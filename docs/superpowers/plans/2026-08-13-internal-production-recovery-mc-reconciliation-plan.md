@@ -8,7 +8,21 @@
 
 **Tech Stack:** TypeScript ESM, Node.js 22+, React 19, Express 5, PostgreSQL, `node:test`, Playwright, GitHub CLI, macOS LaunchAgents.
 
-**Spec:** `setfarm/docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
+
+## 2026-08-16 Execution Rebaseline
+
+Product Build Authority V2 and `setfarm.run-operational-snapshot.v3` are already delivered inputs. Recovery execution starts only from an execution-time exact clean synchronized Setfarm `main` descendant that retains reviewed Authority-V3 PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor, after contract-spine migration 31 is independently verified current, services are rebound through the code-owned zero-owner path, and a fresh clean prerequisite canary proves its one terminal-preclaim lifecycle. The historical `865a7157`/migrations-1-through-29 baseline and polluted run 2075 remain evidence only.
+
+Every D import, preflight, scenario guard, execution, recovery, status, reconciliation, acceptance, and finalization chain freshly resolves A's exact `InternalProductionPostRebindEntryAuthorityPairV1`, requires byte equality with the same pair carried B→C in the authenticated matrix authority, and equality-binds it to the same execution-time source pair. A missing, stale, copied, cross-paired, or source-drifted successor blocks before observation with acceptance effect or mutation.
+
+### Exact C-to-D post-rebind binding
+
+The D composition root, live inflight store, packet finalizer, and operational-acceptance recorder statically import without alias `InternalProductionPostRebindEntryAuthorityPairV1`, `resolveInternalProductionPostRebindEntryAuthorityV1`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1` only from `./baseline-post-handoff-receipt-v1.js`. Before D's first campaign prepare/import/preflight/status seal/scenario guard or mutation, production zero-input verifies A's current successor, pair-only resolves it, resolves C's exact `GoldenMatrixReceiptV1`, and requires byte equality with C's carried pair. No D CLI, campaign, executor port, status resolver, or caller accepts either scalar locator.
+
+`RecoveryLiveGoldenInflightStatusV1`, `RecoveryFinalizedPacketV1`, `RecoveryPacketIndependentReviewReceiptV1`, and `RecoveryOperationalAcceptanceV1` repeat non-null exact `postRebindEntryAuthorityRef`/`postRebindEntryAuthorityHash`; every scenario evidence/selection carries the same pair through its final epoch. A status before authenticated C import is absent and has both fields null; every persisted coordination or later D state has both non-null, with no half-null branch. Source-boundary/AST tests enforce the direct A imports and first-call order. Runtime/store tests reject caller fields, structural clones, stale-current A, A/C cross-pairs, null splits, pair drift across status/evidence/finalization/review/acceptance, nested predecessor tamper, status/store tamper, and source mismatch before any scenario effect. D status JSON exposes the exact pair for fresh A equality extraction only; it never accepts it back.
+
+Every fence that invokes a Setfarm package command consumes authenticated read-only `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` bindings supplied by the applicable receipt resolver. It independently verifies clean literal `main` and `HEAD === refs/remotes/origin/main === SETFARM_ROOT_EXPECTED_SHA` before invocation. A missing binding or workstation-path fallback fails before observation or mutation.
 
 ## Global Constraints
 
@@ -28,7 +42,7 @@
 - Serialize cross-repository integration. Setfarm owns the single source run and its claims, worktrees, branch, commits, push, PR, review transition, merge, and cleanup; Mission Control uses one normal serialized PR branch only after that Setfarm merge is authoritative.
 - Setfarm developer, reviewer, supervisor, QA, and final-test workers never create or switch branches, stage, commit, push, open/ready/merge a PR, or synchronize `main`. They may edit only their immutable claim scope, run claim-bound checks, inspect Git read-only, and submit the exact claim output through the claim-provided `setfarm step complete` command. The Setfarm completion owner performs every Git handoff after gates pass.
 - Every behavior change is test-first. Stop and report after the same canonical systemic cause recurs three times after fixes.
-- Every `bash` fence starts with `set -euo pipefail`. Any fence that invokes D's Setfarm package command first assigns the fixed `SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm`, validates it independently, marks it readonly, and invokes exactly `npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- ...`; a bare `npm`, `cd`-dependent package lookup, inherited npm prefix, or Mission Control `cwd` is never authority. Plan/source-boundary tests execute every owner, claim, synchronization, delivery, cutover, campaign, scenario-verification, finalization, review, and materialization verb from an unrelated empty temporary `cwd` and prove exact identical dispatch; missing/wrong root and poisoned npm prefix fail before observation or mutation. They also parse every shell fence and reject a service, database, run/workflow, or Git mutation unless the immediately preceding command obtains a fresh code-owned authority guard and the mutating command consumes that exact canonical ref/hash. They specifically ban raw `launchctl`, raw `workflow run`, and worker-side `git switch|checkout|pull|fetch|merge|reset|add|commit|push`. Mission Control canonical status/clean/`HEAD === origin/main === owner-sync receipt SHA` is observed before any delivery-owner synchronization or claim creation; workers receive only an authenticated claim worktree/branch/base and never synchronize it themselves. The same tests reject a negative `rg` scan hidden in a pipeline, a match-then-exit expression followed by an unconditional-success fallback, `$(` anywhere in a `test`, `[`, or `[[` predicate, a `readonly`, `export`, `local`, or `declare` invocation, another outer command's argv, or a redirection, and any other masked/bare fallback; command substitution is allowed only in a standalone simple assignment or the enumerated status-aware `if VAR="$(negative scan)"` captures. Transcript fixtures prove that a match status `0` fails, only status `1` with exactly empty captured output passes, status `1` with output and statuses `2`/`127` fail, an upstream Git-diff failure stops before either diff or tree `rg` runs, every inner producer's injected nonzero status stops the fence before its consumer, both producers formerly embedded in every dual-substitution equality fail independently before the predicate, and nonempty tracked or untracked cleanliness output stops all later mutation and evidence publication.
+- Every `bash` fence starts with `set -euo pipefail`. Any fence that invokes D's Setfarm package command first consumes the authenticated clean-main `SETFARM_ROOT`/`SETFARM_ROOT_EXPECTED_SHA` contract above, validates it independently, marks it readonly, and invokes exactly `npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- ...`; a bare `npm`, `cd`-dependent package lookup, inherited npm prefix, Mission Control `cwd`, or hard-coded checkout path is never authority. Plan/source-boundary tests execute every owner, claim, synchronization, delivery, cutover, campaign, scenario-verification, finalization, review, and materialization verb from an unrelated empty temporary `cwd` and prove exact identical dispatch; missing/wrong root and poisoned npm prefix fail before observation or mutation. They also parse every shell fence and reject a service, database, run/workflow, or Git mutation unless the immediately preceding command obtains a fresh code-owned authority guard and the mutating command consumes that exact canonical ref/hash. They specifically ban raw `launchctl`, raw `workflow run`, and worker-side `git switch|checkout|pull|fetch|merge|reset|add|commit|push`. Mission Control canonical status/clean/`HEAD === origin/main === owner-sync receipt SHA` is observed before any delivery-owner synchronization or claim creation; workers receive only an authenticated claim worktree/branch/base and never synchronize it themselves. The same tests reject a negative `rg` scan hidden in a pipeline, a match-then-exit expression followed by an unconditional-success fallback, `$(` anywhere in a `test`, `[`, or `[[` predicate, a `readonly`, `export`, `local`, or `declare` invocation, another outer command's argv, or a redirection, and any other masked/bare fallback; command substitution is allowed only in a standalone simple assignment or the enumerated status-aware `if VAR="$(negative scan)"` captures. Transcript fixtures prove that a match status `0` fails, only status `1` with exactly empty captured output passes, status `1` with output and statuses `2`/`127` fail, an upstream Git-diff failure stops before either diff or tree `rg` runs, every inner producer's injected nonzero status stops the fence before its consumer, both producers formerly embedded in every dual-substitution equality fail independently before the predicate, and nonempty tracked or untracked cleanliness output stops all later mutation and evidence publication.
 
 ## Exact Source and Evidence Delivery Sequence
 
@@ -252,12 +266,13 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 
 - Create `mission-control/server/services/setfarm-operational-model.ts` — fail-closed Setfarm operational-model fetch with exact payload pass-through.
 - Create `mission-control/server/services/setfarm-operational-model.test.ts` — completed-failure and unavailable regressions.
-- Modify `mission-control/server/routes/setfarm-activity.ts` — remove local completed-run clearing and consume the pass-through client.
+- Modify `mission-control/server/routes/setfarm-activity.ts` — remove local completed-run clearing, consume the pass-through client, and use the shared active-state contract.
+- Modify `mission-control/server/routes/runs.ts` — use the same shared active-state contract while preserving legacy diagnostics as non-authoritative.
 - Modify `mission-control/package.json` and `mission-control/package-lock.json` — add direct `ajv` runtime dependency for the vendored JSON Schema boundary.
 - Modify `mission-control/scripts/sync-setfarm-contract.mjs` — vendor the operational-model V2 schema/fixture.
-- Modify `mission-control/scripts/check-setfarm-contract.mjs` — validate the exact twelve-file inventory, retaining A's operational-active schema/fixture and adding D's operational-model pair, plus strict nested payload and canonical model hash.
+- Modify `mission-control/scripts/check-setfarm-contract.mjs` — validate the exact fourteen-file inventory, retaining A's operational-active schema/fixture and adding D's operational-model pair, plus strict nested payload and canonical model hash.
 - Consume without modification `mission-control/shared/setfarm-operational-active-run-status-v1.ts` and its vendored A schema — the sole Mission Control active-status predicate used by project execution and D reconciliation tests.
-- Modify `mission-control/tests/setfarm-contract-vendor.test.ts` — lock exact twelve ordered entries and cross both A's active-status pair and D's run-model pair through their semantic consumers.
+- Modify `mission-control/tests/setfarm-contract-vendor.test.ts` — lock exact fourteen ordered entries and cross both A's active-status pair and D's run-model pair through their semantic consumers.
 - Add `mission-control/contracts/vendor/setfarm/run-operational-model.v2.schema.json` and `run-operational-model.v2.compatibility.json` through the sync script.
 - Create `mission-control/server/services/run-reconciliation.ts` — diagnostic-only DB/snapshot reconciliation schema and pure comparison.
 - Create `mission-control/server/services/run-reconciliation.test.ts` — matched, mismatch, unavailable, and hash regressions.
@@ -273,15 +288,15 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 ### Mission Control failure and retry authority
 
 - Modify `mission-control/server/routes/runs.ts` — label regex errors as legacy diagnostics with no retry authority.
-- Modify `mission-control/src/components/run-detail/ErrorCard.tsx` — preserve the visible legacy-diagnostic label and disallow action inference.
+- Modify `mission-control/src/components/pipeline/ErrorCard.tsx` — preserve the visible legacy-diagnostic label and disallow action inference.
 - Modify `mission-control/src/components/run-detail/OperationalEvidence.tsx` — render exact Setfarm-owned owner, retryability, and operator actions.
-- Modify `mission-control/src/lib/operational-evidence.ts` — strict presentation mapping without local classification.
+- Modify `mission-control/src/lib/operational-snapshot.ts` — strict snapshot presentation mapping without local classification.
 - Create `mission-control/tests/operational-authority-render.test.tsx` — exact owner/retry/refusal/terminal regressions.
 
 ### Durable review evidence
 
-- Supply the reviewed recovery-matrix bytes to B's owner-mediated docs-session commit; B alone creates E's authenticated generation-owned `setfarm/docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md`, while D never observes or validates that path.
-- Supply the reviewed recovery-reconciliation bytes to B's owner-mediated docs-session commit; B alone creates E's authenticated generation-owned `setfarm/docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-reconciliation.md`, while D never observes or validates that path.
+- Supply the reviewed recovery-matrix bytes to B's owner-mediated docs-session commit; B alone creates E's authenticated generation-owned `docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md`, while D never observes or validates that path.
+- Supply the reviewed recovery-reconciliation bytes to B's owner-mediated docs-session commit; B alone creates E's authenticated generation-owned `docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-reconciliation.md`, while D never observes or validates that path.
 
 D's private finalization owns two immutable typed byte streams and their content hashes, not a tracked generation path or session basename. In the combined A–E delivery, E authenticates the generation inputs and exact six-entry tuple before asking B to begin; B alone derives/authenticates the generation-owned paths, basenames, absence, ordering, and registered content hashes. D supplies only freshly reopened finalization-owned bytes/content hashes through its two fixed owner selectors. This avoids a D→E phase dependency while ensuring no operational epoch can overwrite an older recovery packet.
 
@@ -300,7 +315,28 @@ Ownership and delivery order are part of the scope, not an implementation sugges
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 D_SHELL_TEST_VALUE_001="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_001" = "main"
 D_SHELL_TEST_VALUE_002="$(git rev-parse HEAD)"
@@ -308,13 +344,15 @@ D_SHELL_TEST_VALUE_003="$(git rev-parse origin/main)"
 test "$D_SHELL_TEST_VALUE_002" = "$D_SHELL_TEST_VALUE_003"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
-D_SOURCE_BOOTSTRAP_PREPARED="$(npm --prefix /Users/setrox/ai/setrox/setfarm run --silent acceptance:baseline-post-handoff -- prepare-recovery-source-bootstrap --json)"
+require_authenticated_clean_main_setfarm_root_v1
+D_SOURCE_BOOTSTRAP_PREPARED="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- prepare-recovery-source-bootstrap --json)"
 readonly D_SOURCE_BOOTSTRAP_PREPARED
 D_SOURCE_BOOTSTRAP_OPERATION_REF="$(printf '%s\n' "$D_SOURCE_BOOTSTRAP_PREPARED" | jq -er '.operationRef')"
 readonly D_SOURCE_BOOTSTRAP_OPERATION_REF
 D_SOURCE_BOOTSTRAP_OPERATION_HASH="$(printf '%s\n' "$D_SOURCE_BOOTSTRAP_PREPARED" | jq -er '.operationHash | select(test("^[0-9a-f]{64}$"))')"
 readonly D_SOURCE_BOOTSTRAP_OPERATION_HASH
-D_SOURCE_BOOTSTRAP_STARTED="$(env -i PATH="$PATH" HOME="$HOME" npm --prefix /Users/setrox/ai/setrox/setfarm run --silent acceptance:baseline-post-handoff -- resume-recovery-source-bootstrap --json)"
+require_authenticated_clean_main_setfarm_root_v1
+D_SOURCE_BOOTSTRAP_STARTED="$(env -i PATH="$PATH" HOME="$HOME" npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- resume-recovery-source-bootstrap --json)"
 readonly D_SOURCE_BOOTSTRAP_STARTED
 D_SOURCE_BOOTSTRAP_STARTED_REF="$(printf '%s\n' "$D_SOURCE_BOOTSTRAP_STARTED" | jq -er '.sourceRunRef')"
 readonly D_SOURCE_BOOTSTRAP_STARTED_REF
@@ -1862,6 +1900,8 @@ export const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_D_V1 = {
 export interface InternalProductionRecoveryOwnerProducerManifestActivationReceiptV1 {
   schema: "setfarm.internal-production-recovery-owner-producer-manifest-activation.v1";
   phase: "A+B+C+D";
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   reviewedSetfarmSourceRef: CanonicalRef;
   reviewedSetfarmSourceHash: string;
   cleanSetfarmBuildRef: CanonicalRef;
@@ -1887,6 +1927,8 @@ export interface InternalProductionRecoveryOwnerProducerManifestActivationReceip
 export type InternalProductionRecoveryOwnerProducerManifestActivationStatusV1 =
   | Readonly<{
       status: "absent";
+      postRebindEntryAuthorityRef: null;
+      postRebindEntryAuthorityHash: null;
       receiptRef: null;
       receiptHash: null;
       activationRef: null;
@@ -1896,6 +1938,8 @@ export type InternalProductionRecoveryOwnerProducerManifestActivationStatusV1 =
     }>
   | Readonly<{
       status: "activated";
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       receiptRef: CanonicalRef;
       receiptHash: string;
       activationRef: CanonicalRef;
@@ -2925,6 +2969,8 @@ export type RecoveryLiveGoldenInflightStatusV1 =
       scenarioId: RecoveryLiveGoldenScenarioIdV1;
       lifecycleCheckpointCapabilityHash: string | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       coordination: GoldenStageCoordinationV1;
       staged: null;
       resultRef: null;
@@ -2940,6 +2986,8 @@ export type RecoveryLiveGoldenInflightStatusV1 =
       scenarioId: RecoveryLiveGoldenScenarioIdV1;
       lifecycleCheckpointCapabilityHash: string | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       coordination: GoldenStageCoordinationV1;
       staged: GoldenAssertionEnabledStagedCaseV1;
       resultRef: null;
@@ -2955,6 +3003,8 @@ export type RecoveryLiveGoldenInflightStatusV1 =
       scenarioId: RecoveryLiveGoldenScenarioIdV1;
       lifecycleCheckpointCapabilityHash: string | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       coordination: GoldenStageCoordinationV1;
       staged: null;
       resultRef: CanonicalRef;
@@ -2971,6 +3021,8 @@ export type RecoveryLiveGoldenInflightStatusV1 =
       scenarioId: RecoveryLiveGoldenScenarioIdV1;
       lifecycleCheckpointCapabilityHash: string | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       coordination: GoldenStageCoordinationV1;
       staged: null;
       resultRef: null;
@@ -2988,6 +3040,8 @@ export type RecoveryLiveGoldenInflightStatusV1 =
       scenarioId: RecoveryLiveGoldenScenarioIdV1;
       lifecycleCheckpointCapabilityHash: string | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       coordination: GoldenStageCoordinationV1;
       staged: GoldenAssertionEnabledStagedCaseV1;
       resultRef: CanonicalRef;
@@ -3124,6 +3178,8 @@ export interface RecoveryFinalizedPacketV1 {
   schema: "setfarm.internal-production-recovery-finalized-packet.v1";
   campaignId: "internal-production-2026-08-13";
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   orderedEvidenceHashes: readonly string[];
   zeroOwnerReceiptHash: string;
@@ -3152,6 +3208,8 @@ export function createRecoveryFinalizedPacketResolverV1(): RecoveryFinalizedPack
 export interface RecoveryPacketIndependentReviewReceiptV1 {
   schema: "setfarm.internal-production-recovery-packet-independent-review-receipt.v1";
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   finalizationRef: CanonicalRef;
   finalizationHash: string;
@@ -3217,6 +3275,8 @@ export function recordRecoveryPacketIndependentReviewV1(input: Readonly<{
 export interface RecoveryOperationalAcceptanceV1 {
   schema: "setfarm.internal-production-recovery-operational-acceptance.v1";
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   orderedSelectionHashes: readonly string[];
   reconciliationReceiptHash: string;
@@ -3605,7 +3665,7 @@ Implement `RunOperationalModelV2Schema` as a strict schema over the complete exi
 
 The generated `run-operational-model.v2.schema.json` must encode the relation itself, not merely type `status` as string and `terminal` as boolean. Under the strict `run` object it emits an exact `oneOf` with two mutually exclusive `if`/`then` branches: the terminal branch's `if.properties.status.enum` is the exact six-member tuple in producer order and its `then.properties.terminal.const` is `true`; the nonterminal branch's `if.properties.status.not.enum` repeats those same six bytes and its `then.properties.terminal.const` is `false`. Each branch requires both fields and uses `else:false`; the enclosing run schema remains `additionalProperties:false`. The artifact generator derives both enums from the one tuple, and a generator/schema test rejects missing/reordered/extra terminal values, equal branches, absent `if`/`then`/`else:false`, or a schema that accepts either terminal/status disagreement through AJV.
 
-Produce V2 from `buildRunOperationalModel(...)`, and add `setfarm.run-operational-model.v2` plus its compatibility fixture to `mission-control-contract-artifacts.ts`. The existing run-model schema/fixture pair is sufficient; no third artifact is added. A has already expanded the original eight-artifact producer manifest to ten by adding `operational-active-run-status.v1.schema.json` and `.compatibility.json`; D retains those exact two active-status bytes and appends only its run-model pair, so the generated/vendored manifest, lock, checker, sync inventory, and tests all require exactly twelve ordered artifacts. Eight-to-ten arithmetic is stale and forbidden.
+Produce V2 from `buildRunOperationalModel(...)`, and add `setfarm.run-operational-model.v2` plus its compatibility fixture to `mission-control-contract-artifacts.ts`. The existing run-model schema/fixture pair is sufficient; no third artifact is added. The current producer manifest has ten artifacts before the operational-active pair. A appends `operational-active-run-status.v1.schema.json` and `.compatibility.json` to make twelve; D retains those exact two active-status bytes and appends only its run-model pair, so the generated/vendored manifest, lock, checker, sync inventory, and tests all require exactly fourteen ordered artifacts. Eight-to-ten and ten-to-twelve arithmetic are stale and forbidden.
 
 - [ ] **Step 4: Run focused, adjacent, and type verification**
 
@@ -3669,6 +3729,7 @@ Record that Setfarm-owned producer merge SHA from the handoff receipt. Do not pr
 - Create: `mission-control/server/services/setfarm-operational-model.ts`
 - Create: `mission-control/server/services/setfarm-operational-model.test.ts`
 - Modify: `mission-control/server/routes/setfarm-activity.ts`
+- Modify: `mission-control/server/routes/runs.ts`
 - Modify: `mission-control/package.json`
 - Modify: `mission-control/package-lock.json`
 - Modify: `mission-control/scripts/sync-setfarm-contract.mjs`
@@ -3680,16 +3741,34 @@ Record that Setfarm-owned producer merge SHA from the handoff receipt. Do not pr
 - Add through sync: `mission-control/contracts/vendor/setfarm/run-operational-model.v2.compatibility.json`
 - Modify through sync: `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
 
-The sync/check inventory is a fixed ordered list of twelve paths: A's ten already reviewed entries, including the active-status schema/fixture, followed by D's run-model schema/fixture. The lock must contain exactly twelve distinct entries and the exact producer commit. Directory scans, globs, replacing A's active pair, a ten-entry lock, or accepting an extra thirteenth artifact fail the checker and vendor test.
+The sync/check inventory is a fixed ordered list of fourteen paths: the ten current entries, A's two reviewed active-status schema/fixture entries, and D's run-model schema/fixture. The lock must contain exactly fourteen distinct entries and the exact producer commit. Directory scans, globs, replacing A's active pair, a twelve-entry lock, or accepting an extra fifteenth artifact fail the checker and vendor test.
 
 - [ ] **Step 0: Synchronize both merged producers and create the single Mission Control branch**
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 D_SHELL_TEST_VALUE_004="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_004" = "main"
 D_SHELL_TEST_VALUE_005="$(git rev-parse HEAD)"
@@ -3697,7 +3776,9 @@ D_SHELL_TEST_VALUE_006="$(git rev-parse origin/main)"
 test "$D_SHELL_TEST_VALUE_005" = "$D_SHELL_TEST_VALUE_006"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 node --import tsx scripts/mission-control-contract-artifacts.ts --check
+require_authenticated_clean_main_setfarm_root_v1
 D_MC_OWNER_SYNC_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-mission-control-owner-sync --json)"
 readonly D_MC_OWNER_SYNC_JSON
 D_MC_OWNER_SYNC_SHA="$(printf '%s\n' "$D_MC_OWNER_SYNC_JSON" | jq -er '.missionControlSha | select(test("^[0-9a-f]{40}$"))')"
@@ -3743,11 +3824,30 @@ First write and run only `server/services/internal-production-service-restart-st
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 node --import tsx --test server/services/internal-production-service-restart-startup-v1.test.ts
 git diff --check -- server/services/internal-production-service-restart-startup-v1.ts server/services/internal-production-service-restart-startup-v1.test.ts server/index.ts
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-mission-control-claim-guard --json
 ```
 
@@ -3807,10 +3907,29 @@ Expected: all pass; no test expects local failure clearing.
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-git diff --check -- package.json package-lock.json scripts/sync-setfarm-contract.mjs scripts/check-setfarm-contract.mjs tests/setfarm-contract-vendor.test.ts contracts/vendor/setfarm/mission-control-contracts.v1.lock.json contracts/vendor/setfarm/run-operational-model.v2.schema.json contracts/vendor/setfarm/run-operational-model.v2.compatibility.json server/services/setfarm-operational-model.ts server/services/setfarm-operational-model.test.ts server/routes/setfarm-activity.ts
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+git diff --check -- package.json package-lock.json scripts/sync-setfarm-contract.mjs scripts/check-setfarm-contract.mjs tests/setfarm-contract-vendor.test.ts contracts/vendor/setfarm/mission-control-contracts.v1.lock.json contracts/vendor/setfarm/run-operational-model.v2.schema.json contracts/vendor/setfarm/run-operational-model.v2.compatibility.json server/services/setfarm-operational-model.ts server/services/setfarm-operational-model.test.ts server/routes/setfarm-activity.ts server/routes/runs.ts
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-mission-control-claim-guard --json
 ```
 
@@ -3922,10 +4041,29 @@ Expected: all pass.
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 git diff --check -- server/services/run-reconciliation.ts server/services/run-reconciliation.test.ts server/utils/setfarm-db.ts server/routes/setfarm-operational.ts server/routes/setfarm-operational.test.ts
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-mission-control-claim-guard --json
 ```
 
@@ -3941,10 +4079,10 @@ Expected: the read-only guard binds only Task 4's paths and predecessor commit r
 - Create: `mission-control/src/hooks/useRunReconciliation.ts`
 - Create: `mission-control/src/components/run-detail/ReconciliationPanel.tsx`
 - Modify: `mission-control/src/pages/RunDetail.tsx`
-- Modify: `mission-control/src/lib/operational-evidence.ts`
+- Modify: `mission-control/src/lib/operational-snapshot.ts`
 - Modify: `mission-control/src/components/run-detail/OperationalEvidence.tsx`
 - Modify: `mission-control/server/routes/runs.ts`
-- Modify: `mission-control/src/components/run-detail/ErrorCard.tsx`
+- Modify: `mission-control/src/components/pipeline/ErrorCard.tsx`
 - Create: `mission-control/tests/run-reconciliation-render.test.tsx`
 - Create: `mission-control/tests/operational-authority-render.test.tsx`
 
@@ -4027,10 +4165,29 @@ Expected: all pass; failed and cancelled fixtures remain discoverable.
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-git diff --check -- src/lib/run-reconciliation.ts src/hooks/useRunReconciliation.ts src/components/run-detail/ReconciliationPanel.tsx src/pages/RunDetail.tsx src/lib/operational-evidence.ts src/components/run-detail/OperationalEvidence.tsx server/routes/runs.ts src/components/run-detail/ErrorCard.tsx tests/run-reconciliation-render.test.tsx tests/operational-authority-render.test.tsx
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+git diff --check -- src/lib/run-reconciliation.ts src/hooks/useRunReconciliation.ts src/components/run-detail/ReconciliationPanel.tsx src/pages/RunDetail.tsx src/lib/operational-snapshot.ts src/components/run-detail/OperationalEvidence.tsx server/routes/runs.ts server/routes/setfarm-activity.ts src/components/pipeline/ErrorCard.tsx tests/run-reconciliation-render.test.tsx tests/operational-authority-render.test.tsx
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-mission-control-claim-guard --json
 ```
 
@@ -4046,7 +4203,7 @@ Expected: the read-only guard binds only Task 5's paths and predecessor commit r
 - Verify only: `mission-control/server/services/internal-production-service-restart-startup-v1.ts`, `mission-control/server/services/internal-production-service-restart-startup-v1.test.ts`, and `mission-control/server/index.ts`, all created/modified first in Task 3.
 - Update only if Setfarm producer contracts changed:
   - `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
-  - the twelve declared files under `mission-control/contracts/vendor/setfarm/`: A's retained ten, including its operational-active schema/fixture, plus D's new operational-model V2 pair
+  - the fourteen declared files under `mission-control/contracts/vendor/setfarm/`: the ten current entries, A's retained operational-active schema/fixture pair, plus D's new operational-model V2 pair
 
 **Interfaces:**
 
@@ -4059,15 +4216,32 @@ From clean Setfarm `main`, verify the committed producer artifacts, then use Mis
 
 ```bash
 set -euo pipefail
-readonly D_SETFARM_VERIFY_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly D_SETFARM_VERIFY_ROOT="$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 cd "$D_SETFARM_VERIFY_ROOT"
-D_SHELL_TEST_VALUE_013="$(pwd -P)"
-test "$D_SHELL_TEST_VALUE_013" = "$D_SETFARM_VERIFY_ROOT"
-D_SHELL_TEST_VALUE_014="$(git -C "$D_SETFARM_VERIFY_ROOT" rev-parse --show-toplevel)"
-test "$D_SHELL_TEST_VALUE_014" = "$D_SETFARM_VERIFY_ROOT"
-D_SHELL_GUARD_OUTPUT="$(git -C "$D_SETFARM_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
-test -z "$D_SHELL_GUARD_OUTPUT"
 git status --short --branch
+require_authenticated_clean_main_setfarm_root_v1
 node --import tsx scripts/mission-control-contract-artifacts.ts --check
 D_MC_VERIFY_ROOT="$(cd "$D_MC_CLAIM_WORKTREE" && pwd -P)"
 readonly D_MC_VERIFY_ROOT
@@ -4076,6 +4250,7 @@ test "$D_SHELL_TEST_VALUE_015" = "$D_MC_VERIFY_ROOT"
 D_SHELL_GUARD_OUTPUT="$(git -C "$D_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
 cd "$D_MC_VERIFY_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 npm run sync:setfarm-contract -- --source "$D_SETFARM_VERIFY_ROOT"
 git diff --name-only -- contracts/vendor/setfarm
 D_MC_POST_SYNC_PORCELAIN="$(git -C "$D_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
@@ -4087,7 +4262,7 @@ fi
 npm run check:setfarm-contract
 ```
 
-Expected: producer artifacts are current; sync changes only the vendored lock and its exact twelve declared artifacts when the final Setfarm commit differs; A's operational-active schema/fixture remain present and byte-authenticated, and D's operational-model compatibility fixture passes exact schema, nested-authority, and canonical-hash validation. The checker and `tests/setfarm-contract-vendor.test.ts` reject 10, 11, 13, duplicate, reordered, missing-active-pair, or extra entries. If sync produces any tracked or untracked byte, this worker stops before `check:setfarm-contract`, Step 2, scans, or delivery. It reports the already displayed exact vendor paths to the existing Mission Control delivery owner, who alone validates the claim, commits through the authorized flow, and returns a fresh clean claim receipt; the worker then restarts Step 1 from empty full porcelain. A dirty sync result is never verification evidence.
+Expected: producer artifacts are current; sync changes only the vendored lock and its exact fourteen declared artifacts when the final Setfarm commit differs; A's operational-active schema/fixture remain present and byte-authenticated, and D's operational-model compatibility fixture passes exact schema, nested-authority, and canonical-hash validation. The checker and `tests/setfarm-contract-vendor.test.ts` reject 10, 11, 12, 13, 15, duplicate, reordered, missing-active-pair, or extra entries. If sync produces any tracked or untracked byte, this worker stops before `check:setfarm-contract`, Step 2, scans, or delivery. It reports the already displayed exact vendor paths to the existing Mission Control delivery owner, who alone validates the claim, commits through the authorized flow, and returns a fresh clean claim receipt; the worker then restarts Step 1 from empty full porcelain. A dirty sync result is never verification evidence.
 
 Task 6 creates no startup source and allocates no branch. It verifies that Task 3 initialized the sole serialized branch with the fixed `internal-service-restart-startup-claim --service mission-control --json` consumer/test and `server/index.ts` ordering before every later Task 3–5 diff. No E branch owns or edits these three startup paths.
 
@@ -4203,13 +4378,33 @@ Expected: only planned files; no secret/bypass pattern; no local authority promo
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 D_MC_DELIVERY_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- authorize-mission-control-delivery --json)"
 readonly D_MC_DELIVERY_GUARD
 D_MC_DELIVERY_GUARD_REF="$(printf '%s\n' "$D_MC_DELIVERY_GUARD" | jq -er '.guardRef')"
 D_MC_DELIVERY_GUARD_HASH="$(printf '%s\n' "$D_MC_DELIVERY_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- handoff-mission-control-delivery \
   --guard-ref "$D_MC_DELIVERY_GUARD_REF" \
   --guard-hash "$D_MC_DELIVERY_GUARD_HASH" \
@@ -4220,9 +4415,28 @@ The authorization guard binds repository `hikmetgulsesli/mission-control`, base 
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 D_MC_DELIVERY_RECEIPT="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- resolve-mission-control-delivery --json)"
 readonly D_MC_DELIVERY_RECEIPT
 D_SHELL_TEST_VALUE_019="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.baseBranch')"
@@ -4241,8 +4455,11 @@ D_SHELL_TEST_VALUE_026="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.merg
 test "$D_SHELL_TEST_VALUE_025" = "$D_SHELL_TEST_VALUE_026"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 npm run check:setfarm-contract
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
@@ -4252,7 +4469,28 @@ test -z "$D_SHELL_GUARD_OUTPUT"
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 D_SHELL_TEST_VALUE_027="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_027" = "main"
 D_SHELL_TEST_VALUE_028="$(git rev-parse HEAD)"
@@ -4290,10 +4528,28 @@ Run only after Step 5's two clean builds. First activate and freshly resolve D's
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-readonly D_CUTOVER_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly D_CUTOVER_SETFARM_ROOT="$SETFARM_ROOT"
 readonly D_CUTOVER_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 cd "$D_CUTOVER_SETFARM_ROOT"
 D_CUTOVER_SF_BRANCH="$(git branch --show-current)"
@@ -4312,6 +4568,7 @@ D_CUTOVER_MC_HEAD="$(git -C "$D_CUTOVER_MC_ROOT" rev-parse HEAD)"
 D_CUTOVER_MC_ORIGIN="$(git -C "$D_CUTOVER_MC_ROOT" rev-parse refs/remotes/origin/main)"
 test "$D_CUTOVER_MC_HEAD" = "$D_CUTOVER_MC_ORIGIN"
 test "$D_CUTOVER_MC_HEAD" = "$D_MC_SOURCE_MERGE_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 D_PRE_CUTOVER_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- restart-authority-cutover-status --json)"
 printf '%s\n' "$D_PRE_CUTOVER_STATUS" | jq -e '
   .state == "baseline-a-active" and
@@ -4319,11 +4576,13 @@ printf '%s\n' "$D_PRE_CUTOVER_STATUS" | jq -e '
   .physicalRestartAuthorityOwner == "baseline-a" and
   .activationRef == null and .activationHash == null
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_DISABLED_PROBE="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- probe-service-restart-authority --json)"
 printf '%s\n' "$D_DISABLED_PROBE" | jq -e '
   .code == "SERVICE_RESTART_AUTHORITY_NOT_ACTIVATED" and
   .reservationCreated == false and .outboxCreated == false and .helperStarted == false
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_MANIFEST_ACTIVATION="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- activate-recovery-owner-producer-manifest --json)"
 D_MANIFEST_ACTIVATION_REF="$(printf '%s\n' "$D_MANIFEST_ACTIVATION" | jq -er '.receiptRef')"
 D_MANIFEST_ACTIVATION_HASH="$(printf '%s\n' "$D_MANIFEST_ACTIVATION" | jq -er '.receiptHash')"
@@ -4340,6 +4599,7 @@ printf '%s\n' "$D_MANIFEST_ACTIVATION" | jq -e '
   (.activationHeadRef | startswith("setfarm://internal-production/")) and
   (.activationHeadHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_MANIFEST_ACTIVATION_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- recovery-owner-producer-manifest-activation-status --json)"
 printf '%s\n' "$D_MANIFEST_ACTIVATION_STATUS" | jq -e \
   --arg receiptRef "$D_MANIFEST_ACTIVATION_REF" \
@@ -4352,9 +4612,11 @@ printf '%s\n' "$D_MANIFEST_ACTIVATION_STATUS" | jq -e \
   (.activationHash | test("^[0-9a-f]{64}$")) and
   .activationHeadRef == $headRef and .activationHeadHash == $headHash
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_HOOK_LOAD_SEQUENCE="$(npm run --silent acceptance:baseline-post-handoff -- resume-restart-sequence --intent d-startup-hook-load --json)"
 D_HOOK_LOAD_SEQUENCE_REF="$(printf '%s\n' "$D_HOOK_LOAD_SEQUENCE" | jq -er '.sequenceRef')"
 D_HOOK_LOAD_SEQUENCE_HASH="$(printf '%s\n' "$D_HOOK_LOAD_SEQUENCE" | jq -er '.sequenceHash')"
+require_authenticated_clean_main_setfarm_root_v1
 D_HOOK_LOAD_STATUS="$(npm run --silent acceptance:baseline-post-handoff -- restart-sequence-status --intent d-startup-hook-load --json)"
 printf '%s\n' "$D_HOOK_LOAD_STATUS" | jq -e \
   --arg sequenceRef "$D_HOOK_LOAD_SEQUENCE_REF" \
@@ -4364,6 +4626,7 @@ printf '%s\n' "$D_HOOK_LOAD_STATUS" | jq -e \
   (.migrationReceiptRef | type == "string") and
   (.migrationReceiptHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_HOOK_RUNTIME_SOURCE="$(npm run --silent acceptance:baseline-post-handoff -- runtime-source --setfarm-sha "$D_CUTOVER_SF_HEAD" --mission-control-sha "$D_CUTOVER_MC_HEAD" --json)"
 printf '%s\n' "$D_HOOK_RUNTIME_SOURCE" | jq -e \
   --arg sf "$D_CUTOVER_SF_HEAD" --arg mc "$D_CUTOVER_MC_HEAD" '
@@ -4372,14 +4635,18 @@ printf '%s\n' "$D_HOOK_RUNTIME_SOURCE" | jq -e \
   (.dashboardServiceIdentityHash | test("^[0-9a-f]{64}$")) and
   (.missionControlServiceIdentityHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_STILL_DISABLED_PROBE="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- probe-service-restart-authority --json)"
 printf '%s\n' "$D_STILL_DISABLED_PROBE" | jq -e '.code == "SERVICE_RESTART_AUTHORITY_NOT_ACTIVATED"' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_CUTOVER_ZERO="$(npm run --silent acceptance:baseline-post-handoff -- zero-owner --json)"
 D_CUTOVER_ZERO_REF="$(printf '%s\n' "$D_CUTOVER_ZERO" | jq -er '.guardRef')"
 D_CUTOVER_ZERO_HASH="$(printf '%s\n' "$D_CUTOVER_ZERO" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 D_CUTOVER_PREPARED="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- prepare-restart-authority-cutover --guard-ref "$D_CUTOVER_ZERO_REF" --guard-hash "$D_CUTOVER_ZERO_HASH" --json)"
 D_CUTOVER_OPERATION_REF="$(printf '%s\n' "$D_CUTOVER_PREPARED" | jq -er '.operationRef')"
 D_CUTOVER_OPERATION_HASH="$(printf '%s\n' "$D_CUTOVER_PREPARED" | jq -er '.operationHash')"
+require_authenticated_clean_main_setfarm_root_v1
 D_PREPARED_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- restart-authority-cutover-status --json)"
 printf '%s\n' "$D_PREPARED_STATUS" | jq -e \
   --arg operationRef "$D_CUTOVER_OPERATION_REF" --arg operationHash "$D_CUTOVER_OPERATION_HASH" '
@@ -4399,10 +4666,28 @@ After the prepare response and its exact operation pair are durable, discard tha
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-readonly D_RESUME_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly D_RESUME_SETFARM_ROOT="$SETFARM_ROOT"
 readonly D_RESUME_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 cd "$D_RESUME_SETFARM_ROOT"
 D_RESUME_SF_BRANCH="$(git branch --show-current)"
@@ -4419,11 +4704,13 @@ test -z "$D_RESUME_MC_STATUS"
 D_RESUME_MC_HEAD="$(git -C "$D_RESUME_MC_ROOT" rev-parse HEAD)"
 D_RESUME_MC_ORIGIN="$(git -C "$D_RESUME_MC_ROOT" rev-parse refs/remotes/origin/main)"
 test "$D_RESUME_MC_HEAD" = "$D_RESUME_MC_ORIGIN"
+require_authenticated_clean_main_setfarm_root_v1
 D_CUTOVER_RESULT="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- resume-restart-authority-cutover --json)"
 D_HOOKS_READY_REF="$(printf '%s\n' "$D_CUTOVER_RESULT" | jq -er '.startupHooksReadyRef')"
 D_HOOKS_READY_HASH="$(printf '%s\n' "$D_CUTOVER_RESULT" | jq -er '.startupHooksReadyHash')"
 D_CUTOVER_REF="$(printf '%s\n' "$D_CUTOVER_RESULT" | jq -er '.cutoverRef')"
 D_CUTOVER_HASH="$(printf '%s\n' "$D_CUTOVER_RESULT" | jq -er '.cutoverHash')"
+require_authenticated_clean_main_setfarm_root_v1
 D_POST_CUTOVER_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- restart-authority-cutover-status --json)"
 printf '%s\n' "$D_POST_CUTOVER_STATUS" | jq -e \
   --arg cutoverRef "$D_CUTOVER_REF" --arg cutoverHash "$D_CUTOVER_HASH" \
@@ -4453,7 +4740,7 @@ Expected: the exact D manifest receipt/head activation is durable immediately af
 **Files:**
 
 - Write local evidence only through B's fixed `resolveInternalProductionDataRootV1()/recovery` store.
-- Later supply accepted evidence bytes to B's combined session for its generation-owned `setfarm/docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md`; D does not receive that path.
+- Later supply accepted evidence bytes to B's combined session for its generation-owned `docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md`; D does not receive that path.
 
 **After E source merges, satisfy C's full exact final-operational-epoch Profile 1–7 barrier; then run this merged-source preflight once before the sequence. Before each live-operational scenario repeat DB authority, health, and zero-input `observeRecoveryCompleteZeroOwnerCensusV1()`; process-integration scenarios instead require a fresh isolated database and no inherited service process:**
 
@@ -4461,19 +4748,37 @@ Expected: the exact D manifest receipt/head activation is durable immediately af
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
-D_SHELL_TEST_VALUE_033="$(git branch --show-current)"
-test "$D_SHELL_TEST_VALUE_033" = "main"
-D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
-test -z "$D_SHELL_GUARD_OUTPUT"
-D_FINAL_SETFARM_SOURCE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+cd "$SETFARM_ROOT"
+readonly D_FINAL_SETFARM_SOURCE_SHA="$SETFARM_ROOT_HEAD"
 export D_FINAL_SETFARM_SOURCE_SHA
-D_FINAL_MC_SOURCE_SHA="$(git -C ../mission-control rev-parse HEAD)"
+readonly D_MC_ROOT=/Users/setrox/ai/setrox/mission-control
+D_FINAL_MC_SOURCE_SHA="$(git -C "$D_MC_ROOT" rev-parse HEAD)"
 export D_FINAL_MC_SOURCE_SHA
-D_SHELL_TEST_VALUE_034="$(git rev-parse origin/main)"
-test "$D_FINAL_SETFARM_SOURCE_SHA" = "$D_SHELL_TEST_VALUE_034"
-D_SHELL_TEST_VALUE_035="$(git -C ../mission-control rev-parse origin/main)"
+D_SHELL_TEST_VALUE_035="$(git -C "$D_MC_ROOT" rev-parse origin/main)"
 test "$D_FINAL_MC_SOURCE_SHA" = "$D_SHELL_TEST_VALUE_035"
+require_authenticated_clean_main_setfarm_root_v1
 D_LAUNCH_MIGRATION_VERIFICATION="$(node dist/internal-production/golden-run-cli.js \
   verify-launch-operation-migration --json)"
 printf '%s\n' "$D_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
@@ -4490,11 +4795,18 @@ printf '%s\n' "$D_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
   (.verificationHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
 export C_MATRIX_FILE="evals/suites/internal-production-golden-matrix-v1.json"
-npm run internal:golden-matrix -- preflight \
+require_authenticated_clean_main_setfarm_root_v1
+D_A_POST_REBIND_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json)"
+require_authenticated_clean_main_setfarm_root_v1
+D_C_MATRIX_PREFLIGHT_JSON="$(npm run --silent internal:golden-matrix -- preflight \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$D_FINAL_SETFARM_SOURCE_SHA" \
   --mission-control-sha "$D_FINAL_MC_SOURCE_SHA" \
-  --json
+  --json)"
+test "$(printf '%s\n' "$D_C_MATRIX_PREFLIGHT_JSON" | jq -er '.postRebindEntryAuthorityRef')" = \
+  "$(printf '%s\n' "$D_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityRef')"
+test "$(printf '%s\n' "$D_C_MATRIX_PREFLIGHT_JSON" | jq -er '.postRebindEntryAuthorityHash')" = \
+  "$(printf '%s\n' "$D_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityHash')"
 ```
 
 Use C's exact one-successor workflow: invoke `internal:golden-matrix -- execute-next` with those same matrix/release/MC arguments, persist the returned C status ref/hash before execution; when interrupted, invoke C's exact `recover-inflight` with only that status pair, then inspect `status` after the bound result. Repeat serially until Profiles 1–7 satisfy the full current-epoch matrix and its receipt is `decision:"accepted"` in the exact `GoldenFinalReleaseEpochV1(D_FINAL_SETFARM_SOURCE_SHA,D_FINAL_MC_SOURCE_SHA)`. D imports only the accepted Profile 1–3 identities it consumes. No operator command retains or supplies a dead shell's case ID, run ID, or run number, and no recovery branch calls `collect` from those values. Earlier-epoch results remain stored and count toward cumulative systemic history but never satisfy these slots. A non-accepted result freezes starts and follows C's reviewed repair flow before a fresh attempt; a third identical systemic root stops D. Any repair/source drift creates a new epoch and restarts the full C matrix before all ten D scenarios rerun.
@@ -4503,44 +4815,83 @@ Only after that status is authoritative, import and resolve it in fresh processe
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- import-golden-status --json
+require_authenticated_clean_main_setfarm_root_v1
 D_CAMPAIGN_HASH="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name golden-campaign-hash)"
 export D_CAMPAIGN_HASH
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- resolve-golden --campaign-hash "$D_CAMPAIGN_HASH" --profile node-cli --accepted-ordinal 1 --store-control cli
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- resolve-golden --campaign-hash "$D_CAMPAIGN_HASH" --profile node-express-api --accepted-ordinal 1 --store-control api
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- resolve-golden --campaign-hash "$D_CAMPAIGN_HASH" --profile vite-react-web --accepted-ordinal 1 --store-control web
+require_authenticated_clean_main_setfarm_root_v1
 D_CLI_RESULT_HASH="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name cli-result-hash)"
 export D_CLI_RESULT_HASH
+require_authenticated_clean_main_setfarm_root_v1
 D_API_RESULT_HASH="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name api-result-hash)"
 export D_API_RESULT_HASH
+require_authenticated_clean_main_setfarm_root_v1
 D_WEB_RESULT_HASH="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name web-result-hash)"
 export D_WEB_RESULT_HASH
+require_authenticated_clean_main_setfarm_root_v1
 D_CLI_RUN_ID="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name cli-run-id)"
 export D_CLI_RUN_ID
+require_authenticated_clean_main_setfarm_root_v1
 D_API_RUN_ID="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name api-run-id)"
 export D_API_RUN_ID
+require_authenticated_clean_main_setfarm_root_v1
 D_WEB_RUN_ID="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name web-run-id)"
 export D_WEB_RUN_ID
 printf '%s\n' "$D_CLI_RESULT_HASH" "$D_API_RESULT_HASH" "$D_WEB_RESULT_HASH"
 
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- assert-zero-owners --json
 curl -fsS http://127.0.0.1:3080/api/health | jq -e '.status == "healthy"'
 curl -fsS http://127.0.0.1:3333/ >/dev/null
 D_RECOVERY_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- prepare-campaign --campaign-id internal-production-2026-08-13 --release-sha "$D_RECOVERY_RELEASE_SHA" --json
+require_authenticated_clean_main_setfarm_root_v1
 D_RECOVERY_CAMPAIGN_HASH="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name recovery-campaign-hash)"
 export D_RECOVERY_CAMPAIGN_HASH
 D_SHELL_TEST_VALUE_036="$(printf '%s' "$D_RECOVERY_CAMPAIGN_HASH" | wc -c | tr -d ' ')"
 test "$D_SHELL_TEST_VALUE_036" = "64"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- link-source-golden --recovery-campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json
+require_authenticated_clean_main_setfarm_root_v1
 D_RECOVERY_CAMPAIGN_CONTROL_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- control-value --name recovery-campaign-hash --json)"
 export D_RECOVERY_CAMPAIGN_CONTROL_JSON
 D_SHELL_TEST_VALUE_037="$(printf '%s' "$D_RECOVERY_CAMPAIGN_CONTROL_JSON" | jq -er '.schema == "setfarm.internal-production-recovery-control-value.v1" and .name == "recovery-campaign-hash" and .value == env.D_RECOVERY_CAMPAIGN_HASH and (.controlReceiptHash | test("^[0-9a-f]{64}$")) and (keys | sort == ["controlReceiptHash","name","schema","value"])')"
@@ -4555,14 +4906,35 @@ Execute the exact recovery case through the actual-PostgreSQL process fixture; i
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_01_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_01_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-01-cli-spawner-pre-transfer --scenario spawner_pre_transfer_restart --mode actual_postgres_process_integration --checkpoint spawner.claim_published_before_transfer --release-sha "$D_SCENARIO_01_RELEASE_SHA" --json)"
 D_SCENARIO_01_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_01_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_01_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_01_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-01-cli-spawner-pre-transfer --scenario spawner_pre_transfer_restart --mode actual_postgres_process_integration --checkpoint spawner.claim_published_before_transfer --release-sha "$D_SCENARIO_01_RELEASE_SHA" --guard-ref "$D_SCENARIO_01_GUARD_REF" --guard-hash "$D_SCENARIO_01_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario spawner_pre_transfer_restart
 ```
 
@@ -4572,14 +4944,35 @@ Expected: the same claim generation transfers once after restart; no duplicate c
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_02_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_02_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-02-api-completion-owner-pre-effect --scenario completion_owner_pre_effect_restart --mode actual_postgres_process_integration --checkpoint completion.owner_committed_before_effects --release-sha "$D_SCENARIO_02_RELEASE_SHA" --json)"
 D_SCENARIO_02_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_02_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_02_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_02_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-02-api-completion-owner-pre-effect --scenario completion_owner_pre_effect_restart --mode actual_postgres_process_integration --checkpoint completion.owner_committed_before_effects --release-sha "$D_SCENARIO_02_RELEASE_SHA" --guard-ref "$D_SCENARIO_02_GUARD_REF" --guard-hash "$D_SCENARIO_02_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario completion_owner_pre_effect_restart
 ```
 
@@ -4589,14 +4982,35 @@ Expected: the original completion owner resumes or is recovered canonically, eac
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_03_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_03_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-03-web-mc-active --scenario mission_control_active_run_restart --mode live_operational --checkpoint active-run-generation --live-action restartMissionControl --release-sha "$D_SCENARIO_03_RELEASE_SHA" --json)"
 D_SCENARIO_03_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_03_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_03_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_03_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-03-web-mc-active --scenario mission_control_active_run_restart --mode live_operational --checkpoint active-run-generation --live-action restartMissionControl --release-sha "$D_SCENARIO_03_RELEASE_SHA" --guard-ref "$D_SCENARIO_03_GUARD_REF" --guard-hash "$D_SCENARIO_03_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario mission_control_active_run_restart
 ```
 
@@ -4606,14 +5020,35 @@ Subproject B calls `tryAction(...)` during polling and records the one-shot rece
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_04_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_04_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-04-web-dashboard-active --scenario dashboard_active_run_restart --mode live_operational --checkpoint active-run-generation --live-action restartDashboard --release-sha "$D_SCENARIO_04_RELEASE_SHA" --json)"
 D_SCENARIO_04_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_04_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_04_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_04_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-04-web-dashboard-active --scenario dashboard_active_run_restart --mode live_operational --checkpoint active-run-generation --live-action restartDashboard --release-sha "$D_SCENARIO_04_RELEASE_SHA" --guard-ref "$D_SCENARIO_04_GUARD_REF" --guard-hash "$D_SCENARIO_04_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario dashboard_active_run_restart
 ```
 
@@ -4638,14 +5073,35 @@ Run the actual-PostgreSQL process fixture with its one-shot injected provider ad
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_05_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_05_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-05-cli-provider-quota --scenario provider_quota_failure --mode actual_postgres_process_integration --checkpoint spawner.provider_failure_before_fallback --release-sha "$D_SCENARIO_05_RELEASE_SHA" --json)"
 D_SCENARIO_05_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_05_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_05_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_05_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-05-cli-provider-quota --scenario provider_quota_failure --mode actual_postgres_process_integration --checkpoint spawner.provider_failure_before_fallback --release-sha "$D_SCENARIO_05_RELEASE_SHA" --guard-ref "$D_SCENARIO_05_GUARD_REF" --guard-hash "$D_SCENARIO_05_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario provider_quota_failure
 ```
 
@@ -4657,14 +5113,35 @@ Use the campaign's dedicated immutable `recovery-06-bugfix-review` template from
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_06_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_06_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-06-bugfix-review --scenario github_review_retry --mode live_operational --checkpoint actionable-post-pr-review-generation --live-action publish-golden-actionable-post-pr-review --release-sha "$D_SCENARIO_06_RELEASE_SHA" --json)"
 D_SCENARIO_06_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_06_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_06_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_06_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-06-bugfix-review --scenario github_review_retry --mode live_operational --checkpoint actionable-post-pr-review-generation --live-action publish-golden-actionable-post-pr-review --release-sha "$D_SCENARIO_06_RELEASE_SHA" --guard-ref "$D_SCENARIO_06_GUARD_REF" --guard-hash "$D_SCENARIO_06_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario github_review_retry
 ```
 
@@ -4676,14 +5153,35 @@ Run the actual process fixture derived from `v3-darwin-runtime-isolation.test.ts
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_07_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_07_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-07-web-runtime-crash --scenario runtime_crash_cleanup --mode actual_postgres_process_integration --checkpoint spawner.runtime_owned_before_fault --release-sha "$D_SCENARIO_07_RELEASE_SHA" --json)"
 D_SCENARIO_07_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_07_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_07_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_07_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-07-web-runtime-crash --scenario runtime_crash_cleanup --mode actual_postgres_process_integration --checkpoint spawner.runtime_owned_before_fault --release-sha "$D_SCENARIO_07_RELEASE_SHA" --guard-ref "$D_SCENARIO_07_GUARD_REF" --guard-hash "$D_SCENARIO_07_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario runtime_crash_cleanup
 ```
 
@@ -4695,14 +5193,35 @@ Use the actual-PostgreSQL controlled fixture with one deterministic authenticate
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_08_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_08_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-08-web-supervisor-block --scenario supervisor_generation_safe_retry --mode actual_postgres_process_integration --checkpoint supervisor.directive_authenticated_before_generation_claim --release-sha "$D_SCENARIO_08_RELEASE_SHA" --json)"
 D_SCENARIO_08_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_08_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_08_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_08_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-08-web-supervisor-block --scenario supervisor_generation_safe_retry --mode actual_postgres_process_integration --checkpoint supervisor.directive_authenticated_before_generation_claim --release-sha "$D_SCENARIO_08_RELEASE_SHA" --guard-ref "$D_SCENARIO_08_GUARD_REF" --guard-hash "$D_SCENARIO_08_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario supervisor_generation_safe_retry
 ```
 
@@ -4714,14 +5233,35 @@ Use the actual-PostgreSQL child fixture to commit the runtime-completion owner, 
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_SCENARIO_09_RELEASE_SHA="$(git rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_09_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-09-api-post-owner --scenario post_owner_exactly_once_recovery --mode actual_postgres_process_integration --checkpoint completion.effect_applied_before_settlement --release-sha "$D_SCENARIO_09_RELEASE_SHA" --json)"
 D_SCENARIO_09_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_09_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_09_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_09_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- execute --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --case-id recovery-09-api-post-owner --scenario post_owner_exactly_once_recovery --mode actual_postgres_process_integration --checkpoint completion.effect_applied_before_settlement --release-sha "$D_SCENARIO_09_RELEASE_SHA" --guard-ref "$D_SCENARIO_09_GUARD_REF" --guard-hash "$D_SCENARIO_09_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario post_owner_exactly_once_recovery
 ```
 
@@ -4733,13 +5273,34 @@ Resolve the accepted Node API product contract from `$D_API_RESULT_HASH` through
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 D_SCENARIO_10_GUARD="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- guard-scenario --command reuse --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --source-result-hash "$D_API_RESULT_HASH" --scenario api_durable_state_restart --mode live_operational --checkpoint accepted_product_durable_state_written --runtime-action restartAcceptedProduct --json)"
 D_SCENARIO_10_GUARD_REF="$(printf '%s\n' "$D_SCENARIO_10_GUARD" | jq -er '.guardRef')"
 D_SCENARIO_10_GUARD_HASH="$(printf '%s\n' "$D_SCENARIO_10_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery-scenario -- reuse --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --source-result-hash "$D_API_RESULT_HASH" --scenario api_durable_state_restart --mode live_operational --checkpoint accepted_product_durable_state_written --runtime-action restartAcceptedProduct --guard-ref "$D_SCENARIO_10_GUARD_REF" --guard-hash "$D_SCENARIO_10_GUARD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --scenario api_durable_state_restart
 ```
 
@@ -4749,9 +5310,28 @@ Expected: the asynchronous verifier resolves the stored result, packet, runtime 
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-campaign --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
 ```
 
@@ -4769,10 +5349,29 @@ Expected: exactly ten selections resolve to ten content-addressed selectable att
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 D_CAMPAIGN_RUN_IDS="$(
+  require_authenticated_clean_main_setfarm_root_v1
   npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- list-live-run-ids --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
 )"
 export D_CAMPAIGN_RUN_IDS
@@ -4797,16 +5396,36 @@ Expected: every golden or live-operational recovery run has exact identity and a
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- reconcile-live-surfaces --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-campaign --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
 ```
 
 `reconcile-live-surfaces` performs parameterized exact-UUID and global active-set reads, GETs `/api/projects`, `/api/runs`, and `/api/overview`, and verifies the same predicates formerly shown as shell pipelines. D imports A's exact Setfarm producer `isSetfarmOperationalActiveRunStatusV1` unaliased only from `../contracts/operational-active-run-status-v1.js`; Mission Control's project producer imports only A's vendored-schema-backed `shared/setfarm-operational-active-run-status-v1.ts`. For every project the equality is exact: `execution.active === (execution.runStatus !== null && isSetfarmOperationalActiveRunStatusV1(execution.runStatus))`; whenever active, `execution.state === execution.runStatus` byte-for-byte. All four active counts are numerically identical; DB, run-API and project ordered active-ID sets are byte-identical; project bindings are one-to-one with distinct nonempty `execution.runId`; and every terminal execution has terminal public status. It stores only counts, ordered UUIDs, response hashes, predicate results, and a receipt hash below the global private ``resolveInternalProductionDataRootV1()/recovery/${campaignHash}/reconciliation`` child. Expected: the historical 112 raw `status:"active"` registry values do not appear as 112 active executions, and failed/cancelled history remains visible.
 
-`recovery-source-boundary.test.ts`, Mission Control `tests/setfarm-contract-vendor.test.ts`, and the reconciliation/render tests require both exact A imports and the twelve-entry lock. They exercise `running`, `resuming`, `cancelling`, `failing`, `pending`, `completed`, `failed`, `cancelled`, null, and unknown status values; reject `active === runStatus`, truthiness, a local tuple/set/predicate, a stale ten-artifact vendor lock, active `state` drift, and any second normalization rule.
+`recovery-source-boundary.test.ts`, Mission Control `tests/setfarm-contract-vendor.test.ts`, and the reconciliation/render tests require both exact A imports and the fourteen-entry lock. They exercise `running`, `resuming`, `cancelling`, `failing`, `pending`, `completed`, `failed`, `cancelled`, null, and unknown status values; reject `active === runStatus`, truthiness, a local tuple/set/predicate, stale ten- or twelve-artifact vendor locks, active `state` drift, and any second normalization rule.
 
 - [ ] **Step 3: Run a live browser acceptance smoke**
 
@@ -4814,10 +5433,30 @@ Run the fixed browser command. It re-resolves the active-run route/state hashes 
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- browser-acceptance --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-browser-acceptance --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
 ```
 
@@ -4844,8 +5483,8 @@ Use exact listener ownership commands and canonical Setfarm census readers. Expe
 
 **Files:**
 
-- Create through B's authenticated combined session: `setfarm/docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md` without exposing the path to D.
-- Create through B's authenticated combined session: `setfarm/docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-reconciliation.md` without exposing the path to D.
+- Create through B's authenticated combined session: `docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-matrix.md` without exposing the path to D.
+- Create through B's authenticated combined session: `docs/review-packets/internal-production/epoch-<epochHash>-closure-<closureGenerationHash>/recovery-reconciliation.md` without exposing the path to D.
 
 **Interfaces:**
 
@@ -4916,16 +5555,43 @@ The first renderer emits exactly one `# Internal Production Recovery Matrix` hea
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 D_SHELL_TEST_VALUE_038="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_038" = "main"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 node --import tsx scripts/mission-control-contract-artifacts.ts --check
 D_VERIFIED_SETFARM_SOURCE_SHA="$(git rev-parse HEAD)"
 export D_VERIFIED_SETFARM_SOURCE_SHA
@@ -4937,9 +5603,13 @@ D_SHELL_TEST_VALUE_039="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_039" = "main"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 npm run check:setfarm-contract
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 MC_RENDER_ROUTES="/,/setfarm,/setfarm/active,/projects,/setfarm/runs/$D_API_RUN_ID" npm run render:smoke
 D_VERIFIED_MC_SOURCE_SHA="$(git rev-parse HEAD)"
 export D_VERIFIED_MC_SOURCE_SHA
@@ -4955,11 +5625,31 @@ Only after Step 1 passes, remain on the same clean source trees, prove the globa
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- assert-zero-owners --json
+require_authenticated_clean_main_setfarm_root_v1
 D_PACKET_FINALIZATION_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- finalize-packet \
   --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" \
   --setfarm-source-sha "$D_VERIFIED_SETFARM_SOURCE_SHA" \
@@ -4988,9 +5678,28 @@ An independent reviewer resolves the sealed packet, inspects the exact source me
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 D_PACKET_REVIEW_ALLOCATION="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- \
   allocate-packet-review-observation --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json)"
 export D_PACKET_REVIEW_ALLOCATION
@@ -4999,6 +5708,7 @@ export D_PACKET_REVIEW_LOCAL_PATH
 D_PACKET_REVIEW_OBSERVATION_REF="$(printf '%s' "$D_PACKET_REVIEW_ALLOCATION" | jq -er '.observationRef')"
 export D_PACKET_REVIEW_OBSERVATION_REF
 # The independent reviewer writes the strict observation only to the allocated local path.
+require_authenticated_clean_main_setfarm_root_v1
 D_PACKET_REVIEW_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- \
   record-packet-review --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" \
   --observation-ref "$D_PACKET_REVIEW_OBSERVATION_REF" --json)"
@@ -5009,6 +5719,7 @@ export D_PACKET_REVIEW_HASH
 D_PACKET_REVIEW_REF="$(printf '%s' "$D_PACKET_REVIEW_JSON" | \
   jq -er '.reviewRef | select(startswith("setfarm://internal-production/recovery/packet-reviews/sha256/"))')"
 export D_PACKET_REVIEW_REF
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-packet-review \
   --review-ref "$D_PACKET_REVIEW_REF" --review-hash "$D_PACKET_REVIEW_HASH" --json
 ```
@@ -5019,9 +5730,28 @@ Only after that review is clear, record D's non-circular operational gate:
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 D_OPERATIONAL_ACCEPTANCE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- \
   record-operational-acceptance --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json)"
 export D_OPERATIONAL_ACCEPTANCE_JSON
@@ -5031,6 +5761,7 @@ export D_OPERATIONAL_ACCEPTANCE_HASH
 D_OPERATIONAL_ACCEPTANCE_REF="$(printf '%s' "$D_OPERATIONAL_ACCEPTANCE_JSON" | \
   jq -er '.acceptanceRef | select(startswith("setfarm://internal-production/recovery/operational-acceptances/sha256/"))')"
 export D_OPERATIONAL_ACCEPTANCE_REF
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-operational-acceptance \
   --acceptance-ref "$D_OPERATIONAL_ACCEPTANCE_REF" \
   --acceptance-hash "$D_OPERATIONAL_ACCEPTANCE_HASH" --json
@@ -5044,9 +5775,27 @@ Standalone D operational completion stops after the stable private finalization 
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 test -n "$D_DOCS_CLAIM_WORKTREE"
 test -n "$D_DOCS_CLAIM_BRANCH"
 test -n "$D_DOCS_CLAIM_MERGE_BASE_SHA"
@@ -5055,7 +5804,7 @@ D_SHELL_TEST_VALUE_040="$(pwd -P)"
 D_SHELL_TEST_VALUE_041="$(git rev-parse --show-toplevel)"
 test "$D_SHELL_TEST_VALUE_040" = "$D_SHELL_TEST_VALUE_041"
 D_SHELL_TEST_VALUE_042="$(pwd -P)"
-test "$D_SHELL_TEST_VALUE_042" != "/Users/setrox/ai/setrox/setfarm"
+test "$D_SHELL_TEST_VALUE_042" != "$SETFARM_ROOT"
 D_SHELL_TEST_VALUE_043="$(git branch --show-current)"
 test "$D_SHELL_TEST_VALUE_043" = "$D_DOCS_CLAIM_BRANCH"
 test "$D_DOCS_CLAIM_BRANCH" != "main"
@@ -5066,11 +5815,13 @@ D_SHELL_TEST_VALUE_045="$(git merge-base HEAD "$D_DOCS_CLAIM_MERGE_BASE_SHA")"
 test "$D_SHELL_TEST_VALUE_045" = "$D_DOCS_CLAIM_MERGE_BASE_SHA"
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 npm ci
 # `node_modules/` is the repository-declared ignored dependency tree; no tracked
 # or unignored file may appear during installation.
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- materialize-finalized-packet \
   --finalization-hash "$D_PACKET_FINALIZATION_HASH" --json
 ```
@@ -5081,10 +5832,29 @@ For isolated D delivery, the docs claim runs the standalone materializer only in
 
 ```bash
 set -euo pipefail
-SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
-test -d "$SETFARM_ROOT"
-readonly SETFARM_ROOT
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 D_POST_DOCS_OWNER_SYNC_JSON="$(npm run --silent acceptance:final-closure-packet -- verify-final-acceptance --json)"
 readonly D_POST_DOCS_OWNER_SYNC_JSON
 D_POST_DOCS_SYNC_REF="$(printf '%s' "$D_POST_DOCS_OWNER_SYNC_JSON" | jq -er '.canonicalRef')"
@@ -5120,7 +5890,9 @@ D_SHELL_TEST_VALUE_048="$(git rev-parse origin/main)"
 test "$D_SHELL_TEST_VALUE_047" = "$D_SHELL_TEST_VALUE_048"
 D_SHELL_TEST_VALUE_049="$(git rev-parse HEAD)"
 test "$D_SHELL_TEST_VALUE_049" = "$D_POST_DOCS_SETFARM_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-materialization --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json
+require_authenticated_clean_main_setfarm_root_v1
 D_DOCS_DELIVERY_ACCEPTANCE_JSON="$(npm run --silent acceptance:final-closure-packet -- \
   record-recovery-docs-delivery --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json)"
 export D_DOCS_DELIVERY_ACCEPTANCE_JSON
@@ -5130,6 +5902,7 @@ export D_DOCS_DELIVERY_ACCEPTANCE_HASH
 D_DOCS_DELIVERY_ACCEPTANCE_REF="$(printf '%s' "$D_DOCS_DELIVERY_ACCEPTANCE_JSON" | \
   jq -er '.deliveryRef | select(startswith("setfarm://internal-production/recovery/docs-delivery-acceptances/sha256/"))')"
 export D_DOCS_DELIVERY_ACCEPTANCE_REF
+require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- verify-docs-delivery-acceptance \
   --delivery-ref "$D_DOCS_DELIVERY_ACCEPTANCE_REF" \
   --delivery-hash "$D_DOCS_DELIVERY_ACCEPTANCE_HASH" --json
@@ -5137,11 +5910,17 @@ D_SHELL_TEST_VALUE_050="$(shasum -a 256 "$D_POST_DOCS_RECOVERY_MATRIX_PATH" | aw
 test "$D_SHELL_TEST_VALUE_050" = "$D_RECOVERY_MATRIX_MARKDOWN_HASH"
 D_SHELL_TEST_VALUE_051="$(shasum -a 256 "$D_POST_DOCS_RECOVERY_RECONCILIATION_PATH" | awk '{print $1}')"
 test "$D_SHELL_TEST_VALUE_051" = "$D_RECOVERY_RECONCILIATION_MARKDOWN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 node --import tsx scripts/mission-control-contract-artifacts.ts --check
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
@@ -5156,9 +5935,13 @@ D_SHELL_TEST_VALUE_054="$(git rev-parse origin/main)"
 test "$D_SHELL_TEST_VALUE_053" = "$D_SHELL_TEST_VALUE_054"
 D_SHELL_TEST_VALUE_055="$(git rev-parse HEAD)"
 test "$D_SHELL_TEST_VALUE_055" = "$D_POST_DOCS_MC_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 npm run check:setfarm-contract
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 MC_RENDER_ROUTES="/,/setfarm,/setfarm/active,/projects,/setfarm/runs/$D_API_RUN_ID" npm run render:smoke
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"

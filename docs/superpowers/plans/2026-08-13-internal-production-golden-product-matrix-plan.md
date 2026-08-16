@@ -10,6 +10,20 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
 
+## 2026-08-16 Execution Rebaseline
+
+Product Build Authority V2 and `setfarm.run-operational-snapshot.v3` are already delivered inputs. Matrix execution starts only from an execution-time exact clean synchronized Setfarm `main` descendant that retains reviewed Authority-V3 PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor, after contract-spine migration 31 is independently verified current, services are rebound through the code-owned zero-owner path, and a fresh clean prerequisite canary proves its one terminal-preclaim lifecycle. The historical `865a7157`/migrations-1-through-29 baseline and polluted run 2075 cannot authorize or fill a matrix slot.
+
+Every C preflight, execution, recovery, status, and finalization chain freshly resolves A's exact `InternalProductionPostRebindEntryAuthorityPairV1`, requires byte equality with the pair carried by B's `GoldenFinalReleaseEpochV1`, and equality-binds it to the same execution-time source pair. The nested pre-rebind predecessor is historical input only. No matrix slot advances from a missing, stale, copied, cross-paired, or source-drifted successor.
+
+### Exact B-to-C post-rebind binding
+
+`golden-matrix-runner.ts`, its phase store, finalization pointer, and C composition root use unaliased static imports of `InternalProductionPostRebindEntryAuthorityPairV1`, `resolveInternalProductionPostRebindEntryAuthorityV1`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1` only from `./baseline-post-handoff-receipt-v1.js`. Before the first C preflight/status seal, stage operation, B port call, reservation, or mutation, production calls the zero-input verifier then the pair-only resolver and byte-compares that pair with B's authenticated final epoch; `runGoldenMatrix(...)`, CLI argv, ports, coordination input, and callers accept no post-rebind scalar or locator.
+
+The exact fields `postRebindEntryAuthorityRef` and `postRebindEntryAuthorityHash` are non-null and equal in `GoldenStageCoordinationV1`, every non-null `GoldenMatrixInflightStatusV1`, every `GoldenMatrixReceiptV1`, and `GoldenMatrixFinalizationPointerV1`. A null `inflightStatus` means only that no case is inflight; it never nulls the receipt-level post-rebind pair. Source-boundary/AST tests enforce the unaliased A imports and first-call order. Runtime/store tests reject half-null fields, caller injection, structural clones, stale current A authority, B/A cross-pairs, pair drift across coordination/inflight/receipt/pointer, nested predecessor drift, tampered status bytes, and source-pair mismatch before any B or platform side effect. CLI preflight/status JSON exposes the exact pair for shell equality checks but never accepts it as input.
+
+For every operational package command, the owning resolver supplies authenticated read-only `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` bindings. The command independently proves that root is clean literal `main` and that `HEAD === refs/remotes/origin/main === SETFARM_ROOT_EXPECTED_SHA` before use; there is no workstation-path fallback.
+
 ## Global Constraints
 
 - External Developer ID, notarization, signed PKG, installer receipt, and helper authority remain out of scope and blocked.
@@ -101,17 +115,33 @@ export const GoldenProfileAssertionIdsV1: Readonly<Record<
 
 ```bash
 set -euo pipefail
-C_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
-test -z "$C_SHELL_GUARD_OUTPUT"
-C_SHELL_TEST_VALUE_001="$(git branch --show-current)"
-test "$C_SHELL_TEST_VALUE_001" = "main"
-C_SHELL_TEST_VALUE_002="$(git rev-parse HEAD)"
-C_SHELL_TEST_VALUE_003="$(git rev-parse origin/main)"
-test "$C_SHELL_TEST_VALUE_002" = "$C_SHELL_TEST_VALUE_003"
-C_SOURCE_ROOT="$(git rev-parse --show-toplevel)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+cd "$SETFARM_ROOT"
+readonly C_SOURCE_ROOT="$SETFARM_ROOT"
 export C_SOURCE_ROOT
-C_SHELL_TEST_VALUE_004="$(basename "$C_SOURCE_ROOT")"
-test "$C_SHELL_TEST_VALUE_004" = "setfarm"
+readonly C_SHELL_TEST_VALUE_002="$SETFARM_ROOT_HEAD"
+require_authenticated_clean_main_setfarm_root_v1
 C_LAUNCH_MIGRATION_VERIFICATION="$(node dist/internal-production/golden-run-cli.js \
   verify-launch-operation-migration --json)"
 printf '%s\n' "$C_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
@@ -127,6 +157,7 @@ printf '%s\n' "$C_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
   (.schemaProjectionHash | test("^[0-9a-f]{64}$")) and
   (.verificationHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 node dist/cli/cli.js workflow run feature-dev \
   "Implement docs/superpowers/plans/2026-08-13-internal-production-golden-product-matrix-plan.md exactly --repo $C_SOURCE_ROOT --branch main" \
   --protocol v3
@@ -940,6 +971,28 @@ Only after Tasks 1–5 focused/adjacent tests and independent review are green, 
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden-matrix-catalog -- prepare \
   --campaign setfarm-mc-internal-production-v1 \
   --campaign-date 2026-08-14 \
@@ -1074,6 +1127,8 @@ export type GoldenMatrixInflightStatusV1 = Readonly<{
   schema: "setfarm.internal-production-golden-matrix-inflight-status.v1";
   matrixHash: string;
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   migrationVerification: GoldenMatrixMigrationVerificationBindingV1;
   historicalBaselineReceiptHash: string;
@@ -1148,6 +1203,8 @@ export type GoldenMatrixReceiptV1 = Readonly<{
   schema: "setfarm.internal-production-golden-matrix-receipt.v1";
   matrixHash: string;
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   migrationVerification: GoldenMatrixMigrationVerificationBindingV1;
   orderedResultHashes: readonly string[];
@@ -1178,6 +1235,8 @@ export type GoldenMatrixFinalizationPointerV1 = Readonly<{
   schema: "setfarm.internal-production-golden-matrix-finalization-pointer.v1";
   matrixHash: string;
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   migrationVerification: GoldenMatrixMigrationVerificationBindingV1;
   inflightStatus: GoldenMatrixReceiptV1["inflightStatus"];
@@ -1213,6 +1272,8 @@ export type GoldenStageCoordinationV1 = Readonly<{
   caseId: string;
   repetition: 1 | 2;
   launchAttemptOrdinal: number;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   migrationVerification: GoldenMatrixMigrationVerificationBindingV1;
   coordinationRef: CanonicalRef;
@@ -1769,7 +1830,29 @@ Only after Step 6 proves C's reviewed merge/source and clean build exist, run C'
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 C_MANIFEST_ACTIVATION_JSON="$(npm run --silent internal:golden-matrix -- \
   activate-owner-producer-manifest --json)"
 C_MANIFEST_RECEIPT_REF="$(printf '%s\n' "$C_MANIFEST_ACTIVATION_JSON" | jq -er '.receiptRef')"
@@ -1789,6 +1872,7 @@ printf '%s\n' "$C_MANIFEST_ACTIVATION_JSON" | jq -e '
   (.sourceBuildAuthorityRef | type == "string") and
   (.sourceBuildAuthorityHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 C_MANIFEST_STATUS_JSON="$(npm run --silent internal:golden-matrix -- \
   owner-producer-manifest-status --json)"
 C_MANIFEST_STATUS_RECEIPT_REF="$(printf '%s\n' "$C_MANIFEST_STATUS_JSON" | jq -er '.receiptRef')"
@@ -1833,8 +1917,29 @@ Expected: the C controller freshly re-hashes the exact A+B predecessor and A+B+C
 
 ```bash
 set -euo pipefail
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_005="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_005" = "setfarm"
 C_SHELL_TEST_VALUE_006="$(basename "$C_MC_ROOT")"
@@ -1857,11 +1962,18 @@ C_SHELL_TEST_VALUE_012="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_011" = "$C_SHELL_TEST_VALUE_012"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
-npm run --silent internal:golden-matrix -- preflight \
+require_authenticated_clean_main_setfarm_root_v1
+C_A_POST_REBIND_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json)"
+require_authenticated_clean_main_setfarm_root_v1
+C_MATRIX_PREFLIGHT_JSON="$(npm run --silent internal:golden-matrix -- preflight \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$C_SETFARM_SHA" \
   --mission-control-sha "$C_MC_SHA" \
-  --json
+  --json)"
+test "$(printf '%s\n' "$C_MATRIX_PREFLIGHT_JSON" | jq -er '.postRebindEntryAuthorityRef')" = \
+  "$(printf '%s\n' "$C_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityRef')"
+test "$(printf '%s\n' "$C_MATRIX_PREFLIGHT_JSON" | jq -er '.postRebindEntryAuthorityHash')" = \
+  "$(printf '%s\n' "$C_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityHash')"
 ```
 
 Expected: clean releases, current migrations/audits, healthy services, zero active ownership, exact contract compatibility, and zero new runs.
@@ -1870,8 +1982,29 @@ Expected: clean releases, current migrations/audits, healthy services, zero acti
 
 ```bash
 set -euo pipefail
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_013="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_013" = "setfarm"
 C_SHELL_TEST_VALUE_014="$(basename "$C_MC_ROOT")"
@@ -1894,6 +2027,7 @@ C_SHELL_TEST_VALUE_020="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_019" = "$C_SHELL_TEST_VALUE_020"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- execute-next \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$C_SETFARM_SHA" \
@@ -1907,9 +2041,30 @@ If the process is interrupted in any `launch-intent-persisted`, `starter-operati
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 umask 077
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_021="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_021" = "setfarm"
 C_SHELL_TEST_VALUE_022="$(basename "$C_MC_ROOT")"
@@ -1939,6 +2094,7 @@ C_SHELL_TEST_VALUE_029="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_028" = "$C_SHELL_TEST_VALUE_029"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- status \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$C_SETFARM_SHA" \
@@ -1971,6 +2127,7 @@ C_SHELL_TEST_VALUE_036="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_035" = "$C_SHELL_TEST_VALUE_036"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- recover-inflight \
   --status-ref "$C_INFLIGHT_STATUS_REF" \
   --status-hash "$C_INFLIGHT_STATUS_HASH" \
@@ -1993,8 +2150,29 @@ If status reports an immutable nonterminal timeout, do not execute a successor o
 
 ```bash
 set -euo pipefail
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_037="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_037" = "setfarm"
 C_SHELL_TEST_VALUE_038="$(basename "$C_MC_ROOT")"
@@ -2017,6 +2195,7 @@ C_SHELL_TEST_VALUE_044="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_043" = "$C_SHELL_TEST_VALUE_044"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- reconcile-timeouts \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$C_SETFARM_SHA" \
@@ -2036,8 +2215,29 @@ Run:
 
 ```bash
 set -euo pipefail
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_045="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_045" = "setfarm"
 C_SHELL_TEST_VALUE_046="$(basename "$C_MC_ROOT")"
@@ -2060,6 +2260,7 @@ C_SHELL_TEST_VALUE_052="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_051" = "$C_SHELL_TEST_VALUE_052"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- status \
   --matrix "$C_MATRIX_FILE" \
   --release-sha "$C_SETFARM_SHA" \
@@ -2075,9 +2276,30 @@ For both existing-repository results, reopen the attempt provision receipt and r
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 umask 077
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_053="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_053" = "setfarm"
 C_SHELL_TEST_VALUE_054="$(basename "$C_MC_ROOT")"
@@ -2106,6 +2328,7 @@ C_SHELL_TEST_VALUE_061="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_060" = "$C_SHELL_TEST_VALUE_061"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden -- finalize-report \
   --campaign "$C_RAW_CAMPAIGN_FILE" \
   --json >"$C_FINALIZER_RECEIPT"
@@ -2141,9 +2364,30 @@ In a fresh process, rerun B's idempotent finalizer into a private temporary rece
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 umask 077
-C_SETFARM_ROOT="$(git rev-parse --show-toplevel)"
-C_MC_ROOT="$(git -C "$C_SETFARM_ROOT/../mission-control" rev-parse --show-toplevel)"
+readonly C_SETFARM_ROOT="$SETFARM_ROOT"
+readonly C_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 C_SHELL_TEST_VALUE_063="$(basename "$C_SETFARM_ROOT")"
 test "$C_SHELL_TEST_VALUE_063" = "setfarm"
 C_SHELL_TEST_VALUE_064="$(basename "$C_MC_ROOT")"
@@ -2173,6 +2417,7 @@ C_SHELL_TEST_VALUE_071="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_070" = "$C_SHELL_TEST_VALUE_071"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden -- finalize-report \
   --campaign "$C_RAW_CAMPAIGN_FILE" \
   --json >"$C_FINALIZER_RECEIPT"
@@ -2193,6 +2438,7 @@ C_SHELL_TEST_VALUE_077="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_076" = "$C_SHELL_TEST_VALUE_077"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- record-finalization \
   --matrix "$C_MATRIX_FILE" \
   --finalization-hash "$C_FINALIZATION_HASH" \
@@ -2213,6 +2459,7 @@ C_SHELL_TEST_VALUE_083="$(git -C "$C_MC_ROOT" rev-parse refs/remotes/origin/main
 test "$C_SHELL_TEST_VALUE_082" = "$C_SHELL_TEST_VALUE_083"
 C_SETFARM_SHA="$(git rev-parse HEAD)"
 C_MC_SHA="$(git -C "$C_MC_ROOT" rev-parse HEAD)"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent internal:golden-matrix -- finalization-status \
   --matrix "$C_MATRIX_FILE" \
   --json

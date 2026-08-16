@@ -2,13 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver the existing Mission Control Product Build Authority V2 work, remove the false active-project presentation, and establish a backed-up, audited, clean-main baseline for Setfarm and Mission Control before the first golden run.
+**Goal:** Reopen the already delivered Mission Control Product Build Authority V2 and operational-snapshot-v3 receipts, remove any remaining false active-project presentation, and establish the Authority-V3/migration-31-verified clean-main baseline for Setfarm and Mission Control before the first golden run.
 
 **Architecture:** Mission Control continues to proxy and render Setfarm-owned authority without inventing a second authority model. A new read-only project execution projection separates catalog lifecycle, workflow execution, runtime health, and immutable V3 deployment-receipt state; it resolves only explicit run identifiers or exact run numbers from PostgreSQL. After the Mission Control changes merge, both repositories are rebuilt from clean `main`, the live services are restarted only with a zero-owner census, and a bounded baseline packet records exact code, contract, database, process, port, backup, and HTTP evidence.
 
 **Tech Stack:** TypeScript ESM, Node.js 22+, React 19, Express 5, PostgreSQL, `node:test`, Playwright, GitHub CLI, macOS LaunchAgents.
 
-**Spec:** `setfarm/docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
+
+## 2026-08-16 Execution Rebaseline
+
+Product Build Authority V2 behavior and `setfarm.run-operational-snapshot.v3` are already delivered acceptance inputs. Repository truth exposes only per-run Product Build Authority `authorityHash`; it does not contain a global PBA V2 receipt pair. Task 0 first delivers Setfarm's local strict `ProductBuildAuthorityV2DeliveryEvidenceResponseV1` wire parser/schema and canonical fixtures without importing Mission Control source. Task 1 then implements the exact read-only Mission Control `ProductBuildAuthorityV2DeliveryEvidenceV1` producer/endpoint against that response contract without changing the delivered PBA parser/server/UI behavior. The reconciliation feature branch may exercise injected fixtures and compute expected deterministic hashes only as non-authoritative test data: its production observer, pair resolver, CLI, and endpoint owner fail closed before pair publication because the branch is not clean synchronized `main`. Task 6 Step 8 is the first point that creates and reopens the authoritative current pair, after the reviewed merge and a clean synchronized Mission Control main/build. The observations and branch identities in “Starting Evidence” are historical. Current execution starts only from an execution-time exact clean synchronized Setfarm `main` descendant that retains reviewed Authority-V3 PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor, with migrations 1 through 31 independently verified applied/current, exactly one Task 7 bootstrap successor registered pending, and one fresh clean canary proving its one terminal-preclaim lifecycle. Run 2075 remains polluted historical evidence and is not resumed. The local delivery-evidence response contract is not a generated or vendored Setfarm contract artifact: the ten-artifact vendored set that exists before the operational-active pair expands to twelve when that pair is added, and the later run-operational-model-v2 pair expands it to fourteen.
+
+Task 6A seals those pre-rebind facts as the strict `InternalProductionCurrentEntryAuthorityPairV1`. Task 7 consumes that predecessor and, after its authorized migration/rebuild/restart/rebind, seals the strict `InternalProductionPostRebindEntryAuthorityPairV1`. Task 8 and every B/C/D/E descendant consume only the post-rebind successor as current authority; no descendant requires the predecessor to remain current or reconstructs either pair from prose, a SHA alone, or the historical run.
+
+Operational shell fences do not select a workstation checkout. The owning controller first resolves the applicable clean-main/merge receipt, then exports one indivisible read-only `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` binding. Before any package command, the fence independently requires both variables, verifies that the root is a clean literal `main`, and proves `HEAD === refs/remotes/origin/main === SETFARM_ROOT_EXPECTED_SHA`. A missing variable, absolute-path fallback, dirty tree, detached/wrong branch, stale tracking ref, or SHA mismatch fails before observation or mutation.
 
 ## Global Constraints
 
@@ -22,17 +30,17 @@
 - No secret value, `.env`, LaunchAgent environment value, database dump, runtime artifact, screenshot cache, or local log is committed.
 - Work in one writing branch per repository. Finish the Mission Control PR before creating the Setfarm evidence-packet branch.
 - Implementation/review workers do not stage, commit, push, or open PRs. Every “Setfarm-owned handoff” step is executed by the owning Setfarm orchestrator only after the worker and reviewer gates pass.
-- Every code task follows test-first development unless it is explicitly characterizing the already-committed `1709707` implementation.
+- Every remaining code task follows test-first development. Task 1 preserves the delivered `240e779d78804843a1202cbf0440fe423b806b1a` Product Build Authority V2 behavior byte-for-byte and adds only its read-only delivery-evidence producer/endpoint/tests on the fresh reconciliation branch. Branch tests use injected contract fixtures and non-authoritative expected hashes; no production current pair is published, resolved, or handed off before Task 6 Step 8.
 - Stop and report if the same canonical systemic failure repeats three times after attempted fixes.
-- Execute the source/contract dependency in this exact order: Task 0; Task 1; Task 5 Steps 1–3 to vendor the new producer artifacts; Tasks 2–4; Task 5 Steps 4–6 to cross and checkpoint the semantic consumer; then Task 6 and the live baseline tasks. Do not create the Mission Control adapter before its pinned producer bytes exist.
+- Execute the source/contract dependency in this exact order: Task 0 source-only delivery of the local Setfarm response parser/schema and operational-active producer artifacts; Task 1 branch creation and Mission Control delivery-evidence implementation against canonical fixtures; Task 5 Steps 1–3 to vendor the operational-active producer artifacts; Tasks 2–4; Task 5 Steps 4–6 to cross and checkpoint the semantic consumer with fixture-only delivery-evidence expectations; Task 6 reviewed Mission Control delivery; Task 6 Step 8 authoritative clean-main pair creation/reopen; Task 6A pre-rebind entry; then Task 7. No Mission Control module is imported to make Task 0 constructible, no reconciliation-branch stage publishes or consumes a production current pair, and the canary does not run before Task 6 Step 8 has returned the exact clean-main pair.
 - Every `bash` fence starts with `set -euo pipefail`. Plan/source-boundary tests parse every shell fence and reject a service, database, run/workflow, or Git mutation unless the immediately preceding command obtains a fresh code-owned authority guard and the mutating command consumes that exact canonical ref/hash. They specifically ban raw `launchctl`, raw workflow-start commands, and `git switch|checkout|pull|fetch|merge|reset|add|commit|push` in worker fences. A's one finite `restart-service` wrapper is the only service mutator and must freshly resolve and one-use consume its zero-owner guard before fixed no-shell dispatch. The same tests reject a negative `rg` scan hidden in a pipeline, a match-then-exit expression followed by an unconditional-success fallback, or any other masked/bare fallback; transcript fixtures prove that a match status `0` fails, only status `1` with exactly empty captured output passes, status `1` with output and statuses `2`/`127` fail, and an upstream Git-diff failure stops before `rg` runs.
 
 ## Starting Evidence
 
-- Mission Control `feat/product-build-authority-v2` is clean at `17097074da241ae8f285c00c77d6c972791b369c`, one commit ahead of `origin/main` at `4761ff3`.
-- The branch changes exactly six files and has no open PR.
-- The Product Build Authority focused tests currently pass 9/9.
-- Mission Control's vendored Setfarm contract lock currently pins producer commit `9a66b954669be7f6661c53191628e6d84bffe958` and eight artifacts.
+- Historical observation: Mission Control once held the undelivered `feat/product-build-authority-v2` commit `17097074da241ae8f285c00c77d6c972791b369c` above `4761ff3`.
+- Current fact: reviewed PR #19 delivered Product Build Authority V2 as merge `240e779d78804843a1202cbf0440fe423b806b1a`; current execution verifies that merge as an ancestor of clean synchronized Mission Control `main` and never recreates its branch or delivery PR.
+- The Product Build Authority focused tests are rerun from current clean Mission Control `main` as read-only acceptance evidence.
+- Historical observation: Mission Control's vendored Setfarm contract lock pinned producer commit `9a66b954669be7f6661c53191628e6d84bffe958` and eight artifacts. The current pre-active-status inventory has ten artifacts; the active-status pair makes twelve.
 - The live `/api/projects` response contains 220 records: 112 raw `active`, 90 `failed`, and 18 `completed`.
 - None of the 112 raw-active records has a live service observation: 104 are `inactive` and 8 are `unknown`.
 - `/api/runs` returns an empty list, matching the zero-active-run database census.
@@ -41,16 +49,21 @@
 
 ## File Map
 
-### Mission Control Product Build Authority handoff
+### Delivered Mission Control Product Build Authority and delivery evidence
 
-- Modify `mission-control/server/routes/setfarm-operational.test.ts` — characterize V2 success and fail-closed HTTP mappings at the proxy boundary.
-- Review without broad rewrite:
+- Preserve and verify without behavioral modification:
+  - `mission-control/server/routes/setfarm-operational.test.ts`
   - `mission-control/server/routes/setfarm-operational.ts`
   - `mission-control/server/services/setfarm-product-build-authority.ts`
   - `mission-control/server/services/setfarm-product-build-authority.test.ts`
   - `mission-control/src/lib/product-build-authority.ts`
   - `mission-control/src/components/run-detail/ProductBuildAuthority.tsx`
   - `mission-control/tests/product-build-authority-render.test.tsx`
+- Create `mission-control/server/services/product-build-authority-v2-delivery-evidence-v1.ts` — sole read-only owner of the strict projection, deterministic pair, clean-main-only current-source observer, focused-test receipt, and pair-only resolver; its production observer/resolver publishes nothing off clean synchronized `main` with a matching build SHA.
+- Create `mission-control/server/services/product-build-authority-v2-delivery-evidence-v1.test.ts` — merge/path/blob/lock/test/source/status/pair tamper and missing-evidence tests, canonical fixture/hash tests, and feature-branch fail-closed/no-publication tests.
+- Modify `mission-control/server/routes/setfarm-operational.ts` — expose only fixed `GET /api/internal-production/product-build-authority-v2-delivery-evidence` from the owner module.
+- Modify `mission-control/server/routes/setfarm-operational.test.ts` — exact zero-input endpoint contract under injected canonical fixtures representing eventual post-merge clean-main bytes, feature-branch refusal with no production resolver call/publication, no per-run/global-pair confusion, and unavailable/tamper regressions.
+- Modify `mission-control/package.json` — add the zero-input non-listening `internal:product-build-authority-v2-delivery-evidence` source-observer CLI; it first returns an authoritative pair only from Task 6 Step 8's clean synchronized post-merge main/build and is reused before Task 7 loads the endpoint in the Mission Control service.
 
 ### Mission Control execution-state correction
 
@@ -65,7 +78,7 @@
 - Vendor those two files under `mission-control/contracts/vendor/setfarm/` and update the Setfarm contract lock through the existing sync command; Mission Control defines no local active-status tuple.
 - Modify `mission-control/scripts/sync-setfarm-contract.mjs` and `mission-control/scripts/check-setfarm-contract.mjs` — add the exact producer pair to sync/check inventory and cross it through the shared semantic predicate.
 - Create `mission-control/shared/setfarm-operational-active-run-status-v1.ts` — import the vendored schema enum once and expose its exact typed predicate to server and browser consumers.
-- Modify `mission-control/tests/setfarm-contract-vendor.test.ts` — require all ten artifacts and cross the operational-active compatibility fixture through the shared consumer.
+- Modify `mission-control/tests/setfarm-contract-vendor.test.ts` — require all twelve artifacts and cross the operational-active compatibility fixture through the shared consumer.
 - Create `mission-control/server/services/project-execution-state.ts` — pure explicit binding and execution-state derivation.
 - Create `mission-control/server/services/project-execution-state.test.ts` — exact ID/number, conflict, terminal, and unbound regressions.
 - Modify `mission-control/server/utils/setfarm-db.ts` — one bounded PostgreSQL read for explicit project run identities.
@@ -87,6 +100,8 @@
 
 - Create through one Setfarm-owned source claim before live mutation:
   - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts` — also owns the strict content-addressed baseline service-restart authority/store/resolver used by B P0.
+  - `setfarm/src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts` — sole local owner of the strict response constants/schema/parser and canonical field/null relations plus fixed code-owned source/HTTP observer and pair-only resolver; accepts no root, URL, ref, hash, body, transport override, or import from sibling Mission Control source.
+  - `setfarm/tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts` — canonical positive/negative response fixtures, exact canonical bytes/hash/fields, source-boundary no-sibling-import checks, source/HTTP equality, pre-rebind source CLI, post-rebind endpoint, and tamper/status tests.
   - `setfarm/src/internal-production/baseline-owner-producer-manifest-activation-controller-v1.ts` — A-only, import-inert, path-free controller that durably activates the exact eleven-row A manifest and seals the predecessor/successor activation-head wrapper receipt.
   - `setfarm/src/internal-production/baseline-post-handoff-cli.ts`
   - `setfarm/src/internal-production/baseline-service-restart-helper-v1.ts` — private fixed helper entry; no public argv surface.
@@ -108,22 +123,34 @@
   - `setfarm/package.json` command table entry `acceptance:baseline-post-handoff`
 - Update only when the producer pin changes:
   - `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
-  - the eight existing files plus the two operational-active status artifacts under `mission-control/contracts/vendor/setfarm/`
-- Create `setfarm/docs/review-packets/2026-08-13-internal-production-baseline.md` after all live checks have produced exact values.
+  - the ten current files plus the two operational-active status artifacts under `mission-control/contracts/vendor/setfarm/`
+- Create `docs/review-packets/2026-08-13-internal-production-baseline.md` after all live checks have produced exact values.
 
 ---
 
 ### Task 0: Deliver the Setfarm baseline handoff authority before live mutation
 
-**Files:** the baseline-authority/migration Setfarm source/test/integration/package paths listed above, including the six exact A producer call-site modules, the one-way restart-authority retirement module/test, the dedicated bootstrap-handoff migration module, and its registration/digest/tests, plus `src/contracts/operational-active-run-status-v1.ts`, `src/contracts/operational-active-run-status-v1-cli.ts`, `tests/operational-active-run-status-v1.test.ts`, `src/contracts/mission-control-contract-artifacts.ts`, `tests/mission-control-contract-artifacts.test.ts`, `src/server/dashboard.ts`, `src/server/index.html`, and the two generated Mission Control contract artifacts. The source-manifest test computes this set from the File Map; no hand-maintained path count is accepted.
+**Files:** the baseline-authority/migration Setfarm source/test/integration/package paths listed above, including the six exact A producer call-site modules, the one-way restart-authority retirement module/test, the dedicated bootstrap-handoff migration module, its registration/digest/tests, and the strict local Product Build Authority V2 delivery-evidence response parser/observer plus its fixtures and source-boundary tests, plus `src/contracts/operational-active-run-status-v1.ts`, `src/contracts/operational-active-run-status-v1-cli.ts`, `tests/operational-active-run-status-v1.test.ts`, `src/contracts/mission-control-contract-artifacts.ts`, `tests/mission-control-contract-artifacts.test.ts`, `src/server/dashboard.ts`, `src/server/index.html`, and the two generated Mission Control contract artifacts. The source-manifest test computes this set from the File Map; no hand-maintained path count is accepted.
 
 **Interfaces:** `InternalProductionBaselinePostHandoffReceiptV1`, `InternalProductionBaselineBackupReceiptV1`, `InternalProductionBaselineZeroOwnerMutationGuardV1`, exact `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, `applyInternalProductionBaselineBootstrapHandoffMigrationV1({zeroOwnerGuardRef,zeroOwnerGuardHash})`, `resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1({migrationReceiptRef,migrationReceiptHash})`, exact B-purpose `InternalProductionBaselineGoldenLaunchMigrationZeroOwnerAuthorizationV1`/`InternalProductionBaselineGoldenLaunchMigrationZeroOwnerConsumptionV1` bind-consume seam and pair-only resolvers, exact `InternalProductionPhysicalServiceRestartAuthorityEpochV1`, `InternalProductionBaselineRestartAuthorityRetirementV1`, A-owned `InternalProductionServiceRestartStartupHooksReadyV1`, `InternalProductionServiceRestartAuthorityActivationV1`, `InternalProductionServiceRestartAuthorityCutoverV1`, `prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1({zeroOwnerGuardRef,zeroOwnerGuardHash})`, zero-input `resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1()`, read-only `observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1()`, and their exact pair-only resolvers, `resolveInternalProductionBaselineRestartAuthorityRetirementV1({retirementRef,retirementHash})`, exact `InternalProductionBaselineRuntimeSourceProjectionV1Schema`/`InternalProductionBaselineRuntimeSourceProjectionV1`, exact discriminated `InternalProductionBaselineServiceRestartAuthorityV1Schema`/`InternalProductionBaselineServiceRestartAuthorityV1`, `resolveInternalProductionBaselineServiceRestartAuthorityV1({receiptRef,receiptHash})`, exact `InternalProductionBaselineSpawnerStartupAdmissionV1`, `resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1()`, `claimInternalProductionBaselineSpawnerStartupAdmissionV1({admission})`, `awaitInternalProductionBaselineSpawnerRestartAuthorityV1({admission,startupClaimHash})`, exact `InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1`, `InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1`, `createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1()`, `continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({verification})`, `InternalProductionBaselineSpawnerBootstrapRestartOperationV1`, `InternalProductionBaselineSpawnerBootstrapContinuationGrantV1`, `InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1`, `prepareInternalProductionBaselineSpawnerBootstrapRestartV1({targetGuard,postSettlementContinuationKind:"setfarm-bootstrap-main-claim-allocation-v1"})`, `executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1({continuationGrantRef,continuationGrantHash})`, `finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({sequenceRef,sequenceHash})`, code-owned `observeCompleteInternalProductionZeroOwnerCensusV1()`, `observeInternalProductionRuntimeSourceV1()`, `createOrResumeInternalProductionBaselineBackupV1()`, `restartInternalProductionBaselineServiceV1()`, `recordBaselinePostHandoffReceiptV1()`, `verifyCurrentBaselinePostHandoffReceiptV1()`, `resolveHistoricalBaselinePostHandoffReceiptV1()`, the exact operational-active status ABI below, and the strict `zero-owner|apply-bootstrap-handoff-migration|resolve-bootstrap-handoff-migration|restart-service|resume-restart-sequence|restart-sequence-status|runtime-source|backup|record|verify-current|resolve-historical --json` CLI described in Tasks 7–8. Ordinary `zero-owner`/`restart-service` retains its exact pair-only global-zero contract while A owns the physical restart epoch; B can bind/consume a generic guard only through A's exact named golden-launch migration seam; the bootstrap path is in-process only and uses the fenced target guard plus prepared operation pair. `runtime-source` remains diagnostic and `backup --json` remains fixed-path/idempotent.
+
+Task 0 also owns the Task 6A entry ABI: strict `InternalProductionCurrentEntryAuthorityV1`, `InternalProductionCurrentEntryAuthorityPairV1`, `InternalProductionCurrentEntryAuthorityStatusV1`, their pair-only resolver/current verifier, the fixed `prepare-current-entry|resume-current-entry|current-entry-status|verify-current-entry --json` CLI, and read-only `service-census --json`. It additionally owns strict read-only `InternalProductionAuthorityV3Migration31AuditV1` with pair `{authorityV3Migration31AuditRef,authorityV3Migration31AuditHash}` and `InternalProductionPendingBootstrapHandoffMigrationProjectionV1` with pair `{pendingBootstrapHandoffMigrationRef,pendingBootstrapHandoffMigrationHash}`. The zero-input `audit-authority-v3-migration31 --json` proves migrations 1 through 31 are applied/current and binds the delivered Authority-V3 receipt, PR #86 ancestry, migration-31 source/tree/build/schema/current-authority identities; it deliberately ignores later registered-but-unapplied migrations. The zero-input `inspect-pending-bootstrap-handoff-successor --json` separately proves the registry/digest has exactly one pending entry, literal `contract-spine-bootstrap-main-claim-handoff-v1`, whose implementation blob, ordered statements, named digest entry/digest, schema projection, and `migrationSourceSha` are byte/hash-bound to Task 0's current controller source, with no other pending or drifted entry. Both pairs have fixed content-derived refs, pair-only resolvers, no store scan, and no mutation.
+
+The entry ABI separates `controllerSourceAuthority` from `loadedRuntimeServiceAuthority`. The controller authority binds the exact clean Task 0 descendant `controllerSourceSha`, `controllerTreeHash`, and `controllerBuildHash`. The loaded-runtime authority binds the delivered pre-Task0 spawner/dashboard/Mission-Control/OpenClaw process/listener identities and each service's actually loaded source/build authority. Both are independently reopened and verified; pre-rebind validation explicitly does not require either SHA, tree, or build hash to equal the other. `resume-current-entry` runs the new controller only as the fixed non-listening `baseline-post-handoff-cli.ts` process from the authenticated Task 0 build: that process owns fence acquisition and the reciprocal source-run/run start, opens no service port, and does not restart or replace a daemon. The already loaded delivered spawner/runtime then processes the admitted canary under its separately authenticated runtime authority. Task 7 is the only task that rebuilds and rebinds background services.
+
+Its canary path internally uses Task 0's dedicated `current-entry-canary-source-run-launch-v1` owner-admission fence with exact typed `source-run` and `run` target reservations, the compound target-close authority, and the fence-release authority. The strict service census has schema `setfarm.internal-production-service-census.v1`; it emits exactly one code-owned `spawner`, `dashboard`, `missionControl`, and `openClaw` observation with integer `pid`, exact `processOwnerCount`, and, where applicable, exact `listenerOwnerCount`, plus a recomputed `censusHash`. The entry recorder accepts no caller root/SHA/run/failure code/test result/service identity/migration body/receipt body; it obtains every identity through fixed code-owned observers and stores the focused three-code test receipt separately from the one-code live-canary settlement.
+
+Task 0's `product-build-authority-v2-delivery-evidence-v1.ts` locally owns `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_RESPONSE_SCHEMA_V1`, `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_CURRENT_STATUS_V1`, strict `ProductBuildAuthorityV2DeliveryEvidenceResponseV1Schema`/`ProductBuildAuthorityV2DeliveryEvidenceResponseV1`, and `parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value:unknown)`. The accepted success envelope is exactly `{schema:"mission-control.product-build-authority-v2-delivery-evidence-response.v1",currentStatus:"current",deliveryEvidenceRef,deliveryEvidenceHash,evidence}`: the ref, hash, and strict evidence body are non-null together, their canonical hashes/fields must agree, and absent, half-null, mixed, extra-field, or null success members are rejected. Unavailable source, non-200 HTTP, non-clean-main CLI refusal, or parse failure returns no pair and cannot be represented as a partial `current` envelope. Canonical positive/negative fixtures and their expected canonical bytes/hashes are owned in the Task 0 Setfarm test; the production module and test contain no relative, absolute, package, dynamic, or type-only import of Mission Control source. A source-boundary test enumerates imports and fails on `mission-control`, sibling-root traversal, runtime source loading, or an injected parser/schema export. This local response contract is not registered in `mission-control-contract-artifacts.ts`, does not create generated/vendor files, and leaves the explicit inventory progression at ten, then twelve after the operational-active pair, then fourteen after the later run-operational-model-v2 pair.
+
+The same Task 0 module provides zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()`. It obtains the Mission Control executable/source identity only from A's existing code-owned `observeInternalProductionRuntimeSourceV1()` projection plus Task 6 Step 8's freshly resolved clean-main/build identity; it never resolves a sibling checkout or accepts a path. Before Task 7, the observer starts only Mission Control's fixed non-listening source CLI from that authenticated clean-main build; after Task 7 loads the new Mission Control service, it uses only fixed loopback `GET /api/internal-production/product-build-authority-v2-delivery-evidence`. The returned `observationTransport` is strictly `source-cli | http`; current-entry requires `source-cli`, post-rebind requires `http`, and both must parse through the local schema and resolve to the identical delivery-evidence pair. No caller chooses transport, URL, root, command, ref, hash, response, parser, schema, fixture, or fallback. `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})` is pair-only and reobserves/recomputes the named projection rather than treating any per-run `authorityHash` as a global pair. Task 0 unit tests are source-constructible before Task 1 because they use only the local canonical fixtures and private injected transports; the later Task 6 Step 8/Task 7 integration exercises the real CLI/HTTP wire bytes without importing either repository's implementation into the other.
+
+Task 0 also owns Task 7's strict successor ABI in `src/internal-production/baseline-post-handoff-receipt-v1.ts`: `InternalProductionPostRebindEntryAuthorityV1`, exact pair `InternalProductionPostRebindEntryAuthorityPairV1`, discriminated `InternalProductionPostRebindEntryAuthorityStatusV1`, fixed private content-addressed store, `resolveInternalProductionPostRebindEntryAuthorityV1({postRebindEntryAuthorityRef,postRebindEntryAuthorityHash})`, zero-input `resumeInternalProductionPostRebindEntryAuthorityV1()`, `observeInternalProductionPostRebindEntryAuthorityStatusV1()`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1()`. The CLI adds only `resume-post-rebind-entry|post-rebind-entry-status|verify-post-rebind-entry --json`; none accepts predecessor, root, SHA, migration, restart, service, schema, owner, receipt body, or locator input.
 
 Task 0 also owns exact `InternalProductionBaselineRestartSequenceIntentKindV1`, `InternalProductionBaselineServiceRestartAuthorityPairV1`, `InternalProductionBaselineRestartSequenceReceiptV1`, `InternalProductionBaselineRestartSequenceStatusV1`, `resumeInternalProductionBaselineRestartSequenceV1({intentKind})`, `observeInternalProductionBaselineRestartSequenceStatusV1({intentKind})`, and `resolveInternalProductionBaselineRestartSequenceReceiptV1({sequenceRef,sequenceHash})`. The CLI surface adds only `resume-restart-sequence --intent live-rebind|d-startup-hook-load|documentation-rollback --json` and read-only `restart-sequence-status --intent live-rebind|d-startup-hook-load|documentation-rollback --json`; all other arguments fail before observation or mutation.
 
 Task 0's exact A-owned cutover ABI additionally includes `InternalProductionGlobalOwnerAdmissionFencePurposeV1`, `InternalProductionGlobalOwnerAdmissionFenceV1`, narrow null-target `acquireInternalProductionGlobalOwnerAdmissionFenceV1(...)`, dedicated `acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1(...)`, dedicated `acquireInternalProductionRecoveryRestartOwnerAdmissionFenceV1(...)`, `reobserveInternalProductionGlobalOwnerAdmissionFenceV1(...)`, `closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1(...)`, `closeInternalProductionRecoveryRestartTargetsUnderFenceV1(...)`, `INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1`, `InternalProductionCompleteZeroOwnerCensusV1`, the key-checked `INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1`, `InternalProductionOwnerProducerRowV1`, `InternalProductionOwnerProducerManifestV1`, the eleven-row `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`, exact `INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1`, `InternalProductionOwnerProducerManifestSetActivationPredecessorV1`, `InternalProductionOwnerProducerManifestSetActivationCurrentV1`, `InternalProductionOwnerProducerManifestSetActivationStoreV1`, `activateInternalProductionOwnerProducerManifestSetV1(...)`, `resolveInternalProductionOwnerProducerManifestSetActivationV1(...)`, zero-input `resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1()`, `InternalProductionBaselineOwnerProducerManifestActivationReceiptV1`, `InternalProductionBaselineOwnerProducerManifestActivationStatusV1`, zero-input `activateInternalProductionBaselineOwnerProducerManifestV1()`, zero-input read-only `observeInternalProductionBaselineOwnerProducerManifestActivationStatusV1()`, `assembleInternalProductionOwnerProducerRegistryV1(...)`, `InternalProductionOwnerReservationV1`, `beginOrAdoptInternalProductionOwnerReservationV1(...)`, `closeInternalProductionOwnerReservationV1(...)`, and their pair-only resolvers. It also owns `InternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1` and `resolveInternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1({operationRef,operationHash})`, plus the finite recovery-source bootstrap ABI `InternalProductionRecoverySourceBootstrapOperationV1`, `prepareInternalProductionRecoverySourceBootstrapRunV1()`, zero-input `resumeActiveInternalProductionRecoverySourceBootstrapRunV1()`, and read-only `observeInternalProductionRecoverySourceBootstrapStatusV1()`. The immutable cutover operation is private/path-free and exists before its bound guard can be consumed; D receives no operation pair and imports no operation writer.
 
-The existing `acceptance:baseline-post-handoff` package command owns the exact additional CLI verbs `prepare-recovery-source-bootstrap --json`, zero-input `resume-recovery-source-bootstrap --json`, read-only `recovery-source-bootstrap-status --json`, zero-input `activate-owner-producer-manifest --json`, and read-only zero-input `owner-producer-manifest-status --json`. Its command table is exactly:
+The existing `acceptance:baseline-post-handoff` package command owns the exact additional CLI verbs `prepare-recovery-source-bootstrap --json`, zero-input `resume-recovery-source-bootstrap --json`, read-only `recovery-source-bootstrap-status --json`, zero-input `activate-owner-producer-manifest --json`, read-only zero-input `owner-producer-manifest-status --json`, read-only zero-input `observe-product-build-authority-v2-delivery-evidence --json`, `audit-authority-v3-migration31 --json`, `inspect-pending-bootstrap-handoff-successor --json`, and `verify-bootstrap-handoff-migration-current --json`. Its command table is exactly:
 
 ```json
 {
@@ -2066,9 +2093,11 @@ In `baseline-restart-authority-retirement-v1.test.ts`, start from exact epoch on
 
 In `baseline-spawner-startup-admission-v1.test.ts` and `runtime-completion.test.ts`, model the old-generation completion owner after the P0 merge/build. A failed or dirty build result cannot mint `InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1`. A successful code-owned result binds the exact merge/tree/P0 file-set/build/test and historical/migration identities plus current request/claim/run/owner hashes. Crash before/after capability mint, target-guard mint, A prepare, request operation/status-locator persistence/reopen, execute, and process replacement; reentry must use the same pair/locator and never import or call a P0/B function. Reject a structural verification, caller SHA/hash/result, another owner/request, changed migration pair, or continuation after retirement before any restart mutation.
 
-In `migrations.test.ts` and `migration-source-digests.test.ts`, require the exact bootstrap-handoff operation/claim/terminal-pair dedicated migration and named digest entry to be present in A's source claim. Exercise clean fixed database plan/apply/verify with a one-use complete-zero guard after both clean builds and before the first restart authorization; require exact application-source equality, content-address and freshly resolve `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, and bind only the dedicated implementation blob, ordered statements, named digest entry, digest, and schema projection. Then make the first and every later restart authority, all three sequence kinds, B P0, D hook load, and both baseline post-handoff resolvers reopen that exact pair; later clean source may differ only when it is a proven descendant and those A-specific identities remain exact. Append unrelated migration and digest registry entries and require the same authority to remain valid; changing/removing/reordering A's named entry or implementation/projection fails. A CLI integration fixture runs the built pending-migration command with all three old service generations still loaded and proves it makes no HTTP, listener, spawner, dashboard, Mission Control, runtime-module, or restart call before completing. Reject a restart intent/authorization before terminal verified migration, apply before clean merged A source/build, apply after any first-rebind operation exists, missing/replayed/wrong guard, caller SQL/ID/digest/database/ref/hash, partial table/index/column state, non-descendant current source, changed dedicated implementation, ordered statements, or named digest entry, digest/schema drift, response-loss duplication, a B P0 attempt to apply schema, or Task 8 attempting to apply again. Crash before/after plan, guard consumption, each migration transaction boundary, verification, receipt publication/reopen, first-restart consumption, and baseline-receipt binding; retry returns the same pair or fails closed without a second schema mutation.
+In `migrations.test.ts` and `migration-source-digests.test.ts`, require the exact bootstrap-handoff operation/claim/terminal-pair dedicated migration and named digest entry to be present in Task 0 source. Before application, `audit-authority-v3-migration31` must prove exactly ordinals 1 through 31 applied/current and bind the Authority-V3 receipt/source/tree/build/schema pair while deliberately not asserting the registered successor is applied. `inspect-pending-bootstrap-handoff-successor` must prove exactly one pending migration, the named Task 7 successor, byte/hash/schema/source-bound to the current controller, with no other pending/drifted entry. Current-entry stores both exact pairs. Generic `db:contract-spine:verify` before Task 7 is a source/transcript failure. Task 7 reopens both predecessor pairs internally, consumes only the named pending projection under its one-use zero-owner guard, applies once, content-addresses `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, and then produces the exact successor-current audit with zero pending/drifted entries. Make the first and every later restart authority, all three sequence kinds, B P0, D hook load, and both baseline post-handoff resolvers reopen the applied receipt/current-audit chain. Reject zero/two pending entries, another pending ID, early application, forced controller/runtime equality, apply before clean merged Task 0 source/build, apply after any first-rebind operation exists, missing/replayed/wrong guard, caller SQL/ID/digest/database/ref/hash, partial schema state, non-descendant current source, changed implementation/statements/digest/projection, response-loss duplication, a B P0 attempt to apply schema, or Task 8 attempting to apply again. Crash before/after each v31/pending observation, guard consumption, migration transaction, successor-current verification, receipt publication/reopen, first-restart consumption, and baseline-receipt binding; retry returns the same pairs or fails closed without a second schema mutation.
 
 In `baseline-post-handoff-receipt-v1.test.ts`, exercise the B-purpose guard seam without importing B: bind only the literal `golden-launch-operation-migration-release-v1` purpose to a canonical pending-input ref/hash, reopen the authorization, bind one canonical operation ref/hash, and consume the underlying generic guard exactly once through A's named consumer. Crash before/after authorization publication, operation binding, guard consumption, consumption-receipt publication, and response; fresh-process recovery adopts the same authorization/consumption pairs. Reject another purpose/namespace, missing pending input, structural clone, changed operation, direct generic-store access, replay, and a second consumer before any guarded side effect.
+
+In that same focused file, exercise current-entry canary and post-rebind ordering separately. Current-entry tests require the fixed Task 6 Step 8 post-merge delivery-evidence source observer/pair-only resolver, exact v31 audit pair, exact pending-successor pair, current Task 0 controller authority, and separate delivered loaded-runtime authority. They explicitly accept unequal controller/runtime SHAs/trees/builds when each independently verifies and fail a controller that demands equality. Crash/race/replay every prerequisite observation, canary fence, source-run target, run target, start, terminal settlement, compound close, release, and ready-head boundary; assert exact state nullability, one start, one claim, one termination, zero redispatch, and zero unrelated owner. Product-build evidence tests locally parse fixed canonical positive/negative fixtures before Task 1 exists; require the exact response schema/status/ref/hash/evidence field set and all-current-fields-non-null relation; reject missing/tampered PR ancestry, any of eight path blobs, vendor lock/test/source/current status, per-run `authorityHash` substitution, source/HTTP cross-pair, caller root/ref/hash/body/parser/schema, and a structural clone; and source-scan both Task 0 files to forbid any sibling Mission Control import or runtime source load. Post-Task6 wire integration spawns the zero-input CLI and, after rebind, calls the fixed endpoint, parses both through the same local schema, and compares exact canonical bytes/hash/fields without importing Mission Control source. Post-rebind tests first seal that predecessor, apply only its pending successor, simulate Task 7 build/restart/service/source/schema/zero-owner receipts, and crash before/after every successor store/head transition; assert `absent -> predecessor_ready -> migration_applying -> rebuilding -> restarting -> verifying -> ready`, exact null/non-null relations, immutable predecessor runtime binding, byte-identical resume, Setfarm loaded-service equality to Task 7 controller source/build, Mission Control loaded-service equality to its Task 7 build, and HTTP delivery-evidence equality with the predecessor pair. Reject a current-entry verifier call as post-rebind authority, a successor before Task 7 completion, stale-current predecessor, mixed v31/pending/applied/restart pairs, caller locator/scalar/body, structural clone, cross-pair replay, source/build/schema/service/evidence drift, nonzero owner, fork, or a second migration/restart.
 
 In `operational-active-run-status-v1.test.ts`, require the source tuple, Zod enum options, generated JSON Schema enum, CLI JSON, dashboard filter, and existing authoritative DB census predicate to contain the same ordered four values: `running`, `resuming`, `cancelling`, `failing`; require the compatibility fixture to be a schema-valid member bound to that exact schema. Exercise the transition sequence `running -> resuming -> cancelling -> failing` and prove every state remains operational-active without being collapsed; transitions from any of those states to `completed`, `failed`, or `cancelled` become inactive. Reject `pending`, every terminal status, a reordered/extended artifact, duplicate value, or locally maintained dashboard/UI list. Spawn the JSON CLI through `npm run --silent`, feed its stdout directly to the parser, and prove the stream contains exactly one JSON document with no npm banner.
 
@@ -2096,7 +2125,7 @@ Helper recovery records every generation as immutable history. If a helper dies 
 
 `baseline-service-restart-helper-v1.ts` is the sole fixed child entry. The controller launches `process.execPath` plus that compiled module path through `execFile`/`shell:false`, with no user arguments and a replacement environment, and passes one unforgeable operation capability through a private inherited descriptor. The helper authenticates that capability against the durable A-only reservation/operation/outbox before claiming it; direct execution, a caller descriptor/body, an inherited ambient variable, a second claim, or any D capability/namespace fails before guard consumption. Its public module surface is empty.
 
-Implement `operational-active-run-status-v1.ts` as the sole runtime producer of the declared tuple, Zod schema, type, and predicate. Register it in `mission-control-contract-artifacts.ts` so the existing generator derives the JSON Schema and compatibility fixture from that module; do not hand-maintain their enum. Update the artifact test from eight to ten exact ordered paths and cross the new fixture through the producer schema. The code-owned zero-owner observer and dashboard import the predicate directly. The contract CLI serializes the same frozen tuple and hashes the canonical object excluding `contractHash`; `package.json` exposes it as `contract:operational-active-run-status`. In `dashboard.ts`, replace exclude-terminal/current-state guesses with the imported predicate for default `/api/runs` selection and the `operationalActive` field. In `index.html`, consume only `operationalActive === true`. Keep historical-run retrieval explicit and preserve the raw status string without reclassifying it. The regression also reads the authoritative census migration and requires its literal set to remain identical to the producer; changing either side without regenerating/reconciling the other fails.
+Implement `operational-active-run-status-v1.ts` as the sole runtime producer of the declared tuple, Zod schema, type, and predicate. Register it in `mission-control-contract-artifacts.ts` so the existing generator derives the JSON Schema and compatibility fixture from that module; do not hand-maintain their enum. Update the artifact test from the current ten to twelve exact ordered paths and cross the new fixture through the producer schema. The code-owned zero-owner observer and dashboard import the predicate directly. The contract CLI serializes the same frozen tuple and hashes the canonical object excluding `contractHash`; `package.json` exposes it as `contract:operational-active-run-status`. In `dashboard.ts`, replace exclude-terminal/current-state guesses with the imported predicate for default `/api/runs` selection and the `operationalActive` field. In `index.html`, consume only `operationalActive === true`. Keep historical-run retrieval explicit and preserve the raw status string without reclassifying it. The regression also reads the authoritative census migration and requires its literal set to remain identical to the producer; changing either side without regenerating/reconciling the other fails.
 
 After the producer and failing artifact expectations are implemented, run the existing code-owned writer once: `node --import tsx scripts/mission-control-contract-artifacts.ts --write`. Only the two declared generated files may be new; every pre-existing generated artifact must remain byte-identical.
 
@@ -2121,6 +2150,7 @@ set -euo pipefail
 node --import tsx --test \
   tests/operational-active-run-status-v1.test.ts \
   tests/mission-control-contract-artifacts.test.ts \
+  tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts \
   tests/internal-production/baseline-post-handoff-receipt-v1.test.ts \
   tests/internal-production/baseline-service-restart-helper-v1.test.ts \
   tests/internal-production/baseline-spawner-startup-admission-v1.test.ts \
@@ -2143,17 +2173,9 @@ The Setfarm owner allocates the isolated source worktree from clean `main`; the 
 
 ---
 
-### Task 1: Complete the Product Build Authority V2 proxy and render review gate
+### Task 1: Implement the delivered Product Build Authority V2 evidence producer for post-merge authority
 
-**Files:**
-
-- Modify: `mission-control/server/routes/setfarm-operational.test.ts`
-- Review: `mission-control/server/routes/setfarm-operational.ts`
-- Review: `mission-control/server/services/setfarm-product-build-authority.ts`
-- Review: `mission-control/server/services/setfarm-product-build-authority.test.ts`
-- Review: `mission-control/src/lib/product-build-authority.ts`
-- Review: `mission-control/src/components/run-detail/ProductBuildAuthority.tsx`
-- Review: `mission-control/tests/product-build-authority-render.test.tsx`
+**Files:** preserve and verify the seven delivered Product Build Authority paths; create the delivery-evidence owner/test; modify only the fixed route/test and package command named in the File Map on `fix/internal-production-baseline-reconciliation`. Task 0's already delivered Setfarm response parser remains repository-local and is never imported, copied as source, or reached through sibling traversal.
 
 **Interfaces:**
 
@@ -2162,99 +2184,121 @@ The Setfarm owner allocates the isolated source worktree from clean `main`; the 
 - Produces: `parseProductBuildAuthority(value: unknown, expectedRunId?: string): ProductBuildAuthority`.
 - Produces: `SetfarmProductBuildAuthorityClient.get(runId: string): Promise<ProductBuildAuthorityFetchResult>`.
 - Produces: `parseProductBuildAuthorityResponse(statusCode: number, body: unknown, expectedRunId: string)` for the browser boundary.
-- Produces: a UI that labels V2 `sealed_packet` as `SEALED`, V2 `refused_before_packet` as `REFUSED`, and never falls back to agent prose.
+- Verifies: the delivered UI labels V2 `sealed_packet` as `SEALED`, V2 `refused_before_packet` as `REFUSED`, and never falls back to agent prose.
+- Implements for post-merge use: strict read-only `ProductBuildAuthorityV2DeliveryEvidenceV1`, exact `ProductBuildAuthorityV2DeliveryEvidencePairV1 = {deliveryEvidenceRef,deliveryEvidenceHash}`, zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()`, pair-only `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})`, fixed endpoint `GET /api/internal-production/product-build-authority-v2-delivery-evidence`, and the zero-input non-listening source CLI. The production observer/resolver/CLI/endpoint owner requires clean synchronized Mission Control `main` with `HEAD === refs/remotes/origin/main === build SHA`; therefore the reconciliation branch cannot produce or consume this pair.
 
-- [ ] **Step 1: Reconfirm the exact pre-existing branch scope**
+`ProductBuildAuthorityV2DeliveryEvidenceV1` has schema `mission-control.product-build-authority-v2-delivery-evidence.v1`, `currentStatus:"current"`, fixed `deliveryPrNumber:19`, and fixed `deliveryMergeSha:"240e779d78804843a1202cbf0440fe423b806b1a"`. It binds that merge's ancestry to current clean Mission Control `main`; current Mission Control source SHA, tree hash, and build hash; the exact ordered blob hashes for the seven delivered schema/parser/server/UI/test paths plus `contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`; the strict focused-test receipt ref/hash; and the lock's producer commit, lock-content hash, exact ordered twelve artifact path/hash identities, and compatibility-set hash. `deliveryEvidenceHash` is `hashCanonicalJson` of every field except its two derived pair fields; `deliveryEvidenceRef` is exactly `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${deliveryEvidenceHash}`. There is no mutable store, current pointer, caller body, per-run authority ref, or claimed global PBA authority pair. A private test-only injected contract evaluator may compute candidate canonical bytes and expected hashes from frozen fixtures, but those values are explicitly non-authoritative: it cannot call the production observer/resolver, publish a pair, populate a current pointer, or escape the test module.
+
+The owner module derives its repository root only from its own authenticated module/build location, requires literal clean `main` and `HEAD === refs/remotes/origin/main === build SHA` before evidence construction or pair resolution, invokes one fixed no-shell focused-test command over the three delivered test files, and emits a deterministic `ProductBuildAuthorityV2FocusedTestReceiptV1`. That receipt binds the fixed command-contract hash, ordered test-path/blob hashes, `passed:true`, and exit status 0; its content hash/ref exclude volatile duration, PID, path, stdout, and timestamp. The pair-only resolver reruns those fixed observers and accepts only byte-identical current evidence. The endpoint and source CLI call the same zero-input resolver and return exactly `{schema,currentStatus,deliveryEvidenceRef,deliveryEvidenceHash,evidence}` with no query, run ID, root, ref, hash, body, or transport argument. On a feature branch, detached head, dirty tree, stale `origin/main`, or build-SHA mismatch they fail before focused tests, hashing, resolver access, response serialization, stdout, or any publication side effect. Mission Control implements the wire producer independently against Task 0's canonical schema/status/ref/hash/evidence/null relations; neither repository imports the other. Source-boundary and later wire-integration tests compare the exact canonical response bytes, hash fields, field set, and rejection cases while proving the delivery-evidence response is not added to the ten/twelve/fourteen generated-vendor inventories.
+
+- [ ] **Step 1: Reopen the delivered merge and create the one reconciliation branch**
 
 Run from `mission-control`:
 
 ```bash
 set -euo pipefail
-git status --short --branch
-git rev-list --left-right --count origin/main...HEAD
-git diff --name-status origin/main...HEAD
-git diff --check origin/main...HEAD
+readonly A_PBA_V2_MERGE_SHA=240e779d78804843a1202cbf0440fe423b806b1a
+A_PBA_CURRENT_BRANCH="$(git branch --show-current)"
+test "$A_PBA_CURRENT_BRANCH" = "main"
+A_PBA_CURRENT_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+test -z "$A_PBA_CURRENT_STATUS"
+A_PBA_CURRENT_HEAD="$(git rev-parse HEAD)"
+A_PBA_CURRENT_ORIGIN="$(git rev-parse refs/remotes/origin/main)"
+test "$A_PBA_CURRENT_HEAD" = "$A_PBA_CURRENT_ORIGIN"
+git merge-base --is-ancestor "$A_PBA_V2_MERGE_SHA" "$A_PBA_CURRENT_HEAD"
+gh pr view 19 --repo hikmetgulsesli/mission-control --json state,mergedAt,mergeCommit,url
 ```
 
-Expected: clean worktree; `0 1`; exactly the six starting files; no whitespace errors.
+Expected: PR #19 is merged at the fixed merge SHA and remains an ancestor of current clean synchronized `main`. The Mission Control delivery owner then creates the single fresh `fix/internal-production-baseline-reconciliation` branch used by Tasks 1–5; the historical `feat/product-build-authority-v2` branch and a second PBA delivery PR are never recreated.
 
-- [ ] **Step 2: Add HTTP-boundary characterization for both V2 dispositions**
+- [ ] **Step 2: Write the failing delivery-evidence projection and branch-refusal tests**
 
-Append this test shape to `server/routes/setfarm-operational.test.ts`, importing `ProductBuildAuthority` from the service:
+Add exact tests for PR/merge ancestry, all eight ordered path/blob members, current source/tree/build, focused-test receipt, twelve lock identities, deterministic candidate bytes/hash under injected frozen fixtures, and endpoint/CLI-shaped canonical fixture equality without invoking the production observer or pair-only resolver. Observe RED because the owner module and endpoint do not exist. Tests delete or tamper each path blob, vendor-lock identity, test result, source/tree/build value, current status, ref, and hash in turn; simulate missing merge ancestry, dirty/non-main source, unsupported query/body/run ID, a per-run `authorityHash` substituted as the evidence pair, and source/HTTP cross-pairs. A production CLI invocation from `fix/internal-production-baseline-reconciliation` must exit nonzero with empty stdout before focused-test execution, hashing, or resolver access, and publication/store/pointer spies remain at zero. The production endpoint owner and pair resolver have the same branch refusal. No branch test publishes or resolves a production pair; it only compares non-authoritative candidate canonical bytes/hash inside private fixtures. Every case fails closed, and no test or runtime API accepts a root, URL, ref/hash override, evidence body, parser/schema injection, or structural clone.
 
-```ts
-test("Product Build authority v2 success is passed through without reinterpretation", () => {
-  const sealed = {
-    schema: "setfarm.product-build-authority.v2",
-    runId: "run-sealed",
-    disposition: "sealed_packet",
-    packetAuthority: {} as never,
-    refusal: null,
-    authorityHash: "a".repeat(64),
-  } as ProductBuildAuthority;
-  const refused = {
-    schema: "setfarm.product-build-authority.v2",
-    runId: "run-refused",
-    disposition: "refused_before_packet",
-    packetAuthority: null,
-    refusal: {} as never,
-    authorityHash: "b".repeat(64),
-  } as ProductBuildAuthority;
+- [ ] **Step 3: Implement the read-only owner, endpoint, resolver, and non-listening CLI**
 
-  assert.deepEqual(
-    toProductBuildAuthorityHttpResult({ status: "ok", authority: sealed }),
-    { statusCode: 200, body: sealed },
-  );
-  assert.deepEqual(
-    toProductBuildAuthorityHttpResult({ status: "ok", authority: refused }),
-    { statusCode: 200, body: refused },
-  );
-});
-```
+The source CLI exists because the pre-Task7 Mission Control service has not loaded Task 1 bytes. Its production path loads only the reviewed post-merge current Mission Control build in a one-shot process, opens no listener, performs no restart, and calls the same zero-input owner used by the endpoint. During Tasks 1–6 Step 7, only private injected-fixture tests may evaluate the contract; direct production CLI, endpoint-owner, observer, and resolver calls on the reconciliation branch must refuse with no pair. After Task 6 Step 8 has built clean synchronized `main`, Task 6A's fixed Setfarm observer may invoke only this CLI before rebind. Task 7 later requires the loaded endpoint to return the byte-identical post-merge pair before it seals post-rebind authority.
 
-This is a characterization test for already-committed behavior, so it is expected to pass immediately. It does not pretend the existing implementation was developed after this plan.
-
-- [ ] **Step 3: Run the focused authority suite**
+- [ ] **Step 4: Run the focused authority and delivery-evidence suite**
 
 ```bash
 set -euo pipefail
 node --import tsx --test \
   server/routes/setfarm-operational.test.ts \
   server/services/setfarm-product-build-authority.test.ts \
+  server/services/product-build-authority-v2-delivery-evidence-v1.test.ts \
   tests/product-build-authority-render.test.tsx
 ```
 
-Expected: all tests pass; V1 remains readable; V2 sealed/refused payloads pass strict server validation; run mismatch, extra fields, hash drift, artifact drift, and unsupported schema fail closed.
+Expected: all tests pass; V1 remains readable; V2 sealed/refused payloads retain strict server behavior; injected canonical fixtures produce deterministic non-authoritative candidate bytes/hashes; feature-branch production invocation publishes no pair; and every missing/tampered path/blob/lock/test/source/status/cross-pair case fails closed.
 
-- [ ] **Step 4: Review the implementation against the Setfarm producer**
+- [ ] **Step 5: Review the delivered implementation against the current Setfarm producer**
 
 ```bash
 set -euo pipefail
-git -C ../setfarm show HEAD:src/server/schemas/product-build-authority-v2.ts | sed -n '1,220p'
-git -C ../setfarm show HEAD:src/server/product-build-authority.ts | sed -n '300,430p'
-git diff --unified=80 origin/main...HEAD -- \
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+git -C "$SETFARM_ROOT" show "$SETFARM_ROOT_EXPECTED_SHA":src/server/schemas/product-build-authority-v2.ts | sed -n '1,220p'
+require_authenticated_clean_main_setfarm_root_v1
+git -C "$SETFARM_ROOT" show "$SETFARM_ROOT_EXPECTED_SHA":src/server/product-build-authority.ts | sed -n '300,430p'
+git show --stat --oneline 240e779d78804843a1202cbf0440fe423b806b1a
+git diff --unified=80 240e779d78804843a1202cbf0440fe423b806b1a..HEAD -- \
   server/routes/setfarm-operational.ts \
   server/services/setfarm-product-build-authority.ts \
   src/lib/product-build-authority.ts \
   src/components/run-detail/ProductBuildAuthority.tsx
 ```
 
-Expected: exact disposition names and refusal identities match; the server recomputes canonical hashes; the UI never treats a refusal as a sealed packet; no prose fallback exists.
+Expected: any later change is inspected as current descendant history, exact disposition names and refusal identities still match, the server recomputes canonical hashes, the UI never treats a refusal as a sealed packet, and no prose fallback exists. This is evidence collection, not a requirement that current `main` remain byte-equal to the old merge.
 
-- [ ] **Step 5: Report the scoped Setfarm-owned handoff checkpoint**
+- [ ] **Step 6: Prove the branch changes only the evidence surface and cannot emit a current pair**
 
 ```bash
 set -euo pipefail
-git diff --check -- server/routes/setfarm-operational.test.ts
-git diff --name-only -- server/routes/setfarm-operational.test.ts
-git status --short --branch
+A_PBA_BRANCH_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+test -z "$A_PBA_BRANCH_STATUS"
+A_PBA_BRANCH_NAME="$(git branch --show-current)"
+test "$A_PBA_BRANCH_NAME" = "fix/internal-production-baseline-reconciliation"
+A_PBA_BRANCH_STDOUT="$(mktemp "${TMPDIR:-/tmp}/a-pba-branch-stdout.XXXXXX")"
+A_PBA_BRANCH_STDERR="$(mktemp "${TMPDIR:-/tmp}/a-pba-branch-stderr.XXXXXX")"
+readonly A_PBA_BRANCH_STDOUT A_PBA_BRANCH_STDERR
+trap 'rm -f -- "$A_PBA_BRANCH_STDOUT" "$A_PBA_BRANCH_STDERR"' EXIT
+if npm run --silent internal:product-build-authority-v2-delivery-evidence -- --json >"$A_PBA_BRANCH_STDOUT" 2>"$A_PBA_BRANCH_STDERR"; then
+  A_PBA_BRANCH_CLI_STATUS=0
+else
+  A_PBA_BRANCH_CLI_STATUS=$?
+fi
+test "$A_PBA_BRANCH_CLI_STATUS" -ne 0
+test ! -s "$A_PBA_BRANCH_STDOUT"
 ```
 
-Expected: only the route test is reported. The worker returns the exact path, focused-test result, and authorized handoff subject `test: cover Product Build authority v2 route` to the Setfarm completion owner. Only that owner, after validating the active claim and canonical writing worktree, may stage and commit it. The worker does not stage, commit, push, or open a PR.
+Expected: the only source changes are the File Map's owner/test/route/test/package paths on the one reconciliation branch. The production command fails before emitting a response or publishing/resolving evidence. Focused tests separately prove zero publication/store/pointer/resolver calls and may retain only non-authoritative candidate bytes/hashes inside their injected fixture scope. No branch status, shell, checkpoint, review handoff, or commit metadata contains a production current pair.
 
 ---
 
 ### Task 2: Add an exact project-to-run execution projection
+
+Task 2 continues on Task 1's single `fix/internal-production-baseline-reconciliation` branch after Task 1's focused fixture and feature-branch no-publication tests pass. It does not resolve or consume a production delivery-evidence pair. Tasks 1–5 alone write to that branch. The seven delivered Product Build Authority V2 behavior paths remain verified inputs and are not behaviorally changed unless a newly failing current regression identifies an independently reviewed root fix.
 
 **Files:**
 
@@ -2753,7 +2797,7 @@ Expected: the worker reports this exact scope, UI/API gate evidence, and authori
 **Files:**
 
 - Modify when changed: `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
-- Modify when changed: the ten producer artifacts under `mission-control/contracts/vendor/setfarm/`
+- Modify when changed: the twelve producer artifacts under `mission-control/contracts/vendor/setfarm/`
 - Modify: `mission-control/scripts/sync-setfarm-contract.mjs`
 - Modify: `mission-control/scripts/check-setfarm-contract.mjs`
 - Modify: `mission-control/tests/setfarm-contract-vendor.test.ts`
@@ -2761,18 +2805,36 @@ Expected: the worker reports this exact scope, UI/API gate evidence, and authori
 **Interfaces:**
 
 - Consumes: committed Setfarm artifacts under `setfarm/contracts/generated/mission-control/` from final clean Setfarm `main`.
-- Produces: one lock whose `producerCommit` equals the exact Setfarm baseline SHA and whose ten SHA-256 values bind byte-identical vendored artifacts.
+- Produces: one lock whose `producerCommit` equals the exact Setfarm baseline SHA and whose twelve SHA-256 values bind byte-identical vendored artifacts.
+- Verifies in private injected fixtures: the eventual `ProductBuildAuthorityV2DeliveryEvidenceV1` canonical evidence bytes/hash include that final twelve-entry lock. These branch-only expected values are non-authoritative test data; Task 5 does not call the production observer/resolver, publish or consume a current pair, add a thirteenth artifact, or write evidence into the vendor lock.
 
 - [ ] **Step 1: Require clean synchronized Setfarm main**
 
 ```bash
 set -euo pipefail
-git -C ../setfarm status --short --branch
-A_MC_SYNC_SETFARM_BRANCH="$(git -C ../setfarm branch --show-current)"
-test "$A_MC_SYNC_SETFARM_BRANCH" = "main"
-A_MC_SYNC_SETFARM_HEAD="$(git -C ../setfarm rev-parse HEAD)"
-A_MC_SYNC_SETFARM_ORIGIN_MAIN="$(git -C ../setfarm rev-parse origin/main)"
-test "$A_MC_SYNC_SETFARM_HEAD" = "$A_MC_SYNC_SETFARM_ORIGIN_MAIN"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+git -C "$SETFARM_ROOT" status --short --branch
 ```
 
 Expected: clean `main`; exact local/remote equality. Do not sync from a feature/spec branch.
@@ -2781,35 +2843,83 @@ Expected: clean `main`; exact local/remote equality. Do not sync from a feature/
 
 ```bash
 set -euo pipefail
-npm --prefix ../setfarm run check:mission-control-contracts
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run check:mission-control-contracts
 ```
 
 Expected: PASS.
 
 - [ ] **Step 3: Sync from the committed producer**
 
-First add a source-boundary test in `setfarm-contract-vendor.test.ts` that reads `scripts/sync-setfarm-contract.mjs` and requires exactly the two new ordered producer/vendored path pairs in addition to the existing eight; observe RED. Extend only the sync inventory, rerun that named test, then use the sync command. Do not add a directory scan, glob, caller artifact, or alternate repository selection.
+First add a source-boundary test in `setfarm-contract-vendor.test.ts` that reads `scripts/sync-setfarm-contract.mjs` and requires exactly the two new ordered producer/vendored path pairs in addition to the existing ten; observe RED. Extend only the sync inventory, rerun that named test, then use the sync command. Do not add a directory scan, glob, caller artifact, or alternate repository selection.
 
 ```bash
 set -euo pipefail
-npm run sync:setfarm-contract -- --source ../setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+npm run sync:setfarm-contract -- --source "$SETFARM_ROOT"
 ```
 
-Expected: the sync either updates only the lock plus the ten known vendor files or produces no diff because the byte pin is already current.
+Expected: the sync either updates only the lock plus the twelve declared vendor files or produces no diff because the byte pin is already current.
 
 - [ ] **Step 4: Cross the semantic consumer after Tasks 2–4**
 
-Update `setfarm-contract-vendor.test.ts` to require exactly ten distinct lock entries and add `setfarm.operational-active-run-status.v1` to the compatibility descriptor table. The JSON Schema enum must cross `isSetfarmOperationalActiveRunStatusV1()` for all four members in producer order and the schema-valid positive scalar fixture must cross the same predicate. A rehashed fixture containing `pending`, or an enum with a missing/reordered/extra member, must be rejected by the semantic consumer. The test imports the shared adapter and its type; it does not declare another active tuple.
+Update `setfarm-contract-vendor.test.ts` to require exactly twelve distinct lock entries and add `setfarm.operational-active-run-status.v1` to the compatibility descriptor table. The JSON Schema enum must cross `isSetfarmOperationalActiveRunStatusV1()` for all four members in producer order and the schema-valid positive scalar fixture must cross the same predicate. A rehashed fixture containing `pending`, or an enum with a missing/reordered/extra member, must be rejected by the semantic consumer. The test imports the shared adapter and its type; it does not declare another active tuple.
 
-Extend `check-setfarm-contract.mjs` with the same exact contract/stem descriptor. It imports the shared predicate, parses the pinned compatibility envelope, invokes the predicate for its scalar fixture, and requires every ordered generated-schema enum member to pass that predicate; unknown or drifted members fail. The checker never defines another tuple and continues to validate the exact ordered ten-entry lock.
+Extend `check-setfarm-contract.mjs` with the same exact contract/stem descriptor. It imports the shared predicate, parses the pinned compatibility envelope, invokes the predicate for its scalar fixture, and requires every ordered generated-schema enum member to pass that predicate; unknown or drifted members fail. The checker never defines another tuple and validates the exact ordered twelve-entry lock.
+
+After the lock check, use only the delivery-evidence test module's private injected contract evaluator to require that the non-authoritative candidate canonical bytes/hash cover the exact lock content hash, producer commit, and twelve ordered artifact identities. The source-boundary test proves the evaluator cannot reach the production observer/resolver/CLI/endpoint owner and that direct production invocation on the reconciliation branch fails before publication. The delivery-evidence response contract is not vendored, stored, registered with the artifact generator, or added to the twelve-artifact inventory; the established inventory remains ten before the operational-active pair, twelve here, and fourteen only when the later run-operational-model-v2 pair is explicitly added.
 
 ```bash
 set -euo pipefail
 npm run check:setfarm-contract
-node --import tsx --test tests/setfarm-contract-vendor.test.ts
+node --import tsx --test \
+  server/services/product-build-authority-v2-delivery-evidence-v1.test.ts \
+  tests/setfarm-contract-vendor.test.ts
 ```
 
-Expected: PASS only after the shared consumer exists and all ten pinned artifact hashes validate.
+Expected: PASS only after the shared consumer exists, all twelve pinned artifact hashes validate, injected fixture expectations cover that exact lock, and branch-refusal tests prove no production current pair can be returned or handed off.
 
 - [ ] **Step 5: Review exact contract scope**
 
@@ -2820,7 +2930,7 @@ git diff --name-only -- scripts/sync-setfarm-contract.mjs scripts/check-setfarm-
 git diff --check
 ```
 
-Expected: this task changes only the two sync/check scripts, vendored artifacts/lock, and `tests/setfarm-contract-vendor.test.ts`; the shared adapter and its API/UI consumers belong to Tasks 2–4.
+Expected: this task changes only the two sync/check scripts, vendored artifacts/lock, and `tests/setfarm-contract-vendor.test.ts`; Task 1's delivery-evidence contract is evaluated only under private fixtures and changes no source or artifact inventory.
 
 - [ ] **Step 6: Report the contract-pin handoff when it changed**
 
@@ -2832,21 +2942,21 @@ if ! git diff --quiet -- scripts/sync-setfarm-contract.mjs scripts/check-setfarm
 fi
 ```
 
-Expected: the worker reports only the sync/check/lock/ten-vendor/test scope and authorized subject `chore: pin Setfarm baseline contracts` when bytes changed. The owning Setfarm completion claim stages/commits when required; otherwise it records a no-change checkpoint and creates no empty commit.
+Expected: the worker reports only the sync/check/lock/twelve-vendor/test scope and authorized subject `chore: pin Setfarm baseline contracts` when bytes changed. The owning Setfarm completion claim stages/commits when required; otherwise it records a no-change checkpoint and creates no empty commit.
 
 ---
 
-### Task 6: Verify and deliver the Mission Control branch through a reviewed PR
+### Task 6: Verify and deliver the remaining Mission Control reconciliation branch through a reviewed PR
 
 **Files:**
 
-- Verify all Mission Control files changed by Tasks 1–5.
+- Verify all Mission Control files changed by Tasks 1–5, including the strict delivery-evidence owner/endpoint/resolver, while retaining the delivered per-run Product Build Authority behavior.
 - Do not add build output, screenshots, logs, `.env`, or runtime data.
 
 **Interfaces:**
 
-- Consumes: all prior Mission Control task commits.
-- Produces: one reviewed, merged Mission Control PR and a clean local `main` equal to `origin/main`.
+- Consumes before merge: Tasks 1–5 commits, injected-fixture evidence expectations, and feature-branch fail-closed/no-publication results on fresh branch `fix/internal-production-baseline-reconciliation`; it consumes no production `ProductBuildAuthorityV2DeliveryEvidencePairV1`.
+- Produces: one reviewed, merged reconciliation PR and a clean local `main` equal to `origin/main`; only Step 8 then builds that merged main and creates/reopens the first authoritative current delivery-evidence pair over the merged source/build/lock. It does not redeliver or invent a global authority pair for per-run Product Build Authority V2.
 
 - [ ] **Step 1: Run static and focused checks**
 
@@ -2866,6 +2976,7 @@ npm run check:setfarm-contract
 node --import tsx --test \
   server/routes/setfarm-operational.test.ts \
   server/services/setfarm-product-build-authority.test.ts \
+  server/services/product-build-authority-v2-delivery-evidence-v1.test.ts \
   server/services/project-execution-state.test.ts \
   server/routes/projects-projection.test.ts \
   server/routes/overview.test.ts \
@@ -2875,7 +2986,7 @@ node --import tsx --test \
   tests/project-health.test.ts
 ```
 
-Expected: PASS only from the exact Mission Control root after all prior owner commits are complete and the full tracked/untracked porcelain is empty. Transcript/source tests inject one dirty tracked path and one untracked path independently and prove the first positive check is never invoked.
+Expected: PASS only from the exact Mission Control root after all prior owner commits are complete and the full tracked/untracked porcelain is empty. Delivery-evidence tests in this feature-branch stage use only injected fixtures and prove direct production observer/resolver/CLI/endpoint-owner invocation fails before pair publication. Transcript/source tests inject one dirty tracked path and one untracked path independently and prove the first positive check is never invoked.
 
 - [ ] **Step 2: Run the full Mission Control suite and build**
 
@@ -2885,7 +2996,7 @@ npm test
 npm run build
 ```
 
-Expected: both commands exit 0.
+Expected: the suite and build exit 0. The feature-branch build is verification input only: it does not make the branch authoritative, and no production source CLI, endpoint owner, observer, resolver, shell status, or handoff consumes or returns a current delivery-evidence pair.
 
 - [ ] **Step 3: Run render smoke including Projects and one durable run detail**
 
@@ -2953,17 +3064,17 @@ Expected: only reviewed source/tests/contracts. Immediately before diff capture,
 
 - [ ] **Step 5: Hand the verified branch to the Setfarm delivery owner**
 
-Return the exact diff paths, commit-subject checkpoints from Tasks 1–5, full verification evidence, secret-scan result, and this bounded PR metadata to the owning Setfarm delivery claim:
+Return the exact diff paths and commit-subject checkpoints from Tasks 1–5, the fixture/hash and feature-branch no-publication test results, full verification evidence, secret-scan result, and this bounded PR metadata to the owning Setfarm delivery claim. Do not include or require a production delivery-evidence pair before merge:
 
 ```text
 repository: hikmetgulsesli/mission-control
 base: main
-head: feat/product-build-authority-v2
+head: fix/internal-production-baseline-reconciliation
 title: fix: reconcile Mission Control project authority
 body:
 ## Summary
 
-- consume and render Product Build Authority V2 sealed/refused dispositions
+- retain the delivered per-run Product Build Authority V2 sealed/refused projection unchanged and add its clean-main-only read-only delivery-evidence endpoint
 - separate project catalog, execution, runtime, and immutable receipt state
 - remove the false Active Run terminal fallback
 - pin and verify the final Setfarm Mission Control contracts
@@ -3001,7 +3112,248 @@ set -euo pipefail
 gh pr view --repo hikmetgulsesli/mission-control --json url,state,isDraft,mergeable,reviewDecision,statusCheckRollup
 ```
 
-Expected: read-only evidence is non-draft, mergeable, clear, and green. Report that gate to the Setfarm delivery owner. Only that owner merges/deletes the branch, synchronizes its claimed canonical worktree to `main`, and returns the merged SHA. The worker then read-only verifies the reported worktree is clean `main` and equals `origin/main` before Task 7.
+Expected: read-only evidence is non-draft, mergeable, clear, and green. Report that gate to the Setfarm delivery owner. Only that owner merges/deletes the branch, synchronizes its claimed canonical worktree to `main`, and returns the merged SHA. The worker then read-only verifies the reported worktree is clean `main` and equals `origin/main` before Task 6A.
+
+- [ ] **Step 8: Build merged clean Mission Control main and create/reopen the first authoritative pair**
+
+```bash
+set -euo pipefail
+cd /Users/setrox/ai/setrox/mission-control
+A_PBA_DELIVERY_BRANCH="$(git branch --show-current)"
+test "$A_PBA_DELIVERY_BRANCH" = "main"
+A_PBA_DELIVERY_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+test -z "$A_PBA_DELIVERY_STATUS"
+A_PBA_DELIVERY_HEAD="$(git rev-parse HEAD)"
+A_PBA_DELIVERY_ORIGIN="$(git rev-parse refs/remotes/origin/main)"
+test "$A_PBA_DELIVERY_HEAD" = "$A_PBA_DELIVERY_ORIGIN"
+npm run build
+A_PBA_POST_BUILD_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+test -z "$A_PBA_POST_BUILD_STATUS"
+A_PBA_DELIVERY_EVIDENCE_FIRST_JSON="$(npm run --silent internal:product-build-authority-v2-delivery-evidence -- --json)"
+A_PBA_DELIVERY_EVIDENCE_SECOND_JSON="$(npm run --silent internal:product-build-authority-v2-delivery-evidence -- --json)"
+test "$A_PBA_DELIVERY_EVIDENCE_FIRST_JSON" = "$A_PBA_DELIVERY_EVIDENCE_SECOND_JSON"
+printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_FIRST_JSON" | jq -e '
+  .schema == "mission-control.product-build-authority-v2-delivery-evidence-response.v1" and
+  .currentStatus == "current" and
+  (.deliveryEvidenceRef | startswith("mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/")) and
+  (.deliveryEvidenceHash | test("^[0-9a-f]{64}$")) and
+  .evidence.currentMissionControlSourceSha == $sourceSha and
+  (.evidence.deliveredPathBlobHashes | length == 8) and
+  (.evidence.artifactLock.orderedArtifacts | length == 12) and
+  .evidence.focusedTests.passed == true
+' --arg sourceSha "$A_PBA_DELIVERY_HEAD" >/dev/null
+```
+
+Expected: the merge and build gates are the first production call site allowed to construct an authoritative `current` response. Two fresh zero-input non-listening CLI processes call the same code-owned clean-main owner/resolver used by the endpoint and return byte-identical canonical responses; Task 6A's fixed source observer consumes that exact ref/hash. The currently loaded Mission Control service may still be the delivered pre-Task1 build, so no loaded-endpoint availability or source equality is claimed until Task 7 rebinds it; Task 7 then reopens the same pair through the zero-input endpoint. A changed branch, dirty tree, `HEAD`/`origin/main` mismatch, stale/absent build, or build-SHA mismatch fails before either pair is returned.
+
+---
+
+### Task 6A: Reopen the delivered Authority V3 rollout and seal current entry authority
+
+**Files:** no new runtime behavior. Task 0's `baseline-post-handoff-receipt-v1.ts`, CLI, and tests own the strict recorder/resolver/status surface used here.
+
+**Interfaces:**
+
+- `InternalProductionCurrentEntryAuthorityV1` has schema `setfarm.internal-production-current-entry-authority.v1`. It binds reviewed PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor; exact `controllerSourceAuthority:{controllerSourceSha,controllerTreeHash,controllerBuildHash}` for current clean Task 0 Setfarm main; separate `loadedRuntimeServiceAuthority` for the delivered pre-Task0 spawner/dashboard/Mission-Control/OpenClaw source/build/process/listener identities; current clean Mission Control SHA; exact `productBuildAuthorityV2DeliveryEvidenceRef`/`productBuildAuthorityV2DeliveryEvidenceHash`; exact `authorityV3Migration31AuditRef`/`authorityV3Migration31AuditHash`; exact `pendingBootstrapHandoffMigrationRef`/`pendingBootstrapHandoffMigrationHash`; focused Authority-V3 test receipt; one fresh canary settlement and its fence/typed-target/compound-close/release pairs; and the final complete zero-unrelated-owner census. It never asserts controller/runtime source, tree, or build equality and never stores a per-run PBA `authorityHash` as global delivery authority.
+- `InternalProductionCurrentEntryAuthorityPairV1` is exactly `{entryAuthorityRef,entryAuthorityHash}`. `InternalProductionCurrentEntryAuthorityStatusV1` is the strict `absent | prepared | canary_running | settled | ready | blocked` state with one immutable expected-predecessor chain. `absent` requires controller/runtime, delivery-evidence, v31-audit, pending-successor, fence/target/canary/close/release, and authority-pair fields all null. `prepared` requires the independently verified controller/runtime authorities plus all three prerequisite pairs non-null while every canary lifecycle field and the entry pair remain null. `canary_running` additionally requires the fence and both typed target reservations non-null while settlement/close/release/entry remain null. `settled` adds the exact terminal canary settlement and compound target-close pair while release/entry remain null. Only `ready` adds the fence-release pair and exact entry pair. `blocked` preserves exactly the last valid prefix with later fields null and one finite reason code.
+- The focused-test receipt proves the exact mutually exclusive tuple `SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED`, `SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED`, and `SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED` across source mapping, migration 31, rollback refusal, and terminal-preclaim regressions. The single live canary proves only the one exact failure code it actually observed. It never claims that one run emitted all three mutually exclusive codes.
+- The canary settlement requires a new disposable run, one observed tuple member, exactly one terminal claim, exactly one termination request, zero redispatch after terminalization, zero open claim/runtime/completion/effect ownership, and no reuse or continuation of run 2075.
+- `prepare-current-entry --json` accepts no root/SHA/run/code/path/receipt override. It creates or adopts the fixed operation only after separately resolving Task 0 controller source/build, the loaded delivered-runtime authority, Task 6 Step 8's post-merge clean-main delivery-evidence pair through the fixed source observer, the exact v31 audit pair, and the exact pending-successor projection pair. It requires no equality between controller and loaded-runtime authority. `resume-current-entry --json` accepts no identity; its non-listening current controller internally acquires or reopens Task 0's dedicated `current-entry-canary-source-run-launch-v1` fence and exact typed source-run/run target reservations, reobserves zero unrelated owners, starts or adopts one canary, closes both targets only against its terminal settlement, then releases the same fence. `current-entry-status --json` is read-only. `verify-current-entry --json` reopens the ready pre-rebind pair and freshly revalidates both distinct source/service authorities, all three prerequisite pairs, and zero owners without starting a run; Task 7 calls it before its first authorized mutation, never afterward as successor-current proof.
+- Crash/race/replay tests interrupt immediately before and after controller observation, loaded-runtime observation, delivery-evidence resolution, v31 audit resolution, pending-successor resolution, fence acquire, each typed target reservation, launch intent, run start/response, terminal settlement, compound target close, fence release, ready publication, and response. Retry adopts only the same prerequisite/fence/targets/run/settlement/close/release/entry pair. Tests accept intentionally unequal controller/runtime source/build identities when both independently resolve, and reject forced equality, crossed source/service evidence, drift in either authority, missing/second pending migration, applied pending successor before Task 7, PBA evidence tamper/stale status, a fork, second run, unrelated owner, one-sided close, release-before-close, caller scalar, or structural clone without another start.
+
+- [ ] **Step 1: Verify the delivered rollout, migration 31, focused code coverage, and loaded services**
+
+The operator shell receives `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` from the freshly resolved clean-main controller authority, then runs the exact root validator before each Setfarm package command. The first controller SHA may equal PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c`; a later reviewed clean descendant is valid when that merge remains an ancestor. The loaded runtime services may still report the earlier delivered runtime source/build. Both authorities must be current for their own scope, but Step 1 contains no equality assertion between them.
+
+```bash
+set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+git -C "$SETFARM_ROOT" merge-base --is-ancestor 1d691c89760339ea905dfe17f8e9188e62603c1c "$SETFARM_ROOT_EXPECTED_SHA"
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run check:migration-digests
+require_authenticated_clean_main_setfarm_root_v1
+node --import tsx --test \
+  "$SETFARM_ROOT/tests/execution-attempts/operational-failure-cause-v3.test.ts" \
+  "$SETFARM_ROOT/tests/execution-attempts/operational-failure-cause-migration.test.ts" \
+  "$SETFARM_ROOT/tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts" \
+  "$SETFARM_ROOT/tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts" \
+  "$SETFARM_ROOT/tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts"
+require_authenticated_clean_main_setfarm_root_v1
+A_PBA_DELIVERY_EVIDENCE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- observe-product-build-authority-v2-delivery-evidence --json)"
+A_PBA_DELIVERY_EVIDENCE_REF="$(printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_JSON" | jq -er '.deliveryEvidenceRef')"
+A_PBA_DELIVERY_EVIDENCE_HASH="$(printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_JSON" | jq -er '.deliveryEvidenceHash')"
+printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_JSON" | jq -e '
+  .currentStatus == "current" and .observationTransport == "source-cli" and
+  (.deliveryEvidenceRef | startswith("mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/")) and
+  (.deliveryEvidenceHash | test("^[0-9a-f]{64}$")) and
+  .evidence.deliveryMergeSha == "240e779d78804843a1202cbf0440fe423b806b1a" and
+  (.evidence.deliveredPathBlobHashes | length == 8) and
+  (.evidence.artifactLock.orderedArtifacts | length == 12) and
+  .evidence.focusedTests.passed == true
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+A_AUTHORITY_V3_V31_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- audit-authority-v3-migration31 --json)"
+A_AUTHORITY_V3_V31_REF="$(printf '%s\n' "$A_AUTHORITY_V3_V31_JSON" | jq -er '.authorityV3Migration31AuditRef')"
+A_AUTHORITY_V3_V31_HASH="$(printf '%s\n' "$A_AUTHORITY_V3_V31_JSON" | jq -er '.authorityV3Migration31AuditHash')"
+printf '%s\n' "$A_AUTHORITY_V3_V31_JSON" | jq -e '
+  .schema == "setfarm.internal-production-authority-v3-migration31-audit.v1" and
+  .authorityV3Status == "current" and
+  .appliedMigrationOrdinalMax == 31 and
+  .appliedMigrationOrdinals == [range(1; 32)] and
+  .migration31ApplyStatus == "applied" and .migration31VerifyStatus == "verified" and
+  (.authorityV3Migration31AuditRef | startswith("setfarm://internal-production/")) and
+  (.authorityV3Migration31AuditHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+A_PENDING_SUCCESSOR_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- inspect-pending-bootstrap-handoff-successor --json)"
+A_PENDING_SUCCESSOR_REF="$(printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -er '.pendingBootstrapHandoffMigrationRef')"
+A_PENDING_SUCCESSOR_HASH="$(printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -er '.pendingBootstrapHandoffMigrationHash')"
+printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -e '
+  .schema == "setfarm.internal-production-pending-bootstrap-handoff-migration-projection.v1" and
+  .pendingMigrationCount == 1 and .otherPendingMigrationCount == 0 and .driftedMigrationCount == 0 and
+  .migrationId == "contract-spine-bootstrap-main-claim-handoff-v1" and
+  .applyStatus == "pending" and .migrationSourceSha == $controllerSha and
+  (.migrationImplementationBlobHash | test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
+  (.orderedStatementsHash | test("^[0-9a-f]{64}$")) and
+  (.namedMigrationDigestEntryHash | test("^[0-9a-f]{64}$")) and
+  (.migrationDigest | test("^[0-9a-f]{64}$")) and
+  (.schemaProjectionHash | test("^[0-9a-f]{64}$")) and
+  (.pendingBootstrapHandoffMigrationRef | startswith("setfarm://internal-production/")) and
+  (.pendingBootstrapHandoffMigrationHash | test("^[0-9a-f]{64}$"))
+' --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+A_LOADED_RUNTIME_SERVICE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- service-census --json)"
+printf '%s\n' "$A_LOADED_RUNTIME_SERVICE_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  (.loadedRuntimeServiceAuthorityHash | test("^[0-9a-f]{64}$")) and
+  (.services | length == 4) and
+  all(.services[]; .pid > 0 and .processOwnerCount == 1 and (.loadedSourceSha | type == "string") and (.loadedBuildHash | test("^[0-9a-f]{64}$")))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_PREPARE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- prepare-current-entry --json)"
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_PREPARED_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
+printf '%s\n' "$A_CURRENT_ENTRY_PREPARED_STATUS" | jq -e \
+  --arg pbaRef "$A_PBA_DELIVERY_EVIDENCE_REF" --arg pbaHash "$A_PBA_DELIVERY_EVIDENCE_HASH" \
+  --arg v31Ref "$A_AUTHORITY_V3_V31_REF" --arg v31Hash "$A_AUTHORITY_V3_V31_HASH" \
+  --arg pendingRef "$A_PENDING_SUCCESSOR_REF" --arg pendingHash "$A_PENDING_SUCCESSOR_HASH" \
+  --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" '
+  .state == "prepared" and
+  .controllerSourceAuthority.controllerSourceSha == $controllerSha and
+  (.controllerSourceAuthority.controllerTreeHash | test("^[0-9a-f]{64}$")) and
+  (.controllerSourceAuthority.controllerBuildHash | test("^[0-9a-f]{64}$")) and
+  (.loadedRuntimeServiceAuthority.authorityHash | test("^[0-9a-f]{64}$")) and
+  .productBuildAuthorityV2DeliveryEvidenceRef == $pbaRef and .productBuildAuthorityV2DeliveryEvidenceHash == $pbaHash and
+  .authorityV3Migration31AuditRef == $v31Ref and .authorityV3Migration31AuditHash == $v31Hash and
+  .pendingBootstrapHandoffMigrationRef == $pendingRef and .pendingBootstrapHandoffMigrationHash == $pendingHash and
+  .entryAuthorityRef == null and .entryAuthorityHash == null
+' >/dev/null
+```
+
+Expected: the exact v31 audit proves only migrations 1 through 31 applied/current and the delivered Authority-V3 source/build/current-authority chain. The separate successor projection proves exactly one Task 7 migration pending and byte-bound to the current controller, with no other pending/drifted entry. The delivery-evidence pair equals Task 6 Step 8's post-merge clean-main source observation. The code-owned census proves one loaded owner per service under its delivered runtime authority; it is not compared to the new controller source/build. Prepare returns only the fixed operation and `prepared` status preserves all three exact prerequisite pairs. No migration, restart, or canary starts in this step, and generic `db:contract-spine:verify` is forbidden here because it would incorrectly require the registered Task 7 successor to be applied.
+
+- [ ] **Step 2: Start or adopt one fresh prerequisite canary and seal its exact observed lifecycle**
+
+```bash
+set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+A_READY_PBA_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- observe-product-build-authority-v2-delivery-evidence --json)"
+A_READY_PBA_REF="$(printf '%s\n' "$A_READY_PBA_JSON" | jq -er '.deliveryEvidenceRef')"
+A_READY_PBA_HASH="$(printf '%s\n' "$A_READY_PBA_JSON" | jq -er '.deliveryEvidenceHash')"
+require_authenticated_clean_main_setfarm_root_v1
+A_READY_V31_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- audit-authority-v3-migration31 --json)"
+A_READY_V31_REF="$(printf '%s\n' "$A_READY_V31_JSON" | jq -er '.authorityV3Migration31AuditRef')"
+A_READY_V31_HASH="$(printf '%s\n' "$A_READY_V31_JSON" | jq -er '.authorityV3Migration31AuditHash')"
+require_authenticated_clean_main_setfarm_root_v1
+A_READY_PENDING_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- inspect-pending-bootstrap-handoff-successor --json)"
+A_READY_PENDING_REF="$(printf '%s\n' "$A_READY_PENDING_JSON" | jq -er '.pendingBootstrapHandoffMigrationRef')"
+A_READY_PENDING_HASH="$(printf '%s\n' "$A_READY_PENDING_JSON" | jq -er '.pendingBootstrapHandoffMigrationHash')"
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- resume-current-entry --json
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_STATUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
+printf '%s\n' "$A_CURRENT_ENTRY_STATUS_JSON" | jq -e \
+  --arg pbaRef "$A_READY_PBA_REF" --arg pbaHash "$A_READY_PBA_HASH" \
+  --arg v31Ref "$A_READY_V31_REF" --arg v31Hash "$A_READY_V31_HASH" \
+  --arg pendingRef "$A_READY_PENDING_REF" --arg pendingHash "$A_READY_PENDING_HASH" \
+  --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" '
+  .state == "ready" and
+  .controllerSourceAuthority.controllerSourceSha == $controllerSha and
+  (.controllerSourceAuthority.controllerTreeHash | test("^[0-9a-f]{64}$")) and
+  (.controllerSourceAuthority.controllerBuildHash | test("^[0-9a-f]{64}$")) and
+  (.loadedRuntimeServiceAuthority.authorityHash | test("^[0-9a-f]{64}$")) and
+  .productBuildAuthorityV2DeliveryEvidenceRef == $pbaRef and .productBuildAuthorityV2DeliveryEvidenceHash == $pbaHash and
+  .authorityV3Migration31AuditRef == $v31Ref and .authorityV3Migration31AuditHash == $v31Hash and
+  .pendingBootstrapHandoffMigrationRef == $pendingRef and .pendingBootstrapHandoffMigrationHash == $pendingHash and
+  (.entryAuthorityRef | startswith("setfarm://internal-production/")) and
+  (.entryAuthorityHash | test("^[0-9a-f]{64}$")) and
+  (.canary.observedFailureCode == "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED" or
+   .canary.observedFailureCode == "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED" or
+   .canary.observedFailureCode == "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED") and
+  .canary.claimCount == 1 and
+  .canary.terminationRequestCount == 1 and
+  .canary.redispatchCount == 0 and
+  .canary.finalOwnershipCount == 0 and
+  (.canary.ownerAdmissionFenceRef | startswith("setfarm://internal-production/")) and
+  (.canary.ownerAdmissionFenceHash | test("^[0-9a-f]{64}$")) and
+  (.canary.sourceRunTargetReservationRef | startswith("setfarm://internal-production/")) and
+  (.canary.sourceRunTargetReservationHash | test("^[0-9a-f]{64}$")) and
+  (.canary.runTargetReservationRef | startswith("setfarm://internal-production/")) and
+  (.canary.runTargetReservationHash | test("^[0-9a-f]{64}$")) and
+  (.canary.targetCloseRef | startswith("setfarm://internal-production/")) and
+  (.canary.targetCloseHash | test("^[0-9a-f]{64}$")) and
+  (.canary.ownerAdmissionFenceReleaseRef | startswith("setfarm://internal-production/")) and
+  (.canary.ownerAdmissionFenceReleaseHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- verify-current-entry --json
+```
+
+Expected: the fixed non-listening Task 0 controller starts or adopts one new disposable canary, never run 2075, through the one fence/two-target lifecycle and returns the same ready pair after response loss/retry. No background service is rebuilt, restarted, or rebound; the loaded-runtime authority remains the exact delivered authority observed in `prepared`. Status proves all prerequisite/fence/target/settlement/close/release nullability and pair propagation without controller/runtime equality. The canary records one exact observed failure lifecycle; the separate focused-test receipt remains the proof for the complete three-code set.
+
+Task 7 alone may consume this ready pre-rebind pair. No Task 8 or B/C/D/E action consumes it directly; those phases require Task 7's strict post-rebind successor.
 
 ---
 
@@ -3014,8 +3366,12 @@ Expected: read-only evidence is non-draft, mergeable, clear, and green. Report t
 
 **Interfaces:**
 
-- Consumes: merged Mission Control `main`, merged Setfarm `main`, zero active ownership, and the reviewed pending bootstrap-handoff migration/digest delivered by Task 0.
-- Produces: one guarded, verified, content-addressed bootstrap-handoff migration receipt before any restart plus clean-main builds loaded by the Setfarm spawner, Setfarm dashboard, and Mission Control processes, with healthy HTTP endpoints and exact process/build identity evidence.
+- Consumes: the ready pre-rebind `InternalProductionCurrentEntryAuthorityPairV1`, including its exact v31 audit pair, pending bootstrap-successor projection pair, distinct controller/runtime authorities, and PBA V2 delivery-evidence pair; merged Mission Control `main`; merged Setfarm `main`; and zero active ownership.
+- Produces: one guarded, verified, content-addressed bootstrap-handoff migration receipt before any restart plus clean-main builds loaded by the Setfarm spawner, Setfarm dashboard, and Mission Control processes, with healthy HTTP endpoints and exact process/build identity evidence; then one strict `InternalProductionPostRebindEntryAuthorityPairV1` successor.
+
+`InternalProductionPostRebindEntryAuthorityV1` has schema `setfarm.internal-production-post-rebind-entry-authority.v1` and exact derived pair `{postRebindEntryAuthorityRef,postRebindEntryAuthorityHash}`. It binds the predecessor current-entry pair and reopens its `controllerSourceAuthority`, predecessor `loadedRuntimeServiceAuthority`, v31 audit pair, pending-successor projection pair, and PBA V2 delivery-evidence pair. It additionally binds Task 7's applied/current bootstrap-handoff migration receipt and exact successor-current audit pair; live-rebind restart-sequence pair and three ordered service authority pairs; Task 7 `controllerSourceSha/controllerTreeHash/controllerBuildHash`; Mission Control source/tree/build; post-rebind loaded-service authority; service census, runtime-source, health, and final complete zero-owner hashes. For every Setfarm-loaded service in the scoped service authority—spawner, dashboard, and any Setfarm controller worker—the post-rebind loaded source/tree/build must equal Task 7's current controller source/tree/build. The rebound Mission Control service must independently equal Task 7's current Mission Control source/tree/build; OpenClaw remains an identity/health observation and is never compared to Setfarm build bytes. The successor also requires the loaded Mission Control delivery-evidence endpoint to resolve by HTTP to the exact predecessor delivery-evidence pair. `resolveInternalProductionPostRebindEntryAuthorityV1(...)` reopens every dependency and recomputes the pair; the current verifier reobserves the clean source/build/schema/services/evidence endpoint and zero owners.
+
+`InternalProductionPostRebindEntryAuthorityStatusV1` is `absent | predecessor_ready | migration_applying | rebuilding | restarting | verifying | ready | blocked`. `absent` has every predecessor/prerequisite/migration/restart/service/verification/authority field null. `predecessor_ready` requires the predecessor pair plus its v31 audit, pending-successor, predecessor runtime, and delivery-evidence pairs non-null. `migration_applying` preserves those exact pairs and has no applied receipt. `rebuilding` additionally requires the applied migration receipt and successor-current audit pair non-null; the predecessor pending pair remains immutable historical input and is never reused as a current-pending assertion. `restarting` adds Task 7 controller builds while post-rebind service/evidence fields remain null. `verifying` adds restart/service fields and requires each scoped loaded source/build equality, while final HTTP evidence/health/zero-owner/post pair remain null. Only `ready` adds the exact HTTP-observed delivery-evidence equality, final verification tuple, and post-rebind pair. `blocked` preserves exactly the last valid prefix and requires every later field null plus one finite reason code. One expected-predecessor head makes prepare/resume/status crash-idempotent; retry adopts the same prefix/successor and never repeats an applied migration or settled restart.
 
 - [ ] **Step 1: Prove there is no active ownership before restart**
 
@@ -3023,7 +3379,31 @@ Run with `SETFARM_PG_URL` already present in the operator shell:
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
+npm run --silent acceptance:baseline-post-handoff -- verify-current-entry --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- zero-owner --json
 ```
 
@@ -3033,13 +3413,37 @@ Expected: the complete code-owned census is zero. If not, stop; do not restart o
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 A_SETFARM_BUILD_BRANCH="$(git branch --show-current)"
 test "$A_SETFARM_BUILD_BRANCH" = "main"
 A_SETFARM_BUILD_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$A_SETFARM_BUILD_STATUS"
+require_authenticated_clean_main_setfarm_root_v1
 npm ci
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
 node --test dist/cli/cli.test.js
 A_SETFARM_POST_BUILD_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
@@ -3070,7 +3474,29 @@ Expected: PASS and clean status.
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 A_MANIFEST_ACTIVATION_JSON="$(npm run --silent acceptance:baseline-post-handoff -- \
   activate-owner-producer-manifest --json)"
 A_MANIFEST_RECEIPT_REF="$(printf '%s\n' "$A_MANIFEST_ACTIVATION_JSON" | jq -er '.receiptRef')"
@@ -3088,6 +3514,7 @@ printf '%s\n' "$A_MANIFEST_ACTIVATION_JSON" | jq -e '
   (.sourceBuildAuthorityRef | type == "string") and
   (.sourceBuildAuthorityHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 A_MANIFEST_STATUS_JSON="$(npm run --silent acceptance:baseline-post-handoff -- \
   owner-producer-manifest-status --json)"
 A_MANIFEST_STATUS_RECEIPT_REF="$(printf '%s\n' "$A_MANIFEST_STATUS_JSON" | jq -er '.receiptRef')"
@@ -3119,7 +3546,28 @@ Run the just-built CLI directly from clean Setfarm `main` while all three servic
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
 A_PRE_MIGRATION_BRANCH="$(git branch --show-current)"
 test "$A_PRE_MIGRATION_BRANCH" = "main"
 A_PRE_MIGRATION_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
@@ -3129,11 +3577,15 @@ A_PRE_MIGRATION_ORIGIN="$(git rev-parse refs/remotes/origin/main)"
 test "$A_PRE_MIGRATION_HEAD" = "$A_PRE_MIGRATION_ORIGIN"
 A_PRE_MIGRATION_BUILD_SHA="$(jq -er '.sha' dist/BUILD_INFO.json)"
 test "$A_PRE_MIGRATION_BUILD_SHA" = "$A_PRE_MIGRATION_HEAD"
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
+require_authenticated_clean_main_setfarm_root_v1
 npm run check:migration-digests
+require_authenticated_clean_main_setfarm_root_v1
 A_MIGRATION_GUARD_JSON="$(npm run --silent acceptance:baseline-post-handoff -- zero-owner --json)"
 A_MIGRATION_GUARD_REF="$(printf '%s\n' "$A_MIGRATION_GUARD_JSON" | jq -er '.guardRef')"
 A_MIGRATION_GUARD_HASH="$(printf '%s\n' "$A_MIGRATION_GUARD_JSON" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 A_MIGRATION_RECEIPT_JSON="$(npm run --silent acceptance:baseline-post-handoff -- \
   apply-bootstrap-handoff-migration \
   --guard-ref "$A_MIGRATION_GUARD_REF" \
@@ -3144,6 +3596,10 @@ A_MIGRATION_RECEIPT_HASH="$(printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -er '
 printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .schema == "setfarm.internal-production-baseline-bootstrap-handoff-migration-receipt.v1" and
   .migrationId == "contract-spine-bootstrap-main-claim-handoff-v1" and
+  (.predecessorAuthorityV3Migration31AuditRef | startswith("setfarm://internal-production/")) and
+  (.predecessorAuthorityV3Migration31AuditHash | test("^[0-9a-f]{64}$")) and
+  (.pendingBootstrapHandoffMigrationRef | startswith("setfarm://internal-production/")) and
+  (.pendingBootstrapHandoffMigrationHash | test("^[0-9a-f]{64}$")) and
   .migrationSourceSha == $sourceSha and
   (.migrationImplementationBlobHash | test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
   (.orderedStatementsHash | test("^[0-9a-f]{64}$")) and
@@ -3158,31 +3614,64 @@ printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .bootstrapHandoffClaimIdUnique == true and
   .terminalReceiptPairColumnsPresent == true
 ' --arg sourceSha "$A_PRE_MIGRATION_HEAD" >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 A_MIGRATION_REOPENED_JSON="$(npm run --silent acceptance:baseline-post-handoff -- resolve-bootstrap-handoff-migration --json)"
 printf '%s\n' "$A_MIGRATION_REOPENED_JSON" | jq -e \
   --arg receiptRef "$A_MIGRATION_RECEIPT_REF" \
   --arg receiptHash "$A_MIGRATION_RECEIPT_HASH" \
   '.migrationReceiptRef == $receiptRef and .migrationReceiptHash == $receiptHash and .verifyStatus == "verified"' \
   >/dev/null
-npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
+A_SUCCESSOR_CURRENT_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-bootstrap-handoff-migration-current --json)"
+printf '%s\n' "$A_SUCCESSOR_CURRENT_JSON" | jq -e \
+  --arg receiptRef "$A_MIGRATION_RECEIPT_REF" --arg receiptHash "$A_MIGRATION_RECEIPT_HASH" '
+  .schema == "setfarm.internal-production-bootstrap-handoff-current-audit.v1" and
+  .migrationReceiptRef == $receiptRef and .migrationReceiptHash == $receiptHash and
+  .applyStatus == "applied" and .verifyStatus == "verified" and .currentStatus == "current" and
+  .pendingMigrationCount == 0 and .driftedMigrationCount == 0 and
+  (.bootstrapHandoffCurrentAuditRef | startswith("setfarm://internal-production/")) and
+  (.bootstrapHandoffCurrentAuditHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
 A_POST_MIGRATION_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$A_POST_MIGRATION_STATUS"
 A_POST_MIGRATION_HEAD="$(git rev-parse HEAD)"
 test "$A_POST_MIGRATION_HEAD" = "$A_PRE_MIGRATION_HEAD"
 ```
 
-Expected: the pending migration is applied exactly once at the exact `migrationSourceSha` and freshly reopened before any service restart, while every old service generation remains untouched. The command uses the new clean build as a database client only; it does not require a newly loaded daemon, endpoint, listener, or runtime module. The receipt binds only the dedicated immutable bootstrap-migration implementation Git blob, ordered-statements hash, named digest-entry hash/digest, and verified schema projection; unrelated append-only aggregate registry/digest entries remain valid. Every restart/sequence entry point now resolves and hash-binds this exact pair internally; later descendant sources must prove ancestry and byte-identical blob/digest/schema identities. A missing/corrupt/unverified, non-ancestral, or blob/digest/schema-mismatched receipt blocks before a restart reservation or side effect.
+Expected: the controller consumes only the predecessor current-entry's exact pending-successor projection, applies it once at the exact `migrationSourceSha`, and freshly proves it applied/current with zero pending/drifted migrations before any service restart, while every old service generation remains untouched. The shell supplies only the separate zero-owner guard; it cannot supply or substitute the pending projection. The command uses the new clean build as a database client only and does not require a newly loaded daemon, endpoint, listener, or runtime module. The receipt binds the predecessor v31 pair, exact pending projection, immutable implementation blob, ordered-statements hash, named digest entry/digest, and verified schema projection. Every restart/sequence entry point resolves this receipt/current-audit pair internally. A missing/corrupt/unverified, non-ancestral, cross-paired, or blob/digest/schema-mismatched authority blocks before a restart reservation or side effect.
 
 - [ ] **Step 5: Rebind the spawner, dashboard, and Mission Control to the verified builds**
 
 ```bash
 set -euo pipefail
-readonly A_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly A_SETFARM_ROOT="$SETFARM_ROOT"
 readonly A_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 A_UID="$(id -u)"
 readonly A_UID
 cd "$A_SETFARM_ROOT"
 
+require_authenticated_clean_main_setfarm_root_v1
 A_REBIND_MIGRATION_JSON="$(npm run --silent acceptance:baseline-post-handoff -- resolve-bootstrap-handoff-migration --json)"
 A_REBIND_MIGRATION_REF="$(printf '%s\n' "$A_REBIND_MIGRATION_JSON" | jq -er '.migrationReceiptRef')"
 A_REBIND_MIGRATION_HASH="$(printf '%s\n' "$A_REBIND_MIGRATION_JSON" | jq -er '.migrationReceiptHash')"
@@ -3207,20 +3696,27 @@ readonly A_MC_BUILD_HASH
 A_SETFARM_INSTALL_LINK="$(readlink /Users/setrox/.local/bin/setfarm)"
 test "$A_SETFARM_INSTALL_LINK" = "$A_SETFARM_ROOT/dist/cli/cli.js"
 
-A_OLD_SPAWNER_PID="$(pgrep -f "$A_SETFARM_ROOT/dist/spawner\\.js" | sort -u)"
+A_OLD_SERVICE_CENSUS_JSON="$(
+  require_authenticated_clean_main_setfarm_root_v1
+  npm run --silent acceptance:baseline-post-handoff -- service-census --json
+)"
+printf '%s\n' "$A_OLD_SERVICE_CENSUS_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  .spawner.processOwnerCount == 1 and
+  .dashboard.processOwnerCount == 1 and .dashboard.listenerOwnerCount == 1 and
+  .missionControl.processOwnerCount == 1 and .missionControl.listenerOwnerCount == 1 and
+  .openClaw.processOwnerCount == 1 and .openClaw.listenerOwnerCount == 1 and
+  (.censusHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+A_OLD_SPAWNER_PID="$(printf '%s\n' "$A_OLD_SERVICE_CENSUS_JSON" | jq -er '.spawner.pid')"
 readonly A_OLD_SPAWNER_PID
-A_OLD_DASHBOARD_PID="$(lsof -nP -iTCP:3333 -sTCP:LISTEN -t | sort -u)"
+A_OLD_DASHBOARD_PID="$(printf '%s\n' "$A_OLD_SERVICE_CENSUS_JSON" | jq -er '.dashboard.pid')"
 readonly A_OLD_DASHBOARD_PID
-A_OLD_MC_PID="$(lsof -nP -iTCP:3080 -sTCP:LISTEN -t | sort -u)"
+A_OLD_MC_PID="$(printf '%s\n' "$A_OLD_SERVICE_CENSUS_JSON" | jq -er '.missionControl.pid')"
 readonly A_OLD_MC_PID
-A_OLD_SPAWNER_PID_COUNT="$(printf '%s\n' "$A_OLD_SPAWNER_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_OLD_SPAWNER_PID_COUNT" = "1"
-A_OLD_DASHBOARD_PID_COUNT="$(printf '%s\n' "$A_OLD_DASHBOARD_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_OLD_DASHBOARD_PID_COUNT" = "1"
-A_OLD_MC_PID_COUNT="$(printf '%s\n' "$A_OLD_MC_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_OLD_MC_PID_COUNT" = "1"
 
 A_LIVE_RESTART_SEQUENCE="$(
+  require_authenticated_clean_main_setfarm_root_v1
   npm run --silent acceptance:baseline-post-handoff -- \
     resume-restart-sequence --intent live-rebind --json
 )"
@@ -3232,6 +3728,7 @@ readonly A_LIVE_RESTART_SEQUENCE_REF
 A_LIVE_RESTART_SEQUENCE_HASH="$(printf '%s\n' "$A_LIVE_RESTART_SEQUENCE" | jq -er '.sequenceHash')"
 readonly A_LIVE_RESTART_SEQUENCE_HASH
 A_LIVE_RESTART_STATUS="$(
+  require_authenticated_clean_main_setfarm_root_v1
   npm run --silent acceptance:baseline-post-handoff -- \
     restart-sequence-status --intent live-rebind --json
 )"
@@ -3252,18 +3749,24 @@ curl -fsS --retry 20 --retry-delay 1 http://127.0.0.1:3080/api/health | jq -e '.
 curl -fsS --max-time 30 http://127.0.0.1:3080/api/projects | jq -e 'type == "array"'
 curl -fsS --retry 20 --retry-delay 1 http://127.0.0.1:3333/ >/dev/null
 
-A_NEW_SPAWNER_PID="$(pgrep -f "$A_SETFARM_ROOT/dist/spawner\\.js" | sort -u)"
+A_NEW_SERVICE_CENSUS_JSON="$(
+  require_authenticated_clean_main_setfarm_root_v1
+  npm run --silent acceptance:baseline-post-handoff -- service-census --json
+)"
+printf '%s\n' "$A_NEW_SERVICE_CENSUS_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  .spawner.processOwnerCount == 1 and
+  .dashboard.processOwnerCount == 1 and .dashboard.listenerOwnerCount == 1 and
+  .missionControl.processOwnerCount == 1 and .missionControl.listenerOwnerCount == 1 and
+  .openClaw.processOwnerCount == 1 and .openClaw.listenerOwnerCount == 1 and
+  (.censusHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+A_NEW_SPAWNER_PID="$(printf '%s\n' "$A_NEW_SERVICE_CENSUS_JSON" | jq -er '.spawner.pid')"
 readonly A_NEW_SPAWNER_PID
-A_NEW_DASHBOARD_PID="$(lsof -nP -iTCP:3333 -sTCP:LISTEN -t | sort -u)"
+A_NEW_DASHBOARD_PID="$(printf '%s\n' "$A_NEW_SERVICE_CENSUS_JSON" | jq -er '.dashboard.pid')"
 readonly A_NEW_DASHBOARD_PID
-A_NEW_MC_PID="$(lsof -nP -iTCP:3080 -sTCP:LISTEN -t | sort -u)"
+A_NEW_MC_PID="$(printf '%s\n' "$A_NEW_SERVICE_CENSUS_JSON" | jq -er '.missionControl.pid')"
 readonly A_NEW_MC_PID
-A_NEW_SPAWNER_PID_COUNT="$(printf '%s\n' "$A_NEW_SPAWNER_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_NEW_SPAWNER_PID_COUNT" = "1"
-A_NEW_DASHBOARD_PID_COUNT="$(printf '%s\n' "$A_NEW_DASHBOARD_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_NEW_DASHBOARD_PID_COUNT" = "1"
-A_NEW_MC_PID_COUNT="$(printf '%s\n' "$A_NEW_MC_PID" | sed '/^$/d' | wc -l | tr -d ' ')"
-test "$A_NEW_MC_PID_COUNT" = "1"
 test "$A_NEW_SPAWNER_PID" != "$A_OLD_SPAWNER_PID"
 test "$A_NEW_DASHBOARD_PID" != "$A_OLD_DASHBOARD_PID"
 test "$A_NEW_MC_PID" != "$A_OLD_MC_PID"
@@ -3276,7 +3779,9 @@ A_OBSERVED_DASHBOARD_BUILD_HASH="$(shasum -a 256 "$A_SETFARM_ROOT/dist/server/da
 test "$A_OBSERVED_DASHBOARD_BUILD_HASH" = "$A_DASHBOARD_BUILD_HASH"
 A_OBSERVED_MC_BUILD_HASH="$(shasum -a 256 "$A_MC_ROOT/dist-server/index.js" | awk '{print $1}')"
 test "$A_OBSERVED_MC_BUILD_HASH" = "$A_MC_BUILD_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- zero-owner --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- runtime-source \
   --setfarm-sha "$A_SETFARM_SHA" \
   --mission-control-sha "$A_MC_SHA" \
@@ -3293,6 +3798,29 @@ Expected: before its first reservation, the resolved `live-rebind` sequence fres
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+cd "$SETFARM_ROOT"
 umask 077
 A_CENSUS_TMP="$(mktemp -d)"
 chmod 0700 "$A_CENSUS_TMP"
@@ -3305,6 +3833,7 @@ readonly A_ACTIVE_STATUSES_JSON="$A_CENSUS_TMP/operational-active-statuses.json"
 readonly A_DB_IDS="$A_CENSUS_TMP/db-active-run-ids.txt"
 readonly A_API_IDS="$A_CENSUS_TMP/api-active-run-ids.txt"
 readonly A_PROJECT_IDS="$A_CENSUS_TMP/project-active-run-ids.txt"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent contract:operational-active-run-status -- --json > "$A_ACTIVE_STATUSES_JSON"
 curl -fsS http://127.0.0.1:3080/api/runs > "$A_RUNS_JSON"
 curl -fsS --max-time 30 http://127.0.0.1:3080/api/projects > "$A_PROJECTS_JSON"
@@ -3370,19 +3899,110 @@ Expected: the code-owned contract JSON, database, `/api/runs`, and project proje
 
 ```bash
 set -euo pipefail
-A_MC_LISTENER_COUNT="$(lsof -nP -iTCP:3080 -sTCP:LISTEN -t | sort -u | wc -l | tr -d ' ')"
-test "$A_MC_LISTENER_COUNT" = "1"
-A_DASHBOARD_LISTENER_COUNT="$(lsof -nP -iTCP:3333 -sTCP:LISTEN -t | sort -u | wc -l | tr -d ' ')"
-test "$A_DASHBOARD_LISTENER_COUNT" = "1"
-A_GATEWAY_LISTENER_COUNT="$(lsof -nP -iTCP:18789 -sTCP:LISTEN -t | sort -u | wc -l | tr -d ' ')"
-test "$A_GATEWAY_LISTENER_COUNT" = "1"
-A_SPAWNER_PROCESS_COUNT="$(pgrep -f '/setfarm/dist/spawner\.js' | sort -u | wc -l | tr -d ' ')"
-test "$A_SPAWNER_PROCESS_COUNT" = "1"
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+A_SERVICE_CENSUS_JSON="$(
+  require_authenticated_clean_main_setfarm_root_v1
+  npm run --silent acceptance:baseline-post-handoff -- service-census --json
+)"
+printf '%s\n' "$A_SERVICE_CENSUS_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  .spawner.processOwnerCount == 1 and
+  .dashboard.processOwnerCount == 1 and .dashboard.listenerOwnerCount == 1 and
+  .missionControl.processOwnerCount == 1 and .missionControl.listenerOwnerCount == 1 and
+  .openClaw.processOwnerCount == 1 and .openClaw.listenerOwnerCount == 1 and
+  (.censusHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 setfarm dashboard status
+require_authenticated_clean_main_setfarm_root_v1
 setfarm spawner status
 ```
 
 Expected: one unique listener owner for each port, one spawner process, and both Setfarm status commands report running. The transient LaunchAgent watchdog command is not counted as a second daemon.
+
+- [ ] **Step 8: Seal and verify the post-rebind entry successor**
+
+```bash
+set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- resume-post-rebind-entry --json
+require_authenticated_clean_main_setfarm_root_v1
+A_POST_REBIND_STATUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- post-rebind-entry-status --json)"
+printf '%s\n' "$A_POST_REBIND_STATUS_JSON" | jq -e '
+  . as $status |
+  .state == "ready" and
+  (.predecessorCurrentEntryRef | startswith("setfarm://internal-production/")) and
+  (.predecessorCurrentEntryHash | test("^[0-9a-f]{64}$")) and
+  (.predecessorLoadedRuntimeServiceAuthorityHash | test("^[0-9a-f]{64}$")) and
+  (.predecessorAuthorityV3Migration31AuditRef | startswith("setfarm://internal-production/")) and
+  (.predecessorAuthorityV3Migration31AuditHash | test("^[0-9a-f]{64}$")) and
+  (.predecessorPendingBootstrapHandoffMigrationRef | startswith("setfarm://internal-production/")) and
+  (.predecessorPendingBootstrapHandoffMigrationHash | test("^[0-9a-f]{64}$")) and
+  (.migrationReceiptRef | startswith("setfarm://internal-production/")) and
+  (.migrationReceiptHash | test("^[0-9a-f]{64}$")) and
+  (.bootstrapHandoffCurrentAuditRef | startswith("setfarm://internal-production/")) and
+  (.bootstrapHandoffCurrentAuditHash | test("^[0-9a-f]{64}$")) and
+  (.restartSequenceRef | startswith("setfarm://internal-production/")) and
+  (.restartSequenceHash | test("^[0-9a-f]{64}$")) and
+  all(.loadedRuntimeServiceAuthority.setfarmServices[];
+    .loadedSourceSha == $status.controllerSourceAuthority.controllerSourceSha and
+    .loadedTreeHash == $status.controllerSourceAuthority.controllerTreeHash and
+    .loadedBuildHash == $status.controllerSourceAuthority.controllerBuildHash) and
+  .loadedRuntimeServiceAuthority.missionControl.loadedSourceSha == .missionControlSourceAuthority.sourceSha and
+  .loadedRuntimeServiceAuthority.missionControl.loadedTreeHash == .missionControlSourceAuthority.treeHash and
+  .loadedRuntimeServiceAuthority.missionControl.loadedBuildHash == .missionControlSourceAuthority.buildHash and
+  .productBuildAuthorityV2DeliveryEvidenceObservationTransport == "http" and
+  .productBuildAuthorityV2DeliveryEvidenceRef == .predecessorProductBuildAuthorityV2DeliveryEvidenceRef and
+  .productBuildAuthorityV2DeliveryEvidenceHash == .predecessorProductBuildAuthorityV2DeliveryEvidenceHash and
+  (.postRebindEntryAuthorityRef | startswith("setfarm://internal-production/")) and
+  (.postRebindEntryAuthorityHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json
+```
+
+Expected: the first call creates or adopts exactly one linear successor after all Task 7 effects are terminal; response loss at any store/head boundary returns the byte-identical pair. Status/resolver preserve the predecessor's distinct loaded-runtime authority, v31 pair, pending-successor pair, and delivery-evidence pair; prove the exact successor applied/current; prove every scoped Setfarm service is loaded from Task 7's controller source/tree/build and Mission Control from its Task 7 source/tree/build; and require the rebound HTTP endpoint to return the same delivery-evidence pair previously observed through the source CLI. No Task 8 or B/C/D/E operation begins until this pair is `ready` and current.
 
 ---
 
@@ -3390,23 +4010,49 @@ Expected: one unique listener owner for each port, one spawner process, and both
 
 **Files:**
 
-- Create: `setfarm/docs/review-packets/2026-08-13-internal-production-baseline.md`
+- Create: `docs/review-packets/2026-08-13-internal-production-baseline.md`
 - Create outside Git: `/Users/setrox/ai/setrox/data/backups/internal-production-baseline/setfarm.dump`
 - Create outside Git: `/Users/setrox/ai/setrox/data/backups/internal-production-baseline/setfarm.list.txt`
 - Create outside Git: `/Users/setrox/ai/setrox/data/backups/internal-production-baseline/setfarm.sha256`
 
 **Interfaces:**
 
-- Consumes: clean-main repositories, healthy services, matching active censuses, Task 7's already applied and restart-bound exact bootstrap-handoff migration receipt, and the current PostgreSQL schema.
+- Consumes: a freshly verified current `InternalProductionPostRebindEntryAuthorityPairV1`, clean-main repositories, healthy services, matching active censuses, Task 7's already applied and restart-bound exact bootstrap-handoff migration receipt, and the current PostgreSQL schema. It resolves the predecessor current-entry pair only through that successor and never asks the pre-rebind verifier to remain current.
 - Produces: one crash-resumable authenticated backup receipt and a bounded Markdown summary that binds, but does not reapply, the already verified migration and does not embed the dump or secrets.
 
 - [ ] **Step 1: Freshly resolve the applied migration and run read-only authority audits**
 
 ```bash
 set -euo pipefail
-cd /Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+cd "$SETFARM_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
+npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
+require_authenticated_clean_main_setfarm_root_v1
 npm run check:migration-digests
+require_authenticated_clean_main_setfarm_root_v1
 A_MIGRATION_RECEIPT_JSON="$(npm run --silent acceptance:baseline-post-handoff -- resolve-bootstrap-handoff-migration --json)"
 printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .schema == "setfarm.internal-production-baseline-bootstrap-handoff-migration-receipt.v1" and
@@ -3426,10 +4072,15 @@ printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   (.migrationReceiptRef | startswith("setfarm://internal-production/")) and
   (.migrationReceiptHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-artifact-batches
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-artifact-store-authority-ledger
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-platform-release-store-records
 ```
 
@@ -3439,6 +4090,28 @@ Expected: Task 8 performs no migration or other schema mutation. The zero-input 
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 A_BACKUP_RESULT="$(npm run --silent acceptance:baseline-post-handoff -- backup --json)"
 printf '%s\n' "$A_BACKUP_RESULT" | jq -e '
   .schema == "setfarm.internal-production-baseline-backup-receipt.v1" and
@@ -3456,6 +4129,7 @@ printf '%s\n' "$A_BACKUP_RESULT" | jq -e '
   (.receiptHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
 A_BACKUP_RECEIPT_HASH="$(printf '%s\n' "$A_BACKUP_RESULT" | jq -er '.receiptHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run --silent acceptance:baseline-post-handoff -- backup --json | jq -e \
   --arg hash "$A_BACKUP_RECEIPT_HASH" \
   '.receiptHash == $hash' >/dev/null
@@ -3469,23 +4143,57 @@ Capture these commands without exposing environment values:
 
 ```bash
 set -euo pipefail
-git -C /Users/setrox/ai/setrox/setfarm rev-parse HEAD
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+git -C "$SETFARM_ROOT" rev-parse HEAD
 git -C /Users/setrox/ai/setrox/mission-control rev-parse HEAD
-jq -r '.name + " " + .version' /Users/setrox/ai/setrox/setfarm/package.json
+jq -r '.name + " " + .version' "$SETFARM_ROOT/package.json"
 jq -r '.name + " " + .version' /Users/setrox/ai/setrox/mission-control/package.json
-jq -r '.sha, .branch, .dirty' /Users/setrox/ai/setrox/setfarm/dist/BUILD_INFO.json
-A_PACKET_SETFARM_SHA="$(git -C /Users/setrox/ai/setrox/setfarm rev-parse HEAD)"
+jq -r '.sha, .branch, .dirty' "$SETFARM_ROOT/dist/BUILD_INFO.json"
+A_PACKET_SETFARM_SHA="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
 jq -e --arg sha "$A_PACKET_SETFARM_SHA" \
   '.sha == $sha and .branch == "main" and .dirty == false' \
-  /Users/setrox/ai/setrox/setfarm/dist/BUILD_INFO.json
-shasum -a 256 /Users/setrox/ai/setrox/setfarm/dist/spawner.js
-shasum -a 256 /Users/setrox/ai/setrox/setfarm/dist/server/daemon.js
+  "$SETFARM_ROOT/dist/BUILD_INFO.json"
+shasum -a 256 "$SETFARM_ROOT/dist/spawner.js"
+shasum -a 256 "$SETFARM_ROOT/dist/server/daemon.js"
 shasum -a 256 /Users/setrox/ai/setrox/mission-control/dist-server/index.js
-A_PACKET_SPAWNER_PID="$(pgrep -f '/Users/setrox/ai/setrox/setfarm/dist/spawner\.js')"
+A_PACKET_SERVICE_CENSUS_JSON="$(
+  require_authenticated_clean_main_setfarm_root_v1
+  npm run --silent acceptance:baseline-post-handoff -- service-census --json
+)"
+printf '%s\n' "$A_PACKET_SERVICE_CENSUS_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  .spawner.processOwnerCount == 1 and
+  .dashboard.processOwnerCount == 1 and .dashboard.listenerOwnerCount == 1 and
+  .missionControl.processOwnerCount == 1 and .missionControl.listenerOwnerCount == 1 and
+  .openClaw.processOwnerCount == 1 and .openClaw.listenerOwnerCount == 1 and
+  (.censusHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+A_PACKET_SPAWNER_PID="$(printf '%s\n' "$A_PACKET_SERVICE_CENSUS_JSON" | jq -er '.spawner.pid')"
 ps -p "$A_PACKET_SPAWNER_PID" -o pid=,command=
-A_PACKET_DASHBOARD_PID="$(lsof -nP -iTCP:3333 -sTCP:LISTEN -t)"
+A_PACKET_DASHBOARD_PID="$(printf '%s\n' "$A_PACKET_SERVICE_CENSUS_JSON" | jq -er '.dashboard.pid')"
 ps -p "$A_PACKET_DASHBOARD_PID" -o pid=,command=
-A_PACKET_MC_PID="$(lsof -nP -iTCP:3080 -sTCP:LISTEN -t)"
+A_PACKET_MC_PID="$(printf '%s\n' "$A_PACKET_SERVICE_CENSUS_JSON" | jq -er '.missionControl.pid')"
 ps -p "$A_PACKET_MC_PID" -o pid=,command=
 jq -r '.producerCommit, (.artifacts[] | [.vendoredPath,.sha256] | @tsv)' /Users/setrox/ai/setrox/mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json
 pg_dump --version
@@ -3504,7 +4212,8 @@ First report the exact requested branch `docs/internal-production-baseline`, bas
 
 ```bash
 set -euo pipefail
-readonly A_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+: "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+readonly A_SETFARM_ROOT="$SETFARM_ROOT"
 readonly A_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 A_DOCS_WORKTREE="$(git rev-parse --show-toplevel)"
 readonly A_DOCS_WORKTREE
@@ -3549,7 +4258,8 @@ The documentation branch already exists from Step 4 and was created only after t
 
 ```bash
 set -euo pipefail
-readonly A_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+: "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+readonly A_SETFARM_ROOT="$SETFARM_ROOT"
 A_DOCS_WORKTREE="$(git rev-parse --show-toplevel)"
 readonly A_DOCS_WORKTREE
 readonly A_PACKET_PATH=docs/review-packets/2026-08-13-internal-production-baseline.md
@@ -3632,7 +4342,28 @@ The tracked baseline Markdown contains one parser-owned bounded line `Operationa
 
 ```bash
 set -euo pipefail
-readonly A_SETFARM_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly A_SETFARM_ROOT="$SETFARM_ROOT"
 A_UID="$(id -u)"
 readonly A_UID
 cd "$A_SETFARM_ROOT"
@@ -3643,17 +4374,25 @@ test -z "$A_ROLLBACK_PRE_BUILD_STATUS"
 A_ROLLBACK_HEAD="$(git rev-parse HEAD)"
 A_ROLLBACK_ORIGIN_MAIN="$(git rev-parse origin/main)"
 test "$A_ROLLBACK_HEAD" = "$A_ROLLBACK_ORIGIN_MAIN"
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- zero-owner --json
+require_authenticated_clean_main_setfarm_root_v1
 npm ci
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
 A_ROLLBACK_BUILD_INFO_SHA="$(jq -er '.sha' dist/BUILD_INFO.json)"
 A_ROLLBACK_BUILD_HEAD="$(git rev-parse HEAD)"
 test "$A_ROLLBACK_BUILD_INFO_SHA" = "$A_ROLLBACK_BUILD_HEAD"
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- zero-owner --json >/dev/null
 A_ROLLBACK_RESTART_SEQUENCE="$(
+  require_authenticated_clean_main_setfarm_root_v1
   npm run --silent acceptance:baseline-post-handoff -- \
     resume-restart-sequence --intent documentation-rollback --json
 )"
@@ -3665,6 +4404,7 @@ readonly A_ROLLBACK_RESTART_SEQUENCE_REF
 A_ROLLBACK_RESTART_SEQUENCE_HASH="$(printf '%s\n' "$A_ROLLBACK_RESTART_SEQUENCE" | jq -er '.sequenceHash')"
 readonly A_ROLLBACK_RESTART_SEQUENCE_HASH
 A_ROLLBACK_RESTART_STATUS="$(
+  require_authenticated_clean_main_setfarm_root_v1
   npm run --silent acceptance:baseline-post-handoff -- \
     restart-sequence-status --intent documentation-rollback --json
 )"
@@ -3675,7 +4415,9 @@ A_ROLLBACK_RESTART_STATUS_SEQUENCE_REF="$(printf '%s\n' "$A_ROLLBACK_RESTART_STA
 test "$A_ROLLBACK_RESTART_STATUS_SEQUENCE_REF" = "$A_ROLLBACK_RESTART_SEQUENCE_REF"
 A_ROLLBACK_RESTART_STATUS_SEQUENCE_HASH="$(printf '%s\n' "$A_ROLLBACK_RESTART_STATUS" | jq -er '.sequenceHash')"
 test "$A_ROLLBACK_RESTART_STATUS_SEQUENCE_HASH" = "$A_ROLLBACK_RESTART_SEQUENCE_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- zero-owner --json
 curl -fsS --retry 20 --retry-delay 1 http://127.0.0.1:3080/api/health | jq -e '.status == "healthy"'
 curl -fsS --retry 20 --retry-delay 1 http://127.0.0.1:3333/ >/dev/null
@@ -3684,7 +4426,9 @@ A_ROLLBACK_FINAL_HEAD="$(git rev-parse HEAD)"
 test "$A_ROLLBACK_FINAL_BUILD_INFO_SHA" = "$A_ROLLBACK_FINAL_HEAD"
 A_ROLLBACK_FINAL_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$A_ROLLBACK_FINAL_STATUS"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- record --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- verify-current --json
 ```
 
@@ -3694,7 +4438,10 @@ The receipt is never tracked. Subprojects B/E call only `resolve-historical --js
 
 Subproject A passes only when all of the following are simultaneously true:
 
-- Product Build Authority V2 is delivered through a reviewed Mission Control PR.
+- Product Build Authority V2 reviewed PR #19 merge `240e779d78804843a1202cbf0440fe423b806b1a` remains an ancestor of current clean synchronized Mission Control `main`; all reconciliation-branch stages prove production observer/resolver/CLI/endpoint-owner refusal and no publication, then Task 6 Step 8's clean post-merge main/build creates and reopens one strict current `ProductBuildAuthorityV2DeliveryEvidencePairV1` over its exact delivered paths/tests/twelve-entry vendor lock without inventing a global per-run authority pair. Task 6A consumes only that post-merge pair.
+- The pre-rebind `InternalProductionCurrentEntryAuthorityPairV1` resolves as Task 7's immutable predecessor, independently binds unequal-or-equal controller and delivered loaded-runtime authorities, stores the exact v31 audit and sole pending-successor pairs, and preserves its canary fence/target/settlement/close/release chain; it is not required to remain current after rebind.
+- The ready `InternalProductionPostRebindEntryAuthorityPairV1` freshly verifies the exact successor migration applied/current, binds the predecessor runtime authority, requires every scoped loaded Setfarm service to equal Task 7 controller source/build and Mission Control to equal its Task 7 source/build, requires the loaded HTTP delivery-evidence pair to equal the predecessor source-observed pair, and binds the restart/schema/complete-zero-owner chain. Task 8 and B/C/D/E use only this successor.
+- Focused Authority-V3 tests prove all three mutually exclusive setup-packet failure codes, while the separately bound fresh canary proves exactly one observed code lifecycle with one claim, one termination, and zero redispatch.
 - Setfarm and Mission Control contract artifacts are byte-compatible and pinned to the accepted Setfarm producer SHA.
 - DB active run count, `/api/runs`, and `/api/projects[].execution.active` agree exactly.
 - Every active project has one non-empty `execution.runId`, and active project-to-run bindings are one-to-one with no duplicate run ID.
@@ -3704,7 +4451,7 @@ Subproject A passes only when all of the following are simultaneously true:
 - Mission Control full tests, build, and render smoke pass.
 - Setfarm full tests and guarded clean-main build pass.
 - Final loaded Setfarm `BUILD_INFO.sha` equals the post-packet documentation merge at clean `origin/main`; the private post-handoff receipt binds the earlier operational SHA without circular tracked evidence.
-- Migration plan/verify and current authority audits pass.
+- The v31 historical/current-authority audit, sole pending-successor projection, Task 7 applied receipt, and successor-current audit all resolve with their phase-exact applied/pending relations and no drift.
 - The custom-format PostgreSQL backup has one authenticated completed attempt/journal receipt; all three fixed files exist with recorded hashes, the checksum matches, and the archive is listable by matching PostgreSQL tooling.
 - Exactly one intended Mission Control listener, Setfarm dashboard listener, OpenClaw listener owner, and Setfarm spawner process exists.
 - Both repositories are clean and equal to `origin/main`.

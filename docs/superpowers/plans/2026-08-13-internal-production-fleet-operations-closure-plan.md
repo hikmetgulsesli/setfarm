@@ -10,6 +10,20 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
 
+## 2026-08-16 Execution Rebaseline
+
+Product Build Authority V2 and `setfarm.run-operational-snapshot.v3` are already delivered inputs. Fleet and cold-rehearsal execution starts only from an execution-time exact clean synchronized Setfarm `main` descendant that retains reviewed Authority-V3 PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor, after contract-spine migration 31 is independently verified current, services are rebound through the code-owned zero-owner path, and a fresh clean prerequisite canary proves its one terminal-preclaim lifecycle. The historical `865a7157`/migrations-1-through-29 baseline and polluted run 2075 cannot authorize fleet capacity or acceptance.
+
+Every E fleet/cold/docs preflight, scheduler transition, execution, recovery, status, finalization, and acceptance chain freshly resolves A's exact `InternalProductionPostRebindEntryAuthorityPairV1`, requires byte equality with the pair propagated B→C→D in `RecoveryOperationalAcceptanceV1`, and equality-binds it to the same execution-time source pair. Missing, stale, copied, cross-paired, or source-drifted successor authority blocks before capacity or mutation.
+
+### Exact D-to-E post-rebind binding
+
+The E scheduler/composition, fleet status/preflight guard, cold coordinator, pre-packet input, final-closure finalizer, and post-handoff verifier statically import without alias `InternalProductionPostRebindEntryAuthorityPairV1`, `resolveInternalProductionPostRebindEntryAuthorityV1`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1` only from `./baseline-post-handoff-receipt-v1.js`. Before E's first D-import acceptance read, capacity/preflight/status seal, scheduler transition, cold action, docs/final-closure input, or mutation, production zero-input verifies A's successor, pair-only resolves it, resolves D's exact operational acceptance, and requires pair equality through D/C/B. No CLI, fleet/cold/final-closure input, port, guard issuer, or caller accepts either scalar locator.
+
+`GoldenFleetStatusV1`, `GoldenFleetPreflightGuardV1`, fleet settlement/finalization, cold status/receipt, `InternalProductionFinalClosureInputV1`, packet/finalization, docs completion, and post-handoff/final-acceptance receipts repeat exact non-null `postRebindEntryAuthorityRef`/`postRebindEntryAuthorityHash`. Only an E status before authenticated D import has both null; every prepared/running/frozen/blocked/accepted successor has both non-null, with no half-null branch. Source-boundary/AST tests enforce the direct A imports and first-call order. Runtime/store tests reject caller locators, structural clones, stale-current A, A/D cross-pairs, null splits, pair drift through fleet/cold/closure/docs handoff, nested predecessor tamper, status/input/finalization tamper, or source mismatch before any capacity or publication effect. Status/preflight shell JSON extracts and byte-compares the pair with a fresh A verifier response but never feeds it back.
+
+For every operational package command, the owning resolver supplies authenticated read-only `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` bindings. The command independently proves that root is clean literal `main` and that `HEAD === refs/remotes/origin/main === SETFARM_ROOT_EXPECTED_SHA` before use; there is no workstation-path fallback.
+
 ## Global Constraints
 
 - This is Subproject E. Begin source implementation only after reviewed A-D source changes are merged. Begin live fleet execution only after the E source PR is merged and both repositories are clean synchronized `main` builds.
@@ -63,6 +77,8 @@ export const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_E_V1 = {
 export interface InternalProductionFleetOwnerProducerManifestActivationReceiptV1 {
   schema: "setfarm.internal-production-fleet-owner-producer-manifest-activation.v1";
   phase: "A+B+C+D+E";
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   reviewedSetfarmSourceRef: CanonicalRef;
   reviewedSetfarmSourceHash: string;
   cleanSetfarmBuildRef: CanonicalRef;
@@ -88,10 +104,14 @@ export interface InternalProductionFleetOwnerProducerManifestActivationReceiptV1
 export type InternalProductionFleetOwnerProducerManifestActivationStatusV1 =
   | Readonly<{
       status: "absent";
+      postRebindEntryAuthorityRef: null;
+      postRebindEntryAuthorityHash: null;
       receipt: null;
     }>
   | Readonly<{
       status: "activated";
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       receipt: InternalProductionFleetOwnerProducerManifestActivationReceiptV1;
     }>;
 
@@ -323,7 +343,8 @@ Before Task 1 changes any source, report branch name `feat/internal-production-f
 
 ```bash
 set -euo pipefail
-readonly E_SF_ROOT=/Users/setrox/ai/setrox/setfarm
+: "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+readonly E_SF_ROOT="$SETFARM_ROOT"
 E_SOURCE_WORKTREE="$(git rev-parse --show-toplevel)"
 readonly E_SOURCE_WORKTREE
 test "$E_SOURCE_WORKTREE" != "$E_SF_ROOT"
@@ -537,15 +558,38 @@ It rejects every other campaign/date, duplicate/unknown flag, and output/path/re
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 node --import tsx --test \
   tests/internal-production/golden-fleet-c-gateway-contract.test.ts \
   tests/internal-production/golden-fleet-catalog.test.ts \
   tests/internal-production/golden-fleet-catalog-cli.test.ts \
   tests/internal-production/golden-fleet-source-boundary.test.ts
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden-fleet-catalog -- prepare \
   --campaign internal-production-fleet-2026-08-14 \
   --campaign-date 2026-08-14 \
   --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden-fleet-catalog -- prepare \
   --campaign internal-production-fleet-2026-08-14 \
   --campaign-date 2026-08-14 \
@@ -626,6 +670,8 @@ export type GoldenFleetBlockerCodeV1 =
 export interface GoldenFleetStatusV1 {
   schema: "setfarm.internal-production-golden-fleet-status.v1";
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   orderedResultHashes: readonly string[];
   timeoutReconciliationAuthorities: readonly GoldenCommittedTimeoutReconciliationPairAuthorityV1[];
@@ -646,6 +692,8 @@ export interface GoldenFleetStatusV1 {
 export interface GoldenFleetPreflightGuardV1 {
   schema: "setfarm.internal-production-golden-fleet-preflight-guard.v1";
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   loadedCampaignHash: string;
   operationalAcceptanceRef: CanonicalRef;
@@ -1916,6 +1964,8 @@ export interface ColdRehearsalStateV1 {
   campaignHash: string;
   setfarmSha: string;
   missionControlSha: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   epochHash: string;
   attemptOrdinal: 1 | 2 | 3;
@@ -1996,6 +2046,8 @@ export interface ColdRehearsalReceiptV1 {
   campaignHash: string;
   setfarmSha: string;
   missionControlSha: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   epochHash: string;
   attemptOrdinal: 1 | 2 | 3;
@@ -2209,6 +2261,8 @@ export function deriveInternalProductionClosureGenerationV1(input: Readonly<{
 export interface InternalProductionFinalClosureInputV1 {
   schema: "setfarm.internal-production-final-closure-input.v1";
   closureId: "internal-production-closure-2026-08-14";
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   source: Readonly<{ setfarmSha: string; missionControlSha: string }>;
   sourceBuildAuthorityRef: CanonicalRef;
   sourceBuildAuthorityHash: string;
@@ -2376,6 +2430,8 @@ export type InternalProductionFinalClosurePacketV1 = Readonly<
 export interface InternalProductionFinalClosureFinalizationV1 {
   schema: "setfarm.internal-production-final-closure-finalization.v1";
   inputHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   prePacketReviewReceiptRef: CanonicalRef;
   prePacketReviewReceiptHash: string;
   reviewHistoryRef: CanonicalRef;
@@ -3137,6 +3193,27 @@ Save `E_MISSION_CONTROL_CONSUMER_SHA` from this clean main and require it to equ
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 cd "$E_SF_ROOT"
 E_SHELL_TEST_VALUE_015="$(git branch --show-current)"
 test "$E_SHELL_TEST_VALUE_015" = "main"
@@ -3152,14 +3229,21 @@ test -z "$E_SHELL_GUARD_OUTPUT"
 E_SHELL_TEST_VALUE_019="$(git -C /Users/setrox/ai/setrox/mission-control rev-parse HEAD)"
 E_SHELL_TEST_VALUE_020="$(git -C /Users/setrox/ai/setrox/mission-control rev-parse origin/main)"
 test "$E_SHELL_TEST_VALUE_019" = "$E_SHELL_TEST_VALUE_020"
+require_authenticated_clean_main_setfarm_root_v1
 npm ci
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:audit-current-authority-ledgers
 git -C /Users/setrox/ai/setrox/mission-control clean -ndX >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 (cd /Users/setrox/ai/setrox/mission-control && npm ci && npm run build && npm test)
 
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_MANIFEST_ACTIVATION="$(npm run --silent acceptance:final-closure-packet -- activate-fleet-owner-producer-manifest --json)"
 printf '%s\n' "$E_FLEET_MANIFEST_ACTIVATION" | jq -e '
   .schema == "setfarm.internal-production-fleet-owner-producer-manifest-activation.v1" and
@@ -3178,6 +3262,7 @@ printf '%s\n' "$E_FLEET_MANIFEST_ACTIVATION" | jq -e '
   (.activationHeadRef | startswith("setfarm://internal-production/")) and
   (.activationHeadHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_MANIFEST_ACTIVATION_STATUS="$(npm run --silent acceptance:final-closure-packet -- fleet-owner-producer-manifest-activation-status --json)"
 E_FLEET_MANIFEST_ACTIVATION_RECEIPT_REF="$(printf '%s\n' "$E_FLEET_MANIFEST_ACTIVATION" | jq -er '.receiptRef')"
 E_FLEET_MANIFEST_ACTIVATION_RECEIPT_HASH="$(printf '%s\n' "$E_FLEET_MANIFEST_ACTIVATION" | jq -er '.receiptHash')"
@@ -3206,6 +3291,7 @@ printf '%s\n' "$E_FLEET_MANIFEST_ACTIVATION_STATUS" | jq -e \
   .receipt.planProducerCounts == [11,10,6,16,9]
 ' >/dev/null
 
+require_authenticated_clean_main_setfarm_root_v1
 E_SOURCE_DELIVERY_STATUS="$(npm run --silent acceptance:final-closure-packet -- source-delivery-status --json)"
 E_DURABLE_SETFARM_HANDOFF_SHA="$(printf '%s\n' "$E_SOURCE_DELIVERY_STATUS" | jq -er '.setfarm.mergeSha')"
 E_DURABLE_MC_HANDOFF_SHA="$(printf '%s\n' "$E_SOURCE_DELIVERY_STATUS" | jq -er '.missionControl.mergeSha')"
@@ -3229,6 +3315,7 @@ E_FINAL_SETfarm_SHA="$E_POSTBUILD_SF_HEAD"
 readonly E_FINAL_SETfarm_SHA
 E_FINAL_MC_SHA="$E_POSTBUILD_MC_HEAD"
 readonly E_FINAL_MC_SHA
+require_authenticated_clean_main_setfarm_root_v1
 E_SOURCE_REBIND="$(npm run --silent acceptance:final-closure-packet -- rebind-source-services --json)"
 printf '%s\n' "$E_SOURCE_REBIND" | jq -e \
   --arg sf "$E_FINAL_SETfarm_SHA" --arg mc "$E_FINAL_MC_SHA" '
@@ -3277,6 +3364,7 @@ printf '%s\n' "$E_SOURCE_REBIND" | jq -e \
   )) and
   (.finalZeroOwnerCensusHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:baseline-post-handoff -- runtime-source \
   --setfarm-sha "$E_FINAL_SETfarm_SHA" \
   --mission-control-sha "$E_FINAL_MC_SHA" \
@@ -3301,7 +3389,28 @@ Expected: after D's helper/consumer handoffs and E's serialized Setfarm delivery
 
 ```bash
 set -euo pipefail
-readonly E_SF_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly E_SF_ROOT="$SETFARM_ROOT"
 readonly E_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 readonly E_MATRIX="$E_SF_ROOT/evals/suites/internal-production-golden-matrix-v1.json"
 E_SETFARM_SHA="$(git -C "$E_SF_ROOT" rev-parse HEAD)"
@@ -3313,6 +3422,7 @@ test -z "$E_SHELL_GUARD_OUTPUT"
 E_SHELL_GUARD_OUTPUT="$(git -C "$E_MC_ROOT" status --porcelain=v1 --untracked-files=all)"
 test -z "$E_SHELL_GUARD_OUTPUT"
 cd "$E_SF_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 E_LAUNCH_MIGRATION_VERIFICATION="$(node dist/internal-production/golden-run-cli.js \
   verify-launch-operation-migration --json)"
 printf '%s\n' "$E_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
@@ -3328,6 +3438,7 @@ printf '%s\n' "$E_LAUNCH_MIGRATION_VERIFICATION" | jq -e \
   (.schemaProjectionHash | test("^[0-9a-f]{64}$")) and
   (.verificationHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_MATRIX_STATUS="$(npm run --silent internal:golden-matrix -- status \
   --matrix "$E_MATRIX" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3346,6 +3457,7 @@ printf '%s\n' "$E_MATRIX_STATUS" | jq -e \
 ' >/dev/null
 E_MATRIX_RECEIPT_REF="$(printf '%s\n' "$E_MATRIX_STATUS" | jq -er '.matrixReceiptRef')"
 E_MATRIX_RECEIPT_HASH="$(printf '%s\n' "$E_MATRIX_STATUS" | jq -er '.matrixReceiptHash')"
+require_authenticated_clean_main_setfarm_root_v1
 E_MATRIX_FINALIZATION="$(npm run --silent internal:golden-matrix -- finalization-status \
   --matrix "$E_MATRIX" \
   --json)"
@@ -3362,13 +3474,17 @@ printf '%s\n' "$E_MATRIX_FINALIZATION" | jq -e \
   (.finalizationHash | type == "string" and test("^[0-9a-f]{64}$")) and
   (.finalizerOutputHash | type == "string" and test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_D_CONTROL="$(npm run --silent acceptance:recovery -- control-value --name recovery-campaign-hash --json)"
 E_D_CAMPAIGN_HASH="$(printf '%s\n' "$E_D_CONTROL" | jq -er '
   select(.schema == "setfarm.internal-production-recovery-control-value.v1") |
   select(.name == "recovery-campaign-hash") | .value
 ')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-campaign --campaign-hash "$E_D_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-browser-acceptance --campaign-hash "$E_D_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 E_D_FINALIZATION="$(npm run --silent acceptance:recovery -- finalize-packet \
   --campaign-hash "$E_D_CAMPAIGN_HASH" \
   --setfarm-source-sha "$E_SETFARM_SHA" \
@@ -3383,6 +3499,7 @@ printf '%s\n' "$E_D_FINALIZATION" | jq -e \
   (.recoveryMatrixMarkdownHash | type == "string" and test("^[0-9a-f]{64}$")) and
   (.recoveryReconciliationMarkdownHash | type == "string" and test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_D_OPERATIONAL_ACCEPTANCE="$(npm run --silent acceptance:recovery -- \
   record-operational-acceptance --campaign-hash "$E_D_CAMPAIGN_HASH" --json)"
 E_D_OPERATIONAL_ACCEPTANCE_REF="$(printf '%s\n' "$E_D_OPERATIONAL_ACCEPTANCE" | jq -er '.acceptanceRef')"
@@ -3397,6 +3514,7 @@ printf '%s\n' "$E_D_OPERATIONAL_ACCEPTANCE" | jq -e \
   (.acceptanceRef | startswith("setfarm://internal-production/recovery/operational-acceptances/sha256/")) and
   (.acceptanceHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-operational-acceptance \
   --acceptance-ref "$E_D_OPERATIONAL_ACCEPTANCE_REF" \
   --acceptance-hash "$E_D_OPERATIONAL_ACCEPTANCE_HASH" --json
@@ -3430,7 +3548,29 @@ test "$E_SHELL_TEST_VALUE_025" = "10"
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 cd "$E_SF_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_PREFLIGHT_GUARD="$(npm run --silent internal:golden -- fleet-preflight \
   --campaign "$E_CAMPAIGN" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3438,6 +3578,7 @@ E_FLEET_PREFLIGHT_GUARD="$(npm run --silent internal:golden -- fleet-preflight \
   --json)"
 E_FLEET_PREFLIGHT_GUARD_REF="$(printf '%s\n' "$E_FLEET_PREFLIGHT_GUARD" | jq -er '.guardRef')"
 E_FLEET_PREFLIGHT_GUARD_HASH="$(printf '%s\n' "$E_FLEET_PREFLIGHT_GUARD" | jq -er '.guardHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden -- fleet-execute-next \
   --campaign "$E_CAMPAIGN" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3451,14 +3592,43 @@ The guard capture and consuming execute are one fail-fast block; no command may 
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+E_A_POST_REBIND_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json)"
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_STATUS_JSON="$(npm run --silent internal:golden -- fleet-status \
   --campaign "$E_CAMPAIGN" \
   --release-sha "$E_SETFARM_SHA" \
   --mission-control-sha "$E_MISSION_CONTROL_SHA" \
   --json)"
+test "$(printf '%s\n' "$E_FLEET_STATUS_JSON" | jq -er '.postRebindEntryAuthorityRef')" = \
+  "$(printf '%s\n' "$E_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityRef')"
+test "$(printf '%s\n' "$E_FLEET_STATUS_JSON" | jq -er '.postRebindEntryAuthorityHash')" = \
+  "$(printf '%s\n' "$E_A_POST_REBIND_JSON" | jq -er '.postRebindEntryAuthorityHash')"
 E_FLEET_CAMPAIGN_HASH="$(printf '%s' "$E_FLEET_STATUS_JSON" | jq -er '.campaignHash')"
 E_INFLIGHT_REF="$(printf '%s' "$E_FLEET_STATUS_JSON" | jq -er '.inflight[0].inflightRef')"
 E_INFLIGHT_HASH="$(printf '%s' "$E_FLEET_STATUS_JSON" | jq -er '.inflight[0].inflightHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden -- fleet-recover-inflight \
   --campaign-hash "$E_FLEET_CAMPAIGN_HASH" \
   --inflight-ref "$E_INFLIGHT_REF" \
@@ -3478,6 +3648,28 @@ Use C's exact observer and writer; never manufacture verification hashes in the 
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 E_REPAIR_BUNDLE_JSON="$(npm run --silent internal:golden-repair-review -- observe-repair \
   --campaign "$E_CAMPAIGN" \
   --case "$E_FAILED_CASE_ID" \
@@ -3490,6 +3682,7 @@ E_INDEPENDENT_REVIEW_HASH="$(printf '%s\n' "$E_REPAIR_BUNDLE_JSON" | jq -er '.in
 E_FOCUSED_VERIFICATION_HASH="$(printf '%s\n' "$E_REPAIR_BUNDLE_JSON" | jq -er '.focusedVerificationHash')"
 E_BROAD_VERIFICATION_HASH="$(printf '%s\n' "$E_REPAIR_BUNDLE_JSON" | jq -er '.broadVerificationHash')"
 E_CLEAN_BUILD_HASH="$(printf '%s\n' "$E_REPAIR_BUNDLE_JSON" | jq -er '.cleanBuildHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run internal:golden-repair-review -- record \
   --campaign "$E_CAMPAIGN" \
   --case "$E_FAILED_CASE_ID" \
@@ -3512,6 +3705,28 @@ After each repair merge, end the old shell that holds read-only SHA variables. I
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_STATUS_JSON="$(npm run --silent internal:golden -- fleet-status \
   --campaign "$E_CAMPAIGN" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3566,7 +3781,28 @@ Task 8 cannot begin merely because D source merged or the fleet settled. Re-reso
 
 ```bash
 set -euo pipefail
-readonly E_SF_ROOT=/Users/setrox/ai/setrox/setfarm
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+readonly E_SF_ROOT="$SETFARM_ROOT"
 readonly E_MC_ROOT=/Users/setrox/ai/setrox/mission-control
 readonly E_CAMPAIGN="$E_SF_ROOT/evals/suites/internal-production-golden-fleet-v1.json"
 E_SETFARM_SHA="$(git -C "$E_SF_ROOT" rev-parse HEAD)"
@@ -3574,6 +3810,7 @@ readonly E_SETFARM_SHA
 E_MISSION_CONTROL_SHA="$(git -C "$E_MC_ROOT" rev-parse HEAD)"
 readonly E_MISSION_CONTROL_SHA
 cd "$E_SF_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 D_RECOVERY_CONTROL="$(npm run --silent acceptance:recovery -- control-value --name recovery-campaign-hash --json)"
 D_RECOVERY_CAMPAIGN_HASH="$(printf '%s\n' "$D_RECOVERY_CONTROL" | jq -er '
   select(.schema == "setfarm.internal-production-recovery-control-value.v1") |
@@ -3596,8 +3833,11 @@ E_SHELL_TEST_VALUE_031="$(git -C "$E_MC_ROOT" rev-parse origin/main)"
 test "$E_SHELL_TEST_VALUE_030" = "$E_SHELL_TEST_VALUE_031"
 E_SHELL_TEST_VALUE_032="$(printf '%s' "$D_RECOVERY_CAMPAIGN_HASH" | rg -o '^[0-9a-f]{64}$')"
 test "$D_RECOVERY_CAMPAIGN_HASH" = "$E_SHELL_TEST_VALUE_032"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-campaign --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-browser-acceptance --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH"
+require_authenticated_clean_main_setfarm_root_v1
 C_MATRIX_STATUS="$(npm run --silent internal:golden-matrix -- status \
   --matrix "$E_SF_ROOT/evals/suites/internal-production-golden-matrix-v1.json" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3609,6 +3849,7 @@ C_MATRIX_RECEIPT_REF="$(printf '%s\n' "$C_MATRIX_STATUS" | jq -er '
 C_MATRIX_RECEIPT_HASH="$(printf '%s\n' "$C_MATRIX_STATUS" | jq -er '
   .matrixReceiptHash | select(test("^[0-9a-f]{64}$"))
 ')"
+require_authenticated_clean_main_setfarm_root_v1
 C_FINALIZATION_STATUS="$(npm run --silent internal:golden-matrix -- finalization-status \
   --matrix "$E_SF_ROOT/evals/suites/internal-production-golden-matrix-v1.json" \
   --json)"
@@ -3626,6 +3867,7 @@ printf '%s\n' "$C_FINALIZATION_STATUS" | jq -e \
 ' >/dev/null
 C_REPORT_TARGET="$(printf '%s\n' "$C_FINALIZATION_STATUS" | jq -er '.reportPath')"
 case "$C_REPORT_TARGET" in docs/review-packets/*-golden-run-report.md) ;; *) exit 1 ;; esac
+require_authenticated_clean_main_setfarm_root_v1
 D_FINALIZATION_STATUS="$(npm run --silent acceptance:recovery -- finalize-packet \
   --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" \
   --setfarm-source-sha "$E_SETFARM_SHA" \
@@ -3638,10 +3880,12 @@ printf '%s\n' "$D_FINALIZATION_STATUS" | jq -e \
   (.recoveryMatrixMarkdownHash | test("^[0-9a-f]{64}$")) and
   (.recoveryReconciliationMarkdownHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 D_OPERATIONAL_ACCEPTANCE_STATUS="$(npm run --silent acceptance:recovery -- \
   record-operational-acceptance --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json)"
 D_OPERATIONAL_ACCEPTANCE_REF="$(printf '%s\n' "$D_OPERATIONAL_ACCEPTANCE_STATUS" | jq -er '.acceptanceRef')"
 D_OPERATIONAL_ACCEPTANCE_HASH="$(printf '%s\n' "$D_OPERATIONAL_ACCEPTANCE_STATUS" | jq -er '.acceptanceHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-operational-acceptance \
   --acceptance-ref "$D_OPERATIONAL_ACCEPTANCE_REF" \
   --acceptance-hash "$D_OPERATIONAL_ACCEPTANCE_HASH" --json
@@ -3654,6 +3898,28 @@ Expected: C's status receipt and finalization pointer repeat one exact `matrixRe
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 E_FLEET_STATUS_JSON="$(npm run --silent internal:golden -- fleet-status \
   --campaign "$E_CAMPAIGN" \
   --release-sha "$E_SETFARM_SHA" \
@@ -3681,6 +3947,7 @@ printf '%s\n' "$E_FLEET_STATUS_JSON" | jq -e \
   (.settlementHash | type == "string" and length == 64)
 ' >/dev/null
 E_RENDER_RESULT_HASH="$(printf '%s\n' "$E_FLEET_STATUS_JSON" | jq -er '.currentEpochResultHashes[0]')"
+require_authenticated_clean_main_setfarm_root_v1
 E_EXTERNAL_PREFLIGHT_JSON="$(npm run --silent acceptance:external-distribution-preflight -- \
   record-readiness-v2 --json)"
 printf '%s\n' "$E_EXTERNAL_PREFLIGHT_JSON" | jq -e '
@@ -3699,6 +3966,7 @@ printf '%s\n' "$E_EXTERNAL_PREFLIGHT_JSON" | jq -e '
   (.blockers | length == 5) and
   .productionAuthority == false and .productionAdmission == "blocked"
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_COLD_RECEIPT_JSON="$(npm run --silent acceptance:cold-rehearsal -- run \
   --campaign "$E_CAMPAIGN" \
   --setfarm-sha "$E_SETFARM_SHA" \
@@ -3751,15 +4019,38 @@ Expected: all phases complete in order and the private terminal receipt is conte
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 E_SHELL_GUARD_OUTPUT="$(git -C "$E_SF_ROOT" status --porcelain=v1 --untracked-files=all)"
 test -z "$E_SHELL_GUARD_OUTPUT"
 E_SHELL_GUARD_OUTPUT="$(git -C "$E_MC_ROOT" status --porcelain=v1 --untracked-files=all)"
 test -z "$E_SHELL_GUARD_OUTPUT"
+require_authenticated_clean_main_setfarm_root_v1
 E_FINALIZATION_JSON="$(npm run --silent internal:golden -- finalize-report \
   --campaign "$E_CAMPAIGN" \
   --json)"
-printf '%s\n' "$E_FINALIZATION_JSON" | \
-  npm run --silent acceptance:final-closure-packet -- record-finalizer-output --json
+require_authenticated_clean_main_setfarm_root_v1
+npm run --silent acceptance:final-closure-packet -- record-finalizer-output --json \
+  <<<"$E_FINALIZATION_JSON"
 E_FINALIZATION_HASH="$(printf '%s\n' "$E_FINALIZATION_JSON" | jq -er '
   select(.schema == "setfarm.internal-production-finalized-campaign-report.v1") |
   select(.finalReleaseEpoch.epochHash | type == "string" and length == 64) |
@@ -3777,6 +4068,28 @@ Ask an independent reviewer to inspect the fixed A baseline, B finalizer output/
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
 E_REVIEW_ALLOCATION="$(npm run --silent acceptance:final-closure-packet -- allocate-review-observation --json)"
 E_REVIEW_OBSERVATION="$(printf '%s\n' "$E_REVIEW_ALLOCATION" | jq -er '.path')"
 E_REVIEW_OBSERVATION_REF="$(printf '%s\n' "$E_REVIEW_ALLOCATION" | jq -er '.observationRef')"
@@ -3787,6 +4100,7 @@ E_SHELL_TEST_VALUE_033="$(stat -f '%l' "$E_REVIEW_OBSERVATION")"
 test "$E_SHELL_TEST_VALUE_033" = "1"
 E_SHELL_TEST_VALUE_034="$(stat -f '%Lp' "$E_REVIEW_OBSERVATION")"
 test "$E_SHELL_TEST_VALUE_034" = "600"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:final-closure-packet -- record-review \
   --observation-ref "$E_REVIEW_OBSERVATION_REF" \
   --json
@@ -3799,8 +4113,31 @@ Still on clean canonical `main`, seal the exact reviewed final input and its two
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 cd "$E_SF_ROOT"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:final-closure-packet -- prepare-input --json
+require_authenticated_clean_main_setfarm_root_v1
 E_CLOSURE_FINALIZATION="$(npm run --silent acceptance:final-closure-packet -- finalize-private --json)"
 E_CLOSURE_FINALIZATION_HASH="$(printf '%s\n' "$E_CLOSURE_FINALIZATION" | jq -er '.finalizationHash | select(test("^[0-9a-f]{64}$"))')"
 E_CLOSURE_PACKET_HASH="$(printf '%s\n' "$E_CLOSURE_FINALIZATION" | jq -er '.packetHash | select(test("^[0-9a-f]{64}$"))')"
@@ -3838,6 +4175,27 @@ Report requested branch `docs/internal-production-fleet-closure`, clean operatio
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 test -n "$E_DOCS_CLAIM_WORKTREE"
 test -n "$E_DOCS_CLAIM_BRANCH"
 test -n "$E_DOCS_CLAIM_MERGE_BASE_SHA"
@@ -3865,6 +4223,7 @@ test "$E_DOCS_CLAIM_MERGE_BASE_SHA" = "$E_SETFARM_SHA"
 E_SHELL_TEST_VALUE_042="$(git merge-base HEAD origin/main)"
 test "$E_SHELL_TEST_VALUE_042" = "$E_DOCS_CLAIM_MERGE_BASE_SHA"
 git merge-base --is-ancestor "$E_SETFARM_SHA" HEAD
+require_authenticated_clean_main_setfarm_root_v1
 npm ci
 E_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$E_SHELL_GUARD_OUTPUT"
@@ -3873,6 +4232,7 @@ E_EXPECTED_CLOSURE_GENERATION_HASH="$(printf '%s\n' "$E_CLOSURE_FINALIZATION" | 
 E_EXPECTED_CLOSURE_GENERATION_DIRECTORY="epoch-${E_EXPECTED_EPOCH_HASH}-closure-${E_EXPECTED_CLOSURE_GENERATION_HASH}"
 E_SHELL_TEST_VALUE_043="$(printf '%s\n' "$E_CLOSURE_FINALIZATION" | jq -er '.closureGenerationDirectory')"
 test "$E_SHELL_TEST_VALUE_043" = "$E_EXPECTED_CLOSURE_GENERATION_DIRECTORY"
+require_authenticated_clean_main_setfarm_root_v1
 E_MATERIALIZATION="$(npm run --silent acceptance:final-closure-packet -- materialize-all \
   --finalization-hash "$E_CLOSURE_FINALIZATION_HASH" \
   --json)"
@@ -3960,6 +4320,27 @@ Expected: exactly the six named untracked documentation paths in the already ass
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 cd "$E_SF_ROOT"
 E_SHELL_TEST_VALUE_049="$(git branch --show-current)"
 test "$E_SHELL_TEST_VALUE_049" = "main"
@@ -3987,8 +4368,11 @@ E_SHELL_TEST_VALUE_057="$(git -C "$E_MC_ROOT" rev-parse HEAD)"
 test "$E_SHELL_TEST_VALUE_057" = "$E_MISSION_CONTROL_SHA"
 E_SHELL_TEST_VALUE_058="$(git -C "$E_MC_ROOT" rev-parse origin/main)"
 test "$E_SHELL_TEST_VALUE_058" = "$E_MISSION_CONTROL_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 npm test
+require_authenticated_clean_main_setfarm_root_v1
 (cd "$E_MC_ROOT" && npm test)
+require_authenticated_clean_main_setfarm_root_v1
 E_POST_HANDOFF_INTENT="$(npm run --silent acceptance:final-closure-packet -- begin-post-handoff --json)"
 printf '%s\n' "$E_POST_HANDOFF_INTENT" | jq -e \
   --arg operational "$E_SETFARM_SHA" \
@@ -4012,6 +4396,7 @@ printf '%s\n' "$E_POST_HANDOFF_INTENT" | jq -e \
 ' >/dev/null
 E_POST_HANDOFF_INTENT_REF="$(printf '%s\n' "$E_POST_HANDOFF_INTENT" | jq -er '.intentRef')"
 E_POST_HANDOFF_INTENT_HASH="$(printf '%s\n' "$E_POST_HANDOFF_INTENT" | jq -er '.intentHash')"
+require_authenticated_clean_main_setfarm_root_v1
 E_POST_HANDOFF_READY="$(npm run --silent acceptance:final-closure-packet -- execute-post-handoff --json)"
 printf '%s\n' "$E_POST_HANDOFF_READY" | jq -e \
   --arg intentRef "$E_POST_HANDOFF_INTENT_REF" \
@@ -4026,6 +4411,7 @@ printf '%s\n' "$E_POST_HANDOFF_READY" | jq -e \
   (.readyRef | type == "string" and startswith("setfarm://internal-production/")) and
   (.readyHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_POST_HANDOFF="$(npm run --silent acceptance:final-closure-packet -- record-post-handoff --json)"
 E_POST_HANDOFF_FINAL_LEASE_REF="$(printf '%s\n' "$E_POST_HANDOFF_READY" | jq -er '.finalCoordinatorLeaseRecordRef')"
 E_POST_HANDOFF_FINAL_LEASE_HASH="$(printf '%s\n' "$E_POST_HANDOFF_READY" | jq -er '.finalCoordinatorLeaseRecordHash')"
@@ -4132,13 +4518,17 @@ printf '%s\n' "$E_POST_HANDOFF" | jq -e \
   .externalPreflight.productionAdmission == "blocked" and
   (.receiptHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:final-closure-packet -- verify-current-post-handoff --json
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:final-closure-packet -- resolve-post-handoff --json
+require_authenticated_clean_main_setfarm_root_v1
 E_FINAL_ACCEPTANCE="$(npm run --silent acceptance:final-closure-packet -- verify-final-acceptance --json)"
 E_SHELL_TEST_VALUE_059="$(printf '%s\n' "$E_FINAL_ACCEPTANCE" | jq -er '.receiptHash')"
 E_SHELL_TEST_VALUE_060="$(printf '%s\n' "$E_POST_HANDOFF" | jq -er '.receiptHash')"
 test "$E_SHELL_TEST_VALUE_059" = \
   "$E_SHELL_TEST_VALUE_060"
+require_authenticated_clean_main_setfarm_root_v1
 D_DOCS_DELIVERY_ACCEPTANCE="$(npm run --silent acceptance:final-closure-packet -- \
   record-recovery-docs-delivery --campaign-hash "$D_RECOVERY_CAMPAIGN_HASH" --json)"
 printf '%s\n' "$D_DOCS_DELIVERY_ACCEPTANCE" | jq -e \
@@ -4157,11 +4547,13 @@ printf '%s\n' "$D_DOCS_DELIVERY_ACCEPTANCE" | jq -e \
 ' >/dev/null
 D_DOCS_DELIVERY_ACCEPTANCE_REF="$(printf '%s\n' "$D_DOCS_DELIVERY_ACCEPTANCE" | jq -er '.deliveryRef')"
 D_DOCS_DELIVERY_ACCEPTANCE_HASH="$(printf '%s\n' "$D_DOCS_DELIVERY_ACCEPTANCE" | jq -er '.deliveryHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run acceptance:recovery -- verify-docs-delivery-acceptance \
   --delivery-ref "$D_DOCS_DELIVERY_ACCEPTANCE_REF" \
   --delivery-hash "$D_DOCS_DELIVERY_ACCEPTANCE_HASH" --json
 curl -fsS http://127.0.0.1:3080/api/health | jq -e '.status == "healthy"' >/dev/null
 curl -fsS http://127.0.0.1:3333/ >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 E_EXTERNAL_PREFLIGHT_RECHECK="$(npm run --silent acceptance:external-distribution-preflight -- \
   record-readiness-v2 --json)"
 E_POST_HANDOFF_EXTERNAL_PREFLIGHT_HASH="$(printf '%s\n' "$E_POST_HANDOFF" | jq -er '.externalPreflight.evidenceHash')"

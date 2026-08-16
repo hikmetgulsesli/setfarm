@@ -10,6 +10,32 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-setfarm-mission-control-internal-production-closure-design.md`
 
+## 2026-08-16 Execution Rebaseline
+
+Product Build Authority V2 and `setfarm.run-operational-snapshot.v3` are already delivered inputs. The historical `865a7157` release examples below are archival fixtures, not current launch authority. Real harness preflight starts only from an execution-time exact clean synchronized Setfarm `main` descendant that retains reviewed Authority-V3 PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor, after contract-spine migration 31 is independently verified current, services are rebound through the code-owned zero-owner path, and a fresh clean prerequisite canary proves one terminal claim/termination lifecycle without redispatch. No command may resume polluted run 2075 or substitute the migrations-1-through-29 historical baseline.
+
+Every B preflight, migration-release status, execute, collect, reconciliation, and finalization chain freshly resolves A's exact `InternalProductionPostRebindEntryAuthorityPairV1` and equality-binds it to the same execution-time Setfarm/Mission Control source pair. The pre-rebind current-entry pair appears only as the immutable predecessor nested inside A's successor. A missing, stale, structurally copied, cross-paired, or source-drifted post-rebind pair blocks before repository construction or mutation.
+
+### Exact A-to-B post-rebind binding
+
+`golden-run-contract-v1.ts`, `golden-launch-operation-migration-release-v1.ts`, and the B composition root statically import these exact names without alias, facade, namespace, dynamic import, wrapper, or local projection:
+
+```ts
+import type {
+  InternalProductionPostRebindEntryAuthorityPairV1,
+} from "./baseline-post-handoff-receipt-v1.js";
+import {
+  resolveInternalProductionPostRebindEntryAuthorityV1,
+  verifyCurrentInternalProductionPostRebindEntryAuthorityV1,
+} from "./baseline-post-handoff-receipt-v1.js";
+```
+
+Before B's first prepare/preflight/store/reservation/repository or migration-release mutation, the production composition zero-input calls `verifyCurrentInternalProductionPostRebindEntryAuthorityV1()`, then pair-only calls `resolveInternalProductionPostRebindEntryAuthorityV1({postRebindEntryAuthorityRef,postRebindEntryAuthorityHash})` with exactly the returned pair. No CLI, campaign, epoch constructor, port, or caller supplies either scalar locator. `GoldenFinalReleaseEpochV1`, `GoldenPreflightReleaseAuthorityV1`, every admitted launch intent/start/result, migration-release non-absent status/receipt/current verification, campaign settlement, and finalization repeat the exact two fields. `createGoldenFinalReleaseEpochV1({setfarmSha,missionControlSha})` keeps its two-field caller input and obtains the pair only from the verified production composition.
+
+For `blocked-before-authority`, both post-rebind fields are null; every `blocked-after-authority|admitted` preflight and every non-absent migration-release state requires both non-null. No half-null branch parses. Source-boundary/AST tests require the imports and first-call ordering; runtime/store tests reject a structural clone, caller field/locator, null split, stale current pair, cross-pair ref/hash, pair drift between preflight/status/result/finalization, changed nested predecessor, and Setfarm/Mission Control source mismatch before any side effect. Status/shell tests extract the pair from B JSON and byte-compare it with a fresh A verifier result; extraction is observation only and is never fed back as authority.
+
+For every operational package command, the owning resolver supplies authenticated read-only `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` bindings. The command independently proves that root is clean literal `main` and that `HEAD === refs/remotes/origin/main === SETFARM_ROOT_EXPECTED_SHA` before use; there is no workstation-path fallback.
+
 ## Global Constraints
 
 - This plan implements Subproject B only. Subproject C supplies the ordered matrix, immutable existing-repository templates, one fresh attempt repository/remote per persisted intent, and concrete `GoldenProductAssertionPort` adapters against the interfaces defined here.
@@ -471,7 +497,7 @@ export type SetfarmBootstrapMainClaimHandoffReceiptV1 = Readonly<{
   observedOriginMainSha: string;
   claimBaseSha: string;
   claimId: string;
-  canonicalRoot: "/Users/setrox/ai/setrox/setfarm";
+  canonicalRoot: string;
   claimWorktreeRoot: string;
   canonicalBranch: "main";
   claimBranch: string;
@@ -590,9 +616,31 @@ Start a separate fresh operator process after Step 6b may have replaced the owne
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 p0_poll_attempt=0
 p0_bootstrap_state=""
 while test "$p0_poll_attempt" -lt 60; do
+  require_authenticated_clean_main_setfarm_root_v1
   p0_bootstrap_status="$(npm run --silent acceptance:completion-owner-receipts -- activation-status --json)"
   p0_bootstrap_state="$(printf '%s\n' "$p0_bootstrap_status" | jq -er '.state')"
   p0_status_ref="$(printf '%s\n' "$p0_bootstrap_status" | jq -er '.statusRef')"
@@ -673,6 +721,27 @@ The Setfarm controller accepts only the pair returned by the terminal handoff op
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
 canonical_root="$(git rev-parse --show-toplevel)"
 canonical_real_root="$(cd "$canonical_root" && pwd -P)"
 test "$canonical_real_root" = "$SETFARM_BOOTSTRAP_HANDOFF_CANONICAL_ROOT"
@@ -695,6 +764,7 @@ test -n "$SETFARM_BOOTSTRAP_HANDOFF_SETTLEMENT_REF"
 printf '%s\n' "$SETFARM_BOOTSTRAP_HANDOFF_SETTLEMENT_HASH" | rg -x '[0-9a-f]{64}'
 test -n "$SETFARM_BOOTSTRAP_HANDOFF_CONTINUATION_GRANT_REF"
 printf '%s\n' "$SETFARM_BOOTSTRAP_HANDOFF_CONTINUATION_GRANT_HASH" | rg -x '[0-9a-f]{64}'
+require_authenticated_clean_main_setfarm_root_v1
 p0_tree_projection="$(npm run --silent acceptance:completion-owner-receipts -- p0-tree-projection --source-sha "$head_sha" --json)"
 jq -e '
   .schema == "setfarm.p0-bootstrap-tree-projection.v1" and
@@ -776,7 +846,7 @@ Exercise the loader against the exact opened descriptor rather than a path prech
 
 Construct both valid path-free launch-intent members, their post-provision launch-execution bindings, durable starter-invocation-issued receipts, and authoritative start receipts. Each intent contains the code-owned positive `launchAttemptOrdinal`, complete `GoldenFinalReleaseEpochV1`, requires `releaseSha === finalReleaseEpoch.setfarmSha` and `releaseEpochHash === finalReleaseEpoch.epochHash`, and binds A's exact historical-baseline receipt hash plus Task 3A's canonical `recoveryContextRef/recoveryContextHash`; its start receipt repeats and equality-binds the ordinal and context pair. Recompute and assert every hash, then reject a changed/caller-skipped ordinal, changed/malformed epoch object/hash/release relation, changed historical-baseline receipt hash, changed/missing context pair, a full launch-task hash or pre-start set in the intent, unsorted/duplicate/more-than-64 binding IDs, changed logical correlation/context/full task/pre-start set/execution/issued/operation hash, strategy/preparation mismatch, changed canary-preparation/admission/fixture authority, start receipt not bound to the exact intent+context+execution+issued chain, mismatched run/workflow/protocol/release, and any selector token, raw task, absolute path, command, output, timestamp, or unknown field. The public issued/start receipts expose only path-free content identities and the operation hash; the raw task, fixture path, inherited-descriptor payload, and random claim secret are valid only inside the private mode-`0600` recovery-context or launch-operation stores and never parse through the launch/start schemas. Construct one valid path-free `GoldenExistingRepositoryFixtureAttemptV1` and require its attempt ordinal to equal the enclosing generic launch-attempt ordinal; reject a mismatched campaign/case/repetition/ordinal/epoch/intent/key/template/fixture/remote identity, a noncanonical repository URL or receipt ref, a changed provision hash, a local path, or an extra repository/template ref. Parse representative existing Setfarm refs including `setfarm://run/RUN_1`, `setfarm://run/RUN_1/step/final-test`, `setfarm://artifact/${"a".repeat(64)}`, and `setfarm://claim-log/17` through the exported `CanonicalRefSchema`; reject `http:`, `https:`, `file:`, bare paths, query/fragment syntax, whitespace, empty segments, and every non-`setfarm://` URI family. B's own source-boundary assertion proves this is the sole canonical-ref grammar in B and permits zero downstream consumers at B delivery time. Each later C/D/E suite must independently assert that its modules import this exact export, define no local regex, and use no second URI family; B never requires a future source file to exist before its own source PR can pass.
 
-Construct a valid `GoldenFinalReleaseEpochV1`, require Git-object hashes for Setfarm and Mission Control, and recompute `epochHash = hashCanonicalJson({ schema, setfarmSha, missionControlSha })`. Reject a changed SHA/hash, extra field, timestamp, branch, version, dirty flag, or caller-authored epoch hash. Prove a result matches an epoch only when both exact release SHAs match; version strings or one matching SHA are insufficient.
+Construct a valid `GoldenFinalReleaseEpochV1`, require Git-object hashes for Setfarm and Mission Control plus A's freshly verified post-rebind pair, and recompute `epochHash = hashCanonicalJson({ schema, setfarmSha, missionControlSha, postRebindEntryAuthorityRef, postRebindEntryAuthorityHash })`. Reject a changed SHA/pair/hash, caller-supplied pair, structural A authority, extra field, timestamp, branch, version, dirty flag, or caller-authored epoch hash. Prove a result matches an epoch only when both exact release SHAs and the post-rebind pair match; version strings, one SHA, or a cross-pair are insufficient.
 
 Construct both strict `GoldenStartedRunStartV1` branches. Assert the V3 branch retains exact `feature-dev`/`v3` requested and actual identities, a numeric positive actual protocol version, null requested version/template/attempt, and a non-null admission binding. Assert the existing-repository branch retains equal bug-fix or security-audit requested/actual workflow identities, `workflow-default`, the stored actual protocol and numeric version, null requested version/admission, the immutable template hash, and the complete fresh attempt whose canonical full-object hash is `fixtureAttemptHash`. Mutate every common chain hash and strategy field; reject swapped requested/actual workflows, V3 actual protocol drift, a caller protocol version, partial/structurally cloned attempt, reused template identity, mixed admission/attempt authorities, nullability drift, string/fraction/zero actual versions, and unknown fields. Construct terminal and timeout `GoldenStartedRunResultV1` values from each branch, store/reopen/render them, and require byte-identical nested start authority and a changed start identity to change `resultHash`.
 
@@ -1165,6 +1235,8 @@ export const GoldenFinalReleaseEpochV1Schema = z.object({
   schema: z.literal("setfarm.internal-production-final-release-epoch.v1"),
   setfarmSha: GitObjectHashSchema,
   missionControlSha: GitObjectHashSchema,
+  postRebindEntryAuthorityRef: CanonicalRefSchema,
+  postRebindEntryAuthorityHash: Sha256Schema,
   epochHash: Sha256Schema,
 }).strict();
 
@@ -1511,6 +1583,8 @@ export type GoldenPreflightHistoricalBaselineAuthorityV1 = Readonly<{
 export type GoldenPreflightReleaseAuthorityV1 = Readonly<{
   setfarmSha: string;
   missionControlSha: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   setfarmVersion: string;
   missionControlVersion: string;
   workflowHash: string;
@@ -1553,6 +1627,8 @@ export type GoldenPreflightResultV1 =
       historicalBaseline: GoldenPreflightHistoricalBaselineAuthorityV1 | null;
       releaseAuthority: GoldenPreflightReleaseAuthorityV1 | null;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1 | null;
+      postRebindEntryAuthorityRef: null;
+      postRebindEntryAuthorityHash: null;
       executionCapacity: GoldenCampaignExecutionCapacityV1 | null;
       blockerCodes: readonly GoldenPreflightFailureCodeV1[];
     }>)
@@ -1562,6 +1638,8 @@ export type GoldenPreflightResultV1 =
       historicalBaseline: GoldenPreflightHistoricalBaselineAuthorityV1;
       releaseAuthority: GoldenPreflightReleaseAuthorityV1;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       executionCapacity: GoldenCampaignExecutionCapacityV1;
       blockerCodes: readonly GoldenPreflightFailureCodeV1[];
     }>)
@@ -1571,6 +1649,8 @@ export type GoldenPreflightResultV1 =
       historicalBaseline: GoldenPreflightHistoricalBaselineAuthorityV1;
       releaseAuthority: GoldenPreflightReleaseAuthorityV1;
       finalReleaseEpoch: GoldenFinalReleaseEpochV1;
+      postRebindEntryAuthorityRef: CanonicalRef;
+      postRebindEntryAuthorityHash: string;
       executionCapacity: GoldenCampaignExecutionCapacityV1;
       blockerCodes: readonly [];
     }>);
@@ -2085,6 +2165,8 @@ export type GoldenLaunchOperationMigrationReleaseOperationV1 = Readonly<{
 
 export type GoldenLaunchOperationMigrationReleaseReceiptV1 = Readonly<{
   schema: "setfarm.internal-production-golden-launch-operation-migration-release-receipt.v1";
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   operationRef: CanonicalRef;
   operationHash: string;
   pendingInputRef: CanonicalRef;
@@ -2121,6 +2203,8 @@ export type GoldenLaunchOperationMigrationReleaseReceiptV1 = Readonly<{
 
 export type GoldenLaunchOperationMigrationCurrentVerificationV1 = Readonly<{
   schema: "setfarm.internal-production-golden-launch-operation-migration-current-verification.v1";
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   receiptRef: CanonicalRef;
   receiptHash: string;
   applicationSourceSha: string;
@@ -2137,10 +2221,10 @@ export type GoldenLaunchOperationMigrationCurrentVerificationV1 = Readonly<{
 }>;
 
 export type GoldenLaunchOperationMigrationReleaseStatusV1 =
-  | Readonly<{ state: "absent"; pendingInputRef: null; pendingInputHash: null; ownerAdmissionFenceRef: null; ownerAdmissionFenceHash: null; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: null; operationHash: null; receiptRef: null; receiptHash: null; statusHash: string }>
-  | Readonly<{ state: "pending-input"; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef | null; ownerAdmissionFenceHash: string | null; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: null; operationHash: null; receiptRef: null; receiptHash: null; statusHash: string }>
-  | Readonly<{ state: "prepared" | "applying"; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: string; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: CanonicalRef; operationHash: string; receiptRef: null; receiptHash: null; statusHash: string }>
-  | Readonly<{ state: "terminal"; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: string; ownerAdmissionFenceReleaseRef: CanonicalRef; ownerAdmissionFenceReleaseHash: string; operationRef: CanonicalRef; operationHash: string; receiptRef: CanonicalRef; receiptHash: string; statusHash: string }>;
+  | Readonly<{ state: "absent"; postRebindEntryAuthorityRef: null; postRebindEntryAuthorityHash: null; pendingInputRef: null; pendingInputHash: null; ownerAdmissionFenceRef: null; ownerAdmissionFenceHash: null; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: null; operationHash: null; receiptRef: null; receiptHash: null; statusHash: string }>
+  | Readonly<{ state: "pending-input"; postRebindEntryAuthorityRef: CanonicalRef; postRebindEntryAuthorityHash: string; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef | null; ownerAdmissionFenceHash: string | null; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: null; operationHash: null; receiptRef: null; receiptHash: null; statusHash: string }>
+  | Readonly<{ state: "prepared" | "applying"; postRebindEntryAuthorityRef: CanonicalRef; postRebindEntryAuthorityHash: string; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: string; ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null; operationRef: CanonicalRef; operationHash: string; receiptRef: null; receiptHash: null; statusHash: string }>
+  | Readonly<{ state: "terminal"; postRebindEntryAuthorityRef: CanonicalRef; postRebindEntryAuthorityHash: string; pendingInputRef: CanonicalRef; pendingInputHash: string; ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: string; ownerAdmissionFenceReleaseRef: CanonicalRef; ownerAdmissionFenceReleaseHash: string; operationRef: CanonicalRef; operationHash: string; receiptRef: CanonicalRef; receiptHash: string; statusHash: string }>;
 
 export function prepareGoldenLaunchOperationMigrationReleaseV1(input: Readonly<{
   sourceMergeReceiptRef: CanonicalRef;
@@ -4416,6 +4500,8 @@ export type GoldenFinalizedCampaignReportV1 = Readonly<{
   campaignId: string;
   campaignDate: string;
   campaignHash: string;
+  postRebindEntryAuthorityRef: CanonicalRef;
+  postRebindEntryAuthorityHash: string;
   finalReleaseEpoch: GoldenFinalReleaseEpochV1;
   resultHashes: readonly string[];
   timeoutReconciliationAuthorities:
@@ -5239,6 +5325,33 @@ On synchronized clean `main`, after Subproject A is confirmed complete, first ru
 
 ```bash
 set -euo pipefail
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf "SETFARM_ROOT must be absolute\n" >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+require_authenticated_clean_main_setfarm_root_v1
+B_POST_REBIND_ENTRY_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json)"
+B_POST_REBIND_ENTRY_REF="$(printf '%s\n' "$B_POST_REBIND_ENTRY_JSON" | jq -er '.postRebindEntryAuthorityRef')"
+B_POST_REBIND_ENTRY_HASH="$(printf '%s\n' "$B_POST_REBIND_ENTRY_JSON" | jq -er '.postRebindEntryAuthorityHash')"
+printf '%s\n' "$B_POST_REBIND_ENTRY_REF" | rg -x 'setfarm://internal-production/.+'
+printf '%s\n' "$B_POST_REBIND_ENTRY_HASH" | rg -x '[0-9a-f]{64}'
 task8_postsync_branch="$(git branch --show-current)"
 test "$task8_postsync_branch" = "main"
 task8_postsync_status="$(git status --porcelain --untracked-files=all)"
@@ -5246,6 +5359,7 @@ test -z "$task8_postsync_status"
 task8_postsync_head="$(git rev-parse HEAD)"
 task8_postsync_origin_main="$(git rev-parse refs/remotes/origin/main)"
 test "$task8_postsync_head" = "$task8_postsync_origin_main"
+require_authenticated_clean_main_setfarm_root_v1
 npm run build
 task8_posttest_branch="$(git branch --show-current)"
 test "$task8_posttest_branch" = "main"
@@ -5259,6 +5373,7 @@ task8_posttest_tree="$(git rev-parse 'HEAD^{tree}')"
 test "$task8_posttest_tree" = "$SETFARM_MERGE_RECEIPT_MERGE_TREE_HASH"
 task8_posttest_build_sha="$(jq -er '.sha' dist/BUILD_INFO.json)"
 test "$task8_posttest_build_sha" = "$task8_posttest_head"
+require_authenticated_clean_main_setfarm_root_v1
 task8_manifest_activation_json="$(npm run --silent internal:golden -- \
   activate-owner-producer-manifest --json)"
 task8_manifest_receipt_ref="$(printf '%s\n' "$task8_manifest_activation_json" | jq -er '.receiptRef')"
@@ -5278,6 +5393,7 @@ printf '%s\n' "$task8_manifest_activation_json" | jq -e '
   (.sourceBuildAuthorityRef | type == "string") and
   (.sourceBuildAuthorityHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 task8_manifest_status_json="$(npm run --silent internal:golden -- \
   owner-producer-manifest-status --json)"
 task8_manifest_status_receipt_ref="$(printf '%s\n' "$task8_manifest_status_json" | jq -er '.receiptRef')"
@@ -5305,6 +5421,7 @@ printf '%s\n' "$task8_manifest_status_json" | jq -e '
   .state == "active" and
   (.statusHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
 task8_migration_guard_json="$(npm run --silent acceptance:baseline-post-handoff -- zero-owner --json)"
 task8_migration_guard_ref="$(printf '%s\n' "$task8_migration_guard_json" | jq -er '.guardRef')"
 task8_migration_guard_hash="$(printf '%s\n' "$task8_migration_guard_json" | jq -er '.guardHash')"
@@ -5316,6 +5433,7 @@ task8_preprepare_head="$(git rev-parse HEAD)"
 task8_preprepare_origin="$(git rev-parse refs/remotes/origin/main)"
 test "$task8_preprepare_head" = "$task8_preprepare_origin"
 test "$task8_preprepare_head" = "$SETFARM_MERGE_RECEIPT_MERGE_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 task8_migration_operation_json="$(node dist/internal-production/golden-run-cli.js \
   prepare-launch-operation-migration \
   --source-merge-ref "$SETFARM_MERGE_RECEIPT_REF" \
@@ -5327,6 +5445,7 @@ task8_migration_operation_keys="$(printf '%s\n' "$task8_migration_operation_json
 test "$task8_migration_operation_keys" = '["operationHash","operationRef"]'
 task8_migration_operation_ref="$(printf '%s\n' "$task8_migration_operation_json" | jq -er '.operationRef')"
 task8_migration_operation_hash="$(printf '%s\n' "$task8_migration_operation_json" | jq -er '.operationHash')"
+require_authenticated_clean_main_setfarm_root_v1
 task8_migration_pre_resume_status="$(node dist/internal-production/golden-run-cli.js \
   launch-operation-migration-status --json)"
 printf '%s\n' "$task8_migration_pre_resume_status" | jq -e \
@@ -5344,6 +5463,7 @@ task8_preresume_head="$(git rev-parse HEAD)"
 task8_preresume_origin="$(git rev-parse refs/remotes/origin/main)"
 test "$task8_preresume_head" = "$task8_preresume_origin"
 test "$task8_preresume_head" = "$SETFARM_MERGE_RECEIPT_MERGE_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 task8_migration_receipt_pair_json="$(node dist/internal-production/golden-run-cli.js \
   resume-launch-operation-migration --json)"
 task8_migration_receipt_pair_keys="$(printf '%s\n' "$task8_migration_receipt_pair_json" | jq -cer 'keys')"
@@ -5358,6 +5478,7 @@ task8_postmigration_head="$(git rev-parse HEAD)"
 task8_postmigration_origin="$(git rev-parse refs/remotes/origin/main)"
 test "$task8_postmigration_head" = "$task8_postmigration_origin"
 test "$task8_postmigration_head" = "$SETFARM_MERGE_RECEIPT_MERGE_SHA"
+require_authenticated_clean_main_setfarm_root_v1
 task8_migration_verified_json="$(node dist/internal-production/golden-run-cli.js \
   verify-launch-operation-migration --json)"
 printf '%s\n' "$task8_migration_verified_json" | jq -e \
@@ -5386,6 +5507,7 @@ task8_preflight_origin="$(git rev-parse refs/remotes/origin/main)"
 test "$task8_preflight_head" = "$task8_preflight_origin"
 test "$task8_preflight_head" = "$SETFARM_MERGE_RECEIPT_MERGE_SHA"
 task8_preflight_release_sha="$task8_preflight_head"
+require_authenticated_clean_main_setfarm_root_v1
 node dist/internal-production/golden-run-cli.js preflight --campaign tests/fixtures/internal-production/golden-campaign-v1.json --case node-cli-contract-fixture --release-sha "$task8_preflight_release_sha" --json
 task8_final_status="$(git status --porcelain --untracked-files=all)"
 test -z "$task8_final_status"

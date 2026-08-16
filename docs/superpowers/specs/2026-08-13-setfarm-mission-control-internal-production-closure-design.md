@@ -14,7 +14,7 @@ Internal completion requires evidence that current clean-main Setfarm code can c
 
 ## Current Baseline
 
-The design starts from the following live state observed on 2026-08-13:
+The following list is historical evidence observed on 2026-08-13. In particular, SHA `865a7157ba5dacd24283af03c00400499aac6de7` and contract-spine migrations 1 through 29 are not the execution baseline for the remaining closure work:
 
 - Setfarm `main` equals `origin/main` at `865a7157ba5dacd24283af03c00400499aac6de7`.
 - Setfarm version `2.3.79` has a clean-main build whose `BUILD_INFO.json` binds that exact SHA and reports `dirty:false`.
@@ -23,9 +23,47 @@ The design starts from the following live state observed on 2026-08-13:
 - The live database has zero active runs, zero open claims, and zero active runtime sessions.
 - The live database contains 32 V3 runs, all terminally failed, and no completed V3 run.
 - Those historical failures predate part or all of the current authority, recovery, and publication closure work and cannot prove or disprove the current build by themselves.
-- Mission Control is clean but has one local commit on `feat/product-build-authority-v2` that is one commit ahead of `origin/main` and has not been delivered through a reviewed PR.
+- Historical Mission Control observation: one local commit on `feat/product-build-authority-v2` was once one commit ahead of `origin/main` and had not yet been delivered. That observation is superseded by reviewed PR #19 merge `240e779d78804843a1202cbf0440fe423b806b1a`, which current clean synchronized Mission Control `main` must retain as an ancestor.
 - Mission Control reports 112 projects as `active` while PostgreSQL reports zero active runs. The meaning and derivation of that mismatch must be resolved before Mission Control acceptance.
 - The platform-release preflight correctly remains non-authoritative and blocked because external signing, notarization, installation, trust, and activation evidence is absent.
+
+### Current-State Rebaseline
+
+Mission Control Product Build Authority V2 behavior and Setfarm's `setfarm.run-operational-snapshot.v3` producer/consumer path are already delivered. Repository truth contains only per-run PBA V2 `authorityHash`, not a global delivery receipt pair, so Task 1 adds one strict read-only `ProductBuildAuthorityV2DeliveryEvidenceV1` projection/endpoint on the fresh reconciliation branch. That projection deterministically binds PR #19 ancestry, the delivered schema/parser/server/UI/test path blobs, current clean Mission Control source/tree/build, focused tests, and the exact vendor lock; it does not redefine per-run authority. Reviewed Setfarm PR #86 delivered Authority V3 at merge `1d691c89760339ea905dfe17f8e9188e62603c1c`, and migrations 1 through 31/current-authority remain delivered evidence to reopen. Task 0 additionally registers exactly one byte/source-bound bootstrap-handoff successor for Task 7, which must still be pending at the pre-rebind gate. The accepted controller source is an execution-time exact clean descendant and is never permanently pinned to `1d691c89` or substituted with the historical `865a7157`/migrations-1-through-29 baseline.
+
+Pre-rebind authority deliberately separates the new Task 0 `controllerSourceSha/tree/build` from `loadedRuntimeServiceAuthority`. The latter records the delivered pre-Task0 service source/build/process/listener identities still running. Each authority is independently current for its own scope; equality is neither required nor inferred. The fresh canary is admitted by the new controller through Task 0's fixed non-listening CLI process, which opens no service port and performs no restart; the delivered loaded runtime processes the admitted work under its own authority. Task 7 is the only phase that rebuilds/rebinds background services. After rebind, every scoped Setfarm service must equal Task 7's controller source/tree/build, Mission Control must equal its Task 7 source/tree/build, and the loaded delivery-evidence HTTP endpoint must return the same pair observed pre-rebind through the source CLI.
+
+Focused Authority-V3 runtime/migration/rollback/terminal-preclaim tests prove the three mutually exclusive setup-packet failure codes. One fresh clean canary separately proves only the exact one-code lifecycle it actually observes: exactly one terminal claim, exactly one termination request, and zero redispatch after terminalization. Polluted pre-fix run 2075 is historical evidence only and is never resumed as the canary. The canary controller internally acquires Task 0's dedicated source-run launch owner-admission fence and exact typed source-run/run target reservations, reobserves zero unrelated owners, starts or adopts the one run, closes both targets only against its terminal settlement, and releases that fence; the current-entry authority binds the fence, both targets, compound close, and release pairs. No caller or shell supplies a guard, root, run, reservation, or identity.
+
+The current-entry pair is deliberately the pre-rebind predecessor. It stores an exact read-only v31 Authority-V3 audit pair proving migrations 1 through 31 applied/current and a separate pending-successor projection pair proving exactly the Task 7 bootstrap migration pending with no other pending/drifted entry. Generic full migration verification is invalid at this phase because it would demand that registered successor already be applied. Task 7 consumes both pairs, applies/reopens exactly that successor, rebuilds and rebinds services, then seals a strict `InternalProductionPostRebindEntryAuthorityV1` successor after fresh applied/current, source/build/schema/service/PBA-evidence and complete zero-owner verification. Task 8 and every B/C/D/E campaign, preflight, status, coordination, recovery, fleet, and closure authority consume the post-rebind pair; they never require the pre-rebind pair to remain current after Task 7's authorized mutations. A failure at either gate remains a blocker; the rebaseline does not weaken, bypass, or reinterpret any runtime, migration, or acceptance guard.
+
+Every operational command uses a receipt-authenticated root contract rather than a host checkout literal. The owning resolver exports `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` as one read-only binding, and the same shell performs this validation before any package command, observation with acceptance effect, or mutation:
+
+```bash
+require_authenticated_clean_main_setfarm_root_v1() {
+  : "${SETFARM_ROOT:?authenticated clean-main Setfarm root is required}"
+  : "${SETFARM_ROOT_EXPECTED_SHA:?authenticated clean-main Setfarm SHA is required}"
+  case "$SETFARM_ROOT" in
+    /*) ;;
+    *) printf 'SETFARM_ROOT must be absolute\n' >&2; return 1 ;;
+  esac
+  test -d "$SETFARM_ROOT"
+  test ! -L "$SETFARM_ROOT"
+  readonly SETFARM_ROOT SETFARM_ROOT_EXPECTED_SHA
+  SETFARM_ROOT_TOP="$(git -C "$SETFARM_ROOT" rev-parse --show-toplevel)"
+  SETFARM_ROOT_BRANCH="$(git -C "$SETFARM_ROOT" branch --show-current)"
+  SETFARM_ROOT_HEAD="$(git -C "$SETFARM_ROOT" rev-parse HEAD)"
+  SETFARM_ROOT_ORIGIN="$(git -C "$SETFARM_ROOT" rev-parse refs/remotes/origin/main)"
+  SETFARM_ROOT_STATUS="$(git -C "$SETFARM_ROOT" status --porcelain=v1 --untracked-files=all)"
+  test "$SETFARM_ROOT_TOP" = "$SETFARM_ROOT"
+  test "$SETFARM_ROOT_BRANCH" = "main"
+  test -z "$SETFARM_ROOT_STATUS"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_ORIGIN"
+  test "$SETFARM_ROOT_HEAD" = "$SETFARM_ROOT_EXPECTED_SHA"
+}
+```
+
+The expected SHA comes only from the freshly resolved merge/current-build authority. Each standalone operational fence defines this exact function and calls it immediately before every Setfarm package command or mutation; it does not add separate presence/directory checks. A caller-selected root or SHA, fixed workstation path, nonabsolute/symlink/wrong top level, detached/wrong branch, dirty tree, stale tracking ref, or mismatch fails closed before the operational command.
 
 ## Completion Claim
 
@@ -45,11 +83,11 @@ That closure evidence is strict, not a prose note or arbitrary hash. It contains
 
 ### Operational Epoch and Documentation-Only Descendant
 
-Internal acceptance distinguishes two Setfarm identities and never conflates them. The accepted operational epoch is the exact `GoldenFinalReleaseEpochV1` pair `{operationalSetfarmSha, operationalMissionControlSha}` on which C's final matrix, D's recovery acceptance, E's fleet settlement, and the cold rehearsal ran. After those authorities are private and immutable, one later Setfarm documentation-only squash merge may create `documentationSetfarmSha`. That commit must have `operationalSetfarmSha` as its sole parent, Mission Control must remain at `operationalMissionControlSha`, and its complete Git delta must be exactly the six registered acceptance-packet files for one closure generation.
+Internal acceptance distinguishes two Setfarm identities and never conflates them. The accepted operational epoch is the exact `GoldenFinalReleaseEpochV1` pair `{operationalSetfarmSha, operationalMissionControlSha}` on which C's final matrix, D's recovery acceptance, E's fleet settlement, and the cold rehearsal ran. After those authorities are private and immutable, one later Setfarm documentation-only squash merge may create `documentationSha`. That commit must have `operationalSetfarmSha` as its sole parent, Mission Control must remain at `operationalMissionControlSha`, and its complete Git delta must be exactly the six registered acceptance-packet files for one closure generation.
 
 The closure generation is derived before E renders either final-closure document or seals its later closure finalization. Its exact identity is `closureGenerationHash = hashCanonicalJson({epochHash: finalReleaseEpoch.epochHash, matrixFinalizationHash, recoveryFinalizationHash, fleetFinalizationHash})`; there is no schema member, operational SHA, full epoch, E closure-finalization hash, output content hash, path, or timestamp in that pre-render hash input. Its only combined directory is `docs/review-packets/internal-production/epoch-<full-epoch-sha256>-closure-<full-closure-generation-sha256>`, and its six fixed basenames are `golden-matrix-report.md`, `recovery-matrix.md`, `recovery-reconciliation.md`, `golden-fleet-report.md`, `final-closure.json`, and `final-closure.md`. The pre-render input and packet bind the same four-member generation input tuple, generation hash, directory suffix, ordered paths, and immutable owner identities needed to reopen C matrix, D recovery-matrix Markdown, D recovery-reconciliation Markdown, B fleet, and E renderer inputs; they do not claim either E output hash or the completed six-content-hash tuple. Only the later E finalization, docs-session completion, and post-handoff receipt bind the six actual content hashes after both E outputs exist, alongside that unchanged generation identity. The independent `closureFinalizationHash` is bound beside the generation and never feeds it. A new operational epoch derives six distinct initially absent targets; all prior generation files remain tracked and byte-identical. No new session overwrites, deletes, renames, or adopts a partial prefix from any generation.
 
-The documentation descendant is never a second accepted operational epoch. It is eligible for final clean-main acceptance only when a fresh, private, non-circular post-handoff receipt resolves the tracked pre-handoff packet and its pre-packet review/finalization, authenticates the docs PR/base/head/squash/sole-parent lineage, independent review history with zero unresolved Critical/High/Medium findings, the exact successful check set, six paths and content hashes, and proves executable/source/build semantic projection equality to `operationalSetfarmSha`. The receipt also rebinds the three services, authority audits, and complete zero-owner census. The final internal-production acceptance authority is the tracked packet plus that exact private post-handoff receipt; neither alone is sufficient. Its current/final resolver additionally requires clean synchronized Setfarm `main` with `HEAD === documentationSetfarmSha` and clean synchronized Mission Control `main` with `HEAD === operationalMissionControlSha`. A historical ancestry resolver is archival inspection only and can never establish current or final acceptance.
+The documentation descendant is never a second accepted operational epoch. It is eligible for final clean-main acceptance only when a fresh, private, non-circular post-handoff receipt resolves the tracked pre-handoff packet and its pre-packet review/finalization, authenticates the docs PR/base/head/squash/sole-parent lineage, independent review history with zero unresolved Critical/High/Medium findings, the exact successful check set, six paths and content hashes, and proves executable/source/build semantic projection equality to `operationalSetfarmSha`. The receipt also rebinds the three services, authority audits, and complete zero-owner census. The final internal-production acceptance authority is the tracked packet plus that exact private post-handoff receipt; neither alone is sufficient. Its current/final resolver additionally requires clean synchronized Setfarm `main` with `HEAD === documentationSha` and clean synchronized Mission Control `main` with `HEAD === operationalMissionControlSha`. A historical ancestry resolver is archival inspection only and can never establish current or final acceptance.
 
 When every relation above holds, the documentation SHA is a metadata-only descendant and C/D/E need not rerun. If docs-PR review finds a byte-affecting defect in any of the six generated files, the documentation owner abandons the entire isolated claim; it never edits those immutable materialized bytes in place. A packet/evidence-only correction creates a corrected pre-packet review, input, private finalization, fresh exact-operational-base six-entry session, and new docs claim. A source or generator correction instead creates a new operational epoch and reruns C through D through E before another docs claim. If the commit is not the sole-parent squash, its delta is not exactly the registered six files, any executable/build semantic projection differs, Mission Control moves, either current HEAD differs from its required SHA, or the receipt/review/check/service/audit/zero-owner chain cannot be freshly resolved, the documentation exception does not apply. The changed Setfarm SHA then requires a new operational epoch and a new C/D/E acceptance sequence.
 
@@ -71,16 +109,20 @@ This is a multi-system program and must be executed as five independently review
 
 ### Subproject A: Canonical Baseline and Mission Control Handoff
 
-Deliver the existing Mission Control Product Build Authority work through a reviewed PR, then establish one clean and synchronized baseline for both repositories.
+Treat the delivered Mission Control Product Build Authority V2 behavior and operational-snapshot-v3 work as immutable baseline inputs, add only the constructible read-only PBA V2 delivery-evidence projection, reopen and verify the delivered PR #86 Authority-V3/v31 authority separately from Task 0's sole pending bootstrap successor, seal the strict current-entry predecessor after the fresh prerequisite canary, then have Task 7 seal the strict post-rebind successor after its guarded migration/rebuild/restart/rebind.
 
 Required outcomes:
 
-- Review the exact six-file Mission Control diff against `origin/main`.
-- Run Mission Control tests, build, Setfarm contract compatibility, and rendering smoke checks.
-- Merge through a reviewed PR and rebuild Mission Control from clean `main`.
+- Produce and pair-resolve the exact read-only `ProductBuildAuthorityV2DeliveryEvidenceV1`; bind PR #19/current source/tree/build, eight ordered path blobs, focused tests, and twelve vendor-lock identities without inventing a global PBA authority receipt.
+- Run Mission Control tests, build, Setfarm contract compatibility, and rendering smoke checks against the current vendored contract set.
+- Reopen PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor; separately verify migrations 1 through 31 applied/current and the one exact Task 7 successor pending, with no other pending/drifted migration.
+- Bind current Task 0 controller source/tree/build separately from delivered loaded-runtime service authority without requiring equality; run the canary through the fixed non-listening controller CLI and leave all service rebuild/rebind work to Task 7.
 - Record exact Setfarm and Mission Control SHAs, package versions, contract hashes, service PIDs, listening ports, and health responses.
 - Take a fresh PostgreSQL backup and prove it can be listed and inspected with matching PostgreSQL tooling.
-- Verify migration plan, migration verification, and current-authority audits before any canary run.
+- Reopen the exact v31 historical/current-authority pair and pending-successor projection before the fresh canary; forbid generic full migration verification until Task 7 applies that successor.
+- Use focused tests to prove all three mutually exclusive failure codes; use one new clean canary to prove only its one exact observed terminal-preclaim lifecycle before any golden run.
+- Run the canary only through Task 0's dedicated source-run/run target-reservation fence lifecycle and bind its acquire, target-close, and release authorities into the pre-rebind receipt.
+- Require Task 7 to consume both predecessor migration pairs, apply the exact successor, rebind scoped services to current controller/build authority, equality-check the loaded PBA delivery-evidence HTTP pair, and publish one crash-idempotent post-rebind pair; Task 8 and B/C/D/E consume only that successor as current entry authority.
 - Reconcile Mission Control's `active` project classification with the zero-active-run database census. Historical runnable projects may remain visible, but they must not be labeled as active Setfarm execution unless the canonical operational model says they are active.
 - Verify there is exactly one intended daemon for each long-lived Setfarm/MC service and no stale test or agent process.
 
