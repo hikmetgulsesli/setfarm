@@ -12,6 +12,7 @@ import {
   rollbackRuntimeCompletionManifestAuthorityToV27,
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -22,6 +23,9 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 async function restoreExactV7Shape(database: TestDatabase): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+    targetReleaseSha: "1".repeat(40),
+  });
   await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
     targetReleaseSha: "0".repeat(40),
   });
@@ -253,6 +257,9 @@ describe("contract spine migration journal", () => {
 
   it("adopts an exact existing attempt table only after catalog verification", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+      targetReleaseSha: "1".repeat(40),
+    });
     await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
       targetReleaseSha: "0".repeat(40),
     });
@@ -268,6 +275,7 @@ describe("contract spine migration journal", () => {
       "003_migration_release_attestation",
       "029_v3_story_claim_runtime_binding_v1",
       "030_operational_failure_cause_authority_v2",
+      "031_operational_failure_cause_authority_v3",
     ]);
     assert.deepEqual(adopted.adopted, [
       "001_execution_attempts",
@@ -303,6 +311,9 @@ describe("contract spine migration journal", () => {
 
   it("upgrades agent-scoped claim indexes and backfills the exact relational claim owner", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+      targetReleaseSha: "1".repeat(40),
+    });
     await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
       targetReleaseSha: "0".repeat(40),
     });
@@ -412,6 +423,7 @@ describe("contract spine migration journal", () => {
       "028_runtime_completion_manifest_authority",
       "029_v3_story_claim_runtime_binding_v1",
       "030_operational_failure_cause_authority_v2",
+      "031_operational_failure_cause_authority_v3",
     ]);
     const rows = await database.sql<Array<{
       claim_id: string | null;
@@ -467,6 +479,7 @@ describe("contract spine migration journal", () => {
       "028_runtime_completion_manifest_authority",
       "029_v3_story_claim_runtime_binding_v1",
       "030_operational_failure_cause_authority_v2",
+      "031_operational_failure_cause_authority_v3",
     ]);
     const rows = await database.sql<Array<{
       request_id: string;

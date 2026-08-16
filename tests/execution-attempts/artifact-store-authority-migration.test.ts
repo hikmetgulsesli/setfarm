@@ -15,6 +15,7 @@ import {
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
   rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
@@ -33,6 +34,9 @@ async function rollbackRecordLedgerIfPresent(sql: postgres.Sql): Promise<void> {
      ) AS present`,
   );
   if (failureCauseRows[0]?.present) {
+    await rollbackOperationalFailureCauseAuthorityV3ToV30(sql, {
+      targetReleaseSha: "3".repeat(40),
+    });
     await rollbackOperationalFailureCauseAuthorityV2ToV29(sql, {
       targetReleaseSha: "4".repeat(40),
     });
@@ -1087,7 +1091,7 @@ describe("artifact store authority migration 24", () => {
              AS evil_checksum`,
       );
       assert.deepEqual(evidence[0], {
-        public_rows: 30,
+        public_rows: 31,
         evil_checksum: "0".repeat(64),
       });
     } finally {

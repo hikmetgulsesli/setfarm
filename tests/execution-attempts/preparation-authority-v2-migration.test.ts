@@ -12,6 +12,7 @@ import {
   rollbackPreparationAuthorityV2LedgerToV24 as rollbackPreparationAuthorityV2LedgerToV24Raw,
   rollbackRuntimeCompletionManifestAuthorityToV27,
   rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -35,6 +36,9 @@ const BASE_TREE = "f".repeat(40);
 const SLICE_HASH = "1".repeat(64);
 
 async function rollbackCurrentHeadToV26(sql: TestDatabase["sql"]): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(sql, {
+    targetReleaseSha: "4".repeat(40),
+  });
   await rollbackOperationalFailureCauseAuthorityV2ToV29(sql, {
     targetReleaseSha: "5".repeat(40),
   });
