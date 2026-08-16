@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 
@@ -123,6 +126,17 @@ export type ProductBuildAuthorityV2DeliveryEvidenceResponseV1 = Readonly<{
   deliveryEvidenceRef: CanonicalRef;
   deliveryEvidenceHash: Sha256V1;
   evidence: ProductBuildAuthorityV2DeliveryEvidenceV1;
+}>;
+
+export type ProductBuildAuthorityV2DeliveryEvidencePairV1 = Readonly<{
+  deliveryEvidenceRef: CanonicalRef;
+  deliveryEvidenceHash: Sha256V1;
+}>;
+
+export type ProductBuildAuthorityV2DeliveryEvidenceObservationV1 = Readonly<{
+  schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1";
+  observationTransport: "source-cli";
+  response: ProductBuildAuthorityV2DeliveryEvidenceResponseV1;
 }>;
 
 const GitObjectHashV1Schema = z.string().regex(GIT_OBJECT_HASH_V1_PATTERN)
@@ -401,4 +415,452 @@ export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value: un
   } catch {
     throw new ProductBuildAuthorityV2DeliveryEvidenceResponseParseError();
   }
+}
+
+const PBA_OBSERVATION_SCHEMA_V1 =
+  "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" as const;
+const MISSION_CONTROL_LAUNCHD_LABEL_V1 = "com.setrox.mission-control" as const;
+const LAUNCHCTL_EXECUTABLE_V1 = "/bin/launchctl" as const;
+const PLUTIL_EXECUTABLE_V1 = "/usr/bin/plutil" as const;
+const MISSION_CONTROL_ENTRYPOINT_RELATIVE_PATH_V1 = "dist-server/index.js" as const;
+const MISSION_CONTROL_SOURCE_CLI_RELATIVE_PATH_V1 =
+  "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js" as const;
+const LOCATOR_CHILD_TIMEOUT_MS_V1 = 5_000;
+const SOURCE_CLI_TIMEOUT_MS_V1 = 120_000;
+const CHILD_MAX_BUFFER_BYTES_V1 = 1_048_576;
+const CHILD_ENVIRONMENT_V1 = Object.freeze({
+  PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+  LANG: "C",
+  LC_ALL: "C",
+});
+
+type ProductBuildAuthorityV2DeliveryEvidenceObservationErrorCodeV1 =
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_UID_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_FAILED"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_OUTPUT_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_FAILED"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_FAILED"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_RESPONSE_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_DRIFT"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID"
+  | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_MISMATCH";
+
+class ProductBuildAuthorityV2DeliveryEvidenceObservationError extends Error {
+  readonly code: ProductBuildAuthorityV2DeliveryEvidenceObservationErrorCodeV1;
+
+  constructor(code: ProductBuildAuthorityV2DeliveryEvidenceObservationErrorCodeV1) {
+    super(code);
+    this.name = "ProductBuildAuthorityV2DeliveryEvidenceObservationError";
+    this.code = code;
+    this.stack = `${this.name}: ${code}`;
+  }
+}
+
+function failObservation(
+  code: ProductBuildAuthorityV2DeliveryEvidenceObservationErrorCodeV1,
+): never {
+  throw new ProductBuildAuthorityV2DeliveryEvidenceObservationError(code);
+}
+
+type ChildResultV1 = Readonly<{ stdout: string; stderr: string }>;
+
+function runBoundedChildV1(
+  executable: string,
+  argv: readonly string[],
+  options: Readonly<{ cwd?: string; timeout: number }>,
+  failureCode: ProductBuildAuthorityV2DeliveryEvidenceObservationErrorCodeV1,
+): Promise<ChildResultV1> {
+  return new Promise((resolveChild, rejectChild) => {
+    execFile(
+      executable,
+      [...argv],
+      {
+        cwd: options.cwd,
+        env: CHILD_ENVIRONMENT_V1,
+        shell: false,
+        timeout: options.timeout,
+        maxBuffer: CHILD_MAX_BUFFER_BYTES_V1,
+        encoding: "utf8",
+      },
+      (error, stdout, stderr) => {
+        if (error !== null || typeof stdout !== "string" || typeof stderr !== "string") {
+          rejectChild(new ProductBuildAuthorityV2DeliveryEvidenceObservationError(failureCode));
+          return;
+        }
+        if (
+          Buffer.byteLength(stdout, "utf8") > CHILD_MAX_BUFFER_BYTES_V1
+          || Buffer.byteLength(stderr, "utf8") > CHILD_MAX_BUFFER_BYTES_V1
+        ) {
+          rejectChild(new ProductBuildAuthorityV2DeliveryEvidenceObservationError(failureCode));
+          return;
+        }
+        resolveChild({ stdout, stderr });
+      },
+    );
+  });
+}
+
+function parseSingleRawPlutilValueV1(stdout: string): string {
+  if (!stdout.endsWith("\n")) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID");
+  }
+  const value = stdout.slice(0, -1);
+  if (value.length === 0 || /[\n\r\0]/u.test(value)) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID");
+  }
+  return value;
+}
+
+function parseCompactJsonLineV1(
+  stdout: string,
+  invalidCode:
+    | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID"
+    | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID",
+): unknown {
+  if (!stdout.endsWith("\n")) failObservation(invalidCode);
+  const compact = stdout.slice(0, -1);
+  if (compact.length === 0 || /[\n\r]/u.test(compact)) failObservation(invalidCode);
+  try {
+    const parsed: unknown = JSON.parse(compact);
+    if (JSON.stringify(parsed) !== compact) failObservation(invalidCode);
+    return parsed;
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation(invalidCode);
+  }
+}
+
+type LaunchctlProjectionV1 = Readonly<{
+  plistPath: string;
+  program: string;
+  workingDirectory: string;
+}>;
+
+function parseLaunchctlProjectionV1(
+  stdout: string,
+  expectedDomain: string,
+): LaunchctlProjectionV1 {
+  if (!stdout.startsWith(`${expectedDomain} = {\n`) || !stdout.endsWith("}\n")) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_OUTPUT_INVALID");
+  }
+  const selected = {
+    plistPath: [...stdout.matchAll(/^\tpath = ([^\n\r\0]+)$/gmu)],
+    program: [...stdout.matchAll(/^\tprogram = ([^\n\r\0]+)$/gmu)],
+    workingDirectory: [...stdout.matchAll(/^\tworking directory = ([^\n\r\0]+)$/gmu)],
+  };
+  if (
+    selected.plistPath.length !== 1
+    || selected.program.length !== 1
+    || selected.workingDirectory.length !== 1
+  ) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_OUTPUT_INVALID");
+  }
+  return {
+    plistPath: selected.plistPath[0]?.[1] ?? "",
+    program: selected.program[0]?.[1] ?? "",
+    workingDirectory: selected.workingDirectory[0]?.[1] ?? "",
+  };
+}
+
+type FileIdentityV1 = Readonly<{
+  path: string;
+  device: number;
+  inode: number;
+  size: number;
+  modifiedAtMillis: number;
+  mode: number;
+  uid: number;
+}>;
+
+async function observeRegularNonSymlinkFileV1(
+  path: string,
+  options: Readonly<{ uid?: number; safeMode?: boolean }>,
+): Promise<FileIdentityV1> {
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    if (
+      options.uid !== undefined
+      && metadata.uid !== 0
+      && metadata.uid !== options.uid
+    ) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    if (options.safeMode === true && (metadata.mode & 0o022) !== 0) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    if (await realpath(path) !== path) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    const numericIdentity = [
+      metadata.dev,
+      metadata.ino,
+      metadata.size,
+      metadata.mtimeMs,
+      metadata.mode,
+      metadata.uid,
+    ];
+    if (numericIdentity.some((value) => !Number.isFinite(value) || value < 0)) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    return {
+      path,
+      device: metadata.dev,
+      inode: metadata.ino,
+      size: metadata.size,
+      modifiedAtMillis: metadata.mtimeMs,
+      mode: metadata.mode,
+      uid: metadata.uid,
+    };
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+}
+
+function requireContainedPathV1(root: string, path: string): void {
+  const relativePath = relative(root, path);
+  if (
+    relativePath.length === 0
+    || relativePath === ".."
+    || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+    || isAbsolute(relativePath)
+  ) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+}
+
+type MissionControlSourceCliLocatorV1 = Readonly<{
+  uid: number;
+  domain: string;
+  plist: FileIdentityV1;
+  workingDirectory: string;
+  nodeExecutable: string;
+  entrypoint: FileIdentityV1;
+  sourceCli: FileIdentityV1;
+}>;
+
+async function observeMissionControlSourceCliLocatorV1(): Promise<MissionControlSourceCliLocatorV1> {
+  let uid: unknown;
+  try {
+    uid = process.getuid?.();
+  } catch {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_UID_INVALID");
+  }
+  if (!Number.isSafeInteger(uid) || (uid as number) < 0) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_UID_INVALID");
+  }
+  const exactUid = uid as number;
+  const domain = `gui/${exactUid}/${MISSION_CONTROL_LAUNCHD_LABEL_V1}`;
+  const launchctl = await runBoundedChildV1(
+    LAUNCHCTL_EXECUTABLE_V1,
+    ["print", domain],
+    { timeout: LOCATOR_CHILD_TIMEOUT_MS_V1 },
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_FAILED",
+  );
+  if (launchctl.stderr !== "") {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LAUNCHCTL_OUTPUT_INVALID");
+  }
+  const loaded = parseLaunchctlProjectionV1(launchctl.stdout, domain);
+  if (!isAbsolute(loaded.plistPath)) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  const plist = await observeRegularNonSymlinkFileV1(loaded.plistPath, {
+    uid: exactUid,
+    safeMode: true,
+  });
+  const plutilSelections = await Promise.all([
+    runBoundedChildV1(
+      PLUTIL_EXECUTABLE_V1,
+      ["-extract", "Label", "raw", "-o", "-", loaded.plistPath],
+      { timeout: LOCATOR_CHILD_TIMEOUT_MS_V1 },
+      "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_FAILED",
+    ),
+    runBoundedChildV1(
+      PLUTIL_EXECUTABLE_V1,
+      ["-extract", "WorkingDirectory", "raw", "-o", "-", loaded.plistPath],
+      { timeout: LOCATOR_CHILD_TIMEOUT_MS_V1 },
+      "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_FAILED",
+    ),
+    runBoundedChildV1(
+      PLUTIL_EXECUTABLE_V1,
+      ["-extract", "ProgramArguments", "json", "-o", "-", loaded.plistPath],
+      { timeout: LOCATOR_CHILD_TIMEOUT_MS_V1 },
+      "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_FAILED",
+    ),
+  ]);
+  if (plutilSelections.some((selection) => selection.stderr !== "")) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID");
+  }
+  const label = parseSingleRawPlutilValueV1(plutilSelections[0]?.stdout ?? "");
+  const workingDirectory = parseSingleRawPlutilValueV1(
+    plutilSelections[1]?.stdout ?? "",
+  );
+  const programArguments = parseCompactJsonLineV1(
+    plutilSelections[2]?.stdout ?? "",
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID",
+  );
+  if (
+    label !== MISSION_CONTROL_LAUNCHD_LABEL_V1
+    || !isAbsolute(workingDirectory)
+    || loaded.workingDirectory !== workingDirectory
+    || !Array.isArray(programArguments)
+    || programArguments.length !== 2
+    || programArguments.some((member) => typeof member !== "string")
+  ) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  try {
+    if (await realpath(workingDirectory) !== workingDirectory) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  const entrypointPath = resolve(
+    workingDirectory,
+    MISSION_CONTROL_ENTRYPOINT_RELATIVE_PATH_V1,
+  );
+  const sourceCliPath = resolve(
+    workingDirectory,
+    MISSION_CONTROL_SOURCE_CLI_RELATIVE_PATH_V1,
+  );
+  requireContainedPathV1(workingDirectory, entrypointPath);
+  requireContainedPathV1(workingDirectory, sourceCliPath);
+  if (programArguments[1] !== entrypointPath) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  let loadedNodeRealpath: string;
+  let plistNodeRealpath: string;
+  try {
+    if (!isAbsolute(loaded.program) || !isAbsolute(programArguments[0] ?? "")) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+    }
+    [loadedNodeRealpath, plistNodeRealpath] = await Promise.all([
+      realpath(loaded.program),
+      realpath(programArguments[0] ?? ""),
+    ]);
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  if (loadedNodeRealpath !== plistNodeRealpath || !isAbsolute(loadedNodeRealpath)) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
+  }
+  const [entrypoint, sourceCli] = await Promise.all([
+    observeRegularNonSymlinkFileV1(entrypointPath, {}),
+    observeRegularNonSymlinkFileV1(sourceCliPath, {}),
+  ]);
+  return {
+    uid: exactUid,
+    domain,
+    plist,
+    workingDirectory,
+    nodeExecutable: loadedNodeRealpath,
+    entrypoint,
+    sourceCli,
+  };
+}
+
+function recursivelyFreezeV1<Value>(value: Value): Value {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const key of Reflect.ownKeys(value)) {
+      recursivelyFreezeV1((value as Record<PropertyKey, unknown>)[key]);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function parseExactDeliveryEvidencePairV1(
+  input: ProductBuildAuthorityV2DeliveryEvidencePairV1,
+): ProductBuildAuthorityV2DeliveryEvidencePairV1 {
+  try {
+    if (input === null || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID");
+    }
+    const ownKeys = Reflect.ownKeys(input);
+    if (
+      ownKeys.length !== 2
+      || !ownKeys.includes("deliveryEvidenceRef")
+      || !ownKeys.includes("deliveryEvidenceHash")
+    ) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID");
+    }
+    const refDescriptor = Object.getOwnPropertyDescriptor(input, "deliveryEvidenceRef");
+    const hashDescriptor = Object.getOwnPropertyDescriptor(input, "deliveryEvidenceHash");
+    if (
+      refDescriptor === undefined
+      || hashDescriptor === undefined
+      || !("value" in refDescriptor)
+      || !("value" in hashDescriptor)
+      || refDescriptor.enumerable !== true
+      || hashDescriptor.enumerable !== true
+      || typeof refDescriptor.value !== "string"
+      || typeof hashDescriptor.value !== "string"
+      || !SHA256_V1_PATTERN.test(hashDescriptor.value)
+      || refDescriptor.value !== `${DELIVERY_EVIDENCE_REF_PREFIX_V1}${hashDescriptor.value}`
+    ) {
+      failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID");
+    }
+    return Object.freeze({
+      deliveryEvidenceRef: refDescriptor.value as CanonicalRef,
+      deliveryEvidenceHash: hashDescriptor.value as Sha256V1,
+    });
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID");
+  }
+}
+
+export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(): Promise<ProductBuildAuthorityV2DeliveryEvidenceObservationV1> {
+  const before = await observeMissionControlSourceCliLocatorV1();
+  const child = await runBoundedChildV1(
+    before.nodeExecutable,
+    [before.sourceCli.path, "--json"],
+    { cwd: before.workingDirectory, timeout: SOURCE_CLI_TIMEOUT_MS_V1 },
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_FAILED",
+  );
+  if (child.stderr !== "") {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID");
+  }
+  const rawResponse = parseCompactJsonLineV1(
+    child.stdout,
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID",
+  );
+  let response: ProductBuildAuthorityV2DeliveryEvidenceResponseV1;
+  try {
+    response = parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(rawResponse);
+  } catch {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_RESPONSE_INVALID");
+  }
+  const after = await observeMissionControlSourceCliLocatorV1();
+  if (JSON.stringify(after) !== JSON.stringify(before)) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_DRIFT");
+  }
+  return recursivelyFreezeV1({
+    schema: PBA_OBSERVATION_SCHEMA_V1,
+    observationTransport: "source-cli",
+    response,
+  });
+}
+
+export async function resolveProductBuildAuthorityV2DeliveryEvidenceV1(
+  input: ProductBuildAuthorityV2DeliveryEvidencePairV1,
+): Promise<ProductBuildAuthorityV2DeliveryEvidenceObservationV1> {
+  const expected = parseExactDeliveryEvidencePairV1(input);
+  const observation = await observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();
+  if (
+    observation.response.deliveryEvidenceRef !== expected.deliveryEvidenceRef
+    || observation.response.deliveryEvidenceHash !== expected.deliveryEvidenceHash
+  ) {
+    failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_MISMATCH");
+  }
+  return observation;
 }

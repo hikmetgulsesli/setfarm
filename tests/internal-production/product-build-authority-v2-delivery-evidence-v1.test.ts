@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
@@ -11,7 +12,9 @@ import {
   PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_CURRENT_STATUS_V1,
   PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_RESPONSE_SCHEMA_V1,
   SHA256_V1_PATTERN,
+  observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1,
   parseProductBuildAuthorityV2DeliveryEvidenceResponseV1,
+  resolveProductBuildAuthorityV2DeliveryEvidenceV1,
 } from "../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.js";
 
 const INVALID_RESPONSE_CODE =
@@ -214,7 +217,526 @@ function invalidMutation(mutator: (candidate: MutableResponse) => void): void {
   assertInvalid(candidate);
 }
 
+type ObserverHarnessScenario = Readonly<{
+  action?: "observe" | "resolve";
+  pairKind?:
+    | "valid"
+    | "mismatch"
+    | "crossed"
+    | "missing"
+    | "hidden"
+    | "symbol"
+    | "accessor"
+    | "proxy"
+    | "custom-prototype"
+    | "null-prototype";
+  uid?: number | null | string;
+  launchctlMode?:
+    | "ok"
+    | "error"
+    | "timeout"
+    | "oversize"
+    | "malformed"
+    | "duplicate-path"
+    | "wrong-program"
+    | "wrong-cwd"
+    | "final-drift";
+  plutilMode?:
+    | "ok"
+    | "error"
+    | "timeout"
+    | "oversize"
+    | "duplicate-label"
+    | "wrong-label"
+    | "wrong-cwd"
+    | "malformed-argv"
+    | "wrong-argv";
+  fileMode?:
+    | "ok"
+    | "plist-symlink"
+    | "plist-nonregular"
+    | "plist-owner"
+    | "plist-mode"
+    | "entry-symlink"
+    | "entry-nonregular"
+    | "cli-symlink"
+    | "cli-nonregular";
+  cliMode?:
+    | "ok"
+    | "error"
+    | "timeout"
+    | "signal"
+    | "oversize"
+    | "empty"
+    | "stderr"
+    | "malformed"
+    | "multiline"
+    | "trailing"
+    | "second-payload"
+    | "no-final-newline"
+    | "invalid-response";
+}>;
+
+type ObserverHarnessResult = Readonly<{
+  ok: boolean;
+  code?: string;
+  message?: string;
+  stack?: string;
+  schema?: string;
+  observationTransport?: string;
+  frozen?: boolean;
+  pair?: Readonly<{ deliveryEvidenceRef: string; deliveryEvidenceHash: string }>;
+  calls: readonly Readonly<{
+    file: string;
+    args: readonly string[];
+    cwd?: string;
+    env?: Readonly<Record<string, string>>;
+    shell?: boolean;
+    timeout?: number;
+    maxBuffer?: number;
+    encoding?: string;
+  }>[];
+}>;
+
+function runObserverHarness(
+  scenario: ObserverHarnessScenario,
+): ObserverHarnessResult {
+  const moduleUrl = new URL(
+    "../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
+    import.meta.url,
+  ).href;
+  const script = `
+    import { mock } from "node:test";
+
+    const scenario = ${JSON.stringify(scenario)};
+    const response = ${JSON.stringify(VALID_RESPONSE)};
+    const calls = [];
+    const launchctlPath = "/bin/launchctl";
+    const plutilPath = "/usr/bin/plutil";
+    const plistPath = "/Users/setrox/Library/LaunchAgents/com.setrox.mission-control.plist";
+    const cwd = "/Users/setrox/ai/setrox/mission-control";
+    const nodeAlias = "/opt/homebrew/opt/node/bin/node";
+    const nodeReal = "/opt/homebrew/Cellar/node/26.4.0/bin/node";
+    const entrypoint = cwd + "/dist-server/index.js";
+    const cli = cwd + "/dist-server/services/product-build-authority-v2-delivery-evidence-v1.js";
+    const secret = "LAUNCHCTL_SECRET_SENTINEL";
+    let launchctlCount = 0;
+
+    process.env.HOME = "/hostile/home";
+    process.env.NODE_OPTIONS = "--hostile-node-option";
+    process.env.NODE_PATH = "/hostile/node/path";
+    process.env.GIT_DIR = "/hostile/git";
+    process.env.HTTPS_PROXY = "https://hostile.invalid";
+    process.env.SETFARM_PG_URL = "postgres://hostile";
+    process.env.INTERNAL_PRODUCTION_WRITE_TOKEN = secret;
+    if (scenario.uid === null) process.getuid = undefined;
+    else if (Object.prototype.hasOwnProperty.call(scenario, "uid")) {
+      process.getuid = () => scenario.uid;
+    } else {
+      process.getuid = () => 501;
+    }
+
+    function childError(code) {
+      const error = new Error(secret + ":child:" + code);
+      error.code = code;
+      if (code === "ETIMEDOUT") error.killed = true;
+      return error;
+    }
+
+    function launchctlOutput() {
+      launchctlCount += 1;
+      let loadedCwd = cwd;
+      let loadedProgram = nodeAlias;
+      if (scenario.launchctlMode === "wrong-cwd") loadedCwd = cwd + "-wrong";
+      if (scenario.launchctlMode === "wrong-program") loadedProgram = "/usr/bin/false";
+      if (scenario.launchctlMode === "final-drift" && launchctlCount === 2) {
+        loadedCwd = cwd + "-drift";
+      }
+      if (scenario.launchctlMode === "malformed") return secret + "\\nnot-a-job\\n";
+      const pathLine = "\\tpath = " + plistPath + "\\n";
+      const duplicatePath = scenario.launchctlMode === "duplicate-path" ? pathLine : "";
+      return "gui/501/com.setrox.mission-control = {\\n"
+        + pathLine + duplicatePath
+        + "\\ttype = LaunchAgent\\n"
+        + "\\tprogram = " + loadedProgram + "\\n"
+        + "\\tworking directory = " + loadedCwd + "\\n"
+        + "\\tenvironment = {\\n\\t\\tTOKEN => " + secret + "\\n\\t}\\n"
+        + "}\\n";
+    }
+
+    function plutilOutput(args) {
+      const selected = args[1];
+      if (scenario.plutilMode === "oversize") return "x".repeat(1_048_577);
+      if (selected === "Label") {
+        const value = scenario.plutilMode === "wrong-label"
+          ? "com.setrox.wrong" : "com.setrox.mission-control";
+        return scenario.plutilMode === "duplicate-label"
+          ? value + "\\n" + value + "\\n"
+          : value + "\\n";
+      }
+      if (selected === "WorkingDirectory") {
+        return (scenario.plutilMode === "wrong-cwd" ? cwd + "-wrong" : cwd) + "\\n";
+      }
+      if (selected === "ProgramArguments") {
+        if (scenario.plutilMode === "malformed-argv") return "{not-json}\\n";
+        const argv = scenario.plutilMode === "wrong-argv"
+          ? [nodeAlias, entrypoint, "--extra"] : [nodeAlias, entrypoint];
+        return JSON.stringify(argv) + "\\n";
+      }
+      throw new Error("unexpected plutil selector");
+    }
+
+    function cliOutput() {
+      const compact = JSON.stringify(response);
+      switch (scenario.cliMode) {
+        case "oversize": return "x".repeat(1_048_577);
+        case "empty": return "";
+        case "malformed": return "{not-json}\\n";
+        case "multiline": return JSON.stringify(response, null, 2) + "\\n";
+        case "trailing": return compact + " \\n";
+        case "second-payload": return compact + "\\n" + compact + "\\n";
+        case "no-final-newline": return compact;
+        case "invalid-response": return "{}\\n";
+        default: return compact + "\\n";
+      }
+    }
+
+    function execFile(file, args, options, callback) {
+      calls.push({
+        file,
+        args: [...args],
+        cwd: options.cwd,
+        env: options.env,
+        shell: options.shell,
+        timeout: options.timeout,
+        maxBuffer: options.maxBuffer,
+        encoding: options.encoding,
+      });
+      queueMicrotask(() => {
+        if (file === launchctlPath) {
+          if (scenario.launchctlMode === "error") return callback(childError("ENOENT"), "", secret);
+          if (scenario.launchctlMode === "timeout") return callback(childError("ETIMEDOUT"), "", secret);
+          const stdout = scenario.launchctlMode === "oversize"
+            ? "x".repeat(1_048_577) : launchctlOutput();
+          return callback(null, stdout, "");
+        }
+        if (file === plutilPath) {
+          if (scenario.plutilMode === "error") return callback(childError("ENOENT"), "", secret);
+          if (scenario.plutilMode === "timeout") return callback(childError("ETIMEDOUT"), "", secret);
+          return callback(null, plutilOutput(args), "");
+        }
+        if (file === nodeReal) {
+          if (scenario.cliMode === "error") return callback(childError("EACCES"), "", secret);
+          if (scenario.cliMode === "timeout") return callback(childError("ETIMEDOUT"), "", secret);
+          if (scenario.cliMode === "signal") {
+            const error = childError("ECHILD");
+            error.signal = "SIGTERM";
+            return callback(error, "", secret);
+          }
+          const stderr = scenario.cliMode === "stderr" ? secret : "";
+          return callback(null, cliOutput(), stderr);
+        }
+        return callback(childError("ENOENT"), "", secret);
+      });
+    }
+
+    function statFor(path) {
+      let kind = "file";
+      let uid = 501;
+      let mode = path === plistPath ? 0o100644 : 0o100755;
+      if (scenario.fileMode === "plist-symlink" && path === plistPath) kind = "symlink";
+      if (scenario.fileMode === "plist-nonregular" && path === plistPath) kind = "directory";
+      if (scenario.fileMode === "plist-owner" && path === plistPath) uid = 777;
+      if (scenario.fileMode === "plist-mode" && path === plistPath) mode = 0o100666;
+      if (scenario.fileMode === "entry-symlink" && path === entrypoint) kind = "symlink";
+      if (scenario.fileMode === "entry-nonregular" && path === entrypoint) kind = "directory";
+      if (scenario.fileMode === "cli-symlink" && path === cli) kind = "symlink";
+      if (scenario.fileMode === "cli-nonregular" && path === cli) kind = "directory";
+      return {
+        uid,
+        mode,
+        dev: 1,
+        ino: path === plistPath ? 10 : path === entrypoint ? 20 : 30,
+        size: path === plistPath ? 100 : path === entrypoint ? 200 : 300,
+        mtimeMs: 1_700_000_000_000,
+        isFile: () => kind === "file",
+        isSymbolicLink: () => kind === "symlink",
+      };
+    }
+
+    await mock.module("node:child_process", { namedExports: { execFile } });
+    await mock.module("node:fs/promises", { namedExports: {
+      lstat: async (path) => statFor(path),
+      realpath: async (path) => {
+        if (path === nodeAlias) return nodeReal;
+        if (path === "/usr/bin/false") return "/usr/bin/false";
+        return path;
+      },
+    } });
+
+    const module = await import(${JSON.stringify(moduleUrl)});
+    let pair = {
+      deliveryEvidenceRef: response.deliveryEvidenceRef,
+      deliveryEvidenceHash: response.deliveryEvidenceHash,
+    };
+    switch (scenario.pairKind) {
+      case "mismatch":
+        pair = {
+          deliveryEvidenceRef: "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/" + "0".repeat(64),
+          deliveryEvidenceHash: "0".repeat(64),
+        };
+        break;
+      case "crossed": pair = { ...pair, deliveryEvidenceHash: "0".repeat(64) }; break;
+      case "missing": pair = { deliveryEvidenceRef: pair.deliveryEvidenceRef }; break;
+      case "hidden": Object.defineProperty(pair, "hidden", { value: true }); break;
+      case "symbol": pair[Symbol("hidden")] = true; break;
+      case "accessor": {
+        const ref = pair.deliveryEvidenceRef;
+        Object.defineProperty(pair, "deliveryEvidenceRef", { enumerable: true, get: () => ref });
+        break;
+      }
+      case "proxy": pair = new Proxy(pair, {
+        getPrototypeOf: () => { throw new Error(secret); },
+      }); break;
+      case "custom-prototype": pair = Object.assign(Object.create({ inherited: true }), pair); break;
+      case "null-prototype": pair = Object.assign(Object.create(null), pair); break;
+    }
+
+    function deeplyFrozen(value, seen = new Set()) {
+      if (value === null || typeof value !== "object" || seen.has(value)) return true;
+      seen.add(value);
+      if (!Object.isFrozen(value)) return false;
+      return Reflect.ownKeys(value).every((key) => deeplyFrozen(value[key], seen));
+    }
+
+    try {
+      const observation = scenario.action === "resolve"
+        ? await module.resolveProductBuildAuthorityV2DeliveryEvidenceV1(pair)
+        : await module.observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();
+      process.stdout.write(JSON.stringify({
+        ok: true,
+        schema: observation.schema,
+        observationTransport: observation.observationTransport,
+        frozen: deeplyFrozen(observation),
+        pair: {
+          deliveryEvidenceRef: observation.response.deliveryEvidenceRef,
+          deliveryEvidenceHash: observation.response.deliveryEvidenceHash,
+        },
+        calls,
+      }));
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        code: error?.code,
+        message: error?.message,
+        stack: error?.stack,
+        calls,
+      }));
+    }
+  `;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--no-warnings",
+      "--experimental-test-module-mocks",
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+    ],
+    {
+      cwd: new URL("../..", import.meta.url),
+      encoding: "utf8",
+      maxBuffer: 4 * 1_048_576,
+      env: { ...process.env },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `observer harness failed: ${result.stderr || result.stdout}`,
+  );
+  return JSON.parse(result.stdout) as ObserverHarnessResult;
+}
+
+function assertRedactedObserverError(result: ObserverHarnessResult): void {
+  assert.equal(result.ok, false);
+  assert.match(
+    result.code ?? "",
+    /^PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_[A-Z_]+$/u,
+  );
+  assert.equal(result.message, result.code);
+  assert.doesNotMatch(
+    `${result.code ?? ""}${result.message ?? ""}${result.stack ?? ""}`,
+    /LAUNCHCTL_SECRET_SENTINEL|\/Users\/|postgres:|hostile/u,
+  );
+}
+
 describe("Product Build Authority V2 delivery-evidence response v1", () => {
+  it("exports only the fixed zero-input observer and pair-only resolver", () => {
+    assert.equal(typeof observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1, "function");
+    assert.equal(typeof resolveProductBuildAuthorityV2DeliveryEvidenceV1, "function");
+  });
+
+  it("observes the fixed source CLI with a sealed child boundary and freezes the result", () => {
+    const result = runObserverHarness({ action: "observe" });
+    assert.equal(result.ok, true);
+    assert.equal(
+      result.schema,
+      "setfarm.product-build-authority-v2-delivery-evidence-observation.v1",
+    );
+    assert.equal(result.observationTransport, "source-cli");
+    assert.equal(result.frozen, true);
+    assert.deepEqual(result.pair, {
+      deliveryEvidenceRef: DELIVERY_EVIDENCE_REF,
+      deliveryEvidenceHash: DELIVERY_EVIDENCE_HASH,
+    });
+    assert.equal(result.calls.length, 9);
+    assert.deepEqual(result.calls[0], {
+      file: "/bin/launchctl",
+      args: ["print", "gui/501/com.setrox.mission-control"],
+      env: { PATH: "/opt/homebrew/bin:/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      shell: false,
+      timeout: 5_000,
+      maxBuffer: 1_048_576,
+      encoding: "utf8",
+    });
+    assert.deepEqual(
+      result.calls.slice(1, 4).map((call) => [call.file, call.args]),
+      [
+        [
+          "/usr/bin/plutil",
+          ["-extract", "Label", "raw", "-o", "-", "/Users/setrox/Library/LaunchAgents/com.setrox.mission-control.plist"],
+        ],
+        [
+          "/usr/bin/plutil",
+          ["-extract", "WorkingDirectory", "raw", "-o", "-", "/Users/setrox/Library/LaunchAgents/com.setrox.mission-control.plist"],
+        ],
+        [
+          "/usr/bin/plutil",
+          ["-extract", "ProgramArguments", "json", "-o", "-", "/Users/setrox/Library/LaunchAgents/com.setrox.mission-control.plist"],
+        ],
+      ],
+    );
+    assert.deepEqual(result.calls[4], {
+      file: "/opt/homebrew/Cellar/node/26.4.0/bin/node",
+      args: [
+        "/Users/setrox/ai/setrox/mission-control/dist-server/services/product-build-authority-v2-delivery-evidence-v1.js",
+        "--json",
+      ],
+      cwd: "/Users/setrox/ai/setrox/mission-control",
+      env: { PATH: "/opt/homebrew/bin:/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      shell: false,
+      timeout: 120_000,
+      maxBuffer: 1_048_576,
+      encoding: "utf8",
+    });
+    assert.deepEqual(result.calls.slice(5), result.calls.slice(0, 4));
+    assert.equal(
+      Object.keys(result.calls[4]?.env ?? {}).some((key) =>
+        /HOME|NODE|GIT|PROXY|SETFARM|DATABASE|TOKEN/u.test(key)),
+      false,
+    );
+  });
+
+  it("freshly reobserves for pair resolution and refuses mismatches", () => {
+    const exact = runObserverHarness({ action: "resolve", pairKind: "valid" });
+    assert.equal(exact.ok, true);
+    assert.equal(exact.calls.length, 9);
+    assert.deepEqual(exact.pair, {
+      deliveryEvidenceRef: DELIVERY_EVIDENCE_REF,
+      deliveryEvidenceHash: DELIVERY_EVIDENCE_HASH,
+    });
+
+    const mismatch = runObserverHarness({ action: "resolve", pairKind: "mismatch" });
+    assertRedactedObserverError(mismatch);
+    assert.equal(
+      mismatch.code,
+      "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_MISMATCH",
+    );
+    assert.equal(mismatch.calls.length, 9);
+  });
+
+  it("rejects malformed exact pairs before any OS call", () => {
+    for (const pairKind of [
+      "crossed",
+      "missing",
+      "hidden",
+      "symbol",
+      "accessor",
+      "proxy",
+      "custom-prototype",
+      "null-prototype",
+    ] as const) {
+      const result = runObserverHarness({ action: "resolve", pairKind });
+      assertRedactedObserverError(result);
+      assert.equal(
+        result.code,
+        "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PAIR_INVALID",
+        pairKind,
+      );
+      assert.equal(result.calls.length, 0, pairKind);
+    }
+  });
+
+  it("fails closed on UID, launchctl, plist, and file locator drift", () => {
+    const scenarios: readonly ObserverHarnessScenario[] = [
+      { uid: null },
+      { uid: -1 },
+      { uid: 1.5 },
+      { uid: Number.MAX_SAFE_INTEGER + 1 },
+      { launchctlMode: "error" },
+      { launchctlMode: "timeout" },
+      { launchctlMode: "oversize" },
+      { launchctlMode: "malformed" },
+      { launchctlMode: "duplicate-path" },
+      { launchctlMode: "wrong-program" },
+      { launchctlMode: "wrong-cwd" },
+      { launchctlMode: "final-drift" },
+      { plutilMode: "error" },
+      { plutilMode: "timeout" },
+      { plutilMode: "oversize" },
+      { plutilMode: "duplicate-label" },
+      { plutilMode: "wrong-label" },
+      { plutilMode: "wrong-cwd" },
+      { plutilMode: "malformed-argv" },
+      { plutilMode: "wrong-argv" },
+      { fileMode: "plist-symlink" },
+      { fileMode: "plist-nonregular" },
+      { fileMode: "plist-owner" },
+      { fileMode: "plist-mode" },
+      { fileMode: "entry-symlink" },
+      { fileMode: "entry-nonregular" },
+      { fileMode: "cli-symlink" },
+      { fileMode: "cli-nonregular" },
+    ];
+    for (const scenario of scenarios) {
+      assertRedactedObserverError(runObserverHarness(scenario));
+    }
+  });
+
+  it("accepts only one compact bounded JSON payload with empty stderr", () => {
+    for (const cliMode of [
+      "error",
+      "timeout",
+      "signal",
+      "oversize",
+      "empty",
+      "stderr",
+      "malformed",
+      "multiline",
+      "trailing",
+      "second-payload",
+      "no-final-newline",
+      "invalid-response",
+    ] as const) {
+      const result = runObserverHarness({ cliMode });
+      assertRedactedObserverError(result);
+      assert.equal(result.calls.some((call) => call.file === "/opt/homebrew/Cellar/node/26.4.0/bin/node"), true);
+    }
+  });
+
   it("accepts the exact canonical current response and literal hash projections", () => {
     assert.equal(
       PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_RESPONSE_SCHEMA_V1,
@@ -449,7 +971,7 @@ describe("Product Build Authority V2 delivery-evidence response v1", () => {
     });
   });
 
-  it("has a Setfarm-local static import boundary and exposes no injectable production port", async () => {
+  it("has a Setfarm-local source-CLI-only boundary and no private exported seam", async () => {
     const source = await readFile(
       new URL(
         "../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
@@ -460,20 +982,62 @@ describe("Product Build Authority V2 delivery-evidence response v1", () => {
     const imports = [...source.matchAll(
       /^\s*import(?:\s+type)?(?:[^;]*?\sfrom\s*)?["']([^"']+)["'];/gmu,
     )].map((match) => match[1]);
-    assert.deepEqual(imports, ["zod", "../product-compiler/canonical-json.js"]);
+    assert.deepEqual(imports, [
+      "node:child_process",
+      "node:fs/promises",
+      "node:path",
+      "zod",
+      "../product-compiler/canonical-json.js",
+    ]);
     assert.equal(source.includes("import type"), false);
     assert.equal(source.includes("import("), false);
     assert.equal(source.includes("require("), false);
     assert.equal(imports.some((specifier) => specifier?.includes("mission-control")), false);
+    assert.equal(imports.some((specifier) => specifier?.includes("baseline-post-handoff")), false);
+    assert.equal(imports.some((specifier) => specifier?.includes("runtime-source")), false);
     assert.equal(imports.some((specifier) => specifier?.startsWith("../../")), false);
     assert.deepEqual(
-      [...source.matchAll(/export function\s+([A-Za-z0-9_]+)/gu)].map((match) => match[1]),
-      ["parseProductBuildAuthorityV2DeliveryEvidenceResponseV1"],
+      [...source.matchAll(/export (?:async )?function\s+([A-Za-z0-9_]+)/gu)].map((match) => match[1]),
+      [
+        "parseProductBuildAuthorityV2DeliveryEvidenceResponseV1",
+        "observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1",
+        "resolveProductBuildAuthorityV2DeliveryEvidenceV1",
+      ],
+    );
+    assert.deepEqual(
+      [...source.matchAll(/export type\s+([A-Za-z0-9_]+)/gu)].map((match) => match[1]),
+      [
+        "GitObjectHashV1",
+        "Sha256V1",
+        "CanonicalRef",
+        "ProductBuildAuthorityV2FocusedTestReceiptV1",
+        "ProductBuildAuthorityV2VendorLockProjectionV1",
+        "ProductBuildAuthorityV2DeliveryEvidenceV1",
+        "ProductBuildAuthorityV2DeliveryEvidenceResponseV1",
+        "ProductBuildAuthorityV2DeliveryEvidencePairV1",
+        "ProductBuildAuthorityV2DeliveryEvidenceObservationV1",
+      ],
     );
     assert.match(
       source,
       /parseProductBuildAuthorityV2DeliveryEvidenceResponseV1\(value: unknown\)/u,
     );
-    assert.doesNotMatch(source, /(?:parser|transport|sourceRoot|missionControlRoot)\s*[?:]/u);
+    assert.match(
+      source,
+      /observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1\(\)/u,
+    );
+    assert.match(
+      source,
+      /resolveProductBuildAuthorityV2DeliveryEvidenceV1\(\s*input: ProductBuildAuthorityV2DeliveryEvidencePairV1/u,
+    );
+    assert.doesNotMatch(
+      source,
+      /\bfetch\b|https?:\/\/127\.0\.0\.1|observationTransport:\s*"http"|fallback/iu,
+    );
+    assert.doesNotMatch(
+      source,
+      /export\s+(?:const|class|function|type|interface)\s+(?:[A-Za-z0-9_]*(?:Locator|Launchctl|Plutil|Environment|Options|Factory)[A-Za-z0-9_]*)/u,
+    );
+    assert.doesNotMatch(source, /(?:sourceRoot|missionControlRoot|transportOverride)\s*[?:]/u);
   });
 });
