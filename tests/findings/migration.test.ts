@@ -4,8 +4,8 @@ import { after, before, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   planContractSpineMigrations,
-  verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
@@ -21,7 +21,7 @@ describe("finding/recovery ledger migration", () => {
   it("applies v10 additively and detects partial ledger drift", async () => {
     const applied = await applyContractSpineMigrations(database.sql);
     assert.equal(applied.applied.includes("010_finding_recovery_evidence_ledger"), true);
-    const verified = await verifyContractSpineMigrations(database.sql);
+    const verified = await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql);
     const v10 = verified.migrations.find((migration) => migration.version === 10);
     assert.equal(v10?.name, "010_finding_recovery_evidence_ledger");
     assert.equal(v10?.state, "applied");

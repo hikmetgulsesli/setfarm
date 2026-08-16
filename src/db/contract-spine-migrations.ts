@@ -3,6 +3,18 @@ import type postgres from "postgres";
 import { computeContractSpineMigrationChecksumV1 } from "./contract-spine-migration-checksum.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migration-digests.generated.js";
 import { assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable } from "./contract-spine-migration-source-integrity.js";
+import {
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
+  BootstrapMainClaimHandoffV1SchemaError,
+  detectBootstrapMainClaimHandoffV1Schema,
+  isAuthenticatedBootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+  projectBootstrapMainClaimHandoffV1Schema,
+  verifyBootstrapMainClaimHandoffV1Schema,
+  type BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+  type BootstrapMainClaimHandoffV1SchemaProjection,
+} from "./bootstrap-main-claim-handoff-v1-migration.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   OPERATIONAL_FAILURE_CAUSE_AUTHORITY_BINDINGS_V1,
@@ -309,7 +321,7 @@ type MigrationDefinition = Readonly<{
   adopt?(sql: TransactionSql): Promise<void>;
 }>;
 
-type Migration = MigrationDefinition & (
+type MigrationWithoutClass = MigrationDefinition & (
   | Readonly<{
       implementationDigest: string;
       apply(sql: TransactionSql): Promise<void>;
@@ -321,8 +333,16 @@ type Migration = MigrationDefinition & (
   | Readonly<{
       implementationDigest?: never;
       apply?: never;
-    }>
+  }>
 );
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-guarded-class:BEGIN
+export type ContractSpineMigrationClass = "automatic" | "guarded";
+
+type Migration = MigrationWithoutClass & Readonly<{
+  migrationClass: ContractSpineMigrationClass;
+}>;
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-guarded-class:END
 
 function checksum(migration: Migration): string {
   return computeContractSpineMigrationChecksumV1(migration);
@@ -341,6 +361,7 @@ export type ContractSpineMigrationPlan = Readonly<{
   migrations: ReadonlyArray<Readonly<{
     version: number;
     name: string;
+    migrationClass: ContractSpineMigrationClass | null;
     checksum: string;
     state:
       | "pending"
@@ -358,6 +379,7 @@ export type ContractSpineMigrationApplyResult = Readonly<{
   applied: string[];
   adopted: string[];
   alreadyApplied: string[];
+  guardedPending: string[];
 }>;
 
 export type RecoveryTerminalLeaseRollbackResult = Readonly<{
@@ -12395,7 +12417,7 @@ async function detectRegisteredV3StoryClaimRuntimeBindingV1(
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v29-registration-adapters:END
 
-const migrations: readonly Migration[] = [
+const automaticMigrationDefinitions: readonly MigrationWithoutClass[] = [
   {
     version: 1,
     name: "001_execution_attempts",
@@ -12653,6 +12675,24 @@ const migrations: readonly Migration[] = [
   },
   // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v31-registration:END
 ];
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-registration:BEGIN
+const migrations: readonly Migration[] = Object.freeze([
+  ...automaticMigrationDefinitions.map((migration) => Object.freeze({
+    ...migration,
+    migrationClass: "automatic" as const,
+  })),
+  Object.freeze({
+    version: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+    name: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+    migrationClass: "guarded" as const,
+    statements: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[32],
+    detect: detectBootstrapMainClaimHandoffV1Schema,
+    verify: verifyBootstrapMainClaimHandoffV1Schema,
+  }),
+]);
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-registration:END
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
   const sourceDigests = new Map<number, string>(
@@ -15597,6 +15637,8 @@ async function planContractSpineMigrationsOnConnection(
       const detected = await migration.detect(sql);
       if (detected === "absent") {
         state = "pending";
+      } else if (migration.migrationClass === "guarded") {
+        state = "adoption_mismatch";
       } else if (detected === "partial") {
         state = "adoption_mismatch";
       } else {
@@ -15605,8 +15647,9 @@ async function planContractSpineMigrationsOnConnection(
           state = "adoptable";
         } catch (error) {
           if (
-            error instanceof ContractSpineMigrationError
-            && error.code === "MIGRATION_ADOPTION_MISMATCH"
+            (error instanceof ContractSpineMigrationError
+              && error.code === "MIGRATION_ADOPTION_MISMATCH")
+            || error instanceof BootstrapMainClaimHandoffV1SchemaError
           ) {
             state = "adoption_mismatch";
           } else {
@@ -15617,19 +15660,27 @@ async function planContractSpineMigrationsOnConnection(
     } else {
       if (row.name !== migration.name || row.checksum !== expectedChecksum) {
         state = "checksum_mismatch";
+      } else if (migration.migrationClass === "guarded" && row.state !== "applied") {
+        state = "adoption_mismatch";
       } else if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(
         migration,
         sql,
       ) !== "present") {
         state = "adoption_mismatch";
       } else {
-        try {
-          await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql);
+          try {
+            if (migration.migrationClass === "guarded") {
+              await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+                sql,
+              );
+            }
+            await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql);
           state = row.state === "adopted" ? "adopted" : "applied";
         } catch (error) {
           if (
-            error instanceof ContractSpineMigrationError
-            && error.code === "MIGRATION_ADOPTION_MISMATCH"
+            (error instanceof ContractSpineMigrationError
+              && error.code === "MIGRATION_ADOPTION_MISMATCH")
+            || error instanceof BootstrapMainClaimHandoffV1SchemaError
           ) {
             state = "adoption_mismatch";
           } else {
@@ -15641,6 +15692,7 @@ async function planContractSpineMigrationsOnConnection(
     planned.push({
       version: migration.version,
       name: migration.name,
+      migrationClass: migration.migrationClass,
       checksum: expectedChecksum,
       state,
     });
@@ -15683,6 +15735,7 @@ async function planContractSpineMigrationsOnConnection(
     planned.push({
       version: row.version,
       name: row.name,
+      migrationClass: null,
       checksum: row.checksum,
       state: "unexpected",
     });
@@ -15759,6 +15812,8 @@ export async function applyContractSpineMigrations(
       const applied: string[] = [];
       const adopted: string[] = [];
       const alreadyApplied: string[] = [];
+      // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-guarded-dispatch:BEGIN
+      const guardedPending: string[] = [];
       const journal = await journalRows(transaction);
       const knownVersions = new Set(migrations.map((migration) => migration.version));
       const unexpected = journal.find((row) => !knownVersions.has(row.version));
@@ -15780,6 +15835,12 @@ export async function applyContractSpineMigrations(
               `Migration ${migration.version} journal checksum or name differs from source`,
             );
           }
+          if (migration.migrationClass === "guarded" && row.state !== "applied") {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_ADOPTION_MISMATCH",
+              `Guarded migration ${migration.version} may never be adopted`,
+            );
+          }
           if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(
             migration,
             transaction,
@@ -15789,11 +15850,32 @@ export async function applyContractSpineMigrations(
               `Migration ${migration.version} journaled objects are not fully present`,
             );
           }
-          await verifyRegisteredMigrationAtCurrentSupportedHeadV31(
-            migration,
-            transaction,
-          );
+          try {
+            if (migration.migrationClass === "guarded") {
+              await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+                transaction,
+              );
+            }
+            await verifyRegisteredMigrationAtCurrentSupportedHeadV31(
+              migration,
+              transaction,
+            );
+          } catch (cause) {
+            if (cause instanceof BootstrapMainClaimHandoffV1SchemaError) {
+              throw new ContractSpineMigrationError(
+                "MIGRATION_ADOPTION_MISMATCH",
+                `Migration ${migration.version} journaled schema differs from source`,
+                { cause },
+              );
+            }
+            throw cause;
+          }
           alreadyApplied.push(migration.name);
+          continue;
+        }
+
+        if (migration.migrationClass === "guarded") {
+          guardedPending.push(migration.name);
           continue;
         }
 
@@ -15839,7 +15921,6 @@ export async function applyContractSpineMigrations(
           ],
         );
       }
-
       await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
 
       if (options.releaseSha) {
@@ -15853,7 +15934,9 @@ export async function applyContractSpineMigrations(
       await verifyExactContractSpineJournalAuthority(transaction);
       await verifyExactContractSpineSourceChain(
         transaction,
-        migrations[migrations.length - 1]!.version,
+        guardedPending.length > 0
+          ? automaticMigrationDefinitions[automaticMigrationDefinitions.length - 1]!.version
+          : migrations[migrations.length - 1]!.version,
       );
 
       return {
@@ -15861,6 +15944,7 @@ export async function applyContractSpineMigrations(
         applied,
         adopted,
         alreadyApplied,
+        guardedPending,
       };
     }) as ContractSpineMigrationApplyResult;
   } catch (error) {
@@ -15875,6 +15959,559 @@ export async function applyContractSpineMigrations(
     throw error;
   }
 }
+
+export type AuthorityV3ContractSpineThroughMigration31AuditV1 = Readonly<{
+  schema: "setfarm.authority-v3-contract-spine-through-migration-31-audit.v1";
+  status: "verified";
+  throughVersion: 31;
+  migrations: ContractSpineMigrationPlan["migrations"];
+}>;
+
+export type PendingBootstrapMainClaimHandoffGuardedSuccessorV1 = Readonly<{
+  schema: "setfarm.pending-bootstrap-main-claim-handoff-guarded-successor.v1";
+  status: "exact_pending_guarded_successor";
+  migration: ContractSpineMigrationPlan["migrations"][number];
+  migrationDigest: string;
+  namedMigrationDigestEntryHash: string;
+  orderedStatementsHash: string;
+  expectedSchemaProjectionHash: string;
+}>;
+
+export type BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1 = Readonly<{
+  schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-apply.v1";
+  status: "applied" | "already_applied";
+  migrationId: typeof BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID;
+  migrationOrdinal: typeof BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL;
+  migrationClass: "guarded";
+  evidenceHash: string;
+  schemaProjection: BootstrapMainClaimHandoffV1SchemaProjection;
+}>;
+
+const GUARDED_MIGRATION_32_EVIDENCE_KEYS = Object.freeze([
+  "schema",
+  "purpose",
+  "currentEntryOperationRef",
+  "currentEntryOperationHash",
+  "sealedSpawnerAdmissionRef",
+  "sealedSpawnerAdmissionHash",
+  "postPredecessorTerminationLegacyZeroOwnerObservationRef",
+  "postPredecessorTerminationLegacyZeroOwnerObservationHash",
+  "authorityV3Migration31AuditRef",
+  "authorityV3Migration31AuditHash",
+  "pendingBootstrapHandoffMigrationRef",
+  "pendingBootstrapHandoffMigrationHash",
+  "cleanSetfarmSourceSha",
+  "cleanSetfarmTreeHash",
+  "cleanSetfarmBuildHash",
+  "migrationSourceSha",
+  "freshLegacyZeroOwnerObservationRef",
+  "freshLegacyZeroOwnerObservationHash",
+  "preManifestMigration32AuthorizationRef",
+  "preManifestMigration32AuthorizationHash",
+  "preManifestMigration32AuthorizationConsumptionRef",
+  "preManifestMigration32AuthorizationConsumptionHash",
+] as const);
+const GUARDED_MIGRATION_32_CANONICAL_REF = /^setfarm:\/\/[a-z0-9][a-z0-9/._:-]{0,510}$/;
+const GUARDED_MIGRATION_32_SHA256 = /^[a-f0-9]{64}$/;
+const GUARDED_MIGRATION_32_GIT_OBJECT = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const GUARDED_MIGRATION_32_APPLICATION_KEYS = Object.freeze([
+  "schema",
+  "evidenceHash",
+  "authorizationRef",
+  "authorizationHash",
+  "authorizationConsumptionRef",
+  "authorizationConsumptionHash",
+  "applicationHash",
+] as const);
+
+function bootstrapMainClaimHandoffGuardedMigration32ApplicationProjection(
+  evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+  evidenceHash: string,
+): Readonly<Record<string, unknown>> {
+  const body = Object.freeze({
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1",
+    evidenceHash,
+    authorizationRef: evidence.preManifestMigration32AuthorizationRef,
+    authorizationHash: evidence.preManifestMigration32AuthorizationHash,
+    authorizationConsumptionRef:
+      evidence.preManifestMigration32AuthorizationConsumptionRef,
+    authorizationConsumptionHash:
+      evidence.preManifestMigration32AuthorizationConsumptionHash,
+  });
+  return Object.freeze({
+    ...body,
+    applicationHash: hashCanonicalJson(body),
+  });
+}
+
+function assertGuardedMigration32Evidence(
+  evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+): void {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 requires its exact purpose-bound evidence",
+    );
+  }
+  const actualKeys = Object.keys(evidence).sort();
+  const expectedKeys = [...GUARDED_MIGRATION_32_EVIDENCE_KEYS].sort();
+  const refs = [
+    evidence.currentEntryOperationRef,
+    evidence.sealedSpawnerAdmissionRef,
+    evidence.postPredecessorTerminationLegacyZeroOwnerObservationRef,
+    evidence.authorityV3Migration31AuditRef,
+    evidence.pendingBootstrapHandoffMigrationRef,
+    evidence.freshLegacyZeroOwnerObservationRef,
+    evidence.preManifestMigration32AuthorizationRef,
+    evidence.preManifestMigration32AuthorizationConsumptionRef,
+  ];
+  const hashes = [
+    evidence.currentEntryOperationHash,
+    evidence.sealedSpawnerAdmissionHash,
+    evidence.postPredecessorTerminationLegacyZeroOwnerObservationHash,
+    evidence.authorityV3Migration31AuditHash,
+    evidence.pendingBootstrapHandoffMigrationHash,
+    evidence.cleanSetfarmBuildHash,
+    evidence.freshLegacyZeroOwnerObservationHash,
+    evidence.preManifestMigration32AuthorizationHash,
+    evidence.preManifestMigration32AuthorizationConsumptionHash,
+  ];
+  if (
+    JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)
+    || evidence.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1"
+    || evidence.purpose !== "task6a-guarded-migration-32-after-sealed-spawner-v1"
+    || refs.some((value) => !GUARDED_MIGRATION_32_CANONICAL_REF.test(value))
+    || hashes.some((value) => !GUARDED_MIGRATION_32_SHA256.test(value))
+    || !GUARDED_MIGRATION_32_GIT_OBJECT.test(evidence.cleanSetfarmSourceSha)
+    || !GUARDED_MIGRATION_32_GIT_OBJECT.test(evidence.cleanSetfarmTreeHash)
+    || evidence.migrationSourceSha !== evidence.cleanSetfarmSourceSha
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 evidence does not match the sealed Task 6A contract",
+    );
+  }
+}
+
+async function verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+  sql: Sql | TransactionSql,
+  expected?: Readonly<{
+    evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1;
+    evidenceHash: string;
+  }>,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    release_sha: string | null;
+    migration_application_evidence_hash: string;
+    head_payload: unknown;
+  }>>(
+    `SELECT migration.release_sha,
+            head.migration_application_evidence_hash,
+            head.head_payload
+       FROM public.setfarm_schema_migrations migration
+       JOIN public.internal_production_owner_admission_head_v1 head
+         ON head.singleton = TRUE
+      WHERE migration.version = 32`,
+  );
+  const row = rows[0];
+  const payload = row?.head_payload;
+  const payloadRecord = payload !== null && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null;
+  const application = payloadRecord?.migrationApplication;
+  const applicationRecord = application !== null
+    && typeof application === "object"
+    && !Array.isArray(application)
+    ? application as Record<string, unknown>
+    : null;
+  const applicationKeys = applicationRecord ? Object.keys(applicationRecord).sort() : [];
+  const requiredKeys = [...GUARDED_MIGRATION_32_APPLICATION_KEYS].sort();
+  const applicationBody = applicationRecord
+    ? {
+        schema: applicationRecord.schema,
+        evidenceHash: applicationRecord.evidenceHash,
+        authorizationRef: applicationRecord.authorizationRef,
+        authorizationHash: applicationRecord.authorizationHash,
+        authorizationConsumptionRef: applicationRecord.authorizationConsumptionRef,
+        authorizationConsumptionHash: applicationRecord.authorizationConsumptionHash,
+      }
+    : null;
+  const structurallyValid = rows.length === 1
+    && row !== undefined
+    && GUARDED_MIGRATION_32_GIT_OBJECT.test(row.release_sha ?? "")
+    && GUARDED_MIGRATION_32_SHA256.test(row.migration_application_evidence_hash)
+    && row.migration_application_evidence_hash !== "0".repeat(64)
+    && payloadRecord !== null
+    && payloadRecord?.schema === "setfarm.internal-production-owner-admission-head.v1"
+    && payloadRecord.version === 0
+    && JSON.stringify(applicationKeys) === JSON.stringify(requiredKeys)
+    && applicationRecord?.schema
+      === "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"
+    && applicationRecord.evidenceHash === row.migration_application_evidence_hash
+    && typeof applicationRecord.authorizationRef === "string"
+    && GUARDED_MIGRATION_32_CANONICAL_REF.test(applicationRecord.authorizationRef)
+    && typeof applicationRecord.authorizationHash === "string"
+    && GUARDED_MIGRATION_32_SHA256.test(applicationRecord.authorizationHash)
+    && typeof applicationRecord.authorizationConsumptionRef === "string"
+    && GUARDED_MIGRATION_32_CANONICAL_REF.test(
+      applicationRecord.authorizationConsumptionRef,
+    )
+    && typeof applicationRecord.authorizationConsumptionHash === "string"
+    && GUARDED_MIGRATION_32_SHA256.test(
+      applicationRecord.authorizationConsumptionHash,
+    )
+    && typeof applicationRecord.applicationHash === "string"
+    && GUARDED_MIGRATION_32_SHA256.test(applicationRecord.applicationHash)
+    && applicationBody !== null
+    && applicationRecord.applicationHash === hashCanonicalJson(applicationBody);
+  if (!structurallyValid) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 journaled application provenance is incomplete or invalid",
+    );
+  }
+  if (
+    expected
+    && (
+      row.release_sha !== expected.evidence.migrationSourceSha
+      || row.migration_application_evidence_hash !== expected.evidenceHash
+      || applicationRecord.authorizationRef
+        !== expected.evidence.preManifestMigration32AuthorizationRef
+      || applicationRecord.authorizationHash
+        !== expected.evidence.preManifestMigration32AuthorizationHash
+      || applicationRecord.authorizationConsumptionRef
+        !== expected.evidence.preManifestMigration32AuthorizationConsumptionRef
+      || applicationRecord.authorizationConsumptionHash
+        !== expected.evidence.preManifestMigration32AuthorizationConsumptionHash
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 response-loss retry evidence differs from first application",
+    );
+  }
+}
+
+async function auditAuthorityV3ThroughMigration31OnConnection(
+  transaction: TransactionSql,
+): Promise<AuthorityV3ContractSpineThroughMigration31AuditV1> {
+  const plan = await planContractSpineMigrationsOnConnection(transaction);
+  const predecessors = plan.migrations.filter((migration) => migration.version <= 31);
+  if (
+    predecessors.length !== 31
+    || predecessors.some((migration, index) =>
+      migration.version !== index + 1
+      || migration.migrationClass !== "automatic"
+      || (migration.state !== "applied" && migration.state !== "adopted"))
+  ) {
+    const mismatch = predecessors.find((migration) =>
+      migration.state === "checksum_mismatch" || migration.state === "adoption_mismatch");
+    if (mismatch?.state === "checksum_mismatch") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_CHECKSUM_MISMATCH",
+        `Migration ${mismatch.version} differs from the Authority-V3 predecessor source`,
+      );
+    }
+    if (mismatch?.state === "adoption_mismatch") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `Migration ${mismatch.version} differs from the Authority-V3 predecessor schema`,
+      );
+    }
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "Authority-V3 predecessor migrations 1 through 31 are not all current",
+    );
+  }
+  await verifyExactContractSpineSourceChain(transaction, 31);
+  await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
+  return Object.freeze({
+    schema: "setfarm.authority-v3-contract-spine-through-migration-31-audit.v1" as const,
+    status: "verified" as const,
+    throughVersion: 31 as const,
+    migrations: Object.freeze(predecessors.map((migration) => Object.freeze({ ...migration }))),
+  });
+}
+
+async function inspectPendingBootstrapSuccessorOnConnection(
+  transaction: TransactionSql,
+): Promise<PendingBootstrapMainClaimHandoffGuardedSuccessorV1> {
+  const plan = await planContractSpineMigrationsOnConnection(transaction);
+  const unexpected = plan.migrations.find((migration) => migration.state === "unexpected");
+  if (unexpected) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_UNKNOWN_VERSION",
+      `Migration journal contains unknown version ${unexpected.version}`,
+    );
+  }
+  const checksumMismatch = plan.migrations.find((migration) =>
+    migration.state === "checksum_mismatch");
+  if (checksumMismatch) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      `Migration ${checksumMismatch.version} journal checksum or name differs from source`,
+    );
+  }
+  const adoptionMismatch = plan.migrations.find((migration) =>
+    migration.state === "adoption_mismatch");
+  if (adoptionMismatch) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `Migration ${adoptionMismatch.version} is partial or differs from source`,
+    );
+  }
+  const pending = plan.migrations.filter((migration) =>
+    migration.state === "pending" || migration.state === "adoptable");
+  const target = pending[0];
+  if (
+    pending.length !== 1
+    || !target
+    || target.version !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL
+    || target.name !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+    || target.migrationClass !== "guarded"
+    || target.state !== "pending"
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "Migration 32 is not the sole exact pending guarded successor",
+    );
+  }
+  const migrationDigest = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[32];
+  const expectedProjection: BootstrapMainClaimHandoffV1SchemaProjection = Object.freeze({
+    schema: "setfarm.bootstrap-main-claim-handoff-schema-projection.v1",
+    migrationId: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+    migrationOrdinal: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+    bootstrapHandoffOperationTablePresent: true,
+    bootstrapHandoffOperationIdUnique: true,
+    bootstrapHandoffClaimIdUnique: true,
+    terminalReceiptPairColumnsPresent: true,
+    ownerReservationSidecarPresent: true,
+    ownerAdmissionHeadPresent: true,
+  });
+  return Object.freeze({
+    schema: "setfarm.pending-bootstrap-main-claim-handoff-guarded-successor.v1" as const,
+    status: "exact_pending_guarded_successor" as const,
+    migration: Object.freeze({ ...target }),
+    migrationDigest,
+    namedMigrationDigestEntryHash: hashCanonicalJson({
+      migrationOrdinal: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+      migrationId: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+      migrationDigest,
+    }),
+    orderedStatementsHash: hashCanonicalJson(BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS),
+    expectedSchemaProjectionHash: hashCanonicalJson(expectedProjection),
+  });
+}
+
+export async function auditAuthorityV3ContractSpineThroughMigration31V1(
+  sql: Sql,
+): Promise<AuthorityV3ContractSpineThroughMigration31AuditV1> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock_shared($1)", [
+      contractSpineMigrationLockKey,
+    ]);
+    return auditAuthorityV3ThroughMigration31OnConnection(transaction);
+  }) as Promise<AuthorityV3ContractSpineThroughMigration31AuditV1>;
+}
+
+export async function inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(
+  sql: Sql,
+): Promise<PendingBootstrapMainClaimHandoffGuardedSuccessorV1> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock_shared($1)", [
+      contractSpineMigrationLockKey,
+    ]);
+    return inspectPendingBootstrapSuccessorOnConnection(transaction);
+  }) as Promise<PendingBootstrapMainClaimHandoffGuardedSuccessorV1>;
+}
+
+export async function applyBootstrapMainClaimHandoffGuardedMigration32V1(
+  sql: Sql,
+  evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+): Promise<BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1> {
+  if (arguments.length !== 2) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 accepts only SQL and its exact evidence",
+    );
+  }
+  if (!isAuthenticatedBootstrapMainClaimHandoffGuardedMigration32EvidenceV1(evidence)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Guarded migration 32 rejects unauthenticated or cloned evidence",
+    );
+  }
+  assertGuardedMigration32Evidence(evidence);
+  const evidenceHash = hashCanonicalJson(evidence);
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', '5000ms', true)");
+      await transaction.unsafe("SELECT set_config('statement_timeout', '30000ms', true)");
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migrations IN SHARE ROW EXCLUSIVE MODE",
+      );
+      const migration = migrations.find((candidate) =>
+        candidate.version === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL)!;
+      const expectedChecksum = checksum(migration);
+      const journal = await journalRows(transaction);
+      const unexpected = journal.find((row) =>
+        !migrations.some((candidate) => candidate.version === row.version));
+      if (unexpected) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration journal contains unknown version ${unexpected.version}`,
+        );
+      }
+      const existing = journal.find((row) =>
+        row.version === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL);
+      if (existing) {
+        if (
+          existing.name !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+          || existing.checksum !== expectedChecksum
+        ) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_CHECKSUM_MISMATCH",
+            "Migration 32 journal identity differs from source",
+          );
+        }
+        if (existing.state !== "applied") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            "Guarded migration 32 may never be adopted",
+          );
+        }
+        try {
+          await verifyBootstrapMainClaimHandoffV1Schema(transaction);
+        } catch (cause) {
+          if (cause instanceof BootstrapMainClaimHandoffV1SchemaError) {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_ADOPTION_MISMATCH",
+              "Migration 32 journaled schema differs from source",
+              { cause },
+            );
+          }
+          throw cause;
+        }
+        await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+          transaction,
+          { evidence, evidenceHash },
+        );
+        const applicationAndCurrentAttestation = await transaction.unsafe<Array<{
+          attested_rows: number;
+          journal_rows: number;
+          current_release_count: number;
+        }>>(
+          `SELECT COUNT(*) FILTER (
+                    WHERE verified_release_sha IS NOT NULL AND verified_at IS NOT NULL
+                  )::integer AS attested_rows,
+                  COUNT(*)::integer AS journal_rows,
+                  COUNT(DISTINCT verified_release_sha)::integer AS current_release_count
+             FROM public.setfarm_schema_migrations`,
+        );
+        const currentAttestation = applicationAndCurrentAttestation[0];
+        if (
+          currentAttestation?.attested_rows !== currentAttestation?.journal_rows
+          || currentAttestation.current_release_count !== 1
+        ) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            "Guarded migration 32 application identity or current release attestation is invalid",
+          );
+        }
+        await verifyExactContractSpineSourceChain(transaction, 32);
+        return Object.freeze({
+          schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-apply.v1" as const,
+          status: "already_applied" as const,
+          migrationId: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+          migrationOrdinal: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+          migrationClass: "guarded" as const,
+          evidenceHash,
+          schemaProjection: await projectBootstrapMainClaimHandoffV1Schema(transaction),
+        });
+      }
+
+      await auditAuthorityV3ThroughMigration31OnConnection(transaction);
+      await inspectPendingBootstrapSuccessorOnConnection(transaction);
+      if (await detectBootstrapMainClaimHandoffV1Schema(transaction) !== "absent") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Guarded migration 32 refuses partial or adoptable schema",
+        );
+      }
+      for (const statement of BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS) {
+        await transaction.unsafe(statement);
+      }
+      const migrationApplication =
+        bootstrapMainClaimHandoffGuardedMigration32ApplicationProjection(
+          evidence,
+          evidenceHash,
+        );
+      await transaction.unsafe(
+        `UPDATE public.internal_production_owner_admission_head_v1
+            SET migration_application_evidence_hash = $1,
+                head_payload = head_payload || jsonb_build_object(
+                  'migrationApplication', $2::text::jsonb
+                ),
+                updated_at = NOW()
+          WHERE singleton = TRUE`,
+        [
+          evidenceHash,
+          JSON.stringify(migrationApplication),
+        ],
+      );
+      const schemaProjection = await projectBootstrapMainClaimHandoffV1Schema(transaction);
+      await transaction.unsafe(
+        `INSERT INTO public.setfarm_schema_migrations
+           (version, name, checksum, state, release_sha, verified_release_sha, verified_at)
+         VALUES ($1, $2, $3, 'applied', $4, $4, NOW())`,
+        [
+          BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+          BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+          expectedChecksum,
+          evidence.migrationSourceSha,
+        ],
+      );
+      await transaction.unsafe(
+        `UPDATE public.setfarm_schema_migrations
+            SET verified_release_sha = $1,
+                verified_at = NOW()`,
+        [evidence.migrationSourceSha],
+      );
+      await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+        transaction,
+        { evidence, evidenceHash },
+      );
+      await verifyExactContractSpineJournalAuthority(transaction);
+      await verifyExactContractSpineSourceChain(transaction, 32);
+      return Object.freeze({
+        schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-apply.v1" as const,
+        status: "applied" as const,
+        migrationId: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+        migrationOrdinal: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+        migrationClass: "guarded" as const,
+        evidenceHash,
+        schemaProjection,
+      });
+    }) as BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        "Guarded migration 32 lock was not acquired within 5000ms",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-guarded-dispatch:END
 
 /**
  * Roll migration 25 back only while no preparation authority provenance was

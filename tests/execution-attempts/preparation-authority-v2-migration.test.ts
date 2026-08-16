@@ -5,6 +5,7 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
@@ -182,7 +183,10 @@ describe("preparation authority v2 migration 25", () => {
       releaseSha: RELEASE_SHA,
     });
     assert.equal(applied.applied.includes("025_v3_preparation_authority_v2_ledger"), true);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     const rollback = await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
       targetReleaseSha: TARGET_RELEASE_SHA,
     });
@@ -254,7 +258,10 @@ describe("preparation authority v2 migration 25", () => {
     ]) {
       await assert.rejects(operation(), /V3_PREPARATION_AUTHORITY.*V2_IMMUTABLE/);
     }
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
   });
 
   it("rejects structurally incomplete JSON payloads at the database boundary", async () => {
@@ -309,7 +316,10 @@ describe("preparation authority v2 migration 25", () => {
         JSON.stringify(forged),
       ],
     );
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     await rollbackCurrentHeadToV26(database.sql);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),

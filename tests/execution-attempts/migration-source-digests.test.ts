@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { computeContractSpineMigrationChecksumV1 } from "../../src/db/contract-spine-migration-checksum.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract-spine-migration-digests.generated.js";
 import {
+  CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST,
   assertContractSpineSemanticMigrationSourceIntegrity,
   computeContractSpineSemanticMigrationDigests,
   createContractSpineMigrationSourceReader,
@@ -31,6 +32,114 @@ function replaceExactlyOnce(source: string, before: string, after: string): stri
 }
 
 describe("contract-spine semantic migration source digests", () => {
+  it("binds guarded migration 32 without changing any historical digest", () => {
+    const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST as Readonly<
+      Record<number, Readonly<{
+        regions: readonly Readonly<{ file: string; region: string }>[];
+        dependencyFiles: readonly string[];
+      }>>
+    >;
+    const checkedIn = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS as Readonly<
+      Record<number, string>
+    >;
+
+    assert.deepEqual(manifest[32], {
+      regions: [
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-identity-and-statements",
+        },
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-schema-projector",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-guarded-class",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-registration",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-guarded-dispatch",
+        },
+      ],
+      dependencyFiles: ["src/product-compiler/canonical-json.ts"],
+    });
+    assert.match(checkedIn[32] ?? "", /^[a-f0-9]{64}$/);
+
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader) as Readonly<
+      Record<number, string>
+    >;
+    const statementsMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "phase = 'failed_released'\n         AND terminal_receipt_ref IS NULL",
+        "phase = 'failed_release_mutation'\n         AND terminal_receipt_ref IS NULL",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(statementsMutation[32], baseline[32]);
+    for (const historical of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const) {
+      assert.equal(statementsMutation[historical], baseline[historical]);
+    }
+
+    const projectorMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "bootstrapHandoffOperationIdUnique: true as const",
+        "bootstrapHandoffOperationIdUnique: false as const",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(projectorMutation[32], baseline[32]);
+    assert.equal(projectorMutation[31], baseline[31]);
+
+    const dispatchMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "guardedPending.push(migration.name)",
+        "guardedPending.unshift(migration.name)",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(dispatchMutation[32], baseline[32]);
+    assert.equal(dispatchMutation[31], baseline[31]);
+
+    const canonicalJsonMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/product-compiler/canonical-json.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "return createHash(\"sha256\").update(canonicalJsonBytes(value)).digest(\"hex\");",
+        "return createHash(\"sha512\").update(canonicalJsonBytes(value)).digest(\"hex\");",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(canonicalJsonMutation[32], baseline[32]);
+
+    const unrelatedMigrationMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/operational-failure-cause-authority-v3-migration.ts",
+        (source) => `${source}\n// migration-31-only source mutation\n`,
+      ),
+    ) as Readonly<Record<number, string>>;
+    assert.notEqual(unrelatedMigrationMutation[31], baseline[31]);
+    assert.equal(unrelatedMigrationMutation[32], baseline[32]);
+
+    assert.throws(
+      () => assertContractSpineSemanticMigrationSourceIntegrity(replacingReader(
+        "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "const OWNER_ADMISSION_HEAD_TABLE = \"internal_production_owner_admission_head_v1\";",
+          "const OWNER_ADMISSION_HEAD_TABLE = \"internal_production_owner_admission_head_v1_mutated\";",
+        ),
+      )),
+      /CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGEST_STALE:v32/,
+    );
+  });
+
   it("matches the checked-in generated digest manifest", () => {
     assert.deepEqual(
       assertContractSpineSemanticMigrationSourceIntegrity(sourceReader),

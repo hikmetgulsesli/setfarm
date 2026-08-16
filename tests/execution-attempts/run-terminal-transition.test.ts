@@ -25,7 +25,10 @@ import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  createIsolatedTestDatabase,
+} from "./test-database.js";
 
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -655,7 +658,7 @@ describe("canonical run terminal owner", () => {
   });
 
   it("downgrades migration 20 terminal rows to the exact v19 reader contract", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const runId = "run-terminal-v19-binary-rollback";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });

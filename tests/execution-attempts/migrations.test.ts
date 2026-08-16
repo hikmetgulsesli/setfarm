@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
 import { after, before, beforeEach, describe, it } from "node:test";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   ContractSpineMigrationError,
@@ -21,6 +24,22 @@ import { validateRuntimeCompletionEffectInput } from "../../src/execution/runtim
 import { RuntimeCompletionPlanV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
+
+async function typescriptFilesUnder(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(directory, entry.name);
+    return entry.isDirectory()
+      ? typescriptFilesUnder(entryPath)
+      : entry.isFile() && /\.(?:[cm]?ts|tsx)$/u.test(entry.name)
+        ? [entryPath]
+        : [];
+  }));
+  return files.flat();
+}
 
 async function restoreExactV7Shape(database: TestDatabase): Promise<void> {
   await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
@@ -190,6 +209,617 @@ describe("contract spine migration journal", () => {
     assert.equal(plan.migrations[0]?.state, "pending");
   });
 
+  it("registers exact automatic ordinals 1-31 and sole guarded ordinal 32", async () => {
+    const module = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js")
+      .catch(() => null);
+    assert.ok(module, "the dedicated guarded migration module must exist");
+    assert.equal(module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID, guardedMigrationId);
+    assert.equal(module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL, 32);
+    assert.deepEqual(
+      module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS.map((statement: string) =>
+        [
+          "internal_production_bootstrap_main_claim_handoff_operations_v1",
+          "internal_production_owner_reservations_v1",
+          "internal_production_owner_admission_authorities_v1",
+          "internal_production_owner_admission_head_v1",
+        ].filter((relation) => statement.includes(relation))),
+      [["internal_production_bootstrap_main_claim_handoff_operations_v1"],
+        ["internal_production_owner_reservations_v1"],
+        ["internal_production_owner_admission_authorities_v1"],
+        [],
+        ["internal_production_owner_admission_authorities_v1"],
+        ["internal_production_owner_admission_authorities_v1"],
+        ["internal_production_owner_admission_head_v1"],
+        ["internal_production_owner_admission_head_v1"]],
+    );
+
+    const plan = await planContractSpineMigrations(database.sql);
+    assert.equal(plan.migrations.length, 32);
+    assert.deepEqual(
+      plan.migrations.slice(0, 31).map((migration) => migration.migrationClass),
+      Array.from({ length: 31 }, () => "automatic"),
+    );
+    assert.deepEqual(plan.migrations[31], {
+      version: 32,
+      name: guardedMigrationId,
+      migrationClass: "guarded",
+      checksum: plan.migrations[31]?.checksum,
+      state: "pending",
+    });
+  });
+
+  it("generic apply skips guarded 32 while targeted v31 audit and pending inspection succeed", async () => {
+    const migrationApi = await import("../../src/db/contract-spine-migrations.js");
+    assert.equal(
+      typeof migrationApi.auditAuthorityV3ContractSpineThroughMigration31V1,
+      "function",
+    );
+    assert.equal(
+      typeof migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
+      "function",
+    );
+
+    const priorEnvironment = process.env.SETFARM_APPLY_GUARDED_MIGRATION;
+    process.env.SETFARM_APPLY_GUARDED_MIGRATION = guardedMigrationId;
+    try {
+      const applied = await applyContractSpineMigrations(database.sql, {
+        releaseSha: "c".repeat(40),
+        guarded: true,
+        migrationId: guardedMigrationId,
+      } as never);
+      assert.deepEqual(applied.guardedPending, [guardedMigrationId]);
+    } finally {
+      if (priorEnvironment === undefined) {
+        delete process.env.SETFARM_APPLY_GUARDED_MIGRATION;
+      } else {
+        process.env.SETFARM_APPLY_GUARDED_MIGRATION = priorEnvironment;
+      }
+    }
+
+    const journal = await database.sql<Array<{ version: number }>>`
+      SELECT version FROM setfarm_schema_migrations ORDER BY version
+    `;
+    assert.deepEqual(journal.map((row) => row.version), Array.from({ length: 31 }, (_, i) => i + 1));
+    const guardedRelations = await database.sql<Array<{ relation: string | null }>>`
+      SELECT to_regclass('public.internal_production_bootstrap_main_claim_handoff_operations_v1')::text AS relation
+      UNION ALL SELECT to_regclass('public.internal_production_owner_reservations_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_admission_authorities_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_admission_head_v1')::text
+    `;
+    assert.deepEqual(guardedRelations.map((row) => row.relation), [null, null, null, null]);
+
+    const audit = await migrationApi.auditAuthorityV3ContractSpineThroughMigration31V1(database.sql);
+    assert.equal(audit.status, "verified");
+    assert.equal(audit.throughVersion, 31);
+    assert.equal(audit.migrations.length, 31);
+    const pending = await migrationApi
+      .inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql);
+    assert.deepEqual({
+      status: pending.status,
+      version: pending.migration.version,
+      name: pending.migration.name,
+      migrationClass: pending.migration.migrationClass,
+      state: pending.migration.state,
+    }, {
+      status: "exact_pending_guarded_successor",
+      version: 32,
+      name: guardedMigrationId,
+      migrationClass: "guarded",
+      state: "pending",
+    });
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_INCOMPLETE"
+        && /Migration 32 is pending/.test(error.message),
+    );
+  });
+
+  it("test-private zero-argument capability applies guarded 32 exactly once", async () => {
+    const capability = database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1;
+    assert.equal(typeof capability, "function");
+    assert.equal(capability.length, 0);
+    await assert.rejects(
+      Reflect.apply(capability, database, [{}]),
+      /TEST_GUARDED_MIGRATION_32_ARGUMENTS_FORBIDDEN/,
+    );
+
+    const automatic = await applyContractSpineMigrations(database.sql);
+    assert.deepEqual(automatic.guardedPending, [guardedMigrationId]);
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_INCOMPLETE",
+    );
+    const first = await capability.call(database);
+    assert.equal(first.status, "applied");
+    const descendantReleaseSha = "d".repeat(40);
+    const reattested = await applyContractSpineMigrations(database.sql, {
+      releaseSha: descendantReleaseSha,
+    });
+    assert.deepEqual(reattested.guardedPending, []);
+    const applicationIdentity = await database.sql<Array<{
+      release_sha: string;
+      verified_release_sha: string;
+    }>>`
+      SELECT release_sha, verified_release_sha
+        FROM setfarm_schema_migrations
+       WHERE version = 32
+    `;
+    assert.deepEqual(applicationIdentity.map((row) => ({ ...row })), [{
+      release_sha: "a".repeat(40),
+      verified_release_sha: descendantReleaseSha,
+    }]);
+    const second = await capability.call(database);
+    assert.equal(second.status, "already_applied");
+
+    const journal = await database.sql<Array<{ version: number; name: string }>>`
+      SELECT version, name FROM setfarm_schema_migrations WHERE version = 32
+    `;
+    assert.deepEqual(journal.map((row) => ({ ...row })), [{ version: 32, name: guardedMigrationId }]);
+    const complete = await applyContractSpineMigrations(database.sql);
+    assert.deepEqual(complete.guardedPending, []);
+    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+
+    const module = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    const projection = await module.projectBootstrapMainClaimHandoffV1Schema(database.sql);
+    assert.deepEqual(projection, {
+      schema: "setfarm.bootstrap-main-claim-handoff-schema-projection.v1",
+      migrationId: guardedMigrationId,
+      migrationOrdinal: 32,
+      bootstrapHandoffOperationTablePresent: true,
+      bootstrapHandoffOperationIdUnique: true,
+      bootstrapHandoffClaimIdUnique: true,
+      terminalReceiptPairColumnsPresent: true,
+      ownerReservationSidecarPresent: true,
+      ownerAdmissionHeadPresent: true,
+    });
+    await database.sql`
+      UPDATE internal_production_owner_admission_head_v1
+         SET head_payload = head_payload || ${{
+           headTransitionFixture: {
+             schema: "setfarm.test-owner-admission-head-transition.v1",
+             headVersion: 1,
+           },
+         }}::jsonb
+       WHERE singleton = TRUE
+    `;
+    assert.equal((await planContractSpineMigrations(database.sql)).status, "current");
+    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal((await capability.call(database)).status, "already_applied");
+    const preserved = await database.sql<Array<{ head_payload: Record<string, unknown> }>>`
+      SELECT head_payload
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton = TRUE
+    `;
+    const preservedHeadPayload = preserved[0]!.head_payload;
+    for (const mutation of [
+      `head_payload #- '{migrationApplication,authorizationHash}'`,
+      `jsonb_set(
+         head_payload,
+         '{migrationApplication,unexpected}',
+         'true'::jsonb
+       )`,
+      `jsonb_set(
+         jsonb_set(
+           head_payload,
+           '{migrationApplication,authorizationHash}',
+           head_payload #> '{migrationApplication,authorizationConsumptionHash}'
+         ),
+         '{migrationApplication,authorizationConsumptionHash}',
+         head_payload #> '{migrationApplication,authorizationHash}'
+       )`,
+    ]) {
+      await database.sql.unsafe(
+        `UPDATE internal_production_owner_admission_head_v1
+            SET head_payload = ${mutation}
+          WHERE singleton = TRUE`,
+      );
+      const drift = await planContractSpineMigrations(database.sql);
+      assert.equal(drift.status, "drift");
+      assert.equal(
+        drift.migrations.find((migration) => migration.version === 32)?.state,
+        "adoption_mismatch",
+      );
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH",
+      );
+      await database.sql`
+        UPDATE internal_production_owner_admission_head_v1
+           SET head_payload = ${preservedHeadPayload}::jsonb
+         WHERE singleton = TRUE
+      `;
+    }
+  });
+
+  it("rejects adoptable, partial, extra-pending, and unexpected guarded successors", async () => {
+    const migrationApi = await import("../../src/db/contract-spine-migrations.js");
+    const guarded = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    await applyContractSpineMigrations(database.sql);
+
+    await database.sql.unsafe(guarded.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS[0]);
+    await assert.rejects(
+      migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+    assert.deepEqual(
+      (await applyContractSpineMigrations(database.sql)).guardedPending,
+      [guardedMigrationId],
+      "generic apply must not complete or journal a partial guarded schema",
+    );
+
+    await database.sql.unsafe("DROP TABLE internal_production_bootstrap_main_claim_handoff_operations_v1");
+    for (const statement of guarded.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    await assert.rejects(
+      migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+    await assert.rejects(
+      database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1(),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+
+    await database.sql.unsafe("DROP TABLE internal_production_owner_admission_head_v1");
+    await database.sql.unsafe("DROP TABLE internal_production_owner_admission_authorities_v1");
+    await database.sql.unsafe("DROP TABLE internal_production_owner_reservations_v1");
+    await database.sql.unsafe("DROP TABLE internal_production_bootstrap_main_claim_handoff_operations_v1");
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 31`;
+    await assert.rejects(
+      migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_INCOMPLETE",
+    );
+
+    await database.sql`
+      INSERT INTO setfarm_schema_migrations (version, name, checksum, state, release_sha)
+      VALUES (99, '099_unexpected', ${"f".repeat(64)}, 'applied', NULL)
+    `;
+    await assert.rejects(
+      migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_UNKNOWN_VERSION",
+    );
+  });
+
+  it("rejects a forged adopted journal state for guarded migration 32", async () => {
+    const guarded = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    const automatic = await applyContractSpineMigrations(database.sql);
+    assert.deepEqual(automatic.guardedPending, [guardedMigrationId]);
+    const pendingPlan = await planContractSpineMigrations(database.sql);
+    const guardedPlan = pendingPlan.migrations.find((migration) => migration.version === 32);
+    assert.ok(guardedPlan);
+    for (const statement of guarded.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    await database.sql`
+      INSERT INTO setfarm_schema_migrations (version, name, checksum, state, release_sha)
+      VALUES (32, ${guardedMigrationId}, ${guardedPlan.checksum}, 'adopted', ${"a".repeat(40)})
+    `;
+
+    const forgedPlan = await planContractSpineMigrations(database.sql);
+    assert.equal(forgedPlan.status, "drift");
+    assert.equal(
+      forgedPlan.migrations.find((migration) => migration.version === 32)?.state,
+      "adoption_mismatch",
+    );
+    for (const operation of [
+      () => applyContractSpineMigrations(database.sql),
+      () => verifyContractSpineMigrations(database.sql),
+      () => database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1(),
+    ]) {
+      await assert.rejects(
+        operation(),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH",
+      );
+    }
+
+    await database.sql`UPDATE setfarm_schema_migrations SET state = 'applied' WHERE version = 32`;
+    const provenanceFreePlan = await planContractSpineMigrations(database.sql);
+    assert.equal(provenanceFreePlan.status, "drift");
+    assert.equal(
+      provenanceFreePlan.migrations.find((migration) => migration.version === 32)?.state,
+      "adoption_mismatch",
+    );
+    for (const operation of [
+      () => applyContractSpineMigrations(database.sql),
+      () => verifyContractSpineMigrations(database.sql),
+      () => database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1(),
+    ]) {
+      await assert.rejects(
+        operation(),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH",
+      );
+    }
+  });
+
+  it("rejects same-name guarded schema weakening through the exact projector", async () => {
+    const guarded = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await database.sql.unsafe(
+      `ALTER TABLE internal_production_owner_admission_authorities_v1
+         DROP CONSTRAINT internal_production_owner_admission_authority_kind_check`,
+    );
+    await database.sql.unsafe(
+      `ALTER TABLE internal_production_owner_admission_authorities_v1
+         ADD CONSTRAINT internal_production_owner_admission_authority_kind_check
+         CHECK (authority_kind <> '')`,
+    );
+
+    await assert.rejects(
+      guarded.projectBootstrapMainClaimHandoffV1Schema(database.sql),
+      (error: unknown) => error instanceof guarded.BootstrapMainClaimHandoffV1SchemaError
+        && /exact relation metadata mismatch/.test(error.message),
+    );
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+  });
+
+  it("projects the exact category and owner-admission purpose guards", async () => {
+    const guarded = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const requiredGuards = [
+      {
+        relation: "internal_production_owner_reservations_v1",
+        name: "internal_production_owner_reservation_category_check",
+      },
+      {
+        relation: "internal_production_owner_admission_authorities_v1",
+        name: "internal_production_owner_admission_authority_purpose_check",
+      },
+    ] as const;
+    const installed = await database.sql.unsafe<Array<{ name: string }>>(
+      `SELECT conname AS name
+         FROM pg_constraint
+        WHERE conname = ANY($1::text[])
+        ORDER BY conname`,
+      [requiredGuards.map((guard) => guard.name)],
+    );
+    assert.deepEqual(
+      installed.map((row) => row.name),
+      requiredGuards.map((guard) => guard.name).sort(),
+    );
+
+    for (const guard of requiredGuards) {
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(
+            `ALTER TABLE public.${guard.relation} DROP CONSTRAINT ${guard.name}`,
+          );
+          await transaction.unsafe(
+            `ALTER TABLE public.${guard.relation} ADD CONSTRAINT ${guard.name} CHECK (TRUE)`,
+          );
+          await guarded.projectBootstrapMainClaimHandoffV1Schema(transaction);
+        }),
+        (error: unknown) => error instanceof guarded.BootstrapMainClaimHandoffV1SchemaError
+          && /exact relation metadata mismatch/.test(error.message),
+      );
+    }
+  });
+
+  it("rejects owner reservations outside the exact category registry", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await assert.rejects(
+      database.sql.unsafe(
+        `INSERT INTO internal_production_owner_reservations_v1 (
+           reservation_ref, reservation_hash, category, owner_key, owner_key_hash,
+           producer_purpose_hash, producer_implementation_id,
+           producer_implementation_hash, reservation_payload,
+           reservation_head_predecessor_hash, state, head_version
+         ) VALUES ($1, $2, 'invented-owner-category', 'owner-key', $3, $4,
+                   'test-producer-v1', $5, '{}'::jsonb, $6, 'pending', 0)`,
+        [
+          "setfarm://tests/reservations/invalid-category",
+          "1".repeat(64),
+          "2".repeat(64),
+          "3".repeat(64),
+          "4".repeat(64),
+          "5".repeat(64),
+        ],
+      ),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "23514",
+    );
+  });
+
+  it("rejects owner-admission fence and release bodies outside the exact purpose union", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const predecessor = "0".repeat(64);
+    const successor = "1".repeat(64);
+    const invalidFenceRef = "setfarm://tests/owner-admission-fences/invalid-purpose";
+    const invalidFenceHash = "2".repeat(64);
+    await assert.rejects(
+      database.sql.unsafe(
+        `INSERT INTO internal_production_owner_admission_authorities_v1 (
+           authority_ref, authority_hash, authority_kind, phase_key,
+           predecessor_head_hash, successor_head_hash, authority_body
+         ) VALUES ($1, $2, 'fence', 'invalid-fence-purpose', $3, $4, $5::text::jsonb)`,
+        [
+          invalidFenceRef,
+          invalidFenceHash,
+          predecessor,
+          successor,
+          JSON.stringify({
+            schema: "setfarm.internal-production-global-owner-admission-fence.v1",
+            purpose: "invented-owner-admission-purpose-v1",
+            fenceRef: invalidFenceRef,
+            fenceHash: invalidFenceHash,
+            ownerAdmissionHeadHash: successor,
+            targetFamily: { kind: "none", targetFamilyHash: null },
+          }),
+        ],
+      ),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "23514",
+    );
+
+    const invalidReleaseRef = "setfarm://tests/owner-admission-releases/invalid-purpose";
+    const invalidReleaseHash = "3".repeat(64);
+    await assert.rejects(
+      database.sql.unsafe(
+        `INSERT INTO internal_production_owner_admission_authorities_v1 (
+           authority_ref, authority_hash, authority_kind, phase_key,
+           predecessor_head_hash, successor_head_hash, authority_body
+         ) VALUES ($1, $2, 'release', 'invalid-release-purpose', $3, $4, $5::text::jsonb)`,
+        [
+          invalidReleaseRef,
+          invalidReleaseHash,
+          predecessor,
+          successor,
+          JSON.stringify({
+            schema: "setfarm.internal-production-global-owner-admission-fence-release.v1",
+            purpose: "invented-owner-admission-purpose-v1",
+            releaseRef: invalidReleaseRef,
+            releaseHash: invalidReleaseHash,
+            ownerAdmissionHeadPredecessorHash: predecessor,
+            ownerAdmissionHeadSuccessorHash: successor,
+            releaseAuthority: { targetFamilyKind: "none" },
+          }),
+        ],
+      ),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "23514",
+    );
+  });
+
+  it("makes the owner-admission authority journal permanently append-only", async () => {
+    const guarded = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const authorityRef = "setfarm://tests/owner-admission-authorities/immutable-reservation";
+    const authorityHash = "1".repeat(64);
+    const predecessor = "0".repeat(64);
+    await database.sql.unsafe(
+      `INSERT INTO internal_production_owner_admission_authorities_v1 (
+         authority_ref, authority_hash, authority_kind, phase_key,
+         predecessor_head_hash, successor_head_hash, authority_body
+       ) VALUES ($1, $2, 'reservation', 'immutable-reservation', $3, $3, $4::text::jsonb)`,
+      [
+        authorityRef,
+        authorityHash,
+        predecessor,
+        JSON.stringify({
+          schema: "setfarm.internal-production-owner-reservation.v1",
+          reservationRef: authorityRef,
+          reservationHash: authorityHash,
+          ownerAdmissionHeadPredecessorHash: predecessor,
+        }),
+      ],
+    );
+    for (const mutation of [
+      `UPDATE internal_production_owner_admission_authorities_v1
+          SET phase_key = 'rewritten' WHERE authority_ref = '${authorityRef}'`,
+      `DELETE FROM internal_production_owner_admission_authorities_v1
+          WHERE authority_ref = '${authorityRef}'`,
+      "TRUNCATE TABLE internal_production_owner_admission_authorities_v1",
+    ]) {
+      await assert.rejects(
+        database.sql.unsafe(mutation),
+        /INTERNAL_PRODUCTION_OWNER_ADMISSION_AUTHORITY_MUTATION_FORBIDDEN/,
+      );
+    }
+
+    await database.sql.unsafe(
+      `CREATE OR REPLACE FUNCTION public.setfarm_forbid_internal_production_owner_admission_authority_mutation()
+       RETURNS trigger LANGUAGE plpgsql SET search_path TO pg_catalog, public AS $function$
+       BEGIN
+         RETURN OLD;
+       END
+       $function$`,
+    );
+    await assert.rejects(
+      guarded.projectBootstrapMainClaimHandoffV1Schema(database.sql),
+      (error: unknown) => error instanceof guarded.BootstrapMainClaimHandoffV1SchemaError
+        && /exact relation metadata mismatch/.test(error.message),
+    );
+  });
+
+  it("keeps the test-only migration capability outside production exports and package commands", async () => {
+    const migrationApi = await import("../../src/db/contract-spine-migrations.js");
+    assert.equal(
+      "applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1" in migrationApi,
+      false,
+    );
+    const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    assert.equal(
+      Object.values(packageJson.scripts).some((command) =>
+        /guarded|bootstrap-main-claim-handoff/i.test(command)),
+      false,
+    );
+
+    const seamSymbols = [
+      ["mintBootstrapMainClaimHandoff", "GuardedMigration32EvidenceForControllerV1"].join(""),
+      ["applyBootstrapMainClaimHandoff", "GuardedMigration32V1"].join(""),
+    ] as const;
+    const seamOccurrences: Array<Readonly<{
+      symbol: string;
+      file: string;
+      count: number;
+    }>> = [];
+    for (const sourceRoot of [
+      path.join(repoRoot, "src"),
+      path.join(repoRoot, "tests"),
+      path.join(repoRoot, "scripts"),
+    ]) {
+      for (const file of await typescriptFilesUnder(sourceRoot)) {
+        const source = await readFile(file, "utf8");
+        for (const symbol of seamSymbols) {
+          const count = source.split(symbol).length - 1;
+          if (count > 0) {
+            seamOccurrences.push({ symbol, file: path.relative(repoRoot, file), count });
+          }
+        }
+      }
+    }
+    seamOccurrences.sort((left, right) =>
+      left.file.localeCompare(right.file)
+      || seamSymbols.indexOf(left.symbol).toString().localeCompare(
+        seamSymbols.indexOf(right.symbol).toString(),
+      ));
+    assert.deepEqual(seamOccurrences, [
+      {
+        symbol: seamSymbols[0],
+        file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        count: 1,
+      },
+      {
+        symbol: seamSymbols[1],
+        file: "src/db/contract-spine-migrations.ts",
+        count: 1,
+      },
+      {
+        symbol: seamSymbols[0],
+        file: "tests/execution-attempts/test-database.ts",
+        count: 3,
+      },
+      {
+        symbol: seamSymbols[1],
+        file: "tests/execution-attempts/test-database.ts",
+        count: 5,
+      },
+    ]);
+  });
+
   it("makes ordinary runtime startup verify-only and fail before base DDL", async () => {
     await assert.rejects(
       database.db.pgMigrate(),
@@ -221,6 +851,8 @@ describe("contract spine migration journal", () => {
     const first = await applyContractSpineMigrations(database.sql, { releaseSha });
     assert.equal(first.applied.length >= 1, true);
     assert.deepEqual(first.adopted, []);
+    assert.deepEqual(first.guardedPending, [guardedMigrationId]);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
 
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
@@ -233,8 +865,9 @@ describe("contract spine migration journal", () => {
       FROM setfarm_schema_migrations
       ORDER BY version
     `;
-    assert.equal(journal.every((row) => row.release_sha === releaseSha), true);
-    assert.equal(journal.every((row) => row.verified_release_sha === releaseSha), true);
+    assert.equal(journal.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
+    assert.equal(journal[31]?.release_sha, "a".repeat(40));
+    assert.equal(journal.every((row) => row.verified_release_sha === "a".repeat(40)), true);
 
     const nextReleaseSha = "d".repeat(40);
     const second = await applyContractSpineMigrations(database.sql, {
@@ -252,7 +885,8 @@ describe("contract spine migration journal", () => {
     const originalReleases = await database.sql<{ release_sha: string | null }[]>`
       SELECT release_sha FROM setfarm_schema_migrations ORDER BY version
     `;
-    assert.equal(originalReleases.every((row) => row.release_sha === releaseSha), true);
+    assert.equal(originalReleases.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
+    assert.equal(originalReleases[31]?.release_sha, "a".repeat(40));
   });
 
   it("adopts an exact existing attempt table only after catalog verification", async () => {
@@ -306,6 +940,7 @@ describe("contract spine migration journal", () => {
       "027_platform_release_store_record_ledger_v3",
       "028_runtime_completion_manifest_authority",
     ]);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -454,6 +1089,7 @@ describe("contract spine migration journal", () => {
     `;
     assert.equal(indexes.length, 2);
     assert.equal(indexes.every((index) => !index.indexdef.includes("agent_id")), true);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -530,6 +1166,7 @@ describe("contract spine migration journal", () => {
     const repeated = await applyContractSpineMigrations(database.sql);
     assert.deepEqual(repeated.applied, []);
     assert.equal((await effects.listForRequest(terminalIdentityUnknown.requestId)).length, 1);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -773,6 +1410,7 @@ describe("contract spine migration journal", () => {
     assert.equal(pending.migrations.find((item) => item.version === 9)?.state, "pending");
     const applied = await applyContractSpineMigrations(database.sql);
     assert.ok(applied.applied.includes("009_product_artifact_index"));
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.migrations.find((item) => item.version === 9)?.state, "applied");
     const relations = await database.sql<Array<{ tablename: string }>>`
@@ -855,13 +1493,17 @@ describe("contract spine migration journal", () => {
       applyContractSpineMigrations(database.sql),
       applyContractSpineMigrations(database.sql),
     ]);
-    assert.equal(results.flatMap((result) => result.applied).length, migrationCount);
-    assert.equal(results.flatMap((result) => result.alreadyApplied).length, migrationCount);
+    assert.equal(results.flatMap((result) => result.applied).length, migrationCount - 1);
+    assert.equal(results.flatMap((result) => result.alreadyApplied).length, migrationCount - 1);
+    assert.deepEqual(
+      results.map((result) => result.guardedPending),
+      [[guardedMigrationId], [guardedMigrationId]],
+    );
 
     const rows = await database.sql<{ count: number }[]>`
       SELECT COUNT(*)::integer AS count FROM setfarm_schema_migrations
     `;
-    assert.equal(rows[0]?.count, migrationCount);
+    assert.equal(rows[0]?.count, migrationCount - 1);
   });
 
   it("bounds advisory-lock waiting", async () => {

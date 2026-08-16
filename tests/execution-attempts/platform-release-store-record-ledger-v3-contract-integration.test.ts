@@ -9,6 +9,7 @@ import postgres from "postgres";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentArtifactPublicationAuthorityLedgerAtV28Data,
   auditCurrentContractSpineAuthorityLedgersAtV28Data,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
@@ -497,7 +498,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
       true,
     );
     assert.equal(
-      (await verifyContractSpineMigrations(database.sql)).status,
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
       "verified",
     );
     const currentHeadCliResult = runMigrationCli(
@@ -592,7 +593,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
       false,
     );
     assert.equal(
-      (await verifyContractSpineMigrations(database.sql)).status,
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
       "verified",
     );
 
@@ -642,7 +643,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
       await driftConnection.end({ timeout: 2 });
     }
     assert.equal(
-      (await verifyContractSpineMigrations(database.sql)).status,
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
       "verified",
     );
 
@@ -691,7 +692,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
       true,
     );
     assert.equal(
-      (await verifyContractSpineMigrations(database.sql)).status,
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
       "verified",
     );
 

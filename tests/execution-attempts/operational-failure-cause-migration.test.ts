@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackArtifactPublicationBatchLedgerToV22,
@@ -18,7 +19,6 @@ import {
   rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
-  verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
   detectOperationalFailureCauseAuthorityV3Constraint,
@@ -26,7 +26,10 @@ import {
   OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS,
   verifyOperationalFailureCauseAuthorityV3Constraint,
 } from "../../src/db/operational-failure-cause-authority-v3-migration.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  type TestDatabase,
+} from "./test-database.js";
 import {
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
@@ -88,9 +91,19 @@ function v3Cause(failureCode: string): Readonly<Record<string, unknown>> {
   });
 }
 
+async function insertFixtureRun(database: TestDatabase, runId: string): Promise<void> {
+  await database.sql.unsafe(
+    `INSERT INTO runs (
+       id, workflow_id, task, status, protocol,
+       compiler_release_sha, activation_preflight_hash
+     ) VALUES ($1, 'feature-dev', 'contract test', 'running', 'shadow', $2, $3)`,
+    [runId, "d".repeat(40), "e".repeat(64)],
+  );
+}
+
 describe("operational failure cause migration", () => {
   it("upgrades exact v30 to v31, rejects one-field drift, and reapplies idempotently", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const insert = async (
         suffix: string,
@@ -98,7 +111,7 @@ describe("operational failure cause migration", () => {
         cause: Readonly<Record<string, unknown>>,
       ): Promise<void> => {
         const runId = `run-v3-cause-${suffix}`;
-        await database.insertRun(runId);
+        await insertFixtureRun(database, runId);
         await database.sql.unsafe(
           `INSERT INTO run_termination_requests (
              request_id, run_id, target_status, state, requested_by,
@@ -161,11 +174,11 @@ describe("operational failure cause migration", () => {
 
   it("independently preserves v31 and evidence when each v3-only code refuses rollback", async () => {
     for (const [index, failureCode] of V3_ONLY_CODES.entries()) {
-      const database = await createIsolatedTestDatabase();
+      const database = await createIsolatedMigration31TestDatabase();
       try {
         const runId = `run-v3-rollback-refusal-${index}`;
         const requestId = `RTR_v3-rollback-refusal-${index}`;
-        await database.insertRun(runId);
+        await insertFixtureRun(database, runId);
         await database.sql.unsafe(
           `INSERT INTO run_termination_requests (
              request_id, run_id, target_status, state, requested_by,
@@ -233,7 +246,7 @@ describe("operational failure cause migration", () => {
   });
 
   it("detects v31 constraint drift as partial and rolls back safely without evidence", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const rows = await database.sql<Array<{ expression: string }>>`
         SELECT pg_get_expr(conbin, conrelid, true) AS expression
@@ -281,7 +294,7 @@ describe("operational failure cause migration", () => {
   });
 
   it("admits only the exact DESIGN tuple and preserves it against rollback", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const insert = async (input: Readonly<{
         suffix: string;
@@ -289,7 +302,7 @@ describe("operational failure cause migration", () => {
         cause: Readonly<Record<string, unknown>>;
       }>): Promise<void> => {
         const runId = `run-design-cause-${input.suffix}`;
-        await database.insertRun(runId);
+        await insertFixtureRun(database, runId);
         await database.sql.unsafe(
           `INSERT INTO run_termination_requests (
              request_id, run_id, target_status, state, requested_by,
@@ -376,11 +389,11 @@ describe("operational failure cause migration", () => {
   });
 
   it("validates and seals optional typed causes, then rolls back without rewriting evidence", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const insertRun = async (suffix: string): Promise<string> => {
         const runId = `run-operational-cause-${suffix}`;
-        await database.insertRun(runId);
+        await insertFixtureRun(database, runId);
         return runId;
       };
       const insertTermination = async (
@@ -566,7 +579,10 @@ describe("operational failure cause migration", () => {
         "030_operational_failure_cause_authority_v2",
         "031_operational_failure_cause_authority_v3",
       ]);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      assert.equal(
+        (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+        "verified",
+      );
 
       const constraintRows = await database.sql<Array<{ expression: string }>>`
         SELECT pg_get_expr(conbin, conrelid, true) AS expression
@@ -593,7 +609,7 @@ describe("operational failure cause migration", () => {
         assert.notEqual(expression, exactExpression);
         await installConstraint(expression);
         await assert.rejects(
-          verifyContractSpineMigrations(database.sql),
+          auditAuthorityV3ContractSpineThroughMigration31V1(database.sql),
           (error: unknown) =>
             error instanceof ContractSpineMigrationError
             && error.code === "MIGRATION_ADOPTION_MISMATCH",
@@ -618,13 +634,16 @@ describe("operational failure cause migration", () => {
         "'V3_OBSERVABLE_REF_INVALID'::text, 'ATTACKER_NEW_CODE'::text",
       ));
       await installConstraint(exactExpression);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      assert.equal(
+        (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+        "verified",
+      );
 
       await database.sql.unsafe(
         "DROP TRIGGER trg_run_termination_requests_operational_failure_cause_immutable ON run_termination_requests",
       );
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        auditAuthorityV3ContractSpineThroughMigration31V1(database.sql),
         (error: unknown) =>
           error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
