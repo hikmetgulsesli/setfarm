@@ -77,7 +77,7 @@ Operational shell fences do not select a workstation checkout. The owning contro
 - Generate `setfarm/contracts/generated/mission-control/operational-active-run-status.v1.schema.json` and `setfarm/contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json` from the same producer.
 - Vendor those two files under `mission-control/contracts/vendor/setfarm/` and update the Setfarm contract lock through the existing sync command; Mission Control defines no local active-status tuple.
 - Modify `mission-control/scripts/sync-setfarm-contract.mjs` and `mission-control/scripts/check-setfarm-contract.mjs` — add the exact producer pair to sync/check inventory and cross it through the shared semantic predicate.
-- Create `mission-control/shared/setfarm-operational-active-run-status-v1.ts` — import the vendored schema enum once and expose its exact typed predicate to server and browser consumers.
+- Create `mission-control/server/shared/setfarm-operational-active-run-status-v1.ts` — import the vendored schema enum once and expose its exact typed predicate to server and browser consumers from inside the existing server TypeScript compilation root. Browser consumers import this same browser-safe module through Vite; there is no second tuple or predicate.
 - Modify `mission-control/tests/setfarm-contract-vendor.test.ts` — require all twelve artifacts and cross the operational-active compatibility fixture through the shared consumer.
 - Create `mission-control/server/services/project-execution-state.ts` — pure explicit binding and execution-state derivation.
 - Create `mission-control/server/services/project-execution-state.test.ts` — exact ID/number, conflict, terminal, and unbound regressions.
@@ -4120,7 +4120,7 @@ Task 2 continues on Task 1's single `fix/internal-production-baseline-reconcilia
 
 **Files:**
 
-- Create: `mission-control/shared/setfarm-operational-active-run-status-v1.ts`
+- Create: `mission-control/server/shared/setfarm-operational-active-run-status-v1.ts`
 - Consume: `mission-control/contracts/vendor/setfarm/operational-active-run-status.v1.schema.json`
 - Create: `mission-control/server/services/project-execution-state.ts`
 - Create: `mission-control/server/services/project-execution-state.test.ts`
@@ -4322,12 +4322,12 @@ Expected: PASS.
 ```bash
 set -euo pipefail
 git diff --check -- \
-  shared/setfarm-operational-active-run-status-v1.ts \
+  server/shared/setfarm-operational-active-run-status-v1.ts \
   server/services/project-execution-state.ts \
   server/services/project-execution-state.test.ts \
   server/utils/setfarm-db.ts
 git diff --name-only -- \
-  shared/setfarm-operational-active-run-status-v1.ts \
+  server/shared/setfarm-operational-active-run-status-v1.ts \
   server/services/project-execution-state.ts \
   server/services/project-execution-state.test.ts \
   server/utils/setfarm-db.ts
@@ -4343,7 +4343,7 @@ Expected: the worker reports these exact paths, test evidence, and authorized ha
 
 - Modify: `mission-control/server/routes/projects.ts`
 - Create: `mission-control/server/routes/projects-projection.test.ts`
-- Consume: `mission-control/server/services/project-execution-state.ts`, its Setfarm-derived execution state, and `mission-control/shared/setfarm-operational-active-run-status-v1.ts`; the route defines no active-status list.
+- Consume: `mission-control/server/services/project-execution-state.ts`, its Setfarm-derived execution state, and `mission-control/server/shared/setfarm-operational-active-run-status-v1.ts`; the route defines no active-status list.
 
 **Interfaces:**
 
@@ -4372,6 +4372,10 @@ export function toProjectApiProjection(
   execution: ProjectExecutionState,
 ): Record<string, unknown> & ProjectApiProjection;
 ```
+
+The projection first proves `execution.active === (execution.runStatus !== null && isSetfarmOperationalActiveRunStatusV1(execution.runStatus))`; an active execution must also have `execution.state === execution.runStatus`. A mismatch fails with `PROJECT_EXECUTION_ACTIVE_RELATION_INVALID`. Active execution maps public status to `building`. An exact terminal execution maps `completed|done` to `completed`, `failed` to `failed`, and `cancelled|canceled` to `cancelled`; any other terminal status fails with `PROJECT_EXECUTION_TERMINAL_STATUS_INVALID`. Otherwise persisted `completed|done`, `failed|error`, and `cancelled|canceled` retain their corresponding public terminal status, while every other legacy catalog value maps to `registered`.
+
+The canonical V3 marker remains the existing exact `productCompilerProtocol:"v3"` plus `createdBy:"setfarm-v3-terminal-projector"` predicate. Its runtime state comes only from `observedServiceStatus` (`active|inactive`, otherwise `unknown`), its `checkedAt` comes only from a nonempty `observedServiceCheckedAt`, and its reason is the nonempty exact upstream `observedServiceReasonCode` or fixed `V3_DEPLOYMENT_OBSERVATION_UNAVAILABLE`; immutable receipt `serviceStatus` is never a runtime fallback. A noncanonical record maps only exact observed/post-probe `serviceStatus` `active|inactive`, otherwise `unknown`, has `checkedAt:null`, and uses fixed `PROJECT_RUNTIME_LEGACY_SERVICE_STATUS_ACTIVE|INACTIVE|UNKNOWN`. A canonical receipt exists only when stored `status` and `serviceStatus` are both exact `active` and both canonical hashes are lowercase SHA-256; otherwise projection fails with `PROJECT_API_CANONICAL_RECEIPT_INVALID`. Noncanonical records never synthesize a receipt.
 
 - [ ] **Step 1: Write failing public-projection tests**
 
@@ -4423,6 +4427,8 @@ In `GET /projects`:
 5. Perform existing live port/deployment observation.
 6. Return a cloned `toProjectApiProjection()` result.
 
+Capture binding hints and immutable catalog/receipt fields from the de-duplicated pre-enrichment records. Existing name/repository/task enrichment remains advisory and may contribute display fields or runtime probes, but it cannot change the captured execution binding, public catalog status, immutable receipt, or action authority. Run the same read-only projection for `GET /projects/:id`: project/enrich the registered-record collection with one bounded run-row read and then preserve the existing `findProjectByIdOrRepo` lookup semantics. Do not project mutation responses, import/export payloads, or persistence objects in this task.
+
 Keep `ProjectsJsonRepository.save()`, canonical transfer ACK hashing, patch guards, deletion guards, and V3 persisted record shapes unchanged. Remove name/task/repository matching only from execution-state assignment; legacy descriptive enrichment may remain advisory but cannot change `execution`, public `status`, or action authority. The route imports the shared predicate and fail-closed equality-checks `execution.active === (execution.runStatus !== null && isSetfarmOperationalActiveRunStatusV1(execution.runStatus))` before emitting a project. It copies the exact active transition state from `ProjectExecutionState`; it never imports a second tuple or treats `pending` as active.
 
 - [ ] **Step 4: Make terminal filtering explicit**
@@ -4461,7 +4467,7 @@ Expected: the worker reports the two paths, focused gates, and authorized subjec
 **Files:**
 
 - Modify: `mission-control/src/lib/types.ts`
-- Consume: `mission-control/shared/setfarm-operational-active-run-status-v1.ts`
+- Consume: `mission-control/server/shared/setfarm-operational-active-run-status-v1.ts`
 - Modify: `mission-control/src/lib/project-health.ts`
 - Modify: `mission-control/src/pages/Projects.tsx`
 - Modify: `mission-control/src/components/projects/ProjectCard.tsx`
