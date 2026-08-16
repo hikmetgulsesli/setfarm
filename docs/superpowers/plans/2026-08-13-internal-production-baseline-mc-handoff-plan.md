@@ -33,7 +33,7 @@ Operational shell fences do not select a workstation checkout. The owning contro
 - Every remaining code task follows test-first development. Task 1 preserves the delivered `240e779d78804843a1202cbf0440fe423b806b1a` Product Build Authority V2 behavior byte-for-byte and adds only its read-only delivery-evidence producer/endpoint/tests on the fresh reconciliation branch. Branch tests use injected contract fixtures and non-authoritative expected hashes; no production current pair is published, resolved, or handed off before Task 6 Step 8.
 - Stop and report if the same canonical systemic failure repeats three times after attempted fixes.
 - Execute the source/contract dependency in this exact order: Task 0 source-only delivery of the local Setfarm response parser/schema and operational-active producer artifacts; Task 1 branch creation and Mission Control delivery-evidence implementation against canonical fixtures; Task 5 Steps 1–3 to vendor the operational-active producer artifacts; Tasks 2–4; Task 5 Steps 4–6 to cross and checkpoint the semantic consumer with fixture-only delivery-evidence expectations; Task 6 reviewed Mission Control delivery; Task 6 Step 8 authoritative clean-main pair creation/reopen; Task 6A pre-rebind entry; then Task 7. No Mission Control module is imported to make Task 0 constructible, no reconciliation-branch stage publishes or consumes a production current pair, and the canary does not run before Task 6 Step 8 has returned the exact clean-main pair.
-- Every `bash` fence starts with `set -euo pipefail`. Plan/source-boundary tests parse every shell fence and reject a service, database, run/workflow, or Git mutation unless the immediately preceding command obtains a fresh code-owned authority guard and the mutating command consumes that exact canonical ref/hash. They specifically ban raw `launchctl`, raw workflow-start commands, and `git switch|checkout|pull|fetch|merge|reset|add|commit|push` in worker fences. A's one finite `restart-service` wrapper is the only service mutator and must freshly resolve and one-use consume its zero-owner guard before fixed no-shell dispatch. The same tests reject a negative `rg` scan hidden in a pipeline, a match-then-exit expression followed by an unconditional-success fallback, or any other masked/bare fallback; transcript fixtures prove that a match status `0` fails, only status `1` with exactly empty captured output passes, status `1` with output and statuses `2`/`127` fail, and an upstream Git-diff failure stops before `rg` runs.
+- Every `bash` fence starts with `set -euo pipefail`. Plan/source-boundary tests parse every shell fence and reject a service, database, run/workflow, or Git mutation unless the immediately preceding command obtains a fresh code-owned authority guard and the mutating command consumes the exact derived authorization pair. They specifically ban raw `launchctl`, raw workflow-start commands, and `git switch|checkout|pull|fetch|merge|reset|add|commit|push` in worker fences. A's one finite `restart-service` wrapper is the only service mutator; its closed public input is only the service enum plus the prepared pair-resolved authorization that internally binds and one-use consumes the fresh zero-owner guard before fixed no-shell dispatch. The same tests reject a negative `rg` scan hidden in a pipeline, a match-then-exit expression followed by an unconditional-success fallback, or any other masked/bare fallback; transcript fixtures prove that a match status `0` fails, only status `1` with exactly empty captured output passes, status `1` with output and statuses `2`/`127` fail, and an upstream Git-diff failure stops before `rg` runs.
 
 ## Starting Evidence
 
@@ -99,6 +99,8 @@ Operational shell fences do not select a workstation checkout. The owning contro
 ### Contract and evidence delivery
 
 - Create through one Setfarm-owned source claim before live mutation:
+  - `setfarm/src/internal-production/owner-admission-v1.ts` — import-inert one-way core for the pure category/census/manifest/reservation/fence ABI and the injected PostgreSQL sidecar port; every receipt/restart/sequence/controller consumer imports this core, and this core imports none of them.
+  - `setfarm/tests/internal-production/owner-admission-v1.test.ts` — exact 35-category/35-map-key/36-scalar coverage, sidecar transaction/idempotency, fence, import-direction, and import-inertness tests.
   - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts` — also owns the strict content-addressed baseline service-restart authority/store/resolver used by B P0.
   - `setfarm/src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts` — sole local owner of the strict response constants/schema/parser and canonical field/null relations plus fixed code-owned source/HTTP observer and pair-only resolver; accepts no root, URL, ref, hash, body, transport override, or import from sibling Mission Control source.
   - `setfarm/tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts` — canonical positive/negative response fixtures, exact canonical bytes/hash/fields, source-boundary no-sibling-import checks, source/HTTP equality, pre-rebind source CLI, post-rebind endpoint, and tamper/status tests.
@@ -111,7 +113,7 @@ Operational shell fences do not select a workstation checkout. The owning contro
   - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts`, `setfarm/src/spawner.ts`, `setfarm/src/execution/attempt-repository.ts`, `setfarm/src/execution/claim-runtime-publication.ts`, `setfarm/src/execution/runtime-completion.ts`, and `setfarm/src/execution/runtime-completion-effect-runner.ts` — exact call sites for the eleven A-owned rows of `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`; each calls its fixed producer function before the first matching owner publication and closes against the terminal authority.
   - `setfarm/src/execution/runtime-completion.ts` — mint the opaque completion-owner bootstrap target guard only inside the authenticated current-owner context.
   - `setfarm/src/db/bootstrap-main-claim-handoff-v1-migration.ts` — sole immutable implementation, ordered statements, named migration identity, and schema projector for the bootstrap-main-claim handoff migration.
-  - `setfarm/src/db/contract-spine-migrations.ts` and `setfarm/src/db/contract-spine-migration-digests.generated.ts` — append-only registration of that dedicated migration and its named digest entry before B Task P0; unrelated later entries may be appended without changing A's authority.
+  - `setfarm/src/db/contract-spine-migrations.ts`, `setfarm/src/db/contract-spine-migration-source-integrity.ts`, and `setfarm/src/db/contract-spine-migration-digests.generated.ts` — guarded registration of exact ordinal 32, its source-integrity manifest, and generated named digest entry before B Task P0; unrelated later entries may be appended without changing A's authority.
   - `setfarm/tests/internal-production/baseline-post-handoff-receipt-v1.test.ts`
   - `setfarm/tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts` — A controller receipt/status, interruption, replay, CLI, import-inertness, and no-producer-before-activation tests.
   - `setfarm/tests/internal-production/baseline-post-handoff-cli.test.ts`
@@ -119,7 +121,11 @@ Operational shell fences do not select a workstation checkout. The owning contro
   - `setfarm/tests/internal-production/baseline-spawner-startup-admission-v1.test.ts`
   - `setfarm/tests/internal-production/baseline-service-restart-sequence-v1.test.ts`
   - `setfarm/tests/internal-production/baseline-restart-authority-retirement-v1.test.ts`
+  - `setfarm/tests/internal-production/task-0-source-manifest.test.ts` — owns the reviewed literal exact Task 0 path tuple and rejects an omitted, extra, duplicated, reordered, or Markdown-derived path fixture.
   - `setfarm/tests/execution-attempts/migrations.test.ts` and `setfarm/tests/execution-attempts/migration-source-digests.test.ts`
+  - `setfarm/tests/execution-attempts/test-database.ts` — keeps automatic isolated-test migration setup as the default and exposes only the private exact migration-32 test helper; there is no caller-selected guarded ID or production mode.
+  - `setfarm/tests/execution-attempts/runtime-completion.test.ts` — covers the completion-owner bootstrap target-guard mint/bind call site.
+  - `setfarm/tests/mission-control-terminal-filter.test.ts` — replaces the obsolete local terminal-list source assertion with the shared `operationalActive` contract assertion.
   - `setfarm/package.json` command table entry `acceptance:baseline-post-handoff`
 - Update only when the producer pin changes:
   - `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
@@ -130,11 +136,74 @@ Operational shell fences do not select a workstation checkout. The owning contro
 
 ### Task 0: Deliver the Setfarm baseline handoff authority before live mutation
 
-**Files:** the baseline-authority/migration Setfarm source/test/integration/package paths listed above, including the six exact A producer call-site modules, the one-way restart-authority retirement module/test, the dedicated bootstrap-handoff migration module, its registration/digest/tests, and the strict local Product Build Authority V2 delivery-evidence response parser/observer plus its fixtures and source-boundary tests, plus `src/contracts/operational-active-run-status-v1.ts`, `src/contracts/operational-active-run-status-v1-cli.ts`, `tests/operational-active-run-status-v1.test.ts`, `src/contracts/mission-control-contract-artifacts.ts`, `tests/mission-control-contract-artifacts.test.ts`, `src/server/dashboard.ts`, `src/server/index.html`, and the two generated Mission Control contract artifacts. The source-manifest test computes this set from the File Map; no hand-maintained path count is accepted.
+Contract-freeze rule: every Task 0 package command, internal-production module, guarded migration facility, owner-admission facility, restart/bootstrap/clean-build bridge, fixture, and focused test named below is missing work on the starting branch and is a Task 0 postcondition. Words such as “existing,” “delivered,” or “reused” refer only to explicitly named pre-Task0 foundations (Authority V3/PR #86, migrations 1–31, current generic helpers, and delivered PBA behavior); they never authorize skipping a RED test or treating a missing Task 0 export as a precondition.
+
+**Files:** exactly the 43 repository-relative paths in `TASK_0_EXACT_SOURCE_PATHS_V1` below. This is the complete Task 0 source/test/generated/package surface, including the six A producer call-site modules, the one-way owner-admission core/test, restart-authority retirement module/test, guarded bootstrap-handoff migration module/registry/source-integrity/generated digest/tests/private isolated-test helper, adjacent runtime-completion and dashboard-filter tests, strict local Product Build Authority V2 response parser/fixtures, operational-active producer/artifacts, and the literal source-manifest test. No production module parses this Markdown. `tests/internal-production/task-0-source-manifest.test.ts` owns a byte-for-byte literal copy of this tuple and exercises a private exact-set validator with the tuple, then with one omission, one extra path, one duplicate, and one reorder; a count-only assertion is forbidden.
+
+```typescript
+export const TASK_0_EXACT_SOURCE_PATHS_V1 = [
+  "contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json",
+  "contracts/generated/mission-control/operational-active-run-status.v1.schema.json",
+  "package.json",
+  "src/contracts/mission-control-contract-artifacts.ts",
+  "src/contracts/operational-active-run-status-v1-cli.ts",
+  "src/contracts/operational-active-run-status-v1.ts",
+  "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+  "src/db/contract-spine-migration-digests.generated.ts",
+  "src/db/contract-spine-migration-source-integrity.ts",
+  "src/db/contract-spine-migrations.ts",
+  "src/execution/attempt-repository.ts",
+  "src/execution/claim-runtime-publication.ts",
+  "src/execution/runtime-completion-effect-runner.ts",
+  "src/execution/runtime-completion.ts",
+  "src/internal-production/baseline-owner-producer-manifest-activation-controller-v1.ts",
+  "src/internal-production/baseline-post-handoff-cli.ts",
+  "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+  "src/internal-production/baseline-restart-authority-retirement-v1.ts",
+  "src/internal-production/baseline-service-restart-helper-v1.ts",
+  "src/internal-production/baseline-service-restart-sequence-v1.ts",
+  "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+  "src/internal-production/owner-admission-v1.ts",
+  "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
+  "src/server/dashboard.ts",
+  "src/server/index.html",
+  "src/spawner.ts",
+  "tests/execution-attempts/migration-source-digests.test.ts",
+  "tests/execution-attempts/migrations.test.ts",
+  "tests/execution-attempts/runtime-completion.test.ts",
+  "tests/execution-attempts/test-database.ts",
+  "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
+  "tests/internal-production/baseline-post-handoff-cli.test.ts",
+  "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+  "tests/internal-production/baseline-restart-authority-retirement-v1.test.ts",
+  "tests/internal-production/baseline-service-restart-helper-v1.test.ts",
+  "tests/internal-production/baseline-service-restart-sequence-v1.test.ts",
+  "tests/internal-production/baseline-spawner-startup-admission-v1.test.ts",
+  "tests/internal-production/owner-admission-v1.test.ts",
+  "tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts",
+  "tests/internal-production/task-0-source-manifest.test.ts",
+  "tests/mission-control-contract-artifacts.test.ts",
+  "tests/mission-control-terminal-filter.test.ts",
+  "tests/operational-active-run-status-v1.test.ts",
+] as const;
+```
 
 **Interfaces:** `InternalProductionBaselinePostHandoffReceiptV1`, `InternalProductionBaselineBackupReceiptV1`, `InternalProductionBaselineZeroOwnerMutationGuardV1`, exact `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, `applyInternalProductionBaselineBootstrapHandoffMigrationV1({zeroOwnerGuardRef,zeroOwnerGuardHash})`, `resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1({migrationReceiptRef,migrationReceiptHash})`, exact B-purpose `InternalProductionBaselineGoldenLaunchMigrationZeroOwnerAuthorizationV1`/`InternalProductionBaselineGoldenLaunchMigrationZeroOwnerConsumptionV1` bind-consume seam and pair-only resolvers, exact `InternalProductionPhysicalServiceRestartAuthorityEpochV1`, `InternalProductionBaselineRestartAuthorityRetirementV1`, A-owned `InternalProductionServiceRestartStartupHooksReadyV1`, `InternalProductionServiceRestartAuthorityActivationV1`, `InternalProductionServiceRestartAuthorityCutoverV1`, `prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1({zeroOwnerGuardRef,zeroOwnerGuardHash})`, zero-input `resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1()`, read-only `observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1()`, and their exact pair-only resolvers, `resolveInternalProductionBaselineRestartAuthorityRetirementV1({retirementRef,retirementHash})`, exact `InternalProductionBaselineRuntimeSourceProjectionV1Schema`/`InternalProductionBaselineRuntimeSourceProjectionV1`, exact discriminated `InternalProductionBaselineServiceRestartAuthorityV1Schema`/`InternalProductionBaselineServiceRestartAuthorityV1`, `resolveInternalProductionBaselineServiceRestartAuthorityV1({receiptRef,receiptHash})`, exact `InternalProductionBaselineSpawnerStartupAdmissionV1`, `resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1()`, `claimInternalProductionBaselineSpawnerStartupAdmissionV1({admission})`, `awaitInternalProductionBaselineSpawnerRestartAuthorityV1({admission,startupClaimHash})`, exact `InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1`, `InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1`, `createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1()`, `continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({verification})`, `InternalProductionBaselineSpawnerBootstrapRestartOperationV1`, `InternalProductionBaselineSpawnerBootstrapContinuationGrantV1`, `InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1`, `prepareInternalProductionBaselineSpawnerBootstrapRestartV1({targetGuard,postSettlementContinuationKind:"setfarm-bootstrap-main-claim-allocation-v1"})`, `executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1({continuationGrantRef,continuationGrantHash})`, `finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({operationRef,operationHash})`, `resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({sequenceRef,sequenceHash})`, code-owned `observeCompleteInternalProductionZeroOwnerCensusV1()`, `observeInternalProductionRuntimeSourceV1()`, `createOrResumeInternalProductionBaselineBackupV1()`, `restartInternalProductionBaselineServiceV1()`, `recordBaselinePostHandoffReceiptV1()`, `verifyCurrentBaselinePostHandoffReceiptV1()`, `resolveHistoricalBaselinePostHandoffReceiptV1()`, the exact operational-active status ABI below, and the strict `zero-owner|apply-bootstrap-handoff-migration|resolve-bootstrap-handoff-migration|restart-service|resume-restart-sequence|restart-sequence-status|runtime-source|backup|record|verify-current|resolve-historical --json` CLI described in Tasks 7–8. Ordinary `zero-owner`/`restart-service` retains its exact pair-only global-zero contract while A owns the physical restart epoch; B can bind/consume a generic guard only through A's exact named golden-launch migration seam; the bootstrap path is in-process only and uses the fenced target guard plus prepared operation pair. `runtime-source` remains diagnostic and `backup --json` remains fixed-path/idempotent.
 
 Task 0 also owns the Task 6A entry ABI: strict `InternalProductionCurrentEntryAuthorityV1`, `InternalProductionCurrentEntryAuthorityPairV1`, `InternalProductionCurrentEntryAuthorityStatusV1`, their pair-only resolver/current verifier, the fixed `prepare-current-entry|resume-current-entry|current-entry-status|verify-current-entry --json` CLI, and read-only `service-census --json`. It additionally owns strict read-only `InternalProductionAuthorityV3Migration31AuditV1` with pair `{authorityV3Migration31AuditRef,authorityV3Migration31AuditHash}` and `InternalProductionPendingBootstrapHandoffMigrationProjectionV1` with pair `{pendingBootstrapHandoffMigrationRef,pendingBootstrapHandoffMigrationHash}`. The zero-input `audit-authority-v3-migration31 --json` proves migrations 1 through 31 are applied/current and binds the delivered Authority-V3 receipt, PR #86 ancestry, migration-31 source/tree/build/schema/current-authority identities; it deliberately ignores later registered-but-unapplied migrations. The zero-input `inspect-pending-bootstrap-handoff-successor --json` separately proves the registry/digest has exactly one pending entry, literal `contract-spine-bootstrap-main-claim-handoff-v1`, whose implementation blob, ordered statements, named digest entry/digest, schema projection, and `migrationSourceSha` are byte/hash-bound to Task 0's current controller source, with no other pending or drifted entry. Both pairs have fixed content-derived refs, pair-only resolvers, no store scan, and no mutation.
+
+Migration 32 is the sole `migrationClass:"guarded"` member of the ordered registry; ordinals 1–31 are `migrationClass:"automatic"`. The exact framework contract is:
+
+- `planContractSpineMigrations(sql)` enumerates both classes in ordinal order, includes `migrationClass` on every row, and reports guarded 32 as `state:"pending"`/plan `status:"pending"` until its exact dedicated apply succeeds.
+- `applyContractSpineMigrations(sql, options?)` applies or adopts only `automatic` entries. It never executes, adopts, journals, or verifies a missing guarded entry; its strict result adds `guardedPending:["contract-spine-bootstrap-main-claim-handoff-v1"]` before Task 7 and `guardedPending:[]` after Task 7. There is no option, migration ID, callback, environment variable, or cast that makes generic apply consume a guarded entry.
+- `verifyContractSpineMigrations(sql, options?)` continues to use the complete registered plan and fails with `MIGRATION_INCOMPLETE` naming guarded ordinal 32 while it is pending. It returns `status:"verified"` only after the exact dedicated apply has journaled and verified 32. Therefore generic `db:contract-spine:verify` is prohibited before Task 7, not weakened to ignore the successor.
+- `auditAuthorityV3ContractSpineThroughMigration31V1(sql)` is the only targeted predecessor audit. It verifies exact applied/current ordinals 1–31 and their source/current-authority relations, deliberately makes no claim about a later registered-unapplied row, and produces the A v31 audit pair.
+- `inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(sql)` is the only guarded-successor inspector. It accepts no ID/version/digest/projection input and succeeds only for exactly one registry successor, ordinal `32`, name `contract-spine-bootstrap-main-claim-handoff-v1`, class `guarded`, absent journal row/absent schema, with no other pending, unexpected, partial, adoptable, or drifted entry.
+- The registry exposes no generic guarded apply. Its sole narrow execution port is `applyBootstrapMainClaimHandoffGuardedMigration32V1(sql, evidence)`, where `evidence` is constructed only inside `applyInternalProductionBaselineBootstrapHandoffMigrationV1` after it reopens the exact v31 audit, pending-successor, clean-build, and one-use zero-owner authorities. The port fixes ordinal/name/class/statements and rejects a caller SQL body, ID, digest, projection, database selector, or capability clone.
+
+`CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[32]` binds the dedicated module's exact implementation/ordered-statement/schema-projector regions and the registry's guarded-class/registration/dispatch regions. `CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[32]` is produced only by `scripts/check-contract-spine-migration-digests.ts --write`; the generated map, source-integrity manifest, checksum, named `(32,migrationId,migrationDigest)` entry hash, pending projection, and later receipt must all agree. Tests mutate each region/dependency and prove only entry 32 changes; hand-editing the generated digest or omitting the source-integrity entry fails `check:migration-digests`.
+
+`createIsolatedTestDatabase()` and its `reset()` keep their default automatic behavior: apply 1–31 and deliberately leave guarded 32 pending. `tests/execution-attempts/test-database.ts` adds only the test-private, literal `applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1(database)` path, which delegates to the same exact guarded port with deterministic test evidence. It is imported only by the migration and owner-admission focused tests, accepts no caller migration ID/body, and cannot be reached through `pgMigrate`, production exports, package commands, or environment configuration. Those isolated databases may apply 32 for tests; Task 0 never applies it to the live/canonical database.
 
 The entry ABI separates `controllerSourceAuthority` from `loadedRuntimeServiceAuthority`. The controller authority binds the exact clean Task 0 descendant `controllerSourceSha`, `controllerTreeHash`, and `controllerBuildHash`. The loaded-runtime authority binds the delivered pre-Task0 spawner/dashboard/Mission-Control/OpenClaw process/listener identities and each service's actually loaded source/build authority. Both are independently reopened and verified; pre-rebind validation explicitly does not require either SHA, tree, or build hash to equal the other. `resume-current-entry` runs the new controller only as the fixed non-listening `baseline-post-handoff-cli.ts` process from the authenticated Task 0 build: that process owns fence acquisition and the reciprocal source-run/run start, opens no service port, and does not restart or replace a daemon. The already loaded delivered spawner/runtime then processes the admitted canary under its separately authenticated runtime authority. Task 7 is the only task that rebuilds and rebinds background services.
 
@@ -142,7 +211,123 @@ Its canary path internally uses Task 0's dedicated `current-entry-canary-source-
 
 Task 0's `product-build-authority-v2-delivery-evidence-v1.ts` locally owns `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_RESPONSE_SCHEMA_V1`, `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_CURRENT_STATUS_V1`, strict `ProductBuildAuthorityV2DeliveryEvidenceResponseV1Schema`/`ProductBuildAuthorityV2DeliveryEvidenceResponseV1`, and `parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value:unknown)`. The accepted success envelope is exactly `{schema:"mission-control.product-build-authority-v2-delivery-evidence-response.v1",currentStatus:"current",deliveryEvidenceRef,deliveryEvidenceHash,evidence}`: the ref, hash, and strict evidence body are non-null together, their canonical hashes/fields must agree, and absent, half-null, mixed, extra-field, or null success members are rejected. Unavailable source, non-200 HTTP, non-clean-main CLI refusal, or parse failure returns no pair and cannot be represented as a partial `current` envelope. Canonical positive/negative fixtures and their expected canonical bytes/hashes are owned in the Task 0 Setfarm test; the production module and test contain no relative, absolute, package, dynamic, or type-only import of Mission Control source. A source-boundary test enumerates imports and fails on `mission-control`, sibling-root traversal, runtime source loading, or an injected parser/schema export. This local response contract is not registered in `mission-control-contract-artifacts.ts`, does not create generated/vendor files, and leaves the explicit inventory progression at ten, then twelve after the operational-active pair, then fourteen after the later run-operational-model-v2 pair.
 
-The same Task 0 module provides zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()`. It obtains the Mission Control executable/source identity only from A's existing code-owned `observeInternalProductionRuntimeSourceV1()` projection plus Task 6 Step 8's freshly resolved clean-main/build identity; it never resolves a sibling checkout or accepts a path. Before Task 7, the observer starts only Mission Control's fixed non-listening source CLI from that authenticated clean-main build; after Task 7 loads the new Mission Control service, it uses only fixed loopback `GET /api/internal-production/product-build-authority-v2-delivery-evidence`. The returned `observationTransport` is strictly `source-cli | http`; current-entry requires `source-cli`, post-rebind requires `http`, and both must parse through the local schema and resolve to the identical delivery-evidence pair. No caller chooses transport, URL, root, command, ref, hash, response, parser, schema, fixture, or fallback. `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})` is pair-only and reobserves/recomputes the named projection rather than treating any per-run `authorityHash` as a global pair. Task 0 unit tests are source-constructible before Task 1 because they use only the local canonical fixtures and private injected transports; the later Task 6 Step 8/Task 7 integration exercises the real CLI/HTTP wire bytes without importing either repository's implementation into the other.
+The nested wire ABI is frozen exactly as follows; every object is strict and every shown member is required and non-null. `Sha` is lowercase 40-hex, `BlobHash` is lowercase 40- or 64-hex, and every other `*Hash` is lowercase 64-hex. Tuple order is wire authority, not a sortable convenience:
+
+```typescript
+type ProductBuildAuthorityV2PathBlobIdentityV1 = Readonly<{
+  path: string;
+  blobHash: string;
+}>;
+
+type ProductBuildAuthorityV2VendorArtifactIdentityV1 = Readonly<{
+  producerPath: string;
+  vendoredPath: string;
+  sha256: string;
+}>;
+
+export type ProductBuildAuthorityV2FocusedTestReceiptV1 = Readonly<{
+  schema: "mission-control.product-build-authority-v2-focused-test-receipt.v1";
+  argv: readonly [
+    "node", "--import", "tsx", "--test",
+    "server/routes/setfarm-operational.test.ts",
+    "server/services/setfarm-product-build-authority.test.ts",
+    "tests/product-build-authority-render.test.tsx",
+  ];
+  commandContractHash: string;
+  testPathBlobs: readonly [
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+  ];
+  exitCode: 0;
+  passed: true;
+  focusedTestReceiptRef: CanonicalRef;
+  focusedTestReceiptHash: string;
+}>;
+
+export type ProductBuildAuthorityV2VendorLockProjectionV1 = Readonly<{
+  schema: "mission-control.product-build-authority-v2-vendor-lock-projection.v1";
+  lockPath: "contracts/vendor/setfarm/mission-control-contracts.v1.lock.json";
+  producerRepository: "https://github.com/hikmetgulsesli/setfarm.git";
+  producerCommit: string;
+  lockContentHash: string;
+  artifacts: readonly [
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+    ProductBuildAuthorityV2VendorArtifactIdentityV1,
+  ];
+  compatibilitySetHash: string;
+  vendorLockProjectionHash: string;
+}>;
+
+export type ProductBuildAuthorityV2DeliveryEvidenceV1 = Readonly<{
+  schema: "mission-control.product-build-authority-v2-delivery-evidence.v1";
+  currentStatus: "current";
+  deliveryPrNumber: 19;
+  deliveryMergeSha: "240e779d78804843a1202cbf0440fe423b806b1a";
+  deliveryMergeAncestorOfCurrentSource: true;
+  currentSource: Readonly<{
+    branch: "main";
+    clean: true;
+    sourceSha: string;
+    treeHash: string;
+    buildHash: string;
+    originMainSha: string;
+  }>;
+  deliveredPathBlobs: readonly [
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+    ProductBuildAuthorityV2PathBlobIdentityV1,
+  ];
+  focusedTests: ProductBuildAuthorityV2FocusedTestReceiptV1;
+  vendorLock: ProductBuildAuthorityV2VendorLockProjectionV1;
+  deliveryEvidenceRef: CanonicalRef;
+  deliveryEvidenceHash: string;
+}>;
+
+export type ProductBuildAuthorityV2DeliveryEvidenceResponseV1 = Readonly<{
+  schema: "mission-control.product-build-authority-v2-delivery-evidence-response.v1";
+  currentStatus: "current";
+  deliveryEvidenceRef: CanonicalRef;
+  deliveryEvidenceHash: string;
+  evidence: ProductBuildAuthorityV2DeliveryEvidenceV1;
+}>;
+```
+
+The eight `deliveredPathBlobs[].path` values are, in order: `server/routes/setfarm-operational.test.ts`, `server/routes/setfarm-operational.ts`, `server/services/setfarm-product-build-authority.ts`, `server/services/setfarm-product-build-authority.test.ts`, `src/lib/product-build-authority.ts`, `src/components/run-detail/ProductBuildAuthority.tsx`, `tests/product-build-authority-render.test.tsx`, and `contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`. `focusedTests.testPathBlobs` uses exactly the three test paths in `argv`, in the same order. The exact ordered `{producerPath,vendoredPath,sha256}` identities in `vendorLock.artifacts` are:
+
+1. `contracts/generated/mission-control/run-operational-snapshot.v1.compatibility.json` → `contracts/vendor/setfarm/run-operational-snapshot.v1.compatibility.json`
+2. `contracts/generated/mission-control/run-operational-snapshot.v1.schema.json` → `contracts/vendor/setfarm/run-operational-snapshot.v1.schema.json`
+3. `contracts/generated/mission-control/run-operational-snapshot.v2.compatibility.json` → `contracts/vendor/setfarm/run-operational-snapshot.v2.compatibility.json`
+4. `contracts/generated/mission-control/run-operational-snapshot.v2.schema.json` → `contracts/vendor/setfarm/run-operational-snapshot.v2.schema.json`
+5. `contracts/generated/mission-control/run-operational-snapshot.v3.compatibility.json` → `contracts/vendor/setfarm/run-operational-snapshot.v3.compatibility.json`
+6. `contracts/generated/mission-control/run-operational-snapshot.v3.schema.json` → `contracts/vendor/setfarm/run-operational-snapshot.v3.schema.json`
+7. `contracts/generated/mission-control/deployment-observation.v1.compatibility.json` → `contracts/vendor/setfarm/deployment-observation.v1.compatibility.json`
+8. `contracts/generated/mission-control/deployment-observation.v1.schema.json` → `contracts/vendor/setfarm/deployment-observation.v1.schema.json`
+9. `contracts/generated/mission-control/project-transfer-ack.v1.compatibility.json` → `contracts/vendor/setfarm/project-transfer-ack.v1.compatibility.json`
+10. `contracts/generated/mission-control/project-transfer-ack.v1.schema.json` → `contracts/vendor/setfarm/project-transfer-ack.v1.schema.json`
+11. `contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json` → `contracts/vendor/setfarm/operational-active-run-status.v1.compatibility.json`
+12. `contracts/generated/mission-control/operational-active-run-status.v1.schema.json` → `contracts/vendor/setfarm/operational-active-run-status.v1.schema.json`
+
+The later run-operational-model-v2 pair appends positions 13–14 and never reorders these twelve.
+
+`commandContractHash = hashCanonicalJson({argv})`; `focusedTestReceiptHash` hashes the focused-test receipt excluding its two derived pair members, and its ref is `mission-control://internal-production/product-build-authority-v2-focused-test-receipt/sha256/<hash>`. `lockContentHash` is SHA-256 of the exact checked-in lock-file bytes; `compatibilitySetHash = hashCanonicalJson({schema:"mission-control.setfarm-contract-compatibility-set.v1",artifacts})`; `vendorLockProjectionHash` hashes that strict projection excluding only itself. `deliveryEvidenceHash` hashes the strict evidence object excluding only `deliveryEvidenceRef` and `deliveryEvidenceHash`, and its ref is exactly `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/<hash>`. The response duplicates the same pair and requires `response.deliveryEvidenceRef/hash === response.evidence.deliveryEvidenceRef/hash`. JSON emitters write properties in the declaration order above; canonical hashes use repository canonical JSON. There are no optional fields and no nullable success fields at any depth. Unavailability is a non-200/failed zero-output observation, never a JSON object with null evidence or a partial pair.
+
+The same Task 0 module provides zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()` as a required Task 0 postcondition. It obtains the Mission Control executable/source identity only from A's code-owned `observeInternalProductionRuntimeSourceV1()` projection plus Task 6 Step 8's freshly resolved clean-main/build identity; it never resolves a sibling checkout or accepts a path. Before Task 7, the observer starts only Mission Control's fixed non-listening source CLI from that authenticated clean-main build; after Task 7 loads the new Mission Control service, it uses only fixed loopback `GET /api/internal-production/product-build-authority-v2-delivery-evidence`. The returned `observationTransport` is strictly `source-cli | http`; current-entry requires `source-cli`, post-rebind requires `http`, and both must parse through the local schema and resolve to the identical delivery-evidence pair. No caller chooses transport, URL, root, command, ref, hash, response, parser, schema, fixture, or fallback. `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})` is pair-only and reobserves/recomputes the named projection rather than treating any per-run `authorityHash` as a global pair. Task 0 unit tests are source-constructible before Task 1 because they use only the local canonical fixtures and private injected transports; the later Task 6 Step 8/Task 7 integration exercises the real CLI/HTTP wire bytes without importing either repository's implementation into the other.
 
 Task 0 also owns Task 7's strict successor ABI in `src/internal-production/baseline-post-handoff-receipt-v1.ts`: `InternalProductionPostRebindEntryAuthorityV1`, exact pair `InternalProductionPostRebindEntryAuthorityPairV1`, discriminated `InternalProductionPostRebindEntryAuthorityStatusV1`, fixed private content-addressed store, `resolveInternalProductionPostRebindEntryAuthorityV1({postRebindEntryAuthorityRef,postRebindEntryAuthorityHash})`, zero-input `resumeInternalProductionPostRebindEntryAuthorityV1()`, `observeInternalProductionPostRebindEntryAuthorityStatusV1()`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1()`. The CLI adds only `resume-post-rebind-entry|post-rebind-entry-status|verify-post-rebind-entry --json`; none accepts predecessor, root, SHA, migration, restart, service, schema, owner, receipt body, or locator input.
 
@@ -150,7 +335,7 @@ Task 0 also owns exact `InternalProductionBaselineRestartSequenceIntentKindV1`, 
 
 Task 0's exact A-owned cutover ABI additionally includes `InternalProductionGlobalOwnerAdmissionFencePurposeV1`, `InternalProductionGlobalOwnerAdmissionFenceV1`, narrow null-target `acquireInternalProductionGlobalOwnerAdmissionFenceV1(...)`, dedicated `acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1(...)`, dedicated `acquireInternalProductionRecoveryRestartOwnerAdmissionFenceV1(...)`, `reobserveInternalProductionGlobalOwnerAdmissionFenceV1(...)`, `closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1(...)`, `closeInternalProductionRecoveryRestartTargetsUnderFenceV1(...)`, `INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1`, `InternalProductionCompleteZeroOwnerCensusV1`, the key-checked `INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1`, `InternalProductionOwnerProducerRowV1`, `InternalProductionOwnerProducerManifestV1`, the eleven-row `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`, exact `INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1`, `InternalProductionOwnerProducerManifestSetActivationPredecessorV1`, `InternalProductionOwnerProducerManifestSetActivationCurrentV1`, `InternalProductionOwnerProducerManifestSetActivationStoreV1`, `activateInternalProductionOwnerProducerManifestSetV1(...)`, `resolveInternalProductionOwnerProducerManifestSetActivationV1(...)`, zero-input `resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1()`, `InternalProductionBaselineOwnerProducerManifestActivationReceiptV1`, `InternalProductionBaselineOwnerProducerManifestActivationStatusV1`, zero-input `activateInternalProductionBaselineOwnerProducerManifestV1()`, zero-input read-only `observeInternalProductionBaselineOwnerProducerManifestActivationStatusV1()`, `assembleInternalProductionOwnerProducerRegistryV1(...)`, `InternalProductionOwnerReservationV1`, `beginOrAdoptInternalProductionOwnerReservationV1(...)`, `closeInternalProductionOwnerReservationV1(...)`, and their pair-only resolvers. It also owns `InternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1` and `resolveInternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1({operationRef,operationHash})`, plus the finite recovery-source bootstrap ABI `InternalProductionRecoverySourceBootstrapOperationV1`, `prepareInternalProductionRecoverySourceBootstrapRunV1()`, zero-input `resumeActiveInternalProductionRecoverySourceBootstrapRunV1()`, and read-only `observeInternalProductionRecoverySourceBootstrapStatusV1()`. The immutable cutover operation is private/path-free and exists before its bound guard can be consumed; D receives no operation pair and imports no operation writer.
 
-The existing `acceptance:baseline-post-handoff` package command owns the exact additional CLI verbs `prepare-recovery-source-bootstrap --json`, zero-input `resume-recovery-source-bootstrap --json`, read-only `recovery-source-bootstrap-status --json`, zero-input `activate-owner-producer-manifest --json`, read-only zero-input `owner-producer-manifest-status --json`, read-only zero-input `observe-product-build-authority-v2-delivery-evidence --json`, `audit-authority-v3-migration31 --json`, `inspect-pending-bootstrap-handoff-successor --json`, and `verify-bootstrap-handoff-migration-current --json`. Its command table is exactly:
+Task 0 creates the `acceptance:baseline-post-handoff` package command as a required postcondition; it owns the exact additional CLI verbs `prepare-recovery-source-bootstrap --json`, zero-input `resume-recovery-source-bootstrap --json`, read-only `recovery-source-bootstrap-status --json`, zero-input `activate-owner-producer-manifest --json`, read-only zero-input `owner-producer-manifest-status --json`, read-only zero-input `observe-product-build-authority-v2-delivery-evidence --json`, `audit-authority-v3-migration31 --json`, `inspect-pending-bootstrap-handoff-successor --json`, and `verify-bootstrap-handoff-migration-current --json`. Its command table is exactly:
 
 ```json
 {
@@ -217,6 +402,10 @@ export declare const InternalProductionBaselineRuntimeSourceProjectionV1Schema:
 export type InternalProductionBaselineBootstrapHandoffMigrationReceiptV1 = Readonly<{
   schema: "setfarm.internal-production-baseline-bootstrap-handoff-migration-receipt.v1";
   migrationId: "contract-spine-bootstrap-main-claim-handoff-v1";
+  predecessorAuthorityV3Migration31AuditRef: CanonicalRef;
+  predecessorAuthorityV3Migration31AuditHash: string;
+  pendingBootstrapHandoffMigrationRef: CanonicalRef;
+  pendingBootstrapHandoffMigrationHash: string;
   migrationSourceSha: string;
   migrationImplementationBlobHash: string;
   orderedStatementsHash: string;
@@ -253,6 +442,10 @@ export function resolveInternalProductionBaselineBootstrapHandoffMigrationReceip
     migrationReceiptHash: string;
   }>,
 ): Promise<InternalProductionBaselineBootstrapHandoffMigrationReceiptV1>;
+
+// migrationReceiptHash covers every field above except the two derived
+// migrationReceiptRef/migrationReceiptHash members, including both exact
+// causal predecessor pairs.
 
 export type InternalProductionBaselineGoldenLaunchMigrationZeroOwnerAuthorizationV1 = Readonly<{
   schema: "setfarm.internal-production-baseline-golden-launch-migration-zero-owner-authorization.v1";
@@ -600,13 +793,49 @@ export function assembleInternalProductionOwnerProducerRegistryV1(input: Readonl
 export type InternalProductionOwnerReservationV1 = Readonly<{
   schema: "setfarm.internal-production-owner-reservation.v1";
   category: InternalProductionOwnerCategoryV1;
+  ownerKey: string;
   ownerKeyHash: string;
   producerPurposeHash: string;
   producerImplementationId: InternalProductionOwnerProducerImplementationIdV1;
   producerImplementationHash: string;
+  canonicalOwnerIdentity: null;
+  state: "pending";
   ownerAdmissionHeadPredecessorHash: string;
   reservationRef: CanonicalRef;
   reservationHash: string;
+}>;
+export type InternalProductionCanonicalOwnerIdentityV1<
+  Category extends InternalProductionOwnerCategoryV1 = InternalProductionOwnerCategoryV1,
+> = Readonly<{
+  schema: "setfarm.internal-production-canonical-owner-identity.v1";
+  category: Category;
+  ownerKey: string;
+  ownerRef: CanonicalRef;
+  ownerHash: string;
+}>;
+export type InternalProductionBoundOwnerReservationV1<
+  Category extends InternalProductionOwnerCategoryV1 = InternalProductionOwnerCategoryV1,
+> = Readonly<{
+  schema: "setfarm.internal-production-bound-owner-reservation.v1";
+  category: Category;
+  producerImplementationId: InternalProductionOwnerProducerImplementationIdV1;
+  ownerKey: string;
+  reservationRef: CanonicalRef;
+  reservationHash: string;
+  canonicalOwnerIdentity: InternalProductionCanonicalOwnerIdentityV1<Category>;
+  state: "bound";
+  bindingHash: string;
+}>;
+export type InternalProductionTerminalOwnerAuthorityV1<
+  Category extends InternalProductionOwnerCategoryV1 = InternalProductionOwnerCategoryV1,
+> = Readonly<{
+  schema: "setfarm.internal-production-terminal-owner-authority.v1";
+  category: Category;
+  ownerKey: string;
+  ownerRef: CanonicalRef;
+  ownerHash: string;
+  terminalOwnerRef: CanonicalRef;
+  terminalOwnerHash: string;
 }>;
 export type InternalProductionOwnerReservationCloseV1 = Readonly<{
   schema: "setfarm.internal-production-owner-reservation-close.v1";
@@ -625,13 +854,21 @@ export type InternalProductionOwnerReservationCloseV1 = Readonly<{
 
 export function beginOrAdoptInternalProductionOwnerReservationV1(input: Readonly<{
   producerImplementationId: InternalProductionOwnerProducerImplementationIdV1;
-  ownerKeyHash: string;
+  ownerKey: string;
 }>): Promise<InternalProductionOwnerReservationV1>;
-export function closeInternalProductionOwnerReservationV1(input: Readonly<{
+export function bindInternalProductionOwnerReservationInTransactionV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(sql: postgres.TransactionSql, input: Readonly<{
   reservationRef: CanonicalRef;
   reservationHash: string;
-  terminalOwnerRef: CanonicalRef;
-  terminalOwnerHash: string;
+  canonicalOwnerIdentity: InternalProductionCanonicalOwnerIdentityV1<Category>;
+}>): Promise<InternalProductionBoundOwnerReservationV1<Category>>;
+export function closeInternalProductionOwnerReservationV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(input: Readonly<{
+  reservationRef: CanonicalRef;
+  reservationHash: string;
+  terminalAuthority: InternalProductionTerminalOwnerAuthorityV1<Category>;
 }>): Promise<InternalProductionOwnerReservationCloseV1>;
 export function resolveInternalProductionOwnerReservationV1(input: Readonly<{
   reservationRef: CanonicalRef;
@@ -646,6 +883,11 @@ export function resolveInternalProductionOwnerReservationCloseV1(input: Readonly
 // code-owned manifest for that producer's delivered plan and derives category,
 // owner-key grammar, producer-purpose hash, and census keys. Callers cannot
 // supply or override those values; an inactive/future-plan row is unavailable.
+
+// Guarded migration 32 creates the PostgreSQL reservation sidecar and its
+// singleton owner-admission-head CAS relation.
+// Owner insert + sidecar bind use the same TransactionSql; no filesystem
+// atomicity is claimed.
 
 export type InternalProductionOwnerReservationIdentityV1 = Readonly<{
   category: InternalProductionOwnerCategoryV1;
@@ -691,41 +933,55 @@ export const INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1 = {
     role: "restart-reservation",
     category: "restart-reservation",
     producerImplementationId: "d-restart-reservation-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "reserveInternalProductionServiceRestartDispatchOwnerV1",
   },
   serviceRestartOperationReservation: {
     role: "service-restart-operation",
     category: "service-restart-operation",
     producerImplementationId: "d-service-restart-operation-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "reserveInternalProductionServiceRestartOperationOwnerV1",
   },
   launchOutboxReservation: {
     role: "launch-outbox",
     category: "launch-outbox",
     producerImplementationId: "d-service-restart-launch-outbox-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "publishInternalProductionServiceRestartLaunchOutboxUnderFenceV1",
   },
   helperProcessReservation: {
     role: "helper-process",
     category: "process",
     producerImplementationId: "d-service-restart-helper-process-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "publishInternalProductionServiceRestartHelperProcessUnderFenceV1",
   },
   dispatchChildProcessReservation: {
     role: "dispatch-child-process",
     category: "process",
     producerImplementationId: "d-service-restart-child-process-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "publishInternalProductionServiceRestartDispatchChildProcessUnderFenceV1",
   },
   startupListenerReservation: {
     role: "startup-listener",
     category: "listener",
     producerImplementationId: "d-service-restart-startup-listener-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "publishInternalProductionServiceRestartStartupListenerUnderFenceV1",
   },
   replacementProcessReservation: {
     role: "replacement-process",
     category: "process",
     producerImplementationId: "d-service-restart-replacement-process-v1",
+    expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts",
+    expectedExportName: "publishInternalProductionServiceRestartReplacementProcessUnderFenceV1",
   },
 } as const;
 
 export const INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1 =
-  "be60e0b9d36372e19f765b93f77f53fb6f1b8ec8a7421eab4f6f4a0f96faaf05" as const;
+  "c3d88ba2dc7d9e70d773d0056d2fdeaced399f63adc7fd1c37eb423fa22d08d5" as const;
 // Tests recompute hashCanonicalJson(INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1)
 // and require exact equality with this pinned ABI hash.
 
@@ -1438,6 +1694,19 @@ export type InternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1 
   operationHash: string;
 }>;
 
+type InternalProductionRecoveryDForwardRegistryKeyV1 = Exclude<
+  keyof typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1,
+  "schema"
+>;
+export type InternalProductionRecoveryDForwardImplementationIdentityV1<
+  Key extends InternalProductionRecoveryDForwardRegistryKeyV1,
+> = Readonly<
+  (typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1)[Key] & {
+  moduleBlobHash: string;
+  sourceSha: string;
+  buildHash: string;
+}>;
+
 export type InternalProductionServiceRestartStartupHooksReadyV1 = Readonly<{
   schema: "setfarm.internal-production-service-restart-startup-hooks-ready.v1";
   setfarmSourceSha: string;
@@ -1456,6 +1725,17 @@ export type InternalProductionServiceRestartStartupHooksReadyV1 = Readonly<{
   physicalRestartEpochHash: string;
   physicalRestartEpochOrdinal: 1;
   physicalRestartAuthorityOwner: "baseline-a";
+  dForwardIdentityRegistryHash:
+    typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1;
+  dForwardImplementationIdentities: readonly [
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"restartReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"serviceRestartOperationReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"launchOutboxReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"helperProcessReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"dispatchChildProcessReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"startupListenerReservation">,
+    InternalProductionRecoveryDForwardImplementationIdentityV1<"replacementProcessReservation">,
+  ];
   spawnerHookImplementationId: "recovery-d-setfarm-spawner-startup-v1";
   spawnerHookImplementationHash: string;
   dashboardHookImplementationId: "recovery-d-setfarm-dashboard-startup-v1";
@@ -2029,17 +2309,21 @@ export function resolveInternalProductionBaselineRestartSequenceReceiptV1(
 
 For a `setfarm-spawner` operation only, A publishes and reopens one strict startup-admission record plus a fixed unique pending locator after operation/outbox/helper-startup durability and before authorization consumption or dispatch. Its bootstrap branch contains the exact `bootstrapOperationRef`/`bootstrapOperationHash`; ordinary A-managed restarts require both fields `null`. The new spawner calls the zero-argument resolver, which opens only that locator—no scan, environment, plist, PID argument, path, or newest selection—and remints a WeakMap-authenticated capability carrying the exact operation pair. Claiming derives current PID/start-time/executable, loaded Setfarm SHA/build/module, and generation through code-owned observers and requires exact equality to the admission and active A operation before one startup claim is published. The waiter uses only that authenticated capability plus its exact claim and returns the same operation's composite pair; it never follows a caller locator or reconstructs from `operationId`. A structural clone, pair omission/substitution, stale/completed unrelated operation, second claimant, wrong service/source/build/generation, or D capability/namespace fails. With no active A operation the resolver returns `null`; before D is implemented, B remains completion-poll-disabled with typed `activation-required`. A retains completed admission history until the next predecessor-CAS A operation archives it, so a crashing bootstrap generation resumes the same handshake.
 
-The exact existing `runtime-completion.ts` owner controller may mint `InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1` only while it holds the current authenticated P0 completion request/claim/run owner. It derives the request, claim, run, and owner-generation hashes internally, first drains and fences that owner against new effects, and observes zero unrelated owners; the target owner itself is the sole nonzero census member. The opaque guard is WeakMap-authenticated and cannot be serialized, cloned, minted by a worker, or used outside the one fixed bootstrap action. `prepareInternalProductionBaselineSpawnerBootstrapRestartV1({targetGuard,postSettlementContinuationKind:"setfarm-bootstrap-main-claim-allocation-v1"})` authenticates it and, in the already-delivered A source, publishes/reopens the intent, operation, outbox, and one-use `InternalProductionBaselineSpawnerBootstrapContinuationGrantV1` before returning `{operationRef,operationHash}` and before dispatch or process replacement. The grant binds target guard, operation, bootstrap Setfarm source/tree, literal continuation kind, `authorized-no-claim`, and null claim/worktree fields; A accepts no other continuation kind and creates no claim or writer. The current completion request durably binds the operation pair before calling `executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({operationRef,operationHash})`. Execute/recover may dispatch and terminate the caller; a crash immediately after dispatch but before response is recovered only by reopening the same operation pair. The A startup admission and its hidden authenticated waiter carry that exact pair into the replacement process and never reconstruct it from `operationId`, scan a locator, or accept caller fields. The operation and continuation-grant resolvers reopen only their exact pairs. After the replacement spawner activates, targeted recovery releases the exact owner, and global zero is freshly observed, `finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({operationRef,operationHash})` publishes and returns `{sequenceRef,sequenceHash}`; the pair-only resolver reopens it. None of these bootstrap mutations has a public CLI. This already-delivered A operation is the sole mutation the pre-P0 owner prepares and starts after P0 merge/build; it never imports or calls B.
+Task 0 must extend the existing `runtime-completion.ts` owner controller so it may mint `InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1` only while it holds the current authenticated P0 completion request/claim/run owner. It derives the request, claim, run, and owner-generation hashes internally, first drains and fences that owner against new effects, and observes zero unrelated owners; the target owner itself is the sole nonzero census member. The opaque guard is WeakMap-authenticated and cannot be serialized, cloned, minted by a worker, or used outside the one fixed bootstrap action. As a Task 0 postcondition, `prepareInternalProductionBaselineSpawnerBootstrapRestartV1({targetGuard,postSettlementContinuationKind:"setfarm-bootstrap-main-claim-allocation-v1"})` authenticates it and publishes/reopens the intent, operation, outbox, and one-use `InternalProductionBaselineSpawnerBootstrapContinuationGrantV1` before returning `{operationRef,operationHash}` and before dispatch or process replacement. The grant binds target guard, operation, bootstrap Setfarm source/tree, literal continuation kind, `authorized-no-claim`, and null claim/worktree fields; A accepts no other continuation kind and creates no claim or writer. The current completion request durably binds the operation pair before calling `executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({operationRef,operationHash})`. Execute/recover may dispatch and terminate the caller; a crash immediately after dispatch but before response is recovered only by reopening the same operation pair. The A startup admission and its hidden authenticated waiter carry that exact pair into the replacement process and never reconstruct it from `operationId`, scan a locator, or accept caller fields. The operation and continuation-grant resolvers reopen only their exact pairs. After the replacement spawner activates, targeted recovery releases the exact owner, and global zero is freshly observed, `finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({operationRef,operationHash})` publishes and returns `{sequenceRef,sequenceHash}`; the pair-only resolver reopens it. None of these bootstrap mutations has a public CLI. This Task 0-delivered A operation is the sole mutation the pre-P0 owner prepares and starts after P0 merge/build; it never imports or calls B.
 
-The old-generation owner crosses the P0 build-to-restart boundary only through A's already delivered `createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1()` and `continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({verification})`. The first may mint its opaque capability only after the owner receives the successful clean-main P0 build/test result and itself reopens the P0 merge/tree/file-set/build verification plus A historical/migration pairs; it binds the current request/claim/run/owner generation and accepts no caller path/SHA/hash/test result. The continuation authenticates the same live owner, mints the target guard, calls A prepare, atomically persists the exact operation pair and fixed status locator in that request, reopens them, then calls A execute/recover. It may terminate its caller and therefore no one relies on its return. Response loss or reentry adopts the same request-bound pair/locator; no pre-P0 process imports or calls a P0/B function.
+The old-generation owner crosses the P0 build-to-restart boundary only through Task 0's required `createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1()` and `continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({verification})` postconditions. The first may mint its opaque capability only after the owner receives the successful clean-main P0 build/test result and itself reopens the P0 merge/tree/file-set/build verification plus A historical/migration pairs; it binds the current request/claim/run/owner generation and accepts no caller path/SHA/hash/test result. The continuation authenticates the same live owner, mints the target guard, calls A prepare, atomically persists the exact operation pair and fixed status locator in that request, reopens them, then calls A execute/recover. It may terminate its caller and therefore no one relies on its return. Response loss or reentry adopts the same request-bound pair/locator; no pre-P0 process imports or calls a P0/B function.
 
 The same A source claim pre-delivers the exact bootstrap-main-claim handoff database schema that B P0 later consumes. `src/db/bootstrap-main-claim-handoff-v1-migration.ts` is the sole immutable owner of its migration ID, ordered statements, and schema projector; `contract-spine-migrations.ts` and `contract-spine-migration-digests.generated.ts` are append-only registries, not whole-file authority. After the reviewed A and Mission Control sources have been merged and both clean-main builds pass, but before Task 7 prepares the first service restart, `applyInternalProductionBaselineBootstrapHandoffMigrationV1(...)` accepts only a freshly resolved complete-zero guard pair, one-use consumes that guard, requires the clean merged A build, runs the fixed contract-spine plan/apply/verify path, requires the exact named digest entry, and publishes/reopens one content-addressed `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`. Initial application requires exact `currentSetfarmSourceSha === migrationSourceSha`; the receipt binds only the dedicated implementation Git blob, canonical `orderedStatementsHash`, canonical named `(migrationId,migrationDigest)` entry hash, the digest, and verified schema projection. It never hashes or pins the complete mutable registry or generated aggregate. The command is a direct database operation in the just-built CLI and depends on no newly loaded spawner, dashboard, Mission Control process, listener, or post-restart runtime module. A fixed terminal locator for this one migration permits only the zero-input read-only `resolve-bootstrap-handoff-migration --json` command to recover its exact pair and invoke the pair-only resolver; it never selects a newest migration or accepts an ID/ref/hash/path/SQL/database override. The receipt proves the operation table, unique operation/claim identities, and terminal canonical-pair columns; it accepts no SQL, migration ID, digest, database URL, or schema projection from the caller. Every later consumer resolves the current clean literal-`main` Setfarm source itself, requires `migrationSourceSha` to be an ancestor of that current SHA through a fixed bounded Git ancestry observer, and freshly requires the dedicated implementation blob, ordered statements, named digest entry, digest, and schema projection to equal the receipt byte-for-byte. Unrelated append-only registry/digest entries are allowed and do not change A's authority; modifying/removing/reordering A's named entry or implementation/projection blocks. A descendant source is therefore valid only when A's dedicated migration identity remains unchanged; equality with `migrationSourceSha` is required only at initial application. Restart authorization separately requires its complete before/after runtime-source projections to equal the exact current source/build authority, so descendant acceptance never relaxes runtime-source equality. Every subsequent A restart authorization and restart-sequence intent first resolves that exact terminal pair, binds its ref/hash/schema projection into the authority/sequence hash, and fails before reservation, outbox, helper, guard consumption, or dispatch when it is absent, corrupt, unverified, non-ancestral, or implementation/statements/named-entry/digest/schema mismatched. The baseline post-handoff receipt copies the same migration pair and schema projection hash, and both current and historical resolvers freshly reopen the migration receipt and repeat those exact relations rather than trusting copied hashes. B P0 may be claimed only from that resolved historical authority and may restart the spawner only after re-resolving the same migration pair against its descendant clean source; B never applies or mutates schema.
 
+For migration 32 specifically, “plan/apply/verify” means the generic plan observes it pending, generic apply skips it, generic verify fails `MIGRATION_INCOMPLETE`, and the dedicated Task 7 operation alone calls `applyBootstrapMainClaimHandoffGuardedMigration32V1` followed by exact successor verification. Its ordered statements create the bootstrap-handoff operation/claim/terminal-pair schema, `internal_production_owner_reservations_v1`, and singleton `internal_production_owner_admission_head_v1`; its schema projection verifies all three. The terminal receipt hashes the exact v31 audit and pending-successor pairs alongside migration identity, guard consumption, apply/verify facts, and schema facts. There is no generic guarded mode and no pre-Task7 live application.
+
 A also predeclares the only B-purpose guard seam in `baseline-post-handoff-receipt-v1.ts`. `bindInternalProductionBaselineGoldenLaunchMigrationZeroOwnerGuardV1()` accepts a fresh generic A zero-owner pair only after B has durably published and reopened its fixed `pendingInputRef`/`pendingInputHash`, validates the exact purpose and canonical pending-input namespace, and publishes the immutable authorization pair without consuming the guard. `consumeInternalProductionBaselineGoldenLaunchMigrationZeroOwnerGuardV1()` accepts only that authorization plus the equality-bound B operation pair, reopens both A records, and one-use consumes the underlying guard inside A before publishing the consumption pair. B never imports, authenticates, or mutates A's generic guard store directly. The authorization/consumption resolvers are read-only, pair-only, and reject another purpose, pending input, operation, replay, structural clone, or raw guard substitution.
 
-`baseline-restart-authority-retirement-v1.ts` owns one fixed global physical-restart transition lock and one immutable two-epoch head for the ordered services `setfarm-spawner`, `setfarm-dashboard`, and `mission-control`. It also predeclares and solely owns the strict `InternalProductionServiceRestartStartupHooksReadyV1`, `InternalProductionServiceRestartAuthorityActivationV1`, and `InternalProductionServiceRestartAuthorityCutoverV1` schemas, content-addressed stores, fixed locators, code-owned runtime-hook observer/recorder, and pair-only resolvers; A imports no D schema, store, capability, callback, or body. The observer uses a fixed three-hook implementation-ID registry plus current code-owned service/runtime/source/build observations and accepts no caller service, SHA, build, generation, hook hash, verdict, or D object. Epoch one is `authorityOwner:"baseline-a"` and requires readiness/activation/retirement fields null; epoch two is `authorityOwner:"recovery-d"` and requires all three exact pairs non-null. A pre-delivers the sole two-step cutover mutation boundary: `prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1({zeroOwnerGuardRef,zeroOwnerGuardHash})` and zero-input `resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1()`. Exactly D's reviewed cutover adapter may import those two mutations unaliased; every other D import from the A module is a type or read-only resolver/status observer, and no CLI/worker/other production module may call them. The former single-call commit, standalone retirement export, and every D-owned readiness/activation/cutover writer do not exist. Under the one transition lock, resume follows the exact operation-first durability order below, then performs one expected-predecessor visibility CAS from epoch one to the complete A-owned readiness/retirement/activation/cutover/epoch-two tuple. Before the CAS, A epoch one remains authoritative and D remains disabled even though exact invisible candidates may exist; after it, readers must freshly resolve the epoch's complete tuple from A's stores. D publishes no parallel candidate or summary. Every A ordinary restart, bootstrap prepare, and new sequence acquires the same lock before it reads epoch one or publishes any authorization/operation; after epoch two it fails before mutation with typed `BASELINE_RESTART_AUTHORITY_RETIRED`. A operations durably in flight before cutover remain recoverable and therefore make cutover refuse until terminal; completed A history remains resolvable forever. A partial/mismatched operation or candidate is ambiguous and never enables either owner.
+`baseline-restart-authority-retirement-v1.ts` owns one fixed global physical-restart transition lock and one immutable two-epoch head for the ordered services `setfarm-spawner`, `setfarm-dashboard`, and `mission-control`. It also predeclares and solely owns the strict `InternalProductionServiceRestartStartupHooksReadyV1`, `InternalProductionServiceRestartAuthorityActivationV1`, and `InternalProductionServiceRestartAuthorityCutoverV1` schemas, content-addressed stores, fixed locators, code-owned runtime-hook observer/recorder, and pair-only resolvers; A imports no D schema, store, capability, callback, or body. A's `INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1` is the physical forward-identity registry: its seven ordered records fix implementation ID, module-relative path, and export name. Readiness repeats those records in the same order and adds the observed module blob hash, clean D source SHA, and D build hash for each; all seven must agree on the reviewed D source/build and exact module blob. A reads and hashes the registered source/build identities through code-owned observers and never imports or evaluates the future D module. The separate three service startup-hook IDs remain exact runtime hook observations. No caller supplies a service, path, export, SHA, build, blob hash, generation, hook hash, verdict, or D object. Epoch one is `authorityOwner:"baseline-a"` and requires readiness/activation/retirement fields null; epoch two is `authorityOwner:"recovery-d"` and requires all three exact pairs non-null. A delivers as a Task 0 postcondition the sole two-step cutover mutation boundary: `prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1({zeroOwnerGuardRef,zeroOwnerGuardHash})` and zero-input `resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1()`. Exactly D's reviewed cutover adapter may import those two mutations unaliased; every other D import from the A module is a type or read-only resolver/status observer, and no CLI/worker/other production module may call them. The former single-call commit, standalone retirement export, and every D-owned readiness/activation/cutover writer do not exist. Under the one transition lock, resume follows the exact operation-first durability order below, then performs one expected-predecessor visibility CAS from epoch one to the complete A-owned readiness/retirement/activation/cutover/epoch-two tuple. Before the CAS, A epoch one remains authoritative and D remains disabled even though exact invisible candidates may exist; after it, readers must freshly resolve the epoch's complete tuple from A's stores. D publishes no parallel candidate or summary. Every A ordinary restart, bootstrap prepare, and new sequence acquires the same lock before it reads epoch one or publishes any authorization/operation; after epoch two it fails before mutation with typed `BASELINE_RESTART_AUTHORITY_RETIRED`. A operations durably in flight before cutover remain recoverable and therefore make cutover refuse until terminal; completed A history remains resolvable forever. A partial/mismatched operation or candidate is ambiguous and never enables either owner.
 
-Prepare's first and sole durable creation is the complete fixed `cutover-pending-input.json` record. It contains `InternalProductionPhysicalServiceRestartAuthorityCutoverPendingInputV1` directly; its constant canonical ref is derived from that fixed namespace and `pendingInputHash` hashes the strict body with only the derived ref/hash omitted, so no content-addressed member, guard authorization, operation, locator, or candidate can be orphaned before discoverability. Publication uses an unpredictable same-directory temporary, file fsync, atomic no-replace, parent fsync, and `O_NOFOLLOW` reopen. There is no separate content-addressed pending-input object or pending-input locator. Only after reopening this record does prepare acquire A's durable global owner-admission fence for the exact cutover purpose. One canonical owner-admission head serializes fence acquire/release and every producer reservation begin/close. Its exhaustive registry is exactly `INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1`: run, claim, execution attempt, runtime session, completion owner, mandatory effect, ordinary start, restart reservation/operation, launch preparation, prepared/staged work, fixture attempt, artifact reservation/publication, docs session/lease, fleet stage/inflight/review, matrix inflight, launch outbox, termination, finding, recovery, operational delivery, source run, cold rehearsal, compilation/execution lease, process, listener, worktree, dirty worktree, and stale child. Fence acquire treats every open reservation and published live owner as nonzero. Outside a typed fence target family, a producer must begin or byte-identically adopt its category/owner-key reservation before its first durable owner byte, bind that pair into the owner record, and close it only against the exact terminal owner receipt. Inside `source-run-launch` or `recovery-restart`, the same atomic fence/head CAS creates the complete exact named target set, those target pairs are the only permitted begin authorities while the fence is held, and only the matching exact compound close may settle them. Reservation CAS refuses while a fence is held; fence CAS refuses while any non-target reservation or owner is live. A nonzero observation leaves the same fixed pending record in `pending-input`, publishes no operation, consumes no guard, and performs no epoch mutation; zero-input resume alone may retry acquisition.
+Prepare's first and sole durable creation is the complete fixed `cutover-pending-input.json` record. It contains `InternalProductionPhysicalServiceRestartAuthorityCutoverPendingInputV1` directly; its constant canonical ref is derived from that fixed namespace and `pendingInputHash` hashes the strict body with only the derived ref/hash omitted, so no content-addressed member, guard authorization, operation, locator, or candidate can be orphaned before discoverability. Publication uses an unpredictable same-directory temporary, file fsync, atomic no-replace, parent fsync, and `O_NOFOLLOW` reopen. There is no separate content-addressed pending-input object or pending-input locator. Only after reopening this record does prepare acquire A's durable global owner-admission fence for the exact cutover purpose. One canonical owner-admission head serializes fence acquire/release and every producer reservation begin/close. Its exhaustive registry is exactly `INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1`: run, claim, execution attempt, runtime session, completion owner, mandatory effect, ordinary start, restart reservation/operation, launch preparation, prepared/staged work, fixture attempt, artifact reservation/publication, docs session/lease, fleet stage/inflight/review, matrix inflight, launch outbox, termination, finding, recovery, operational delivery, source run, cold rehearsal, compilation/execution lease, process, listener, worktree, dirty worktree, and stale child. Fence acquire treats every open reservation and published live owner as nonzero. Outside a typed fence target family, a producer must begin or byte-identically adopt its category/owner-key reservation before its first durable owner byte; its canonical PostgreSQL owner insert and sidecar bind then occur in the same transaction, and it closes only through the exact category-typed terminal authority. Inside `source-run-launch` or `recovery-restart`, the same atomic fence/head CAS creates the complete exact named target set, those target pairs are the only permitted begin authorities while the fence is held, and only the matching exact compound close may settle them. Reservation CAS refuses while a fence is held; fence CAS refuses while any non-target reservation or owner is live. A nonzero observation leaves the same fixed pending record in `pending-input`, publishes no operation, consumes no guard, and performs no epoch mutation; zero-input resume alone may retry acquisition.
+
+Guarded migration 32 creates the permanent PostgreSQL sidecar `internal_production_owner_reservations_v1` plus the singleton `internal_production_owner_admission_head_v1` relation. Its pending row stores category, producer ID, canonical owner key and its hash, and the exact reservation pair with owner/binding/terminal/close members null; every reservation/fence acquire, bind, close, and release locks and CAS-advances that same database head in its transaction. Begin/adopt returns the byte-identical pending row after response loss. Owner publication and `bindInternalProductionOwnerReservationInTransactionV1(...)` share one `postgres.TransactionSql`, so either the canonical owner row and sidecar identity both commit or neither commits; concrete owner tables receive no duplicate pair columns. Close reopens the bound row, requires an exact category/owner-key/owner-pair match, and is idempotent only for the same typed terminal authority and close pair. A crossed type, replay with a different terminal pair, or partial transition fails without mutation. The sidecar is the authoritative reservation-to-owner binding. It does not claim filesystem atomicity: a file, process, listener, dispatch, or other non-PostgreSQL effect may begin only after the bound transaction is durable and remains governed by its own outbox/receipt protocol. A producer that cannot publish its authoritative owner and bind the sidecar in one PostgreSQL transaction is not covered and fails closed. Reservation activation is impossible before Task 7 applies migration 32.
 
 Under the held owner-admission fence, resume observes/reopens epoch one, A's empty restart/sequence/helper census, and the fixed three-hook runtime identities; derives every immutable readiness/retirement/activation/epoch-two/cutover candidate hash in memory; publishes/reopens `InternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1`; and CAS-publishes the fixed active-operation locator. Immediately before guard consumption and again immediately before the epoch-head CAS it calls `reobserveInternalProductionGlobalOwnerAdmissionFenceV1(...)` and requires exactly zero unrelated owners with the identical category/identity-set projection. Any nonzero or changed observation leaves the same operation pending and performs neither consumption nor CAS. The fence remains held through terminal cutover publication/reopen and is released only afterward; terminal visibility/status requires the exact release record. A crash before the fixed pending record is side-effect-free and the same caller input may repeat prepare; after it, a fresh process uses only zero-input resume, which reopens the fixed record and creates or adopts only the missing fence/operation/active-locator member in order—never a scan or caller guard. `observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1()` is strictly read-only and reports `baseline-a-active | pending-input | prepared | resuming | recovery-d-active`; `pending-input` permits a null fence only before acquisition and otherwise binds its exact pair, while all later states require the same fence. Crash tests use a wholly fresh empty-environment process at every pending-temp/fsync/publish/reopen, fence acquire/reobserve, operation, active-locator, guard-consumption, candidate, CAS, terminal, fence-release, and response boundary. Race B migration prepare, D cutover prepare, and every enumerated owner admission; at most one fence holder exists, no owner is admitted while held, and neither guarded mutation runs from a nonzero census.
 
@@ -2109,9 +2393,11 @@ For backup recovery, use a temporary fixed-root test harness and an injected cra
 
 Before each guard observation, the coordinator freshly reopens the prior resolved `after` projection and current runtime projection and requires canonical equality. Pair zero's `before` equals the sealed initial projection; pair `i.before` equals pair `i-1.after`; the final projection equals pair two's `after`. It holds Setfarm/Mission Control source and build identities invariant throughout the sequence and permits only the ordinal's target service authority/generation transition. It derives each `orderedAdvanceHashes[i]` from the exact predecessor/successor projection pair, ordinal, service/action, composite pair, and prior advance hash, then the final receipt/resolver recomputes the complete three-link chain.
 
-`baseline-service-restart-sequence-v1.ts` is the sole sequence-intent, guard-pair, composite-pair, CAS-journal, final-receipt, and status owner. It calls the existing code-owned zero-owner observer and `restartInternalProductionBaselineServiceV1()` directly; it does not spawn the public CLI or duplicate restart logic. Every record uses the existing fixed private root and unpredictable-temporary/file-fsync/no-replace/parent-fsync/`O_NOFOLLOW` reopen protocol. `baseline-post-handoff-cli.ts` validates exactly the three finite intent literals `live-rebind|d-startup-hook-load|documentation-rollback` and delegates `resume-restart-sequence` or read-only `restart-sequence-status`; the mutating command returns only a completed final pair and status never repairs or advances. A fresh process resolves every returned pair before use.
+`baseline-service-restart-sequence-v1.ts` is a required Task 0 postcondition and the sole sequence-intent, guard-pair, composite-pair, CAS-journal, final-receipt, and status owner. It calls Task 0's code-owned zero-owner observer and `restartInternalProductionBaselineServiceV1()` directly; it does not spawn the public CLI or duplicate restart logic. Every record uses the Task 0-owned fixed private root and unpredictable-temporary/file-fsync/no-replace/parent-fsync/`O_NOFOLLOW` reopen protocol. `baseline-post-handoff-cli.ts` validates exactly the three finite intent literals `live-rebind|d-startup-hook-load|documentation-rollback` and delegates `resume-restart-sequence` or read-only `restart-sequence-status`; the mutating command returns only a completed final pair and status never repairs or advances. A fresh process resolves every returned pair before use.
 
-`baseline-restart-authority-retirement-v1.ts` is the sole fixed transition lock/epoch/readiness/activation/retirement/cutover writer. The helper, bootstrap preparer, and sequence coordinator all call its internal A-active guard while holding the same lock before their first durable mutation. D's exact reviewed cutover adapter alone imports A's two cutover mutations unaliased; every other D consumer imports only types/resolvers/status, while A imports nothing from D. `baseline-post-handoff-receipt-v1.ts` owns the guarded migration receipt, B-purpose guard seam, the four-purpose global fence, canonical 35-category/census schema, plan-manifest schema/assembler, producer reservation/head/store/resolvers, fixed recovery-source operation/run receipt/status/resolver, and the sole phase-versioned manifest-set activation store/head/resolvers. `baseline-post-handoff-cli.ts` and `package.json` own its three bootstrap verbs. The six A call-site files named in the File Map implement exactly the eleven literal seven-field rows of `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`, including `execution-attempt` separately from `fixture-attempt` and the source bootstrap's `run` reservation separately from the ordinary spawner `run` producer; `INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash` hashes exactly its schema, plan, and ordered rows. The new target-family ABI changes no A-owned producer call site and therefore leaves manifest A at exactly eleven rows. A imports no B–E source and does not assert a future module exists. `baseline-post-handoff-receipt-v1.test.ts` requires exactly 35 unique categories, exactly 35 key-checked census-map entries, the exact eleven A rows, unique implementation ID/module-function/owner-key tuples, and census keys equal to each row's category map. Its AST fixtures open only `plan:"A"` modules and require their named functions to begin before the first owner byte and close only with the terminal pair.
+`baseline-restart-authority-retirement-v1.ts` is the sole fixed transition lock/epoch/readiness/activation/retirement/cutover writer. The helper, bootstrap preparer, and sequence coordinator all call its internal A-active guard while holding the same lock before their first durable mutation. D's exact reviewed cutover adapter alone imports A's two cutover mutations unaliased; every other D consumer imports only types/resolvers/status, while A imports nothing from D. `owner-admission-v1.ts` owns the pure guarded fence, canonical 35-category/35-key/36-scalar census mapping, plan-manifest, typed reservation/sidecar-port, bind, and close ABI. It may import only pure canonical helpers and type-only PostgreSQL interfaces; it never imports the receipt, activation controller, restart retirement/helper/sequence, startup admission, CLI, spawner, or execution call sites. `baseline-post-handoff-receipt-v1.ts`, the activation controller, retirement/helper/sequence/startup modules, and the six producer call-site modules depend one way on `owner-admission-v1.ts`; coordinators receive narrow runtime observers/stores/DB ports as function arguments. Runtime observation, DB connection, store opening, process inspection, controller construction, and `void` execution at module scope are forbidden in every new Task 0 module. Type-only reverse edges are also forbidden when they would load a runtime module; shared types live in the core.
+
+`baseline-post-handoff-receipt-v1.ts` owns the guarded migration receipt, B-purpose guard seam, fixed recovery-source operation/run receipt/status/resolver, and the sole phase-versioned manifest-set activation store/head/resolvers while consuming the owner-admission core. `baseline-post-handoff-cli.ts` and `package.json` own its three bootstrap verbs. The six A call-site files named in the File Map implement exactly the eleven literal seven-field rows of `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`, including `execution-attempt` separately from `fixture-attempt` and the source bootstrap's `run` reservation separately from the ordinary spawner `run` producer; `INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash` hashes exactly its schema, plan, and ordered rows. The new target-family ABI changes no A-owned producer call site and therefore leaves manifest A at exactly eleven rows. A imports no B–E source and does not assert a future module exists. `owner-admission-v1.test.ts` and `baseline-post-handoff-receipt-v1.test.ts` require exactly 35 unique categories, exactly 35 key-checked census-map entries, complete coverage of all 36 scalar counters, the intentional two-scalar `artifact-publication` mapping, the exact eleven A rows, unique implementation ID/module-function/owner-key tuples, and census keys equal to each row's category map. Their AST/import fixtures enforce the one-way graph, import-inertness, same-transaction owner insert/bind, typed close, and no producer byte before the pending reservation.
 
 After A's reviewed source is merged, clean, and source/build-authenticated, `activateInternalProductionOwnerProducerManifestSetV1({expectedPredecessor:null,manifests:[INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1]})` publishes the first strict content-addressed activation receipt and CAS-installs the fixed current head. The initial receipt has all four predecessor fields null; every append instead supplies and persists one exact predecessor quartet `{activationRef,activationHash,headRef,headHash}`. Each receipt binds exact phase, ordered plans/manifests and their fresh source/build authority pairs, canonical registry/map hashes, that predecessor activation pair, that predecessor head pair, and its derived ref/hash. `manifestSetHash` is exactly `hashCanonicalJson({schema:"setfarm.internal-production-owner-producer-manifest-set.v1",phase,orderedPlans,orderedManifestHashes,orderedSourceBuildAuthorities,ownerCategoryRegistryHash,ownerCategoryCensusMapHash})`; the activation hash includes that complete projection plus both predecessor pairs and omits only its own derived `activationRef`/`activationHash`. The strict head is a separate content-addressed record: its canonical hash projection is exactly `{schema,phase,activationRef,activationHash,predecessorHeadRef,predecessorHeadHash}`, then it derives `headRef` and `headHash`; neither derived head member appears in that projection. The implementation rejects an absent, half-null, mixed, non-current, or receipt/head-inconsistent predecessor before publishing either successor. Immutable receipts and heads use unpredictable same-directory temp, file fsync, no-replace publication, parent fsync, and `O_NOFOLLOW` reopen; the sole mutable current-head locator uses expected-predecessor CAS, atomic replacement, parent fsync, and exact reopen. A later plan may append only its exact next manifest after that plan's reviewed merge/source/build authority exists and after freshly resolving the current `{head,receipt}` predecessor; phase skips, reorder/removal, stale predecessor, future import, structural manifest, source/build drift, or a duplicate/conflicting row fails without head movement. There is no void activation, import-time side effect, process-local active set, caller row, CLI row injection, or source import order as authority. `resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1()` opens only the fixed current-head locator, reopens and re-hashes the named head and receipt, proves their phase/current/pair/predecessor-chain relations, and returns the strict `{head,receipt}` tuple. `observeCompleteInternalProductionZeroOwnerCensusV1()` freshly resolves that same tuple and equality-binds both pairs, its exact `manifestSetHash`, registry/map hashes, and all reservation/owner identities into the observation. Missing/corrupt/forked/unknown activation state makes the census unavailable rather than zero.
 
@@ -2129,7 +2415,25 @@ Implement `operational-active-run-status-v1.ts` as the sole runtime producer of 
 
 After the producer and failing artifact expectations are implemented, run the existing code-owned writer once: `node --import tsx scripts/mission-control-contract-artifacts.ts --write`. Only the two declared generated files may be new; every pre-existing generated artifact must remain byte-identical.
 
-Use existing Setfarm database/process/worktree observers; do not create a second run classifier or lifecycle controller. `observeCompleteInternalProductionZeroOwnerCensusV1()` is zero-input/read-only and returns the strict path-free `InternalProductionCompleteZeroOwnerCensusObservationV1`: all 35 category-backed counts including `executionAttemptCount`, the freshly resolved current manifest-set activation ref/hash, active manifest-set hash, category-registry hash, census-map hash, reservation/owner identity-set hashes, and observation hash. Production accepts no injected observer, census, activation, root, store, or row; tests may use a private non-exported fake helper that cannot be imported by D/E. The receipt module owns the fixed backup path, durable attempt/journal, and no-follow/no-replace protocol. The only service mutation in this subproject is the finite `restart-service` command: it consumes one exact fresh zero-owner guard and maps the closed service enum to code-owned labels before fixed `execFile`/`shell:false`; no other A module or shell fence may contain `launchctl`. Source observers reject an injected root, connection string, command, service label, PID, or receipt body. The `runtime-source` CLI alone accepts exactly two comparison SHA arguments, validates them as Git object hashes, and passes them only as expected identities to the code-owned observer; neither value selects a root/build/process.
+Use existing Setfarm database/process/worktree observers; do not create a second run classifier or lifecycle controller. `observeCompleteInternalProductionZeroOwnerCensusV1()` is zero-input/read-only and returns the strict path-free `InternalProductionCompleteZeroOwnerCensusObservationV1`: exactly 35 ordered category registry entries, exactly 35 census-map keys, and complete coverage of exactly 36 scalar counters including `executionAttemptCount`. `artifact-publication` alone maps to both `publicationBatchCount` and `artifactPublicationCount`; every other category maps to exactly one scalar, and no scalar is unmapped or multiply owned. The observation also binds the freshly resolved current manifest-set activation ref/hash, active manifest-set hash, category-registry hash, census-map hash, reservation/owner identity-set hashes, and observation hash. Production accepts no injected observer, census, activation, root, store, or row; tests may use a private non-exported fake helper that cannot be imported by D/E. The receipt module owns the fixed backup path, durable attempt/journal, and no-follow/no-replace protocol. Source observers reject an injected root, connection string, command, service label, PID, or receipt body. The `runtime-source` CLI alone accepts exactly two comparison SHA arguments, validates them as Git object hashes, and passes them only as expected identities to the code-owned observer; neither value selects a root/build/process.
+
+The only service mutation in A is the finite public `restart-service` wrapper. Its exact input is `{service,authorizationRef,authorizationHash}` where `service` is only `setfarm-spawner | setfarm-dashboard | mission-control` and the pair is the already prepared, pair-resolved service-restart authorization. Its CLI is exactly `restart-service --service <closed-service> --authorization-ref <CanonicalRef> --authorization-hash <64-hex> --json`; it rejects every other flag and never accepts a label, command, executable, argv, UID, domain, PID, path, root, environment, migration pair, or receipt body. The private helper has no public argv. It derives `uid` only from code-owned `process.getuid()` (and fails closed if unavailable/non-integer), then dispatches exactly one of:
+
+```typescript
+export const INTERNAL_PRODUCTION_BASELINE_LAUNCHD_SERVICE_REGISTRY_V1 = {
+  "setfarm-spawner": "com.setrox.setfarm-spawner",
+  "setfarm-dashboard": "com.setrox.setfarm-dashboard",
+  "mission-control": "com.setrox.mission-control",
+} as const;
+
+execFile(
+  "/bin/launchctl",
+  ["kickstart", "-k", `gui/${uid}/${INTERNAL_PRODUCTION_BASELINE_LAUNCHD_SERVICE_REGISTRY_V1[service]}`],
+  { shell: false, env: replacementEnvironment },
+);
+```
+
+The executable is literal `/bin/launchctl`; argv positions 0–2 are literal `kickstart`, `-k`, and the code-derived `gui/<uid>/<label>`. No other A module or shell fence may contain a launchd dispatch. Any host whose installed labels differ fails closed and requires a reviewed registry change.
 
 `restartInternalProductionBaselineServiceV1()` first reopens the exact discriminated authorization, the sole verified bootstrap-handoff migration receipt, and the code-owned complete `before` runtime-source projection; requires the current clean source in `before` to descend from the original `migrationSourceSha`, requires the dedicated migration implementation blob, ordered statements, named digest entry, digest, and schema projection to equal the receipt while ignoring unrelated append-only registry entries, and separately requires the complete runtime source/build projection to equal the current clean build; binds that pair into `operationId`; and only then durably publishes/reopens a fixed A-only chain `reservation -> operation -> outbox` before authorization consumption, process creation, or dispatch. A private code-owned helper atomically claims only that outbox, publishes its bounded child PID/start-time/executable/process-identity hash and startup marker, and only then consumes the authorization inside the already prepared operation. No public API accepts the helper, PID, process, label, command, namespace, or migration authority. The helper executes the one fixed no-shell service dispatch at most once and publishes exactly one immutable completion or failure settlement; the successful authority binds the migration pair, reservation, operation, outbox, claim, child identity, startup marker, and completion-settlement hashes. Recovery before consumption may reclaim only a provably dead pre-dispatch helper for the same operation; recovery after consumption is lookup/adoption only. After authentic completion it waits for the exact changed target generation/service authority and derives the complete `after` projection from code-owned observers. It then reobserves either complete global zero for `complete-zero-owner` or the exact fenced target plus zero unrelated owners for `fenced-completion-owner-bootstrap`, and creates only that matching authority branch. Bootstrap terminal global zero is never claimed here; it exists only in the later terminal bootstrap sequence.
 
@@ -2150,14 +2454,19 @@ set -euo pipefail
 node --import tsx --test \
   tests/operational-active-run-status-v1.test.ts \
   tests/mission-control-contract-artifacts.test.ts \
+  tests/mission-control-terminal-filter.test.ts \
   tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts \
+  tests/internal-production/owner-admission-v1.test.ts \
+  tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts \
   tests/internal-production/baseline-post-handoff-receipt-v1.test.ts \
   tests/internal-production/baseline-service-restart-helper-v1.test.ts \
   tests/internal-production/baseline-spawner-startup-admission-v1.test.ts \
   tests/internal-production/baseline-service-restart-sequence-v1.test.ts \
   tests/internal-production/baseline-restart-authority-retirement-v1.test.ts \
+  tests/internal-production/task-0-source-manifest.test.ts \
   tests/execution-attempts/migrations.test.ts \
   tests/execution-attempts/migration-source-digests.test.ts \
+  tests/execution-attempts/runtime-completion.test.ts \
   tests/internal-production/baseline-post-handoff-cli.test.ts
 node --import tsx scripts/mission-control-contract-artifacts.ts --check
 npx tsc -p tsconfig.json --noEmit
@@ -2169,7 +2478,7 @@ git diff --check
 
 - [ ] **Step 4: Deliver through one canonical Setfarm V3 source claim**
 
-The Setfarm owner allocates the isolated source worktree from clean `main`; the implementation/review agents edit/test only the declared Task 0 Setfarm paths and submit the claim output. Setfarm alone commits, pushes, opens, reviews, merges, cleans up, and returns clean synchronized `main`. No live service restart, backup, baseline Markdown, or receipt write occurs in this task. Task 7/8 cannot begin until the exact command is present in clean built `main` and the source PR has independent zero-Critical/High/Medium review.
+The Setfarm owner allocates the isolated source worktree from clean `main`; the implementation/review agents edit/test only the 43 declared Task 0 paths and submit the claim output. Setfarm alone commits, pushes, opens, reviews, merges, cleans up, and returns clean synchronized `main`. Task 0 may generate only the two checked-in operational-active artifacts and the checked-in migration-32 digest through their deterministic writers. It may create/drop isolated test databases and apply guarded 32 only through the literal private test helper; it must not connect that helper to the live/canonical database. No live migration/schema change, owner/reservation, current/post-rebind authority, canary/run, service restart/rebind, runtime/store/receipt, backup, baseline Markdown, or generated-project mutation occurs in this task. Task 7/8 cannot begin until the exact command is present in clean built `main` and the source PR has independent zero-Critical/High/Medium review.
 
 ---
 
@@ -2190,6 +2499,8 @@ The Setfarm owner allocates the isolated source worktree from clean `main`; the 
 `ProductBuildAuthorityV2DeliveryEvidenceV1` has schema `mission-control.product-build-authority-v2-delivery-evidence.v1`, `currentStatus:"current"`, fixed `deliveryPrNumber:19`, and fixed `deliveryMergeSha:"240e779d78804843a1202cbf0440fe423b806b1a"`. It binds that merge's ancestry to current clean Mission Control `main`; current Mission Control source SHA, tree hash, and build hash; the exact ordered blob hashes for the seven delivered schema/parser/server/UI/test paths plus `contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`; the strict focused-test receipt ref/hash; and the lock's producer commit, lock-content hash, exact ordered twelve artifact path/hash identities, and compatibility-set hash. `deliveryEvidenceHash` is `hashCanonicalJson` of every field except its two derived pair fields; `deliveryEvidenceRef` is exactly `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${deliveryEvidenceHash}`. There is no mutable store, current pointer, caller body, per-run authority ref, or claimed global PBA authority pair. A private test-only injected contract evaluator may compute candidate canonical bytes and expected hashes from frozen fixtures, but those values are explicitly non-authoritative: it cannot call the production observer/resolver, publish a pair, populate a current pointer, or escape the test module.
 
 The owner module derives its repository root only from its own authenticated module/build location, requires literal clean `main` and `HEAD === refs/remotes/origin/main === build SHA` before evidence construction or pair resolution, invokes one fixed no-shell focused-test command over the three delivered test files, and emits a deterministic `ProductBuildAuthorityV2FocusedTestReceiptV1`. That receipt binds the fixed command-contract hash, ordered test-path/blob hashes, `passed:true`, and exit status 0; its content hash/ref exclude volatile duration, PID, path, stdout, and timestamp. The pair-only resolver reruns those fixed observers and accepts only byte-identical current evidence. The endpoint and source CLI call the same zero-input resolver and return exactly `{schema,currentStatus,deliveryEvidenceRef,deliveryEvidenceHash,evidence}` with no query, run ID, root, ref, hash, body, or transport argument. On a feature branch, detached head, dirty tree, stale `origin/main`, or build-SHA mismatch they fail before focused tests, hashing, resolver access, response serialization, stdout, or any publication side effect. Mission Control implements the wire producer independently against Task 0's canonical schema/status/ref/hash/evidence/null relations; neither repository imports the other. Source-boundary and later wire-integration tests compare the exact canonical response bytes, hash fields, field set, and rejection cases while proving the delivery-evidence response is not added to the ten/twelve/fourteen generated-vendor inventories.
+
+Task 1 implements byte-for-byte the exact nested PBA delivery evidence, focused-test receipt, vendor-lock projection, response property order, tuple order, hash exclusions/ref derivations, and all-required/non-null rules frozen in Task 0; it may not rename, flatten, add, omit, reorder, or make optional any member.
 
 - [ ] **Step 1: Reopen the delivered merge and create the one reconciliation branch**
 
@@ -3373,6 +3684,8 @@ Task 7 alone may consume this ready pre-rebind pair. No Task 8 or B/C/D/E action
 
 `InternalProductionPostRebindEntryAuthorityStatusV1` is `absent | predecessor_ready | migration_applying | rebuilding | restarting | verifying | ready | blocked`. `absent` has every predecessor/prerequisite/migration/restart/service/verification/authority field null. `predecessor_ready` requires the predecessor pair plus its v31 audit, pending-successor, predecessor runtime, and delivery-evidence pairs non-null. `migration_applying` preserves those exact pairs and has no applied receipt. `rebuilding` additionally requires the applied migration receipt and successor-current audit pair non-null; the predecessor pending pair remains immutable historical input and is never reused as a current-pending assertion. `restarting` adds Task 7 controller builds while post-rebind service/evidence fields remain null. `verifying` adds restart/service fields and requires each scoped loaded source/build equality, while final HTTP evidence/health/zero-owner/post pair remain null. Only `ready` adds the exact HTTP-observed delivery-evidence equality, final verification tuple, and post-rebind pair. `blocked` preserves exactly the last valid prefix and requires every later field null plus one finite reason code. One expected-predecessor head makes prepare/resume/status crash-idempotent; retry adopts the same prefix/successor and never repeats an applied migration or settled restart.
 
+The post-rebind producer requires the applied migration receipt's `predecessorAuthorityV3Migration31AuditRef/Hash` and `pendingBootstrapHandoffMigrationRef/Hash` to equal the two pairs reopened from the predecessor current-entry authority. The successor-current audit reopens that same receipt and treats its pending pair as immutable causal history only, never as a post-apply pending assertion. Every B/C/D/E consumer obtains the causal quartet only through the current post-rebind successor.
+
 - [ ] **Step 1: Prove there is no active ownership before restart**
 
 Run with `SETFARM_PG_URL` already present in the operator shell:
@@ -3578,6 +3891,12 @@ test "$A_PRE_MIGRATION_HEAD" = "$A_PRE_MIGRATION_ORIGIN"
 A_PRE_MIGRATION_BUILD_SHA="$(jq -er '.sha' dist/BUILD_INFO.json)"
 test "$A_PRE_MIGRATION_BUILD_SHA" = "$A_PRE_MIGRATION_HEAD"
 require_authenticated_clean_main_setfarm_root_v1
+A_PREDECESSOR_CURRENT_ENTRY_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-current-entry --json)"
+A_PREDECESSOR_V31_REF="$(printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_JSON" | jq -er '.authorityV3Migration31AuditRef')"
+A_PREDECESSOR_V31_HASH="$(printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_JSON" | jq -er '.authorityV3Migration31AuditHash')"
+A_PREDECESSOR_PENDING_REF="$(printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_JSON" | jq -er '.pendingBootstrapHandoffMigrationRef')"
+A_PREDECESSOR_PENDING_HASH="$(printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_JSON" | jq -er '.pendingBootstrapHandoffMigrationHash')"
+require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
 require_authenticated_clean_main_setfarm_root_v1
 npm run check:migration-digests
@@ -3596,6 +3915,10 @@ A_MIGRATION_RECEIPT_HASH="$(printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -er '
 printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .schema == "setfarm.internal-production-baseline-bootstrap-handoff-migration-receipt.v1" and
   .migrationId == "contract-spine-bootstrap-main-claim-handoff-v1" and
+  .predecessorAuthorityV3Migration31AuditRef == $v31Ref and
+  .predecessorAuthorityV3Migration31AuditHash == $v31Hash and
+  .pendingBootstrapHandoffMigrationRef == $pendingRef and
+  .pendingBootstrapHandoffMigrationHash == $pendingHash and
   (.predecessorAuthorityV3Migration31AuditRef | startswith("setfarm://internal-production/")) and
   (.predecessorAuthorityV3Migration31AuditHash | test("^[0-9a-f]{64}$")) and
   (.pendingBootstrapHandoffMigrationRef | startswith("setfarm://internal-production/")) and
@@ -3613,13 +3936,26 @@ printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .bootstrapHandoffOperationIdUnique == true and
   .bootstrapHandoffClaimIdUnique == true and
   .terminalReceiptPairColumnsPresent == true
-' --arg sourceSha "$A_PRE_MIGRATION_HEAD" >/dev/null
+' --arg sourceSha "$A_PRE_MIGRATION_HEAD" \
+  --arg v31Ref "$A_PREDECESSOR_V31_REF" \
+  --arg v31Hash "$A_PREDECESSOR_V31_HASH" \
+  --arg pendingRef "$A_PREDECESSOR_PENDING_REF" \
+  --arg pendingHash "$A_PREDECESSOR_PENDING_HASH" >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
 A_MIGRATION_REOPENED_JSON="$(npm run --silent acceptance:baseline-post-handoff -- resolve-bootstrap-handoff-migration --json)"
 printf '%s\n' "$A_MIGRATION_REOPENED_JSON" | jq -e \
   --arg receiptRef "$A_MIGRATION_RECEIPT_REF" \
   --arg receiptHash "$A_MIGRATION_RECEIPT_HASH" \
-  '.migrationReceiptRef == $receiptRef and .migrationReceiptHash == $receiptHash and .verifyStatus == "verified"' \
+  --arg v31Ref "$A_PREDECESSOR_V31_REF" \
+  --arg v31Hash "$A_PREDECESSOR_V31_HASH" \
+  --arg pendingRef "$A_PREDECESSOR_PENDING_REF" \
+  --arg pendingHash "$A_PREDECESSOR_PENDING_HASH" \
+  '.migrationReceiptRef == $receiptRef and .migrationReceiptHash == $receiptHash and
+   .predecessorAuthorityV3Migration31AuditRef == $v31Ref and
+   .predecessorAuthorityV3Migration31AuditHash == $v31Hash and
+   .pendingBootstrapHandoffMigrationRef == $pendingRef and
+   .pendingBootstrapHandoffMigrationHash == $pendingHash and
+   .verifyStatus == "verified"' \
   >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
 A_SUCCESSOR_CURRENT_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-bootstrap-handoff-migration-current --json)"
@@ -4047,7 +4383,11 @@ require_authenticated_clean_main_setfarm_root_v1() {
 }
 cd "$SETFARM_ROOT"
 require_authenticated_clean_main_setfarm_root_v1
-npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json
+A_POST_REBIND_ENTRY_JSON="$(npm run --silent acceptance:baseline-post-handoff -- verify-post-rebind-entry --json)"
+A_POST_REBIND_V31_REF="$(printf '%s\n' "$A_POST_REBIND_ENTRY_JSON" | jq -er '.predecessorAuthorityV3Migration31AuditRef')"
+A_POST_REBIND_V31_HASH="$(printf '%s\n' "$A_POST_REBIND_ENTRY_JSON" | jq -er '.predecessorAuthorityV3Migration31AuditHash')"
+A_POST_REBIND_PENDING_REF="$(printf '%s\n' "$A_POST_REBIND_ENTRY_JSON" | jq -er '.predecessorPendingBootstrapHandoffMigrationRef')"
+A_POST_REBIND_PENDING_HASH="$(printf '%s\n' "$A_POST_REBIND_ENTRY_JSON" | jq -er '.predecessorPendingBootstrapHandoffMigrationHash')"
 require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:plan
 require_authenticated_clean_main_setfarm_root_v1
@@ -4057,6 +4397,10 @@ A_MIGRATION_RECEIPT_JSON="$(npm run --silent acceptance:baseline-post-handoff --
 printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .schema == "setfarm.internal-production-baseline-bootstrap-handoff-migration-receipt.v1" and
   .migrationId == "contract-spine-bootstrap-main-claim-handoff-v1" and
+  .predecessorAuthorityV3Migration31AuditRef == $v31Ref and
+  .predecessorAuthorityV3Migration31AuditHash == $v31Hash and
+  .pendingBootstrapHandoffMigrationRef == $pendingRef and
+  .pendingBootstrapHandoffMigrationHash == $pendingHash and
   (.migrationImplementationBlobHash | test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
   (.orderedStatementsHash | test("^[0-9a-f]{64}$")) and
   (.namedMigrationDigestEntryHash | test("^[0-9a-f]{64}$")) and
@@ -4071,7 +4415,10 @@ printf '%s\n' "$A_MIGRATION_RECEIPT_JSON" | jq -e '
   .terminalReceiptPairColumnsPresent == true and
   (.migrationReceiptRef | startswith("setfarm://internal-production/")) and
   (.migrationReceiptHash | test("^[0-9a-f]{64}$"))
-' >/dev/null
+' --arg v31Ref "$A_POST_REBIND_V31_REF" \
+  --arg v31Hash "$A_POST_REBIND_V31_HASH" \
+  --arg pendingRef "$A_POST_REBIND_PENDING_REF" \
+  --arg pendingHash "$A_POST_REBIND_PENDING_HASH" >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
 npm run db:contract-spine:verify
 require_authenticated_clean_main_setfarm_root_v1
@@ -4306,7 +4653,7 @@ Both `verifyCurrentBaselinePostHandoffReceiptV1()` and `resolveHistoricalBaselin
 
 The tracked packet cannot contain the SHA of the commit that contains itself. After the owner returns the merged documentation SHA, record the pre-packet operational source SHA and the final docs merge SHA as distinct private handoff fields, then rebuild/rebind Setfarm so runtime guards observe the actual final `main` SHA. This A-owned `documentation-rollback` step is valid only before D's one-way retirement transition. If epoch two already exists, the A sequence returns `BASELINE_RESTART_AUTHORITY_RETIRED`; the operator must use D's reviewed `documentation-handoff` authority or stop, never clear/rewrite retirement or replay an A historical sequence:
 
-The A source change delivered before this documentation handoff must include `src/internal-production/baseline-post-handoff-receipt-v1.ts`, private `src/internal-production/baseline-service-restart-helper-v1.ts`, `src/internal-production/baseline-spawner-startup-admission-v1.ts`, `src/internal-production/baseline-service-restart-sequence-v1.ts`, `src/internal-production/baseline-restart-authority-retirement-v1.ts`, `src/internal-production/baseline-post-handoff-cli.ts`, the exact target-guard mint/bind call site in `src/execution/runtime-completion.ts`, the dedicated bootstrap-handoff migration plus append-only registry/digest sources, their six exact focused authority tests, both migration tests, and package command `acceptance:baseline-post-handoff`. The owner inventory/tree/hash gate checks all nineteen Task 0 paths and rejects an omitted target-guard call site, coordinator, startup admission, retirement epoch, migration/digest, helper, test, or package wiring before delivery. The post-handoff writer accepts no sequence or migration field/pair from the shell: it takes the retained `documentation-rollback` final pair from the code-owned coordinator, freshly resolves `InternalProductionBaselineRestartSequenceReceiptV1` and the already applied `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, requires their source/build/final-census/schema identities to equal the current record inputs, and copies their exact pairs plus all three ordered restart composite pairs. A missing, in-progress, blocked, live-rebind, structurally cloned, swapped, or drifted sequence or migration prevents `record`; the final baseline receipt hash covers every copied pair. Define the strict receipt as:
+The A source change delivered before this documentation handoff must contain exactly the 43 paths in `TASK_0_EXACT_SOURCE_PATHS_V1`, including the owner-admission core/test, exact literal source-manifest test, target-guard mint/bind call site, guarded migration-32 registry/source-integrity/generated digest/private test helper, adjacent runtime-completion and Mission Control filter tests, all restart/receipt/PBA/active-status modules and focused tests, generated active-status pair, and package wiring. The source inventory/tree/hash gate compares the literal tuple path-for-path and rejects an omission, extra path, duplicate, reorder, Markdown-derived expected set, or count-only assertion. The post-handoff writer accepts no sequence or migration field/pair from the shell: it takes the retained `documentation-rollback` final pair from the code-owned coordinator, freshly resolves `InternalProductionBaselineRestartSequenceReceiptV1` and the already applied `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, requires their source/build/final-census/schema identities to equal the current record inputs, and copies their exact pairs plus all three ordered restart composite pairs. A missing, in-progress, blocked, live-rebind, structurally cloned, swapped, or drifted sequence or migration prevents `record`; the final baseline receipt hash covers every copied pair, including the migration receipt's exact v31 predecessor and pending-successor causal pairs. Define the strict receipt as:
 
 ```typescript
 export interface InternalProductionBaselinePostHandoffReceiptV1 {
