@@ -373,6 +373,24 @@ export type ProductBuildAuthorityV2DeliveryEvidenceResponseV1 = Readonly<{
   deliveryEvidenceHash: Sha256V1;
   evidence: ProductBuildAuthorityV2DeliveryEvidenceV1;
 }>;
+
+export type ProductBuildAuthorityV2DeliveryEvidencePairV1 = Readonly<{
+  deliveryEvidenceRef: CanonicalRef;
+  deliveryEvidenceHash: Sha256V1;
+}>;
+
+export type ProductBuildAuthorityV2DeliveryEvidenceObservationV1 = Readonly<{
+  schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1";
+  observationTransport: "source-cli";
+  response: ProductBuildAuthorityV2DeliveryEvidenceResponseV1;
+}>;
+
+export function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1():
+  Promise<ProductBuildAuthorityV2DeliveryEvidenceObservationV1>;
+
+export function resolveProductBuildAuthorityV2DeliveryEvidenceV1(
+  input: ProductBuildAuthorityV2DeliveryEvidencePairV1,
+): Promise<ProductBuildAuthorityV2DeliveryEvidenceObservationV1>;
 ```
 
 The eight `deliveredPathBlobs[].path` values are, in order: `server/routes/setfarm-operational.test.ts`, `server/routes/setfarm-operational.ts`, `server/services/setfarm-product-build-authority.ts`, `server/services/setfarm-product-build-authority.test.ts`, `src/lib/product-build-authority.ts`, `src/components/run-detail/ProductBuildAuthority.tsx`, `tests/product-build-authority-render.test.tsx`, and `contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`. `focusedTests.testPathBlobs` uses exactly the three test paths in `argv`, in the same order. The exact ordered `{producerPath,vendoredPath,sha256}` identities in `vendorLock.artifacts` are:
@@ -394,7 +412,11 @@ The later run-operational-model-v2 pair appends positions 13–14 and never reor
 
 `producerCommit`, fixed `deliveryMergeSha`, `currentSource.sha`, `currentSource.treeHash`, and `currentSource.originMainSha` are parsed with `GIT_OBJECT_HASH_V1_PATTERN`; no content hash uses that grammar. Every path `blobHash`, build hash, command/receipt hash, artifact `sha256`, lock hash, compatibility/projection hash, and evidence hash is parsed with `SHA256_V1_PATTERN`. `commandContractHash = hashCanonicalJson({argv})`; `focusedTestReceiptHash` hashes the focused-test receipt excluding its two derived pair members, and its ref is `mission-control://internal-production/product-build-authority-v2-focused-test-receipt/sha256/<hash>`. `lockContentHash` is SHA-256 of the exact checked-in lock-file bytes; `compatibilitySetHash = hashCanonicalJson({schema:"mission-control.setfarm-contract-compatibility-set.v1",artifacts})`; `vendorLockProjectionHash` hashes that strict projection excluding only itself. `deliveryEvidenceHash` hashes the strict evidence object excluding only `deliveryEvidenceRef` and `deliveryEvidenceHash`, and its ref is exactly `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/<hash>`. The response duplicates the same pair and requires `response.deliveryEvidenceRef/hash === response.evidence.deliveryEvidenceRef/hash`. JSON emitters write properties in the declaration order above; canonical hashes use repository canonical JSON. There are no optional fields and no nullable success fields at any depth. Boundary fixtures accept lowercase Git-object lengths 40 and 64, reject lengths 39/41/63/65, uppercase and non-hex for every Git field, and prove every SHA-256 field rejects 40-hex as well as 63/65, uppercase, and non-hex. Unavailability is a non-200/failed zero-output observation, never a JSON object with null evidence or a partial pair.
 
-The same Task 0 module provides zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()` as a required Task 0 postcondition. It obtains the Mission Control executable/source identity only from A's code-owned `observeInternalProductionRuntimeSourceV1()` projection plus Task 6 Step 8's freshly resolved clean-main/build identity; it never resolves a sibling checkout or accepts a path. Before Task 7, the observer starts only Mission Control's fixed non-listening source CLI from that authenticated clean-main build; after Task 7 loads the new Mission Control service, it uses only fixed loopback `GET /api/internal-production/product-build-authority-v2-delivery-evidence`. The returned `observationTransport` is strictly `source-cli | http`; current-entry requires `source-cli`, post-rebind requires `http`, and both must parse through the local schema and resolve to the identical delivery-evidence pair. No caller chooses transport, URL, root, command, ref, hash, response, parser, schema, fixture, or fallback. `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})` is pair-only and reobserves/recomputes the named projection rather than treating any per-run `authorityHash` as a global pair. Task 0 unit tests are source-constructible before Task 1 because they use only the local canonical fixtures and private injected transports; the later Task 6 Step 8/Task 7 integration exercises the real CLI/HTTP wire bytes without importing either repository's implementation into the other.
+The same Task 0 module provides zero-input `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()` as a required Task 0 postcondition. Before Task 7 it derives Mission Control's non-listening source-CLI target only from the fixed loaded LaunchAgent configuration `gui/<process.getuid()>/com.setrox.mission-control`: `/bin/launchctl` plus `/usr/bin/plutil` authenticate the loaded job's exact plist, label, canonical working directory, Node executable and `dist-server/index.js` entrypoint, then derive the sibling compiled delivery-evidence CLI below that same working directory. This configuration is only a path-free, code-owned locator and asserts no source/build or loaded-process byte identity. The located CLI itself reopens its module root and proves clean literal synchronized `main`, source/tree/build identity, exact content hash, focused tests and unchanged final attestation; its strict response is the sole pre-rebind source/build authority. No sibling path, `HOME`, environment root, caller path, or caller transport is accepted.
+
+The first source-CLI slice exports strict `ProductBuildAuthorityV2DeliveryEvidenceObservationV1 {schema,observationTransport:"source-cli",response}` plus pair-only `ProductBuildAuthorityV2DeliveryEvidencePairV1`; it does not attempt HTTP or fallback. It observes the fixed launchd locator both before and after the bounded CLI execution and rejects drift. The child uses the authenticated Node realpath, exact `[derivedCliPath,"--json"]`, authenticated cwd, `shell:false`, a fixed timeout/max buffer, and a replacement environment containing only `PATH`, `LANG`, and `LC_ALL`; no `HOME`, `NODE_*`, `GIT_*`, proxy, database, token, or Setfarm variable crosses the boundary. Success is exactly one compact JSON document plus one terminal newline and empty stderr, followed by the local strict parser; every error is a finite redacted code and never includes launchctl/plist/child bytes or paths.
+
+Only after Task 7 freshly resolves the authenticated post-rebind restart/loaded-runtime authority may the lifecycle-specific post-rebind observer use fixed loopback `GET /api/internal-production/product-build-authority-v2-delivery-evidence`; it must parse to the identical predecessor source-CLI evidence pair. Endpoint availability is never transport authority, and there is no HTTP-first, fallback, or automatic selector in the pre-rebind parser module. Current-entry requires `source-cli`; post-rebind requires `http`. No caller chooses transport, URL, root, command, ref, hash, response, parser, schema, fixture, or fallback. `resolveProductBuildAuthorityV2DeliveryEvidenceV1({deliveryEvidenceRef,deliveryEvidenceHash})` validates an exact pair before any OS call, performs a fresh source-CLI observation, and requires byte-identical response pair; it scans no store and accepts no body. Task 0 tests use private Node-core/test-module mocks only, never a production transport injection or fixture export. The later Task 6 Step 8/Task 7 integration exercises the real CLI/HTTP wire bytes without importing either repository's implementation into the other.
 
 Task 0 also owns Task 7's strict successor ABI in `src/internal-production/baseline-post-handoff-receipt-v1.ts`: `InternalProductionPostRebindEntryAuthorityV1`, exact pair `InternalProductionPostRebindEntryAuthorityPairV1`, discriminated `InternalProductionPostRebindEntryAuthorityStatusV1`, fixed private content-addressed store, `resolveInternalProductionPostRebindEntryAuthorityV1({postRebindEntryAuthorityRef,postRebindEntryAuthorityHash})`, zero-input `resumeInternalProductionPostRebindEntryAuthorityV1()`, `observeInternalProductionPostRebindEntryAuthorityStatusV1()`, and `verifyCurrentInternalProductionPostRebindEntryAuthorityV1()`. The CLI adds only `resume-post-rebind-entry|post-rebind-entry-status|verify-post-rebind-entry --json`; none accepts predecessor, root, SHA, migration, restart, service, schema, owner, receipt body, or locator input.
 
@@ -4371,6 +4393,9 @@ export function toProjectApiProjection(
   persisted: Record<string, unknown>,
   execution: ProjectExecutionState,
 ): Record<string, unknown> & ProjectApiProjection;
+
+export function readProjectApiProjections():
+  Promise<Array<Record<string, unknown> & ProjectApiProjection>>;
 ```
 
 The projection first proves `execution.active === (execution.runStatus !== null && isSetfarmOperationalActiveRunStatusV1(execution.runStatus))`; an active execution must also have `execution.state === execution.runStatus`. A mismatch fails with `PROJECT_EXECUTION_ACTIVE_RELATION_INVALID`. Active execution maps public status to `building`. An exact terminal execution maps `completed|done` to `completed`, `failed` to `failed`, and `cancelled|canceled` to `cancelled`; any other terminal status fails with `PROJECT_EXECUTION_TERMINAL_STATUS_INVALID`. Otherwise persisted `completed|done`, `failed|error`, and `cancelled|canceled` retain their corresponding public terminal status, while every other legacy catalog value maps to `registered`.
@@ -4427,13 +4452,17 @@ In `GET /projects`:
 5. Perform existing live port/deployment observation.
 6. Return a cloned `toProjectApiProjection()` result.
 
-Capture binding hints and immutable catalog/receipt fields from the de-duplicated pre-enrichment records. Existing name/repository/task enrichment remains advisory and may contribute display fields or runtime probes, but it cannot change the captured execution binding, public catalog status, immutable receipt, or action authority. Run the same read-only projection for `GET /projects/:id`: project/enrich the registered-record collection with one bounded run-row read and then preserve the existing `findProjectByIdOrRepo` lookup semantics. Do not project mutation responses, import/export payloads, or persistence objects in this task.
+Capture binding hints, every raw binding identity field (`latestRunId`, `workflowRunId`, `setfarmRunIds`, `latestRunNumber`, and `runNumber`), and immutable catalog/receipt fields from the de-duplicated pre-enrichment records. Existing name/repository/task enrichment remains advisory and may contribute display fields or runtime probes, but the projected clone restores those exact binding fields and cannot change execution binding, raw action/evidence authority, public catalog status, immutable receipt, or action authority. A same-name/repository unrelated run therefore cannot replace either `execution.runId` or any returned raw binding identity. Run the same read-only projection for `GET /projects/:id`: project/enrich the registered-record collection with one bounded run-row read and then preserve the existing `findProjectByIdOrRepo` lookup semantics. Do not project mutation responses, import/export payloads, or persistence objects in this task.
+
+`readProjectApiProjections()` is the sole zero-input list reader implementing steps 1–6; `GET /projects` calls it and then applies request-specific filtering/sorting. Task 4's overview route imports this read-only seam for active-workflow counts rather than repeating raw `projects.json`, broad `getRuns()`, binding, enrichment, or the active tuple. It never saves, mutates, accepts a repository/reader/row input, or returns an unprojected record.
 
 Keep `ProjectsJsonRepository.save()`, canonical transfer ACK hashing, patch guards, deletion guards, and V3 persisted record shapes unchanged. Remove name/task/repository matching only from execution-state assignment; legacy descriptive enrichment may remain advisory but cannot change `execution`, public `status`, or action authority. The route imports the shared predicate and fail-closed equality-checks `execution.active === (execution.runStatus !== null && isSetfarmOperationalActiveRunStatusV1(execution.runStatus))` before emitting a project. It copies the exact active transition state from `ProjectExecutionState`; it never imports a second tuple or treats `pending` as active.
 
 - [ ] **Step 4: Make terminal filtering explicit**
 
 Update `isHiddenTerminalProject()` to use `execution.state === "terminal"` plus public `status` in `failed|cancelled`; default `/api/projects` continues to include all records. `hideTerminal=1` remains the only API request that hides terminal projects.
+
+Legacy synthesis does not pre-drop `cancelled|canceled` runs: it produces their terminal projection like other historical runs. The default list includes them, while the explicit `hideTerminal=1` filter removes them. No earlier synthesis/filter branch may silently erase failed or cancelled history.
 
 - [ ] **Step 5: Run focused server tests**
 
@@ -4482,6 +4511,7 @@ Expected: the worker reports the two paths, focused gates, and authorized subjec
 **Interfaces:**
 
 - Consumes: `ProjectApiProjection` from Task 3.
+- Consumes: Task 3's zero-input read-only `readProjectApiProjections()` collection seam; Overview never repeats raw project loading, broad run lookup, execution binding, or runtime observation.
 - Consumes: the exact `SetfarmOperationalActiveRunStatusV1` type and `isSetfarmOperationalActiveRunStatusV1()` predicate from the shared vendored-contract adapter.
 - Produces: `pickActiveRun(runs: readonly PipelineRunSummary[]): PipelineRunSummary | null`.
 - Produces: four independently labeled UI concepts: `PROJECT`, `EXECUTION`, `RUNTIME`, and `RECEIPT`.
@@ -4578,6 +4608,8 @@ When it returns `null`, render “No active Setfarm run.” rather than “No Se
 Export a pure `selectRecentRuntimeProjects(projects)` helper from `server/routes/overview.ts`. It may select projects with a declared frontend port, but it must not filter on raw `project.status === "active"`. It returns candidates whose ports are then checked, and `online` remains the result of the live HTTP probe.
 
 The route imports the shared predicate and obtains active-workflow counts only from a Task 3 `ProjectApiProjection.execution` whose `active`, `state`, and `runStatus` satisfy the same equality relation; it must not inspect a raw project status or duplicate the four-value tuple. Test that an inactive historical raw-active project is not described as an active workflow, that each exact operational-active state contributes once, that a `pending` or terminal run contributes zero, and that a completed project with a live port can appear as an online recent deployment.
+
+Overview's pure active-project selector requires `execution.active === true`, `execution.runStatus !== null`, the shared predicate to accept that exact `runStatus`, and `execution.state === execution.runStatus`; it then uses the distinct projected `execution.runId` identities to select corresponding raw run summaries and rejects cross-source status disagreement. Its recent-runtime selector considers projected records with a valid declared frontend/main port regardless of catalog or execution terminal state, sorts by creation time, caps at six, and leaves `online` solely to the bounded live port probe. `Projects.tsx` re-reads the canonical project list after create/import/toggle mutations because Task 3 intentionally does not return projections from mutation endpoints; it never fabricates or retains stale execution/runtime/receipt fields optimistically.
 
 - [ ] **Step 7: Run focused and adjacent UI/API tests**
 
