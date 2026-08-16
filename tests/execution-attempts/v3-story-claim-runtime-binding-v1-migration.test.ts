@@ -5,9 +5,10 @@ import { after, before, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
-  auditCurrentContractSpineAuthorityLedgersAtV30Data,
+  auditCurrentContractSpineAuthorityLedgersAtV31Data,
   planContractSpineMigrations,
   rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -30,6 +31,9 @@ import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.j
 type SubjectKind = "story_member" | "final_product";
 
 async function rollbackCurrentToV28(database: TestDatabase): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+    targetReleaseSha: "6".repeat(40),
+  });
   await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
     targetReleaseSha: "7".repeat(40),
   });
@@ -934,7 +938,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     assert.doesNotMatch(auditSource, /RETURNING\s+\*/iu);
   });
 
-  it("keeps live head-30 callers off the deprecated historical current-head aliases", () => {
+  it("keeps live head-31 callers off the deprecated historical current-head aliases", () => {
     const liveCallerSources = [
       readFileSync(
         new URL("../../scripts/contract-spine-migrate.ts", import.meta.url),
@@ -950,7 +954,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     ];
     for (const source of liveCallerSources) {
       assert.doesNotMatch(source, /AtCurrentHeadData/u);
-      assert.match(source, /AtV30Data/u);
+      assert.match(source, /AtV31Data/u);
     }
     const historicalV28ContractSource = readFileSync(
       new URL(
@@ -1041,8 +1045,8 @@ describe("v3 story claim/runtime binding migration 29", () => {
     }
   });
 
-  it("audits current head 30 without granting production authority", async () => {
-    const audit = await auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql);
+  it("audits current head 31 without granting production authority", async () => {
+    const audit = await auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql);
     assert.equal(audit.schema, "setfarm.contract-spine-current-authority-ledgers-audit.v2");
     assert.equal(audit.productionAuthority, false);
     assert.equal(audit.productionAdmission, "forbidden");
@@ -1147,6 +1151,9 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("refuses impossible adopted journal state for migration 29", async () => {
+    await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+      targetReleaseSha: "6".repeat(40),
+    });
     await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
       targetReleaseSha: "7".repeat(40),
     });
@@ -1159,8 +1166,8 @@ describe("v3 story claim/runtime binding migration 29", () => {
         /Migration 29 existing relation does not match the expected shape/,
       );
       await assert.rejects(
-        auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql),
-        /current authority audit requires the exact 26, 27, 28, 29, 30 head/,
+        auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql),
+        /current authority audit requires the exact 26, 27, 28, 29, 30, 31 head/,
       );
       await assert.rejects(
         rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
@@ -1182,16 +1189,19 @@ describe("v3 story claim/runtime binding migration 29", () => {
       await isolated.sql.unsafe(
         `INSERT INTO setfarm_schema_migrations (
            version, name, checksum, state, applied_at
-         ) VALUES (31, '031_future_fixture', $1, 'applied', NOW())`,
+         ) VALUES (32, '032_future_fixture', $1, 'applied', NOW())`,
         ["f".repeat(64)],
       );
       await assert.rejects(
-        rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
+        rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
           targetReleaseSha: "7".repeat(40),
         }),
-        /Migration 31 must be rolled back before migration 30/,
+        /Migration 32 must be rolled back before migration 31/,
       );
-      await isolated.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 31");
+      await isolated.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 32");
+      await rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+        targetReleaseSha: "6".repeat(40),
+      });
       await rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
         targetReleaseSha: "7".repeat(40),
       });
@@ -1226,6 +1236,9 @@ describe("v3 story claim/runtime binding migration 29", () => {
         subjectKind: "final_product",
       });
       await insertBinding(isolated, owner, "final_product");
+      await rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+        targetReleaseSha: "7".repeat(40),
+      });
       await rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
         targetReleaseSha: "8".repeat(40),
       });

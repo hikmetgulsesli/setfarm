@@ -56,7 +56,7 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
     const { failStep } = await import("../../src/installer/step-fail.js");
     const result = await failStep(
       stepDbId,
-      "PRODUCT_BUILD_PACKET_V3_BLOCKED: DESIGN_CONTROL_INDEX_INCOMPLETE",
+      "PRODUCT_BUILD_PACKET_V3_BLOCKED: SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
       envelope,
       {
         singleStepMode: "terminal_platform_preclaim",
@@ -65,7 +65,7 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
           workflowStepId: "setup-build",
           boundary: "product_compiler.setup_build_packet",
           failureClass: "contract_invalid",
-          failureCode: "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+          failureCode: "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
         },
       },
     );
@@ -119,7 +119,7 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
       workflowStepId: "setup-build",
       boundary: "product_compiler.setup_build_packet",
       failureClass: "contract_invalid",
-      failureCode: "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+      failureCode: "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
     });
     assert.equal(owner.implement_status, "waiting");
 
