@@ -5,8 +5,10 @@ import { after, before, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
-  auditCurrentContractSpineAuthorityLedgersAtV29Data,
+  auditCurrentContractSpineAuthorityLedgersAtV31Data,
   planContractSpineMigrations,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -27,6 +29,18 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 type SubjectKind = "story_member" | "final_product";
+
+async function rollbackCurrentToV28(database: TestDatabase): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+    targetReleaseSha: "6".repeat(40),
+  });
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+    targetReleaseSha: "7".repeat(40),
+  });
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "8".repeat(40),
+  });
+}
 
 async function seedV3RunAndStep(
   database: TestDatabase,
@@ -375,9 +389,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   it("records a terminal historical-owner cutover without fabricating bindings", async () => {
     const isolated = await createIsolatedTestDatabase();
     try {
-      await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-        targetReleaseSha: "8".repeat(40),
-      });
+      await rollbackCurrentToV28(isolated);
       const historical = await seedBindingOwner(isolated, {
         suffix: "historical-terminal",
         workflowStepId: "implement",
@@ -482,9 +494,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     for (const scenario of scenarios) {
       const isolated = await createIsolatedTestDatabase();
       try {
-        await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-          targetReleaseSha: "8".repeat(40),
-        });
+        await rollbackCurrentToV28(isolated);
         const owner = await seedBindingOwner(isolated, {
           suffix: scenario.suffix,
           workflowStepId: "implement",
@@ -538,9 +548,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     for (const scenario of ["missing-runtime", "mismatched-runtime"] as const) {
       const isolated = await createIsolatedTestDatabase();
       try {
-        await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-          targetReleaseSha: "8".repeat(40),
-        });
+        await rollbackCurrentToV28(isolated);
         const owner = await seedBindingOwner(isolated, {
           suffix: scenario,
           workflowStepId: "implement",
@@ -605,9 +613,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   it("cuts over more than one exact historical owner page", async () => {
     const isolated = await createIsolatedTestDatabase();
     try {
-      await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-        targetReleaseSha: "8".repeat(40),
-      });
+      await rollbackCurrentToV28(isolated);
       const runId = "v29-historical-multipage";
       const stepDbId = await seedV3RunAndStep(isolated, {
         runId,
@@ -692,9 +698,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   it("rejects oversized historical owner identity before cutover allocation", async () => {
     const isolated = await createIsolatedTestDatabase();
     try {
-      await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-        targetReleaseSha: "8".repeat(40),
-      });
+      await rollbackCurrentToV28(isolated);
       const owner = await seedBindingOwner(isolated, {
         suffix: "oversized-history",
         workflowStepId: "implement",
@@ -934,7 +938,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     assert.doesNotMatch(auditSource, /RETURNING\s+\*/iu);
   });
 
-  it("keeps live head-29 callers off the deprecated v28 current-head aliases", () => {
+  it("keeps live head-31 callers off the deprecated historical current-head aliases", () => {
     const liveCallerSources = [
       readFileSync(
         new URL("../../scripts/contract-spine-migrate.ts", import.meta.url),
@@ -950,7 +954,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
     ];
     for (const source of liveCallerSources) {
       assert.doesNotMatch(source, /AtCurrentHeadData/u);
-      assert.match(source, /AtV29Data/u);
+      assert.match(source, /AtV31Data/u);
     }
     const historicalV28ContractSource = readFileSync(
       new URL(
@@ -1041,8 +1045,8 @@ describe("v3 story claim/runtime binding migration 29", () => {
     }
   });
 
-  it("audits current head 29 without granting production authority", async () => {
-    const audit = await auditCurrentContractSpineAuthorityLedgersAtV29Data(database.sql);
+  it("audits current head 31 without granting production authority", async () => {
+    const audit = await auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql);
     assert.equal(audit.schema, "setfarm.contract-spine-current-authority-ledgers-audit.v2");
     assert.equal(audit.productionAuthority, false);
     assert.equal(audit.productionAdmission, "forbidden");
@@ -1053,9 +1057,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   it("refuses nonempty preinstalled adoption including forged hashes and wrong members", async () => {
     const isolated = await createIsolatedTestDatabase();
     try {
-      await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-        targetReleaseSha: "8".repeat(40),
-      });
+      await rollbackCurrentToV28(isolated);
       await isolated.sql.begin(async (transaction) =>
         applyV3StoryClaimRuntimeBindingV1(transaction));
       const forged = await seedBindingOwner(isolated, {
@@ -1125,9 +1127,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   it("plans and rejects exact unjournaled cutover topology instead of adopting it", async () => {
     const isolated = await createIsolatedTestDatabase();
     try {
-      await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-        targetReleaseSha: "8".repeat(40),
-      });
+      await rollbackCurrentToV28(isolated);
       await isolated.sql.begin(async (transaction) =>
         applyV3StoryClaimRuntimeBindingV1(transaction));
       const plan = await planContractSpineMigrations(isolated.sql);
@@ -1151,6 +1151,12 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("refuses impossible adopted journal state for migration 29", async () => {
+    await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+      targetReleaseSha: "6".repeat(40),
+    });
+    await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+      targetReleaseSha: "7".repeat(40),
+    });
     await database.sql.unsafe(
       "UPDATE setfarm_schema_migrations SET state = 'adopted' WHERE version = 29",
     );
@@ -1160,8 +1166,8 @@ describe("v3 story claim/runtime binding migration 29", () => {
         /Migration 29 existing relation does not match the expected shape/,
       );
       await assert.rejects(
-        auditCurrentContractSpineAuthorityLedgersAtV29Data(database.sql),
-        /current authority audit requires the exact 26, 27, 28, 29 head/,
+        auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql),
+        /current authority audit requires the exact 26, 27, 28, 29, 30, 31 head/,
       );
       await assert.rejects(
         rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
@@ -1173,6 +1179,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
       await database.sql.unsafe(
         "UPDATE setfarm_schema_migrations SET state = 'applied' WHERE version = 29",
       );
+      await applyContractSpineMigrations(database.sql);
     }
   });
 
@@ -1182,16 +1189,22 @@ describe("v3 story claim/runtime binding migration 29", () => {
       await isolated.sql.unsafe(
         `INSERT INTO setfarm_schema_migrations (
            version, name, checksum, state, applied_at
-         ) VALUES (30, '030_future_fixture', $1, 'applied', NOW())`,
+         ) VALUES (32, '032_future_fixture', $1, 'applied', NOW())`,
         ["f".repeat(64)],
       );
       await assert.rejects(
-        rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
-          targetReleaseSha: "8".repeat(40),
+        rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+          targetReleaseSha: "7".repeat(40),
         }),
-        /Migration 30 must be rolled back before migration 29/,
+        /Migration 32 must be rolled back before migration 31/,
       );
-      await isolated.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 30");
+      await isolated.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 32");
+      await rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+        targetReleaseSha: "6".repeat(40),
+      });
+      await rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
+        targetReleaseSha: "7".repeat(40),
+      });
       const result = await rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
         targetReleaseSha: "8".repeat(40),
       });
@@ -1223,6 +1236,12 @@ describe("v3 story claim/runtime binding migration 29", () => {
         subjectKind: "final_product",
       });
       await insertBinding(isolated, owner, "final_product");
+      await rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+        targetReleaseSha: "7".repeat(40),
+      });
+      await rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
+        targetReleaseSha: "8".repeat(40),
+      });
       await assert.rejects(
         rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
           targetReleaseSha: "9".repeat(40),

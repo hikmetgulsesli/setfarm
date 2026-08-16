@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { AcceptedCandidateV1Schema } from "../../evidence/accepted-candidate-v1.js";
-import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "../../execution/operational-failure-cause-authority-v1.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV3 } from "../../execution/operational-failure-cause-authority-v3.js";
 import { OperationalFailureCauseV1Schema } from "../../execution/schemas/operational-failure-cause-v1.js";
 import { V3DeployAuthorityEvidenceV1Schema } from "../../execution/schemas/v3-deploy-authority-evidence-v1.js";
 import { V3DeployReceiptV1Schema } from "../../execution/schemas/v3-deploy-receipt-v1.js";
@@ -382,7 +382,7 @@ export const OperationalTerminationRequestV1Schema = z.object({
     return;
   }
   if (failureCauseResult?.success) {
-    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV1({
+    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV3({
       requestedBy: value.requestedBy,
       cause: failureCauseResult.data,
       evidence: value.evidence,

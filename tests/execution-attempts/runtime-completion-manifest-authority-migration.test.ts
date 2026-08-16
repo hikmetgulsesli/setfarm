@@ -10,6 +10,8 @@ import {
   ContractSpineMigrationError,
   contractSpineMigrationLockKey,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -32,6 +34,12 @@ const ADVISORY_WAIT_TIMEOUT_MS = 20_000;
 async function rollbackEmptyV29ToV28(
   sql: TestDatabase["sql"],
 ): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(sql, {
+    targetReleaseSha: "1".repeat(40),
+  });
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(sql, {
+    targetReleaseSha: "0".repeat(40),
+  });
   await rollbackV3StoryClaimRuntimeBindingToV28(sql, {
     targetReleaseSha: "9".repeat(40),
   });

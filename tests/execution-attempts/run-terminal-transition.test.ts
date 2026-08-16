@@ -9,6 +9,8 @@ import {
   rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
@@ -28,6 +30,12 @@ import { createIsolatedTestDatabase } from "./test-database.js";
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
 ): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+    targetReleaseSha: "c".repeat(40),
+  });
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+    targetReleaseSha: "d".repeat(40),
+  });
   await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
     targetReleaseSha: "e".repeat(40),
   });
@@ -701,6 +709,8 @@ describe("canonical run terminal owner", () => {
         "027_platform_release_store_record_ledger_v3",
         "028_runtime_completion_manifest_authority",
         "029_v3_story_claim_runtime_binding_v1",
+        "030_operational_failure_cause_authority_v2",
+        "031_operational_failure_cause_authority_v3",
       ]);
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,

@@ -246,6 +246,57 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST = Object.freeze({
       "src/product-compiler/canonical-json.ts",
     ]),
   }),
+  30: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/operational-failure-cause-authority-v2-migration.ts",
+        region: "migration-v30-operational-failure-cause-authority-v2",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v30-error-binding" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v30-registration" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v30-rollback" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v30-current-authority-audit",
+      }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/execution/operational-failure-cause-authority-v1.ts",
+      "src/execution/operational-failure-cause-authority-v2.ts",
+      "src/execution/schemas/operational-failure-cause-v1.ts",
+      "src/product-compiler/canonical-json.ts",
+      "src/recovery/v3-downstream-terminal-cause-v1.ts",
+    ]),
+  }),
+  31: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/operational-failure-cause-authority-v3-migration.ts",
+        region: "migration-v31-operational-failure-cause-authority-v3",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v31-error-binding" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v31-registration" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v31-current-object-ownership",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v31-head-dispatch" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v31-current-authority-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v31-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/db/operational-failure-cause-authority-v3-migration.ts",
+      "src/execution/operational-failure-cause-authority-v1.ts",
+      "src/execution/operational-failure-cause-authority-v2.ts",
+      "src/execution/operational-failure-cause-authority-v3.ts",
+      "src/execution/schemas/operational-failure-cause-v1.ts",
+      "src/product-compiler/canonical-json.ts",
+      "src/recovery/v3-downstream-terminal-cause-v1.ts",
+    ]),
+  }),
 } satisfies Readonly<Record<ContractSpineSemanticMigrationVersion, SemanticMigrationSourceManifest>>);
 
 function sha256(value: string): string {
@@ -310,7 +361,7 @@ export function computeContractSpineSemanticMigrationDigests(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const computed = {} as Record<ContractSpineSemanticMigrationVersion, string>;
-  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const) {
     const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[version];
     const regions = manifest.regions.map((item) => ({
       file: item.file,
@@ -338,7 +389,7 @@ export function assertContractSpineSemanticMigrationSourceIntegrity(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const actual = computeContractSpineSemanticMigrationDigests(readSource);
-  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const) {
     const expected = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[version];
     if (actual[version] !== expected) {
       throw new Error(
@@ -376,6 +427,8 @@ export function renderContractSpineSemanticMigrationDigests(
     `  27: \"${digests[27]}\",`,
     `  28: \"${digests[28]}\",`,
     `  29: \"${digests[29]}\",`,
+    `  30: \"${digests[30]}\",`,
+    `  31: \"${digests[31]}\",`,
     "} as const);",
     "",
     "export type ContractSpineSemanticMigrationVersion =",

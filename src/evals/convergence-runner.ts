@@ -98,7 +98,7 @@ import {
   type TaskIntentOracleVersioned,
 } from "./task-intent-oracle-v2.js";
 import { createV3ReleaseAdmissionRepository } from "../execution/v3-release-admission-repository.js";
-import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "../execution/operational-failure-cause-authority-v1.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV3 } from "../execution/operational-failure-cause-authority-v3.js";
 import {
   OperationalFailureCauseV1Schema,
   operationalFailureCauseHashV1,
@@ -733,7 +733,7 @@ export function trustedOperationalFailureCauseV1(input: Readonly<{
   failedWorkflowStepIds: ReadonlySet<string>;
 }>): OperationalFailureCauseV1 | null {
   const evidence = parsedEvidence(input.evidence);
-  const authority = evaluateOperationalFailureCauseEvidenceAuthorityV1({
+  const authority = evaluateOperationalFailureCauseEvidenceAuthorityV3({
     requestedBy: input.requestedBy,
     cause: evidence["operationalFailureCause"],
     evidence,

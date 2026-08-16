@@ -6,6 +6,19 @@ import { z } from "zod";
 
 import { canonicalJsonBytes, canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
+  DESIGN_SOURCE_SEMANTIC_RETRY_EVIDENCE_POLICY_V1,
+  parseDesignSourceSemanticRetryEvidenceV1,
+  projectDesignSourceSemanticRetryEvidenceV1,
+  type DesignSourceSemanticRetryEvidenceV1,
+} from "./design-source-semantic-retry-evidence-v1.js";
+import {
+  compileDesignSourceSemanticRetryCorrectionsV1,
+  genericDesignSourceRetryCorrectionLinesV1,
+} from "./design-source-semantic-retry-corrections-v1.js";
+import {
+  STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
+} from "./stitch-stage-provider-rejection-v1.js";
+import {
   createInitialDesignSourceGenerationRequestV2,
   DesignSourceMaterializationFailureV2,
   runDesignSourceCompilationAttemptsV2,
@@ -68,6 +81,15 @@ import {
   buildV3BatchStitchPromptV2,
   type V3DesignContractV2,
 } from "./v3-design-contract-v2.js";
+import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
+
+export const DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1 = Object.freeze({
+  schema: "setfarm.operational-failure-cause.v1",
+  workflowStepId: "design",
+  boundary: "product_compiler.design_source.semantic_closure",
+  failureClass: "contract_invalid",
+  failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
+} satisfies OperationalFailureCauseV1);
 
 const AttemptTransportSchema = z.object({
   schema: z.literal("setfarm.stitch-attempt-transport.v1"),
@@ -85,12 +107,13 @@ const AttemptTransportSchema = z.object({
 }).strict();
 
 const MAX_SELECTED_HTML_BYTES_V2 = ENGLISH_TEXT_MAX_CODE_UNITS_V1 * 4;
-const DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2 = Object.freeze({
+export const DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2 = Object.freeze({
   schema: "setfarm.design-source-selected-html-admission-policy.v2" as const,
   maximumBytes: MAX_SELECTED_HTML_BYTES_V2,
   encoding: "utf8_fatal" as const,
   language: "English" as const,
   contract: "setfarm.english-text-contract.v1" as const,
+  neutralCodePoints: Object.freeze(["U+00A9"] as const),
 });
 
 export type DesignSourceStageArtifactV2 = Readonly<{
@@ -252,13 +275,7 @@ function typedMaterializationFailure(input: Readonly<{
   evidence: unknown;
 }>): DesignSourceMaterializationFailureV2 {
   const reasonCodes = uniqueSorted(input.reasonCodes).slice(0, 100);
-  const cause = {
-    schema: "setfarm.operational-failure-cause.v1",
-    workflowStepId: "design",
-    boundary: "product_compiler.design_source.semantic_closure",
-    failureClass: "contract_invalid",
-    failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
-  };
+  const cause = DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1;
   const evidence = input.evidence && typeof input.evidence === "object" && !Array.isArray(input.evidence)
     ? input.evidence as Record<string, unknown>
     : { detail: input.evidence };
@@ -297,7 +314,8 @@ function requireSelectedHtmlEnglishV2(input: Readonly<{
       decoded = "";
     }
     if (!diagnostic) {
-      const violation = inspectEnglishTextV1(decoded);
+      const inspectionText = decoded.replaceAll("\u00a9", " ");
+      const violation = inspectEnglishTextV1(inspectionText);
       if (violation) diagnostic = englishTextViolationMessageV1(violation);
     }
   }
@@ -490,6 +508,10 @@ async function materializeAcceptedAuthority(input: Readonly<{
     writeEvidence: input.writeEvidence,
   });
   if (selection.status === "rejected") {
+    const retrySemanticEvidence = projectDesignSourceSemanticRetryEvidenceV1({
+      candidateSelection: selection.candidateSelection,
+      candidateSelectionArtifact: selectionRef,
+    });
     const unresolved = selection.candidateSelection.selections
       .filter((item) => item.status === "unresolved")
       .map((item) => ({
@@ -510,6 +532,7 @@ async function materializeAcceptedAuthority(input: Readonly<{
         failedStageIds: uniqueSorted(unresolved.map((item) => item.stageId)),
         failedTargetRefs: uniqueSorted(unresolved.map((item) => item.targetRef)),
         unresolvedTargets: unresolved,
+        retrySemanticEvidence,
       },
     });
   }
@@ -694,7 +717,9 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       builder: "buildV3BatchStitchPromptV2",
       generationTargetsSchema: generationTargets.schema,
       projectId: input.projectId,
+      semanticRetryPolicy: DESIGN_SOURCE_SEMANTIC_RETRY_EVIDENCE_POLICY_V1,
       selectedHtmlAdmissionPolicy: DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
+      providerRejectionPolicy: STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
     }),
     renderPolicyHash: hashCanonicalJson(STITCH_RENDERED_SEMANTICS_POLICY_V2),
     selectionPolicyHash: hashCanonicalJson(STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2),
@@ -718,6 +743,75 @@ function retryStages(failureEvidence: unknown): string[] {
   const values = record.failedStageIds ?? providerEvidence?.failedStageIds;
   if (!Array.isArray(values)) return [];
   return uniqueSorted(values.filter((value): value is string => typeof value === "string"));
+}
+
+const RETRY_REASON_CODE = /^[A-Z][A-Z0-9_]{2,199}$/;
+
+function retryReasonCodes(failureEvidence: unknown, stageId: string): string[] {
+  if (!failureEvidence || typeof failureEvidence !== "object" || Array.isArray(failureEvidence)) return [];
+  const unresolvedTargets = (failureEvidence as Record<string, unknown>)["unresolvedTargets"];
+  if (!Array.isArray(unresolvedTargets)) return [];
+  const codes: string[] = [];
+  for (const target of unresolvedTargets.slice(0, 100)) {
+    if (!target || typeof target !== "object" || Array.isArray(target)) continue;
+    const record = target as Record<string, unknown>;
+    if (record["stageId"] !== stageId || !Array.isArray(record["evaluations"])) continue;
+    for (const evaluation of record["evaluations"].slice(0, 100)) {
+      if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) continue;
+      const rejectionCodes = (evaluation as Record<string, unknown>)["rejectionCodes"];
+      if (!Array.isArray(rejectionCodes)) continue;
+      for (const code of rejectionCodes.slice(0, 100)) {
+        if (typeof code === "string" && RETRY_REASON_CODE.test(code)) codes.push(code);
+      }
+    }
+  }
+  return uniqueSorted(codes).slice(0, 100);
+}
+
+function boundRetrySemanticEvidence(
+  failureEvidence: unknown,
+): DesignSourceSemanticRetryEvidenceV1 | null {
+  if (!failureEvidence || typeof failureEvidence !== "object" || Array.isArray(failureEvidence)) {
+    return null;
+  }
+  const record = failureEvidence as Record<string, unknown>;
+  try {
+    const candidateSelectionArtifact = ProductCompilationAttemptArtifactRefV1Schema.parse(
+      record["candidateSelectionArtifact"],
+    );
+    const retrySemanticEvidence = parseDesignSourceSemanticRetryEvidenceV1(
+      record["retrySemanticEvidence"],
+    );
+    return canonicalJsonStringify(retrySemanticEvidence.candidateSelectionArtifact)
+      === canonicalJsonStringify(candidateSelectionArtifact)
+      ? retrySemanticEvidence
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function retryCorrectionLines(
+  failureEvidence: unknown,
+  stageId: string,
+  reasonCodes: readonly string[],
+): readonly string[] {
+  const evidence = boundRetrySemanticEvidence(failureEvidence);
+  const stage = evidence?.stages.find((candidate) => candidate.stageId === stageId);
+  const boundReasonCodes = uniqueSorted([
+    ...reasonCodes,
+    ...(stage?.targets.flatMap((target) => [
+      ...target.rejectionCodes,
+      ...target.renderedFailureCodes,
+    ]) ?? []),
+  ]);
+  return evidence === null
+    ? genericDesignSourceRetryCorrectionLinesV1(boundReasonCodes)
+    : compileDesignSourceSemanticRetryCorrectionsV1({
+      evidence,
+      stageId,
+      reasonCodes: boundReasonCodes,
+    });
 }
 
 export async function runDesignSourceAuthorityV2(
@@ -867,22 +961,32 @@ export async function runDesignSourceAuthorityV2(
       if (failedStageIds.length === 0) return null;
       const failed = new Set(failedStageIds);
       return {
-        stagePrompts: stagePrompts.map((stage) => failed.has(stage.stageId)
-          ? {
-              stageId: stage.stageId,
-              prompt: [
-                stage.prompt,
-                "",
-                "# SETFARM_PROVEN_RETRY_DELTA_V1",
-                `parent_failure_fingerprint: ${failure.failureFingerprint}`,
-                `parent_failure_artifact_hash: ${failure.failureArtifactHash}`,
-                `reason_codes: ${failure.reasonCodes.join(",")}`,
-                `failed_stage_id: ${stage.stageId}`,
-                "Regenerate only this stage from the unchanged typed contract above.",
-                "Correct every listed semantic violation. Do not reuse prior candidate source, invent controls, or change target identity.",
-              ].join("\n"),
-            }
-          : stage),
+        stagePrompts: stagePrompts.map((stage) => {
+          if (!failed.has(stage.stageId)) return stage;
+          const nestedReasonCodes = retryReasonCodes(failureEvidence, stage.stageId);
+          const correctionReasonCodes = uniqueSorted([
+            ...failure.reasonCodes,
+            ...nestedReasonCodes,
+          ]);
+          return {
+            stageId: stage.stageId,
+            prompt: [
+              stage.prompt,
+              "",
+              "# SETFARM_PROVEN_RETRY_DELTA_V1",
+              `parent_failure_fingerprint: ${failure.failureFingerprint}`,
+              `parent_failure_artifact_hash: ${failure.failureArtifactHash}`,
+              `reason_codes: ${failure.reasonCodes.join(",")}`,
+              ...(nestedReasonCodes.length > 0
+                ? [`nested_reason_codes: ${nestedReasonCodes.join(",")}`]
+                : []),
+              `failed_stage_id: ${stage.stageId}`,
+              "Regenerate only this stage from the unchanged typed contract above.",
+              "Correct every listed semantic violation. Do not reuse prior candidate source, invent controls, or change target identity.",
+              ...retryCorrectionLines(failureEvidence, stage.stageId, correctionReasonCodes),
+            ].join("\n"),
+          };
+        }),
       };
     },
   });

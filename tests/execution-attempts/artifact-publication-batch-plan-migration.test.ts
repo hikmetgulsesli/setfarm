@@ -12,6 +12,8 @@ import {
   rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
+  rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -36,6 +38,12 @@ const producer = Object.freeze({
 });
 
 async function rollbackEmptyCurrentHeadsToV26(database: TestDatabase): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+    targetReleaseSha: "8".repeat(40),
+  });
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
   await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
     targetReleaseSha: "a".repeat(40),
   });

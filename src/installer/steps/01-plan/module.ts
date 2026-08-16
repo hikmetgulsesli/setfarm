@@ -88,12 +88,17 @@ function buildV3Prompt(ctx: PromptContext): string {
           "- Bind every semantics.states[].invariants occurrence exactly once by stateKey plus zero-based invariantOrdinal. Use runtime_assertions for executable state predicates, structured_semantic_coverage only when an exact declared delta/precondition/observable/persistence intent already enforces it, and non_runtime_requirement only for constraint/non-goal requirements with exact local evidence refs.",
           "- Runtime assertion subjects are relative to their owning state; do not repeat a state key inside the subject. Use only the code-owned predicate operators and checkpoints admitted by the schema.",
           "- Bind every entity_field state-delta occurrence exactly once by actionKey plus stateDeltaKey to one declared state snapshot and singleton or match_input selection. A schema field without an exact runtime instance selection is incomplete.",
+          "- runtimeBehavior.entityFieldBindings contains every-and-only state delta occurrences whose valueFrom.kind is entity_field. Literal and input state deltas do not appear in entityFieldBindings.",
+          "- Each entityFieldBindings snapshot contains exactly stateKey, collectionPath, and selection. Never emit valueField or any other snapshot key.",
+          "- Singleton selection uses exactly { kind: \"singleton\" }. Its collectionPath must resolve in the declared state's initialValue to one plain object containing the typed projected entity field; use an empty collectionPath when the whole initialValue is that object.",
+          "- match_input selection uses exactly kind, matchFieldKey, and inputField. Its collectionPath must resolve in initialValue to an array of plain objects; every member contains the typed projected field and typed match field, match values are unique, matchFieldKey belongs to the value-source entity, and inputField names a required compatible action input.",
           "- Runtime behavior references only semantic local keys and exact zero-based ordinals. Do not emit requirementRefs, evidence IDs, ProductSpec IDs, hashes, filenames, selectors, or implementation choices in runtimeBehavior; Setfarm derives them.",
           "- Prose invariants remain provenance, not executable instructions. The structured runtimeBehavior disposition is the primary implementation and test authority for each occurrence.",
         ]
       : []),
     "- Use lowercase local keys only. Do not emit PROD_/STATE_/ACT_/EVID_/SURF_ or any other global ID.",
     "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, observable, and assumption cites exact requirementRefs.",
+    "- enumValues is valid only when valueType is exactly enum. Every non-enum entity field, including a string field, omits enumValues.",
     ...(productSemanticsVersion === "v2"
       ? [
           "- Every route has exactly one route_root surface. Other same-route surfaces use composition.kind=contained and an exact hostSurfaceKey; contained surfaces are not separate screens.",
@@ -112,7 +117,7 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Persistence intents name stateDeltaKeys, never state-path copies or payloadFields. Setfarm derives both.",
     "- Declare an input only when a state valueFrom or a CLI/HTTP fieldBinding consumes it. Fixed outcomes use literal deltas and no synthetic input.",
     "- Every declared state must have an action precondition, delta, or value-source owner. An all-CLI/HTTP product may be stateless; do not invent fake state, busy/loading state, or UI state unless exact behavior owns it.",
-    "- Every action needs at least one observable with an after assertion. Durable writes additionally need a reload assertion.",
+    "- Every action needs at least one observable. Every individual observable needs an after assertion. Durable writes additionally need a reload assertion.",
     "- Rendered observables bind the owning control or an exact action surface/accessibility role and name. CLI/HTTP observables use only typed invocation_output selectors. Setfarm generates observable and evidence identities.",
     "- Use an empty or RFC 6901 path beginning with '/'; escape '~' as '~0' and '/' within a token as '~1'.",
     "- If primary semantics are ambiguous, contradictory, missing, or outside activated product classes, emit the typed rejection instead of guessing.",

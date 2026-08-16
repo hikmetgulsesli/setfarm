@@ -117,6 +117,33 @@ describe("run operational model", () => {
     assert.equal(model.failure.retryable, false);
   });
 
+  it("keeps the first failed workflow step as the source after downstream terminalization", () => {
+    const terminalFailure = [
+      "PLATFORM_PRECLAIM_TERMINAL [design]:",
+      JSON.stringify({
+        schema: "setfarm.design-preclaim-failure.v2",
+        operationalCauseHash: "a".repeat(64),
+        reasonCodes: ["DESIGN_CANDIDATE_SELECTION_V2_UNRESOLVED"],
+      }),
+    ].join(" ");
+    const model = buildRunOperationalModel({
+      run: run(),
+      steps: [
+        step("plan", "done"),
+        step("design", "failed", terminalFailure),
+        step("stories", "failed", terminalFailure),
+        step("setup-repo", "failed", terminalFailure),
+        step("deploy", "failed", terminalFailure),
+      ],
+      stories: [],
+    });
+
+    assert.equal(model.pipeline.failedStepId, "design");
+    assert.equal(model.failure.sourceStepId, "design");
+    assert.equal(model.failure.present, true);
+    assert.match(model.failure.summary, /PLATFORM_PRECLAIM_TERMINAL \[design\]/);
+  });
+
   it("keeps verified story counts separate from done-awaiting-verify", () => {
     const model = buildRunOperationalModel({
       run: run({ status: "completed" }),

@@ -152,6 +152,7 @@ export function buildV3BatchStitchPromptV2(input: Readonly<{
     "- Never emit data-action without its declared data-control-slot, or data-control-slot without its declared data-action.",
     "- Each exact_input_attributes value belongs on the one value-providing element for that field; preserve its exact spelling and case.",
     "- Do not emit any undeclared button, link, input, textarea, select, checkbox, tab, menu item, overflow control, breadcrumb control, icon-only control, or other actionable element.",
+    "- Do not add actionable navigation, sidebar, header, footer, breadcrumb, menu, icon-only, settings, privacy, terms, account, or utility controls unless each one is an exact declared physical_control_slots entry. Use non-actionable div, span, or p elements for decorative chrome.",
     "- Preserve every observable_contract exactly. Browser-computed accessibility role and accessible name are authoritative; native named elements are valid and do not require redundant literal role attributes.",
     "- An observable with a before visibility=true assertion must be visible in the initial static render. An observable required only after/reload may be represented by a semantically present hidden placeholder; it must not be rejected merely for being initially hidden.",
     "- Do not create style-guide, assistant, summary, moodboard, documentation, PRD, marketing, admin, account, checkout, or extra product screens.",
