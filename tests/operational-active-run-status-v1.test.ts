@@ -93,3 +93,38 @@ test("emits one canonical hash-bound JSON document through the silent npm comman
   );
   assert.equal(stdout, `${canonicalJsonStringify(document)}\n`);
 });
+
+test("rejects every invalid contract CLI argv without writing stdout", async (t) => {
+  const cases = [
+    { name: "missing --json", argv: [] },
+    { name: "unknown flag", argv: ["--unknown"] },
+    { name: "positional argument", argv: ["running"] },
+    { name: "duplicate --json", argv: ["--json", "--json"] },
+    { name: "--json plus extra", argv: ["--json", "extra"] },
+  ] as const;
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      const npmArgv = ["run", "--silent", "contract:operational-active-run-status"];
+      if (fixture.argv.length > 0) npmArgv.push("--", ...fixture.argv);
+      await assert.rejects(
+        execFileAsync("npm", npmArgv, { cwd: process.cwd(), encoding: "utf8" }),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          const failure = error as Error & {
+            code?: number | string;
+            stdout?: string;
+            stderr?: string;
+          };
+          assert.notEqual(failure.code, 0);
+          assert.equal(failure.stdout, "");
+          assert.match(
+            failure.stderr ?? "",
+            /OPERATIONAL_ACTIVE_RUN_STATUS_JSON_FLAG_REQUIRED/,
+          );
+          return true;
+        },
+      );
+    });
+  }
+});
