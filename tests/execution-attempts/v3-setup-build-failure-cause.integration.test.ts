@@ -7,10 +7,71 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { OperationalFailureCauseError } from "../../src/execution/schemas/operational-failure-cause-v1.js";
+import { evaluateOperationalFailureCauseAuthorityV3 } from "../../src/execution/operational-failure-cause-authority-v3.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import type { ClaimContext } from "../../src/installer/steps/types.js";
+import {
+  SETUP_BUILD_PACKET_OPERATIONAL_FAILURE_CODE_BY_ERROR_CODE_V3,
+  setupBuildPacketOperationalFailureCode,
+} from "../../src/installer/steps/05-setup-build/preclaim.js";
+import { SetupBuildPacketError } from "../../src/product-compiler/setup-build-packet-orchestrator.js";
 import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+test("setup-build packet failure map exhaustively authorizes the current producer vocabulary", () => {
+  const codes = [
+    "SETUP_PACKET_ACTIVATION_REJECTED",
+    "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+    "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
+    "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED",
+    "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+    "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+    "SETUP_PACKET_ENTRYPOINT_AMBIGUOUS",
+    "SETUP_PACKET_ENTRYPOINT_MISSING",
+    "SETUP_PACKET_FILE_INVALID",
+    "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS",
+    "SETUP_PACKET_GENERATED_SOURCE_MISSING",
+    "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+    "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+    "SETUP_PACKET_JSON_INVALID",
+    "SETUP_PACKET_PLAN_REJECTED",
+    "SETUP_PACKET_PROTOCOL_MISMATCH",
+    "SETUP_PACKET_REPO_DIRTY",
+    "SETUP_PACKET_REPO_IDENTITY_INVALID",
+    "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED",
+    "SETUP_PACKET_RUN_ID_MISMATCH",
+    "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH",
+    "SETUP_PACKET_SOURCE_NON_CANONICAL",
+    "SETUP_PACKET_STORY_PLAN_REJECTED",
+    "SETUP_PACKET_TOPOLOGY_OWNER_AMBIGUOUS",
+    "SETUP_PACKET_TOPOLOGY_REJECTED",
+  ] as const;
+  assert.deepEqual(Object.keys(SETUP_BUILD_PACKET_OPERATIONAL_FAILURE_CODE_BY_ERROR_CODE_V3).sort(), [...codes].sort());
+
+  for (const code of codes) {
+    const mapped = SETUP_BUILD_PACKET_OPERATIONAL_FAILURE_CODE_BY_ERROR_CODE_V3[code];
+    assert.equal(
+      setupBuildPacketOperationalFailureCode(new SetupBuildPacketError(code, "test")),
+      mapped,
+    );
+    assert.equal(
+      mapped,
+      code === "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH"
+        ? "SETUP_PACKET_PROTOCOL_MISMATCH"
+        : code,
+    );
+    assert.equal(evaluateOperationalFailureCauseAuthorityV3({
+      requestedBy: "setfarm.step-fail.single",
+      cause: {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "setup-build",
+        boundary: "product_compiler.setup_build_packet",
+        failureClass: "contract_invalid",
+        failureCode: mapped,
+      },
+    }).trusted, true, code);
+  }
+});
 
 test("v3 setup-build converter reads its machine result instead of classifying process prose", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
