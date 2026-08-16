@@ -101,7 +101,7 @@ Operational shell fences do not select a workstation checkout. The owning contro
 - Create through one Setfarm-owned source claim before live mutation:
   - `setfarm/src/internal-production/owner-admission-v1.ts` — import-inert one-way core for the pure category/census/manifest/reservation/fence ABI and the injected PostgreSQL sidecar port; every receipt/restart/sequence/controller consumer imports this core, and this core imports none of them.
   - `setfarm/tests/internal-production/owner-admission-v1.test.ts` — exact 35-category/35-map-key/36-scalar coverage, repository reservation/close pair resolution, same-transaction sidecar idempotency, fixed production composition/no caller registry-factory, test-private fake, fence, import-direction, and import-inertness tests.
-  - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts` — also owns the strict content-addressed baseline service-restart authority/store/resolver used by B P0 and the disjoint one-use pre-manifest migration-32 authorization/legacy-census observer.
+  - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts` — also owns the strict content-addressed baseline service-restart authority/store/resolver used by B P0, the disjoint one-use pre-manifest migration-32 authorization/legacy-census observer, the pre-mutation loaded-runtime authority/store/resolver, and the exact twelve-state current-entry status with its four nested crash-phase unions.
   - `setfarm/src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts` — sole local owner of the strict response constants/schema/parser and canonical field/null relations plus fixed code-owned source/HTTP observer and pair-only resolver; accepts no root, URL, ref, hash, body, transport override, or import from sibling Mission Control source.
   - `setfarm/tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts` — canonical positive/negative response fixtures, exact canonical bytes/hash/fields, source-boundary no-sibling-import checks, source/HTTP equality, pre-rebind source CLI, post-rebind endpoint, and tamper/status tests.
   - `setfarm/src/internal-production/baseline-owner-producer-manifest-activation-controller-v1.ts` — A-only, import-inert, path-free controller that durably activates the exact eleven-row A manifest and seals the predecessor/successor activation-head wrapper receipt.
@@ -110,14 +110,14 @@ Operational shell fences do not select a workstation checkout. The owning contro
   - `setfarm/src/internal-production/baseline-spawner-startup-admission-v1.ts` — A-operation-bound new-spawner startup capability/locator/claim plus the fixed pre-schema authorization, startup token, disjoint restart authority, predecessor-termination observation, replacement-process observation, sealed admission, same-generation admission-ready record, strict phase stores, and pair-only resolvers.
   - `setfarm/src/internal-production/baseline-service-restart-sequence-v1.ts` — fixed `live-rebind|d-startup-hook-load|documentation-rollback` coordinator, journal, and resolver.
   - `setfarm/src/internal-production/baseline-restart-authority-retirement-v1.ts` — the one-way A-to-D physical-service restart-authority epoch, A-owned strict hook-readiness/activation/cutover contracts and stores, code-owned hook observer/recorder, global transition lock, durable retirement/cutover receipts, and pair-only resolvers.
-  - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts`, `setfarm/src/execution/run-persistence.ts`, `setfarm/src/spawner.ts`, `setfarm/src/execution/attempt-repository.ts`, `setfarm/src/execution/claim-runtime-publication.ts`, `setfarm/src/execution/runtime-completion.ts`, and `setfarm/src/execution/runtime-completion-effect-runner.ts` — exact call sites for the eleven A-owned rows of `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`; each calls its fixed producer function before the first matching owner publication and closes against the terminal authority. The ordinary `run` row is born only inside `persistWorkflowRun`'s PostgreSQL transaction, where reservation, run insertion, and sidecar bind are fail-closed and indivisible. `spawner.ts` consumes the returned authenticated run-owner pair and cannot reserve it later; it additionally accepts only the operation-bound pre-schema startup token, exposes no owner/listener/normal loop while sealed, and enables producers only after same-generation admission-ready.
+  - `setfarm/src/internal-production/baseline-post-handoff-receipt-v1.ts`, `setfarm/src/execution/run-persistence.ts`, `setfarm/src/spawner.ts`, `setfarm/src/execution/attempt-repository.ts`, `setfarm/src/execution/claim-runtime-publication.ts`, `setfarm/src/execution/runtime-completion.ts`, and `setfarm/src/execution/runtime-completion-effect-runner.ts` — exact call sites for the eleven A-owned rows of `INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1`; each calls its fixed producer function before the first matching owner publication and closes against the terminal authority. The ordinary `run` row is born only inside `persistWorkflowRun`'s PostgreSQL transaction callback, where reservation, run insertion, and sidecar bind are fail-closed and indivisible; its pair/result is not returned or observable until the outer transaction promise confirms commit. `spawner.ts` consumes only that post-commit authenticated run-owner pair and cannot reserve it later; it additionally accepts only the operation-bound pre-schema startup token, exposes no owner/listener/normal loop while sealed, and enables producers only after same-generation admission-ready.
   - `setfarm/src/installer/run.ts`, `setfarm/tests/execution-attempts/run-protocol.test.ts`, `setfarm/tests/execution-attempts/v3-release-admission.test.ts`, and `setfarm/tests/evals/convergence-eval.test.ts` — every direct `persistWorkflowRun` caller/fixture affected by the same-transaction run-owner result and pre-manifest admission fence.
   - `setfarm/src/execution/runtime-completion.ts` — mint the opaque completion-owner bootstrap target guard only inside the authenticated current-owner context.
   - `setfarm/src/db/bootstrap-main-claim-handoff-v1-migration.ts` — sole immutable implementation, ordered statements, named migration identity, and schema projector for the bootstrap-main-claim handoff migration.
   - `setfarm/src/db/contract-spine-migrations.ts`, `setfarm/src/db/contract-spine-migration-source-integrity.ts`, and `setfarm/src/db/contract-spine-migration-digests.generated.ts` — guarded registration of exact ordinal 32, its source-integrity manifest, and generated named digest entry before B Task P0; unrelated later entries may be appended without changing A's authority.
   - `setfarm/src/db-pg.ts` — sole production composition for the injected owner repository/controller and fixed non-exported category resolver table; its operation-bound sealed startup branch permits only a minimal read-only v31/pending-32 connection and cannot report normal DB ready, while ordinary startup still fails generic full verify until 32 is applied.
   - `setfarm/scripts/run-isolated-postgres-tests.ts` — after automatic apply, invokes only the fixed test-private migration-32 authority before full verify or child tests.
-  - `setfarm/tests/internal-production/baseline-post-handoff-receipt-v1.test.ts`
+  - `setfarm/tests/internal-production/baseline-post-handoff-receipt-v1.test.ts` — includes the exact pre-mutation runtime authority and twelve-state/nested-phase strict-nullability, store, pair-resolution, crash-prefix, clone, and drift tests.
   - `setfarm/tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts` — A controller receipt/status, interruption, replay, CLI, import-inertness, and no-producer-before-activation tests.
   - `setfarm/tests/internal-production/baseline-post-handoff-cli.test.ts`
   - `setfarm/tests/internal-production/baseline-service-restart-helper-v1.test.ts`
@@ -610,6 +610,356 @@ export type InternalProductionCurrentEntryOperationPairV1 = Readonly<{
   operationRef: CanonicalRef;
   operationHash: Sha256V1;
 }>;
+export type InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1 = Readonly<{
+  preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
+  preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
+}>;
+export type InternalProductionPreMutationLoadedRuntimeServiceV1 =
+  | Readonly<{
+      service: "spawner";
+      pid: number; processStartTimeEpochMs: number;
+      processIdentityHash: Sha256V1; serviceIdentityHash: Sha256V1;
+      generationHash: Sha256V1;
+      loadedSourceSha: GitObjectHashV1; loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+      listener: null;
+    }>
+  | Readonly<{
+      service: "dashboard";
+      pid: number; processStartTimeEpochMs: number;
+      processIdentityHash: Sha256V1; serviceIdentityHash: Sha256V1;
+      generationHash: Sha256V1;
+      loadedSourceSha: GitObjectHashV1; loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+      listener: Readonly<{
+        host: "127.0.0.1"; port: 3333; listenerIdentityHash: Sha256V1;
+      }>;
+    }>
+  | Readonly<{
+      service: "missionControl";
+      pid: number; processStartTimeEpochMs: number;
+      processIdentityHash: Sha256V1; serviceIdentityHash: Sha256V1;
+      generationHash: Sha256V1;
+      loadedSourceSha: GitObjectHashV1; loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+      listener: Readonly<{
+        host: "127.0.0.1"; port: 3080; listenerIdentityHash: Sha256V1;
+      }>;
+    }>
+  | Readonly<{
+      service: "openClaw";
+      pid: number; processStartTimeEpochMs: number;
+      processIdentityHash: Sha256V1; serviceIdentityHash: Sha256V1;
+      generationHash: Sha256V1;
+      loadedSourceSha: null; loadedTreeHash: null; loadedBuildHash: null;
+      listener: Readonly<{
+        host: "127.0.0.1"; port: 18789; listenerIdentityHash: Sha256V1;
+      }>;
+    }>;
+export type InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1 = Readonly<{
+  schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-authority.v1";
+  currentEntryOperationRef: CanonicalRef;
+  currentEntryOperationHash: Sha256V1;
+  observedServiceCensusHash: Sha256V1;
+  services: readonly [
+    Extract<InternalProductionPreMutationLoadedRuntimeServiceV1, { service: "spawner" }>,
+    Extract<InternalProductionPreMutationLoadedRuntimeServiceV1, { service: "dashboard" }>,
+    Extract<InternalProductionPreMutationLoadedRuntimeServiceV1, { service: "missionControl" }>,
+    Extract<InternalProductionPreMutationLoadedRuntimeServiceV1, { service: "openClaw" }>,
+  ];
+  servicesIdentityHash: Sha256V1;
+  preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
+  preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
+}>;
+export interface InternalProductionPreMutationLoadedRuntimeServiceAuthorityStoreV1 {
+  publish(input: InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1):
+    Promise<InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1>;
+  resolve(input: InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1):
+    Promise<InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1>;
+}
+export function resolveInternalProductionPreMutationLoadedRuntimeServiceAuthorityV1(
+  input: InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1,
+): Promise<InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1>;
+
+export type InternalProductionCurrentEntryMigrationApplyingPhaseV1 =
+  | Readonly<{
+      phase: "prepared";
+      authorization: InternalProductionPreManifestMigration32AuthorizationPairV1;
+      consumption: null; migrationReceipt: null; currentAudit: null;
+    }>
+  | Readonly<{
+      phase: "consumed";
+      authorization: InternalProductionPreManifestMigration32AuthorizationPairV1;
+      consumption: InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1;
+      migrationReceipt: null; currentAudit: null;
+    }>
+  | Readonly<{
+      phase: "receipt_published";
+      authorization: InternalProductionPreManifestMigration32AuthorizationPairV1;
+      consumption: InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1;
+      migrationReceipt: InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1;
+      currentAudit: null;
+    }>
+  | Readonly<{
+      phase: "current_audited";
+      authorization: InternalProductionPreManifestMigration32AuthorizationPairV1;
+      consumption: InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1;
+      migrationReceipt: InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1;
+      currentAudit: Readonly<{
+        bootstrapHandoffCurrentAuditRef: CanonicalRef;
+        bootstrapHandoffCurrentAuditHash: Sha256V1;
+      }>;
+    }>;
+export type InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1 =
+  | Readonly<{
+      phase: "sealed";
+      sealedAdmission: InternalProductionPreSchemaSpawnerSealedAdmissionPairV1;
+      admissionReady: null; loadedRuntimeServiceAuthority: null;
+    }>
+  | Readonly<{
+      phase: "admission_ready";
+      sealedAdmission: InternalProductionPreSchemaSpawnerSealedAdmissionPairV1;
+      admissionReady: InternalProductionTask0SpawnerAdmissionReadyPairV1;
+      loadedRuntimeServiceAuthority: null;
+    }>
+  | Readonly<{
+      phase: "runtime_observed";
+      sealedAdmission: InternalProductionPreSchemaSpawnerSealedAdmissionPairV1;
+      admissionReady: InternalProductionTask0SpawnerAdmissionReadyPairV1;
+      loadedRuntimeServiceAuthority: Readonly<{
+        loadedRuntimeServiceAuthorityRef: CanonicalRef;
+        loadedRuntimeServiceAuthorityHash: Sha256V1;
+      }>;
+    }>;
+export type InternalProductionCurrentEntryCanaryRunningPhaseV1 =
+  | Readonly<{
+      phase: "running";
+      ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: Sha256V1;
+      sourceRunTargetReservationRef: CanonicalRef;
+      sourceRunTargetReservationHash: Sha256V1;
+      runTargetReservationRef: CanonicalRef; runTargetReservationHash: Sha256V1;
+      terminalSettlementRef: null; terminalSettlementHash: null;
+      targetCloseRef: null; targetCloseHash: null;
+    }>
+  | Readonly<{
+      phase: "terminal_settlement_published";
+      ownerAdmissionFenceRef: CanonicalRef; ownerAdmissionFenceHash: Sha256V1;
+      sourceRunTargetReservationRef: CanonicalRef;
+      sourceRunTargetReservationHash: Sha256V1;
+      runTargetReservationRef: CanonicalRef; runTargetReservationHash: Sha256V1;
+      terminalSettlementRef: CanonicalRef; terminalSettlementHash: Sha256V1;
+      targetCloseRef: null; targetCloseHash: null;
+    }>;
+export type InternalProductionCurrentEntrySettledPhaseV1 =
+  | Readonly<{
+      phase: "target_closed";
+      terminalSettlementRef: CanonicalRef; terminalSettlementHash: Sha256V1;
+      targetCloseRef: CanonicalRef; targetCloseHash: Sha256V1;
+      ownerAdmissionFenceReleaseRef: null; ownerAdmissionFenceReleaseHash: null;
+      entryAuthorityRef: null; entryAuthorityHash: null;
+    }>
+  | Readonly<{
+      phase: "fence_released";
+      terminalSettlementRef: CanonicalRef; terminalSettlementHash: Sha256V1;
+      targetCloseRef: CanonicalRef; targetCloseHash: Sha256V1;
+      ownerAdmissionFenceReleaseRef: CanonicalRef;
+      ownerAdmissionFenceReleaseHash: Sha256V1;
+      entryAuthorityRef: null; entryAuthorityHash: null;
+    }>;
+export type InternalProductionCurrentEntryBlockedReasonCodeV1 =
+  | "PRE_MUTATION_RUNTIME_AUTHORITY_DRIFT"
+  | "PRE_SCHEMA_REBIND_BLOCKED"
+  | "MIGRATION_AUTHORIZATION_BLOCKED"
+  | "MIGRATION_RECEIPT_PUBLICATION_FAILED"
+  | "MIGRATION_CURRENT_AUDIT_FAILED"
+  | "MANIFEST_ACTIVATION_FAILED"
+  | "SPAWNER_ADMISSION_FAILED"
+  | "RUNTIME_OBSERVATION_DRIFT"
+  | "CANARY_START_FAILED"
+  | "CANARY_SETTLEMENT_FAILED"
+  | "CANARY_TARGET_CLOSE_FAILED"
+  | "CANARY_FENCE_RELEASE_FAILED"
+  | "ENTRY_PUBLICATION_FAILED";
+export type InternalProductionCurrentEntryAuthorityStatusPairV1 = Readonly<{
+  statusRef: CanonicalRef;
+  statusHash: Sha256V1;
+}>;
+export type InternalProductionCurrentEntryNonBlockedStateV1 =
+  | "absent" | "operation_prepared" | "pre_schema_spawner_rebinding"
+  | "pre_manifest_bootstrap_sealed" | "migration_applying"
+  | "manifest_activating" | "spawner_admission_transitioning"
+  | "prepared" | "canary_running" | "settled" | "ready";
+type InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 = Readonly<{
+  schema: "setfarm.internal-production-current-entry-authority-status.v1";
+  operationRef: CanonicalRef;
+  operationHash: Sha256V1;
+  preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
+  preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
+  preMutationLoadedRuntimeServiceAuthority:
+    InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1;
+  statusRef: CanonicalRef;
+  statusHash: Sha256V1;
+}>;
+type InternalProductionCurrentEntryManifestActivationPairV1 = Readonly<{
+  ownerProducerManifestActivationRef: CanonicalRef;
+  ownerProducerManifestActivationHash: Sha256V1;
+  ownerProducerManifestHeadRef: CanonicalRef;
+  ownerProducerManifestHeadHash: Sha256V1;
+}>;
+export type InternalProductionCurrentEntryAuthorityPairV1 = Readonly<{
+  entryAuthorityRef: CanonicalRef;
+  entryAuthorityHash: Sha256V1;
+}>;
+export type InternalProductionCurrentEntryAuthorityStatusV1 =
+  | Readonly<{
+      schema: "setfarm.internal-production-current-entry-authority-status.v1";
+      state: "absent";
+      operationRef: null; operationHash: null;
+      preMutationLoadedRuntimeServiceAuthorityRef: null;
+      preMutationLoadedRuntimeServiceAuthorityHash: null;
+      preMutationLoadedRuntimeServiceAuthority: null;
+      preSchemaSpawnerRebindStatus: null; migrationApplyingPhase: null;
+      manifestActivation: null; spawnerAdmissionTransitionPhase: null;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null; statusRef: CanonicalRef; statusHash: Sha256V1;
+    }>
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "operation_prepared";
+      preSchemaSpawnerRebindStatus: null; migrationApplyingPhase: null;
+      manifestActivation: null; spawnerAdmissionTransitionPhase: null;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "pre_schema_spawner_rebinding";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: null; manifestActivation: null;
+      spawnerAdmissionTransitionPhase: null; canaryRunningPhase: null;
+      settledPhase: null; entryAuthority: null; blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "pre_manifest_bootstrap_sealed";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: null; manifestActivation: null;
+      spawnerAdmissionTransitionPhase: null; canaryRunningPhase: null;
+      settledPhase: null; entryAuthority: null; blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "migration_applying";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: InternalProductionCurrentEntryMigrationApplyingPhaseV1;
+      manifestActivation: null; spawnerAdmissionTransitionPhase: null;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "manifest_activating";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: null; spawnerAdmissionTransitionPhase: null;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "spawner_admission_transitioning";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: InternalProductionCurrentEntryManifestActivationPairV1;
+      spawnerAdmissionTransitionPhase:
+        InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "prepared";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: InternalProductionCurrentEntryManifestActivationPairV1;
+      spawnerAdmissionTransitionPhase:
+        Extract<InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1,
+          { phase: "runtime_observed" }>;
+      canaryRunningPhase: null; settledPhase: null; entryAuthority: null;
+      blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "canary_running";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: InternalProductionCurrentEntryManifestActivationPairV1;
+      spawnerAdmissionTransitionPhase:
+        Extract<InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1,
+          { phase: "runtime_observed" }>;
+      canaryRunningPhase: InternalProductionCurrentEntryCanaryRunningPhaseV1;
+      settledPhase: null; entryAuthority: null; blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "settled";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: InternalProductionCurrentEntryManifestActivationPairV1;
+      spawnerAdmissionTransitionPhase:
+        Extract<InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1,
+          { phase: "runtime_observed" }>;
+      canaryRunningPhase: Extract<InternalProductionCurrentEntryCanaryRunningPhaseV1,
+        { phase: "terminal_settlement_published" }>;
+      settledPhase: InternalProductionCurrentEntrySettledPhaseV1;
+      entryAuthority: null; blockedReason: null;
+    }>)
+  | (InternalProductionCurrentEntryAuthorityStatusFixedPrefixV1 & Readonly<{
+      state: "ready";
+      preSchemaSpawnerRebindStatus: InternalProductionPreSchemaSpawnerRebindStatusPairV1;
+      migrationApplyingPhase: Extract<InternalProductionCurrentEntryMigrationApplyingPhaseV1,
+        { phase: "current_audited" }>;
+      manifestActivation: InternalProductionCurrentEntryManifestActivationPairV1;
+      spawnerAdmissionTransitionPhase:
+        Extract<InternalProductionCurrentEntrySpawnerAdmissionTransitionPhaseV1,
+          { phase: "runtime_observed" }>;
+      canaryRunningPhase: Extract<InternalProductionCurrentEntryCanaryRunningPhaseV1,
+        { phase: "terminal_settlement_published" }>;
+      settledPhase: Extract<InternalProductionCurrentEntrySettledPhaseV1,
+        { phase: "fence_released" }>;
+      entryAuthority: InternalProductionCurrentEntryAuthorityPairV1;
+      blockedReason: null;
+    }>)
+  | Readonly<{
+      schema: "setfarm.internal-production-current-entry-authority-status.v1";
+      state: "blocked";
+      lastValidPrefix:
+        | Readonly<{
+            state: "absent";
+            operationRef: null; operationHash: null;
+            preMutationLoadedRuntimeServiceAuthorityRef: null;
+            preMutationLoadedRuntimeServiceAuthorityHash: null;
+            preMutationLoadedRuntimeServiceAuthority: null;
+            lastValidStatusRef: CanonicalRef; lastValidStatusHash: Sha256V1;
+          }>
+        | Readonly<{
+            state: Exclude<InternalProductionCurrentEntryNonBlockedStateV1, "absent">;
+            operationRef: CanonicalRef; operationHash: Sha256V1;
+            preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
+            preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
+            preMutationLoadedRuntimeServiceAuthority:
+              InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1;
+            lastValidStatusRef: CanonicalRef; lastValidStatusHash: Sha256V1;
+          }>;
+      blockedReason: InternalProductionCurrentEntryBlockedReasonCodeV1;
+      statusRef: CanonicalRef; statusHash: Sha256V1;
+    }>;
+export interface InternalProductionCurrentEntryAuthorityStatusStoreV1 {
+  publish(input: InternalProductionCurrentEntryAuthorityStatusV1):
+    Promise<InternalProductionCurrentEntryAuthorityStatusPairV1>;
+  resolve(input: InternalProductionCurrentEntryAuthorityStatusPairV1):
+    Promise<InternalProductionCurrentEntryAuthorityStatusV1>;
+  observeFixedStatus(): Promise<InternalProductionCurrentEntryAuthorityStatusV1>;
+}
+export function resolveInternalProductionCurrentEntryAuthorityStatusV1(
+  input: InternalProductionCurrentEntryAuthorityStatusPairV1,
+): Promise<InternalProductionCurrentEntryAuthorityStatusV1>;
 export type InternalProductionPreSchemaSpawnerRebindRefusalCodeV1 =
   | "CURRENT_ENTRY_OPERATION_NOT_PREPARED"
   | "CURRENT_ENTRY_OPERATION_MISMATCH"
@@ -3029,7 +3379,9 @@ Guarded migration 32 creates the permanent PostgreSQL sidecar `internal_producti
 
 The caller passes the same `PgTransactionSql` to repository `resolveReservation(...)`, controller begin/adopt, its canonical owner insert, controller bind, authenticated terminal resolution, controller close, and repository `resolveClose(...)` as applicable. The repository locks the singleton head and reservation key, verifies the active manifest row/category/owner-key derivation, inserts or byte-identically adopts the pending sidecar row, permits the caller's canonical owner insert, binds its exact owner pair, and CAS-advances the head before that one PostgreSQL transaction commits. A crash/throw/deadlock before commit exposes neither reservation nor owner; a lost response after commit is recovered through the same injected repository and returns the byte-identical bound row without a second owner. A conflicting producer/category/key/pair, partially visible row, stale head, or second owner fails and rolls back the whole transaction. Concrete owner tables receive no duplicate reservation columns; the sidecar is the authoritative binding.
 
-The ordinary `run` producer is not `src/spawner.ts`. The first durable `activeRunCount` byte is `runWorkflow → persistWorkflowRun`, so `src/execution/run-persistence.ts` owns implementation `a-runtime-run-v1`. `persistWorkflowRun(sql, input)` must, using that same passed `PgTransactionSql`, resolve the exact run-admission authority, begin/adopt the typed run reservation, insert or byte-identically adopt the workflow-run row, bind its authenticated run-owner pair in the sidecar, and return that pair with the persisted run before commit. `src/installer/run.ts` and the spawner consume the returned pair; neither may reserve after insertion or reconstruct it from a run ID. Any insert, including a direct CLI path, that cannot bind the pair in the same transaction fails and rolls back.
+The ordinary `run` producer is not `src/spawner.ts`. The first durable `activeRunCount` byte is `runWorkflow → persistWorkflowRun`, so `src/execution/run-persistence.ts` owns implementation `a-runtime-run-v1`. Inside one `PgTransactionSql` callback, `persistWorkflowRun` resolves the exact run-admission authority, begins/adopts the typed run reservation, inserts or byte-identically adopts the workflow-run row, binds its authenticated run-owner pair in the sidecar, and constructs one tentative `{run,runOwnerReservationRef,runOwnerReservationHash}` callback result. That callback value is private to the transaction executor. The public `persistWorkflowRun(...)` promise does not resolve, and its result is neither returned through nor observable by an installer, spawner, or other caller continuation, until the PostgreSQL transaction commit succeeds. A rollback, commit rejection, connection loss before commit acknowledgement, or callback throw exposes no run and no pair to `src/installer/run.ts`, the spawner, or any caller. After an acknowledged commit, retry pair-resolves and returns the same persisted row/pair; neither installer nor spawner may consume a precommit value, reserve after insertion, or reconstruct authority from a run ID. Any insert, including a direct CLI path, that cannot bind the pair in the same transaction fails and rolls back.
+
+`run-protocol.test.ts`, `v3-release-admission.test.ts`, and `convergence-eval.test.ts` hold the transaction at a commit latch and prove the public promise remains pending and no installer/spawner callback receives either row or pair. They then cover successful commit release, callback rollback, commit rejection, lost connection before acknowledgement, response loss after acknowledged commit, and retry. Only successful commit exposes the exact pair once; every failure exposes neither member and leaves no row/sidecar residue. Compile-time and runtime fixtures reject a transaction adapter that forwards the callback's tentative value before commit.
 
 To close the pre-schema race, the current-entry controller acquires one fixed, non-advisory PostgreSQL pre-manifest run-admission fence on the existing migration-journal head before the final legacy-zero reobservation. Every `persistWorkflowRun` transaction must acquire the conflicting code-owned admission lock before its first run byte. The migration-32 transaction holds that same fence through reobservation, authorization consumption, schema creation, and installation of the equivalent owner-admission-head fence before releasing the journal lock. Thus an unrelated CLI insert racing after postzero/reobservation blocks and then fails closed; it cannot slip between observation and apply. The only later permitted target is the same current-entry operation's exact typed canary run reservation after migration/current audit, A activation, full verify, and admission-ready. Tests race that target and an unrelated CLI insert at every lock/commit/head-transition boundary and prove exactly the target may win, with no advisory/file lock, unreserved row, late spawner reservation, or second owner.
 
@@ -3098,6 +3450,8 @@ In that same focused file, exercise Task 6A current-entry and Task 7 post-rebind
 In `operational-active-run-status-v1.test.ts`, require the source tuple, Zod enum options, generated JSON Schema enum, CLI JSON, dashboard filter, and existing authoritative DB census predicate to contain the same ordered four values: `running`, `resuming`, `cancelling`, `failing`; require the compatibility fixture to be a schema-valid member bound to that exact schema. Exercise the transition sequence `running -> resuming -> cancelling -> failing` and prove every state remains operational-active without being collapsed; transitions from any of those states to `completed`, `failed`, or `cancelled` become inactive. Reject `pending`, every terminal status, a reordered/extended artifact, duplicate value, or locally maintained dashboard/UI list. Spawn the JSON CLI through `npm run --silent`, feed its stdout directly to the parser, and prove the stream contains exactly one JSON document with no npm banner.
 
 For backup recovery, use a temporary fixed-root test harness and an injected crash hook around every `dump-linked`, `list-linked`, and `checksum-linked` hard-link operation: immediately before the link, immediately after the link but before directory fsync, after fsync but before the immutable phase record is published, and immediately after that record is published. Every rerun must authenticate and adopt only the exact contiguous prefix, complete the remaining links, and return the byte-identical receipt. Add crashes before/after `artifacts-sealed`, `published`, every source-name unlink, and `sources-released`. For each of the seven journal phases, crash before/after unpredictable temporary-record creation, full write, file fsync, no-replace publication, journal-directory fsync, temporary-name unlink, and final `O_NOFOLLOW` reopen; every recovery either authenticates the same whole record and continues or sees no committed phase. Reject a partial/truncated record, a later record without its predecessor, a forged/reordered/hash-chain-broken record, an unknown fixed record, a symlink/hardlink/mode-drifted record, an unequal pre-existing phase target, a temporary-file poisoning attempt, any use of append/`O_APPEND` against journal authority, a gap such as dump plus checksum without list, a target with different device/inode while its sealed source exists, any artifact hash/size/mode/symlink/hardlink mismatch, a foreign pre-existing target without the durable attempt, or a second attempt. Prove the final three targets are regular non-symlink mode-`0600`, link-count-one files and that rerunning `backup --json` only reopens the same receipt.
+
+Round 4 extends that focused current-entry matrix without adding a top state. It enumerates all four migration-applying phases, all three spawner-admission phases, both canary-running phases, and both settled phases; crashes immediately before/after every durable member named by those discriminants and requires byte-identical adoption. The same test publishes/resolves `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1`, requires its four ordered service identities and census hash to equal the adjacent Step 1 observation in every later status/final entry, and rejects a structural clone or any generation/source/build/listener drift. Each branch test asserts all required prior pairs, every mandated null later member, the finite blocked reason, and refusal of an impossible combination.
 
 - [ ] **Step 2: Implement the smallest fixed authority**
 
@@ -4204,16 +4558,20 @@ Expected: the merge and build gates are the first production call site allowed t
 
 **Interfaces:**
 
-- Every non-absent current-entry phase repeats the exact current-entry operation pair. Its strict pre-schema subchain is authorization → startup token → restart authority → predecessor-termination observation → replacement-process observation → sealed admission → admission ready; the migration subchain adds the exact authorization-consumption pair before its terminal receipt. Within `pre_schema_spawner_rebinding`, the nested rebind status may be only `prepared`, `startup_token_published`, or one of the ordered `dispatching` prefixes; `pre_manifest_bootstrap_sealed` requires the terminal sealed status and every predecessor pair. Within `migration_applying`, migration authorization status may be only `prepared | consumed`; `manifest_activating` begins only from its `terminal` receipt. Every later phase preserves those byte-identical pairs. Strict schemas require all earlier fields and exact null later fields and reject a crossed operation, hash-only termination, predicted generation, phase-impossible field, or blocked-prefix clone.
+- `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1` is a strict code-owned four-service observation created inside zero-input `prepare-current-entry` from the immediately preceding Step 1 service census. Its exact pair is published only after the fixed current-entry operation exists, and its body binds that operation, the census hash, ordered spawner/dashboard/Mission-Control/OpenClaw process identity, generation, loaded source/tree/build, and phase-applicable listener identity. Its hash is `hashCanonicalJson` over that strict body excluding only the two derived pair fields; its ref is `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${preMutationLoadedRuntimeServiceAuthorityHash}`. Its no-replace store and pair-only resolver recompute both and accept no caller body, process field, census, path, PID, or newest scan. The status ABI is the two direct scalar fields `.preMutationLoadedRuntimeServiceAuthorityRef`/`.preMutationLoadedRuntimeServiceAuthorityHash` plus the freshly pair-resolved `.preMutationLoadedRuntimeServiceAuthority` body, never a caller-supplied `preMutationLoadedRuntimeServiceAuthorityPair` wrapper. `operation_prepared`, every later nonblocked status, and final `InternalProductionCurrentEntryAuthorityV1` contain the byte-identical pair. The final current-entry body also embeds the freshly pair-resolved authority body; this pre-mutation observation remains distinct from the later mixed `loadedRuntimeServiceAuthority` produced after the spawner transition.
 
-- `InternalProductionCurrentEntryAuthorityV1` has schema `setfarm.internal-production-current-entry-authority.v1`. It binds reviewed PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor; exact `controllerSourceAuthority:{controllerSourceSha,controllerTreeHash,controllerBuildHash}` for current clean Task 0 Setfarm main; the current-entry operation pair created before mutation; the pre-schema spawner authorization/restart authority, sealed admission, post-predecessor-termination legacy-zero pair, and same-generation normal-admission-ready pair; exact applied `bootstrapHandoffMigrationReceiptRef/Hash` and `bootstrapHandoffCurrentAuditRef/Hash`; the A-manifest activation/head pairs; separate `loadedRuntimeServiceAuthority` with the spawner equal to the Task 0 controller build while dashboard/Mission-Control/OpenClaw remain on their independently authenticated delivered builds; current clean Mission Control SHA; exact PBA delivery-evidence pair; focused Authority-V3 test receipt; one fresh canary settlement and its fence/typed-target/compound-close/release pairs; and the final complete zero-unrelated-owner census. It has no top-level pending-migration pair or pending-current assertion. The migration receipt preserves the exact v31 predecessor/pre-apply pending quartet plus the pre-schema/sealed/legacy-census/migration-authorization chain as immutable causal history.
-- `InternalProductionCurrentEntryAuthorityPairV1` is exactly `{entryAuthorityRef,entryAuthorityHash}`. `InternalProductionCurrentEntryAuthorityStatusV1` is the strict twelve-state union `absent | operation_prepared | pre_schema_spawner_rebinding | pre_manifest_bootstrap_sealed | migration_applying | manifest_activating | spawner_admission_transitioning | prepared | canary_running | settled | ready | blocked` with one immutable operation/head chain. `absent` has every operation/migration/manifest/restart/admission/runtime/PBA/canary/entry field null. `operation_prepared` has only the fixed operation plus read-only PBA/v31/pending/source-build prerequisites. `pre_schema_spawner_rebinding` adds the special authorization and may add its dispatch prefix, but no sealed/migration/manifest/canary field. `pre_manifest_bootstrap_sealed` requires authentic old-spawner terminality, the Task 0 sealed generation, and its post-termination all-36-zero legacy observation. `migration_applying` adds the later equal legacy reobservation and pre-manifest migration authorization/consumption prefix but exposes no receipt until terminal. `manifest_activating` requires the applied receipt/current audit and null activation/admission-ready/runtime/canary suffix. `spawner_admission_transitioning` adds the exact A activation/head while the same generation remains sealed and normal DB readiness is null. `prepared` requires the unchanged-generation `normal-task0-admission-ready` pair after ordinary generic full verify/normal DB initialization, mixed loaded-runtime authority, PBA pair, applied migration/current audit, and manifest pairs while every canary/entry field is null. `canary_running` adds the fence and both typed targets; `settled` adds terminal canary settlement and compound close; only `ready` adds fence release and entry pair. `blocked` preserves exactly the last valid durable prefix with later fields null and one finite reason code.
+- Every non-absent current-entry phase repeats the exact current-entry operation pair and pre-mutation runtime-authority pair. Its strict pre-schema subchain is authorization → startup token → restart authority → predecessor-termination observation → replacement-process observation → sealed admission → admission ready; the migration subchain adds the exact authorization-consumption pair before its terminal receipt/current audit. Within `pre_schema_spawner_rebinding`, the nested rebind status may be only `prepared`, `startup_token_published`, or one of the ordered `dispatching` prefixes; `pre_manifest_bootstrap_sealed` requires the terminal sealed status and every predecessor pair. The four Round 4 nested discriminants represent the mandated receipt/current-audit, admission-ready/runtime-observed, canary-settlement, target-close, and fence-release crash boundaries without adding a thirteenth top state. Every later phase preserves those byte-identical pairs. Strict schemas require all earlier fields and exact null later fields and reject a crossed operation, hash-only termination, predicted generation, phase-impossible field, or blocked-prefix clone.
+
+- `InternalProductionCurrentEntryAuthorityV1` has schema `setfarm.internal-production-current-entry-authority.v1`. It binds reviewed PR #86 merge `1d691c89760339ea905dfe17f8e9188e62603c1c` as an ancestor; exact `controllerSourceAuthority:{controllerSourceSha,controllerTreeHash,controllerBuildHash}` for current clean Task 0 Setfarm main; the current-entry operation pair created before mutation; the direct pre-mutation loaded-runtime ref/hash plus its freshly pair-resolved strict body; the pre-schema spawner authorization/restart authority, sealed admission, post-predecessor-termination legacy-zero pair, and same-generation normal-admission-ready pair; exact applied `bootstrapHandoffMigrationReceiptRef/Hash` and `bootstrapHandoffCurrentAuditRef/Hash`; the A-manifest activation/head pairs; separate `loadedRuntimeServiceAuthority` with the spawner equal to the Task 0 controller build while dashboard/Mission-Control/OpenClaw remain on their independently authenticated delivered builds; current clean Mission Control SHA; exact PBA delivery-evidence pair; focused Authority-V3 test receipt; one fresh canary settlement and its fence/typed-target/compound-close/release pairs; and the final complete zero-unrelated-owner census. It has no top-level pending-migration pair or pending-current assertion. The migration receipt preserves the exact v31 predecessor/pre-apply pending quartet plus the pre-schema/sealed/legacy-census/migration-authorization chain as immutable causal history.
+- `InternalProductionCurrentEntryAuthorityPairV1` is exactly `{entryAuthorityRef,entryAuthorityHash}`. `InternalProductionCurrentEntryAuthorityStatusV1` keeps exactly twelve top states: `absent | operation_prepared | pre_schema_spawner_rebinding | pre_manifest_bootstrap_sealed | migration_applying | manifest_activating | spawner_admission_transitioning | prepared | canary_running | settled | ready | blocked`. `absent` has every authority and phase null. `operation_prepared` and every later nonblocked state contain the byte-identical operation pair and `InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1`; every later phase field is null there. `pre_schema_spawner_rebinding` and `pre_manifest_bootstrap_sealed` retain the exact Round 3 rebind prefixes. `migration_applying` has strict nested `prepared | consumed | receipt_published | current_audited`: consumption is null only in `prepared`, receipt is null through `consumed`, and current audit is null through `receipt_published`. Only `current_audited` may advance to `manifest_activating`. `spawner_admission_transitioning` has strict nested `sealed | admission_ready | runtime_observed`: admission-ready is null in `sealed`, and post-rebind mixed runtime authority is null until `runtime_observed`. Only `runtime_observed` may advance to `prepared`. `canary_running` is nested `running | terminal_settlement_published`, with settlement null in `running` and target close null in both. `settled` is nested `target_closed | fence_released`, with release null in `target_closed` and final entry null in both. Only `ready` adds the entry pair. Every branch uses the fixed prior pairs and an exact strict schema; `blocked` preserves one exact last-valid status pair and one finite `InternalProductionCurrentEntryBlockedReasonCodeV1`. A missing/extra/crossed pair, wrong nested phase, impossible nullability, structural clone, or skipped durable boundary fails parsing/resolution and cannot advance the head.
 - The focused-test receipt proves the exact mutually exclusive tuple `SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED`, `SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED`, and `SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED` across source mapping, migration 31, rollback refusal, and terminal-preclaim regressions. The single live canary proves only the one exact failure code it actually observed. It never claims that one run emitted all three mutually exclusive codes.
 - The canary settlement requires a new disposable run, one observed tuple member, exactly one terminal claim, exactly one termination request, zero redispatch after terminalization, zero open claim/runtime/completion/effect ownership, and no reuse or continuation of run 2075.
 - `prepare-current-entry --json` accepts no root/SHA/run/code/path/receipt override. After it internally reopens Task 6 Step 8's PBA pair plus clean source/build and the read-only v31/pending authorities, it creates or adopts the fixed operation before any service/database mutation and returns only its pair. `resume-current-entry --json` accepts no identity and is the sole production mutation controller: it resumes that fixed operation through pre-schema authorization/dispatch/old-spawner termination/startup seal/post-termination legacy zero, fresh legacy equality reobservation, pre-manifest migration authorization/apply/current audit, A-manifest activation, same-generation generic full verify/normal DB initialization/admission-ready, mixed runtime observation, canary fence/targets/start/settlement/close/release, and ready publication. It never invokes the public normal restart API and exposes no apply/restart/activation mutation argv. `current-entry-status --json` is read-only. `verify-current-entry --json` reopens the ready pair and freshly revalidates the complete operation prefix, applied/current migration, activation, sealed-to-ready same-generation transition, runtime split, PBA, canary chain, and zero owners without starting a run; Task 7 calls it before its first restart and never applies schema.
 - Crash/race/replay tests interrupt before and after operation publication, first legacy observation, pre-schema authorization, helper/outbox/dispatch, old-spawner terminal observation, sealed-process startup, post-termination all-36-zero observation, fresh migration-time reobservation, migration authorization/transaction/receipt/current audit, manifest activation, generic full verify/normal DB initialization/admission-ready CAS, mixed runtime observation, PBA resolution, canary fence/targets/start/settlement/close/release, ready publication, and response. Retry adopts only the same operation/head prefix. Race an owner/child at every observation-to-dispatch/termination/seal/apply boundary and require the replacement to stay sealed with migration unavailable. Tests reject default startup success while 32 is pending, any env/argv/caller sealed mode, generic early apply, Task 7 apply, normal complete-zero/restart before activation, missing/second pending migration, causal-pair drift, manifest before schema, canary before admission-ready, dashboard/MC pre-canary rebind, old-spawner production after terminal restart, PBA tamper, fork, second run, unrelated owner, one-sided close, release-before-close, caller scalar, or structural clone.
 
 - Round 3 crash fixtures stop before/after authorization, startup-token publication, restart-authority publication, helper dispatch, strict predecessor-termination observation, strict replacement-process observation, sealed-admission publication, migration-authorization consumption, terminal migration receipt, and admission-ready publication. Each status prefix resolves its exact operation and record pairs; retries adopt that prefix, and impossible nullability, crossed pairs, predicted generations, structural bodies, or newest-store scans fail without advancing.
+
+- Round 4 crash fixtures additionally stop before/after pre-mutation runtime-authority publication, migration authorization prepare, consumption, receipt publication, current-audit publication, admission-ready publication, mixed-runtime observation, canary start, terminal-settlement publication, compound target close, fence release, and entry publication. Every before/after boundary maps to one exact top-state/nested-phase combination above. Tests enumerate every strict branch, pairwise null relation, fixed predecessor pair, and finite blocked reason, and reject a skipped nested member, stale pre-mutation census, caller runtime body, crossed operation, or status repair.
 
 - [ ] **Step 1: Verify read-only prerequisites and prepare before mutation**
 
@@ -4298,6 +4656,11 @@ printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -e '
 ' --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
 A_PRE_ENTRY_SERVICES_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- service-census --json)"
+printf '%s\n' "$A_PRE_ENTRY_SERVICES_JSON" | jq -e '
+  .schema == "setfarm.internal-production-service-census.v1" and
+  (.serviceCensusHash | test("^[0-9a-f]{64}$")) and
+  [.services[].service] == ["spawner","dashboard","missionControl","openClaw"]
+' >/dev/null
 A_PRE_ENTRY_DASHBOARD_PID="$(printf '%s\n' "$A_PRE_ENTRY_SERVICES_JSON" | jq -er '.services[] | select(.service == "dashboard") | .pid')"
 A_PRE_ENTRY_MC_PID="$(printf '%s\n' "$A_PRE_ENTRY_SERVICES_JSON" | jq -er '.services[] | select(.service == "missionControl") | .pid')"
 require_authenticated_clean_main_setfarm_root_v1
@@ -4315,13 +4678,30 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   --arg operationRef "$A_CURRENT_ENTRY_OPERATION_REF" --arg operationHash "$A_CURRENT_ENTRY_OPERATION_HASH" \
   --arg pbaRef "$A_PBA_DELIVERY_EVIDENCE_REF" --arg pbaHash "$A_PBA_DELIVERY_EVIDENCE_HASH" \
   --arg v31Ref "$A_AUTHORITY_V3_V31_REF" --arg v31Hash "$A_AUTHORITY_V3_V31_HASH" \
-  --arg pendingRef "$A_PENDING_SUCCESSOR_REF" --arg pendingHash "$A_PENDING_SUCCESSOR_HASH" '
+  --arg pendingRef "$A_PENDING_SUCCESSOR_REF" --arg pendingHash "$A_PENDING_SUCCESSOR_HASH" \
+  --argjson preEntryCensus "$A_PRE_ENTRY_SERVICES_JSON" '
   .state == "operation_prepared" and
   .operationRef == $operationRef and .operationHash == $operationHash and
   .productBuildAuthorityV2DeliveryEvidenceRef == $pbaRef and
   .productBuildAuthorityV2DeliveryEvidenceHash == $pbaHash and
   .authorityV3Migration31AuditRef == $v31Ref and .authorityV3Migration31AuditHash == $v31Hash and
   .pendingBootstrapHandoffMigrationRef == $pendingRef and .pendingBootstrapHandoffMigrationHash == $pendingHash and
+  (.preMutationLoadedRuntimeServiceAuthorityRef | startswith("setfarm://internal-production/")) and
+  (.preMutationLoadedRuntimeServiceAuthorityHash | test("^[0-9a-f]{64}$")) and
+  .preMutationLoadedRuntimeServiceAuthority.schema ==
+    "setfarm.internal-production-pre-mutation-loaded-runtime-service-authority.v1" and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationRef == $operationRef and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationHash == $operationHash and
+  .preMutationLoadedRuntimeServiceAuthority.observedServiceCensusHash ==
+    $preEntryCensus.serviceCensusHash and
+  .preMutationLoadedRuntimeServiceAuthority.services == $preEntryCensus.services and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityRef ==
+    .preMutationLoadedRuntimeServiceAuthorityRef and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityHash ==
+    .preMutationLoadedRuntimeServiceAuthorityHash and
+  .preSchemaSpawnerRebindStatus == null and .migrationApplyingPhase == null and
+  .manifestActivation == null and .spawnerAdmissionTransitionPhase == null and
+  .canaryRunningPhase == null and .settledPhase == null and .entryAuthority == null and
   .preSchemaSpawnerRebindAuthorizationRef == null and
   .bootstrapHandoffMigrationReceiptRef == null and
   .ownerProducerManifestActivationRef == null and
@@ -4329,7 +4709,7 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
 ' >/dev/null
 ```
 
-Expected: read-only PBA/v31/pending/source/service prerequisites are captured before `prepare-current-entry`, and the durable `operation_prepared` pair/head exists before the first live mutation. Every later status field is null. This step invokes no resume, restart, migration, activation, guard, run, or other live mutation.
+Expected: read-only PBA/v31/pending/source prerequisites and the adjacent exact four-service census are captured before `prepare-current-entry`. Prepare publishes the operation, then the operation-bound pre-mutation loaded-runtime authority and `operation_prepared` status before the first live mutation. The status body pair-resolves to the byte-identical census services/hash and exact operation; every later phase field is null. This step invokes no resume, restart, migration, activation, guard, run, or other live mutation.
 
 - [ ] **Step 2: Resume the one operation to ready, then verify it read-only**
 
@@ -4360,10 +4740,20 @@ require_authenticated_clean_main_setfarm_root_v1
 A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
 A_CURRENT_ENTRY_PRE_RESUME_OPERATION_REF="$(printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -er '.operationRef')"
 A_CURRENT_ENTRY_PRE_RESUME_OPERATION_HASH="$(printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -er '.operationHash')"
+A_PRE_MUTATION_RUNTIME_AUTHORITY_REF="$(printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -er '.preMutationLoadedRuntimeServiceAuthorityRef')"
+A_PRE_MUTATION_RUNTIME_AUTHORITY_HASH="$(printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -er '.preMutationLoadedRuntimeServiceAuthorityHash')"
 printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -e '
   .schema == "setfarm.internal-production-current-entry-authority-status.v1" and
   (.operationRef | startswith("setfarm://internal-production/")) and
   (.operationHash | test("^[0-9a-f]{64}$")) and
+  (.preMutationLoadedRuntimeServiceAuthorityRef | startswith("setfarm://internal-production/")) and
+  (.preMutationLoadedRuntimeServiceAuthorityHash | test("^[0-9a-f]{64}$")) and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationRef == .operationRef and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationHash == .operationHash and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityRef ==
+    .preMutationLoadedRuntimeServiceAuthorityRef and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityHash ==
+    .preMutationLoadedRuntimeServiceAuthorityHash and
   (.state == "operation_prepared" or
    .state == "pre_schema_spawner_rebinding" or
    .state == "pre_manifest_bootstrap_sealed" or
@@ -4374,7 +4764,48 @@ printf '%s\n' "$A_CURRENT_ENTRY_PRE_RESUME_STATUS_JSON" | jq -e '
    .state == "canary_running" or
    .state == "settled" or
    .state == "ready") and
-  .state != "blocked"
+  .state != "blocked" and
+  (.state != "migration_applying" or
+    ((.migrationApplyingPhase.phase == "prepared" and
+      .migrationApplyingPhase.consumption == null and
+      .migrationApplyingPhase.migrationReceipt == null and
+      .migrationApplyingPhase.currentAudit == null) or
+     (.migrationApplyingPhase.phase == "consumed" and
+      .migrationApplyingPhase.consumption != null and
+      .migrationApplyingPhase.migrationReceipt == null and
+      .migrationApplyingPhase.currentAudit == null) or
+     (.migrationApplyingPhase.phase == "receipt_published" and
+      .migrationApplyingPhase.consumption != null and
+      .migrationApplyingPhase.migrationReceipt != null and
+      .migrationApplyingPhase.currentAudit == null) or
+     (.migrationApplyingPhase.phase == "current_audited" and
+      .migrationApplyingPhase.consumption != null and
+      .migrationApplyingPhase.migrationReceipt != null and
+      .migrationApplyingPhase.currentAudit != null))) and
+  (.state != "spawner_admission_transitioning" or
+    ((.spawnerAdmissionTransitionPhase.phase == "sealed" and
+      .spawnerAdmissionTransitionPhase.admissionReady == null and
+      .spawnerAdmissionTransitionPhase.loadedRuntimeServiceAuthority == null) or
+     (.spawnerAdmissionTransitionPhase.phase == "admission_ready" and
+      .spawnerAdmissionTransitionPhase.admissionReady != null and
+      .spawnerAdmissionTransitionPhase.loadedRuntimeServiceAuthority == null) or
+     (.spawnerAdmissionTransitionPhase.phase == "runtime_observed" and
+      .spawnerAdmissionTransitionPhase.admissionReady != null and
+      .spawnerAdmissionTransitionPhase.loadedRuntimeServiceAuthority != null))) and
+  (.state != "canary_running" or
+    ((.canaryRunningPhase.phase == "running" and
+      .canaryRunningPhase.terminalSettlementRef == null and
+      .canaryRunningPhase.targetCloseRef == null) or
+     (.canaryRunningPhase.phase == "terminal_settlement_published" and
+      .canaryRunningPhase.terminalSettlementRef != null and
+      .canaryRunningPhase.targetCloseRef == null))) and
+  (.state != "settled" or
+    ((.settledPhase.phase == "target_closed" and
+      .settledPhase.ownerAdmissionFenceReleaseRef == null and
+      .settledPhase.entryAuthorityRef == null) or
+     (.settledPhase.phase == "fence_released" and
+      .settledPhase.ownerAdmissionFenceReleaseRef != null and
+      .settledPhase.entryAuthorityRef == null)))
 ' >/dev/null
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- resume-current-entry --json >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
@@ -4389,11 +4820,34 @@ require_authenticated_clean_main_setfarm_root_v1
 A_CURRENT_ENTRY_STATUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
 printf '%s\n' "$A_CURRENT_ENTRY_STATUS_JSON" | jq -e \
   --arg operationRef "$A_CURRENT_ENTRY_PRE_RESUME_OPERATION_REF" --arg operationHash "$A_CURRENT_ENTRY_PRE_RESUME_OPERATION_HASH" \
+  --arg preMutationRuntimeRef "$A_PRE_MUTATION_RUNTIME_AUTHORITY_REF" --arg preMutationRuntimeHash "$A_PRE_MUTATION_RUNTIME_AUTHORITY_HASH" \
   --arg pbaRef "$A_READY_PBA_REF" --arg pbaHash "$A_READY_PBA_HASH" \
   --arg migrationRef "$A_READY_MIGRATION_REF" --arg migrationHash "$A_READY_MIGRATION_HASH" \
   --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" '
   .state == "ready" and
   .operationRef == $operationRef and .operationHash == $operationHash and
+  .preMutationLoadedRuntimeServiceAuthorityRef == $preMutationRuntimeRef and
+  .preMutationLoadedRuntimeServiceAuthorityHash == $preMutationRuntimeHash and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationRef == $operationRef and
+  .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationHash == $operationHash and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityRef ==
+    $preMutationRuntimeRef and
+  .preMutationLoadedRuntimeServiceAuthority.preMutationLoadedRuntimeServiceAuthorityHash ==
+    $preMutationRuntimeHash and
+  [.preMutationLoadedRuntimeServiceAuthority.services[].service] ==
+    ["spawner","dashboard","missionControl","openClaw"] and
+  .migrationApplyingPhase.phase == "current_audited" and
+  .migrationApplyingPhase.currentAudit != null and
+  .spawnerAdmissionTransitionPhase.phase == "runtime_observed" and
+  .spawnerAdmissionTransitionPhase.admissionReady != null and
+  .spawnerAdmissionTransitionPhase.loadedRuntimeServiceAuthority != null and
+  .canaryRunningPhase.phase == "terminal_settlement_published" and
+  .canaryRunningPhase.terminalSettlementRef != null and
+  .canaryRunningPhase.targetCloseRef == null and
+  .settledPhase.phase == "fence_released" and
+  .settledPhase.targetCloseRef != null and
+  .settledPhase.ownerAdmissionFenceReleaseRef != null and
+  .settledPhase.entryAuthorityRef == null and
   .controllerSourceAuthority.controllerSourceSha == $controllerSha and
   (.controllerSourceAuthority.controllerTreeHash | test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
   (.controllerSourceAuthority.controllerBuildHash | test("^[0-9a-f]{64}$")) and
@@ -4468,7 +4922,7 @@ require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- verify-current-entry --json
 ```
 
-Expected: the adjacent read-only status block freshly reopens the one fixed operation in a valid resumable prefix; `blocked`, `absent`, or a crossed operation fails before mutation. The single zero-input `resume-current-entry` then internally consumes that fixed authority and drives or adopts it through the acyclic startup token → restart → predecessor termination/postzero → sealed admission chain, pre-manifest migration authorization/applied-current receipt, A activation, unchanged-generation admission-ready transition, and one fence/two-target canary lifecycle. It internally establishes the durable `prepared` admission-ready barrier before canary admission and never accepts mutation argv. A ready retry returns the byte-identical terminal without a new effect. Every crash/retry uses the same operation head and cannot skip or overshoot an invalid prefix. Dashboard and Mission Control remain on their pre-mutation PIDs. Subsequent status, service census, pair resolution, and `verify-current-entry` calls are read-only. The canary records one exact observed failure lifecycle; the separate focused-test receipt remains the proof for the complete three-code set.
+Expected: the adjacent read-only status block freshly reopens the one fixed operation and its exact pre-mutation loaded-runtime pair/body in a valid resumable prefix; `blocked`, `absent`, a census/runtime drift, or a crossed operation fails before mutation. It validates the phase-specific nullability for every resumable nested discriminant. The single zero-input `resume-current-entry` then internally consumes that fixed authority and drives or adopts it through the acyclic startup token → restart → predecessor termination/postzero → sealed admission chain, all four migration phases, A activation, all three admission phases, both canary phases, both settled phases, and ready publication. It internally establishes the durable `prepared` admission-ready barrier before canary admission and never accepts mutation argv. A ready retry returns the byte-identical terminal without a new effect. Every crash/retry uses the same operation head, pre-mutation runtime pair, and nested phase prefix and cannot skip or overshoot an invalid boundary. The ready status reopens the same pre-mutation pair, asserts terminal nested phases, and proves dashboard/Mission Control remain on those pre-mutation PIDs. Subsequent status, service census, pair resolution, and `verify-current-entry` calls are read-only. The canary records one exact observed failure lifecycle; the separate focused-test receipt remains the proof for the complete three-code set.
 
 Task 7 alone may consume this ready pre-rebind pair. No Task 8 or B/C/D/E action consumes it directly; those phases require Task 7's strict post-rebind successor.
 
@@ -4483,7 +4937,7 @@ Task 7 alone may consume this ready pre-rebind pair. No Task 8 or B/C/D/E action
 
 **Interfaces:**
 
-- Consumes: the ready pre-full-rebind `InternalProductionCurrentEntryAuthorityPairV1`, including its prepared-before-mutation operation, pre-schema startup token/restart/termination/postzero/sealed chain, already applied/current migration receipt/audit with immutable v31/pending causal quartet, A-manifest activation, same-generation normal-admission-ready pair, mixed loaded-runtime authority, canary chain, and PBA pair; merged Mission Control `main`; merged Setfarm `main`; and zero active ownership.
+- Consumes: the ready pre-full-rebind `InternalProductionCurrentEntryAuthorityPairV1`, including its prepared-before-mutation operation and exact pre-mutation loaded-runtime authority pair/body, pre-schema startup token/restart/termination/postzero/sealed chain, already applied/current migration receipt/audit with immutable v31/pending causal quartet, A-manifest activation, same-generation normal-admission-ready pair, mixed loaded-runtime authority, terminal nested phase chain, canary chain, and PBA pair; merged Mission Control `main`; merged Setfarm `main`; and zero active ownership.
 - Produces: no schema mutation. It read-only reopens/verifies that same migration receipt/current audit, then loads clean-main builds into the Setfarm spawner, Setfarm dashboard, and Mission Control processes with healthy HTTP endpoints and exact process/build identity evidence, and seals one strict `InternalProductionPostRebindEntryAuthorityPairV1` successor.
 
 `InternalProductionPostRebindEntryAuthorityV1` has schema `setfarm.internal-production-post-rebind-entry-authority.v1` and exact derived pair `{postRebindEntryAuthorityRef,postRebindEntryAuthorityHash}`. It binds the predecessor current-entry pair and reopens its controller operation, pre-schema token/restart/sealed admission/postzero, admission-ready transition, mixed predecessor runtime, applied migration receipt/current audit, A-manifest activation, canary chain, and PBA pair. It binds the byte-identical migration pair again rather than creating a Task 7 migration authority; the receipt's v31/pending and pre-schema authorization chains remain causal history only. It additionally binds the live-rebind restart-sequence pair and three ordered service authority pairs; Task 7 Setfarm controller source/tree/build; Mission Control source/tree/build; post-rebind loaded-service authority; service census, runtime-source, health, and final complete zero-owner hashes. Every scoped loaded Setfarm service must equal Task 7's controller source/build and Mission Control must equal its Task 7 build; OpenClaw remains identity/health only. The loaded PBA endpoint must resolve by HTTP to the predecessor pair. The resolver/current verifier reopens every dependency and reobserves source/build/schema/services/evidence/zero owners without any migration writer.
