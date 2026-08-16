@@ -131,7 +131,8 @@ Run:
 ```bash
 test "$(rg -c '^<!-- standing-owner-authorization-v1:start -->$' AGENTS.md)" -eq 1
 test "$(rg -c '^<!-- standing-owner-authorization-v1:end -->$' AGENTS.md)" -eq 1
-rg -n 'A stale stored `blocked` status is historical evidence' AGENTS.md
+rg -n 'A stale stored$' AGENTS.md
+rg -n '^`blocked` status is historical evidence' AGENTS.md
 rg -n 'Standing authority never permits a direct commit to `main`' AGENTS.md
 rg -n 'governs causally necessary root fixes' \
   docs/superpowers/plans/2026-08-16-design-source-semantic-retry-closure-plan.md
@@ -152,13 +153,14 @@ Run:
 ```bash
 git add -- \
   AGENTS.md \
-  docs/superpowers/plans/2026-08-16-design-source-semantic-retry-closure-plan.md
+  docs/superpowers/plans/2026-08-16-design-source-semantic-retry-closure-plan.md \
+  docs/superpowers/plans/2026-08-16-standing-owner-authorization-protocol-plan.md
 git diff --cached --check
 git diff --cached --name-only
 git commit -m "docs: adopt standing owner authorization"
 ```
 
-Expected: the staged file list is exactly `AGENTS.md` and the semantic-retry plan. The already committed spec and implementation plan remain earlier commits on the same branch. The new commit succeeds on `docs/standing-owner-authorization-v1`, and `git status --short` is empty.
+Expected: the staged file list is exactly `AGENTS.md`, the semantic-retry plan, and this plan's verification correction. The already committed spec remains an earlier commit on the same branch. The new commit succeeds on `docs/standing-owner-authorization-v1`, and `git status --short` is empty.
 
 ---
 
@@ -360,7 +362,8 @@ trap 'rm -f "$BLOCK_FILE"' EXIT
 extract_authorization_block "$ROOT_AGENTS" > "$BLOCK_FILE"
 
 rg -n 'systemic root fix discovered from current evidence remains in scope' "$BLOCK_FILE"
-rg -n 'A stale stored `blocked` status is historical evidence' "$BLOCK_FILE"
+rg -n 'A stale stored$' "$BLOCK_FILE"
+rg -n '^`blocked` status is historical evidence' "$BLOCK_FILE"
 rg -n 'Do not ask the user to reconfirm each commit, push, PR update, merge' "$BLOCK_FILE"
 rg -n 'direct commit to `main`' "$BLOCK_FILE"
 rg -n 'destructive data or filesystem mutation' "$BLOCK_FILE"
