@@ -28,6 +28,7 @@ import {
   resolveProductArtifactDir,
 } from "../runtime-config.js";
 import { readShadowParityReport } from "../execution/shadow-parity.js";
+import { isSetfarmOperationalActiveRunStatusV1 } from "../contracts/operational-active-run-status-v1.js";
 import {
   createV3ProjectTransferAckRepository,
   V3ProjectTransferAckRepositoryError,
@@ -66,29 +67,41 @@ function loadWorkflows(): WorkflowDef[] {
   return results;
 }
 
-type DashboardRunInfo = RunInfo & {
+export type DashboardRunInfo = RunInfo & {
   steps: StepInfo[];
+  operationalActive: boolean;
   terminal: boolean;
   derived_status: "active" | "terminal" | "completed" | "queued";
 };
 
-function isTerminalRunStatus(status: string | null | undefined): boolean {
-  return ["failed", "cancelled", "canceled", "error"].includes(String(status || "").trim().toLowerCase());
-}
-
-function dashboardDerivedStatus(run: RunInfo): DashboardRunInfo["derived_status"] {
+function dashboardDerivedStatus(
+  run: RunInfo,
+  operationalActive: boolean,
+): DashboardRunInfo["derived_status"] {
   const status = String(run.status || "").trim().toLowerCase();
-  if (isTerminalRunStatus(status)) return "terminal";
+  if (operationalActive) return "active";
   if (status === "completed" || status === "done") return "completed";
-  if (status === "running") return "active";
+  if (
+    status === "failed"
+    || status === "cancelled"
+    || status === "canceled"
+    || status === "error"
+  ) return "terminal";
   return "queued";
 }
 
-function decorateDashboardRun(run: RunInfo & { steps: StepInfo[] }): DashboardRunInfo {
+export function projectDashboardRunForApi(
+  run: RunInfo & { steps: StepInfo[] },
+  options: { includeTerminal?: boolean } = {},
+): DashboardRunInfo | null {
+  const operationalActive = isSetfarmOperationalActiveRunStatusV1(run.status);
+  if (!options.includeTerminal && !operationalActive) return null;
+  const derivedStatus = dashboardDerivedStatus(run, operationalActive);
   return {
     ...run,
-    terminal: isTerminalRunStatus(run.status),
-    derived_status: dashboardDerivedStatus(run),
+    operationalActive,
+    terminal: derivedStatus === "terminal",
+    derived_status: derivedStatus,
   };
 }
 
@@ -98,9 +111,10 @@ async function getRuns(workflowId?: string, options: { includeTerminal?: boolean
     : await pgQuery<RunInfo>("SELECT * FROM runs ORDER BY created_at DESC");
   const results: DashboardRunInfo[] = [];
   for (const r of runs) {
-    if (!options.includeTerminal && isTerminalRunStatus(r.status)) continue;
+    const projection = projectDashboardRunForApi({ ...r, steps: [] }, options);
+    if (!projection) continue;
     const steps = await pgQuery<StepInfo>("SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index ASC", [r.id]);
-    results.push(decorateDashboardRun({ ...r, steps }));
+    results.push({ ...projection, steps });
   }
   return results;
 }
