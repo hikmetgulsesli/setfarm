@@ -30,6 +30,9 @@
 On 2026-08-16, the user explicitly authorized the primary Setfarm owner for this goal to stage only the approved File Map, commit and push `fix/design-semantic-retry-v2`, open and update its PR, address scoped CI or review findings, mark the PR ready, merge it after all required checks and actionable review threads are clear, and perform the code-owned clean-main rollout, canary, matrix, recovery, and Mission Control reconciliation in Task 8. This authorization overrides the implementation/reviewer handoff restriction only for that primary owner and this branch/PR/goal; implementation and review agents remain read-only delivery claimants.
 
 The authorization does not waive branch protection, clean-worktree gates, tests, review requirements, zero-owner/restart authorities, secret rules, or evidence requirements. It does not authorize manual service starts, ad hoc database mutation, unrelated file delivery, force-push, direct commits to `main`, or external signed distribution. It expires when this internal-production goal is complete or when work would expand beyond the approved File Map and Task 8 scope.
+
+`Standing Owner Authorization v1` now governs causally necessary root fixes discovered while this internal-production objective remains active. Such a fix no longer expires merely because its exact path was absent from the original File Map; the primary owner must first record the causal evidence, update the File Map and tests, and preserve every exclusion above. The user's explicit `resume`, `continue`, `fix all remaining problems`, or equivalent instruction renews execution under a fresh blocked-condition audit without granting external signed-distribution authority.
+
 - Stop and classify rather than widening a gate if one post-fix systemic root repeats three times.
 - External signed distribution remains explicitly deferred and outside this plan.
 

@@ -106,6 +106,47 @@ Developer, reviewer, supervisor, QA, and final-test agents must not stage, commi
 
 Do not commit `.env`, tokens, local run state, generated project worktrees, or transient evidence directories.
 
+<!-- standing-owner-authorization-v1:start -->
+## Standing Owner Authorization v1
+
+An explicit user instruction to fix, complete, continue, proceed, or resume a
+bounded objective authorizes the active primary owner to perform the ordinary,
+reversible work required to achieve that objective without repeatedly asking
+for the same permission. This includes read-only investigation, isolated
+worktrees and scoped branches, in-scope source/test/docs/config changes,
+proportional verification, staging and conventional commits, pushing the scoped
+branch, reviewed pull-request delivery, clean-main synchronization, and
+code-owned fail-closed rollout or health verification required by the goal.
+
+A systemic root fix discovered from current evidence remains in scope when it is
+causally necessary for the same objective. Before delivery, record that relation
+in the task plan, update the File Map and tests, and keep the change to the
+smallest root fix. This is scope refinement, not authority for an unrelated
+feature. Implementation and review agents remain non-delivery roles unless the
+user explicitly appoints one as the primary owner.
+
+Standing authority never permits a direct commit to `main`, force-push or
+history rewrite, destructive data or filesystem mutation, credential/secret or
+access-control changes, safety/test/runtime-guard bypasses, unrelated scope,
+material paid third-party activity, or external signing, notarization,
+distribution, or public release. Stop at that exact boundary and request only
+the missing authority. All clean-worktree, single-writer, branch-protection,
+test, review, zero-owner, secret, runtime, and evidence requirements remain in
+force.
+
+When the user says `resume`, `continue`, or an equivalent phrase, begin a fresh
+blocked-condition audit and continue safe in-scope work. A stale stored
+`blocked` status is historical evidence, not an irrevocable lock. Mark the goal
+blocked again only under the current repeated-blocker rule, and mark it complete
+only after every required outcome is proven.
+
+When this protocol is sufficient, state once that it is being used and proceed.
+Do not ask the user to reconfirm each commit, push, PR update, merge, clean-main
+rollout, or causally required in-goal root fix. This protocol cannot override
+higher-priority system instructions, tool restrictions, or explicit user
+revocation.
+<!-- standing-owner-authorization-v1:end -->
+
 ## Testing Expectations
 
 Add regression tests for every gate, validator, PR lifecycle, state transition, Mission Control state derivation, spawner recovery, or evidence bug. For changes in generated-screen, setup-build, verify, QA, final-test, spawner, or Mission Control behavior, run focused tests plus `npm run build` when code changes require compilation.
