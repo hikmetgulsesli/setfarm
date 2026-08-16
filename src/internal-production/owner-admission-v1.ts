@@ -13,15 +13,53 @@ function fail(code: string): never {
 
 function record(value: unknown, code: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) fail(code);
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) fail(code);
+  if (Object.getPrototypeOf(value) !== Object.prototype) fail(code);
   return value as Record<string, unknown>;
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], code: string): void {
-  const actual = Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key === "symbol")) fail(code);
+  const actual = ownKeys as string[];
   const wanted = [...expected].sort();
-  if (JSON.stringify(actual) !== JSON.stringify(wanted)) fail(code);
+  if (JSON.stringify([...actual].sort()) !== JSON.stringify(wanted)) fail(code);
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) fail(code);
+  }
+}
+
+function arrayValue(value: unknown, code: string): unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) fail(code);
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key === "symbol")) fail(code);
+  const expected = [
+    ...Array.from({ length: value.length }, (_, index) => String(index)),
+    "length",
+  ].sort();
+  if (JSON.stringify((ownKeys as string[]).sort()) !== JSON.stringify(expected)) fail(code);
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) fail(code);
+  }
+  return value;
+}
+
+function detachedDeepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((member) => detachedDeepFreeze(member))) as T;
+  }
+  const clone: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") fail("INTERNAL_PRODUCTION_OWNER_VALUE_SYMBOL_INVALID");
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      fail("INTERNAL_PRODUCTION_OWNER_VALUE_PROPERTY_INVALID");
+    }
+    clone[key] = detachedDeepFreeze(descriptor.value);
+  }
+  return Object.freeze(clone) as T;
 }
 
 function stringValue(value: unknown, code: string, maximum = 4_000): string {
@@ -52,7 +90,7 @@ function contentRef(namespace: string, hash: string): string {
   return `setfarm://internal-production/${namespace}/${hash}`;
 }
 
-export const INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1 = [
+export const INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1 = detachedDeepFreeze([
   "run", "claim", "execution-attempt", "runtime-session", "completion-owner", "mandatory-effect",
   "ordinary-service-start", "restart-reservation", "service-restart-operation",
   "launch-preparation", "prepared-launch", "staged-case", "fixture-attempt",
@@ -61,7 +99,7 @@ export const INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1 = [
   "launch-outbox", "termination", "finding", "recovery", "operational-delivery",
   "source-run", "cold-rehearsal", "compilation-lease", "execution-lease",
   "process", "listener", "worktree", "dirty-worktree", "stale-child",
-] as const;
+] as const);
 
 export type InternalProductionOwnerCategoryV1 =
   typeof INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1[number];
@@ -112,7 +150,7 @@ export type InternalProductionCompleteZeroOwnerCensusV1 = Readonly<{
   staleChildCount: number;
 }>;
 
-export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1 = {
+export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1 = detachedDeepFreeze({
   run: ["activeRunCount"],
   claim: ["openClaimCount"],
   "execution-attempt": ["executionAttemptCount"],
@@ -151,7 +189,7 @@ export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1 = {
 } as const satisfies Record<
   InternalProductionOwnerCategoryV1,
   readonly (keyof InternalProductionCompleteZeroOwnerCensusV1)[]
->;
+>);
 
 export type InternalProductionOwnerProducerRowV1 = Readonly<{
   plan: "A" | "B" | "C" | "D" | "E";
@@ -163,7 +201,7 @@ export type InternalProductionOwnerProducerRowV1 = Readonly<{
   censusKeys: readonly (keyof InternalProductionCompleteZeroOwnerCensusV1)[];
 }>;
 
-export const INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1 = [
+export const INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1 = detachedDeepFreeze([
   { plan: "A", module: "src/execution/run-persistence.ts", function: "persistWorkflowRunInTransaction", implementationId: "a-runtime-run-v1", category: "run", ownerKeyDerivationId: "run-id-generation-v1", censusKeys: ["activeRunCount"] },
   { plan: "A", module: "src/execution/claim-runtime-publication.ts", function: "publishSingleClaimRuntime", implementationId: "a-claim-single-runtime-v1", category: "claim", ownerKeyDerivationId: "claim-log-id-v1", censusKeys: ["openClaimCount"] },
   { plan: "A", module: "src/execution/claim-runtime-publication.ts", function: "publishLoopClaimRuntime", implementationId: "a-claim-loop-runtime-v1", category: "claim", ownerKeyDerivationId: "claim-log-id-v1", censusKeys: ["openClaimCount"] },
@@ -180,7 +218,7 @@ export const INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1 = [
   { plan: "A", module: "src/execution/operational-outbox-repository.ts", function: "createOperationalOutboxRepository.publish", implementationId: "a-operational-delivery-v1", category: "operational-delivery", ownerKeyDerivationId: "operational-event-key-consumer-v1", censusKeys: ["operationalDeliveryCount"] },
   { plan: "A", module: "src/internal-production/baseline-post-handoff-receipt-v1.ts", function: "reserveRecoverySourceRunOwnerV1", implementationId: "a-recovery-source-run-v1", category: "source-run", ownerKeyDerivationId: "source-bootstrap-operation-run-v1", censusKeys: ["sourceRunOwnerCount"] },
   { plan: "A", module: "src/internal-production/baseline-post-handoff-receipt-v1.ts", function: "reserveRecoverySourceBootstrapRunOwnerV1", implementationId: "a-recovery-source-bootstrap-run-v1", category: "run", ownerKeyDerivationId: "source-bootstrap-reciprocal-run-v1", censusKeys: ["activeRunCount"] },
-] as const satisfies readonly InternalProductionOwnerProducerRowV1[];
+] as const satisfies readonly InternalProductionOwnerProducerRowV1[]);
 
 export type InternalProductionOwnerProducerManifestV1 = Readonly<{
   schema: "setfarm.internal-production-owner-producer-manifest.v1";
@@ -191,7 +229,7 @@ export type InternalProductionOwnerProducerManifestV1 = Readonly<{
 
 export type InternalProductionOwnerProducerImplementationIdV1 = string;
 
-export const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1 = {
+export const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1 = detachedDeepFreeze({
   schema: "setfarm.internal-production-owner-producer-manifest.v1",
   plan: "A",
   rows: INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
@@ -200,7 +238,7 @@ export const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1 = {
     plan: "A",
     rows: INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
   }),
-} as const satisfies InternalProductionOwnerProducerManifestV1;
+} as const satisfies InternalProductionOwnerProducerManifestV1);
 
 function validateProducerRow(value: unknown, expectedPlan?: string): InternalProductionOwnerProducerRowV1 {
   const row = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_INVALID");
@@ -215,11 +253,11 @@ function validateProducerRow(value: unknown, expectedPlan?: string): InternalPro
   stringValue(row.implementationId, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_IMPLEMENTATION_ID_INVALID");
   const ownerCategory = category(row.category, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_CATEGORY_INVALID");
   stringValue(row.ownerKeyDerivationId, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_OWNER_KEY_DERIVATION_INVALID");
-  if (!Array.isArray(row.censusKeys)) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_CENSUS_KEYS_INVALID");
+  arrayValue(row.censusKeys, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_CENSUS_KEYS_INVALID");
   if (!equalCanonical(row.censusKeys, INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1[ownerCategory])) {
     fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ROW_CENSUS_KEYS_INVALID");
   }
-  return value as InternalProductionOwnerProducerRowV1;
+  return detachedDeepFreeze(value as InternalProductionOwnerProducerRowV1);
 }
 
 export function validateInternalProductionOwnerProducerManifestV1(
@@ -234,8 +272,11 @@ export function validateInternalProductionOwnerProducerManifestV1(
   if (!PLANS.includes(manifest.plan as typeof PLANS[number])) {
     fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_PLAN_INVALID");
   }
-  if (!Array.isArray(manifest.rows)) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_ROWS_INVALID");
-  const rows = manifest.rows.map((row) => validateProducerRow(row, manifest.plan as string));
+  const manifestRows = arrayValue(
+    manifest.rows,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_ROWS_INVALID",
+  );
+  const rows = manifestRows.map((row) => validateProducerRow(row, manifest.plan as string));
   const implementationIds = new Set<string>();
   const moduleFunctions = new Set<string>();
   const ownerKeyTuples = new Set<string>();
@@ -266,7 +307,7 @@ export function validateInternalProductionOwnerProducerManifestV1(
   if (manifest.plan === "A" && !equalCanonical(manifest.rows, INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1)) {
     fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_PLAN_A_ROWS_INVALID");
   }
-  return value as InternalProductionOwnerProducerManifestV1;
+  return detachedDeepFreeze(value as InternalProductionOwnerProducerManifestV1);
 }
 
 export type InternalProductionOwnerProducerManifestSetPhaseV1 =
@@ -337,10 +378,14 @@ export function assembleInternalProductionOwnerProducerRegistryV1(input: Readonl
 }>): Readonly<{ rows: readonly InternalProductionOwnerProducerRowV1[]; registryHash: string }> {
   const outer = record(input, "INTERNAL_PRODUCTION_OWNER_PRODUCER_REGISTRY_INPUT_INVALID");
   exactKeys(outer, ["manifests"], "INTERNAL_PRODUCTION_OWNER_PRODUCER_REGISTRY_INPUT_KEYS_INVALID");
-  if (!Array.isArray(input.manifests) || input.manifests.length !== 5) {
+  const inputManifests = arrayValue(
+    input.manifests,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_SET_INVALID",
+  );
+  if (inputManifests.length !== 5) {
     fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_SET_INVALID");
   }
-  const manifests = input.manifests.map(validateInternalProductionOwnerProducerManifestV1);
+  const manifests = inputManifests.map(validateInternalProductionOwnerProducerManifestV1);
   for (let index = 0; index < manifests.length; index += 1) {
     const manifest = manifests[index]!;
     if (manifest.plan !== PLANS[index]) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_ORDER_INVALID");
@@ -368,8 +413,8 @@ export function assembleInternalProductionOwnerProducerRegistryV1(input: Readonl
     }
     ownerKeyTuples.add(tuple);
   }
-  return Object.freeze({
-    rows: Object.freeze(rows),
+  return detachedDeepFreeze({
+    rows,
     registryHash: hashCanonicalJson({
       schema: "setfarm.internal-production-owner-producer-registry.v1",
       rows,
@@ -498,7 +543,7 @@ export function createInternalProductionOwnerReservationV1(input: Readonly<{
 }>): InternalProductionOwnerReservationV1 {
   const projection = reservationProjection(input);
   const reservationHash = hashCanonicalJson(projection);
-  return Object.freeze({
+  return detachedDeepFreeze({
     ...projection,
     reservationRef: contentRef("owner-reservations", reservationHash),
     reservationHash,
@@ -537,7 +582,7 @@ export function validateInternalProductionOwnerReservationV1(
     ownerAdmissionHeadPredecessorHash: reservation.ownerAdmissionHeadPredecessorHash as string,
   });
   if (!equalCanonical(value, expected)) fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_DERIVATION_INVALID");
-  return value as InternalProductionOwnerReservationV1;
+  return detachedDeepFreeze(value as InternalProductionOwnerReservationV1);
 }
 
 export function validateInternalProductionCanonicalOwnerIdentityV1<
@@ -553,7 +598,7 @@ export function validateInternalProductionCanonicalOwnerIdentityV1<
   stringValue(identity.ownerKey, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_KEY_INVALID");
   canonicalRef(identity.ownerRef, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_REF_INVALID");
   sha256(identity.ownerHash, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_HASH_INVALID");
-  return value as InternalProductionCanonicalOwnerIdentityV1<Category>;
+  return detachedDeepFreeze(value as InternalProductionCanonicalOwnerIdentityV1<Category>);
 }
 
 function bindingProjection<Category extends InternalProductionOwnerCategoryV1>(
@@ -587,7 +632,7 @@ export function createInternalProductionBoundOwnerReservationV1<
   canonicalRef(input.reservation.reservationRef, "INTERNAL_PRODUCTION_OWNER_RESERVATION_REF_INVALID");
   sha256(input.reservation.reservationHash, "INTERNAL_PRODUCTION_OWNER_RESERVATION_HASH_INVALID");
   const projection = bindingProjection(input.reservation, identity);
-  return Object.freeze({ ...projection, bindingHash: hashCanonicalJson(projection) });
+  return detachedDeepFreeze({ ...projection, bindingHash: hashCanonicalJson(projection) });
 }
 
 export function validateInternalProductionBoundOwnerReservationV1<
@@ -616,7 +661,7 @@ export function validateInternalProductionBoundOwnerReservationV1<
   if (bound.bindingHash !== hashCanonicalJson(projection)) {
     fail("INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_BINDING_HASH_INVALID");
   }
-  return value as InternalProductionBoundOwnerReservationV1<Category>;
+  return detachedDeepFreeze(value as InternalProductionBoundOwnerReservationV1<Category>);
 }
 
 export function createInternalProductionTerminalOwnerAuthorityV1<
@@ -629,7 +674,7 @@ export function createInternalProductionTerminalOwnerAuthorityV1<
   const identity = validateInternalProductionCanonicalOwnerIdentityV1<Category>(
     input.canonicalOwnerIdentity,
   );
-  return Object.freeze({
+  return detachedDeepFreeze({
     schema: "setfarm.internal-production-terminal-owner-authority.v1" as const,
     category: identity.category,
     ownerKey: identity.ownerKey,
@@ -659,7 +704,7 @@ export function validateInternalProductionTerminalOwnerAuthorityV1<
   sha256(authority.ownerHash, "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_HASH_INVALID");
   canonicalRef(authority.terminalOwnerRef, "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID");
   sha256(authority.terminalOwnerHash, "INTERNAL_PRODUCTION_TERMINAL_OWNER_HASH_INVALID");
-  return value as InternalProductionTerminalOwnerAuthorityV1<Category>;
+  return detachedDeepFreeze(value as InternalProductionTerminalOwnerAuthorityV1<Category>);
 }
 
 export function deriveInternalProductionTerminalOwnerAuthorityPairV1(
@@ -667,7 +712,7 @@ export function deriveInternalProductionTerminalOwnerAuthorityPairV1(
 ): InternalProductionTerminalOwnerAuthorityPairV1 {
   const authority = validateInternalProductionTerminalOwnerAuthorityV1(authorityInput);
   const terminalAuthorityHash = hashCanonicalJson(authority);
-  return Object.freeze({
+  return detachedDeepFreeze({
     terminalAuthorityRef: contentRef("terminal-owner-authorities", terminalAuthorityHash),
     terminalAuthorityHash,
   });
@@ -688,7 +733,7 @@ export function validateInternalProductionTerminalOwnerAuthorityPairV1(
   if (!equalCanonical(pair, expected)) {
     fail("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID");
   }
-  return value as InternalProductionTerminalOwnerAuthorityPairV1;
+  return detachedDeepFreeze(value as InternalProductionTerminalOwnerAuthorityPairV1);
 }
 
 function closeProjection(input: Readonly<{
@@ -752,7 +797,7 @@ export function createInternalProductionOwnerReservationCloseV1(input: Readonly<
 }>): InternalProductionOwnerReservationCloseV1 {
   const projection = closeProjection(input);
   const closeHash = hashCanonicalJson(projection);
-  return Object.freeze({
+  return detachedDeepFreeze({
     ...projection,
     closeRef: contentRef("owner-reservation-closes", closeHash),
     closeHash,
@@ -803,7 +848,7 @@ export function validateInternalProductionOwnerReservationCloseV1(
     close.closeHash !== expectedHash
     || close.closeRef !== contentRef("owner-reservation-closes", expectedHash)
   ) fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_DERIVATION_INVALID");
-  return value as InternalProductionOwnerReservationCloseV1;
+  return detachedDeepFreeze(value as InternalProductionOwnerReservationCloseV1);
 }
 
 export type PgTransactionSql = postgres.TransactionSql;

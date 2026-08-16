@@ -29,6 +29,17 @@ const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
 
+function assertDeepFrozen(value: unknown, label: string): void {
+  if (value === null || typeof value !== "object") return;
+  assert.equal(Object.isFrozen(value), true, `${label} must be frozen`);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && "value" in descriptor) {
+      assertDeepFrozen(descriptor.value, `${label}.${String(key)}`);
+    }
+  }
+}
+
 const EXPECTED_CATEGORIES = [
   "run", "claim", "execution-attempt", "runtime-session", "completion-owner",
   "mandatory-effect", "ordinary-service-start", "restart-reservation",
@@ -97,7 +108,7 @@ test("freezes and hashes the exact sixteen A producer rows", () => {
     ]),
     EXPECTED_A_TUPLES,
   );
-  assert.equal(
+  assert.deepEqual(
     INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash,
     hashCanonicalJson({
       schema: "setfarm.internal-production-owner-producer-manifest.v1",
@@ -105,7 +116,7 @@ test("freezes and hashes the exact sixteen A producer rows", () => {
       rows: INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
     }),
   );
-  assert.equal(
+  assert.deepEqual(
     validateInternalProductionOwnerProducerManifestV1(
       INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
     ),
@@ -214,11 +225,11 @@ function reservationFixture() {
 
 test("constructs canonical reservation, binding, terminal authority, and pair", () => {
   const { row, reservation, bound, terminal } = reservationFixture();
-  assert.equal(validateInternalProductionOwnerReservationV1(reservation, row), reservation);
-  assert.equal(validateInternalProductionBoundOwnerReservationV1(bound), bound);
-  assert.equal(validateInternalProductionTerminalOwnerAuthorityV1(terminal), terminal);
+  assert.deepEqual(validateInternalProductionOwnerReservationV1(reservation, row), reservation);
+  assert.deepEqual(validateInternalProductionBoundOwnerReservationV1(bound), bound);
+  assert.deepEqual(validateInternalProductionTerminalOwnerAuthorityV1(terminal), terminal);
   const pair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
-  assert.equal(validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal), pair);
+  assert.deepEqual(validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal), pair);
   assert.match(reservation.reservationRef, /^setfarm:\/\/internal-production\/owner-reservations\/[a-f0-9]{64}$/);
   assert.match(bound.bindingHash, /^[a-f0-9]{64}$/);
 });
@@ -264,7 +275,7 @@ test("constructs ordinary and fence-target closes with exact pair and hash rules
     preservedFenceRef: null,
     preservedFenceHash: null,
   });
-  assert.equal(validateInternalProductionOwnerReservationCloseV1(ordinary), ordinary);
+  assert.deepEqual(validateInternalProductionOwnerReservationCloseV1(ordinary), ordinary);
   assert.throws(
     () => validateInternalProductionOwnerReservationCloseV1({ ...ordinary, extra: true }),
     /CLOSE_KEYS_INVALID/,
@@ -290,7 +301,117 @@ test("constructs ordinary and fence-target closes with exact pair and hash rules
     preservedFenceRef: "setfarm://internal-production/fences/test",
     preservedFenceHash: SHA_C,
   });
-  assert.equal(validateInternalProductionOwnerReservationCloseV1(fenced), fenced);
+  assert.deepEqual(validateInternalProductionOwnerReservationCloseV1(fenced), fenced);
+});
+
+test("exports and every successful construction or validation are detached and deeply immutable", () => {
+  assertDeepFrozen(INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1, "category registry");
+  assertDeepFrozen(INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1, "census map");
+  assertDeepFrozen(INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1, "A rows");
+  assertDeepFrozen(INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1, "A manifest");
+
+  const callerManifest = structuredClone(INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1);
+  const validatedManifest = validateInternalProductionOwnerProducerManifestV1(callerManifest);
+  assertDeepFrozen(validatedManifest, "validated manifest");
+  callerManifest.rows[0]!.module = "src/caller-mutated.ts";
+  assert.equal(validatedManifest.rows[0]!.module, "src/execution/run-persistence.ts");
+
+  const manifests = [
+    INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
+    syntheticManifest("B", 10), syntheticManifest("C", 6),
+    syntheticManifest("D", 16), syntheticManifest("E", 9),
+  ] as const;
+  const assembled = assembleInternalProductionOwnerProducerRegistryV1({ manifests });
+  assertDeepFrozen(assembled, "assembled registry");
+  const originalB = manifests[1].rows[0] as { module: string };
+  originalB.module = "src/caller-mutated-b.ts";
+  assert.notEqual(assembled.rows[16]!.module, originalB.module);
+
+  const { row, reservation, identity, bound, terminal } = reservationFixture();
+  const callerReservation = structuredClone(reservation);
+  const validatedReservation = validateInternalProductionOwnerReservationV1(callerReservation, row);
+  const callerBound = structuredClone(bound);
+  const validatedBound = validateInternalProductionBoundOwnerReservationV1(callerBound);
+  const callerTerminal = structuredClone(terminal);
+  const validatedTerminal = validateInternalProductionTerminalOwnerAuthorityV1(callerTerminal);
+  const terminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+  const callerPair = structuredClone(terminalPair);
+  const validatedPair = validateInternalProductionTerminalOwnerAuthorityPairV1(callerPair, terminal);
+  const close = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "ordinary",
+    boundReservation: bound,
+    terminalAuthority: terminal,
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+    ownerAdmissionHeadSuccessorHash: SHA_B,
+    preservedFenceRef: null,
+    preservedFenceHash: null,
+  });
+  const callerClose = structuredClone(close);
+  const validatedClose = validateInternalProductionOwnerReservationCloseV1(callerClose);
+  for (const [label, value] of [
+    ["reservation", reservation], ["validated reservation", validatedReservation],
+    ["binding", bound], ["validated binding", validatedBound],
+    ["terminal", terminal], ["validated terminal", validatedTerminal],
+    ["terminal pair", terminalPair], ["validated terminal pair", validatedPair],
+    ["close", close], ["validated close", validatedClose],
+  ] as const) assertDeepFrozen(value, label);
+  assertDeepFrozen(validatedBound.canonicalOwnerIdentity, "validated nested owner identity");
+
+  callerReservation.ownerKey = "caller-mutated";
+  callerBound.canonicalOwnerIdentity.ownerKey = "caller-mutated";
+  callerTerminal.ownerKey = "caller-mutated";
+  callerPair.terminalAuthorityRef = "setfarm://caller-mutated";
+  callerClose.terminalOwnerRef = "setfarm://caller-mutated";
+  assert.equal(validatedReservation.ownerKey, reservation.ownerKey);
+  assert.equal(validatedBound.canonicalOwnerIdentity.ownerKey, identity.ownerKey);
+  assert.equal(validatedTerminal.ownerKey, identity.ownerKey);
+  assert.notEqual(validatedPair.terminalAuthorityRef, callerPair.terminalAuthorityRef);
+  assert.notEqual(validatedClose.terminalOwnerRef, callerClose.terminalOwnerRef);
+
+  assert.throws(() => {
+    (validatedBound.canonicalOwnerIdentity as { ownerKey: string }).ownerKey = "forbidden";
+  }, TypeError);
+});
+
+test("strict shapes reject symbols, non-enumerable fields, custom prototypes, and null prototypes", () => {
+  const symbolManifest = structuredClone(INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1) as
+    Record<PropertyKey, unknown>;
+  symbolManifest[Symbol("hidden")] = true;
+  assert.throws(
+    () => validateInternalProductionOwnerProducerManifestV1(symbolManifest),
+    /MANIFEST_KEYS_INVALID/,
+  );
+
+  const { row, reservation, identity } = reservationFixture();
+  const nonEnumerableReservation = structuredClone(reservation);
+  Object.defineProperty(nonEnumerableReservation, "hidden", { value: true, enumerable: false });
+  assert.throws(
+    () => validateInternalProductionOwnerReservationV1(nonEnumerableReservation, row),
+    /RESERVATION_KEYS_INVALID/,
+  );
+
+  class CustomTerminalAuthority {}
+  const customPrototypeTerminal = Object.assign(
+    new CustomTerminalAuthority(),
+    createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: identity,
+      terminalOwnerRef: "setfarm://runs/run-owner-admission-test-1/terminal/completed",
+      terminalOwnerHash: SHA_C,
+    }),
+  );
+  assert.throws(
+    () => validateInternalProductionTerminalOwnerAuthorityV1(customPrototypeTerminal),
+    /TERMINAL_OWNER_AUTHORITY_INVALID/,
+  );
+
+  const nullPrototypeIdentity = Object.assign(Object.create(null), identity);
+  assert.throws(
+    () => createInternalProductionBoundOwnerReservationV1({
+      reservation,
+      canonicalOwnerIdentity: nullPrototypeIdentity,
+    }),
+    /CANONICAL_OWNER_IDENTITY_INVALID/,
+  );
 });
 
 test("the core is import-inert and contains only the approved dependency edges", async () => {
