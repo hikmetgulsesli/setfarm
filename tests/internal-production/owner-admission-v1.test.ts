@@ -5,7 +5,9 @@ import test from "node:test";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1,
+  INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1,
+  INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
   assembleInternalProductionOwnerProducerRegistryV1,
@@ -16,6 +18,10 @@ import {
   deriveInternalProductionTerminalOwnerAuthorityPairV1,
   validateInternalProductionBoundOwnerReservationV1,
   validateInternalProductionOwnerProducerManifestV1,
+  validateInternalProductionOwnerProducerManifestSetActivationCurrentV1,
+  validateInternalProductionOwnerProducerManifestSetActivationHeadV1,
+  validateInternalProductionOwnerProducerManifestSetActivationReceiptV1,
+  validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1,
   validateInternalProductionOwnerReservationCloseV1,
   validateInternalProductionOwnerReservationV1,
   validateInternalProductionTerminalOwnerAuthorityPairV1,
@@ -23,11 +29,66 @@ import {
   type InternalProductionCanonicalOwnerIdentityV1,
   type InternalProductionOwnerProducerManifestV1,
   type InternalProductionOwnerProducerRowV1,
+  type InternalProductionOwnerProducerSourceBuildAuthorityAV1,
 } from "../../src/internal-production/owner-admission-v1.js";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
+
+type ProductBuildObservationFromOwnerCore =
+  InternalProductionOwnerProducerSourceBuildAuthorityAV1[
+    "productBuildAuthorityV2Observation"
+  ];
+
+type ExactProductBuildObservation = import(
+  "../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.js"
+).ProductBuildAuthorityV2DeliveryEvidenceObservationV1;
+type AssertCompileTimeTrue<Value extends true> = Value;
+type OwnerCorePbaObservationIsExact = AssertCompileTimeTrue<
+  ProductBuildObservationFromOwnerCore extends ExactProductBuildObservation ? true : false
+>;
+type ExactPbaObservationIsOwnerCore = AssertCompileTimeTrue<
+  ExactProductBuildObservation extends ProductBuildObservationFromOwnerCore ? true : false
+>;
+const exactPbaCompileAssertions: readonly [
+  OwnerCorePbaObservationIsExact,
+  ExactPbaObservationIsOwnerCore,
+] = [true, true];
+void exactPbaCompileAssertions;
+
+const COMPILE_PBA_REF = "mission-control://compile-fixture" as
+  ExactProductBuildObservation["response"]["deliveryEvidenceRef"];
+const COMPILE_PBA_HASH = SHA_A as
+  ExactProductBuildObservation["response"]["deliveryEvidenceHash"];
+
+const incompleteProductBuildObservationCompileFixture: ProductBuildObservationFromOwnerCore = {
+  schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1",
+  observationTransport: "source-cli",
+  response: {
+    schema: "mission-control.product-build-authority-v2-delivery-evidence-response.v1",
+    currentStatus: "current",
+    deliveryEvidenceRef: COMPILE_PBA_REF,
+    deliveryEvidenceHash: COMPILE_PBA_HASH,
+    // @ts-expect-error owner-core ABI requires the complete delivered evidence body
+    evidence: {},
+  },
+};
+void incompleteProductBuildObservationCompileFixture;
+
+const arbitraryProductBuildObservationCompileFixture: ProductBuildObservationFromOwnerCore = {
+  schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1",
+  observationTransport: "source-cli",
+  response: {
+    schema: "mission-control.product-build-authority-v2-delivery-evidence-response.v1",
+    currentStatus: "current",
+    deliveryEvidenceRef: COMPILE_PBA_REF,
+    deliveryEvidenceHash: COMPILE_PBA_HASH,
+    // @ts-expect-error owner-core ABI rejects an arbitrary evidence substitute
+    evidence: { unexpected: true },
+  },
+};
+void arbitraryProductBuildObservationCompileFixture;
 
 function assertDeepFrozen(value: unknown, label: string): void {
   if (value === null || typeof value !== "object") return;
@@ -124,6 +185,101 @@ test("freezes and hashes the exact sixteen A producer rows", () => {
   );
 });
 
+test("validates the stable source pair and schema-domain-separated activation chain", () => {
+  assert.equal(INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1, hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-category-registry.v1",
+    categories: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1,
+  }));
+  assert.equal(INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1, hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-category-census-map.v1",
+    entries: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1.map((category) => ({
+      category,
+      censusKeys: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1[category],
+    })),
+  }));
+  const source = validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1({
+    plan: "A",
+    sourceBuildAuthorityRef:
+      `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${SHA_A}`,
+    sourceBuildAuthorityHash: SHA_A,
+  });
+  const manifestSetHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-producer-manifest-set.v1",
+    phase: "A",
+    orderedPlans: ["A"],
+    orderedManifestHashes: [INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash],
+    orderedSourceBuildAuthorities: [source],
+    ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+    ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+  });
+  const receiptBody = {
+    schema: "setfarm.internal-production-owner-producer-manifest-set-activation.v1" as const,
+    phase: "A" as const,
+    orderedPlans: ["A"] as const,
+    orderedManifestHashes: [INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash],
+    orderedSourceBuildAuthorities: [source],
+    manifestSetHash,
+    ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+    ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+    predecessorActivationRef: null,
+    predecessorActivationHash: null,
+    predecessorHeadRef: null,
+    predecessorHeadHash: null,
+  };
+  const activationHash = hashCanonicalJson(receiptBody);
+  const receipt = validateInternalProductionOwnerProducerManifestSetActivationReceiptV1({
+    ...receiptBody,
+    activationRef:
+      `setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${activationHash}`,
+    activationHash,
+  });
+  const headBody = {
+    schema: "setfarm.internal-production-owner-producer-manifest-set-activation-head.v1" as const,
+    phase: "A" as const,
+    activationRef: receipt.activationRef,
+    activationHash: receipt.activationHash,
+    predecessorHeadRef: null,
+    predecessorHeadHash: null,
+  };
+  const headHash = hashCanonicalJson(headBody);
+  const head = validateInternalProductionOwnerProducerManifestSetActivationHeadV1({
+    ...headBody,
+    headRef:
+      `setfarm://internal-production/owner-producer-manifest-set-activation-head/sha256/${headHash}`,
+    headHash,
+  });
+  const current = validateInternalProductionOwnerProducerManifestSetActivationCurrentV1({
+    currentRevision: 1,
+    head,
+    receipt,
+  });
+  assert.equal(current.currentRevision, 1);
+  assertDeepFrozen(current, "activation current");
+
+  assert.throws(
+    () => validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1({
+      ...source,
+      plan: "B",
+    }),
+    /SOURCE_BUILD_AUTHORITY_REF_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionOwnerProducerManifestSetActivationReceiptV1({
+      ...receipt,
+      activationHash: SHA_B,
+    }),
+    /ACTIVATION_DERIVATION_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionOwnerProducerManifestSetActivationCurrentV1({
+      currentRevision: 1,
+      head: { ...head, activationHash: SHA_B },
+      receipt,
+    }),
+    /ACTIVATION_HEAD_DERIVATION_INVALID|ACTIVATION_CURRENT_PAIR_INVALID/,
+  );
+});
+
 test("manifest validation is strict and rejects hash, census, duplicate, and A-row drift", () => {
   const manifest = structuredClone(INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1);
   assert.throws(
@@ -135,15 +291,21 @@ test("manifest validation is strict and rejects hash, census, duplicate, and A-r
     /MANIFEST_HASH_INVALID/,
   );
   const wrongCensus = structuredClone(manifest);
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   wrongCensus.rows[0]!.censusKeys = ["openClaimCount"];
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   wrongCensus.manifestHash = hashCanonicalJson({ schema: wrongCensus.schema, plan: wrongCensus.plan, rows: wrongCensus.rows });
   assert.throws(() => validateInternalProductionOwnerProducerManifestV1(wrongCensus), /ROW_CENSUS_KEYS_INVALID/);
   const duplicate = structuredClone(manifest);
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   duplicate.rows[1]!.implementationId = duplicate.rows[0]!.implementationId;
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   duplicate.manifestHash = hashCanonicalJson({ schema: duplicate.schema, plan: duplicate.plan, rows: duplicate.rows });
   assert.throws(() => validateInternalProductionOwnerProducerManifestV1(duplicate), /IMPLEMENTATION_ID_DUPLICATE/);
   const reorderedA = structuredClone(manifest);
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   reorderedA.rows.reverse();
+  // @ts-expect-error runtime rejection fixture deliberately mutates readonly caller input
   reorderedA.manifestHash = hashCanonicalJson({ schema: reorderedA.schema, plan: reorderedA.plan, rows: reorderedA.rows });
   assert.throws(() => validateInternalProductionOwnerProducerManifestV1(reorderedA), /PLAN_A_ROWS_INVALID/);
 });
@@ -313,6 +475,7 @@ test("exports and every successful construction or validation are detached and d
   const callerManifest = structuredClone(INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1);
   const validatedManifest = validateInternalProductionOwnerProducerManifestV1(callerManifest);
   assertDeepFrozen(validatedManifest, "validated manifest");
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerManifest.rows[0]!.module = "src/caller-mutated.ts";
   assert.equal(validatedManifest.rows[0]!.module, "src/execution/run-persistence.ts");
 
@@ -357,10 +520,15 @@ test("exports and every successful construction or validation are detached and d
   ] as const) assertDeepFrozen(value, label);
   assertDeepFrozen(validatedBound.canonicalOwnerIdentity, "validated nested owner identity");
 
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerReservation.ownerKey = "caller-mutated";
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerBound.canonicalOwnerIdentity.ownerKey = "caller-mutated";
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerTerminal.ownerKey = "caller-mutated";
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerPair.terminalAuthorityRef = "setfarm://caller-mutated";
+  // @ts-expect-error runtime detachment fixture deliberately mutates readonly caller input
   callerClose.terminalOwnerRef = "setfarm://caller-mutated";
   assert.equal(validatedReservation.ownerKey, reservation.ownerKey);
   assert.equal(validatedBound.canonicalOwnerIdentity.ownerKey, identity.ownerKey);
@@ -421,4 +589,19 @@ test("the core is import-inert and contains only the approved dependency edges",
   assert.doesNotMatch(source, /from\s+["'][^"']*(?:db-pg|receipt|restart|spawner|execution)[^"']*["']/);
   assert.doesNotMatch(source, /createInternalProductionOwnerAdmission(?:Repository|Controller)/);
   assert.doesNotMatch(source, /postgres\s*\(/);
+});
+
+test("the A source-build body exposes the complete exact PBA evidence ABI", async () => {
+  const source = await readFile(
+    new URL("../../src/internal-production/owner-admission-v1.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /evidence:\s*Readonly<Record<string, unknown>>/,
+  );
+  assert.match(
+    source,
+    /type InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1 = import\(\s*["']\.\/product-build-authority-v2-delivery-evidence-v1\.js["']\s*\)\.ProductBuildAuthorityV2DeliveryEvidenceObservationV1;/,
+  );
 });

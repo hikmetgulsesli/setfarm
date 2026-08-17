@@ -191,6 +191,19 @@ export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1 = detachedDeepFree
   readonly (keyof InternalProductionCompleteZeroOwnerCensusV1)[]
 >);
 
+export const INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1 = hashCanonicalJson({
+  schema: "setfarm.internal-production-owner-category-registry.v1",
+  categories: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1,
+});
+
+export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1 = hashCanonicalJson({
+  schema: "setfarm.internal-production-owner-category-census-map.v1",
+  entries: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1.map((ownerCategory) => ({
+    category: ownerCategory,
+    censusKeys: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1[ownerCategory],
+  })),
+});
+
 export type InternalProductionOwnerProducerRowV1 = Readonly<{
   plan: "A" | "B" | "C" | "D" | "E";
   module: string;
@@ -313,6 +326,51 @@ export function validateInternalProductionOwnerProducerManifestV1(
 export type InternalProductionOwnerProducerManifestSetPhaseV1 =
   | "A" | "A+B" | "A+B+C" | "A+B+C+D" | "A+B+C+D+E";
 
+export type InternalProductionOwnerProducerSourceBuildAuthorityPairV1 = Readonly<{
+  plan: "A" | "B" | "C" | "D" | "E";
+  sourceBuildAuthorityRef: string;
+  sourceBuildAuthorityHash: string;
+}>;
+
+type InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1 = import(
+  "./product-build-authority-v2-delivery-evidence-v1.js"
+).ProductBuildAuthorityV2DeliveryEvidenceObservationV1;
+
+export type InternalProductionOwnerProducerSourceBuildAuthorityAV1 = Readonly<{
+  schema: "setfarm.internal-production-owner-producer-source-build-authority-a.v1";
+  plan: "A";
+  manifestHash: string;
+  currentEntryOperationRef: string;
+  currentEntryOperationHash: string;
+  setfarmSource: Readonly<{
+    branch: "main";
+    clean: true;
+    sha: string;
+    treeHash: string;
+    buildHash: string;
+    originMainSha: string;
+  }>;
+  productBuildAuthorityV2DeliveryEvidenceRef: string;
+  productBuildAuthorityV2DeliveryEvidenceHash: string;
+  productBuildAuthorityV2Observation:
+    InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1;
+  vendorProducerCommit: string;
+  vendorProducerCommitAncestorProof: Readonly<{
+    schema: "setfarm.internal-production-vendor-ancestor-proof.v1";
+    vendorProducerCommit: string;
+    setfarmSourceSha: string;
+    mergeBase: string;
+    verified: true;
+  }>;
+  ownerCategoryRegistryHash: string;
+  ownerCategoryCensusMapHash: string;
+  sourceBuildAuthorityRef: string;
+  sourceBuildAuthorityHash: string;
+}>;
+
+export type InternalProductionOwnerProducerSourceBuildAuthorityV1 =
+  InternalProductionOwnerProducerSourceBuildAuthorityAV1;
+
 export type InternalProductionOwnerProducerManifestSetActivationReceiptV1 = Readonly<{
   schema: "setfarm.internal-production-owner-producer-manifest-set-activation.v1";
   phase: InternalProductionOwnerProducerManifestSetPhaseV1;
@@ -353,18 +411,225 @@ export type InternalProductionOwnerProducerManifestSetActivationPredecessorV1 = 
 }>;
 
 export type InternalProductionOwnerProducerManifestSetActivationCurrentV1 = Readonly<{
+  currentRevision: number;
   head: InternalProductionOwnerProducerManifestSetActivationHeadV1;
   receipt: InternalProductionOwnerProducerManifestSetActivationReceiptV1;
+}>;
+
+export type InternalProductionOwnerProducerManifestSetActivationPairV1 = Readonly<{
+  activationRef: string;
+  activationHash: string;
+}>;
+
+export type InternalProductionOwnerProducerManifestSetActivationHeadPairV1 = Readonly<{
+  headRef: string;
+  headHash: string;
 }>;
 
 export interface InternalProductionOwnerProducerManifestSetActivationStoreV1 {
   activate(input: Readonly<{
     expectedPredecessor: InternalProductionOwnerProducerManifestSetActivationPredecessorV1 | null;
     manifests: readonly InternalProductionOwnerProducerManifestV1[];
-  }>): Promise<Readonly<{ activationRef: string; activationHash: string }>>;
-  resolve(input: Readonly<{ activationRef: string; activationHash: string }>):
+    orderedSourceBuildAuthorities:
+      readonly InternalProductionOwnerProducerSourceBuildAuthorityPairV1[];
+  }>): Promise<InternalProductionOwnerProducerManifestSetActivationPairV1>;
+  resolveSourceBuildAuthority(
+    input: InternalProductionOwnerProducerSourceBuildAuthorityPairV1,
+  ): Promise<InternalProductionOwnerProducerSourceBuildAuthorityV1>;
+  resolve(input: InternalProductionOwnerProducerManifestSetActivationPairV1):
     Promise<InternalProductionOwnerProducerManifestSetActivationReceiptV1>;
-  resolveCurrent(): Promise<InternalProductionOwnerProducerManifestSetActivationCurrentV1>;
+  resolveHead(input: InternalProductionOwnerProducerManifestSetActivationHeadPairV1):
+    Promise<InternalProductionOwnerProducerManifestSetActivationHeadV1>;
+  resolveCurrent(): Promise<InternalProductionOwnerProducerManifestSetActivationCurrentV1 | null>;
+}
+
+const PHASE_PLANS = Object.freeze({
+  A: Object.freeze(["A"]),
+  "A+B": Object.freeze(["A", "B"]),
+  "A+B+C": Object.freeze(["A", "B", "C"]),
+  "A+B+C+D": Object.freeze(["A", "B", "C", "D"]),
+  "A+B+C+D+E": Object.freeze(["A", "B", "C", "D", "E"]),
+} as const);
+
+function activationPhase(value: unknown): InternalProductionOwnerProducerManifestSetPhaseV1 {
+  if (typeof value !== "string" || !(value in PHASE_PLANS)) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PHASE_INVALID");
+  }
+  return value as InternalProductionOwnerProducerManifestSetPhaseV1;
+}
+
+export function validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1(
+  value: unknown,
+): InternalProductionOwnerProducerSourceBuildAuthorityPairV1 {
+  const pair = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_PAIR_INVALID");
+  exactKeys(pair, ["plan", "sourceBuildAuthorityRef", "sourceBuildAuthorityHash"],
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_PAIR_KEYS_INVALID");
+  if (!PLANS.includes(pair.plan as typeof PLANS[number])) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_PLAN_INVALID");
+  }
+  const sourceHash = sha256(
+    pair.sourceBuildAuthorityHash,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_HASH_INVALID",
+  );
+  const expectedRef =
+    `setfarm://internal-production/owner-producer-source-build-authority/${pair.plan}/sha256/${sourceHash}`;
+  if (pair.sourceBuildAuthorityRef !== expectedRef) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_REF_INVALID");
+  }
+  return detachedDeepFreeze(value as InternalProductionOwnerProducerSourceBuildAuthorityPairV1);
+}
+
+export function validateInternalProductionOwnerProducerManifestSetActivationReceiptV1(
+  value: unknown,
+): InternalProductionOwnerProducerManifestSetActivationReceiptV1 {
+  const receipt = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_INVALID");
+  exactKeys(receipt, [
+    "schema", "phase", "orderedPlans", "orderedManifestHashes",
+    "orderedSourceBuildAuthorities", "manifestSetHash", "ownerCategoryRegistryHash",
+    "ownerCategoryCensusMapHash", "predecessorActivationRef",
+    "predecessorActivationHash", "predecessorHeadRef", "predecessorHeadHash",
+    "activationRef", "activationHash",
+  ], "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_KEYS_INVALID");
+  if (receipt.schema !== "setfarm.internal-production-owner-producer-manifest-set-activation.v1") {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_SCHEMA_INVALID");
+  }
+  const phase = activationPhase(receipt.phase);
+  const expectedPlans = PHASE_PLANS[phase];
+  const orderedPlans = arrayValue(
+    receipt.orderedPlans,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PLANS_INVALID",
+  );
+  if (JSON.stringify(orderedPlans) !== JSON.stringify(expectedPlans)) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PLANS_INVALID");
+  }
+  const manifestHashes = arrayValue(
+    receipt.orderedManifestHashes,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_MANIFEST_HASHES_INVALID",
+  );
+  if (manifestHashes.length !== expectedPlans.length) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_MANIFEST_HASHES_INVALID");
+  }
+  manifestHashes.forEach((hash) => sha256(
+    hash,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_MANIFEST_HASHES_INVALID",
+  ));
+  const sourcePairs = arrayValue(
+    receipt.orderedSourceBuildAuthorities,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_SOURCE_AUTHORITIES_INVALID",
+  ).map(validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1);
+  if (
+    sourcePairs.length !== expectedPlans.length
+    || sourcePairs.some((pair, index) => pair.plan !== expectedPlans[index])
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_SOURCE_AUTHORITIES_INVALID");
+  if (receipt.ownerCategoryRegistryHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_REGISTRY_HASH_INVALID");
+  }
+  if (receipt.ownerCategoryCensusMapHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CENSUS_MAP_HASH_INVALID");
+  }
+  const manifestSetHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-producer-manifest-set.v1",
+    phase,
+    orderedPlans,
+    orderedManifestHashes: manifestHashes,
+    orderedSourceBuildAuthorities: sourcePairs,
+    ownerCategoryRegistryHash: receipt.ownerCategoryRegistryHash,
+    ownerCategoryCensusMapHash: receipt.ownerCategoryCensusMapHash,
+  });
+  if (receipt.manifestSetHash !== manifestSetHash) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_SET_HASH_INVALID");
+  }
+  const predecessorMembers = [
+    receipt.predecessorActivationRef, receipt.predecessorActivationHash,
+    receipt.predecessorHeadRef, receipt.predecessorHeadHash,
+  ];
+  if (phase === "A") {
+    if (!predecessorMembers.every((member) => member === null)) {
+      fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+    }
+  } else {
+    if (predecessorMembers.some((member) => member === null)) {
+      fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+    }
+    canonicalRef(receipt.predecessorActivationRef,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+    sha256(receipt.predecessorActivationHash,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+    canonicalRef(receipt.predecessorHeadRef,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+    sha256(receipt.predecessorHeadHash,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PREDECESSOR_INVALID");
+  }
+  const { activationRef: _activationRef, activationHash: _activationHash, ...body } = receipt;
+  const activationHash = hashCanonicalJson(body);
+  if (
+    receipt.activationHash !== activationHash
+    || receipt.activationRef !==
+      `setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${activationHash}`
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_DERIVATION_INVALID");
+  return detachedDeepFreeze(value as InternalProductionOwnerProducerManifestSetActivationReceiptV1);
+}
+
+export function validateInternalProductionOwnerProducerManifestSetActivationHeadV1(
+  value: unknown,
+): InternalProductionOwnerProducerManifestSetActivationHeadV1 {
+  const head = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_INVALID");
+  exactKeys(head, [
+    "schema", "phase", "activationRef", "activationHash", "predecessorHeadRef",
+    "predecessorHeadHash", "headRef", "headHash",
+  ], "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_KEYS_INVALID");
+  if (head.schema !== "setfarm.internal-production-owner-producer-manifest-set-activation-head.v1") {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_SCHEMA_INVALID");
+  }
+  const phase = activationPhase(head.phase);
+  canonicalRef(head.activationRef,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_ACTIVATION_REF_INVALID");
+  sha256(head.activationHash,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_ACTIVATION_HASH_INVALID");
+  if ((head.predecessorHeadRef === null) !== (head.predecessorHeadHash === null)) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_PREDECESSOR_INVALID");
+  }
+  if ((phase === "A") !== (head.predecessorHeadRef === null)) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_PREDECESSOR_INVALID");
+  }
+  if (head.predecessorHeadRef !== null) {
+    canonicalRef(head.predecessorHeadRef,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_PREDECESSOR_INVALID");
+    sha256(head.predecessorHeadHash,
+      "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_PREDECESSOR_INVALID");
+  }
+  const { headRef: _headRef, headHash: _headHash, ...body } = head;
+  const headHash = hashCanonicalJson(body);
+  if (
+    head.headHash !== headHash
+    || head.headRef !==
+      `setfarm://internal-production/owner-producer-manifest-set-activation-head/sha256/${headHash}`
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_HEAD_DERIVATION_INVALID");
+  return detachedDeepFreeze(value as InternalProductionOwnerProducerManifestSetActivationHeadV1);
+}
+
+export function validateInternalProductionOwnerProducerManifestSetActivationCurrentV1(
+  value: unknown,
+): InternalProductionOwnerProducerManifestSetActivationCurrentV1 {
+  const current = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CURRENT_INVALID");
+  exactKeys(current, ["currentRevision", "head", "receipt"],
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CURRENT_KEYS_INVALID");
+  const receipt = validateInternalProductionOwnerProducerManifestSetActivationReceiptV1(
+    current.receipt,
+  );
+  const head = validateInternalProductionOwnerProducerManifestSetActivationHeadV1(current.head);
+  const expectedRevision = PHASE_PLANS[receipt.phase].length;
+  if (!Number.isSafeInteger(current.currentRevision) || current.currentRevision !== expectedRevision) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CURRENT_REVISION_INVALID");
+  }
+  if (
+    head.phase !== receipt.phase
+    || head.activationRef !== receipt.activationRef
+    || head.activationHash !== receipt.activationHash
+    || head.predecessorHeadRef !== receipt.predecessorHeadRef
+    || head.predecessorHeadHash !== receipt.predecessorHeadHash
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CURRENT_PAIR_INVALID");
+  return detachedDeepFreeze({ currentRevision: current.currentRevision, head, receipt });
 }
 
 export function assembleInternalProductionOwnerProducerRegistryV1(input: Readonly<{
@@ -851,7 +1116,12 @@ export function validateInternalProductionOwnerReservationCloseV1(
   return detachedDeepFreeze(value as InternalProductionOwnerReservationCloseV1);
 }
 
-export type PgTransactionSql = postgres.TransactionSql;
+export type PgTransactionSql = postgres.TransactionSql & {
+  <T extends readonly (object | undefined)[] = postgres.Row[]>(
+    template: TemplateStringsArray,
+    ...parameters: readonly any[]
+  ): postgres.PendingQuery<T>;
+};
 
 export interface InternalProductionOwnerAdmissionRepositoryV1 {
   withTransaction<Result>(operation: (sql: PgTransactionSql) => Promise<Result>): Promise<Result>;

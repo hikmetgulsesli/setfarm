@@ -397,8 +397,489 @@ export const BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS = Object.freeze([
      '${"0".repeat(64)}',
      '{"schema":"setfarm.internal-production-owner-admission-head.v1","version":0}'::jsonb
    )`,
+  `CREATE FUNCTION public.ip_op_reject_immutable_v1()
+   RETURNS trigger
+   LANGUAGE plpgsql
+   VOLATILE
+   SECURITY INVOKER
+   SET search_path = pg_catalog, public
+   AS $function$
+   BEGIN
+     RAISE EXCEPTION USING
+       ERRCODE = '55000',
+       MESSAGE = 'IP_OWNER_PRODUCER_IMMUTABLE_MUTATION';
+     RETURN NULL;
+   END;
+   $function$;`,
+  `CREATE TABLE public.internal_production_owner_producer_source_build_authorities_v1 (
+     source_build_authority_ref TEXT NOT NULL,
+     source_build_authority_hash CHAR(64) NOT NULL,
+     plan TEXT NOT NULL,
+     manifest_hash CHAR(64) NOT NULL,
+     owner_category_registry_hash CHAR(64) NOT NULL,
+     owner_category_census_map_hash CHAR(64) NOT NULL,
+     canonical_body TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
+     CONSTRAINT ip_op_sba_v1_pkey PRIMARY KEY (source_build_authority_ref),
+     CONSTRAINT ip_op_sba_v1_hash_uq UNIQUE (source_build_authority_hash),
+     CONSTRAINT ip_op_sba_v1_pair_uq UNIQUE (
+       source_build_authority_ref, source_build_authority_hash
+     ),
+     CONSTRAINT ip_op_sba_v1_plan_ck CHECK (plan IN ('A','B','C','D','E')),
+     CONSTRAINT ip_op_sba_v1_ref_ck CHECK (
+       octet_length(source_build_authority_ref) BETWEEN 1 AND 512
+     ),
+     CONSTRAINT ip_op_sba_v1_hash_ck CHECK (
+       source_build_authority_hash ~ '^[0-9a-f]{64}$'
+       AND manifest_hash ~ '^[0-9a-f]{64}$'
+       AND owner_category_registry_hash ~ '^[0-9a-f]{64}$'
+       AND owner_category_census_map_hash ~ '^[0-9a-f]{64}$'
+     ),
+     CONSTRAINT ip_op_sba_v1_body_ck CHECK (
+       jsonb_typeof(canonical_body::jsonb) = 'object'
+       AND octet_length(canonical_body) BETWEEN 2 AND 65536
+     )
+   )`,
+  `CREATE INDEX ip_op_sba_v1_plan_manifest_idx
+     ON public.internal_production_owner_producer_source_build_authorities_v1
+     USING btree (plan, manifest_hash)`,
+  `CREATE TABLE public.internal_production_owner_producer_manifest_set_activations_v1 (
+     activation_ref TEXT NOT NULL,
+     activation_hash CHAR(64) NOT NULL,
+     phase TEXT NOT NULL,
+     manifest_set_hash CHAR(64) NOT NULL,
+     owner_category_registry_hash CHAR(64) NOT NULL,
+     owner_category_census_map_hash CHAR(64) NOT NULL,
+     predecessor_activation_ref TEXT,
+     predecessor_activation_hash CHAR(64),
+     predecessor_head_ref TEXT,
+     predecessor_head_hash CHAR(64),
+     canonical_body TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
+     CONSTRAINT ip_op_msa_v1_pkey PRIMARY KEY (activation_ref),
+     CONSTRAINT ip_op_msa_v1_hash_uq UNIQUE (activation_hash),
+     CONSTRAINT ip_op_msa_v1_pair_uq UNIQUE (activation_ref, activation_hash),
+     CONSTRAINT ip_op_msa_v1_phase_ck CHECK (
+       phase IN ('A','A+B','A+B+C','A+B+C+D','A+B+C+D+E')
+     ),
+     CONSTRAINT ip_op_msa_v1_refs_ck CHECK (
+       octet_length(activation_ref) BETWEEN 1 AND 512
+       AND (predecessor_activation_ref IS NULL
+         OR octet_length(predecessor_activation_ref) BETWEEN 1 AND 512)
+       AND (predecessor_head_ref IS NULL
+         OR octet_length(predecessor_head_ref) BETWEEN 1 AND 512)
+     ),
+     CONSTRAINT ip_op_msa_v1_hashes_ck CHECK (
+       activation_hash ~ '^[0-9a-f]{64}$'
+       AND manifest_set_hash ~ '^[0-9a-f]{64}$'
+       AND owner_category_registry_hash ~ '^[0-9a-f]{64}$'
+       AND owner_category_census_map_hash ~ '^[0-9a-f]{64}$'
+       AND (predecessor_activation_hash IS NULL
+         OR predecessor_activation_hash ~ '^[0-9a-f]{64}$')
+       AND (predecessor_head_hash IS NULL
+         OR predecessor_head_hash ~ '^[0-9a-f]{64}$')
+     ),
+     CONSTRAINT ip_op_msa_v1_body_ck CHECK (
+       jsonb_typeof(canonical_body::jsonb) = 'object'
+       AND octet_length(canonical_body) BETWEEN 2 AND 65536
+     ),
+     CONSTRAINT ip_op_msa_v1_pred_activation_pair_ck CHECK (
+       (predecessor_activation_ref IS NULL) = (predecessor_activation_hash IS NULL)
+     ),
+     CONSTRAINT ip_op_msa_v1_pred_head_pair_ck CHECK (
+       (predecessor_head_ref IS NULL) = (predecessor_head_hash IS NULL)
+     ),
+     CONSTRAINT ip_op_msa_v1_phase_pred_ck CHECK (
+       (phase = 'A') = (
+         predecessor_activation_ref IS NULL
+         AND predecessor_activation_hash IS NULL
+         AND predecessor_head_ref IS NULL
+         AND predecessor_head_hash IS NULL
+       )
+     ),
+     CONSTRAINT ip_op_msa_v1_pred_activation_fk FOREIGN KEY (
+       predecessor_activation_ref, predecessor_activation_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_set_activations_v1 (
+       activation_ref, activation_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE
+   )`,
+  `CREATE INDEX ip_op_msa_v1_phase_manifest_idx
+     ON public.internal_production_owner_producer_manifest_set_activations_v1
+     USING btree (phase, manifest_set_hash)`,
+  `CREATE INDEX ip_op_msa_v1_pred_activation_idx
+     ON public.internal_production_owner_producer_manifest_set_activations_v1
+     USING btree (predecessor_activation_ref, predecessor_activation_hash)
+     WHERE predecessor_activation_ref IS NOT NULL`,
+  `CREATE INDEX ip_op_msa_v1_pred_head_idx
+     ON public.internal_production_owner_producer_manifest_set_activations_v1
+     USING btree (predecessor_head_ref, predecessor_head_hash)
+     WHERE predecessor_head_ref IS NOT NULL`,
+  `CREATE TABLE public.internal_production_owner_producer_manifest_activation_heads_v1 (
+     head_ref TEXT NOT NULL,
+     head_hash CHAR(64) NOT NULL,
+     phase TEXT NOT NULL,
+     activation_ref TEXT NOT NULL,
+     activation_hash CHAR(64) NOT NULL,
+     predecessor_head_ref TEXT,
+     predecessor_head_hash CHAR(64),
+     canonical_body TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
+     CONSTRAINT ip_op_mah_v1_pkey PRIMARY KEY (head_ref),
+     CONSTRAINT ip_op_mah_v1_hash_uq UNIQUE (head_hash),
+     CONSTRAINT ip_op_mah_v1_pair_uq UNIQUE (head_ref, head_hash),
+     CONSTRAINT ip_op_mah_v1_activation_pair_uq UNIQUE (
+       head_ref, head_hash, activation_ref, activation_hash
+     ),
+     CONSTRAINT ip_op_mah_v1_phase_ck CHECK (
+       phase IN ('A','A+B','A+B+C','A+B+C+D','A+B+C+D+E')
+     ),
+     CONSTRAINT ip_op_mah_v1_refs_ck CHECK (
+       octet_length(head_ref) BETWEEN 1 AND 512
+       AND octet_length(activation_ref) BETWEEN 1 AND 512
+       AND (predecessor_head_ref IS NULL
+         OR octet_length(predecessor_head_ref) BETWEEN 1 AND 512)
+     ),
+     CONSTRAINT ip_op_mah_v1_hashes_ck CHECK (
+       head_hash ~ '^[0-9a-f]{64}$'
+       AND activation_hash ~ '^[0-9a-f]{64}$'
+       AND (predecessor_head_hash IS NULL
+         OR predecessor_head_hash ~ '^[0-9a-f]{64}$')
+     ),
+     CONSTRAINT ip_op_mah_v1_body_ck CHECK (
+       jsonb_typeof(canonical_body::jsonb) = 'object'
+       AND octet_length(canonical_body) BETWEEN 2 AND 65536
+     ),
+     CONSTRAINT ip_op_mah_v1_pred_pair_ck CHECK (
+       (predecessor_head_ref IS NULL) = (predecessor_head_hash IS NULL)
+     ),
+     CONSTRAINT ip_op_mah_v1_phase_pred_ck CHECK (
+       (phase = 'A') = (
+         predecessor_head_ref IS NULL AND predecessor_head_hash IS NULL
+       )
+     ),
+     CONSTRAINT ip_op_mah_v1_activation_fk FOREIGN KEY (
+       activation_ref, activation_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_set_activations_v1 (
+       activation_ref, activation_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE,
+     CONSTRAINT ip_op_mah_v1_pred_head_fk FOREIGN KEY (
+       predecessor_head_ref, predecessor_head_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_activation_heads_v1 (
+       head_ref, head_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE
+   )`,
+  `CREATE INDEX ip_op_mah_v1_phase_activation_idx
+     ON public.internal_production_owner_producer_manifest_activation_heads_v1
+     USING btree (phase, activation_ref, activation_hash)`,
+  `CREATE INDEX ip_op_mah_v1_pred_head_idx
+     ON public.internal_production_owner_producer_manifest_activation_heads_v1
+     USING btree (predecessor_head_ref, predecessor_head_hash)
+     WHERE predecessor_head_ref IS NOT NULL`,
+  `ALTER TABLE public.internal_production_owner_producer_manifest_set_activations_v1
+     ADD CONSTRAINT ip_op_msa_v1_pred_head_fk FOREIGN KEY (
+       predecessor_head_ref, predecessor_head_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_activation_heads_v1 (
+       head_ref, head_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE`,
+  `CREATE TABLE public.internal_production_owner_producer_manifest_set_current_v1 (
+     singleton_key BOOLEAN NOT NULL DEFAULT TRUE,
+     current_revision BIGINT NOT NULL DEFAULT 0,
+     phase TEXT,
+     activation_ref TEXT,
+     activation_hash CHAR(64),
+     head_ref TEXT,
+     head_hash CHAR(64),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
+     CONSTRAINT ip_op_msc_v1_pkey PRIMARY KEY (singleton_key),
+     CONSTRAINT ip_op_msc_v1_singleton_ck CHECK (singleton_key IS TRUE),
+     CONSTRAINT ip_op_msc_v1_revision_ck CHECK (current_revision >= 0),
+     CONSTRAINT ip_op_msc_v1_phase_ck CHECK (
+       phase IS NULL OR phase IN ('A','A+B','A+B+C','A+B+C+D','A+B+C+D+E')
+     ),
+     CONSTRAINT ip_op_msc_v1_shape_ck CHECK (
+       (current_revision = 0
+         AND phase IS NULL
+         AND activation_ref IS NULL
+         AND activation_hash IS NULL
+         AND head_ref IS NULL
+         AND head_hash IS NULL)
+       OR (current_revision > 0
+         AND phase IS NOT NULL
+         AND activation_ref IS NOT NULL
+         AND activation_hash IS NOT NULL
+         AND head_ref IS NOT NULL
+         AND head_hash IS NOT NULL)
+     ),
+     CONSTRAINT ip_op_msc_v1_refs_ck CHECK (
+       (activation_ref IS NULL OR octet_length(activation_ref) BETWEEN 1 AND 512)
+       AND (head_ref IS NULL OR octet_length(head_ref) BETWEEN 1 AND 512)
+     ),
+     CONSTRAINT ip_op_msc_v1_hashes_ck CHECK (
+       (activation_hash IS NULL OR activation_hash ~ '^[0-9a-f]{64}$')
+       AND (head_hash IS NULL OR head_hash ~ '^[0-9a-f]{64}$')
+     ),
+     CONSTRAINT ip_op_msc_v1_activation_fk FOREIGN KEY (
+       activation_ref, activation_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_set_activations_v1 (
+       activation_ref, activation_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE,
+     CONSTRAINT ip_op_msc_v1_head_activation_fk FOREIGN KEY (
+       head_ref, head_hash, activation_ref, activation_hash
+     ) REFERENCES public.internal_production_owner_producer_manifest_activation_heads_v1 (
+       head_ref, head_hash, activation_ref, activation_hash
+     ) MATCH SIMPLE ON UPDATE RESTRICT ON DELETE RESTRICT NOT DEFERRABLE
+   )`,
+  `INSERT INTO public.internal_production_owner_producer_manifest_set_current_v1 (
+     singleton_key, current_revision, phase, activation_ref, activation_hash,
+     head_ref, head_hash, updated_at
+   ) VALUES (TRUE, 0, NULL, NULL, NULL, NULL, NULL, transaction_timestamp())`,
+  `CREATE FUNCTION public.ip_op_enforce_current_update_v1()
+   RETURNS trigger
+   LANGUAGE plpgsql
+   VOLATILE
+   SECURITY INVOKER
+   SET search_path = pg_catalog, public
+   AS $function$
+   DECLARE
+     target_activation public.internal_production_owner_producer_manifest_set_activations_v1%ROWTYPE;
+     target_head public.internal_production_owner_producer_manifest_activation_heads_v1%ROWTYPE;
+   BEGIN
+     IF NEW.singleton_key IS DISTINCT FROM OLD.singleton_key
+        OR NEW.singleton_key IS DISTINCT FROM TRUE
+        OR NEW.current_revision IS DISTINCT FROM OLD.current_revision + 1 THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     IF NOT (
+       (OLD.current_revision = 0 AND OLD.phase IS NULL AND NEW.phase = 'A')
+       OR (OLD.phase = 'A' AND NEW.phase = 'A+B')
+       OR (OLD.phase = 'A+B' AND NEW.phase = 'A+B+C')
+       OR (OLD.phase = 'A+B+C' AND NEW.phase = 'A+B+C+D')
+       OR (OLD.phase = 'A+B+C+D' AND NEW.phase = 'A+B+C+D+E')
+     ) THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     SELECT * INTO STRICT target_activation
+       FROM public.internal_production_owner_producer_manifest_set_activations_v1
+      WHERE activation_ref = NEW.activation_ref
+        AND activation_hash = NEW.activation_hash
+      FOR KEY SHARE;
+     SELECT * INTO STRICT target_head
+       FROM public.internal_production_owner_producer_manifest_activation_heads_v1
+      WHERE head_ref = NEW.head_ref
+        AND head_hash = NEW.head_hash
+      FOR KEY SHARE;
+
+     IF target_activation.phase IS DISTINCT FROM NEW.phase
+        OR target_head.phase IS DISTINCT FROM NEW.phase
+        OR target_head.activation_ref IS DISTINCT FROM NEW.activation_ref
+        OR target_head.activation_hash IS DISTINCT FROM NEW.activation_hash THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     IF OLD.current_revision = 0 THEN
+       IF target_activation.predecessor_activation_ref IS NOT NULL
+          OR target_activation.predecessor_activation_hash IS NOT NULL
+          OR target_activation.predecessor_head_ref IS NOT NULL
+          OR target_activation.predecessor_head_hash IS NOT NULL
+          OR target_head.predecessor_head_ref IS NOT NULL
+          OR target_head.predecessor_head_hash IS NOT NULL THEN
+         RAISE EXCEPTION USING
+           ERRCODE = '23514',
+           MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+       END IF;
+     ELSIF target_activation.predecessor_activation_ref IS DISTINCT FROM OLD.activation_ref
+        OR target_activation.predecessor_activation_hash IS DISTINCT FROM OLD.activation_hash
+        OR target_activation.predecessor_head_ref IS DISTINCT FROM OLD.head_ref
+        OR target_activation.predecessor_head_hash IS DISTINCT FROM OLD.head_hash
+        OR target_head.predecessor_head_ref IS DISTINCT FROM OLD.head_ref
+        OR target_head.predecessor_head_hash IS DISTINCT FROM OLD.head_hash THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     NEW.updated_at := transaction_timestamp();
+     RETURN NEW;
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23503',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TARGET_MISSING';
+     WHEN TOO_MANY_ROWS THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '21000',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TARGET_NONUNIQUE';
+   END;
+   $function$;`,
+  `CREATE TRIGGER ip_op_sba_v1_immutable_trg
+   BEFORE UPDATE OR DELETE OR TRUNCATE
+   ON public.internal_production_owner_producer_source_build_authorities_v1
+   FOR EACH STATEMENT EXECUTE FUNCTION public.ip_op_reject_immutable_v1();`,
+  `CREATE TRIGGER ip_op_msa_v1_immutable_trg
+   BEFORE UPDATE OR DELETE OR TRUNCATE
+   ON public.internal_production_owner_producer_manifest_set_activations_v1
+   FOR EACH STATEMENT EXECUTE FUNCTION public.ip_op_reject_immutable_v1();`,
+  `CREATE TRIGGER ip_op_mah_v1_immutable_trg
+   BEFORE UPDATE OR DELETE OR TRUNCATE
+   ON public.internal_production_owner_producer_manifest_activation_heads_v1
+   FOR EACH STATEMENT EXECUTE FUNCTION public.ip_op_reject_immutable_v1();`,
+  `CREATE TRIGGER ip_op_msc_v1_delete_truncate_trg
+   BEFORE DELETE OR TRUNCATE
+   ON public.internal_production_owner_producer_manifest_set_current_v1
+   FOR EACH STATEMENT EXECUTE FUNCTION public.ip_op_reject_immutable_v1();`,
+  `CREATE TRIGGER ip_op_msc_v1_update_trg
+   BEFORE UPDATE
+   ON public.internal_production_owner_producer_manifest_set_current_v1
+   FOR EACH ROW EXECUTE FUNCTION public.ip_op_enforce_current_update_v1();`,
 ] as const);
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-identity-and-statements:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-activation-catalog-authority:BEGIN
+export const EXPECTED_IP_OP_FUNCTION_CATALOG_DEFS_V1 = Object.freeze({
+  ip_op_enforce_current_update_v1:
+    `create or replace function public.ip_op_enforce_current_update_v1() returns trigger language plpgsql set search_path to 'pg_catalog', 'public' as $function$
+   DECLARE
+     target_activation public.internal_production_owner_producer_manifest_set_activations_v1%ROWTYPE;
+     target_head public.internal_production_owner_producer_manifest_activation_heads_v1%ROWTYPE;
+   BEGIN
+     IF NEW.singleton_key IS DISTINCT FROM OLD.singleton_key
+        OR NEW.singleton_key IS DISTINCT FROM TRUE
+        OR NEW.current_revision IS DISTINCT FROM OLD.current_revision + 1 THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     IF NOT (
+       (OLD.current_revision = 0 AND OLD.phase IS NULL AND NEW.phase = 'A')
+       OR (OLD.phase = 'A' AND NEW.phase = 'A+B')
+       OR (OLD.phase = 'A+B' AND NEW.phase = 'A+B+C')
+       OR (OLD.phase = 'A+B+C' AND NEW.phase = 'A+B+C+D')
+       OR (OLD.phase = 'A+B+C+D' AND NEW.phase = 'A+B+C+D+E')
+     ) THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     SELECT * INTO STRICT target_activation
+       FROM public.internal_production_owner_producer_manifest_set_activations_v1
+      WHERE activation_ref = NEW.activation_ref
+        AND activation_hash = NEW.activation_hash
+      FOR KEY SHARE;
+     SELECT * INTO STRICT target_head
+       FROM public.internal_production_owner_producer_manifest_activation_heads_v1
+      WHERE head_ref = NEW.head_ref
+        AND head_hash = NEW.head_hash
+      FOR KEY SHARE;
+
+     IF target_activation.phase IS DISTINCT FROM NEW.phase
+        OR target_head.phase IS DISTINCT FROM NEW.phase
+        OR target_head.activation_ref IS DISTINCT FROM NEW.activation_ref
+        OR target_head.activation_hash IS DISTINCT FROM NEW.activation_hash THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     IF OLD.current_revision = 0 THEN
+       IF target_activation.predecessor_activation_ref IS NOT NULL
+          OR target_activation.predecessor_activation_hash IS NOT NULL
+          OR target_activation.predecessor_head_ref IS NOT NULL
+          OR target_activation.predecessor_head_hash IS NOT NULL
+          OR target_head.predecessor_head_ref IS NOT NULL
+          OR target_head.predecessor_head_hash IS NOT NULL THEN
+         RAISE EXCEPTION USING
+           ERRCODE = '23514',
+           MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+       END IF;
+     ELSIF target_activation.predecessor_activation_ref IS DISTINCT FROM OLD.activation_ref
+        OR target_activation.predecessor_activation_hash IS DISTINCT FROM OLD.activation_hash
+        OR target_activation.predecessor_head_ref IS DISTINCT FROM OLD.head_ref
+        OR target_activation.predecessor_head_hash IS DISTINCT FROM OLD.head_hash
+        OR target_head.predecessor_head_ref IS DISTINCT FROM OLD.head_ref
+        OR target_head.predecessor_head_hash IS DISTINCT FROM OLD.head_hash THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23514',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID';
+     END IF;
+
+     NEW.updated_at := transaction_timestamp();
+     RETURN NEW;
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '23503',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TARGET_MISSING';
+     WHEN TOO_MANY_ROWS THEN
+       RAISE EXCEPTION USING
+         ERRCODE = '21000',
+         MESSAGE = 'IP_OWNER_PRODUCER_CURRENT_TARGET_NONUNIQUE';
+   END;
+   $function$`,
+  ip_op_reject_immutable_v1:
+    `create or replace function public.ip_op_reject_immutable_v1() returns trigger language plpgsql set search_path to 'pg_catalog', 'public' as $function$
+   BEGIN
+     RAISE EXCEPTION USING
+       ERRCODE = '55000',
+       MESSAGE = 'IP_OWNER_PRODUCER_IMMUTABLE_MUTATION';
+     RETURN NULL;
+   END;
+   $function$`,
+} as const);
+
+export const EXPECTED_IP_OP_TRIGGER_CATALOG_DEFS_V1 = Object.freeze({
+  ip_op_mah_v1_immutable_trg:
+    "create trigger ip_op_mah_v1_immutable_trg before delete or update or truncate on internal_production_owner_producer_manifest_activation_heads_v1 for each statement execute function ip_op_reject_immutable_v1()",
+  ip_op_msa_v1_immutable_trg:
+    "create trigger ip_op_msa_v1_immutable_trg before delete or update or truncate on internal_production_owner_producer_manifest_set_activations_v1 for each statement execute function ip_op_reject_immutable_v1()",
+  ip_op_msc_v1_delete_truncate_trg:
+    "create trigger ip_op_msc_v1_delete_truncate_trg before delete or truncate on internal_production_owner_producer_manifest_set_current_v1 for each statement execute function ip_op_reject_immutable_v1()",
+  ip_op_msc_v1_update_trg:
+    "create trigger ip_op_msc_v1_update_trg before update on internal_production_owner_producer_manifest_set_current_v1 for each row execute function ip_op_enforce_current_update_v1()",
+  ip_op_sba_v1_immutable_trg:
+    "create trigger ip_op_sba_v1_immutable_trg before delete or update or truncate on internal_production_owner_producer_source_build_authorities_v1 for each statement execute function ip_op_reject_immutable_v1()",
+} as const);
+
+const EXPECTED_IP_OP_FUNCTION_DEPENDENCIES_V1 = Object.freeze([
+  Object.freeze({
+    proname: "ip_op_enforce_current_update_v1",
+    deptype: "n",
+    refobjsubid: 0,
+    refclassid: "pg_language",
+    referenced: "plpgsql",
+  }),
+  Object.freeze({
+    proname: "ip_op_enforce_current_update_v1",
+    deptype: "n",
+    refobjsubid: 0,
+    refclassid: "pg_namespace",
+    referenced: "public",
+  }),
+  Object.freeze({
+    proname: "ip_op_reject_immutable_v1",
+    deptype: "n",
+    refobjsubid: 0,
+    refclassid: "pg_language",
+    referenced: "plpgsql",
+  }),
+  Object.freeze({
+    proname: "ip_op_reject_immutable_v1",
+    deptype: "n",
+    refobjsubid: 0,
+    refclassid: "pg_namespace",
+    referenced: "public",
+  }),
+] as const);
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-activation-catalog-authority:END
 
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-schema-projector:BEGIN
 const BOOTSTRAP_HANDOFF_OPERATION_TABLE =
@@ -406,6 +887,14 @@ const BOOTSTRAP_HANDOFF_OPERATION_TABLE =
 const OWNER_RESERVATION_TABLE = "internal_production_owner_reservations_v1";
 const OWNER_ADMISSION_AUTHORITY_TABLE = "internal_production_owner_admission_authorities_v1";
 const OWNER_ADMISSION_HEAD_TABLE = "internal_production_owner_admission_head_v1";
+const OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE =
+  "internal_production_owner_producer_source_build_authorities_v1";
+const OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE =
+  "internal_production_owner_producer_manifest_set_activations_v1";
+const OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE =
+  "internal_production_owner_producer_manifest_activation_heads_v1";
+const OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE =
+  "internal_production_owner_producer_manifest_set_current_v1";
 
 const EXPECTED_COLUMNS = Object.freeze({
   [BOOTSTRAP_HANDOFF_OPERATION_TABLE]: Object.freeze([
@@ -479,6 +968,51 @@ const EXPECTED_COLUMNS = Object.freeze({
     "head_payload",
     "updated_at",
   ]),
+  [OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE]: Object.freeze([
+    "source_build_authority_ref",
+    "source_build_authority_hash",
+    "plan",
+    "manifest_hash",
+    "owner_category_registry_hash",
+    "owner_category_census_map_hash",
+    "canonical_body",
+    "created_at",
+  ]),
+  [OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE]: Object.freeze([
+    "activation_ref",
+    "activation_hash",
+    "phase",
+    "manifest_set_hash",
+    "owner_category_registry_hash",
+    "owner_category_census_map_hash",
+    "predecessor_activation_ref",
+    "predecessor_activation_hash",
+    "predecessor_head_ref",
+    "predecessor_head_hash",
+    "canonical_body",
+    "created_at",
+  ]),
+  [OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE]: Object.freeze([
+    "head_ref",
+    "head_hash",
+    "phase",
+    "activation_ref",
+    "activation_hash",
+    "predecessor_head_ref",
+    "predecessor_head_hash",
+    "canonical_body",
+    "created_at",
+  ]),
+  [OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE]: Object.freeze([
+    "singleton_key",
+    "current_revision",
+    "phase",
+    "activation_ref",
+    "activation_hash",
+    "head_ref",
+    "head_hash",
+    "updated_at",
+  ]),
 } as const);
 
 export type BootstrapMainClaimHandoffV1SchemaState =
@@ -518,20 +1052,282 @@ async function existingRelations(sql: Sql): Promise<Set<string>> {
       OWNER_RESERVATION_TABLE,
       OWNER_ADMISSION_AUTHORITY_TABLE,
       OWNER_ADMISSION_HEAD_TABLE,
+      OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE,
+      OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE,
+      OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE,
+      OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE,
     ]],
   );
   return new Set(rows.map((row) => row.relation_name));
 }
 
-function normalizeSql(source: string): string {
-  return source.replace(/\s+/g, " ").trim().toLowerCase();
+function normalizeCatalogSql(source: string): string {
+  let normalized = "";
+  let pendingWhitespace = false;
+  let index = 0;
+  const appendQuoted = (end: number): void => {
+    if (pendingWhitespace && normalized.length > 0) normalized += " ";
+    normalized += source.slice(index, end);
+    pendingWhitespace = false;
+    index = end;
+  };
+  while (index < source.length) {
+    const character = source[index]!;
+    if (/\s/.test(character)) {
+      pendingWhitespace = normalized.length > 0;
+      index += 1;
+      continue;
+    }
+    if (character === "'") {
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] !== "'") {
+          end += 1;
+          continue;
+        }
+        if (source[end + 1] === "'") {
+          end += 2;
+          continue;
+        }
+        end += 1;
+        break;
+      }
+      appendQuoted(end);
+      continue;
+    }
+    if (character === '"') {
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] !== '"') {
+          end += 1;
+          continue;
+        }
+        if (source[end + 1] === '"') {
+          end += 2;
+          continue;
+        }
+        end += 1;
+        break;
+      }
+      appendQuoted(end);
+      continue;
+    }
+    if (character === "$") {
+      const delimiter = source.slice(index).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/)?.[0];
+      if (delimiter !== undefined) {
+        const closing = source.indexOf(delimiter, index + delimiter.length);
+        if (closing >= 0) {
+          appendQuoted(closing + delimiter.length);
+          continue;
+        }
+      }
+    }
+    if (pendingWhitespace && normalized.length > 0) normalized += " ";
+    normalized += character.toLowerCase();
+    pendingWhitespace = false;
+    index += 1;
+  }
+  return normalized;
+}
+
+async function assertExactOwnerProducerActivationCatalogV1(sql: Sql): Promise<void> {
+  const functions = await sql.unsafe<Array<{
+    namespace: string;
+    proname: string;
+    prokind: string;
+    pronargs: number;
+    proargtypes: string;
+    proallargtypes: null;
+    proargmodes: null;
+    proargnames: null;
+    pronargdefaults: number;
+    provariadic_is_zero: boolean;
+    rettype: string;
+    language: string;
+    provolatile: string;
+    prosecdef: boolean;
+    proconfig: string[] | null;
+    proacl: null;
+    definition: string;
+  }>>(
+    `SELECT n.nspname AS namespace, p.proname, p.prokind, p.pronargs,
+            p.proargtypes::text AS proargtypes,
+            p.proallargtypes, p.proargmodes, p.proargnames,
+            p.pronargdefaults, p.provariadic = 0 AS provariadic_is_zero,
+            p.prorettype::regtype::text AS rettype,
+            l.lanname AS language, p.provolatile, p.prosecdef,
+            p.proconfig, p.proacl, pg_get_functiondef(p.oid) AS definition
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = 'public'
+        AND p.proname = ANY($1::text[])
+      ORDER BY p.proname`,
+    [["ip_op_enforce_current_update_v1", "ip_op_reject_immutable_v1"]],
+  );
+  const functionProjection = functions.map((row) => ({
+    ...row,
+    definition: normalizeCatalogSql(row.definition),
+  }));
+  const expectedFunctions = [
+    "ip_op_enforce_current_update_v1",
+    "ip_op_reject_immutable_v1",
+  ].map((proname) => ({
+    namespace: "public",
+    proname,
+    prokind: "f",
+    pronargs: 0,
+    proargtypes: "",
+    proallargtypes: null,
+    proargmodes: null,
+    proargnames: null,
+    pronargdefaults: 0,
+    provariadic_is_zero: true,
+    rettype: "trigger",
+    language: "plpgsql",
+    provolatile: "v",
+    prosecdef: false,
+    proconfig: ["search_path=pg_catalog, public"],
+    proacl: null,
+    definition: EXPECTED_IP_OP_FUNCTION_CATALOG_DEFS_V1[
+      proname as keyof typeof EXPECTED_IP_OP_FUNCTION_CATALOG_DEFS_V1
+    ],
+  }));
+  if (JSON.stringify(functionProjection) !== JSON.stringify(expectedFunctions)) {
+    throw new BootstrapMainClaimHandoffV1SchemaError(
+      "owner-producer activation function catalog mismatch",
+    );
+  }
+
+  const dependencies = await sql.unsafe<Array<{
+    proname: string;
+    deptype: string;
+    refobjsubid: number;
+    refclassid: string;
+    referenced: string;
+  }>>(
+    `SELECT p.proname, d.deptype, d.refobjsubid,
+            d.refclassid::regclass::text AS refclassid,
+            CASE
+              WHEN d.refclassid = 'pg_language'::regclass THEN l.lanname
+              WHEN d.refclassid = 'pg_namespace'::regclass THEN rn.nspname
+              ELSE d.refobjid::text
+            END AS referenced
+       FROM pg_proc p
+       JOIN pg_namespace pn ON pn.oid = p.pronamespace
+       JOIN pg_depend d
+         ON d.classid = 'pg_proc'::regclass
+        AND d.objid = p.oid
+        AND d.objsubid = 0
+       LEFT JOIN pg_language l
+         ON d.refclassid = 'pg_language'::regclass AND l.oid = d.refobjid
+       LEFT JOIN pg_namespace rn
+         ON d.refclassid = 'pg_namespace'::regclass AND rn.oid = d.refobjid
+      WHERE pn.nspname = 'public'
+        AND p.proname = ANY($1::text[])
+      ORDER BY p.proname, refclassid, referenced`,
+    [["ip_op_enforce_current_update_v1", "ip_op_reject_immutable_v1"]],
+  );
+  if (JSON.stringify(dependencies) !== JSON.stringify(EXPECTED_IP_OP_FUNCTION_DEPENDENCIES_V1)) {
+    throw new BootstrapMainClaimHandoffV1SchemaError(
+      "owner-producer activation function dependency catalog mismatch",
+    );
+  }
+
+  const triggers = await sql.unsafe<Array<{
+    name: string;
+    relation: string;
+    function_name: string;
+    tgtype: number;
+    tgenabled: string;
+    tgisinternal: boolean;
+    parent_zero: boolean;
+    constraint_zero: boolean;
+    tgdeferrable: boolean;
+    tginitdeferred: boolean;
+    tgattr: string;
+    tgnargs: number;
+    tgargs_length: number;
+    qual_null: boolean;
+    tgoldtable: null;
+    tgnewtable: null;
+    definition: string;
+  }>>(
+    `SELECT t.tgname AS name, c.relname AS relation,
+            p.proname AS function_name, t.tgtype, t.tgenabled,
+            t.tgisinternal, t.tgparentid = 0 AS parent_zero,
+            t.tgconstraint = 0 AS constraint_zero,
+            t.tgdeferrable, t.tginitdeferred, t.tgattr::text AS tgattr,
+            t.tgnargs, octet_length(t.tgargs) AS tgargs_length,
+            t.tgqual IS NULL AS qual_null, t.tgoldtable, t.tgnewtable,
+            pg_get_triggerdef(t.oid, true) AS definition
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_proc p ON p.oid = t.tgfoid
+      WHERE n.nspname = 'public'
+        AND c.relname = ANY($1::text[])
+        AND NOT t.tgisinternal
+      ORDER BY t.tgname`,
+    [[
+      OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE,
+      OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE,
+      OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE,
+      OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE,
+    ]],
+  );
+  const triggerProjection = triggers.map((row) => ({
+    ...row,
+    definition: normalizeCatalogSql(row.definition),
+  }));
+  const expectedTriggers = [
+    ["ip_op_mah_v1_immutable_trg", OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE,
+      "ip_op_reject_immutable_v1", 58],
+    ["ip_op_msa_v1_immutable_trg", OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE,
+      "ip_op_reject_immutable_v1", 58],
+    ["ip_op_msc_v1_delete_truncate_trg", OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE,
+      "ip_op_reject_immutable_v1", 42],
+    ["ip_op_msc_v1_update_trg", OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE,
+      "ip_op_enforce_current_update_v1", 19],
+    ["ip_op_sba_v1_immutable_trg", OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE,
+      "ip_op_reject_immutable_v1", 58],
+  ].map(([name, relation, function_name, tgtype]) => ({
+    name,
+    relation,
+    function_name,
+    tgtype,
+    tgenabled: "O",
+    tgisinternal: false,
+    parent_zero: true,
+    constraint_zero: true,
+    tgdeferrable: false,
+    tginitdeferred: false,
+    tgattr: "",
+    tgnargs: 0,
+    tgargs_length: 0,
+    qual_null: true,
+    tgoldtable: null,
+    tgnewtable: null,
+    definition: EXPECTED_IP_OP_TRIGGER_CATALOG_DEFS_V1[
+      name as keyof typeof EXPECTED_IP_OP_TRIGGER_CATALOG_DEFS_V1
+    ],
+  }));
+  if (JSON.stringify(triggerProjection) !== JSON.stringify(expectedTriggers)) {
+    throw new BootstrapMainClaimHandoffV1SchemaError(
+      "owner-producer activation trigger catalog mismatch",
+    );
+  }
 }
 
 const EXPECTED_RELATION_METADATA_HASHES = Object.freeze({
   [BOOTSTRAP_HANDOFF_OPERATION_TABLE]: "b8ba5b2d4a39e85300a9ced031f62a19b14aaf415e6d1144df3110ee432aaf82",
   [OWNER_RESERVATION_TABLE]: "dfd68d29ea41810f6f75bac0dc16067147afab9d8a4d5f619a4767051b4954b1",
-  [OWNER_ADMISSION_AUTHORITY_TABLE]: "3b5f99470404679f1f62b6a8c2d25ed120b4e6a4d3f45bd8f96dfac309964712",
+  [OWNER_ADMISSION_AUTHORITY_TABLE]: "a18d5135cdd0d3cbb63d71e1ad28a0f69871d79d5fbb232c5586283fa7fc29b2",
   [OWNER_ADMISSION_HEAD_TABLE]: "c73bea41c46b00dee7912ffc848a7f8c3822a6bd03f8f1b18441156de4412fc0",
+  [OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE]: "3666aedb09ff8ba5f84b923f2a7b8c3e9136b9a67663f5ac6f1ac0b2e34f65f0",
+  [OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE]: "bcfab408c29b74d6c07030b5e56469d35d81b53bf7599bb02bcb6270d8d2bb87",
+  [OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE]: "69a58bae4d755cf6cf9892b0484d672df66349413e2e36d10e89d46c99a293e9",
+  [OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE]: "22dd7ec548f21e8dc8a44a5ee20e4ca738c87ce79f0c91fc99271ccaafaea0d8",
 } as const);
 
 async function exactRelationMetadata(
@@ -694,20 +1490,20 @@ async function exactRelationMetadata(
     topology: topologyRows[0] ?? null,
     columns: columns.map((row) => ({
       ...row,
-      default_expression: normalizeSql(row.default_expression ?? ""),
+      default_expression: normalizeCatalogSql(row.default_expression ?? ""),
     })),
     constraints: constraints.map((row) => ({
       ...row,
-      definition: normalizeSql(row.definition),
+      definition: normalizeCatalogSql(row.definition),
     })),
     indexes: indexes.map((row) => ({
       ...row,
-      definition: normalizeSql(row.definition),
+      definition: normalizeCatalogSql(row.definition),
     })),
     triggers: triggers.map((row) => ({
       ...row,
-      definition: normalizeSql(row.definition),
-      function_definition: normalizeSql(row.function_definition),
+      definition: normalizeCatalogSql(row.definition),
+      function_definition: normalizeCatalogSql(row.function_definition),
     })),
   });
 }
@@ -734,6 +1530,10 @@ export async function projectBootstrapMainClaimHandoffV1Schema(
     || !relations.has(OWNER_RESERVATION_TABLE)
     || !relations.has(OWNER_ADMISSION_AUTHORITY_TABLE)
     || !relations.has(OWNER_ADMISSION_HEAD_TABLE)
+    || !relations.has(OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE)
+    || !relations.has(OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE)
+    || !relations.has(OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE)
+    || !relations.has(OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE)
   ) {
     throw new BootstrapMainClaimHandoffV1SchemaError(
       "bootstrap-main-claim handoff schema is not fully installed",
@@ -744,9 +1544,14 @@ export async function projectBootstrapMainClaimHandoffV1Schema(
     OWNER_RESERVATION_TABLE,
     OWNER_ADMISSION_AUTHORITY_TABLE,
     OWNER_ADMISSION_HEAD_TABLE,
+    OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_TABLE,
+    OWNER_PRODUCER_MANIFEST_SET_ACTIVATION_TABLE,
+    OWNER_PRODUCER_MANIFEST_ACTIVATION_HEAD_TABLE,
+    OWNER_PRODUCER_MANIFEST_SET_CURRENT_TABLE,
   ] as const) {
     await assertExactRelationMetadata(sql, relation);
   }
+  await assertExactOwnerProducerActivationCatalogV1(sql);
   const head = await sql.unsafe<Array<{
     singleton: boolean;
     head_version: string | number;
@@ -763,6 +1568,38 @@ export async function projectBootstrapMainClaimHandoffV1Schema(
   ) {
     throw new BootstrapMainClaimHandoffV1SchemaError(
       "owner-admission head is not one valid singleton",
+    );
+  }
+  const activationCurrent = await sql.unsafe<Array<{
+    singleton_key: boolean;
+    current_revision: string | number;
+    phase: string | null;
+    activation_ref: string | null;
+    activation_hash: string | null;
+    head_ref: string | null;
+    head_hash: string | null;
+  }>>(
+    `SELECT singleton_key, current_revision, phase,
+            activation_ref, activation_hash, head_ref, head_hash
+       FROM public.internal_production_owner_producer_manifest_set_current_v1`,
+  );
+  const current = activationCurrent[0];
+  const currentRevision = Number(current?.current_revision);
+  const currentPairMembers = current === undefined
+    ? []
+    : [current.phase, current.activation_ref, current.activation_hash, current.head_ref, current.head_hash];
+  const currentIsSeed = currentRevision === 0
+    && currentPairMembers.every((member) => member === null);
+  const currentIsActive = currentRevision > 0
+    && currentPairMembers.every((member) => typeof member === "string" && member.length > 0);
+  if (
+    activationCurrent.length !== 1
+    || current?.singleton_key !== true
+    || !Number.isSafeInteger(currentRevision)
+    || (!currentIsSeed && !currentIsActive)
+  ) {
+    throw new BootstrapMainClaimHandoffV1SchemaError(
+      "owner-producer manifest activation current is not one valid singleton",
     );
   }
   return Object.freeze({
@@ -783,7 +1620,7 @@ export async function detectBootstrapMainClaimHandoffV1Schema(
 ): Promise<BootstrapMainClaimHandoffV1SchemaState> {
   const relations = await existingRelations(sql);
   if (relations.size === 0) return "absent";
-  if (relations.size !== 4) return "partial";
+  if (relations.size !== 8) return "partial";
   try {
     await projectBootstrapMainClaimHandoffV1Schema(sql);
     return "present";

@@ -9,6 +9,9 @@ import {
   applyContractSpineMigrations,
   verifyContractSpineMigrations,
 } from "./db/contract-spine-migrations.js";
+import type {
+  PgTransactionSql as InternalProductionPgTransactionSql,
+} from "./internal-production/owner-admission-v1.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -129,10 +132,7 @@ export async function pgExec(sql: string): Promise<void> {
   await s.unsafe(sql);
 }
 
-export type PgTransactionSql = ReturnType<typeof postgres> & Readonly<{
-  savepoint: (...args: any[]) => Promise<any>;
-  prepare: (...args: any[]) => Promise<any>;
-}>;
+export type PgTransactionSql = InternalProductionPgTransactionSql;
 
 export async function pgBegin<T>(fn: (sql: PgTransactionSql) => Promise<T>): Promise<T> {
   await ensureSchemaReady();

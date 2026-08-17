@@ -215,22 +215,53 @@ describe("contract spine migration journal", () => {
     assert.ok(module, "the dedicated guarded migration module must exist");
     assert.equal(module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID, guardedMigrationId);
     assert.equal(module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL, 32);
-    assert.deepEqual(
-      module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS.map((statement: string) =>
-        [
-          "internal_production_bootstrap_main_claim_handoff_operations_v1",
-          "internal_production_owner_reservations_v1",
-          "internal_production_owner_admission_authorities_v1",
-          "internal_production_owner_admission_head_v1",
-        ].filter((relation) => statement.includes(relation))),
-      [["internal_production_bootstrap_main_claim_handoff_operations_v1"],
-        ["internal_production_owner_reservations_v1"],
-        ["internal_production_owner_admission_authorities_v1"],
-        [],
-        ["internal_production_owner_admission_authorities_v1"],
-        ["internal_production_owner_admission_authorities_v1"],
-        ["internal_production_owner_admission_head_v1"],
-        ["internal_production_owner_admission_head_v1"]],
+    const statementAuthority = module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS.map(
+      (statement: string) => {
+        const normalized = statement.replace(/\s+/g, " ").trim();
+        const match = normalized.match(
+          /^(?:CREATE (TABLE|FUNCTION|TRIGGER|INDEX)|INSERT INTO|ALTER TABLE) (?:public\.)?([a-z0-9_]+)/i,
+        );
+        assert.ok(match, `unclassified guarded migration statement: ${normalized.slice(0, 80)}`);
+        return `${(match[1] ?? normalized.split(" ").slice(0, 2).join("-")).toLowerCase()}:${match[2]}`;
+      },
+    );
+    assert.deepEqual(statementAuthority, [
+      "table:internal_production_bootstrap_main_claim_handoff_operations_v1",
+      "table:internal_production_owner_reservations_v1",
+      "table:internal_production_owner_admission_authorities_v1",
+      "function:setfarm_forbid_internal_production_owner_admission_authority_mutation",
+      "trigger:trg_internal_production_owner_admission_authority_immutable",
+      "trigger:trg_internal_production_owner_admission_authority_truncate_forbidden",
+      "table:internal_production_owner_admission_head_v1",
+      "insert-into:internal_production_owner_admission_head_v1",
+      "function:ip_op_reject_immutable_v1",
+      "table:internal_production_owner_producer_source_build_authorities_v1",
+      "index:ip_op_sba_v1_plan_manifest_idx",
+      "table:internal_production_owner_producer_manifest_set_activations_v1",
+      "index:ip_op_msa_v1_phase_manifest_idx",
+      "index:ip_op_msa_v1_pred_activation_idx",
+      "index:ip_op_msa_v1_pred_head_idx",
+      "table:internal_production_owner_producer_manifest_activation_heads_v1",
+      "index:ip_op_mah_v1_phase_activation_idx",
+      "index:ip_op_mah_v1_pred_head_idx",
+      "alter-table:internal_production_owner_producer_manifest_set_activations_v1",
+      "table:internal_production_owner_producer_manifest_set_current_v1",
+      "insert-into:internal_production_owner_producer_manifest_set_current_v1",
+      "function:ip_op_enforce_current_update_v1",
+      "trigger:ip_op_sba_v1_immutable_trg",
+      "trigger:ip_op_msa_v1_immutable_trg",
+      "trigger:ip_op_mah_v1_immutable_trg",
+      "trigger:ip_op_msc_v1_delete_truncate_trg",
+      "trigger:ip_op_msc_v1_update_trg",
+    ]);
+    assert.equal(
+      Buffer.byteLength("internal_production_owner_producer_manifest_activation_heads_v1"),
+      63,
+    );
+    assert.equal(
+      module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS.some((statement: string) =>
+        statement.includes("internal_production_owner_producer_manifest_set_activation_heads_v1")),
+      false,
     );
 
     const plan = await planContractSpineMigrations(database.sql);
@@ -285,8 +316,15 @@ describe("contract spine migration journal", () => {
       UNION ALL SELECT to_regclass('public.internal_production_owner_reservations_v1')::text
       UNION ALL SELECT to_regclass('public.internal_production_owner_admission_authorities_v1')::text
       UNION ALL SELECT to_regclass('public.internal_production_owner_admission_head_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_producer_source_build_authorities_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_producer_manifest_set_activations_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_producer_manifest_activation_heads_v1')::text
+      UNION ALL SELECT to_regclass('public.internal_production_owner_producer_manifest_set_current_v1')::text
     `;
-    assert.deepEqual(guardedRelations.map((row) => row.relation), [null, null, null, null]);
+    assert.deepEqual(
+      guardedRelations.map((row) => row.relation),
+      [null, null, null, null, null, null, null, null],
+    );
 
     const audit = await migrationApi.auditAuthorityV3ContractSpineThroughMigration31V1(database.sql);
     assert.equal(audit.status, "verified");
@@ -374,6 +412,142 @@ describe("contract spine migration journal", () => {
       ownerReservationSidecarPresent: true,
       ownerAdmissionHeadPresent: true,
     });
+    const activationRelations = await database.sql<Array<{
+      relation_name: string;
+      canonical_body_type: string | null;
+    }>>`
+      SELECT c.relname AS relation_name,
+             format_type(a.atttypid, a.atttypmod) AS canonical_body_type
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_attribute a
+          ON a.attrelid = c.oid
+         AND a.attname = 'canonical_body'
+         AND a.attnum > 0
+         AND NOT a.attisdropped
+       WHERE n.nspname = 'public'
+         AND c.relname = ANY(${[
+           "internal_production_owner_producer_source_build_authorities_v1",
+           "internal_production_owner_producer_manifest_set_activations_v1",
+           "internal_production_owner_producer_manifest_activation_heads_v1",
+           "internal_production_owner_producer_manifest_set_current_v1",
+         ]}::text[])
+       ORDER BY c.relname
+    `;
+    assert.deepEqual(activationRelations.map((row) => ({ ...row })), [
+      {
+        relation_name: "internal_production_owner_producer_manifest_activation_heads_v1",
+        canonical_body_type: "text",
+      },
+      {
+        relation_name: "internal_production_owner_producer_manifest_set_activations_v1",
+        canonical_body_type: "text",
+      },
+      {
+        relation_name: "internal_production_owner_producer_manifest_set_current_v1",
+        canonical_body_type: null,
+      },
+      {
+        relation_name: "internal_production_owner_producer_source_build_authorities_v1",
+        canonical_body_type: "text",
+      },
+    ]);
+    const activationCurrentSeed = await database.sql<Array<{
+      singleton_key: boolean;
+      current_revision: string;
+      phase: string | null;
+      activation_ref: string | null;
+      activation_hash: string | null;
+      head_ref: string | null;
+      head_hash: string | null;
+    }>>`
+      SELECT singleton_key, current_revision::text, phase,
+             activation_ref, activation_hash, head_ref, head_hash
+        FROM internal_production_owner_producer_manifest_set_current_v1
+    `;
+    assert.deepEqual(activationCurrentSeed.map((row) => ({ ...row })), [{
+      singleton_key: true,
+      current_revision: "0",
+      phase: null,
+      activation_ref: null,
+      activation_hash: null,
+      head_ref: null,
+      head_hash: null,
+    }]);
+    await assert.rejects(
+      database.sql`
+        UPDATE internal_production_owner_producer_manifest_set_current_v1
+           SET current_revision = current_revision
+         WHERE singleton_key = TRUE
+      `,
+      /IP_OWNER_PRODUCER_CURRENT_TRANSITION_INVALID/,
+    );
+    for (const statement of [
+      "UPDATE internal_production_owner_producer_source_build_authorities_v1 SET plan = plan",
+      "DELETE FROM internal_production_owner_producer_manifest_set_activations_v1",
+      "TRUNCATE internal_production_owner_producer_source_build_authorities_v1",
+    ]) {
+      await assert.rejects(
+        database.sql.unsafe(statement),
+        /IP_OWNER_PRODUCER_IMMUTABLE_MUTATION/,
+      );
+    }
+    const immutableFunctionStatement =
+      module.BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS[8] as string;
+    const replaceFunctionStatement = immutableFunctionStatement.replace(
+      "CREATE FUNCTION",
+      "CREATE OR REPLACE FUNCTION",
+    );
+    const caseDriftedFunctionStatement = replaceFunctionStatement.replace(
+      "IP_OWNER_PRODUCER_IMMUTABLE_MUTATION",
+      "ip_owner_producer_immutable_mutation",
+    );
+    try {
+      await database.sql.unsafe(caseDriftedFunctionStatement);
+      await assert.rejects(
+        module.projectBootstrapMainClaimHandoffV1Schema(database.sql),
+        /function catalog mismatch|exact relation metadata mismatch/,
+      );
+    } finally {
+      await database.sql.unsafe(replaceFunctionStatement);
+    }
+    await module.projectBootstrapMainClaimHandoffV1Schema(database.sql);
+
+    const rawBodyText = '{  "z": 1.00, "a": "Case  Preserved", "z": 2  }';
+    await assert.rejects(
+      database.sql.begin(async (transaction) => {
+        await transaction.unsafe(
+          `INSERT INTO internal_production_owner_producer_source_build_authorities_v1 (
+             source_build_authority_ref, source_build_authority_hash, plan,
+             manifest_hash, owner_category_registry_hash,
+             owner_category_census_map_hash, canonical_body
+           ) VALUES ($1,$2,'A',$3,$4,$5,$6)`,
+          [
+            "setfarm://tests/canonical-text-preservation",
+            "1".repeat(64),
+            "2".repeat(64),
+            "3".repeat(64),
+            "4".repeat(64),
+            rawBodyText,
+          ],
+        );
+        const rows = await transaction.unsafe<Array<{ canonical_body: string }>>(
+          `SELECT canonical_body
+             FROM internal_production_owner_producer_source_build_authorities_v1
+            WHERE source_build_authority_ref = $1`,
+          ["setfarm://tests/canonical-text-preservation"],
+        );
+        assert.equal(rows[0]?.canonical_body, rawBodyText);
+        throw new Error("ROLLBACK_CANONICAL_TEXT_FIXTURE");
+      }),
+      /ROLLBACK_CANONICAL_TEXT_FIXTURE/,
+    );
+    const rolledBackTextRows = await database.sql<Array<{ count: string }>>`
+      SELECT COUNT(*)::text AS count
+        FROM internal_production_owner_producer_source_build_authorities_v1
+       WHERE source_build_authority_ref = 'setfarm://tests/canonical-text-preservation'
+    `;
+    assert.equal(rolledBackTextRows[0]?.count, "0");
     await database.sql`
       UPDATE internal_production_owner_admission_head_v1
          SET head_payload = head_payload || ${{
@@ -466,10 +640,23 @@ describe("contract spine migration journal", () => {
         && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
 
-    await database.sql.unsafe("DROP TABLE internal_production_owner_admission_head_v1");
-    await database.sql.unsafe("DROP TABLE internal_production_owner_admission_authorities_v1");
-    await database.sql.unsafe("DROP TABLE internal_production_owner_reservations_v1");
-    await database.sql.unsafe("DROP TABLE internal_production_bootstrap_main_claim_handoff_operations_v1");
+    await database.sql.unsafe(`
+      DROP TABLE
+        internal_production_owner_producer_manifest_set_current_v1,
+        internal_production_owner_producer_manifest_activation_heads_v1,
+        internal_production_owner_producer_manifest_set_activations_v1,
+        internal_production_owner_producer_source_build_authorities_v1,
+        internal_production_owner_admission_head_v1,
+        internal_production_owner_admission_authorities_v1,
+        internal_production_owner_reservations_v1,
+        internal_production_bootstrap_main_claim_handoff_operations_v1
+      CASCADE
+    `);
+    await database.sql.unsafe("DROP FUNCTION ip_op_enforce_current_update_v1()");
+    await database.sql.unsafe("DROP FUNCTION ip_op_reject_immutable_v1()");
+    await database.sql.unsafe(
+      "DROP FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation()",
+    );
     await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 31`;
     await assert.rejects(
       migrationApi.inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql),

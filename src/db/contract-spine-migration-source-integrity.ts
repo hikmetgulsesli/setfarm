@@ -305,6 +305,10 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST = Object.freeze({
       }),
       Object.freeze({
         file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        region: "migration-v32-activation-catalog-authority",
+      }),
+      Object.freeze({
+        file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
         region: "migration-v32-schema-projector",
       }),
       Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v32-guarded-class" }),

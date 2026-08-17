@@ -51,6 +51,10 @@ describe("contract-spine semantic migration source digests", () => {
         },
         {
           file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-activation-catalog-authority",
+        },
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
           region: "migration-v32-schema-projector",
         },
         {
@@ -86,6 +90,17 @@ describe("contract-spine semantic migration source digests", () => {
       assert.equal(statementsMutation[historical], baseline[historical]);
     }
 
+    const activationInputMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "source_build_authority_hash CHAR(64) NOT NULL,",
+        "source_build_authority_hash CHAR(63) NOT NULL,",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(activationInputMutation[32], baseline[32]);
+    assert.equal(activationInputMutation[31], baseline[31]);
+
     const projectorMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
       "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
       (source) => replaceExactlyOnce(
@@ -96,6 +111,19 @@ describe("contract-spine semantic migration source digests", () => {
     )) as Readonly<Record<number, string>>;
     assert.notEqual(projectorMutation[32], baseline[32]);
     assert.equal(projectorMutation[31], baseline[31]);
+
+    const catalogAuthorityMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "create or replace function public.ip_op_reject_immutable_v1() returns trigger",
+          "create or replace function public.ip_op_reject_immutable_mutated_v1() returns trigger",
+        ),
+      ),
+    ) as Readonly<Record<number, string>>;
+    assert.notEqual(catalogAuthorityMutation[32], baseline[32]);
+    assert.equal(catalogAuthorityMutation[31], baseline[31]);
 
     const dispatchMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
       "src/db/contract-spine-migrations.ts",
