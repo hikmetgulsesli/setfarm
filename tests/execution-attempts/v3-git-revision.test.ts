@@ -7,9 +7,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   captureV3GitCommitRevision,
+  replayV3HistoricalGitCommitAncestryV1,
   resolveV3GitRevision,
   V3GitRevisionError,
 } from "../../src/execution/v3-git-revision.js";
+import * as v3GitRevisionModule from "../../src/execution/v3-git-revision.js";
 
 function git(repo: string, args: readonly string[]): string {
   return execFileSync("git", [...args], {
@@ -17,6 +19,15 @@ function git(repo: string, args: readonly string[]): string {
     encoding: "utf8",
     timeout: 10_000,
     stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function gitObject(repo: string, type: "commit" | "tree", bytes: string): string {
+  return execFileSync("git", ["hash-object", "--literally", "-t", type, "-w", "--stdin"], {
+    cwd: repo,
+    encoding: "utf8",
+    input: bytes,
+    stdio: ["pipe", "pipe", "pipe"],
   }).trim();
 }
 
@@ -64,6 +75,165 @@ describe("v3 immutable Git revision capture", () => {
       sha: secondSha,
       treeHash: secondTree,
     });
+  });
+
+  it("replays the exact stored historical ancestry proof without consulting current HEAD", () => {
+    const replay = (v3GitRevisionModule as Readonly<Record<string, unknown>>)
+      .replayV3HistoricalGitCommitAncestryV1;
+    assert.equal(
+      typeof replay,
+      "function",
+      "production must export replayV3HistoricalGitCommitAncestryV1",
+    );
+    assert.deepEqual(
+      (replay as (input: Readonly<Record<string, string>>) => unknown)({
+        repo,
+        ancestorSha: firstSha,
+        descendantSha: secondSha,
+        expectedAncestorTreeHash: firstTree,
+        expectedDescendantTreeHash: secondTree,
+        expectedMergeBase: firstSha,
+      }),
+      {
+        ancestorSha: firstSha,
+        descendantSha: secondSha,
+        ancestorTreeHash: firstTree,
+        descendantTreeHash: secondTree,
+        mergeBase: firstSha,
+      },
+    );
+  });
+
+  it("rejects any ref or other caller-controlled field outside the exact historical proof ABI", () => {
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({
+        repo,
+        ancestorSha: firstSha,
+        descendantSha: secondSha,
+        expectedAncestorTreeHash: firstTree,
+        expectedDescendantTreeHash: secondTree,
+        expectedMergeBase: firstSha,
+        requestedRef: "main",
+      } as Parameters<typeof replayV3HistoricalGitCommitAncestryV1>[0]),
+      (error) => errorCode(error) === "V3_GIT_REVISION_INPUT_INVALID",
+    );
+  });
+
+  it("returns the typed INVALID error for non-object and non-string historical inputs", () => {
+    const replay = replayV3HistoricalGitCommitAncestryV1 as unknown as (input: unknown) => unknown;
+    for (const input of [null, undefined, 42, [], "history"]) {
+      assert.throws(
+        () => replay(input),
+        (error) => errorCode(error) === "V3_GIT_REVISION_INPUT_INVALID",
+      );
+    }
+    const valid = {
+      repo,
+      ancestorSha: firstSha,
+      descendantSha: secondSha,
+      expectedAncestorTreeHash: firstTree,
+      expectedDescendantTreeHash: secondTree,
+      expectedMergeBase: firstSha,
+    };
+    for (const field of Object.keys(valid)) {
+      assert.throws(
+        () => replay({ ...valid, [field]: 42 }),
+        (error) => errorCode(error) === "V3_GIT_REVISION_INPUT_INVALID",
+      );
+    }
+  });
+
+  it("replays stored objects across HEAD advance and ignores replacement refs", async () => {
+    const valid = {
+      repo,
+      ancestorSha: firstSha,
+      descendantSha: secondSha,
+      expectedAncestorTreeHash: firstTree,
+      expectedDescendantTreeHash: secondTree,
+      expectedMergeBase: firstSha,
+    } as const;
+    git(repo, ["replace", firstSha, secondSha]);
+    await writeFile(path.join(repo, "tracked.txt"), "third\n", "utf8");
+    git(repo, ["add", "tracked.txt"]);
+    git(repo, ["commit", "-qm", "advance current HEAD"]);
+    assert.deepEqual(replayV3HistoricalGitCommitAncestryV1(valid), {
+      ancestorSha: firstSha,
+      descendantSha: secondSha,
+      ancestorTreeHash: firstTree,
+      descendantTreeHash: secondTree,
+      mergeBase: firstSha,
+    });
+  });
+
+  it("rejects historical object, stored-tree, merge-base, and ancestry proof drift", async () => {
+    const valid = {
+      repo,
+      ancestorSha: firstSha,
+      descendantSha: secondSha,
+      expectedAncestorTreeHash: firstTree,
+      expectedDescendantTreeHash: secondTree,
+      expectedMergeBase: firstSha,
+    } as const;
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({
+        ...valid,
+        expectedAncestorTreeHash: "0".repeat(firstTree.length),
+      }),
+      (error) => errorCode(error) === "V3_GIT_PROOF_MISMATCH",
+    );
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({
+        ...valid,
+        expectedMergeBase: secondSha,
+      }),
+      (error) => errorCode(error) === "V3_GIT_PROOF_MISMATCH",
+    );
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({
+        ...valid,
+        ancestorSha: secondSha,
+        descendantSha: firstSha,
+        expectedAncestorTreeHash: secondTree,
+        expectedDescendantTreeHash: firstTree,
+        expectedMergeBase: secondSha,
+      }),
+      (error) => errorCode(error) === "V3_GIT_ANCESTRY_INVALID",
+    );
+
+    await writeFile(path.join(repo, "historical-blob.txt"), "blob\n", "utf8");
+    const blobSha = git(repo, ["hash-object", "-w", "historical-blob.txt"]);
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({ ...valid, ancestorSha: blobSha }),
+      (error) => errorCode(error) === "V3_GIT_OBJECT_NOT_COMMIT",
+    );
+    git(repo, ["tag", "-a", "history-tag", firstSha, "-m", "history tag"]);
+    const tagSha = git(repo, ["rev-parse", "refs/tags/history-tag"]);
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({ ...valid, ancestorSha: tagSha }),
+      (error) => errorCode(error) === "V3_GIT_OBJECT_NOT_COMMIT",
+    );
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({ ...valid, descendantSha: "f".repeat(40) }),
+      (error) => errorCode(error) === "V3_GIT_COMMIT_UNAVAILABLE",
+    );
+
+    const malformedTreeSha = gitObject(repo, "tree", "not-a-valid-tree-object");
+    const malformedCommitSha = gitObject(repo, "commit", [
+      `tree ${malformedTreeSha}`,
+      "author Setfarm Test <setfarm-test@example.invalid> 0 +0000",
+      "committer Setfarm Test <setfarm-test@example.invalid> 0 +0000",
+      "",
+      "malformed tree fixture",
+      "",
+    ].join("\n"));
+    assert.throws(
+      () => replayV3HistoricalGitCommitAncestryV1({
+        ...valid,
+        ancestorSha: malformedCommitSha,
+        expectedAncestorTreeHash: malformedTreeSha,
+      }),
+      (error) => errorCode(error) === "V3_GIT_TREE_INVALID",
+    );
   });
 
   it("ignores dirty tracked and untracked working-tree bytes without changing them", async () => {

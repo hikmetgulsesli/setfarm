@@ -15,7 +15,10 @@ export type V3GitRevisionErrorCode =
   | "V3_GIT_REF_INVALID"
   | "V3_GIT_REF_NOT_COMMIT"
   | "V3_GIT_EXPECTED_SHA_MISMATCH"
-  | "V3_GIT_REF_DRIFT";
+  | "V3_GIT_REF_DRIFT"
+  | "V3_GIT_ANCESTRY_INVALID"
+  | "V3_GIT_PROOF_MISMATCH"
+  | "V3_GIT_OBJECT_DRIFT";
 
 export class V3GitRevisionError extends Error {
   readonly code: V3GitRevisionErrorCode;
@@ -62,10 +65,10 @@ function requireFullObjectHash(
   field: string,
   errorCode: V3GitRevisionErrorCode = "V3_GIT_REVISION_INPUT_INVALID",
 ): string {
-  if (!FULL_GIT_OBJECT_HASH.test(value)) {
+  if (typeof value !== "string" || !FULL_GIT_OBJECT_HASH.test(value)) {
     fail(errorCode, `${field} must be a lowercase full Git object hash`, {
       field,
-      value: value.slice(0, 160),
+      value: typeof value === "string" ? value.slice(0, 160) : String(value).slice(0, 160),
     });
   }
   return value;
@@ -292,4 +295,266 @@ export function resolveV3GitRevision(input: Readonly<{
     }
   }
   return revision;
+}
+
+const HISTORICAL_GIT_ENV = Object.freeze({
+  PATH: "/usr/bin:/bin",
+  LANG: "C",
+  LC_ALL: "C",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_OPTIONAL_LOCKS: "0",
+  GIT_TERMINAL_PROMPT: "0",
+});
+
+const HISTORICAL_GIT_PREFIX = Object.freeze([
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "core.fsmonitor=false",
+]);
+
+function runHistoricalGit(
+  repo: string,
+  args: readonly string[],
+  timeoutMs: number,
+  failureCode: V3GitRevisionErrorCode,
+  failureMessage: string,
+  acceptedStatuses: readonly number[] = [0],
+): Readonly<GitCommandResult & { status: number }> {
+  const result = spawnSync("/usr/bin/git", [...HISTORICAL_GIT_PREFIX, ...args], {
+    cwd: repo,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: HISTORICAL_GIT_ENV,
+  });
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (
+    result.error
+    || result.status === null
+    || !acceptedStatuses.includes(result.status)
+    || result.signal
+    || stderr.length > 0
+  ) {
+    fail(failureCode, failureMessage, {
+      gitArgs: args.join(" ").slice(0, 500),
+      status: result.status === null ? null : String(result.status),
+      signal: result.signal,
+      detail: (result.error?.message || stderr || "git command failed").slice(0, 500),
+    });
+  }
+  return { stdout, stderr, status: result.status };
+}
+
+function exactHistoricalOutputLine(
+  output: string,
+  code: V3GitRevisionErrorCode,
+  description: string,
+): string {
+  if (!output.endsWith("\n") || output.slice(0, -1).includes("\n") || output.slice(0, -1).includes("\r")) {
+    fail(code, `${description} did not return exactly one LF-terminated value`);
+  }
+  const value = output.slice(0, -1);
+  if (!value) fail(code, `${description} returned an empty value`);
+  return value;
+}
+
+function captureHistoricalCommit(
+  repo: string,
+  commitSha: string,
+  timeoutMs: number,
+): SourceRevisionV1 {
+  const objectType = exactHistoricalOutputLine(
+    runHistoricalGit(
+      repo,
+      ["cat-file", "-t", commitSha],
+      timeoutMs,
+      "V3_GIT_COMMIT_UNAVAILABLE",
+      `commit object ${commitSha} is unavailable`,
+    ).stdout,
+    "V3_GIT_COMMIT_UNAVAILABLE",
+    "historical commit object type",
+  );
+  if (objectType !== "commit") {
+    fail("V3_GIT_OBJECT_NOT_COMMIT", `object ${commitSha} is ${objectType}, not a commit`, {
+      commitSha,
+      objectType,
+    });
+  }
+  const treeHash = requireFullObjectHash(
+      exactHistoricalOutputLine(
+      runHistoricalGit(
+        repo,
+        ["rev-parse", "--verify", "--end-of-options", `${commitSha}^{tree}`],
+        timeoutMs,
+        "V3_GIT_TREE_INVALID",
+        `commit ${commitSha} root tree is unavailable`,
+      ).stdout,
+      "V3_GIT_TREE_INVALID",
+      "historical commit root tree",
+    ),
+    "treeHash",
+    "V3_GIT_TREE_INVALID",
+  );
+  const treeType = exactHistoricalOutputLine(
+    runHistoricalGit(
+      repo,
+      ["cat-file", "-t", treeHash],
+      timeoutMs,
+      "V3_GIT_TREE_INVALID",
+      `tree object ${treeHash} is unavailable`,
+    ).stdout,
+    "V3_GIT_TREE_INVALID",
+    "historical tree object type",
+  );
+  if (treeType !== "tree" || treeHash.length !== commitSha.length) {
+    fail("V3_GIT_TREE_INVALID", `object ${treeHash} is not the matching tree object`, {
+      commitSha,
+      treeHash,
+      treeType,
+    });
+  }
+  runHistoricalGit(
+    repo,
+    ["ls-tree", "-r", "-z", "--full-tree", treeHash],
+    timeoutMs,
+    "V3_GIT_TREE_INVALID",
+    `tree object ${treeHash} is malformed or contains unavailable descendants`,
+  );
+  return Object.freeze({ sha: commitSha, treeHash });
+}
+
+/**
+ * Replays one stored ancestor/descendant proof exclusively from immutable Git
+ * objects. The caller owns the repository boundary and supplies no ref name.
+ */
+export function replayV3HistoricalGitCommitAncestryV1(input: Readonly<{
+  repo: string;
+  ancestorSha: string;
+  descendantSha: string;
+  expectedAncestorTreeHash: string;
+  expectedDescendantTreeHash: string;
+  expectedMergeBase: string;
+}>): Readonly<{
+  ancestorSha: string;
+  descendantSha: string;
+  ancestorTreeHash: string;
+  descendantTreeHash: string;
+  mergeBase: string;
+}> {
+  const exactKeys = [
+    "ancestorSha",
+    "descendantSha",
+    "expectedAncestorTreeHash",
+    "expectedDescendantTreeHash",
+    "expectedMergeBase",
+    "repo",
+  ];
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    fail("V3_GIT_REVISION_INPUT_INVALID", "historical ancestry replay input must be one object");
+  }
+  if (JSON.stringify(Object.keys(input).sort()) !== JSON.stringify(exactKeys)) {
+    fail("V3_GIT_REVISION_INPUT_INVALID", "historical ancestry replay input has unknown or missing fields");
+  }
+  const timeoutMs = DEFAULT_GIT_TIMEOUT_MS;
+  if (typeof input.repo !== "string" || !input.repo || input.repo.includes("\0")) {
+    fail("V3_GIT_REVISION_INPUT_INVALID", "repo must be a non-empty filesystem path");
+  }
+  const ancestorSha = requireFullObjectHash(input.ancestorSha, "ancestorSha");
+  const descendantSha = requireFullObjectHash(input.descendantSha, "descendantSha");
+  const expectedAncestorTreeHash = requireFullObjectHash(
+    input.expectedAncestorTreeHash,
+    "expectedAncestorTreeHash",
+  );
+  const expectedDescendantTreeHash = requireFullObjectHash(
+    input.expectedDescendantTreeHash,
+    "expectedDescendantTreeHash",
+  );
+  const expectedMergeBase = requireFullObjectHash(input.expectedMergeBase, "expectedMergeBase");
+
+  runHistoricalGit(
+    input.repo,
+    ["rev-parse", "--git-dir"],
+    timeoutMs,
+    "V3_GIT_REPOSITORY_UNAVAILABLE",
+    "repository object database is unavailable",
+  );
+  const ancestorBefore = captureHistoricalCommit(input.repo, ancestorSha, timeoutMs);
+  const descendantBefore = captureHistoricalCommit(input.repo, descendantSha, timeoutMs);
+  if (
+    ancestorBefore.treeHash !== expectedAncestorTreeHash
+    || descendantBefore.treeHash !== expectedDescendantTreeHash
+  ) {
+    fail("V3_GIT_PROOF_MISMATCH", "stored commit tree proof does not match immutable Git objects", {
+      ancestorSha,
+      expectedAncestorTreeHash,
+      observedAncestorTreeHash: ancestorBefore.treeHash,
+      descendantSha,
+      expectedDescendantTreeHash,
+      observedDescendantTreeHash: descendantBefore.treeHash,
+    });
+  }
+
+  const ancestry = runHistoricalGit(
+    input.repo,
+    ["merge-base", "--is-ancestor", ancestorSha, descendantSha],
+    timeoutMs,
+    "V3_GIT_ANCESTRY_INVALID",
+    "stored ancestor is not an ancestor of stored descendant",
+    [0, 1],
+  );
+  if (ancestry.status !== 0 || ancestry.stdout.length !== 0) {
+    fail("V3_GIT_ANCESTRY_INVALID", "stored ancestor is not an ancestor of stored descendant", {
+      ancestorSha,
+      descendantSha,
+      status: String(ancestry.status),
+    });
+  }
+  const mergeBase = requireFullObjectHash(
+    exactHistoricalOutputLine(
+      runHistoricalGit(
+        input.repo,
+        ["merge-base", ancestorSha, descendantSha],
+        timeoutMs,
+        "V3_GIT_ANCESTRY_INVALID",
+        "historical merge base is unavailable",
+      ).stdout,
+      "V3_GIT_ANCESTRY_INVALID",
+      "historical merge base",
+    ),
+    "mergeBase",
+    "V3_GIT_ANCESTRY_INVALID",
+  );
+  if (mergeBase !== ancestorSha || mergeBase !== expectedMergeBase) {
+    fail("V3_GIT_PROOF_MISMATCH", "stored merge-base proof is not the exact ancestor commit", {
+      ancestorSha,
+      descendantSha,
+      expectedMergeBase,
+      observedMergeBase: mergeBase,
+    });
+  }
+
+  const ancestorAfter = captureHistoricalCommit(input.repo, ancestorSha, timeoutMs);
+  const descendantAfter = captureHistoricalCommit(input.repo, descendantSha, timeoutMs);
+  if (
+    ancestorAfter.treeHash !== ancestorBefore.treeHash
+    || descendantAfter.treeHash !== descendantBefore.treeHash
+  ) {
+    fail("V3_GIT_OBJECT_DRIFT", "immutable Git objects changed during ancestry replay", {
+      ancestorSha,
+      descendantSha,
+    });
+  }
+
+  return Object.freeze({
+    ancestorSha,
+    descendantSha,
+    ancestorTreeHash: ancestorBefore.treeHash,
+    descendantTreeHash: descendantBefore.treeHash,
+    mergeBase,
+  });
 }
