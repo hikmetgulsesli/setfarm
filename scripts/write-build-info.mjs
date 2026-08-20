@@ -29,6 +29,8 @@ const MAX_BUILD_LOCATOR_UTF8_OCTETS_V1 = 1_024;
 const MAX_BUILD_FILE_BYTES_V1 = 33_554_432;
 const MAX_BUILD_TOTAL_BYTES_V1 = 536_870_912;
 const MAX_BUILD_ARCHIVE_GENERATIONS_V1 = 8;
+const MAX_ROTATION_LEDGER_ORDINALS_V1 = 4_096;
+const MAX_NO_REPLACE_PUBLISHER_TEMP_CANDIDATES_V1 = 8;
 const MAX_STITCH_CONVERTER_BYTES_V1 = 16_777_216;
 const MAX_AUTHORITY_BYTES_V1 = 33_554_432;
 
@@ -45,7 +47,11 @@ const FULL_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ARCHIVE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.dist$/;
+const ROTATION_RECORD_NAME_V1 = /^(\d{20})-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/;
 const RFC3339_MILLIS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const ROTATION_LEDGER_DIRECTORY_V1 = ".setfarm/build-generation-rotation-ledger-v1";
+const ARCHIVE_DIRECTORY_V1 = ".setfarm/build-generations-v1";
+const MAINTENANCE_LOCK_FILE_V1 = "build-generation-maintenance-lock-v1.json";
 const CANONICAL_ORIGIN = "https://github.com/hikmetgulsesli/setfarm.git\n";
 const COPY_STEP_ASSETS_SOURCE_SHA256_V1 = "ebc1329d163f2e3670372ba203ed98dd1d2e79c0fcaa946e364aa8db334a1a8c";
 const COPY_STEP_ASSETS_SOURCE_BYTES_V1 = 1_117;
@@ -56,6 +62,9 @@ const EXACT_SCRIPTS = Object.freeze({
   postbuild: "node scripts/write-build-info.mjs --finalize",
   "check:migration-digests": "node --import tsx scripts/check-contract-spine-migration-digests.ts --check",
   "check:mission-control-contracts": "node --import tsx scripts/mission-control-contract-artifacts.ts --check",
+  "build-generation-retention:inspect": "node scripts/build-generation-retention.mjs inspect",
+  "build-generation-retention:prepare": "node scripts/build-generation-retention.mjs prepare",
+  "build-generation-retention:resume": "node scripts/build-generation-retention.mjs resume",
 });
 const EXACT_TSCONFIG = Object.freeze({
   compilerOptions: {
@@ -112,6 +121,448 @@ function canonicalJson(value) {
 
 function hashCanonicalJson(value) {
   return sha256(Buffer.from(canonicalJson(value), "utf8"));
+}
+
+function optionalWriterLstat(target) {
+  try {
+    return lstatSync(target, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function writerDirectoryIdentity(directoryPath, expectedDevice) {
+  const identity = directoryIdentity(directoryPath, directoryPath, expectedDevice);
+  const stats = lstatSync(directoryPath, { bigint: true });
+  const linkCount = Number(stats.nlink);
+  if (!Number.isSafeInteger(linkCount) || linkCount < 1) fail(`${directoryPath} has an invalid link count`);
+  return Object.freeze({ ...identity, linkCount });
+}
+
+function writerSameDirectoryObject(left, right) {
+  return left.realpath === right.realpath
+    && left.devDecimal === right.devDecimal
+    && left.inoDecimal === right.inoDecimal
+    && left.mode === right.mode;
+}
+
+function writerUnlinkStable(filePath, observed, parentPath) {
+  const reopened = readStableRegular(filePath, MAX_AUTHORITY_BYTES_V1, {
+    device: observed.stats.dev,
+    nlink: Number(observed.stats.nlink),
+  });
+  if (reopened.stats.ino !== observed.stats.ino || reopened.mode !== observed.mode || !reopened.bytes.equals(observed.bytes)) {
+    fail(`${filePath} changed before unlink`);
+  }
+  unlinkSync(filePath);
+  fsyncDirectory(parentPath);
+  if (optionalWriterLstat(filePath)) fail(`${filePath} remained after unlink`);
+}
+
+function writerCanonicalRecordBytes(value) {
+  return Buffer.from(`${canonicalJson(value)}\n`, "utf8");
+}
+
+function parseWriterCanonicalRecord(filePath, expectedLinks = [1]) {
+  let observed;
+  for (const nlink of expectedLinks) {
+    try {
+      observed = readStableRegular(filePath, MAX_AUTHORITY_BYTES_V1, { nlink });
+      break;
+    } catch (error) {
+      if (nlink === expectedLinks.at(-1)) throw error;
+    }
+  }
+  let value;
+  try {
+    value = JSON.parse(observed.bytes.toString("utf8"));
+  } catch {
+    fail(`${filePath} contains invalid JSON`);
+  }
+  if (!observed.bytes.equals(writerCanonicalRecordBytes(value))) fail(`${filePath} is not canonical JSON plus LF`);
+  return Object.freeze({ value, observed });
+}
+
+function publishWriterNoReplace(directory, basename, bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length > MAX_AUTHORITY_BYTES_V1) fail("writer publication bytes are invalid");
+  const device = BigInt(writerDirectoryIdentity(directory).devDecimal);
+  const pattern = publisherTempPattern(basename);
+  const family = readdirSync(directory).filter((name) => name === basename || name.startsWith(`.${basename}.`)).sort(compareBytes);
+  const temps = family.filter((name) => name !== basename);
+  if (temps.length > MAX_NO_REPLACE_PUBLISHER_TEMP_CANDIDATES_V1 || temps.some((name) => !pattern.test(name))) {
+    fail(`${basename} publisher temporary state is invalid`);
+  }
+  const fixedPath = path.join(directory, basename);
+  if (family.includes(basename)) {
+    const fixed = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: optionalWriterLstat(fixedPath).nlink === 2n ? 2 : 1 });
+    if (fixed.mode !== 0o600 || !fixed.bytes.equals(bytes)) fail(`${basename} conflicts with immutable authority`);
+    for (const name of temps) {
+      const tempPath = path.join(directory, name);
+      const tempStats = optionalWriterLstat(tempPath);
+      const temp = readStableRegular(tempPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: Number(tempStats.nlink) });
+      if (temp.mode !== 0o600 || !temp.bytes.equals(bytes)) fail(`${basename} has competing temporary bytes`);
+      writerUnlinkStable(tempPath, temp, directory);
+    }
+    const reopened = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: 1 });
+    if (reopened.mode !== 0o600 || !reopened.bytes.equals(bytes)) fail(`${basename} changed after recovery`);
+    return;
+  }
+  let tempPath;
+  for (const name of temps) {
+    const candidate = path.join(directory, name);
+    const observed = readStableRegular(candidate, MAX_AUTHORITY_BYTES_V1, { device, nlink: 1 });
+    if (observed.mode !== 0o600 || !observed.bytes.equals(bytes)) fail(`${basename} has competing unpublished temporaries`);
+    if (!tempPath) tempPath = candidate;
+  }
+  if (!tempPath) {
+    tempPath = path.join(directory, `.${basename}.${randomUUID()}.tmp`);
+    let descriptor;
+    try {
+      descriptor = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      writeFileSync(descriptor, bytes);
+      fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
+  }
+  const created = readStableRegular(tempPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: 1 });
+  if (created.mode !== 0o600 || !created.bytes.equals(bytes)) fail(`${basename} temporary is not exact`);
+  try {
+    linkSync(tempPath, fixedPath);
+    fsyncDirectory(directory);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const winnerStats = optionalWriterLstat(fixedPath);
+    const winner = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: Number(winnerStats.nlink) });
+    if (winner.mode !== 0o600 || !winner.bytes.equals(bytes)) fail(`${basename} concurrent winner conflicts`);
+  }
+  for (const name of readdirSync(directory).filter((name) => name.startsWith(`.${basename}.`))) {
+    const candidate = path.join(directory, name);
+    const stats = optionalWriterLstat(candidate);
+    if (!stats) continue;
+    const observed = readStableRegular(candidate, MAX_AUTHORITY_BYTES_V1, { device, nlink: Number(stats.nlink) });
+    if (observed.mode !== 0o600 || !observed.bytes.equals(bytes)) fail(`${basename} duplicate changed during recovery`);
+    writerUnlinkStable(candidate, observed, directory);
+  }
+  const reopened = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { device, nlink: 1 });
+  if (reopened.mode !== 0o600 || !reopened.bytes.equals(bytes)) fail(`${basename} final authority changed`);
+}
+
+function writerInventory(rootPath) {
+  const rootIdentity = writerDirectoryIdentity(rootPath);
+  const device = BigInt(rootIdentity.devDecimal);
+  const entries = [];
+  let count = 0;
+  let total = 0;
+  function visit(directory, relative, depth) {
+    if (depth > MAX_BUILD_TREE_DEPTH_V1) fail("generation exceeds the depth cap");
+    for (const name of readdirSync(directory).sort(compareBytes)) {
+      count += 1;
+      if (count > MAX_BUILD_OUTPUT_ENTRIES_V1) fail("generation exceeds the entry cap");
+      const locator = canonicalLocator(relative ? `${relative}/${name}` : name);
+      const target = path.join(directory, name);
+      const stats = lstatSync(target, { bigint: true });
+      if (stats.dev !== device || stats.isSymbolicLink()) fail(`invalid generation member ${locator}`);
+      const linkCount = Number(stats.nlink);
+      if (!Number.isSafeInteger(linkCount) || linkCount < 1) fail(`invalid generation link count ${locator}`);
+      if (stats.isDirectory()) {
+        entries.push(Object.freeze({ locator, kind: "directory", devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10), mode: modeOf(stats), linkCount, byteLength: null, sha256: null }));
+        visit(target, locator, depth + 1);
+      } else if (stats.isFile()) {
+        if (stats.nlink !== 1n || stats.size > BigInt(MAX_BUILD_FILE_BYTES_V1)) fail(`invalid generation regular file ${locator}`);
+        const observed = readStableRegular(target, MAX_BUILD_FILE_BYTES_V1, { device, nlink: 1 });
+        total += observed.bytes.length;
+        if (total > MAX_BUILD_TOTAL_BYTES_V1) fail("generation exceeds the byte cap");
+        entries.push(Object.freeze({ locator, kind: "regular_file", devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10), mode: observed.mode, linkCount: 1, byteLength: observed.bytes.length, sha256: sha256(observed.bytes) }));
+      } else fail(`special generation member ${locator}`);
+    }
+  }
+  visit(rootPath, "", 0);
+  entries.sort((left, right) => compareBytes(left.locator, right.locator));
+  const rootPhysicalIdentity = Object.freeze({ devDecimal: rootIdentity.devDecimal, inoDecimal: rootIdentity.inoDecimal, mode: rootIdentity.mode, linkCount: rootIdentity.linkCount });
+  const common = { schema: "setfarm.platform-build-generation-inventory.v1", entryCount: entries.length, regularFileByteCount: total };
+  const physicalEntries = entries.map(({ sha256: ignored, ...entry }) => entry);
+  const contentEntries = entries.map(({ locator, kind, mode, byteLength, sha256: digest }) => ({ locator, kind, mode, byteLength, sha256: digest }));
+  return Object.freeze({ ...common, rootPhysicalIdentity, entries: Object.freeze(entries), physicalInventoryHash: hashCanonicalJson({ ...common, rootPhysicalIdentity, entries: physicalEntries }), contentInventoryHash: hashCanonicalJson({ ...common, entries: contentEntries }) });
+}
+
+function assertWriterRotationSource(value) {
+  if (!value || !hasExactKeys(value, ["branch", "clean", "sourceSha", "sourceTreeHash", "originMainSha", "buildInputSetHash"])
+    || value.branch !== "main" || value.clean !== true || !FULL_HASH.test(value.sourceSha) || !FULL_HASH.test(value.sourceTreeHash)
+    || value.sourceSha !== value.originMainSha || !SHA256.test(value.buildInputSetHash)) fail("rotation controller source is invalid");
+}
+
+function writerPair(record, kind) {
+  return Object.freeze({ [`${kind}Ref`]: record[`${kind}Ref`], [`${kind}Hash`]: record[`${kind}Hash`] });
+}
+
+function assertWriterInventory(value) {
+  if (!value || !hasExactKeys(value, ["schema", "rootPhysicalIdentity", "entryCount", "regularFileByteCount", "entries", "physicalInventoryHash", "contentInventoryHash"])
+    || value.schema !== "setfarm.platform-build-generation-inventory.v1" || !Array.isArray(value.entries) || value.entries.length !== value.entryCount) fail("rotation inventory is invalid");
+  const root = value.rootPhysicalIdentity;
+  if (!root || !hasExactKeys(root, ["devDecimal", "inoDecimal", "mode", "linkCount"])) fail("rotation inventory root is invalid");
+  let prior = null;
+  let bytes = 0;
+  const physicalEntries = [];
+  const contentEntries = [];
+  for (const entry of value.entries) {
+    if (!entry || !hasExactKeys(entry, ["locator", "kind", "devDecimal", "inoDecimal", "mode", "linkCount", "byteLength", "sha256"])) fail("rotation inventory entry is invalid");
+    canonicalLocator(entry.locator);
+    if (prior !== null && compareBytes(prior, entry.locator) >= 0) fail("rotation inventory order is invalid");
+    prior = entry.locator;
+    if (entry.kind === "regular_file") {
+      if (entry.linkCount !== 1 || !Number.isSafeInteger(entry.byteLength) || entry.byteLength < 0 || !SHA256.test(entry.sha256)) fail("rotation file inventory is invalid");
+      bytes += entry.byteLength;
+    } else if (entry.kind !== "directory" || entry.byteLength !== null || entry.sha256 !== null) fail("rotation directory inventory is invalid");
+    const { sha256: ignored, ...physical } = entry;
+    physicalEntries.push(physical);
+    contentEntries.push({ locator: entry.locator, kind: entry.kind, mode: entry.mode, byteLength: entry.byteLength, sha256: entry.sha256 });
+  }
+  const common = { schema: value.schema, entryCount: value.entryCount, regularFileByteCount: value.regularFileByteCount };
+  if (bytes !== value.regularFileByteCount
+    || value.physicalInventoryHash !== hashCanonicalJson({ ...common, rootPhysicalIdentity: root, entries: physicalEntries })
+    || value.contentInventoryHash !== hashCanonicalJson({ ...common, entries: contentEntries })) fail("rotation inventory hashes are invalid");
+}
+
+function writerRotationRef(kind, ordinal, buildId, digest) {
+  return `setfarm://internal-production/build-generation-rotation-${kind}/${String(ordinal).padStart(20, "0")}/${buildId}/sha256/${digest}`;
+}
+
+function assertWriterRotationRecord(value, kind, filename) {
+  const match = ROTATION_RECORD_NAME_V1.exec(filename);
+  if (!match) fail(`invalid ${kind} record filename`);
+  const ordinal = Number(match[1]);
+  const buildId = match[2];
+  const refKey = `${kind}Ref`;
+  const hashKey = `${kind}Hash`;
+  const projection = { ...value };
+  delete projection[refKey];
+  delete projection[hashKey];
+  const digest = hashCanonicalJson(projection);
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > MAX_ROTATION_LEDGER_ORDINALS_V1 || value.ordinal !== ordinal || value.buildId !== buildId
+    || value[hashKey] !== digest || value[refKey] !== writerRotationRef(kind, ordinal, buildId, digest)) fail(`${kind} record pair/body/filename mismatch`);
+  if (kind === "intent") {
+    if (!hasExactKeys(value, ["schema", "ordinal", "buildId", "predecessorCompletion", "sourceParentIdentity", "destinationParentIdentity", "sourceLocator", "destinationLocator", "inventory", "rotationControllerSource", "intentRef", "intentHash"])
+      || value.schema !== "setfarm.platform-build-generation-rotation-intent.v1" || value.sourceLocator !== "dist" || value.destinationLocator !== `${ARCHIVE_DIRECTORY_V1}/${buildId}.dist`) fail("rotation intent shape is invalid");
+    assertWriterInventory(value.inventory);
+    assertWriterRotationSource(value.rotationControllerSource);
+  } else if (kind === "completion") {
+    if (!hasExactKeys(value, ["schema", "ordinal", "buildId", "predecessorCompletion", "intent", "sourceParentIdentity", "destinationParentIdentity", "archiveLocator", "archiveIdentity", "inventory", "rotationControllerSource", "completionRef", "completionHash"])
+      || value.schema !== "setfarm.platform-build-generation-rotation-completion.v1" || value.archiveLocator !== `${ARCHIVE_DIRECTORY_V1}/${buildId}.dist`) fail("rotation completion shape is invalid");
+    assertWriterInventory(value.inventory);
+    assertWriterRotationSource(value.rotationControllerSource);
+  } else if (kind === "disposition") {
+    if (!hasExactKeys(value, ["schema", "ordinal", "buildId", "completion", "retentionOperation", "retentionReceipt", "sourceAbsent", "quarantineLocator", "disposedRootPhysicalIdentity", "physicalInventoryHash", "contentInventoryHash", "permanentDisposition", "quarantineAbsent", "dispositionRef", "dispositionHash"])
+      || value.schema !== "setfarm.platform-build-generation-rotation-disposition.v1" || value.sourceAbsent !== true || value.permanentDisposition !== true || value.quarantineAbsent !== true) fail("rotation disposition shape is invalid");
+  } else fail("rotation record kind is invalid");
+  return value;
+}
+
+function normalizeWriterRecordDirectory(directory, kind) {
+  const families = new Map();
+  const tempPattern = /^\.(.+)\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.tmp$/;
+  for (const name of readdirSync(directory).sort(compareBytes)) {
+    const temp = tempPattern.exec(name);
+    const basename = temp?.[1] ?? name;
+    if (!ROTATION_RECORD_NAME_V1.test(basename) || (temp && !publisherTempPattern(basename).test(name))) fail(`unknown ${kind} ledger dirent ${name}`);
+    const family = families.get(basename) ?? { fixed: null, temps: [] };
+    if (temp) family.temps.push(name); else family.fixed = name;
+    families.set(basename, family);
+  }
+  const values = [];
+  for (const [basename, family] of [...families.entries()].sort(([left], [right]) => compareBytes(left, right))) {
+    if (family.temps.length > MAX_NO_REPLACE_PUBLISHER_TEMP_CANDIDATES_V1) fail("rotation publisher capacity exceeded");
+    const fixed = family.fixed ? parseWriterCanonicalRecord(path.join(directory, family.fixed), [1, 2]) : null;
+    if (fixed) assertWriterRotationRecord(fixed.value, kind, basename);
+    const temps = family.temps.map((name) => {
+      try {
+        const parsed = parseWriterCanonicalRecord(path.join(directory, name), [1, 2]);
+        assertWriterRotationRecord(parsed.value, kind, basename);
+        return { name, parsed };
+      } catch {
+        return { name, parsed: null };
+      }
+    });
+    if (!fixed && temps.length === 1 && !temps[0].parsed) {
+      const filePath = path.join(directory, temps[0].name);
+      const stats = optionalWriterLstat(filePath);
+      const observed = readStableRegular(filePath, MAX_AUTHORITY_BYTES_V1, { nlink: Number(stats.nlink) });
+      writerUnlinkStable(filePath, observed, directory);
+      continue;
+    }
+    if (temps.some((entry) => !entry.parsed)) fail(`${basename} has invalid competing publisher state`);
+    const bytes = fixed?.observed.bytes ?? temps[0]?.parsed.observed.bytes;
+    if (!bytes || temps.some((entry) => !entry.parsed.observed.bytes.equals(bytes))) fail(`${basename} has competing publisher bodies`);
+    publishWriterNoReplace(directory, basename, bytes);
+    const value = parseWriterCanonicalRecord(path.join(directory, basename)).value;
+    values.push(assertWriterRotationRecord(value, kind, basename));
+  }
+  return values;
+}
+
+function normalizeWriterRetentionStores(repositoryRoot, pure) {
+  if (typeof pure?.classifyBuildGenerationRetentionPublisherRecordV1 !== "function") fail("strict retention publisher classifier is unavailable");
+  const retentionRoot = path.join(path.dirname(repositoryRoot), "data", "internal-production-baseline", "build-generation-retention-v1");
+  if (!optionalWriterLstat(retentionRoot)) return;
+  if (writerDirectoryIdentity(retentionRoot).mode !== 0o700) fail("retention store must have mode 0o700");
+  const tempPattern = /^\.(.+)\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.tmp$/;
+  for (const locator of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+    const outer = path.join(retentionRoot, locator);
+    const directory = path.join(outer, "sha256");
+    if (!optionalWriterLstat(outer) || !optionalWriterLstat(directory)
+      || writerDirectoryIdentity(outer).mode !== 0o700 || writerDirectoryIdentity(directory).mode !== 0o700) fail(`retention store ${locator}/sha256 is missing or invalid`);
+    const storeDevice = BigInt(writerDirectoryIdentity(directory).devDecimal);
+    const families = new Map();
+    for (const name of readdirSync(directory).sort(compareBytes)) {
+      const temp = tempPattern.exec(name);
+      const basename = temp?.[1] ?? name;
+      if (!/^[0-9a-f]{64}\.json$/.test(basename) || (temp && !publisherTempPattern(basename).test(name))) fail(`retention store ${locator} has an invalid dirent`);
+      const family = families.get(basename) ?? { fixed: null, temps: [] };
+      if (temp) family.temps.push(name); else family.fixed = name;
+      families.set(basename, family);
+    }
+    for (const [basename, family] of families) {
+      if (family.temps.length > MAX_NO_REPLACE_PUBLISHER_TEMP_CANDIDATES_V1) fail("retention publisher capacity exceeded");
+      const readMember = (name) => {
+        const filePath = path.join(directory, name);
+        const stats = optionalWriterLstat(filePath);
+        const linkCount = Number(stats.nlink);
+        if (stats.dev !== storeDevice || modeOf(stats) !== 0o600 || ![1, 2].includes(linkCount)) {
+          fail(`${name} retention publisher physical state is invalid`);
+        }
+        const observed = readStableRegular(filePath, MAX_AUTHORITY_BYTES_V1, { device: storeDevice, nlink: linkCount });
+        if (observed.mode !== 0o600) fail(`${name} retention publisher mode changed during stable read`);
+        return observed;
+      };
+      const fixed = family.fixed ? readMember(family.fixed) : null;
+      if (fixed && pure.classifyBuildGenerationRetentionPublisherRecordV1({ store: locator, basename, bytes: fixed.bytes }).state !== "valid") {
+        fail(`${basename} fixed retention authority is semantically invalid`);
+      }
+      const temps = family.temps.map((name) => {
+        const observed = readMember(name);
+        const classification = pure.classifyBuildGenerationRetentionPublisherRecordV1({ store: locator, basename, bytes: observed.bytes });
+        return { name, observed, valid: classification.state === "valid" };
+      });
+      if (!fixed && temps.length === 1 && !temps[0].valid) {
+        if (temps[0].observed.stats.nlink !== 1n) fail(`${basename} invalid sole temporary has an unsafe link count`);
+        const filePath = path.join(directory, temps[0].name);
+        writerUnlinkStable(filePath, temps[0].observed, directory);
+        continue;
+      }
+      if (temps.some((entry) => !entry.valid)) fail(`${basename} has invalid competing retention publisher state`);
+      const bytes = fixed?.bytes ?? temps[0]?.observed.bytes;
+      if (!bytes || temps.some((entry) => !entry.observed.bytes.equals(bytes))) fail(`${basename} has competing retention publisher bodies`);
+      const recovery = pure.planNoReplacePublisherRecoveryV1({
+        basename,
+        candidateBytes: bytes,
+        entries: [
+          ...(fixed ? [{ name: basename, observed: fixed }] : []),
+          ...temps,
+        ].map((entry) => ({
+          name: entry.name,
+          bytes: entry.observed.bytes,
+          mode: entry.observed.mode,
+          linkCount: Number(entry.observed.stats.nlink),
+          devDecimal: entry.observed.stats.dev.toString(10),
+          inoDecimal: entry.observed.stats.ino.toString(10),
+        })),
+      });
+      if (recovery.state === "block") fail(`${basename} retention publisher physical automaton is invalid: ${recovery.reason}`);
+      publishWriterNoReplace(directory, basename, bytes);
+    }
+  }
+}
+
+function scanWriterRotationLedger(roots) {
+  const intents = normalizeWriterRecordDirectory(roots.intents, "intent");
+  const completions = normalizeWriterRecordDirectory(roots.completions, "completion");
+  const dispositions = normalizeWriterRecordDirectory(roots.dispositions, "disposition");
+  const intentByOrdinal = new Map(intents.map((value) => [value.ordinal, value]));
+  const completionByOrdinal = new Map(completions.map((value) => [value.ordinal, value]));
+  const dispositionByOrdinal = new Map(dispositions.map((value) => [value.ordinal, value]));
+  if (intentByOrdinal.size !== intents.length) fail("rotation intent fork");
+  if (completionByOrdinal.size !== completions.length) fail("rotation completion fork");
+  if (dispositionByOrdinal.size !== dispositions.length) fail("rotation disposition fork");
+  const maxOrdinal = Math.max(0, ...intentByOrdinal.keys(), ...completionByOrdinal.keys());
+  let predecessor = null;
+  let danglingIntent = null;
+  const generations = [];
+  for (let ordinal = 1; ordinal <= maxOrdinal; ordinal += 1) {
+    const intent = intentByOrdinal.get(ordinal);
+    const completion = completionByOrdinal.get(ordinal);
+    if (!intent || canonicalJson(intent.predecessorCompletion) !== canonicalJson(predecessor)) fail(`rotation predecessor mismatch at ordinal ${ordinal}`);
+    if (!completion) {
+      if (ordinal !== maxOrdinal) fail("nonterminal dangling rotation intent");
+      danglingIntent = intent;
+      break;
+    }
+    if (canonicalJson(completion.predecessorCompletion) !== canonicalJson(predecessor)
+      || canonicalJson(completion.intent) !== canonicalJson(writerPair(intent, "intent"))
+      || completion.archiveLocator !== intent.destinationLocator || completion.ordinal !== intent.ordinal || completion.buildId !== intent.buildId
+      || canonicalJson(completion.sourceParentIdentity) !== canonicalJson(intent.sourceParentIdentity)
+      || canonicalJson(completion.destinationParentIdentity) !== canonicalJson(intent.destinationParentIdentity)
+      || canonicalJson(completion.inventory) !== canonicalJson(intent.inventory)
+      || canonicalJson(completion.rotationControllerSource) !== canonicalJson(intent.rotationControllerSource)
+      || canonicalJson(completion.archiveIdentity) !== canonicalJson({ realpath: path.join(roots.root, completion.archiveLocator), ...completion.inventory.rootPhysicalIdentity })) fail(`rotation completion mismatch at ordinal ${ordinal}`);
+    predecessor = writerPair(completion, "completion");
+    const disposition = dispositionByOrdinal.get(ordinal) ?? null;
+    if (disposition && (canonicalJson(disposition.completion) !== canonicalJson(predecessor)
+      || canonicalJson(disposition.disposedRootPhysicalIdentity) !== canonicalJson(completion.inventory.rootPhysicalIdentity)
+      || disposition.physicalInventoryHash !== completion.inventory.physicalInventoryHash || disposition.contentInventoryHash !== completion.inventory.contentInventoryHash)) fail(`rotation disposition mismatch at ordinal ${ordinal}`);
+    generations.push(Object.freeze({ ordinal, intent, completion, disposition }));
+  }
+  for (const ordinal of dispositionByOrdinal.keys()) if (!completionByOrdinal.has(ordinal)) fail("disposition lacks completion");
+  for (const name of readdirSync(roots.archive).sort(compareBytes)) {
+    const match = ARCHIVE_NAME.exec(name);
+    if (!match) fail(`invalid archive ${name}`);
+    const generation = generations.find((entry) => entry.completion.buildId === match[1]);
+    if ((!generation && danglingIntent?.destinationLocator !== `${ARCHIVE_DIRECTORY_V1}/${name}`) || generation?.disposition) fail(`unindexed or disposed archive ${name}`);
+  }
+  for (const generation of generations) {
+    const archivePath = path.join(roots.root, generation.completion.archiveLocator);
+    const present = optionalWriterLstat(archivePath);
+    if ((present && generation.disposition) || (!present && !generation.disposition)) fail(`archive/disposition mismatch at ordinal ${generation.ordinal}`);
+    if (present) {
+      if (!writerSameDirectoryObject(writerDirectoryIdentity(archivePath, roots.device), generation.completion.archiveIdentity)
+        || canonicalJson(writerInventory(archivePath)) !== canonicalJson(generation.completion.inventory)) fail(`active archive mismatch at ordinal ${generation.ordinal}`);
+    }
+  }
+  return Object.freeze({ completionTip: predecessor, danglingIntent, generations: Object.freeze(generations) });
+}
+
+function ensureWriterAuthorityRoots(root) {
+  const repository = writerDirectoryIdentity(root);
+  const device = BigInt(repository.devDecimal);
+  const setfarm = path.join(root, ".setfarm");
+  if (!optionalWriterLstat(setfarm)) ensureDirectory(setfarm, 0o700, root, device);
+  else if (writerDirectoryIdentity(setfarm, device).mode !== 0o700) fail(".setfarm must have mode 0o700");
+  const archive = path.join(root, ARCHIVE_DIRECTORY_V1);
+  if (!optionalWriterLstat(archive)) ensureDirectory(archive, 0o700, setfarm, device);
+  else if (writerDirectoryIdentity(archive, device).mode !== 0o700) fail("archive root must have mode 0o700");
+  const ledger = path.join(root, ROTATION_LEDGER_DIRECTORY_V1);
+  if (!optionalWriterLstat(ledger)) ensureDirectory(ledger, 0o700, setfarm, device);
+  else if (writerDirectoryIdentity(ledger, device).mode !== 0o700) fail("rotation ledger must have mode 0o700");
+  const result = { root, device, setfarm, archive, ledger };
+  for (const kind of ["intents", "completions", "dispositions"]) {
+    const target = path.join(ledger, kind);
+    if (!optionalWriterLstat(target)) ensureDirectory(target, 0o700, ledger, device);
+    else if (writerDirectoryIdentity(target, device).mode !== 0o700) fail(`${kind} ledger must have mode 0o700`);
+    result[kind] = target;
+  }
+  return Object.freeze(result);
+}
+
+function publishWriterRotationRecord(directory, kind, projection) {
+  const digest = hashCanonicalJson(projection);
+  const value = Object.freeze({ ...projection, [`${kind}Ref`]: writerRotationRef(kind, projection.ordinal, projection.buildId, digest), [`${kind}Hash`]: digest });
+  publishWriterNoReplace(directory, `${String(projection.ordinal).padStart(20, "0")}-${projection.buildId}.json`, writerCanonicalRecordBytes(value));
+  return value;
+}
+
+function hasExactKeys(value, expected) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && canonicalJson(Object.keys(value).sort(compareBytes)) === canonicalJson([...expected].sort(compareBytes));
 }
 
 function compareBytes(left, right) {
@@ -523,7 +974,17 @@ function verifyBuildTopology(pinned) {
   if (!pkg || typeof pkg !== "object" || typeof pkg.version !== "string" || pkg.version.length === 0) {
     fail("package.json version is invalid");
   }
+  const retentionScriptNames = new Set([
+    "build-generation-retention:inspect",
+    "build-generation-retention:prepare",
+    "build-generation-retention:resume",
+  ]);
+  const legacyNoRetention = !pinned.entries.some((entry) => entry.locator === "scripts/build-generation-retention.mjs");
   for (const [name, expected] of Object.entries(EXACT_SCRIPTS)) {
+    if (legacyNoRetention && retentionScriptNames.has(name)) {
+      if (Object.prototype.hasOwnProperty.call(pkg.scripts ?? {}, name)) fail(`legacy package build topology unexpectedly declares script ${name}`);
+      continue;
+    }
     if (pkg.scripts?.[name] !== expected) fail(`package build topology differs at script ${name}`);
   }
   if (!pkg.scripts.build.startsWith("umask 077 && ") || pkg.scripts.build.match(/umask/g)?.length !== 1) {
@@ -638,7 +1099,7 @@ function validateStorageTree(rootPath, device, directoryMode, normalizeDirectori
       inoDecimal: identity.inoDecimal,
       mode: identity.mode,
     }));
-    if (relative) directories.push(Object.freeze({ path: directoryPath, identity }));
+    directories.push(Object.freeze({ path: directoryPath, identity }));
     for (const name of readdirSync(directoryPath).sort(compareBytes)) {
       const childRelative = relative ? `${relative}/${name}` : name;
       entries += 1;
@@ -1225,165 +1686,376 @@ function expectedReleaseManifest(pinned) {
   });
 }
 
-function sameDirectoryMetadata(left, right) {
-  return left.dev === right.dev
-    && left.ino === right.ino
-    && left.mode === right.mode
-    && left.nlink === right.nlink
-    && left.size === right.size
-    && left.mtimeNs === right.mtimeNs
-    && left.ctimeNs === right.ctimeNs;
-}
-
-function optionalLstat(targetPath) {
-  try {
-    return lstatSync(targetPath, { bigint: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-function rotateStorageGeneration(repository, archive, distPath, candidate, distIdentity, capturedStorage) {
-  let descriptor;
-  try {
-    descriptor = openSync(distPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const before = fstatSync(descriptor, { bigint: true });
-    if (
-      !before.isDirectory()
-      || before.dev.toString(10) !== distIdentity.devDecimal
-      || before.ino.toString(10) !== distIdentity.inoDecimal
-      || modeOf(before) !== distIdentity.mode
-    ) fail("pre-rotation dist changed before boundary descriptor open");
-    const boundaryStorage = validateStorageTree(distPath, repository.device, 0o755, false, false);
-    if (canonicalJson(boundaryStorage) !== canonicalJson(capturedStorage)) fail("pre-rotation storage changed at rename boundary");
-    const afterTraversal = fstatSync(descriptor, { bigint: true });
-    const namedBefore = lstatSync(distPath, { bigint: true });
-    if (!sameDirectoryMetadata(before, afterTraversal) || !sameDirectoryMetadata(afterTraversal, namedBefore)) {
-      fail("pre-rotation dist directory changed at rename boundary");
-    }
-    assertDirectoryIdentity(repository.root, repository.identity, "Platform repository root before rotation");
-    assertDirectoryIdentity(archive.setfarmPath, archive.setfarmIdentity, ".setfarm before rotation");
-    assertDirectoryIdentity(archive.archiveRoot, archive.archiveIdentity, "build archive root before rotation");
-    assertDirectoryIdentity(distPath, distIdentity, "pre-rotation dist");
-
-    try {
-      renameSync(distPath, candidate);
-    } catch (error) {
-      const sourceStats = optionalLstat(distPath);
-      const candidateStats = optionalLstat(candidate);
-      if (!sourceStats && candidateStats) {
-        if (!candidateStats.isDirectory() || candidateStats.isSymbolicLink()) fail("response-lost rotation candidate type conflicts");
-        fsyncDirectory(repository.root);
-        fsyncDirectory(archive.archiveRoot);
-        const adopted = directoryIdentity(candidate, "response-lost rotated build generation", repository.device);
-        if (
-          adopted.devDecimal !== distIdentity.devDecimal
-          || adopted.inoDecimal !== distIdentity.inoDecimal
-          || adopted.mode !== 0o755
-        ) fail("response-lost rotation candidate identity conflicts");
-        const adoptedStorage = validateStorageTree(candidate, repository.device, 0o755, false, false);
-        if (canonicalJson(adoptedStorage) !== canonicalJson(capturedStorage)) fail("response-lost rotation candidate tree conflicts");
-      } else if (sourceStats && !candidateStats) {
-        const unchanged = directoryIdentity(distPath, "unchanged pre-rotation dist", repository.device);
-        if (
-          !sourceStats.isDirectory()
-          || sourceStats.isSymbolicLink()
-          || unchanged.devDecimal !== distIdentity.devDecimal
-          || unchanged.inoDecimal !== distIdentity.inoDecimal
-          || unchanged.mode !== 0o755
-        ) fail("failed rotation changed the source identity");
-        const unchangedStorage = validateStorageTree(distPath, repository.device, 0o755, false, false);
-        if (canonicalJson(unchangedStorage) !== canonicalJson(capturedStorage)) fail("failed rotation changed the source tree");
-        throw error;
-      } else {
-        fail("rotation outcome is ambiguous or conflicting");
-      }
-    }
-
-    fsyncDirectory(repository.root);
-    fsyncDirectory(archive.archiveRoot);
-    const heldAfter = fstatSync(descriptor, { bigint: true });
-    if (
-      !heldAfter.isDirectory()
-      || heldAfter.dev !== before.dev
-      || heldAfter.ino !== before.ino
-      || modeOf(heldAfter) !== 0o755
-    ) fail("rotated generation descriptor identity changed");
-    const moved = directoryIdentity(candidate, "rotated build generation", repository.device);
-    if (moved.devDecimal !== distIdentity.devDecimal || moved.inoDecimal !== distIdentity.inoDecimal || moved.mode !== 0o755) {
-      fail("rotated build generation identity changed");
-    }
-    const rotatedStorage = validateStorageTree(candidate, repository.device, 0o755, false, false);
-    if (canonicalJson(rotatedStorage) !== canonicalJson(capturedStorage)) fail("rotated build generation tree changed across whole-directory rename");
-    assertDirectoryIdentity(repository.root, repository.identity, "Platform repository root after rotation");
-    assertDirectoryIdentity(archive.setfarmPath, archive.setfarmIdentity, ".setfarm after rotation");
-    assertDirectoryIdentity(archive.archiveRoot, archive.archiveIdentity, "build archive root after rotation");
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-}
-
 function selectedPhase() {
-  const phases = process.argv.slice(2).filter((value) => value === "--prepare" || value === "--finalize");
-  if (phases.length !== 1 || process.argv.slice(2).length !== 1) fail("exactly one explicit phase is required: --prepare or --finalize");
-  return phases[0];
+  const args = process.argv.slice(2);
+  if (args.length !== 1 || !["--prepare", "--finalize"].includes(args[0])) {
+    fail("exactly one public build-writer command is required");
+  }
+  return args[0];
 }
 
-function prepare() {
+function rotationControllerSourceV1(pinned) {
+  return Object.freeze({
+    branch: "main",
+    clean: true,
+    sourceSha: pinned.sourceSha,
+    sourceTreeHash: pinned.sourceTreeHash,
+    originMainSha: pinned.sourceSha,
+    buildInputSetHash: pinned.buildInputSetHash,
+  });
+}
+
+function preparePreflight() {
   const repository = anchorRepository();
   const pinned = derivePinnedInputSet(repository.root);
   verifyLivePinnedInputs(repository.root, pinned, repository.device);
-  const packageVersion = verifyBuildTopology(pinned);
-  const topology = deriveExpectedOutputs(pinned);
+  verifyBuildTopology(pinned);
+  deriveExpectedOutputs(pinned);
   const buildId = randomUUID();
-  const archive = prepareArchiveRoot(repository, buildId);
-  const candidate = path.join(archive.archiveRoot, `${buildId}.dist`);
+  return Object.freeze({ schema: "setfarm.platform-build-writer-preflight.v1", buildId, rotationControllerSource: rotationControllerSourceV1(pinned) });
+}
+
+function observeLockedWriterV1(lock) {
+  if (lock.pid !== process.pid || !Number.isSafeInteger(process.pid) || process.pid < 1) fail("locked writer process PID is invalid");
+  const observed = spawnSync("/bin/ps", ["-p", String(lock.pid), "-o", "lstart=", "-o", "pgid="], {
+    shell: false,
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
+    timeout: 10_000,
+    maxBuffer: 1_048_576,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = Buffer.isBuffer(observed.stdout) ? observed.stdout : Buffer.from(observed.stdout ?? "");
+  const stderr = Buffer.isBuffer(observed.stderr) ? observed.stderr : Buffer.from(observed.stderr ?? "");
+  const match = /^([A-Z][a-z]{2} [A-Z][a-z]{2} (?: [1-9]|[12][0-9]|3[01]) [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}) +([1-9][0-9]*)\n$/.exec(stdout.toString("utf8"));
+  if (observed.error || observed.signal !== null || observed.status !== 0 || stderr.length !== 0 || !match || match[1] !== lock.processLstart || Number(match[2]) !== lock.processGroupId) {
+    fail("locked writer parent process identity is invalid");
+  }
+}
+
+function parseLockedRotationPairV1(value, kind) {
+  const refKey = `${kind}Ref`;
+  const hashKey = `${kind}Hash`;
+  if (!hasExactKeys(value, [refKey, hashKey]) || !SHA256.test(value[hashKey])) fail(`locked writer ${kind} pair is invalid`);
+  const match = new RegExp(`^setfarm://internal-production/build-generation-rotation-${kind}/([0-9]{20})/([0-9a-f-]{36})/sha256/(${value[hashKey]})$`).exec(value[refKey]);
+  if (!match || !UUID_V4.test(match[2])) fail(`locked writer ${kind} pair ref is invalid`);
+  return Object.freeze({ ordinal: match[1], buildId: match[2] });
+}
+
+function assertLockedPrepareRequest(repository, pinned, phase, value) {
+  const isCreate = phase === "create";
+  const expectedKeys = isCreate
+    ? ["schema", "buildId", "maintenanceCandidateBuildId", "rotationControllerSource", "maintenanceLock", "rotation"]
+    : ["schema", "buildId", "maintenanceCandidateBuildId", "rotationControllerSource", "maintenanceLock"];
+  const expectedSchema = isCreate
+    ? "setfarm.platform-build-writer-locked-create-request.v1"
+    : "setfarm.platform-build-writer-locked-sanitize-request.v1";
+  if (!value || !hasExactKeys(value, expectedKeys)) fail("locked writer request shape is invalid");
+  if (value.schema !== expectedSchema || !UUID_V4.test(value.buildId) || canonicalJson(value.rotationControllerSource) !== canonicalJson(rotationControllerSourceV1(pinned))) fail("locked writer request source is invalid");
+  const lock = value.maintenanceLock;
+  if (!hasExactKeys(lock, ["schema", "kind", "nonce", "pid", "processLstart", "processGroupId", "candidateKeyHash"])
+    || lock.schema !== "setfarm.platform-build-generation-maintenance-lock.v1" || lock.kind !== "writer_prepare" || !UUID_V4.test(lock.nonce)
+    || !Number.isSafeInteger(lock.pid) || lock.pid < 1 || typeof lock.processLstart !== "string" || !Number.isSafeInteger(lock.processGroupId) || lock.processGroupId < 1
+    || !UUID_V4.test(value.maintenanceCandidateBuildId)
+    || lock.candidateKeyHash !== hashCanonicalJson({ kind: "writer_prepare", buildId: value.maintenanceCandidateBuildId, rotationControllerSource: value.rotationControllerSource })
+  ) fail("locked writer maintenance authority is invalid");
+  observeLockedWriterV1(lock);
+  const lockPath = path.join(repository.root, ".setfarm", "build-generation-maintenance-lock-v1.json");
+  const observedLock = readStableRegular(lockPath, MAX_AUTHORITY_BYTES_V1, { device: repository.device, nlink: 1 });
+  if (observedLock.mode !== 0o600 || !observedLock.bytes.equals(Buffer.from(`${canonicalJson(lock)}\n`, "utf8"))) fail("locked writer maintenance file differs from request");
+  if (isCreate) {
+    if (!value.rotation || !hasExactKeys(value.rotation, ["rotated", "intent", "completion", "archiveLocator"]) || typeof value.rotation.rotated !== "boolean") fail("locked writer rotation result is invalid");
+    if (value.rotation.rotated) {
+      const intent = parseLockedRotationPairV1(value.rotation.intent, "intent");
+      const completion = parseLockedRotationPairV1(value.rotation.completion, "completion");
+      const archive = /^\.setfarm\/build-generations-v1\/([0-9a-f-]{36})\.dist$/.exec(value.rotation.archiveLocator);
+      if (!archive || !UUID_V4.test(archive[1]) || intent.ordinal !== completion.ordinal || intent.buildId !== completion.buildId || archive[1] !== completion.buildId) fail("locked writer rotation pairs are invalid");
+    } else if (value.rotation.intent !== null || value.rotation.completion !== null || value.rotation.archiveLocator !== null) fail("locked writer rotation pairs are invalid");
+  }
+  return value;
+}
+
+function prepareLockedSanitize(value) {
+  const repository = anchorRepository();
+  const pinned = derivePinnedInputSet(repository.root);
+  verifyLivePinnedInputs(repository.root, pinned, repository.device);
+  verifyBuildTopology(pinned);
+  deriveExpectedOutputs(pinned);
+  const request = assertLockedPrepareRequest(repository, pinned, "sanitize", value);
+  const archive = prepareArchiveRoot(repository, request.buildId);
+  const candidate = path.join(archive.archiveRoot, `${request.buildId}.dist`);
   try { lstatSync(candidate); fail("build archive candidate already exists"); } catch (error) { if (error?.code !== "ENOENT") throw error; }
   const distPath = path.join(repository.root, "dist");
-  let distExists = true;
-  try { lstatSync(distPath); } catch (error) { if (error?.code === "ENOENT") distExists = false; else throw error; }
-  if (distExists && archive.names.length >= MAX_BUILD_ARCHIVE_GENERATIONS_V1) {
+  let distPresent = true;
+  try { lstatSync(distPath); } catch (error) { if (error?.code === "ENOENT") distPresent = false; else throw error; }
+  if (distPresent && archive.names.length >= MAX_BUILD_ARCHIVE_GENERATIONS_V1) {
     fail("BUILD_GENERATION_RETENTION_REQUIRED: eight retained generations already exist");
   }
-  if (distExists) {
-    const distIdentity = directoryIdentity(distPath, "pre-rotation dist", repository.device);
-    if (distIdentity.mode !== 0o755) fail("pre-rotation dist must have mode 0o755");
+  if (distPresent) {
     validateStorageTree(distPath, repository.device, undefined, false, true);
     for (const basename of PREVIOUS_BUILD_PUBLISHER_BASENAMES_V1) sanitizePublisherFamily(distPath, repository.device, basename);
     validateStorageTree(distPath, repository.device, undefined, true, false);
-    const capturedStorage = validateStorageTree(distPath, repository.device, 0o755, false, false);
-    rotateStorageGeneration(repository, archive, distPath, candidate, distIdentity, capturedStorage);
+    validateStorageTree(distPath, repository.device, 0o755, false, false);
   }
+  verifyLivePinnedInputs(repository.root, pinned, repository.device);
+  return Object.freeze({ schema: "setfarm.platform-build-writer-locked-sanitize-response.v1", buildId: request.buildId, distPresent });
+}
+
+function createFreshPreparedDist(repository, pinned, packageVersion, topology, buildId) {
+  const distPath = path.join(repository.root, "dist");
+  try { lstatSync(distPath); fail("locked writer rotation left dist present"); } catch (error) { if (error?.code !== "ENOENT") throw error; }
   mkdirSync(distPath, { mode: 0o755 });
   fsyncDirectory(repository.root);
   const createdDistIdentity = directoryIdentity(distPath, "fresh dist", repository.device);
   const distIdentity = normalizeDirectoryRevalidated(distPath, createdDistIdentity, 0o755, "fresh dist");
   createExpectedDirectories(repository.root, distPath, topology.directories, repository.device);
-  const info = buildInfoCandidate(pinned, packageVersion);
-  publishExactArtifact(distPath, BUILD_INFO_FILE, Buffer.from(`${JSON.stringify(info, null, 2)}\n`, "utf8"), repository.device);
+  const candidateInfo = buildInfoCandidate(pinned, packageVersion);
+  publishExactArtifact(distPath, BUILD_INFO_FILE, Buffer.from(`${JSON.stringify(candidateInfo, null, 2)}\n`, "utf8"), repository.device);
   const receipt = {
-    schema: "setfarm.platform-build-prepare.v2",
-    buildId,
-    sourceSha: pinned.sourceSha,
-    sourceTreeHash: pinned.sourceTreeHash,
-    buildInputSetHash: pinned.buildInputSetHash,
-    branch: "main",
-    dirty: false,
-    porcelainV2Hash: pinned.porcelainV2Hash,
-    repositoryDirectoryIdentity: repository.identity,
-    distDirectoryIdentity: distIdentity,
+    schema: "setfarm.platform-build-prepare.v2", buildId, sourceSha: pinned.sourceSha, sourceTreeHash: pinned.sourceTreeHash,
+    buildInputSetHash: pinned.buildInputSetHash, branch: "main", dirty: false, porcelainV2Hash: pinned.porcelainV2Hash,
+    repositoryDirectoryIdentity: repository.identity, distDirectoryIdentity: distIdentity,
   };
   writePrepareReceipt(distPath, receipt, repository.device);
-  const prepareSnapshots = captureFileSnapshots(repository, [
-    `dist/${BUILD_INFO_FILE}`,
-    `dist/${PREPARE_FILE}`,
-  ], "prepared authority");
+  const prepareSnapshots = captureFileSnapshots(repository, [`dist/${BUILD_INFO_FILE}`, `dist/${PREPARE_FILE}`], "prepared authority");
   verifyLivePinnedInputs(repository.root, pinned, repository.device);
   assertFileSnapshots(repository, prepareSnapshots, "prepared authority");
   assertDirectoryIdentity(repository.root, repository.identity, "Platform repository root");
   assertDirectoryIdentity(distPath, distIdentity, "fresh dist");
-  console.log(`[write-build-info] prepared ${info.displayVersion} build=${buildId}`);
+  return candidateInfo;
+}
+
+function prepareLockedCreate(value) {
+  const repository = anchorRepository();
+  const pinned = derivePinnedInputSet(repository.root);
+  verifyLivePinnedInputs(repository.root, pinned, repository.device);
+  const packageVersion = verifyBuildTopology(pinned);
+  const topology = deriveExpectedOutputs(pinned);
+  const request = assertLockedPrepareRequest(repository, pinned, "create", value);
+  const { buildId } = request;
+  const archive = prepareArchiveRoot(repository, buildId);
+  const candidate = request.rotation.rotated
+    ? path.join(repository.root, request.rotation.archiveLocator)
+    : path.join(archive.archiveRoot, `${buildId}.dist`);
+  const candidatePresent = (() => { try { lstatSync(candidate); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; } })();
+  if (candidatePresent !== request.rotation.rotated) fail("locked writer rotation/archive result is crossed");
+  const candidateInfo = createFreshPreparedDist(repository, pinned, packageVersion, topology, buildId);
+  return Object.freeze({ schema: "setfarm.platform-build-writer-locked-create-response.v1", buildId, candidateInfo });
+}
+
+function observeWriterProcessIdentity(pid, expected) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return Object.freeze({ state: "ambiguous" });
+  const observed = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "pgid="], {
+    shell: false,
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
+    timeout: 10_000,
+    maxBuffer: 1_048_576,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = Buffer.isBuffer(observed.stdout) ? observed.stdout : Buffer.from(observed.stdout ?? "");
+  const stderr = Buffer.isBuffer(observed.stderr) ? observed.stderr : Buffer.from(observed.stderr ?? "");
+  if (!observed.error && observed.signal === null && observed.status === 1 && stdout.length === 0 && stderr.length === 0) return Object.freeze({ state: "definitely_dead" });
+  const match = /^([A-Z][a-z]{2} [A-Z][a-z]{2} (?: [1-9]|[12][0-9]|3[01]) [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}) +([1-9][0-9]*)\n$/.exec(stdout.toString("utf8"));
+  if (observed.error || observed.signal !== null || observed.status !== 0 || stderr.length !== 0 || !match) return Object.freeze({ state: "ambiguous" });
+  const identity = Object.freeze({ processLstart: match[1], processGroupId: Number(match[2]) });
+  if (!Number.isSafeInteger(identity.processGroupId) || identity.processGroupId < 1) return Object.freeze({ state: "ambiguous" });
+  if (expected && (identity.processLstart !== expected.processLstart || identity.processGroupId !== expected.processGroupId)) return Object.freeze({ state: "live_pid_reused", ...identity });
+  return Object.freeze({ state: "live_match", ...identity });
+}
+
+function parseWriterMaintenanceLock(filePath) {
+  const parsed = parseWriterCanonicalRecord(filePath, [1, 2]);
+  const value = parsed.value;
+  if (!value || !hasExactKeys(value, ["schema", "kind", "nonce", "pid", "processLstart", "processGroupId", "candidateKeyHash"])
+    || value.schema !== "setfarm.platform-build-generation-maintenance-lock.v1"
+    || !["writer_prepare", "retention_prepare", "retention_resume"].includes(value.kind)
+    || !UUID_V4.test(value.nonce) || !Number.isSafeInteger(value.pid) || value.pid < 1
+    || typeof value.processLstart !== "string" || !Number.isSafeInteger(value.processGroupId) || value.processGroupId < 1
+    || !SHA256.test(value.candidateKeyHash)) fail("maintenance lock body is invalid");
+  return parsed;
+}
+
+function recoverWriterMaintenanceLock(setfarm) {
+  const pattern = publisherTempPattern(MAINTENANCE_LOCK_FILE_V1);
+  const family = readdirSync(setfarm).filter((name) => name === MAINTENANCE_LOCK_FILE_V1 || name.startsWith(`.${MAINTENANCE_LOCK_FILE_V1}.`)).sort(compareBytes);
+  const temps = family.filter((name) => name !== MAINTENANCE_LOCK_FILE_V1);
+  if (temps.length > MAX_NO_REPLACE_PUBLISHER_TEMP_CANDIDATES_V1 || temps.some((name) => !pattern.test(name))) fail("maintenance lock temporary state is invalid");
+  for (const name of family) {
+    const filePath = path.join(setfarm, name);
+    const parsed = parseWriterMaintenanceLock(filePath);
+    const owner = observeWriterProcessIdentity(parsed.value.pid, parsed.value);
+    if (["definitely_dead", "live_pid_reused"].includes(owner.state)) writerUnlinkStable(filePath, parsed.observed, setfarm);
+    else fail(`maintenance lock owner is ${owner.state}`);
+  }
+}
+
+function acquireWriterMaintenanceLock(setfarm, candidateKeyHash) {
+  recoverWriterMaintenanceLock(setfarm);
+  const identity = observeWriterProcessIdentity(process.pid);
+  if (identity.state !== "live_match") fail("current maintenance process identity is ambiguous");
+  const value = Object.freeze({
+    schema: "setfarm.platform-build-generation-maintenance-lock.v1",
+    kind: "writer_prepare",
+    nonce: randomUUID(),
+    pid: process.pid,
+    processLstart: identity.processLstart,
+    processGroupId: identity.processGroupId,
+    candidateKeyHash,
+  });
+  const fixedPath = path.join(setfarm, MAINTENANCE_LOCK_FILE_V1);
+  const tempPath = path.join(setfarm, `.${MAINTENANCE_LOCK_FILE_V1}.${value.nonce}.tmp`);
+  const bytes = writerCanonicalRecordBytes(value);
+  let descriptor;
+  try {
+    descriptor = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    writeFileSync(descriptor, bytes);
+    fsyncSync(descriptor);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  const created = readStableRegular(tempPath, MAX_AUTHORITY_BYTES_V1, { nlink: 1 });
+  try {
+    linkSync(tempPath, fixedPath);
+    fsyncDirectory(setfarm);
+  } catch (error) {
+    if (optionalWriterLstat(tempPath)) writerUnlinkStable(tempPath, created, setfarm);
+    if (error?.code !== "EEXIST") throw error;
+    fail("maintenance lock is unavailable");
+  }
+  const linked = readStableRegular(tempPath, MAX_AUTHORITY_BYTES_V1, { nlink: 2 });
+  const fixed = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { nlink: 2 });
+  if (linked.stats.ino !== fixed.stats.ino || !linked.bytes.equals(bytes) || !fixed.bytes.equals(bytes)) fail("maintenance lock fixed-link identity changed");
+  writerUnlinkStable(tempPath, linked, setfarm);
+  const reopened = readStableRegular(fixedPath, MAX_AUTHORITY_BYTES_V1, { nlink: 1 });
+  if (!reopened.bytes.equals(bytes)) fail("maintenance lock authority changed after publication");
+  return Object.freeze({ value, bytes, file: fixedPath });
+}
+
+function releaseWriterMaintenanceLock(setfarm, lock) {
+  const parsed = parseWriterMaintenanceLock(lock.file);
+  if (!parsed.observed.bytes.equals(lock.bytes) || canonicalJson(parsed.value) !== canonicalJson(lock.value)
+    || parsed.value.pid !== process.pid || observeWriterProcessIdentity(process.pid, parsed.value).state !== "live_match") fail("maintenance lock ownership changed before release");
+  writerUnlinkStable(lock.file, parsed.observed, setfarm);
+}
+
+function rotateWriterGeneration(input, roots, inspection) {
+  const dist = path.join(roots.root, "dist");
+  let intent = inspection.danglingIntent;
+  if (intent) {
+    if (canonicalJson(intent.rotationControllerSource) !== canonicalJson(input.rotationControllerSource)) fail("writer candidate does not own the dangling rotation intent");
+  } else {
+    if (!optionalWriterLstat(dist)) return Object.freeze({ rotated: false, intent: null, completion: null });
+    if (inspection.generations.filter((generation) => generation.disposition === null).length >= MAX_BUILD_ARCHIVE_GENERATIONS_V1) fail("BUILD_GENERATION_RETENTION_REQUIRED: eight retained generations already exist");
+    const ordinal = inspection.generations.length + 1;
+    const destinationLocator = `${ARCHIVE_DIRECTORY_V1}/${input.buildId}.dist`;
+    if (optionalWriterLstat(path.join(roots.root, destinationLocator))) fail("rotation destination already exists");
+    intent = publishWriterRotationRecord(roots.intents, "intent", {
+      schema: "setfarm.platform-build-generation-rotation-intent.v1",
+      ordinal,
+      buildId: input.buildId,
+      predecessorCompletion: inspection.completionTip,
+      sourceParentIdentity: writerDirectoryIdentity(roots.root, roots.device),
+      destinationParentIdentity: writerDirectoryIdentity(roots.archive, roots.device),
+      sourceLocator: "dist",
+      destinationLocator,
+      inventory: writerInventory(dist),
+      rotationControllerSource: input.rotationControllerSource,
+    });
+  }
+  const destination = path.join(roots.root, intent.destinationLocator);
+  const sourcePresent = optionalWriterLstat(dist);
+  const destinationPresent = optionalWriterLstat(destination);
+  if (sourcePresent && !destinationPresent) {
+    const inventory = writerInventory(dist);
+    if (inventory.physicalInventoryHash !== intent.inventory.physicalInventoryHash || inventory.contentInventoryHash !== intent.inventory.contentInventoryHash) fail("dangling rotation source inventory changed");
+    renameSync(dist, destination);
+    fsyncDirectory(roots.root);
+    fsyncDirectory(roots.archive);
+  } else if (sourcePresent || !destinationPresent) fail("rotation intent has an ambiguous source/destination state");
+  if (optionalWriterLstat(dist)) fail("rotation source remained after rename");
+  const archiveIdentity = writerDirectoryIdentity(destination, roots.device);
+  const movedInventory = writerInventory(destination);
+  if (canonicalJson(movedInventory) !== canonicalJson(intent.inventory)) fail("rotated archive inventory changed");
+  const completion = publishWriterRotationRecord(roots.completions, "completion", {
+    schema: "setfarm.platform-build-generation-rotation-completion.v1",
+    ordinal: intent.ordinal,
+    buildId: intent.buildId,
+    predecessorCompletion: intent.predecessorCompletion,
+    intent: writerPair(intent, "intent"),
+    sourceParentIdentity: intent.sourceParentIdentity,
+    destinationParentIdentity: intent.destinationParentIdentity,
+    archiveLocator: intent.destinationLocator,
+    archiveIdentity,
+    inventory: movedInventory,
+    rotationControllerSource: intent.rotationControllerSource,
+  });
+  return Object.freeze({ rotated: true, intent, completion });
+}
+
+function runCodeOwnedWriterPrepare(pure) {
+  if (!pure || typeof pure.hashCanonicalJsonV1 !== "function" || typeof pure.canonicalJsonV1 !== "function" || typeof pure.planNoReplacePublisherRecoveryV1 !== "function") fail("shared pure retention helpers are unavailable");
+  const preflight = preparePreflight();
+  const input = Object.freeze({ buildId: preflight.buildId, rotationControllerSource: preflight.rotationControllerSource });
+  const repository = anchorRepository();
+  const setfarm = path.join(repository.root, ".setfarm");
+  if (!optionalWriterLstat(setfarm)) ensureDirectory(setfarm, 0o700, repository.root, repository.device);
+  else if (writerDirectoryIdentity(setfarm, repository.device).mode !== 0o700) fail(".setfarm must have mode 0o700");
+  const candidateKeyHash = pure.hashCanonicalJsonV1({ kind: "writer_prepare", buildId: input.buildId, rotationControllerSource: input.rotationControllerSource });
+  const lock = acquireWriterMaintenanceLock(setfarm, candidateKeyHash);
+  let released = false;
+  try {
+    const roots = ensureWriterAuthorityRoots(repository.root);
+    normalizeWriterRetentionStores(repository.root, pure);
+    if (optionalWriterLstat(path.join(repository.root, "dist")) && readdirSync(roots.archive).length >= MAX_BUILD_ARCHIVE_GENERATIONS_V1) {
+      fail("BUILD_GENERATION_RETENTION_REQUIRED: eight retained generations already exist");
+    }
+    const localInspection = scanWriterRotationLedger(roots);
+    const strictInspection = pure.inspectBuildGenerationRotationLedgerV1();
+    const strictProjection = { completionTip: strictInspection.completionTip, danglingIntent: strictInspection.danglingIntent, generations: strictInspection.generations };
+    if (pure.canonicalJsonV1(localInspection) !== pure.canonicalJsonV1(strictProjection)) fail("writer ledger view differs from strict disposed closure");
+    if (strictInspection.danglingIntent && pure.canonicalJsonV1(strictInspection.danglingIntent.rotationControllerSource) !== pure.canonicalJsonV1(input.rotationControllerSource)) fail("current writer source cannot recover the dangling intent");
+    const baseRequest = { buildId: input.buildId, maintenanceCandidateBuildId: input.buildId, rotationControllerSource: input.rotationControllerSource, maintenanceLock: lock.value };
+    const sanitized = prepareLockedSanitize(Object.freeze({ ...baseRequest, schema: "setfarm.platform-build-writer-locked-sanitize-request.v1" }));
+    const rotation = rotateWriterGeneration(input, roots, strictProjection);
+    if (sanitized.distPresent && !rotation.rotated) fail("locked build writer sanitation/rotation state is crossed");
+    const response = prepareLockedCreate(Object.freeze({
+      ...baseRequest,
+      schema: "setfarm.platform-build-writer-locked-create-request.v1",
+      rotation: rotation.rotated
+        ? { rotated: true, intent: writerPair(rotation.intent, "intent"), completion: writerPair(rotation.completion, "completion"), archiveLocator: rotation.completion.archiveLocator }
+        : { rotated: false, intent: null, completion: null, archiveLocator: null },
+    }));
+    releaseWriterMaintenanceLock(setfarm, lock);
+    released = true;
+    return Object.freeze({ buildId: input.buildId, candidateInfo: response.candidateInfo });
+  } finally {
+    if (!released && optionalWriterLstat(lock.file)) releaseWriterMaintenanceLock(setfarm, lock);
+  }
+}
+
+function prepareLegacyInitialBuild() {
+  const repository = anchorRepository();
+  const pinned = derivePinnedInputSet(repository.root);
+  if (pinned.entries.some((entry) => entry.locator === "scripts/build-generation-retention.mjs")) fail("tracked build-generation retention module is missing");
+  try { lstatSync(path.join(repository.root, ".setfarm")); fail("legacy initial prepare cannot cross existing maintenance authority"); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  try { lstatSync(path.join(repository.root, "dist")); fail("legacy initial prepare cannot rotate an existing build"); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  verifyLivePinnedInputs(repository.root, pinned, repository.device);
+  const packageVersion = verifyBuildTopology(pinned);
+  const topology = deriveExpectedOutputs(pinned);
+  const buildId = randomUUID();
+  const candidateInfo = createFreshPreparedDist(repository, pinned, packageVersion, topology, buildId);
+  return Object.freeze({ buildId, candidateInfo });
+}
+
+async function prepare() {
+  let result;
+  try {
+    const pure = await import("./build-generation-retention.mjs");
+    result = runCodeOwnedWriterPrepare(pure);
+  } catch (error) {
+    if (error?.code !== "ERR_MODULE_NOT_FOUND" || !String(error.message).includes("build-generation-retention.mjs")) throw error;
+    result = prepareLegacyInitialBuild();
+  }
+  console.log(`[write-build-info] prepared ${result.candidateInfo.displayVersion} build=${result.buildId}`);
 }
 
 function finalize() {
@@ -1474,7 +2146,7 @@ function finalize() {
 
 try {
   const phase = selectedPhase();
-  if (phase === "--prepare") prepare();
+  if (phase === "--prepare") await prepare();
   else finalize();
 } catch (error) {
   console.error(`[write-build-info] ${error instanceof Error ? error.message : String(error)}`);

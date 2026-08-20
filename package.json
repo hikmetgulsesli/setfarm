@@ -58,7 +58,10 @@
     "check:paths": "node scripts/check-path-contract.mjs",
     "check:migration-digests": "node --import tsx scripts/check-contract-spine-migration-digests.ts --check",
     "prebuild": "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
-    "postbuild": "node scripts/write-build-info.mjs --finalize"
+    "postbuild": "node scripts/write-build-info.mjs --finalize",
+    "build-generation-retention:inspect": "node scripts/build-generation-retention.mjs inspect",
+    "build-generation-retention:prepare": "node scripts/build-generation-retention.mjs prepare",
+    "build-generation-retention:resume": "node scripts/build-generation-retention.mjs resume"
   },
   "dependencies": {
     "json5": "^2.2.3",

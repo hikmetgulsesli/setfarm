@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -29,6 +30,9 @@ const EXACT_SCRIPTS = Object.freeze({
   postbuild: "node scripts/write-build-info.mjs --finalize",
   "check:migration-digests": "node --import tsx scripts/check-contract-spine-migration-digests.ts --check",
   "check:mission-control-contracts": "node --import tsx scripts/mission-control-contract-artifacts.ts --check",
+  "build-generation-retention:inspect": "node scripts/build-generation-retention.mjs inspect",
+  "build-generation-retention:prepare": "node scripts/build-generation-retention.mjs prepare",
+  "build-generation-retention:resume": "node scripts/build-generation-retention.mjs resume",
 });
 const EXACT_TSCONFIG = Object.freeze({
   compilerOptions: {
@@ -74,6 +78,7 @@ function fixtureFile(root, locator, bytes, mode = 0o644) {
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), "setfarm-oa17-build-"));
   fixtureFile(root, "scripts/write-build-info.mjs", readFileSync(join(sourceRoot, "scripts/write-build-info.mjs")));
+  fixtureFile(root, "scripts/build-generation-retention.mjs", readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs")), 0o755);
   fixtureFile(root, "scripts/stitch-to-jsx.mjs", 'process.stdout.write("fixture converter\\n");\n');
   fixtureFile(root, "scripts/copy-step-assets.mjs", readFileSync(join(sourceRoot, "scripts/copy-step-assets.mjs")), 0o755);
   fixtureFile(root, "scripts/inject-version.js", "// fixture version injection\n");
@@ -112,6 +117,17 @@ function commitProducerTransform(root, transform, message) {
   assert.notEqual(after, before, `${message} must transform the committed producer fixture`);
   writeFileSync(producerPath, after);
   git(root, ["add", "scripts/write-build-info.mjs"]);
+  git(root, ["commit", "--amend", "-qm", message]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function commitRetentionTransform(root, transform, message) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  const before = readFileSync(modulePath, "utf8");
+  const after = transform(before);
+  assert.notEqual(after, before, `${message} must transform the committed retention fixture`);
+  writeFileSync(modulePath, after);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
   git(root, ["commit", "--amend", "-qm", message]);
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
 }
@@ -185,6 +201,23 @@ function mode(root, locator) {
 }
 
 describe("OA17 build source and output authority", () => {
+  it("exposes only the code-owned prepare and finalize writer commands", () => {
+    const root = createFixture();
+    try {
+      for (const phase of ["--prepare-preflight", "--prepare-locked-sanitize", "--prepare-locked-create"]) {
+        const selected = runProducer(root, phase);
+        assert.equal(selected.status, 1, `${phase} unexpectedly selected a private writer phase`);
+        assert.match(selected.stderr, /exactly one public build-writer command is required/);
+      }
+      const producer = readFileSync(join(root, "scripts/write-build-info.mjs"), "utf8");
+      assert.doesNotMatch(producer, /--prepare-(?:preflight|locked-sanitize|locked-create)/);
+      assert.doesNotMatch(producer, /readFileSync\(0\)/);
+      assert.doesNotMatch(producer, /Symbol\.for|globalThis|runBuildGenerationWriterPrepareV1/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the exact package build topology under one inner umask", () => {
     const pkg = JSON.parse(readFileSync(join(sourceRoot, "package.json"), "utf8"));
     for (const [name, value] of Object.entries(EXACT_SCRIPTS)) assert.equal(pkg.scripts[name], value);
@@ -194,7 +227,8 @@ describe("OA17 build source and output authority", () => {
     assert.doesNotMatch(producer, /\b(?:rmSync|rmdirSync|openat|renameat2|dlopen)\b/);
     assert.doesNotMatch(producer, /process\.env\b|SETFARM_[A-Z0-9_]*FAULT|faultInjection|testHook/);
     assert.doesNotMatch(producer, /\bexport\s+(?:function|const|class)\b/);
-    assert.match(producer, /renameSync\(distPath, candidate\)/);
+    assert.doesNotMatch(producer, /runBuildGenerationWriterPrepareV1|Symbol\.for|globalThis/);
+    assert.doesNotMatch(producer, /withBuildGenerationWriterMaintenanceLockV1|runBuildGenerationWriterRotationV1/);
   });
 
   it("runs two literal full npm builds under hostile and restrictive parent umasks", () => {
@@ -206,6 +240,9 @@ describe("OA17 build source and output authority", () => {
       assert.equal(restrictive.status, 0, restrictive.stderr || restrictive.stdout);
       const archiveNames = readdirSync(join(root, ".setfarm/build-generations-v1"));
       assert.equal(archiveNames.length, 1);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/intents")).length, 1);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/completions")).length, 1);
+      assert.equal(existsSync(join(root, ".setfarm/build-generation-maintenance-lock-v1.json")), false);
       assert.equal(mode(root, "dist"), 0o755);
       assert.equal(mode(root, "dist/cli/cli.js"), 0o755);
       assert.equal(mode(root, "dist/server/index.js"), 0o644);
@@ -226,11 +263,12 @@ describe("OA17 build source and output authority", () => {
       try {
         commitProducerTransform(root, (source) => {
           const needle = "    linkSync(tempPath, fixedPath);";
-          assert.equal(source.includes(needle), true, "publisher link boundary must exist");
-          return source.replace(needle, [
+          const offset = source.indexOf(needle, source.indexOf("function publishExactArtifact"));
+          assert.notEqual(offset, -1, "publisher link boundary must exist");
+          return `${source.slice(0, offset)}${[
             needle,
             `    if (basename === ${JSON.stringify(basename)}) process.exit(91);`,
-          ].join("\n"));
+          ].join("\n")}${source.slice(offset + needle.length)}`;
         }, `crash ${basename} after fixed link`);
         const crashed = runLiteralNpmBuild(root, parentUmask);
         assert.notEqual(crashed.status, 0, `${basename} fixture did not crash`);
@@ -449,20 +487,242 @@ describe("OA17 build source and output authority", () => {
     const root = createFixture();
     try {
       commitProducerTransform(root, (source) => {
-        const needle = "    renameSync(distPath, candidate);";
+        const needle = "    renameSync(dist, destination);";
         assert.equal(source.includes(needle), true, "rotation rename boundary must exist");
-        return source.replace(needle, `${needle}\n    throw new Error("fixture rename response loss");`);
+        return source.replace(needle, `${needle}\n    if (!optionalWriterLstat(path.join(roots.root, ".setfarm/.fixture-rename-response-loss"))) {\n      writeFileSync(path.join(roots.root, ".setfarm/.fixture-rename-response-loss"), "crashed\\n");\n      process.exit(91);\n    }`);
       }, "inject whole-dist rename response loss");
       mkdirSync(join(root, "dist"), { mode: 0o755 });
       writeFileSync(join(root, "dist/old.bin"), "old\n", { mode: 0o600 });
+      const crashed = runProducer(root, "--prepare");
+      assert.equal(crashed.status, 91, crashed.stderr);
       const prepared = runProducer(root, "--prepare");
       assert.equal(prepared.status, 0, prepared.stderr);
       assert.equal(readFileSync(join(root, "dist/BUILD_INFO.json"), "utf8").length > 0, true);
       const archives = readdirSync(join(root, ".setfarm/build-generations-v1"));
       assert.equal(archives.length, 1);
       assert.equal(readFileSync(join(root, ".setfarm/build-generations-v1", archives[0], "old.bin"), "utf8"), "old\n");
+      assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/completions")).length, 1);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a forged disposed generation through the strict retention closure", () => {
+    const root = createFullBuildFixture();
+    try {
+      assert.equal(runLiteralNpmBuild(root, "077").status, 0);
+      assert.equal(runLiteralNpmBuild(root, "077").status, 0);
+      const ledger = join(root, ".setfarm/build-generation-rotation-ledger-v1");
+      const completionName = readdirSync(join(ledger, "completions"))[0];
+      const completion = JSON.parse(readFileSync(join(ledger, "completions", completionName), "utf8"));
+      rmSync(join(root, completion.archiveLocator), { recursive: true });
+      const fakeOperationHash = "a".repeat(64);
+      const fakeReceiptHash = "b".repeat(64);
+      const projection = {
+        schema: "setfarm.platform-build-generation-rotation-disposition.v1",
+        ordinal: completion.ordinal,
+        buildId: completion.buildId,
+        completion: { completionRef: completion.completionRef, completionHash: completion.completionHash },
+        retentionOperation: { operationRef: `setfarm://internal-production/build-generation-retention-operation/sha256/${fakeOperationHash}`, operationHash: fakeOperationHash },
+        retentionReceipt: { receiptRef: `setfarm://internal-production/build-generation-retention-receipt/sha256/${fakeReceiptHash}`, receiptHash: fakeReceiptHash },
+        sourceAbsent: true,
+        quarantineLocator: `.setfarm/build-generation-quarantine-v1/${completion.buildId}.dist`,
+        disposedRootPhysicalIdentity: completion.inventory.rootPhysicalIdentity,
+        physicalInventoryHash: completion.inventory.physicalInventoryHash,
+        contentInventoryHash: completion.inventory.contentInventoryHash,
+        permanentDisposition: true,
+        quarantineAbsent: true,
+      };
+      const dispositionHash = canonicalHash(projection);
+      const disposition = {
+        ...projection,
+        dispositionRef: `setfarm://internal-production/build-generation-rotation-disposition/${String(completion.ordinal).padStart(20, "0")}/${completion.buildId}/sha256/${dispositionHash}`,
+        dispositionHash,
+      };
+      fixtureFile(root, `.setfarm/build-generation-rotation-ledger-v1/dispositions/${completionName}`, `${canonical(disposition)}\n`, 0o600);
+      const before = readFileSync(join(root, "dist/BUILD_INFO.json"));
+      const prepared = runProducer(root, "--prepare");
+      assert.notEqual(prepared.status, 0, "writer accepted a disposition without its operation/erase/receipt closure");
+      assert.match(prepared.stderr, /retention|receipt|operation|closure|authority/i);
+      assert.deepEqual(readFileSync(join(root, "dist/BUILD_INFO.json")), before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("acquires the writer-attempt lock before creating or recovering rotation authority", () => {
+    const root = createFixture();
+    try {
+      commitProducerTransform(root, (source) => {
+        const boundary = "function acquireWriterMaintenanceLock(setfarm, candidateKeyHash) {";
+        assert.equal(source.includes(boundary), true);
+        return source.replace(boundary, `${boundary}\n  process.exit(91);`);
+      }, "crash at writer-attempt lock acquisition");
+      const ledger = join(root, ".setfarm/build-generation-rotation-ledger-v1");
+      const crashed = runProducer(root, "--prepare");
+      assert.equal(crashed.status, 91, crashed.stderr);
+      assert.equal(existsSync(ledger), false, "rotation authority was created before the writer-attempt lock");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not consume an orphan rotation publisher temporary before the writer-attempt lock", () => {
+    const root = createFixture();
+    try {
+      const ledger = join(root, ".setfarm/build-generation-rotation-ledger-v1");
+      for (const directory of [
+        ".setfarm",
+        ".setfarm/build-generations-v1",
+        ".setfarm/build-generation-rotation-ledger-v1",
+        ".setfarm/build-generation-rotation-ledger-v1/intents",
+        ".setfarm/build-generation-rotation-ledger-v1/completions",
+        ".setfarm/build-generation-rotation-ledger-v1/dispositions",
+      ]) mkdirSync(join(root, directory), { recursive: true, mode: 0o700 });
+      const temp = join(ledger, "intents/.00000000000000000001-10000000-0000-4000-8000-000000000001.json.90000000-0000-4000-8000-000000000009.tmp");
+      writeFileSync(temp, "partial\n", { mode: 0o600 });
+      commitProducerTransform(root, (source) => source.replace(
+        "function acquireWriterMaintenanceLock(setfarm, candidateKeyHash) {",
+        "function acquireWriterMaintenanceLock(setfarm, candidateKeyHash) {\n  process.exit(91);",
+      ), "crash before rotation publisher recovery");
+      const crashed = runProducer(root, "--prepare");
+      assert.equal(crashed.status, 91, crashed.stderr);
+      assert.equal(existsSync(temp), true, "orphan rotation publisher state was consumed before lock acquisition");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans rather than promotes semantic-invalid sole temps in all retention stores", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "setfarm-oa18-writer-retention-"));
+    const original = createFixture();
+    const root = join(workspace, "setfarm");
+    renameSync(original, root);
+    try {
+      const retentionRoot = join(workspace, "data/internal-production-baseline/build-generation-retention-v1");
+      const basename = `${"a".repeat(64)}.json`;
+      const tempName = `.${basename}.90000000-0000-4000-8000-000000000009.tmp`;
+      for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+        const directory = join(retentionRoot, store, "sha256");
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        chmodSync(retentionRoot, 0o700);
+        chmodSync(join(retentionRoot, store), 0o700);
+        chmodSync(directory, 0o700);
+        writeFileSync(join(directory, tempName), "{}\n", { mode: 0o600 });
+      }
+      const prepared = runProducer(root, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+        assert.deepEqual(readdirSync(join(retentionRoot, store, "sha256")), [], store);
+      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks semantic-invalid fixed authority in every retention store", () => {
+    for (const rejectedStore of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+      const workspace = mkdtempSync(join(tmpdir(), "setfarm-oa18-writer-retention-fixed-"));
+      const original = createFixture();
+      const root = join(workspace, "setfarm");
+      renameSync(original, root);
+      try {
+        const retentionRoot = join(workspace, "data/internal-production-baseline/build-generation-retention-v1");
+        const basename = `${"a".repeat(64)}.json`;
+        for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+          const directory = join(retentionRoot, store, "sha256");
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          chmodSync(retentionRoot, 0o700);
+          chmodSync(join(retentionRoot, store), 0o700);
+          chmodSync(directory, 0o700);
+          if (store === rejectedStore) writeFileSync(join(directory, basename), "{}\n", { mode: 0o600 });
+        }
+        const prepared = runProducer(root, "--prepare");
+        assert.notEqual(prepared.status, 0, rejectedStore);
+        assert.match(prepared.stderr, /semantically invalid/, rejectedStore);
+        assert.equal(readFileSync(join(retentionRoot, rejectedStore, "sha256", basename), "utf8"), "{}\n");
+        assert.equal(existsSync(join(root, "dist")), false, rejectedStore);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("blocks wrong-mode and multiply-linked semantic-invalid retention temps without cleanup", () => {
+    for (const physicalCase of ["mode-0644", "nlink-2", "nlink-3"]) {
+      const workspace = mkdtempSync(join(tmpdir(), "setfarm-oa18-writer-retention-physical-"));
+      const original = createFixture();
+      const root = join(workspace, "setfarm");
+      renameSync(original, root);
+      try {
+        const retentionRoot = join(workspace, "data/internal-production-baseline/build-generation-retention-v1");
+        const basename = `${"a".repeat(64)}.json`;
+        const tempName = `.${basename}.90000000-0000-4000-8000-000000000009.tmp`;
+        let temp;
+        for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+          const directory = join(retentionRoot, store, "sha256");
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          chmodSync(retentionRoot, 0o700);
+          chmodSync(join(retentionRoot, store), 0o700);
+          chmodSync(directory, 0o700);
+          if (store === "operations") {
+            temp = join(directory, tempName);
+            writeFileSync(temp, "{}\n", { mode: physicalCase === "mode-0644" ? 0o644 : 0o600 });
+            chmodSync(temp, physicalCase === "mode-0644" ? 0o644 : 0o600);
+          }
+        }
+        if (physicalCase !== "mode-0644") {
+          linkSync(temp, join(workspace, ".external-retention-link-1"));
+          if (physicalCase === "nlink-3") linkSync(temp, join(workspace, ".external-retention-link-2"));
+        }
+        const prepared = runProducer(root, "--prepare");
+        assert.notEqual(prepared.status, 0, physicalCase);
+        assert.match(prepared.stderr, /mode|link|physical|publisher/i, physicalCase);
+        assert.equal(readFileSync(temp, "utf8"), "{}\n", physicalCase);
+        assert.equal(existsSync(join(dirname(temp), basename)), false, physicalCase);
+        assert.equal(existsSync(join(root, "dist")), false, physicalCase);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("blocks a retention temp chmod between preliminary lstat and stable read", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "setfarm-oa18-writer-retention-mode-race-"));
+    const original = createFixture();
+    const root = join(workspace, "setfarm");
+    renameSync(original, root);
+    try {
+      commitProducerTransform(root, (source) => {
+        const boundary = "        const observed = readStableRegular(filePath, MAX_AUTHORITY_BYTES_V1, { device: storeDevice, nlink: linkCount });";
+        assert.equal(source.includes(boundary), true);
+        return source.replace(boundary, `        chmodSync(filePath, 0o644);\n${boundary}`);
+      }, "inject retention member mode race");
+      const retentionRoot = join(workspace, "data/internal-production-baseline/build-generation-retention-v1");
+      const basename = `${"a".repeat(64)}.json`;
+      const tempName = `.${basename}.90000000-0000-4000-8000-000000000009.tmp`;
+      let temp;
+      for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
+        const directory = join(retentionRoot, store, "sha256");
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        chmodSync(retentionRoot, 0o700);
+        chmodSync(join(retentionRoot, store), 0o700);
+        chmodSync(directory, 0o700);
+        if (store === "operations") {
+          temp = join(directory, tempName);
+          writeFileSync(temp, "{}\n", { mode: 0o600 });
+          chmodSync(temp, 0o600);
+        }
+      }
+      const prepared = runProducer(root, "--prepare");
+      assert.notEqual(prepared.status, 0, "last-instant retention chmod was accepted");
+      assert.match(prepared.stderr, /mode|physical|publisher/i);
+      assert.equal(readFileSync(temp, "utf8"), "{}\n");
+      assert.equal(statSync(temp).mode & 0o777, 0o644);
+      assert.equal(existsSync(join(dirname(temp), basename)), false);
+      assert.equal(existsSync(join(root, "dist")), false);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
     }
   });
 
@@ -473,7 +733,9 @@ describe("OA17 build source and output authority", () => {
       chmodSync(join(root, ".setfarm"), 0o700);
       chmodSync(join(root, ".setfarm/build-generations-v1"), 0o700);
       for (let index = 0; index < 8; index += 1) {
-        mkdirSync(join(root, `.setfarm/build-generations-v1/00000000-0000-4000-8000-${String(index).padStart(12, "0")}.dist`), { mode: 0o755 });
+        const archive = join(root, `.setfarm/build-generations-v1/00000000-0000-4000-8000-${String(index).padStart(12, "0")}.dist`);
+        mkdirSync(archive, { mode: 0o755 });
+        chmodSync(archive, 0o755);
       }
       mkdirSync(join(root, "dist"));
       writeFileSync(join(root, "dist/keep.txt"), "keep\n");
@@ -629,7 +891,8 @@ describe("OA17 build source and output authority", () => {
       try {
         commitProducerTransform(root, (source) => {
           const needle = "    linkSync(tempPath, fixedPath);";
-          assert.equal(source.includes(needle), true, "publisher link boundary must exist");
+          const offset = source.indexOf(needle, source.indexOf("function publishExactArtifact"));
+          assert.notEqual(offset, -1, "publisher link boundary must exist");
           const mutation = [
             `    if (basename === ${JSON.stringify(basename)}) {`,
             "      const racedBytes = readFileSync(tempPath);",
@@ -638,7 +901,7 @@ describe("OA17 build source and output authority", () => {
             "      chmodSync(tempPath, 0o444);",
             "    }",
           ].join("\n");
-          return source.replace(needle, `${mutation}\n${needle}`);
+          return `${source.slice(0, offset)}${mutation}\n${needle}${source.slice(offset + needle.length)}`;
         }, `inject ${basename} link race`);
         let result;
         if (basename === "BUILD_INFO.json") {
