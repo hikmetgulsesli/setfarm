@@ -7,6 +7,9 @@ import postgres from "postgres";
 import { runtimeConfig } from "./runtime-config.js";
 import {
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
+  auditCurrentContractSpineAuthorityLedgersAtV31Data,
+  inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
   verifyContractSpineMigrations,
 } from "./db/contract-spine-migrations.js";
 import type {
@@ -90,6 +93,29 @@ function getSql() {
 }
 
 export { getSql };
+
+/**
+ * Read-only current-entry composition. The called audit implementations own
+ * their exact transaction and advisory-lock topology; this port intentionally
+ * does not run generic schema readiness or generic transactions.
+ */
+export async function auditCurrentInternalProductionAuthorityV3Migration31V1(): Promise<Readonly<{
+  authorityV3ContractSpineThroughMigration31: Awaited<ReturnType<typeof auditAuthorityV3ContractSpineThroughMigration31V1>>;
+  currentAuthorityAudit: Awaited<ReturnType<typeof auditCurrentContractSpineAuthorityLedgersAtV31Data>>;
+}>> {
+  const sql = getSql();
+  const authorityV3ContractSpineThroughMigration31 = await auditAuthorityV3ContractSpineThroughMigration31V1(sql);
+  const currentAuthorityAudit = await auditCurrentContractSpineAuthorityLedgersAtV31Data(sql);
+  await inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(sql);
+  return Object.freeze({ authorityV3ContractSpineThroughMigration31, currentAuthorityAudit });
+}
+
+/** Read-only current-entry pending-successor composition with no generic DB gate. */
+export async function inspectCurrentInternalProductionPendingBootstrapHandoffMigrationV1(): Promise<
+  Awaited<ReturnType<typeof inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1>>
+> {
+  return inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(getSql());
+}
 
 async function ensureSchemaReady(): Promise<void> {
   if (_schemaReady || _isMigrating) return;
