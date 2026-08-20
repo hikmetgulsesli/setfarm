@@ -14,6 +14,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -93,6 +94,9 @@ type FixtureOptions = Readonly<{
   pbaObservationExtra?: boolean;
   pbaResponseExtra?: boolean;
   normalizationContentionBarrier?: boolean;
+  preparedAccessorReobservationDrift?: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation";
+  preparedAccessorByteDrift?: boolean;
+  preparedAccessorWrongDevice?: boolean;
 }>;
 
 function fixtureDatabasePortSource(options: FixtureOptions): string {
@@ -130,12 +134,35 @@ function createFixture(options: FixtureOptions = {}): string {
   fixtureFile(root, "scripts/copy-step-assets.mjs", readFileSync(path.join(sourceRoot, "scripts/copy-step-assets.mjs")), 0o755);
   fixtureFile(root, "scripts/inject-version.js", "// fixture inject\n");
   const observerBytes = readFileSync(observerSource, "utf8");
-  const fixtureObserver = options.normalizationContentionBarrier
+  let fixtureObserver = options.normalizationContentionBarrier
     ? observerBytes.replace(
       'if (plan.state === "block" || plan.fixedName !== basename) currentEntryFail(`publisher family ${basename} cannot normalize`);',
       'if (plan.state === "block" || plan.fixedName !== basename) currentEntryFail(`publisher family ${basename} cannot normalize`); const barrier=path.join(store.directory,"..","normalization-contention-barrier"); try{mkdirSync(barrier,{mode:0o700})}catch(error){if(!(error instanceof Error)||!("code" in error)||error.code!=="EEXIST")throw error} try{writeFileSync(path.join(barrier,String(process.pid)),"ready\\n",{flag:"wx",mode:0o600})}catch(error){if(!(error instanceof Error)||!("code" in error)||error.code!=="EEXIST")throw error} const wait=new Int32Array(new SharedArrayBuffer(4)); while(readdirSync(barrier).length<2)Atomics.wait(wait,0,0,5);',
     )
     : observerBytes;
+  if (options.preparedAccessorReobservationDrift) {
+    const driftedBasename = {
+      authorityV3Migration31Audit: "authority-v3-migration31-audit.json",
+      pendingBootstrapHandoffMigration: "pending-bootstrap-handoff-migration.json",
+      operation: "current-entry-operation.json",
+    }[options.preparedAccessorReobservationDrift];
+    fixtureObserver = fixtureObserver.replace(
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
+      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,${JSON.stringify(driftedBasename)}); const driftBytes=readFileSync(driftPath); renameSync(driftPath,path.join(store.directory,"..",${JSON.stringify(`held-${driftedBasename}`)})); writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:`,
+    );
+  }
+  if (options.preparedAccessorByteDrift) {
+    fixtureObserver = fixtureObserver.replace(
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:',
+    );
+  }
+  if (options.preparedAccessorWrongDevice) {
+    fixtureObserver = fixtureObserver.replace(
+      "CURRENT_ENTRY_MAX_BYTES,\n      store.device,\n      1,",
+      "CURRENT_ENTRY_MAX_BYTES,\n      store.device + 1n,\n      1,",
+    );
+  }
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver);
   fixtureFile(root, "src/db/bootstrap-main-claim-handoff-v1-migration.ts", readFileSync(path.join(sourceRoot, "src/db/bootstrap-main-claim-handoff-v1-migration.ts")));
   fixtureFile(root, "src/db-pg.ts", fixtureDatabasePortSource(options));
@@ -295,7 +322,230 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.equal(typeof loaded.observeCurrentInternalProductionAuthorityV3Migration31AuditV1, "function");
     assert.equal(typeof loaded.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1, "function");
     assert.equal(typeof loaded.prepareInternalProductionCurrentEntryOperationV1, "function");
+    assert.equal(typeof loaded.observePreparedInternalProductionCurrentEntryOperationV1, "function");
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
+  });
+
+  it("returns null for an absent prepared operation without creating current-entry state", () => {
+    const root = createFixture();
+    try {
+      const workspace = path.dirname(root);
+      const before = readdirSync(workspace).sort();
+      const result = runFixtureExpression(
+        root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "null");
+      assert.deepEqual(readdirSync(workspace).sort(), before);
+      assert.equal(existsSync(currentEntryStore(root)), false);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("rejects a temporary or foreign prepared-operation inventory instead of returning absence", () => {
+    for (const name of [
+      ".current-entry-operation.json.12345678-1234-4123-8123-123456789abc.tmp",
+      "foreign-current-entry-member",
+    ]) {
+      const root = createFixture();
+      try {
+        const store = currentEntryStore(root);
+        for (const directory of [
+          path.join(path.dirname(root), "data"),
+          path.join(path.dirname(root), "data/internal-production-baseline"),
+          store,
+        ]) {
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          chmodSync(directory, 0o700);
+        }
+        writeFileSync(path.join(store, name), "{}\n", { mode: 0o600 });
+        chmodSync(path.join(store, name), 0o600);
+        const result = runFixtureExpression(
+          root,
+          "m.observePreparedInternalProductionCurrentEntryOperationV1()",
+        );
+        assert.notEqual(result.status, 0, `${name} must be corruption`);
+        assert.match(result.stderr, /current-entry|inventory|foreign|temporary|corrupt/i);
+        assert.equal(existsSync(path.join(store, name)), true);
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  it("returns the exact prepared operation and accepts valid fixed siblings as absence", () => {
+    const fixture = finalizedFixture();
+    try {
+      const seeded = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const observed = runFixtureExpression(
+        fixture.root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(observed.status, 0, observed.stderr);
+      assert.deepEqual(JSON.parse(observed.stdout), JSON.parse(seeded.stdout));
+      const frozen = runFixtureExpression(
+        fixture.root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => { const deep=(entry) => entry===null||typeof entry!==\"object\"||(Object.isFrozen(entry)&&Reflect.ownKeys(entry).every((key)=>{const descriptor=Object.getOwnPropertyDescriptor(entry,key);return !descriptor||!(\"value\" in descriptor)||deep(descriptor.value)})); process.stdout.write(String(deep(value))) })",
+      );
+      assert.equal(frozen.status, 0, frozen.stderr);
+      assert.equal(frozen.stdout, "true");
+
+      const store = currentEntryStore(fixture.root);
+      unlinkSync(path.join(store, "current-entry-operation.json"));
+      const siblingNames = readdirSync(store).sort();
+      const siblingBytes = siblingNames.map((name) => readFileSync(path.join(store, name)));
+      const absent = runFixtureExpression(
+        fixture.root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(absent.status, 0, absent.stderr);
+      assert.equal(absent.stdout, "null");
+      assert.deepEqual(readdirSync(store).sort(), siblingNames);
+      siblingNames.forEach((name, index) => assert.equal(
+        readFileSync(path.join(store, name)).equals(siblingBytes[index]!),
+        true,
+      ));
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("blocks wrong-mode, hard-linked, symlink, special, and oversized prepared members without cleanup", () => {
+    for (const physical of ["mode", "link", "symlink", "special", "size"] as const) {
+      const fixture = finalizedFixture();
+      try {
+        const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        const operation = path.join(currentEntryStore(fixture.root), "current-entry-operation.json");
+        if (physical === "mode") chmodSync(operation, 0o644);
+        else if (physical === "link") linkSync(operation, path.join(path.dirname(currentEntryStore(fixture.root)), "operation-hard-link"));
+        else if (physical === "symlink") {
+          const target = `${operation}.target`;
+          renameSync(operation, target);
+          symlinkSync(target, operation);
+        } else if (physical === "special") {
+          unlinkSync(operation);
+          execFileSync("/usr/bin/mkfifo", [operation]);
+          chmodSync(operation, 0o600);
+        } else writeFileSync(operation, Buffer.alloc(1_048_577), { mode: 0o600 });
+        const before = physical === "special" ? null : lstatSync(operation);
+        const blocked = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+        assert.notEqual(blocked.status, 0);
+        assert.match(blocked.stderr, /regular|mode|link|member|current-entry|cap|symbolic/i);
+        if (before !== null) {
+          const after = lstatSync(operation);
+          assert.equal(after.ino, before.ino);
+          assert.equal(after.mode, before.mode);
+          assert.equal(after.nlink, before.nlink);
+          assert.equal(after.size, before.size);
+        } else assert.equal(lstatSync(operation).isFIFO(), true);
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
+  it("rejects last-instant identity drift across every prepared family after parsing exact first snapshots", () => {
+    for (const family of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operation"] as const) {
+      const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family });
+      try {
+        const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+        assert.notEqual(result.status, 0, family);
+        assert.match(result.stderr, /changed|identity|mode|prepared current-entry/i);
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
+  it("rejects a cross-device prepared member observation", () => {
+    const fixture = finalizedFixture({ preparedAccessorWrongDevice: true });
+    try {
+      const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /device|regular|current-entry/i);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("rejects last-instant prepared operation byte drift from the retained first snapshot", () => {
+    const fixture = finalizedFixture({ preparedAccessorByteDrift: true });
+    try {
+      const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /changed|prepared current-entry/i);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("does not turn a prepared store disappearance race into absence", () => {
+    const fixture = finalizedFixture();
+    try {
+      const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const start = source.indexOf("function readCurrentEntryStore()");
+      const end = source.indexOf("\n}\n\nfunction publisherEntry", start);
+      assert.ok(start >= 0 && end > start);
+      const original = source.slice(start, end);
+      const raced = original.replace(
+        "const observed = directorySnapshot(directory, `current-entry store ${segment}`, workspaceSnapshot.device);",
+        "if(segment===\"current-entry-v1\"){lstatSync(directory);rmSync(directory,{recursive:true});} const observed = directorySnapshot(directory, `current-entry store ${segment}`, workspaceSnapshot.device);",
+      );
+      assert.notEqual(raced, original);
+      writeFileSync(modulePath, `${source.slice(0, start)}${raced}${source.slice(end)}`);
+      const result = runFixtureExpression(
+        fixture.root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.notEqual(result.status, 0, "a disappeared previously observed store must be corruption");
+      assert.match(result.stderr, /current-entry|changed|absent|directory/i);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("requires a second no-follow absence observation before returning null", () => {
+    const root = createFixture();
+    try {
+      const parent = path.dirname(currentEntryStore(root));
+      for (const directory of [path.join(path.dirname(root), "data"), parent]) {
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        chmodSync(directory, 0o700);
+      }
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const raced = source.replace(
+        "assertDirectory(parentDirectory, parentSnapshot, `parent of absent current-entry store ${segment}`);\n      try {",
+        "assertDirectory(parentDirectory, parentSnapshot, `parent of absent current-entry store ${segment}`); mkdirSync(directory,{mode:0o700});\n      try {",
+      );
+      assert.notEqual(raced, source);
+      writeFileSync(modulePath, raced);
+      const result = runFixtureExpression(
+        root,
+        "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.notEqual(result.status, 0, "an appearing store must be corruption");
+      assert.match(result.stderr, /current-entry|changed|absent|directory/i);
+      assert.equal(existsSync(currentEntryStore(root)), true);
+    } finally {
+      removeFixture(root);
+    }
   });
 
   it("declares only zero-input current-entry database composition ports without importing db-pg", () => {
@@ -854,10 +1104,12 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1",
       "resolveInternalProductionAuthorityV3Migration31AuditV1",
       "resolveInternalProductionPendingBootstrapHandoffMigrationV1",
+      "observePreparedInternalProductionCurrentEntryOperationV1",
       "prepareInternalProductionCurrentEntryOperationV1",
       "resolveInternalProductionCurrentEntryOperationV1",
     ]);
     assert.match(source, /export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1\(\)/);
+    assert.match(source, /export async function observePreparedInternalProductionCurrentEntryOperationV1\(\)/);
     assert.doesNotMatch(source, /process\.(?:env|argv|cwd)\b/);
     assert.doesNotMatch(source, /\b(?:fallback|packagedFallback|repositoryRoot|gitBinary|toolPath)\s*[:=]/i);
     assert.match(source, /spawnSync\("\/usr\/bin\/git"/);

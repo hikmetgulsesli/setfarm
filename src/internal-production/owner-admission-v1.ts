@@ -1,8 +1,9 @@
 import type postgres from "postgres";
 
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
+const GIT_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const CANONICAL_REF = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
 const PLANS = ["A", "B", "C", "D", "E"] as const;
 const PLAN_ROW_COUNTS = [16, 10, 6, 16, 9] as const;
@@ -370,6 +371,194 @@ export type InternalProductionOwnerProducerSourceBuildAuthorityAV1 = Readonly<{
 
 export type InternalProductionOwnerProducerSourceBuildAuthorityV1 =
   InternalProductionOwnerProducerSourceBuildAuthorityAV1;
+
+type SourceBuildAuthorityAInputV1 = Omit<
+  InternalProductionOwnerProducerSourceBuildAuthorityAV1,
+  "sourceBuildAuthorityRef" | "sourceBuildAuthorityHash"
+>;
+
+function gitHash(value: unknown, code: string): string {
+  if (typeof value !== "string" || !GIT_HASH.test(value)) fail(code);
+  return value;
+}
+
+const PBA_DELIVERED_PATHS = Object.freeze([
+  "server/routes/setfarm-operational.test.ts",
+  "server/routes/setfarm-operational.ts",
+  "server/services/setfarm-product-build-authority.ts",
+  "server/services/setfarm-product-build-authority.test.ts",
+  "src/lib/product-build-authority.ts",
+  "src/components/run-detail/ProductBuildAuthority.tsx",
+  "tests/product-build-authority-render.test.tsx",
+  "contracts/vendor/setfarm/mission-control-contracts.v1.lock.json",
+] as const);
+const PBA_FOCUSED_ARGV = Object.freeze([
+  "node", "--import", "tsx", "--test",
+  "server/routes/setfarm-operational.test.ts",
+  "server/services/setfarm-product-build-authority.test.ts",
+  "tests/product-build-authority-render.test.tsx",
+] as const);
+const PBA_VENDOR_ARTIFACT_NAMES = Object.freeze([
+  "run-operational-snapshot.v1.compatibility.json", "run-operational-snapshot.v1.schema.json",
+  "run-operational-snapshot.v2.compatibility.json", "run-operational-snapshot.v2.schema.json",
+  "run-operational-snapshot.v3.compatibility.json", "run-operational-snapshot.v3.schema.json",
+  "deployment-observation.v1.compatibility.json", "deployment-observation.v1.schema.json",
+  "project-transfer-ack.v1.compatibility.json", "project-transfer-ack.v1.schema.json",
+  "operational-active-run-status.v1.compatibility.json", "operational-active-run-status.v1.schema.json",
+] as const);
+
+function validatePbaPathIdentity(value: unknown, expectedPath: string): Readonly<{ path: string; blobHash: string }> {
+  const identity = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  exactKeys(identity, ["path", "blobHash"], "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  if (identity.path !== expectedPath) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  return { path: expectedPath, blobHash: sha256(identity.blobHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID") };
+}
+
+function validateCompletePbaObservation(value: unknown): InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1 {
+  const code = "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID";
+  const observation = record(value, code);
+  exactKeys(observation, ["schema", "observationTransport", "response"], code);
+  if (observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || observation.observationTransport !== "source-cli") fail(code);
+  const response = record(observation.response, code);
+  exactKeys(response, ["schema", "currentStatus", "deliveryEvidenceRef", "deliveryEvidenceHash", "evidence"], code);
+  if (response.schema !== "mission-control.product-build-authority-v2-delivery-evidence-response.v1" || response.currentStatus !== "current") fail(code);
+  const evidence = record(response.evidence, code);
+  exactKeys(evidence, ["schema", "currentStatus", "deliveryPrNumber", "deliveryMergeSha", "deliveryMergeAncestorOfCurrentSource", "currentSource", "deliveredPathBlobs", "focusedTests", "vendorLock", "deliveryEvidenceRef", "deliveryEvidenceHash"], code);
+  if (evidence.schema !== "mission-control.product-build-authority-v2-delivery-evidence.v1" || evidence.currentStatus !== "current" || evidence.deliveryPrNumber !== 19 || evidence.deliveryMergeSha !== "240e779d78804843a1202cbf0440fe423b806b1a" || evidence.deliveryMergeAncestorOfCurrentSource !== true) fail(code);
+  const currentSource = record(evidence.currentSource, code);
+  exactKeys(currentSource, ["branch", "clean", "sha", "treeHash", "buildHash", "originMainSha"], code);
+  if (currentSource.branch !== "main" || currentSource.clean !== true) fail(code);
+  const currentSha = gitHash(currentSource.sha, code);
+  gitHash(currentSource.treeHash, code);
+  sha256(currentSource.buildHash, code);
+  if (gitHash(currentSource.originMainSha, code) !== currentSha) fail(code);
+  const delivered = arrayValue(evidence.deliveredPathBlobs, code);
+  if (delivered.length !== PBA_DELIVERED_PATHS.length) fail(code);
+  const deliveredIdentities = delivered.map((member, index) => validatePbaPathIdentity(member, PBA_DELIVERED_PATHS[index]!));
+  const focused = record(evidence.focusedTests, code);
+  exactKeys(focused, ["schema", "argv", "commandContractHash", "testPathBlobs", "exitCode", "passed", "focusedTestReceiptRef", "focusedTestReceiptHash"], code);
+  if (focused.schema !== "mission-control.product-build-authority-v2-focused-test-receipt.v1" || focused.exitCode !== 0 || focused.passed !== true) fail(code);
+  const argv = arrayValue(focused.argv, code);
+  if (JSON.stringify(argv) !== JSON.stringify(PBA_FOCUSED_ARGV) || focused.commandContractHash !== hashCanonicalJson({ argv })) fail(code);
+  const focusedPaths = arrayValue(focused.testPathBlobs, code);
+  const focusedIndexes = [0, 3, 6] as const;
+  if (focusedPaths.length !== focusedIndexes.length) fail(code);
+  focusedPaths.forEach((member, index) => {
+    const identity = validatePbaPathIdentity(member, PBA_DELIVERED_PATHS[focusedIndexes[index]!]!);
+    if (!equalCanonical(identity, deliveredIdentities[focusedIndexes[index]!]!)) fail(code);
+  });
+  const { focusedTestReceiptRef: _focusedRef, focusedTestReceiptHash: _focusedHash, ...focusedBody } = focused;
+  const focusedHash = hashCanonicalJson(focusedBody);
+  if (focused.focusedTestReceiptHash !== focusedHash || focused.focusedTestReceiptRef !== `mission-control://internal-production/product-build-authority-v2-focused-test-receipt/sha256/${focusedHash}`) fail(code);
+  const vendor = record(evidence.vendorLock, code);
+  exactKeys(vendor, ["schema", "lockPath", "producerRepository", "producerCommit", "lockContentHash", "artifacts", "compatibilitySetHash", "vendorLockProjectionHash"], code);
+  if (vendor.schema !== "mission-control.product-build-authority-v2-vendor-lock-projection.v1" || vendor.lockPath !== "contracts/vendor/setfarm/mission-control-contracts.v1.lock.json" || vendor.producerRepository !== "https://github.com/hikmetgulsesli/setfarm.git") fail(code);
+  gitHash(vendor.producerCommit, code);
+  if (sha256(vendor.lockContentHash, code) !== deliveredIdentities[7]!.blobHash) fail(code);
+  const artifacts = arrayValue(vendor.artifacts, code);
+  if (artifacts.length !== PBA_VENDOR_ARTIFACT_NAMES.length) fail(code);
+  artifacts.forEach((member, index) => {
+    const artifact = record(member, code);
+    exactKeys(artifact, ["producerPath", "vendoredPath", "sha256"], code);
+    const basename = PBA_VENDOR_ARTIFACT_NAMES[index]!;
+    if (artifact.producerPath !== `contracts/generated/mission-control/${basename}` || artifact.vendoredPath !== `contracts/vendor/setfarm/${basename}`) fail(code);
+    sha256(artifact.sha256, code);
+  });
+  if (vendor.compatibilitySetHash !== hashCanonicalJson({ schema: "mission-control.setfarm-contract-compatibility-set.v1", artifacts })) fail(code);
+  const { vendorLockProjectionHash: _vendorHash, ...vendorBody } = vendor;
+  if (vendor.vendorLockProjectionHash !== hashCanonicalJson(vendorBody)) fail(code);
+  const { deliveryEvidenceRef: _evidenceRef, deliveryEvidenceHash: _evidenceHash, ...evidenceBody } = evidence;
+  const evidenceHash = hashCanonicalJson(evidenceBody);
+  if (evidence.deliveryEvidenceHash !== evidenceHash || evidence.deliveryEvidenceRef !== `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${evidenceHash}` || response.deliveryEvidenceHash !== evidenceHash || response.deliveryEvidenceRef !== evidence.deliveryEvidenceRef) fail(code);
+  return detachedDeepFreeze(value as InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1);
+}
+
+function validateSourceAuthorityABody(
+  value: unknown,
+  includePair: boolean,
+): SourceBuildAuthorityAInputV1 {
+  const authority = record(value, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_INVALID");
+  const bodyKeys = [
+    "schema", "plan", "manifestHash", "currentEntryOperationRef", "currentEntryOperationHash",
+    "setfarmSource", "productBuildAuthorityV2DeliveryEvidenceRef",
+    "productBuildAuthorityV2DeliveryEvidenceHash", "productBuildAuthorityV2Observation",
+    "vendorProducerCommit", "vendorProducerCommitAncestorProof", "ownerCategoryRegistryHash",
+    "ownerCategoryCensusMapHash",
+  ];
+  exactKeys(
+    authority,
+    includePair ? [...bodyKeys, "sourceBuildAuthorityRef", "sourceBuildAuthorityHash"] : bodyKeys,
+    "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_KEYS_INVALID",
+  );
+  if (authority.schema !== "setfarm.internal-production-owner-producer-source-build-authority-a.v1" || authority.plan !== "A") {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_DISCRIMINATOR_INVALID");
+  }
+  if (
+    sha256(authority.manifestHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_MANIFEST_INVALID")
+      !== INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_MANIFEST_INVALID");
+  canonicalRef(authority.currentEntryOperationRef, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_OPERATION_INVALID");
+  sha256(authority.currentEntryOperationHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_OPERATION_INVALID");
+  if (authority.currentEntryOperationRef !== `setfarm://internal-production/current-entry-operation/sha256/${authority.currentEntryOperationHash}`) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_OPERATION_INVALID");
+  }
+  const source = record(authority.setfarmSource, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  exactKeys(source, ["branch", "clean", "sha", "treeHash", "buildHash", "originMainSha"], "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  if (source.branch !== "main" || source.clean !== true) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  const sourceSha = gitHash(source.sha, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  gitHash(source.treeHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  sha256(source.buildHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  if (gitHash(source.originMainSha, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID") !== sourceSha) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_SOURCE_INVALID");
+  }
+  const observation = validateCompletePbaObservation(authority.productBuildAuthorityV2Observation);
+  const response = observation.response;
+  const pbaHash = sha256(authority.productBuildAuthorityV2DeliveryEvidenceHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  if (response.deliveryEvidenceRef !== authority.productBuildAuthorityV2DeliveryEvidenceRef || response.deliveryEvidenceHash !== pbaHash) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  const evidence = record(response.evidence, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  if (evidence.deliveryEvidenceRef !== response.deliveryEvidenceRef || evidence.deliveryEvidenceHash !== response.deliveryEvidenceHash) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_PBA_INVALID");
+  const vendorLock = record(evidence.vendorLock, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_VENDOR_INVALID");
+  const vendorCommit = gitHash(authority.vendorProducerCommit, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_VENDOR_INVALID");
+  if (vendorLock.producerCommit !== vendorCommit) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_VENDOR_INVALID");
+  const proof = record(authority.vendorProducerCommitAncestorProof, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_ANCESTRY_INVALID");
+  exactKeys(proof, ["schema", "vendorProducerCommit", "setfarmSourceSha", "mergeBase", "verified"], "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_ANCESTRY_INVALID");
+  if (vendorCommit === sourceSha || proof.schema !== "setfarm.internal-production-vendor-ancestor-proof.v1" || proof.vendorProducerCommit !== vendorCommit || proof.setfarmSourceSha !== sourceSha || proof.verified !== true) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_ANCESTRY_INVALID");
+  if (gitHash(proof.mergeBase, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_ANCESTRY_INVALID") !== vendorCommit) {
+    fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_ANCESTRY_INVALID");
+  }
+  if (authority.ownerCategoryRegistryHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1 || authority.ownerCategoryCensusMapHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_OWNER_HASH_INVALID");
+  if (canonicalJsonBytes(authority).length > 65_536) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_BYTES_INVALID");
+  return authority as SourceBuildAuthorityAInputV1;
+}
+
+function createInternalProductionOwnerProducerSourceBuildAuthorityAV1(
+  input: SourceBuildAuthorityAInputV1,
+): InternalProductionOwnerProducerSourceBuildAuthorityAV1 {
+  const body = validateSourceAuthorityABody(input, false);
+  const sourceBuildAuthorityHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({
+    ...body,
+    sourceBuildAuthorityRef: `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${sourceBuildAuthorityHash}`,
+    sourceBuildAuthorityHash,
+  });
+}
+
+export function validateInternalProductionOwnerProducerSourceBuildAuthorityV1(
+  value: unknown,
+): InternalProductionOwnerProducerSourceBuildAuthorityV1 {
+  const body = validateSourceAuthorityABody(value, true) as InternalProductionOwnerProducerSourceBuildAuthorityAV1;
+  const {
+    sourceBuildAuthorityRef: _ref,
+    sourceBuildAuthorityHash: _hash,
+    ...projection
+  } = body;
+  const sourceBuildAuthorityHash = hashCanonicalJson(projection);
+  if (
+    body.sourceBuildAuthorityHash !== sourceBuildAuthorityHash
+    || body.sourceBuildAuthorityRef !== `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${sourceBuildAuthorityHash}`
+  ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_DERIVATION_INVALID");
+  return detachedDeepFreeze(body);
+}
 
 export type InternalProductionOwnerProducerManifestSetActivationReceiptV1 = Readonly<{
   schema: "setfarm.internal-production-owner-producer-manifest-set-activation.v1";

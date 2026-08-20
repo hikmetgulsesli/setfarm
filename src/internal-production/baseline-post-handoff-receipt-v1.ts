@@ -867,6 +867,17 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 
+function recursivelyFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor && "value" in descriptor) recursivelyFreeze(descriptor.value);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return canonicalComparable([...Object.keys(value)].sort(compareBytes)) === canonicalComparable([...keys].sort(compareBytes));
 }
@@ -1028,15 +1039,35 @@ function ensureCurrentEntryStore(): Readonly<{ directory: string; device: bigint
   return Object.freeze({ directory, device: workspaceSnapshot.device });
 }
 
-function readCurrentEntryStore(): Readonly<{ directory: string; device: bigint }> {
+function readCurrentEntryStore(): Readonly<{ directory: string; device: bigint }>;
+function readCurrentEntryStore(allowAbsent: true): Readonly<{ directory: string; device: bigint }> | null;
+function readCurrentEntryStore(allowAbsent = false): Readonly<{ directory: string; device: bigint }> | null {
   const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
   const workspace = path.dirname(fixedRepositoryRoot());
   const workspaceSnapshot = directorySnapshot(workspace, "Setfarm workspace", repository.device);
   let directory = workspace;
+  let parentDirectory = workspace;
+  let parentSnapshot = workspaceSnapshot;
   for (const segment of CURRENT_ENTRY_STORE_DIRECTORY.split("/")) {
     directory = path.join(directory, segment);
+    try {
+      lstatSync(directory, { bigint: true });
+    } catch (error) {
+      if (!allowAbsent || !isEnoent(error)) throw error;
+      assertDirectory(parentDirectory, parentSnapshot, `parent of absent current-entry store ${segment}`);
+      try {
+        lstatSync(directory, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        assertDirectory(parentDirectory, parentSnapshot, `parent of absent current-entry store ${segment}`);
+        return null;
+      }
+      currentEntryFail(`absent current-entry store ${segment} appeared while observed`);
+    }
     const observed = directorySnapshot(directory, `current-entry store ${segment}`, workspaceSnapshot.device);
     if (observed.identity.mode !== 0o700) currentEntryFail(`current-entry store ${segment} has wrong mode`);
+    parentDirectory = directory;
+    parentSnapshot = observed;
   }
   return Object.freeze({ directory, device: workspaceSnapshot.device });
 }
@@ -1559,6 +1590,70 @@ function pbaPair(observation: ProductBuildAuthorityObservationV1): Readonly<{ de
   return Object.freeze({ deliveryEvidenceRef: ref, deliveryEvidenceHash: hash as string });
 }
 
+/** Reads an already prepared immutable operation without publishing or recovering state. */
+export async function observePreparedInternalProductionCurrentEntryOperationV1(): Promise<
+  InternalProductionCurrentEntryOperationV1 | null
+> {
+  const store = readCurrentEntryStore(true);
+  if (store === null) return null;
+  const storeBefore = directorySnapshot(store.directory, "prepared current-entry store", store.device);
+  const allowed = new Set<string>(Object.values(CURRENT_ENTRY_FILES));
+  const entries = readdirSync(store.directory).sort(compareBytes);
+  if (entries.length > allowed.size || entries.some((entry) => !allowed.has(entry))) {
+    currentEntryFail("prepared current-entry inventory is invalid");
+  }
+  const firstSnapshots = new Map<string, StableRegular>();
+  for (const entry of entries) {
+    const observed = readStableRegular(
+      path.join(store.directory, entry),
+      CURRENT_ENTRY_MAX_BYTES,
+      store.device,
+      1,
+    );
+    if (observed.mode !== 0o600 || observed.bytes.length < 1) {
+      currentEntryFail(`prepared current-entry member ${entry} is invalid`);
+    }
+    firstSnapshots.set(entry, observed);
+  }
+  assertDirectory(store.directory, storeBefore, "prepared current-entry store");
+  let operation: InternalProductionCurrentEntryOperationV1 | null = null;
+  if (!entries.includes(CURRENT_ENTRY_FILES.operation)) {
+    for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+      const snapshot = firstSnapshots.get(CURRENT_ENTRY_FILES[kind]);
+      if (snapshot) await validateCurrentEntryRecordBytes(kind, snapshot.bytes);
+    }
+  } else {
+    const operationSnapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.operation);
+    if (!operationSnapshot) currentEntryFail("prepared current-entry operation snapshot is absent");
+    const body = strictCanonicalRecord(operationSnapshot.bytes, "prepared current-entry operation");
+    const pair = requirePair(
+      { operationRef: body.operationRef, operationHash: body.operationHash },
+      "operationRef",
+      "operationHash",
+      "setfarm://internal-production/current-entry-operation/sha256/",
+    ) as InternalProductionCurrentEntryOperationPairV1;
+    const v31Snapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.authorityV3Migration31Audit);
+    const pendingSnapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.pendingBootstrapHandoffMigration);
+    if (!v31Snapshot || !pendingSnapshot) currentEntryFail("prepared current-entry operation dependencies are absent");
+    operation = await parseCurrentEntryOperationBody(body, pair, true, {
+      v31Body: strictCanonicalRecord(v31Snapshot.bytes, "prepared v31 audit"),
+      pendingBody: strictCanonicalRecord(pendingSnapshot.bytes, "prepared pending migration"),
+    });
+  }
+  const finalEntries = readdirSync(store.directory).sort(compareBytes);
+  assertDirectory(store.directory, storeBefore, "prepared current-entry store");
+  if (canonicalComparable(entries) !== canonicalComparable(finalEntries)) currentEntryFail("prepared current-entry inventory changed while observed");
+  for (const entry of entries) {
+    const first = firstSnapshots.get(entry)!;
+    const final = readStableRegular(path.join(store.directory, entry), CURRENT_ENTRY_MAX_BYTES, store.device, 1);
+    if (final.mode !== 0o600 || !sameRegularMetadata(first.stats, final.stats) || !first.bytes.equals(final.bytes)) {
+      currentEntryFail(`prepared current-entry member ${entry} changed after validation`);
+    }
+  }
+  assertDirectory(store.directory, storeBefore, "prepared current-entry store");
+  return operation;
+}
+
 export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {
   try {
     const store = readCurrentEntryStore();
@@ -1656,5 +1751,5 @@ async function parseCurrentEntryOperationBody(
   const parsed = pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(body.productBuildAuthorityV2Observation.response);
   const parsedPair = pbaPair(Object.freeze({ schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1", observationTransport: "source-cli", response: parsed }) as ProductBuildAuthorityObservationV1);
   if (!isPlainRecord(body.productBuildAuthorityV2DeliveryEvidence) || !hasExactKeys(body.productBuildAuthorityV2DeliveryEvidence, ["deliveryEvidenceRef", "deliveryEvidenceHash"]) || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceRef !== parsedPair.deliveryEvidenceRef || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceHash !== parsedPair.deliveryEvidenceHash || canonicalComparable(body.productBuildAuthorityV2Observation.response) !== canonicalComparable(parsed)) currentEntryFail("stored PBA pair/response is crossed");
-  return Object.freeze(body as unknown as InternalProductionCurrentEntryOperationV1);
+  return recursivelyFreeze(body as unknown as InternalProductionCurrentEntryOperationV1);
 }
