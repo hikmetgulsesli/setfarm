@@ -188,6 +188,12 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   return Object.freeze({ root, vendorCommit });
 }
 
+let activatedOwnerAdmissionFixture: Readonly<{
+  root: string;
+  db: typeof import("../../src/db-pg.js");
+  sql: ReturnType<typeof import("../../src/db-pg.js")["getSql"]>;
+}> | null = null;
+
 type ProductBuildObservationFromOwnerCore =
   InternalProductionOwnerProducerSourceBuildAuthorityAV1[
     "productBuildAuthorityV2Observation"
@@ -509,6 +515,19 @@ test("database shares one transaction-local resolved-source cache across target 
   assert.match(activation, /resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1\(sql, true, sourceCache\)/);
 });
 
+test("database keeps the authenticated terminal-body close private behind the fixed controller", async () => {
+  const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  assert.match(source, /async function closeOwnerReservationInTransactionV1(?:<|\()/);
+  assert.match(source, /closeInTransactionV1: closeOwnerReservationInTransactionV1/);
+  assert.doesNotMatch(source, /export async function closeOwnerReservationInTransactionV1/);
+  const privateClose = source.slice(
+    source.indexOf("async function closeOwnerReservationInTransactionV1"),
+    source.indexOf("const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1"),
+  );
+  assert.match(privateClose, /validateBoundOwnerReservationRowV1/);
+  assert.match(privateClose, /validateClosedOwnerReservationRowV1/);
+});
+
 test("historical source rejects a self-consistent non-contract PBA before target scans", async () => {
   const db = await import("../../src/db-pg.js");
   const valid = authorityA();
@@ -809,11 +828,530 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
         (SELECT COUNT(*)::text FROM internal_production_owner_producer_manifest_activation_heads_v1) AS heads,
         (SELECT current_revision::text FROM internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE) AS revision
     `)], [{ sources: "1", activations: "1", heads: "1", revision: "1" }]);
-    await fixtureDb.pgClose();
+    activatedOwnerAdmissionFixture = { root: fixture.root, db: fixtureDb, sql: fixtureSql };
     await db.pgClose();
   } finally {
-    rmSync(path.dirname(fixture.root), { recursive: true, force: true });
+    if (activatedOwnerAdmissionFixture === null) {
+      rmSync(path.dirname(fixture.root), { recursive: true, force: true });
+    }
   }
+});
+
+test("real PostgreSQL owner admission begins adopts binds and keeps pair-only close fail-closed without a terminal resolver", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the prior real activation fixture must remain available");
+  const { db, sql, root } = activatedOwnerAdmissionFixture;
+  try {
+  const ownerKey = "run-owner-p1-real-pg";
+  const begin = () => sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(
+    transaction,
+    { producerImplementationId: "a-runtime-run-v1", ownerKey },
+  ));
+  const [first, concurrent] = await Promise.all([begin(), begin()]);
+  assert.deepEqual(concurrent, first);
+  assert.deepEqual(await begin(), first);
+  const storedCreationVersion = (await sql<Array<{ head_version: string }>>`
+    SELECT head_version::text FROM internal_production_owner_reservations_v1
+     WHERE reservation_ref=${first.reservationRef}
+  `)[0]!.head_version;
+  await sql`UPDATE internal_production_owner_reservations_v1 SET head_version=head_version+7 WHERE reservation_ref=${first.reservationRef}`;
+  await assert.rejects(begin(), /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/);
+  await sql`UPDATE internal_production_owner_reservations_v1 SET head_version=${storedCreationVersion} WHERE reservation_ref=${first.reservationRef}`;
+  assert.deepEqual(await db.resolveInternalProductionOwnerReservationV1({
+    reservationRef: first.reservationRef,
+    reservationHash: first.reservationHash,
+  }), first);
+
+  const identity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey,
+    ownerRef: "setfarm://runs/run-owner-p1-real-pg",
+    ownerHash: SHA_B,
+  };
+  const bind = () => sql.begin((transaction) => db.bindInternalProductionOwnerReservationV1(
+    transaction,
+    {
+      reservationRef: first.reservationRef,
+      reservationHash: first.reservationHash,
+      canonicalOwnerIdentity: identity,
+    },
+  ));
+  const bound = await bind();
+  assert.deepEqual(await bind(), bound);
+  const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
+  const bindingHead = (await sql<Array<{ predecessor_head_hash: string }>>`
+    SELECT predecessor_head_hash
+      FROM internal_production_owner_admission_authorities_v1
+     WHERE authority_ref=${bindingRef} AND authority_hash=${bound.bindingHash}
+  `)[0]!.predecessor_head_hash;
+  await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 DISABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  try {
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET predecessor_head_hash=${SHA_C},successor_head_hash=${SHA_C} WHERE authority_ref=${bindingRef}`;
+    await assert.rejects(begin(), /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/);
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET predecessor_head_hash=${bindingHead},successor_head_hash=${bindingHead} WHERE authority_ref=${bindingRef}`;
+  } finally {
+    await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 ENABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  }
+  await assert.rejects(
+    sql.begin((transaction) => db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: first.reservationRef,
+      reservationHash: first.reservationHash,
+      canonicalOwnerIdentity: { ...identity, ownerHash: SHA_C },
+    })),
+    /OWNER_IDENTITY_CONFLICT/,
+  );
+
+  const stalePending = await sql.begin((transaction) => (
+    db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-runtime-run-v1",
+      ownerKey: "run-owner-stale-pending-bind",
+    })
+  ));
+  await sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(
+    transaction,
+    { producerImplementationId: "a-runtime-run-v1", ownerKey: "run-owner-intervening-head" },
+  ));
+  const staleIdentity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: stalePending.ownerKey,
+    ownerRef: "setfarm://runs/run-owner-stale-pending-bind",
+    ownerHash: SHA_B,
+  };
+  await assert.rejects(
+    sql.begin((transaction) => db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: stalePending.reservationRef,
+      reservationHash: stalePending.reservationHash,
+      canonicalOwnerIdentity: staleIdentity,
+    })),
+    /^Error: INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CONFLICT$/,
+  );
+  assert.deepEqual([...(await sql<Array<{
+    state: string;
+    canonical_owner_identity: unknown | null;
+    binding_hash: string | null;
+    binding_payload: unknown | null;
+    binding_authorities: string;
+  }>>`
+    SELECT reservation.state,reservation.canonical_owner_identity,reservation.binding_hash,
+           reservation.binding_payload,COUNT(authority.authority_ref)::text AS binding_authorities
+      FROM internal_production_owner_reservations_v1 reservation
+      LEFT JOIN internal_production_owner_admission_authorities_v1 authority
+        ON authority.phase_key=reservation.reservation_ref AND authority.authority_kind='binding'
+     WHERE reservation.reservation_ref=${stalePending.reservationRef}
+     GROUP BY reservation.reservation_ref
+  `)], [{
+    state: "pending",
+    canonical_owner_identity: null,
+    binding_hash: null,
+    binding_payload: null,
+    binding_authorities: "0",
+  }]);
+
+  const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: identity,
+    terminalOwnerRef: "setfarm://runs/run-owner-p1-real-pg/terminal/completed",
+    terminalOwnerHash: SHA_C,
+  });
+  const terminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+  const beforeUnavailable = await sql<Array<{ state: string; head_version: string }>>`
+    SELECT reservation.state, head.head_version::text
+      FROM internal_production_owner_reservations_v1 reservation
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE reservation.reservation_ref = ${first.reservationRef}
+  `;
+  await assert.rejects(
+    sql.begin((transaction) => db.closeInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: first.reservationRef,
+      reservationHash: first.reservationHash,
+      ...terminalPair,
+    })),
+    /^Error: TERMINAL_AUTHORITY_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await sql<Array<{ state: string; head_version: string }>>`
+    SELECT reservation.state, head.head_version::text
+      FROM internal_production_owner_reservations_v1 reservation
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE reservation.reservation_ref = ${first.reservationRef}
+  `, beforeUnavailable);
+
+  let rolledBackReservation: Awaited<ReturnType<typeof begin>> | undefined;
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      rolledBackReservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(
+        transaction,
+        { producerImplementationId: "a-runtime-run-v1", ownerKey: "run-owner-p1-rollback" },
+      );
+      throw new Error("ROLLBACK_AFTER_BEGIN");
+    }),
+    /ROLLBACK_AFTER_BEGIN/,
+  );
+  assert.ok(rolledBackReservation);
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationV1({
+      reservationRef: rolledBackReservation.reservationRef,
+      reservationHash: rolledBackReservation.reservationHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_UNAVAILABLE$/,
+  );
+
+  await assert.rejects(
+    sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(
+      transaction,
+      { producerImplementationId: "future-owner-v1", ownerKey: "future-owner" },
+    )),
+    /^Error: INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE$/,
+  );
+
+  const headBeforeTamper = (await sql<Array<{
+    head_version: string;
+    head_hash: string;
+    migration_application_evidence_hash: string;
+    head_payload: unknown;
+  }>>`SELECT head_version::text,head_hash,migration_application_evidence_hash,head_payload FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE`)[0]!;
+  const reservationCountBeforeTamper = (await sql<Array<{ count: string }>>`SELECT COUNT(*)::text AS count FROM internal_production_owner_reservations_v1`)[0]!.count;
+  const headTampers = [
+    { head_payload: sql.json({ schema: "setfarm.internal-production-owner-admission-head.v1", version: 99 }) },
+    { migration_application_evidence_hash: SHA_C },
+    { head_hash: SHA_C },
+  ] as const;
+  for (const [index, tamper] of headTampers.entries()) {
+    if ("head_payload" in tamper) {
+      await sql`UPDATE internal_production_owner_admission_head_v1 SET head_payload=${tamper.head_payload} WHERE singleton=TRUE`;
+    } else if ("migration_application_evidence_hash" in tamper) {
+      await sql`UPDATE internal_production_owner_admission_head_v1 SET migration_application_evidence_hash=${tamper.migration_application_evidence_hash} WHERE singleton=TRUE`;
+    } else {
+      await sql`UPDATE internal_production_owner_admission_head_v1 SET head_hash=${tamper.head_hash} WHERE singleton=TRUE`;
+    }
+    await assert.rejects(
+      sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(
+        transaction,
+        { producerImplementationId: "a-runtime-run-v1", ownerKey: `head-tamper-${index}` },
+      )),
+      /^Error: INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION$/,
+    );
+    await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${headBeforeTamper.head_version},head_hash=${headBeforeTamper.head_hash},migration_application_evidence_hash=${headBeforeTamper.migration_application_evidence_hash},head_payload=${sql.json(headBeforeTamper.head_payload as never)} WHERE singleton=TRUE`;
+    assert.equal((await sql<Array<{ count: string }>>`SELECT COUNT(*)::text AS count FROM internal_production_owner_reservations_v1`)[0]!.count, reservationCountBeforeTamper);
+  }
+  const advancingAuthority = (await sql<Array<{ authority_ref: string; phase_key: string }>>`
+    SELECT authority_ref,phase_key
+      FROM internal_production_owner_admission_authorities_v1
+     WHERE successor_head_hash=${headBeforeTamper.head_hash}
+       AND predecessor_head_hash<>successor_head_hash
+  `)[0]!;
+  await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 DISABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  try {
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET phase_key='setfarm://tests/crossed-phase' WHERE authority_ref=${advancingAuthority.authority_ref}`;
+    await assert.rejects(
+      sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(
+        transaction,
+        { producerImplementationId: "a-runtime-run-v1", ownerKey: "head-crossed-phase" },
+      )),
+      /^Error: INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION$/,
+    );
+    assert.equal((await sql<Array<{ count: string }>>`SELECT COUNT(*)::text AS count FROM internal_production_owner_reservations_v1`)[0]!.count, reservationCountBeforeTamper);
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET phase_key=${advancingAuthority.phase_key} WHERE authority_ref=${advancingAuthority.authority_ref}`;
+  } finally {
+    await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 ENABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  }
+
+  const missingBindingReservation = await sql.begin((transaction) => (
+    db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-runtime-run-v1",
+      ownerKey: "run-owner-missing-binding-authority",
+    })
+  ));
+  const missingBindingIdentity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: missingBindingReservation.ownerKey,
+    ownerRef: "setfarm://runs/run-owner-missing-binding-authority",
+    ownerHash: SHA_B,
+  };
+  const missingBindingBody = createInternalProductionBoundOwnerReservationV1({
+    reservation: missingBindingReservation,
+    canonicalOwnerIdentity: missingBindingIdentity,
+  });
+  await sql`UPDATE internal_production_owner_reservations_v1 SET state='bound',canonical_owner_identity=${sql.json(missingBindingIdentity)},binding_hash=${missingBindingBody.bindingHash},binding_payload=${sql.json(missingBindingBody)} WHERE reservation_ref=${missingBindingReservation.reservationRef}`;
+  await assert.rejects(
+    sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: missingBindingReservation.producerImplementationId,
+      ownerKey: missingBindingReservation.ownerKey,
+    })),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+  );
+  await assert.rejects(
+    sql.begin((transaction) => db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: missingBindingReservation.reservationRef,
+      reservationHash: missingBindingReservation.reservationHash,
+      canonicalOwnerIdentity: missingBindingIdentity,
+    })),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+  );
+  } catch (error) {
+    await db.pgClose();
+    rmSync(path.dirname(root), { recursive: true, force: true });
+    activatedOwnerAdmissionFixture = null;
+    throw error;
+  }
+});
+
+test("real PostgreSQL close resolver rejects a bare historical row and unavailable terminal authority", async (t) => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql, root } = activatedOwnerAdmissionFixture;
+  t.after(async () => {
+    await db.pgClose();
+    rmSync(path.dirname(root), { recursive: true, force: true });
+    activatedOwnerAdmissionFixture = null;
+  });
+  const row = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0];
+  const currentHead = (await sql<Array<{
+    head_version: string;
+    head_hash: string;
+    head_payload: { migrationApplication: unknown };
+  }>>`SELECT head_version::text,head_hash,head_payload FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE`)[0]!;
+  const reservation = createInternalProductionOwnerReservationV1({
+    producer: row,
+    ownerKey: "run-owner-canonical-historical-close",
+    ownerAdmissionHeadPredecessorHash: currentHead.head_hash,
+  });
+  const identity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: reservation.ownerKey,
+    ownerRef: "setfarm://runs/run-owner-canonical-historical-close",
+    ownerHash: SHA_B,
+  };
+  const bound = createInternalProductionBoundOwnerReservationV1({
+    reservation,
+    canonicalOwnerIdentity: identity,
+  });
+  const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: identity,
+    terminalOwnerRef: "setfarm://runs/run-owner-canonical-historical-close/terminal/completed",
+    terminalOwnerHash: SHA_C,
+  });
+  const reservationSuccessorPayload = {
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: Number(currentHead.head_version) + 1,
+    predecessorHeadHash: currentHead.head_hash,
+    transitionKind: "reservation",
+    transitionRef: reservation.reservationRef,
+    transitionHash: reservation.reservationHash,
+    migrationApplication: currentHead.head_payload.migrationApplication,
+  };
+  const reservationSuccessorHash = hashCanonicalJson(reservationSuccessorPayload);
+  const intermediateReservation = createInternalProductionOwnerReservationV1({
+    producer: row,
+    ownerKey: "run-owner-intermediate-head-transition",
+    ownerAdmissionHeadPredecessorHash: reservationSuccessorHash,
+  });
+  const intermediateSuccessorPayload = {
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: reservationSuccessorPayload.version + 1,
+    predecessorHeadHash: reservationSuccessorHash,
+    transitionKind: "reservation",
+    transitionRef: intermediateReservation.reservationRef,
+    transitionHash: intermediateReservation.reservationHash,
+    migrationApplication: currentHead.head_payload.migrationApplication,
+  };
+  const intermediateSuccessorHash = hashCanonicalJson(intermediateSuccessorPayload);
+  const closeTransition = {
+    schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+    reservationRef: bound.reservationRef,
+    reservationHash: bound.reservationHash,
+    terminalOwnerRef: terminal.terminalOwnerRef,
+    terminalOwnerHash: terminal.terminalOwnerHash,
+  };
+  const closeTransitionHash = hashCanonicalJson(closeTransition);
+  const closeSuccessorPayload = {
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: intermediateSuccessorPayload.version + 1,
+    predecessorHeadHash: intermediateSuccessorHash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${closeTransitionHash}`,
+    transitionHash: closeTransitionHash,
+    migrationApplication: currentHead.head_payload.migrationApplication,
+  };
+  const closeSuccessorHash = hashCanonicalJson(closeSuccessorPayload);
+  const close = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "ordinary",
+    boundReservation: bound,
+    terminalAuthority: terminal,
+    ownerAdmissionHeadPredecessorHash: intermediateSuccessorHash,
+    ownerAdmissionHeadSuccessorHash: closeSuccessorHash,
+    preservedFenceRef: null,
+    preservedFenceHash: null,
+  });
+  await sql`
+    INSERT INTO internal_production_owner_reservations_v1 (
+      reservation_ref, reservation_hash, category, owner_key, owner_key_hash,
+      producer_purpose_hash, producer_implementation_id, producer_implementation_hash,
+      reservation_payload, reservation_head_predecessor_hash, state,
+      canonical_owner_identity, binding_hash, binding_payload, close_kind,
+      terminal_owner_ref, terminal_owner_hash, close_head_predecessor_hash,
+      close_head_successor_hash, preserved_fence_ref, preserved_fence_hash,
+      close_ref, close_hash, close_payload, head_version
+    ) VALUES (
+      ${reservation.reservationRef}, ${reservation.reservationHash}, ${reservation.category},
+      ${reservation.ownerKey}, ${reservation.ownerKeyHash}, ${reservation.producerPurposeHash},
+      ${reservation.producerImplementationId}, ${reservation.producerImplementationHash},
+      ${sql.json(reservation)}, ${reservation.ownerAdmissionHeadPredecessorHash},
+      'closed', ${sql.json(identity)}, ${bound.bindingHash},
+      ${sql.json(bound)}, ${close.closeKind}, ${close.terminalOwnerRef},
+      ${close.terminalOwnerHash}, ${close.ownerAdmissionHeadPredecessorHash},
+      ${close.ownerAdmissionHeadSuccessorHash}, NULL, NULL, ${close.closeRef}, ${close.closeHash},
+      ${sql.json(close)}, ${closeSuccessorPayload.version}
+    )
+  `;
+  await sql`
+    INSERT INTO internal_production_owner_reservations_v1 (
+      reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+      producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+      reservation_payload,reservation_head_predecessor_hash,state,head_version
+    ) VALUES (
+      ${intermediateReservation.reservationRef},${intermediateReservation.reservationHash},
+      ${intermediateReservation.category},${intermediateReservation.ownerKey},
+      ${intermediateReservation.ownerKeyHash},${intermediateReservation.producerPurposeHash},
+      ${intermediateReservation.producerImplementationId},
+      ${intermediateReservation.producerImplementationHash},${sql.json(intermediateReservation)},
+      ${intermediateReservation.ownerAdmissionHeadPredecessorHash},'pending',
+      ${intermediateSuccessorPayload.version}
+    )
+  `;
+  await sql`
+    INSERT INTO internal_production_owner_admission_authorities_v1 (
+      authority_ref, authority_hash, authority_kind, phase_key,
+      predecessor_head_hash, successor_head_hash, authority_body
+    ) VALUES (
+      ${reservation.reservationRef}, ${reservation.reservationHash}, 'reservation',
+      ${reservation.reservationRef}, ${reservation.ownerAdmissionHeadPredecessorHash},
+      ${reservationSuccessorHash}, ${sql.json(reservation)}
+    ), (
+      ${intermediateReservation.reservationRef}, ${intermediateReservation.reservationHash},
+      'reservation', ${intermediateReservation.reservationRef},
+      ${intermediateReservation.ownerAdmissionHeadPredecessorHash},
+      ${intermediateSuccessorHash}, ${sql.json(intermediateReservation)}
+    ), (
+      ${close.closeRef}, ${close.closeHash}, 'close', ${reservation.reservationRef},
+      ${close.ownerAdmissionHeadPredecessorHash}, ${close.ownerAdmissionHeadSuccessorHash},
+      ${sql.json(close)}
+    )
+  `;
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationV1({
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+  );
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationCloseV1({
+      closeRef: close.closeRef,
+      closeHash: close.closeHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION$/,
+  );
+  const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
+  await sql`
+    INSERT INTO internal_production_owner_admission_authorities_v1 (
+      authority_ref, authority_hash, authority_kind, phase_key,
+      predecessor_head_hash, successor_head_hash, authority_body
+    ) VALUES (
+      ${bindingRef}, ${bound.bindingHash}, 'binding', ${reservation.reservationRef},
+      ${reservationSuccessorHash}, ${reservationSuccessorHash}, ${sql.json(bound)}
+    )
+  `;
+  assert.deepEqual(await db.resolveInternalProductionOwnerReservationV1({
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+  }), reservation);
+  const beginHistorical = () => sql.begin((transaction) => (
+    db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: reservation.producerImplementationId,
+      ownerKey: reservation.ownerKey,
+    })
+  ));
+  await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 DISABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  try {
+    await sql`DELETE FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${close.closeRef} AND authority_hash=${close.closeHash}`;
+    await assert.rejects(beginHistorical(), /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/);
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1 (
+        authority_ref, authority_hash, authority_kind, phase_key,
+        predecessor_head_hash, successor_head_hash, authority_body
+      ) VALUES (
+        ${close.closeRef}, ${close.closeHash}, 'close', ${reservation.reservationRef},
+        ${close.ownerAdmissionHeadPredecessorHash}, ${close.ownerAdmissionHeadSuccessorHash},
+        ${sql.json(close)}
+      )
+    `;
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET phase_key=${intermediateReservation.reservationRef} WHERE authority_ref=${close.closeRef}`;
+    await assert.rejects(beginHistorical(), /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/);
+    await sql`UPDATE internal_production_owner_admission_authorities_v1 SET phase_key=${reservation.reservationRef} WHERE authority_ref=${close.closeRef}`;
+  } finally {
+    await sql.unsafe("ALTER TABLE internal_production_owner_admission_authorities_v1 ENABLE TRIGGER trg_internal_production_owner_admission_authority_immutable");
+  }
+  assert.deepEqual(await beginHistorical(), reservation);
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationCloseV1({
+      closeRef: close.closeRef,
+      closeHash: close.closeHash,
+    }),
+    /^Error: TERMINAL_AUTHORITY_UNAVAILABLE$/,
+  );
+  const crossedReservation = createInternalProductionOwnerReservationV1({
+    producer: row,
+    ownerKey: "run-owner-crossed-reservation-successor",
+    ownerAdmissionHeadPredecessorHash: currentHead.head_hash,
+  });
+  await sql`
+    INSERT INTO internal_production_owner_reservations_v1 (
+      reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+      producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+      reservation_payload,reservation_head_predecessor_hash,state,head_version
+    ) VALUES (
+      ${crossedReservation.reservationRef},${crossedReservation.reservationHash},
+      ${crossedReservation.category},${crossedReservation.ownerKey},${crossedReservation.ownerKeyHash},
+      ${crossedReservation.producerPurposeHash},${crossedReservation.producerImplementationId},
+      ${crossedReservation.producerImplementationHash},${sql.json(crossedReservation)},
+      ${crossedReservation.ownerAdmissionHeadPredecessorHash},'pending',
+      ${reservationSuccessorPayload.version}
+    )
+  `;
+  await sql`
+    INSERT INTO internal_production_owner_admission_authorities_v1 (
+      authority_ref,authority_hash,authority_kind,phase_key,
+      predecessor_head_hash,successor_head_hash,authority_body
+    ) VALUES (
+      ${crossedReservation.reservationRef},${crossedReservation.reservationHash},'reservation',
+      ${crossedReservation.reservationRef},${currentHead.head_hash},${SHA_C},
+      ${sql.json(crossedReservation)}
+    )
+  `;
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationV1({
+      reservationRef: crossedReservation.reservationRef,
+      reservationHash: crossedReservation.reservationHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+  );
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationV1({
+      reservationRef: reservation.reservationRef,
+      reservationHash: SHA_C,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_UNAVAILABLE$/,
+  );
+  await assert.rejects(
+    db.resolveInternalProductionOwnerReservationCloseV1({
+      closeRef: close.closeRef,
+      closeHash: SHA_C,
+    }),
+    /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_UNAVAILABLE$/,
+  );
 });
 
 function assertDeepFrozen(value: unknown, label: string): void {

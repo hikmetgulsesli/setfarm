@@ -18,15 +18,29 @@ import type {
   PgTransactionSql as InternalProductionPgTransactionSql,
 } from "./internal-production/owner-admission-v1.js";
 import {
+  createInternalProductionBoundOwnerReservationV1,
+  createInternalProductionOwnerReservationCloseV1,
+  createInternalProductionOwnerReservationV1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
+  validateInternalProductionBoundOwnerReservationV1,
+  validateInternalProductionCanonicalOwnerIdentityV1,
   validateInternalProductionOwnerProducerManifestSetActivationCurrentV1,
   validateInternalProductionOwnerProducerManifestSetActivationHeadV1,
   validateInternalProductionOwnerProducerManifestSetActivationReceiptV1,
   validateInternalProductionOwnerProducerManifestV1,
   validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1,
   validateInternalProductionOwnerProducerSourceBuildAuthorityV1,
+  validateInternalProductionOwnerReservationCloseV1,
+  validateInternalProductionOwnerReservationV1,
+  validateInternalProductionTerminalOwnerAuthorityPairV1,
+  validateInternalProductionTerminalOwnerAuthorityV1,
+  type InternalProductionBoundOwnerReservationV1,
+  type InternalProductionCanonicalOwnerIdentityV1,
+  type InternalProductionOwnerAdmissionControllerV1,
+  type InternalProductionOwnerAdmissionRepositoryV1,
+  type InternalProductionOwnerCategoryV1,
   type InternalProductionOwnerProducerManifestSetActivationCurrentV1,
   type InternalProductionOwnerProducerManifestSetActivationHeadPairV1,
   type InternalProductionOwnerProducerManifestSetActivationHeadV1,
@@ -36,6 +50,10 @@ import {
   type InternalProductionOwnerProducerManifestV1,
   type InternalProductionOwnerProducerSourceBuildAuthorityPairV1,
   type InternalProductionOwnerProducerSourceBuildAuthorityV1,
+  type InternalProductionOwnerReservationCloseV1,
+  type InternalProductionOwnerReservationV1,
+  type InternalProductionTerminalOwnerAuthorityPairV1,
+  type InternalProductionTerminalOwnerAuthorityV1,
 } from "./internal-production/owner-admission-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./product-compiler/canonical-json.js";
 
@@ -529,6 +547,1028 @@ export async function activateInternalProductionBaselineOwnerProducerManifestAFr
     if (error instanceof OwnerProducerActivationSupersededError) throw new Error("SUPERSEDED");
     throw new Error("CORRUPTION");
   }
+}
+
+type OwnerReservationRowV1 = Readonly<{
+  reservation_ref: string;
+  reservation_hash: string;
+  category: string;
+  owner_key: string;
+  owner_key_hash: string;
+  producer_purpose_hash: string;
+  producer_implementation_id: string;
+  producer_implementation_hash: string;
+  reservation_payload: unknown;
+  reservation_head_predecessor_hash: string;
+  state: string;
+  canonical_owner_identity: unknown | null;
+  binding_hash: string | null;
+  binding_payload: unknown | null;
+  close_kind: string | null;
+  terminal_owner_ref: string | null;
+  terminal_owner_hash: string | null;
+  close_head_predecessor_hash: string | null;
+  close_head_successor_hash: string | null;
+  preserved_fence_ref: string | null;
+  preserved_fence_hash: string | null;
+  close_ref: string | null;
+  close_hash: string | null;
+  close_payload: unknown | null;
+  head_version: string | number;
+}>;
+
+type OwnerAdmissionAuthorityRowV1 = Readonly<{
+  authority_ref: string;
+  authority_hash: string;
+  authority_kind: string;
+  phase_key: string;
+  predecessor_head_hash: string;
+  successor_head_hash: string;
+  authority_body: unknown;
+}>;
+
+type OwnerAdmissionHeadRowV1 = Readonly<{
+  head_version: string | number;
+  head_hash: string;
+  active_fence_ref: string | null;
+  active_fence_hash: string | null;
+  active_target_family_hash: string | null;
+  migration_application_evidence_hash: string;
+  head_payload: unknown;
+}>;
+
+type OwnerAdmissionMigrationApplicationV1 = Readonly<{
+  schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1";
+  evidenceHash: string;
+  authorizationRef: string;
+  authorizationHash: string;
+  authorizationConsumptionRef: string;
+  authorizationConsumptionHash: string;
+  applicationHash: string;
+}>;
+
+type OwnerAdmissionAdvancingAuthorityV1 = Readonly<{
+  version: number;
+  authority: OwnerAdmissionAuthorityRowV1;
+}>;
+
+const OWNER_ADMISSION_SHA256_V1 = /^[a-f0-9]{64}$/;
+const OWNER_ADMISSION_REF_V1 = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
+
+function validateOwnerAdmissionPairV1(
+  input: unknown,
+  refKey: string,
+  hashKey: string,
+  code: string,
+): Readonly<Record<string, string>> {
+  exactObjectKeys(input, [refKey, hashKey], code);
+  const pair = input as Record<string, unknown>;
+  if (
+    typeof pair[refKey] !== "string"
+    || !OWNER_ADMISSION_REF_V1.test(pair[refKey])
+    || typeof pair[hashKey] !== "string"
+    || !OWNER_ADMISSION_SHA256_V1.test(pair[hashKey])
+  ) throw new TypeError(code);
+  return Object.freeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] } as Record<string, string>);
+}
+
+function ownerProducerRowForImplementationV1(implementationId: string) {
+  return INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
+    (row) => row.implementationId === implementationId,
+  );
+}
+
+function sameJsonValueV1(left: unknown, right: unknown): boolean {
+  return canonicalJsonStringify(left) === canonicalJsonStringify(right);
+}
+
+function validateOwnerAdmissionMigrationApplicationV1(
+  value: unknown,
+  evidenceHash: string,
+): OwnerAdmissionMigrationApplicationV1 {
+  exactObjectKeys(value, [
+    "schema", "evidenceHash", "authorizationRef", "authorizationHash",
+    "authorizationConsumptionRef", "authorizationConsumptionHash", "applicationHash",
+  ], "INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  const application = value as Record<string, unknown>;
+  const hashes = [
+    application.evidenceHash,
+    application.authorizationHash,
+    application.authorizationConsumptionHash,
+    application.applicationHash,
+  ];
+  if (
+    application.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"
+    || application.evidenceHash !== evidenceHash
+    || !OWNER_ADMISSION_SHA256_V1.test(evidenceHash)
+    || evidenceHash === "0".repeat(64)
+    || hashes.some((hash) => typeof hash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(hash))
+    || typeof application.authorizationRef !== "string"
+    || !OWNER_ADMISSION_REF_V1.test(application.authorizationRef)
+    || typeof application.authorizationConsumptionRef !== "string"
+    || !OWNER_ADMISSION_REF_V1.test(application.authorizationConsumptionRef)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  const body = {
+    schema: application.schema,
+    evidenceHash: application.evidenceHash,
+    authorizationRef: application.authorizationRef,
+    authorizationHash: application.authorizationHash,
+    authorizationConsumptionRef: application.authorizationConsumptionRef,
+    authorizationConsumptionHash: application.authorizationConsumptionHash,
+  };
+  if (application.applicationHash !== hashCanonicalJson(body)) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  return Object.freeze({ ...body, applicationHash: application.applicationHash }) as OwnerAdmissionMigrationApplicationV1;
+}
+
+function validateReservationRowV1(
+  row: OwnerReservationRowV1,
+  authority: OwnerAdmissionAuthorityRowV1,
+): InternalProductionOwnerReservationV1 {
+  const producer = ownerProducerRowForImplementationV1(row.producer_implementation_id);
+  if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  const reservation = validateInternalProductionOwnerReservationV1(row.reservation_payload, producer);
+  if (
+    row.reservation_ref !== reservation.reservationRef
+    || row.reservation_hash !== reservation.reservationHash
+    || row.category !== reservation.category
+    || row.owner_key !== reservation.ownerKey
+    || row.owner_key_hash !== reservation.ownerKeyHash
+    || row.producer_purpose_hash !== reservation.producerPurposeHash
+    || row.producer_implementation_id !== reservation.producerImplementationId
+    || row.producer_implementation_hash !== reservation.producerImplementationHash
+    || row.reservation_head_predecessor_hash !== reservation.ownerAdmissionHeadPredecessorHash
+    || authority.authority_ref !== reservation.reservationRef
+    || authority.authority_hash !== reservation.reservationHash
+    || authority.authority_kind !== "reservation"
+    || authority.phase_key !== reservation.reservationRef
+    || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
+    || !sameJsonValueV1(authority.authority_body, reservation)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  return reservation;
+}
+
+function validateOwnerReservationStateShapeV1(row: OwnerReservationRowV1): void {
+  const bindingMembers = [
+    row.canonical_owner_identity,
+    row.binding_hash,
+    row.binding_payload,
+  ];
+  const requiredCloseMembers = [
+    row.close_kind,
+    row.terminal_owner_ref,
+    row.terminal_owner_hash,
+    row.close_head_predecessor_hash,
+    row.close_head_successor_hash,
+    row.close_ref,
+    row.close_hash,
+    row.close_payload,
+  ];
+  const optionalFenceIsPair = (row.preserved_fence_ref === null)
+    === (row.preserved_fence_hash === null);
+  const valid = optionalFenceIsPair && (
+    (row.state === "pending"
+      && bindingMembers.every((member) => member === null)
+      && requiredCloseMembers.every((member) => member === null)
+      && row.preserved_fence_ref === null)
+    || (row.state === "bound"
+      && bindingMembers.every((member) => member !== null)
+      && requiredCloseMembers.every((member) => member === null)
+      && row.preserved_fence_ref === null)
+    || (row.state === "closed"
+      && bindingMembers.every((member) => member !== null)
+      && requiredCloseMembers.every((member) => member !== null))
+  );
+  if (!valid) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+}
+
+async function resolveOwnerReservationInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ reservationRef: string; reservationHash: string }>,
+  lock = false,
+): Promise<InternalProductionOwnerReservationV1> {
+  const pair = validateOwnerAdmissionPairV1(
+    input,
+    "reservationRef",
+    "reservationHash",
+    "INTERNAL_PRODUCTION_OWNER_RESERVATION_PAIR_INVALID",
+  );
+  const rows = lock
+    ? await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${pair.reservationRef} AND reservation_hash=${pair.reservationHash} FOR UPDATE`
+    : await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${pair.reservationRef} AND reservation_hash=${pair.reservationHash}`;
+  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${pair.reservationRef} AND authority_hash=${pair.reservationHash}`;
+  if (rows.length !== 1 || authorities.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_UNAVAILABLE");
+  }
+  const row = rows[0]!;
+  const authority = authorities[0]!;
+  const reservation = validateReservationRowV1(row, authority);
+  validateOwnerReservationStateShapeV1(row);
+  const headVersion = Number(row.head_version);
+  if (!Number.isSafeInteger(headVersion) || headVersion <= 0) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  const migrationApplication = await resolveOwnerAdmissionMigrationApplicationV1(sql);
+  const ancestryHeadHash = row.state === "closed"
+    ? row.close_head_successor_hash
+    : authority.successor_head_hash;
+  if (typeof ancestryHeadHash !== "string") {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  let ancestry: readonly OwnerAdmissionAdvancingAuthorityV1[];
+  try {
+    ancestry = await validateOwnerAdmissionAncestryToGenesisV1(
+      sql,
+      ancestryHeadHash,
+      headVersion,
+      migrationApplication,
+    );
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  const reservationEdges = ancestry.filter(({ authority: edge }) => (
+    edge.authority_kind === "reservation"
+    && edge.authority_ref === reservation.reservationRef
+    && edge.authority_hash === reservation.reservationHash
+  ));
+  if (reservationEdges.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  const reservationSuccessorVersion = reservationEdges[0]!.version;
+  const expectedSuccessor = ownerAdmissionSuccessorV1({
+    version: reservationSuccessorVersion - 1,
+    predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
+    transitionKind: "reservation",
+    transitionRef: reservation.reservationRef,
+    transitionHash: reservation.reservationHash,
+    migrationApplication,
+  });
+  if (
+    expectedSuccessor.version !== reservationSuccessorVersion
+    || authority.successor_head_hash !== expectedSuccessor.hash
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  try {
+    if (row.state === "bound") {
+      await validateBoundOwnerReservationRowV1(sql, row, reservation);
+    } else if (row.state === "closed") {
+      if (row.close_payload === null || row.close_ref === null || row.close_hash === null) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+      }
+      const close = validateInternalProductionOwnerReservationCloseV1(row.close_payload);
+      const closeAuthorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${row.close_ref} AND authority_hash=${row.close_hash}`;
+      if (closeAuthorities.length !== 1) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+      }
+      await validateClosedOwnerReservationRowV1(
+        sql,
+        row,
+        reservation,
+        close,
+        closeAuthorities[0]!,
+      );
+    }
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  return reservation;
+}
+
+async function validateBoundOwnerReservationRowV1<
+  Category extends InternalProductionOwnerCategoryV1 = InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  row: OwnerReservationRowV1,
+  reservation: InternalProductionOwnerReservationV1,
+): Promise<InternalProductionBoundOwnerReservationV1<Category>> {
+  if (
+    (row.state !== "bound" && row.state !== "closed")
+    || row.canonical_owner_identity === null
+    || row.binding_hash === null
+    || row.binding_payload === null
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  const identity = validateInternalProductionCanonicalOwnerIdentityV1<Category>(
+    row.canonical_owner_identity,
+  );
+  const bound = validateInternalProductionBoundOwnerReservationV1<Category>(row.binding_payload);
+  const expectedBindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
+  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${expectedBindingRef} AND authority_hash=${bound.bindingHash}`;
+  const reservationAuthorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${reservation.reservationRef} AND authority_hash=${reservation.reservationHash}`;
+  const authority = authorities[0];
+  const reservationAuthority = reservationAuthorities[0];
+  if (
+    authorities.length !== 1
+    || reservationAuthorities.length !== 1
+    || !authority
+    || !reservationAuthority
+    || row.binding_hash !== bound.bindingHash
+    || !sameJsonValueV1(identity, bound.canonicalOwnerIdentity)
+    || bound.category !== reservation.category
+    || bound.producerImplementationId !== reservation.producerImplementationId
+    || bound.ownerKey !== reservation.ownerKey
+    || bound.reservationRef !== reservation.reservationRef
+    || bound.reservationHash !== reservation.reservationHash
+    || authority.authority_kind !== "binding"
+    || authority.phase_key !== reservation.reservationRef
+    || authority.predecessor_head_hash !== reservationAuthority.successor_head_hash
+    || authority.successor_head_hash !== reservationAuthority.successor_head_hash
+    || !sameJsonValueV1(authority.authority_body, bound)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  return bound;
+}
+
+async function resolveOwnerAdmissionMigrationApplicationV1(
+  sql: InternalProductionPgTransactionSql,
+): Promise<OwnerAdmissionMigrationApplicationV1> {
+  const rows = await sql<Array<{
+    migration_application_evidence_hash: string;
+    head_payload: unknown;
+  }>>`SELECT migration_application_evidence_hash,head_payload FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE`;
+  if (rows.length !== 1 || !rows[0] || !rows[0].head_payload || typeof rows[0].head_payload !== "object") {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  const payload = rows[0].head_payload as Record<string, unknown>;
+  try {
+    return validateOwnerAdmissionMigrationApplicationV1(
+      payload.migrationApplication,
+      rows[0].migration_application_evidence_hash,
+    );
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+}
+
+async function validateClosedOwnerReservationRowV1(
+  sql: InternalProductionPgTransactionSql,
+  row: OwnerReservationRowV1,
+  reservation: InternalProductionOwnerReservationV1,
+  close: InternalProductionOwnerReservationCloseV1,
+  authority: OwnerAdmissionAuthorityRowV1,
+): Promise<InternalProductionBoundOwnerReservationV1> {
+  const bound = await validateBoundOwnerReservationRowV1(sql, row, reservation);
+  const headVersion = Number(row.head_version);
+  if (!Number.isSafeInteger(headVersion) || headVersion <= 0) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  }
+  const migrationApplication = await resolveOwnerAdmissionMigrationApplicationV1(sql);
+  const transition = {
+    schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+    reservationRef: close.reservationRef,
+    reservationHash: close.reservationHash,
+    terminalOwnerRef: close.terminalOwnerRef,
+    terminalOwnerHash: close.terminalOwnerHash,
+  };
+  const transitionHash = hashCanonicalJson(transition);
+  const expectedSuccessor = ownerAdmissionSuccessorV1({
+    version: headVersion - 1,
+    predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
+    transitionHash,
+    migrationApplication,
+  });
+  if (
+    row.state !== "closed"
+    || row.close_kind !== close.closeKind
+    || row.reservation_ref !== close.reservationRef
+    || row.reservation_hash !== close.reservationHash
+    || row.terminal_owner_ref !== close.terminalOwnerRef
+    || row.terminal_owner_hash !== close.terminalOwnerHash
+    || row.close_head_predecessor_hash !== close.ownerAdmissionHeadPredecessorHash
+    || row.close_head_successor_hash !== close.ownerAdmissionHeadSuccessorHash
+    || row.preserved_fence_ref !== close.preservedFenceRef
+    || row.preserved_fence_hash !== close.preservedFenceHash
+    || row.close_ref !== close.closeRef
+    || row.close_hash !== close.closeHash
+    || close.ownerAdmissionHeadSuccessorHash !== expectedSuccessor.hash
+    || authority.authority_ref !== close.closeRef
+    || authority.authority_hash !== close.closeHash
+    || authority.authority_kind !== "close"
+    || authority.phase_key !== close.reservationRef
+    || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
+    || authority.successor_head_hash !== close.ownerAdmissionHeadSuccessorHash
+    || !sameJsonValueV1(authority.authority_body, close)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  try {
+    await validateOwnerAdmissionAncestryToGenesisV1(
+      sql,
+      expectedSuccessor.hash,
+      headVersion,
+      migrationApplication,
+    );
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  }
+  return bound;
+}
+
+async function resolveOwnerCloseInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ closeRef: string; closeHash: string }>,
+): Promise<InternalProductionOwnerReservationCloseV1> {
+  const pair = validateOwnerAdmissionPairV1(
+    input,
+    "closeRef",
+    "closeHash",
+    "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_PAIR_INVALID",
+  );
+  const rows = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE close_ref=${pair.closeRef} AND close_hash=${pair.closeHash}`;
+  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${pair.closeRef} AND authority_hash=${pair.closeHash}`;
+  if (rows.length !== 1 || authorities.length !== 1 || rows[0]!.close_payload === null) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_UNAVAILABLE");
+  }
+  const row = rows[0]!;
+  const authority = authorities[0]!;
+  const close = validateInternalProductionOwnerReservationCloseV1(row.close_payload);
+  let reservation: InternalProductionOwnerReservationV1;
+  try {
+    reservation = await resolveOwnerReservationInTransactionV1(sql, {
+      reservationRef: close.reservationRef,
+      reservationHash: close.reservationHash,
+    });
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  }
+  let bound: InternalProductionBoundOwnerReservationV1;
+  try {
+    bound = await validateClosedOwnerReservationRowV1(
+      sql,
+      row,
+      reservation,
+      close,
+      authority,
+    );
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  }
+  const resolver = OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1[reservation.category];
+  if (!resolver) throw new Error("TERMINAL_AUTHORITY_UNAVAILABLE");
+  const terminal = validateInternalProductionTerminalOwnerAuthorityV1(
+    await resolver.resolveByTerminalOwnerPair(sql, {
+      terminalOwnerRef: close.terminalOwnerRef,
+      terminalOwnerHash: close.terminalOwnerHash,
+    }),
+  );
+  if (
+    terminal.category !== bound.category
+    || terminal.ownerKey !== bound.ownerKey
+    || terminal.ownerRef !== bound.canonicalOwnerIdentity.ownerRef
+    || terminal.ownerHash !== bound.canonicalOwnerIdentity.ownerHash
+    || terminal.terminalOwnerRef !== close.terminalOwnerRef
+    || terminal.terminalOwnerHash !== close.terminalOwnerHash
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  return close;
+}
+
+async function resolveActiveOwnerProducerV1(
+  sql: InternalProductionPgTransactionSql,
+  implementationId: string,
+) {
+  if (typeof implementationId !== "string" || implementationId.length === 0) {
+    throw new TypeError("INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_ID_INVALID");
+  }
+  const producer = ownerProducerRowForImplementationV1(implementationId);
+  if (!producer) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
+  }
+  const current = await resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1(sql);
+  const planIndex = current?.receipt.orderedPlans.indexOf("A") ?? -1;
+  if (
+    current === null
+    || planIndex < 0
+    || current.receipt.orderedManifestHashes[planIndex]
+      !== INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
+  return producer;
+}
+
+async function lockOwnerAdmissionHeadV1(
+  sql: InternalProductionPgTransactionSql,
+): Promise<Readonly<{
+  version: number;
+  hash: string;
+  migrationApplication: OwnerAdmissionMigrationApplicationV1;
+}>> {
+  const rows = await sql<OwnerAdmissionHeadRowV1[]>`SELECT head_version,head_hash,active_fence_ref,active_fence_hash,active_target_family_hash,migration_application_evidence_hash,head_payload FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE FOR UPDATE`;
+  const row = rows[0];
+  const version = Number(row?.head_version);
+  if (
+    rows.length !== 1
+    || !Number.isSafeInteger(version)
+    || version < 0
+    || !row
+    || !OWNER_ADMISSION_SHA256_V1.test(row.head_hash)
+    || !OWNER_ADMISSION_SHA256_V1.test(row.migration_application_evidence_hash)
+    || (row.active_fence_ref === null) !== (row.active_fence_hash === null)
+    || (row.active_target_family_hash !== null && row.active_fence_ref === null)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  const payload = row.head_payload;
+  const expectedPayloadKeys = version === 0
+    ? ["schema", "version", "migrationApplication"]
+    : [
+        "schema", "version", "predecessorHeadHash", "transitionKind",
+        "transitionRef", "transitionHash", "migrationApplication",
+      ];
+  try {
+    exactObjectKeys(payload, expectedPayloadKeys, "INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  const headPayload = payload as Record<string, unknown>;
+  let migrationApplication: OwnerAdmissionMigrationApplicationV1;
+  try {
+    migrationApplication = validateOwnerAdmissionMigrationApplicationV1(
+      headPayload.migrationApplication,
+      row.migration_application_evidence_hash,
+    );
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  if (
+    headPayload.schema !== "setfarm.internal-production-owner-admission-head.v1"
+    || headPayload.version !== version
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  if (version === 0) {
+    if (row.head_hash !== "0".repeat(64)) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    }
+  } else {
+    if (
+      typeof headPayload.predecessorHeadHash !== "string"
+      || !OWNER_ADMISSION_SHA256_V1.test(headPayload.predecessorHeadHash)
+      || (headPayload.transitionKind !== "reservation" && headPayload.transitionKind !== "close")
+      || typeof headPayload.transitionRef !== "string"
+      || !OWNER_ADMISSION_REF_V1.test(headPayload.transitionRef)
+      || typeof headPayload.transitionHash !== "string"
+      || !OWNER_ADMISSION_SHA256_V1.test(headPayload.transitionHash)
+      || hashCanonicalJson(headPayload) !== row.head_hash
+    ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    await validateOwnerAdmissionAncestryToGenesisV1(
+      sql,
+      row.head_hash,
+      version,
+      migrationApplication,
+    );
+  }
+  if (row.active_fence_ref !== null) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_FENCED");
+  return Object.freeze({ version, hash: row.head_hash, migrationApplication });
+}
+
+function ownerAdmissionSuccessorV1(input: Readonly<{
+  version: number;
+  predecessorHeadHash: string;
+  transitionKind: "reservation" | "close";
+  transitionRef: string;
+  transitionHash: string;
+  migrationApplication: OwnerAdmissionMigrationApplicationV1;
+}>): Readonly<{ version: number; hash: string; payload: Readonly<Record<string, unknown>> }> {
+  const payload = Object.freeze({
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: input.version + 1,
+    predecessorHeadHash: input.predecessorHeadHash,
+    transitionKind: input.transitionKind,
+    transitionRef: input.transitionRef,
+    transitionHash: input.transitionHash,
+    migrationApplication: input.migrationApplication,
+  });
+  return Object.freeze({ version: input.version + 1, hash: hashCanonicalJson(payload), payload });
+}
+
+async function validateOwnerAdmissionAncestryToGenesisV1(
+  sql: InternalProductionPgTransactionSql,
+  headHash: string,
+  version: number,
+  migrationApplication: OwnerAdmissionMigrationApplicationV1,
+  seen = new Set<string>(),
+): Promise<readonly OwnerAdmissionAdvancingAuthorityV1[]> {
+  if (!Number.isSafeInteger(version) || version < 0 || !OWNER_ADMISSION_SHA256_V1.test(headHash)) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  if (version === 0) {
+    if (headHash !== "0".repeat(64)) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    }
+    return Object.freeze([]);
+  }
+  if (seen.has(headHash)) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  seen.add(headHash);
+  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE successor_head_hash=${headHash} AND predecessor_head_hash<>successor_head_hash`;
+  const authority = authorities[0];
+  if (authorities.length !== 1 || !authority) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  let expectedSuccessor: ReturnType<typeof ownerAdmissionSuccessorV1>;
+  try {
+    if (authority.authority_kind === "reservation") {
+      const body = authority.authority_body as Partial<InternalProductionOwnerReservationV1>;
+      const producer = typeof body.producerImplementationId === "string"
+        ? ownerProducerRowForImplementationV1(body.producerImplementationId)
+        : undefined;
+      if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      const reservation = validateInternalProductionOwnerReservationV1(body, producer);
+      expectedSuccessor = ownerAdmissionSuccessorV1({
+        version: version - 1,
+        predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
+        transitionKind: "reservation",
+        transitionRef: reservation.reservationRef,
+        transitionHash: reservation.reservationHash,
+        migrationApplication,
+      });
+      if (
+        authority.authority_ref !== reservation.reservationRef
+        || authority.authority_hash !== reservation.reservationHash
+        || authority.phase_key !== reservation.reservationRef
+        || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
+        || !sameJsonValueV1(authority.authority_body, reservation)
+      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    } else if (authority.authority_kind === "close") {
+      const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
+      const transition = {
+        schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+        reservationRef: close.reservationRef,
+        reservationHash: close.reservationHash,
+        terminalOwnerRef: close.terminalOwnerRef,
+        terminalOwnerHash: close.terminalOwnerHash,
+      };
+      const transitionHash = hashCanonicalJson(transition);
+      expectedSuccessor = ownerAdmissionSuccessorV1({
+        version: version - 1,
+        predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
+        transitionKind: "close",
+        transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
+        transitionHash,
+        migrationApplication,
+      });
+      if (
+        authority.authority_ref !== close.closeRef
+        || authority.authority_hash !== close.closeHash
+        || authority.phase_key !== close.reservationRef
+        || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
+        || !sameJsonValueV1(authority.authority_body, close)
+      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    } else {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    }
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  if (
+    expectedSuccessor.version !== version
+    || expectedSuccessor.hash !== headHash
+    || authority.successor_head_hash !== headHash
+    || authority.predecessor_head_hash !== expectedSuccessor.payload.predecessorHeadHash
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  const predecessors = await validateOwnerAdmissionAncestryToGenesisV1(
+    sql,
+    authority.predecessor_head_hash,
+    version - 1,
+    migrationApplication,
+    seen,
+  );
+  return Object.freeze([
+    Object.freeze({ version, authority }),
+    ...predecessors,
+  ]);
+}
+
+async function beginOrAdoptOwnerReservationInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ producerImplementationId: string; ownerKey: string }>,
+): Promise<InternalProductionOwnerReservationV1> {
+  exactObjectKeys(input, ["producerImplementationId", "ownerKey"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_BEGIN_INPUT_INVALID");
+  const producer = await resolveActiveOwnerProducerV1(sql, input.producerImplementationId);
+  if (typeof input.ownerKey !== "string" || input.ownerKey.length === 0 || input.ownerKey.length > 4_000 || /[\u0000-\u001f\u007f]/.test(input.ownerKey)) {
+    throw new TypeError("INTERNAL_PRODUCTION_OWNER_KEY_INVALID");
+  }
+  const head = await lockOwnerAdmissionHeadV1(sql);
+  const candidate = createInternalProductionOwnerReservationV1({
+    producer,
+    ownerKey: input.ownerKey,
+    ownerAdmissionHeadPredecessorHash: head.hash,
+  });
+  const existing = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE category=${candidate.category} AND owner_key_hash=${candidate.ownerKeyHash} FOR UPDATE`;
+  if (existing.length > 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  if (existing.length === 1) {
+    const adopted = await resolveOwnerReservationInTransactionV1(sql, {
+      reservationRef: existing[0]!.reservation_ref,
+      reservationHash: existing[0]!.reservation_hash,
+    }, true);
+    if (adopted.producerImplementationId !== producer.implementationId || adopted.ownerKey !== input.ownerKey) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CONFLICT");
+    }
+    return adopted;
+  }
+  const successor = ownerAdmissionSuccessorV1({
+    version: head.version,
+    predecessorHeadHash: head.hash,
+    transitionKind: "reservation",
+    transitionRef: candidate.reservationRef,
+    transitionHash: candidate.reservationHash,
+    migrationApplication: head.migrationApplication,
+  });
+  await sql`INSERT INTO internal_production_owner_reservations_v1 (reservation_ref,reservation_hash,category,owner_key,owner_key_hash,producer_purpose_hash,producer_implementation_id,producer_implementation_hash,reservation_payload,reservation_head_predecessor_hash,state,head_version) VALUES (${candidate.reservationRef},${candidate.reservationHash},${candidate.category},${candidate.ownerKey},${candidate.ownerKeyHash},${candidate.producerPurposeHash},${candidate.producerImplementationId},${candidate.producerImplementationHash},${sql.json(candidate)},${candidate.ownerAdmissionHeadPredecessorHash},'pending',${successor.version})`;
+  await sql`INSERT INTO internal_production_owner_admission_authorities_v1 (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body) VALUES (${candidate.reservationRef},${candidate.reservationHash},'reservation',${candidate.reservationRef},${head.hash},${successor.hash},${sql.json(candidate)})`;
+  const updated = await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${successor.version},head_hash=${successor.hash},head_payload=${sql.json(successor.payload as postgres.JSONValue)},updated_at=NOW() WHERE singleton=TRUE AND head_version=${head.version} AND head_hash=${head.hash} RETURNING head_version`;
+  if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CONFLICT");
+  return candidate;
+}
+
+async function bindOwnerReservationInTransactionV1<Category extends InternalProductionOwnerCategoryV1>(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    reservationRef: string;
+    reservationHash: string;
+    canonicalOwnerIdentity: InternalProductionCanonicalOwnerIdentityV1<Category>;
+  }>,
+): Promise<InternalProductionBoundOwnerReservationV1<Category>> {
+  exactObjectKeys(input, ["reservationRef", "reservationHash", "canonicalOwnerIdentity"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_BIND_INPUT_INVALID");
+  const reservationPair = validateOwnerAdmissionPairV1(
+    { reservationRef: input.reservationRef, reservationHash: input.reservationHash },
+    "reservationRef",
+    "reservationHash",
+    "INTERNAL_PRODUCTION_OWNER_RESERVATION_PAIR_INVALID",
+  );
+  const identity = validateInternalProductionCanonicalOwnerIdentityV1<Category>(input.canonicalOwnerIdentity);
+  const producer = ownerProducerRowForImplementationV1(
+    (await sql<Array<{ producer_implementation_id: string }>>`SELECT producer_implementation_id FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${reservationPair.reservationRef} AND reservation_hash=${reservationPair.reservationHash}`)[0]?.producer_implementation_id ?? "",
+  );
+  if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_UNAVAILABLE");
+  await resolveActiveOwnerProducerV1(sql, producer.implementationId);
+  const lockedHead = await lockOwnerAdmissionHeadV1(sql);
+  const reservation = await resolveOwnerReservationInTransactionV1(sql, {
+    reservationRef: reservationPair.reservationRef,
+    reservationHash: reservationPair.reservationHash,
+  }, true);
+  const bound = createInternalProductionBoundOwnerReservationV1({ reservation, canonicalOwnerIdentity: identity });
+  const state = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${reservation.reservationRef} FOR UPDATE`;
+  if (state.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  if (state[0]!.state === "bound" || state[0]!.state === "closed") {
+    const adopted = await validateBoundOwnerReservationRowV1<Category>(sql, state[0]!, reservation);
+    if (!sameJsonValueV1(adopted, bound)) throw new Error("INTERNAL_PRODUCTION_OWNER_IDENTITY_CONFLICT");
+    if (state[0]!.state === "closed") {
+      if (state[0]!.close_payload === null || state[0]!.close_ref === null || state[0]!.close_hash === null) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+      }
+      const close = validateInternalProductionOwnerReservationCloseV1(state[0]!.close_payload);
+      const closeAuthorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${state[0]!.close_ref} AND authority_hash=${state[0]!.close_hash}`;
+      if (closeAuthorities.length !== 1) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+      }
+      await validateClosedOwnerReservationRowV1(
+        sql,
+        state[0]!,
+        reservation,
+        close,
+        closeAuthorities[0]!,
+      );
+    }
+    return adopted;
+  }
+  if (state[0]!.state !== "pending") throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  const reservationAuthorities = await sql<Array<{ successor_head_hash: string }>>`SELECT successor_head_hash FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${reservation.reservationRef} AND authority_hash=${reservation.reservationHash}`;
+  if (reservationAuthorities.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  const reservationSuccessorHash = reservationAuthorities[0]!.successor_head_hash;
+  if (lockedHead.hash !== reservationSuccessorHash) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CONFLICT");
+  }
+  const updated = await sql`UPDATE internal_production_owner_reservations_v1 SET state='bound',canonical_owner_identity=${sql.json(identity)},binding_hash=${bound.bindingHash},binding_payload=${sql.json(bound)},updated_at=NOW() WHERE reservation_ref=${reservation.reservationRef} AND reservation_hash=${reservation.reservationHash} AND state='pending' RETURNING reservation_ref`;
+  if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CONFLICT");
+  const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
+  await sql`INSERT INTO internal_production_owner_admission_authorities_v1 (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body) VALUES (${bindingRef},${bound.bindingHash},'binding',${reservation.reservationRef},${reservationSuccessorHash},${reservationSuccessorHash},${sql.json(bound)})`;
+  return bound;
+}
+
+async function closeOwnerReservationInTransactionV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    reservationRef: string;
+    reservationHash: string;
+    resolvedTerminalAuthority: InternalProductionTerminalOwnerAuthorityV1<Category>;
+  }>,
+): Promise<InternalProductionOwnerReservationCloseV1> {
+  exactObjectKeys(
+    input,
+    ["reservationRef", "reservationHash", "resolvedTerminalAuthority"],
+    "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID",
+  );
+  const reservationPair = validateOwnerAdmissionPairV1(
+    { reservationRef: input.reservationRef, reservationHash: input.reservationHash },
+    "reservationRef",
+    "reservationHash",
+    "INTERNAL_PRODUCTION_OWNER_RESERVATION_PAIR_INVALID",
+  );
+  const terminal = validateInternalProductionTerminalOwnerAuthorityV1<Category>(
+    input.resolvedTerminalAuthority,
+  );
+  const implementationRows = await sql<Array<{ producer_implementation_id: string }>>`
+    SELECT producer_implementation_id
+      FROM internal_production_owner_reservations_v1
+     WHERE reservation_ref=${reservationPair.reservationRef}
+       AND reservation_hash=${reservationPair.reservationHash}
+  `;
+  if (implementationRows.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_UNAVAILABLE");
+  }
+  await resolveActiveOwnerProducerV1(sql, implementationRows[0]!.producer_implementation_id);
+  const head = await lockOwnerAdmissionHeadV1(sql);
+  const reservation = await resolveOwnerReservationInTransactionV1(sql, {
+    reservationRef: reservationPair.reservationRef,
+    reservationHash: reservationPair.reservationHash,
+  }, true);
+  const rows = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${reservation.reservationRef} FOR UPDATE`;
+  const row = rows[0];
+  if (rows.length !== 1 || !row) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_NOT_BOUND");
+  }
+  if (row.state === "closed") {
+    if (row.close_payload === null || row.close_ref === null || row.close_hash === null) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+    }
+    const adopted = validateInternalProductionOwnerReservationCloseV1(row.close_payload);
+    const closeAuthorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${row.close_ref} AND authority_hash=${row.close_hash}`;
+    if (closeAuthorities.length !== 1) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+    }
+    const bound = await validateClosedOwnerReservationRowV1(
+      sql,
+      row,
+      reservation,
+      adopted,
+      closeAuthorities[0]!,
+    );
+    if (
+      adopted.terminalOwnerRef !== terminal.terminalOwnerRef
+      || adopted.terminalOwnerHash !== terminal.terminalOwnerHash
+      || terminal.ownerRef !== bound.canonicalOwnerIdentity.ownerRef
+      || terminal.ownerHash !== bound.canonicalOwnerIdentity.ownerHash
+    ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CONFLICT");
+    return adopted;
+  }
+  if (row.state !== "bound" || row.close_payload !== null) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_NOT_BOUND");
+  }
+  const bound = await validateBoundOwnerReservationRowV1<Category>(sql, row, reservation);
+  const closeTransition = Object.freeze({
+    schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+    terminalOwnerRef: terminal.terminalOwnerRef,
+    terminalOwnerHash: terminal.terminalOwnerHash,
+  });
+  const closeTransitionHash = hashCanonicalJson(closeTransition);
+  const successor = ownerAdmissionSuccessorV1({
+    version: head.version,
+    predecessorHeadHash: head.hash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${closeTransitionHash}`,
+    transitionHash: closeTransitionHash,
+    migrationApplication: head.migrationApplication,
+  });
+  const close = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "ordinary",
+    boundReservation: bound,
+    terminalAuthority: terminal,
+    ownerAdmissionHeadPredecessorHash: head.hash,
+    ownerAdmissionHeadSuccessorHash: successor.hash,
+    preservedFenceRef: null,
+    preservedFenceHash: null,
+  });
+  const updated = await sql`UPDATE internal_production_owner_reservations_v1 SET state='closed',close_kind=${close.closeKind},terminal_owner_ref=${close.terminalOwnerRef},terminal_owner_hash=${close.terminalOwnerHash},close_head_predecessor_hash=${close.ownerAdmissionHeadPredecessorHash},close_head_successor_hash=${close.ownerAdmissionHeadSuccessorHash},preserved_fence_ref=${close.preservedFenceRef},preserved_fence_hash=${close.preservedFenceHash},close_ref=${close.closeRef},close_hash=${close.closeHash},close_payload=${sql.json(close)},head_version=${successor.version},updated_at=NOW() WHERE reservation_ref=${reservation.reservationRef} AND reservation_hash=${reservation.reservationHash} AND state='bound' RETURNING reservation_ref`;
+  if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CONFLICT");
+  await sql`INSERT INTO internal_production_owner_admission_authorities_v1 (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body) VALUES (${close.closeRef},${close.closeHash},'close',${reservation.reservationRef},${head.hash},${successor.hash},${sql.json(close)})`;
+  const headUpdated = await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${successor.version},head_hash=${successor.hash},head_payload=${sql.json(successor.payload as postgres.JSONValue)},updated_at=NOW() WHERE singleton=TRUE AND head_version=${head.version} AND head_hash=${head.hash} RETURNING head_version`;
+  if (headUpdated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CONFLICT");
+  const publishedRows = await sql<OwnerReservationRowV1[]>`SELECT * FROM internal_production_owner_reservations_v1 WHERE reservation_ref=${reservation.reservationRef} FOR UPDATE`;
+  const publishedAuthorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=${close.closeRef} AND authority_hash=${close.closeHash}`;
+  if (publishedRows.length !== 1 || publishedAuthorities.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION");
+  }
+  await validateClosedOwnerReservationRowV1(
+    sql,
+    publishedRows[0]!,
+    reservation,
+    close,
+    publishedAuthorities[0]!,
+  );
+  return close;
+}
+
+const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1 = Object.freeze({}) as Readonly<
+  Partial<Record<InternalProductionOwnerCategoryV1, Readonly<{
+    resolveByAuthorityPair: (
+      sql: InternalProductionPgTransactionSql,
+      pair: InternalProductionTerminalOwnerAuthorityPairV1,
+    ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
+    resolveByTerminalOwnerPair: (
+      sql: InternalProductionPgTransactionSql,
+      pair: Readonly<{ terminalOwnerRef: string; terminalOwnerHash: string }>,
+    ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
+  }>>>
+>;
+
+const OWNER_ADMISSION_REPOSITORY_V1: InternalProductionOwnerAdmissionRepositoryV1 = Object.freeze({
+  withTransaction: <Result>(operation: (sql: InternalProductionPgTransactionSql) => Promise<Result>) => (
+    getSql().begin((rawSql) => operation(rawSql as InternalProductionPgTransactionSql)) as unknown as Promise<Result>
+  ),
+  resolveReservation: resolveOwnerReservationInTransactionV1,
+  resolveClose: resolveOwnerCloseInTransactionV1,
+  beginOrAdoptInTransactionV1: beginOrAdoptOwnerReservationInTransactionV1,
+  bindInTransactionV1: bindOwnerReservationInTransactionV1,
+  closeInTransactionV1: closeOwnerReservationInTransactionV1,
+});
+
+const OWNER_ADMISSION_CONTROLLER_V1: InternalProductionOwnerAdmissionControllerV1 = Object.freeze({
+  resolveInternalProductionOwnerReservationV1: OWNER_ADMISSION_REPOSITORY_V1.resolveReservation,
+  resolveInternalProductionOwnerReservationCloseV1: OWNER_ADMISSION_REPOSITORY_V1.resolveClose,
+  beginOrAdoptInternalProductionOwnerReservationV1: OWNER_ADMISSION_REPOSITORY_V1.beginOrAdoptInTransactionV1,
+  bindInternalProductionOwnerReservationV1: OWNER_ADMISSION_REPOSITORY_V1.bindInTransactionV1,
+  closeInternalProductionOwnerReservationV1: async (
+    sql: InternalProductionPgTransactionSql,
+    input: Readonly<{
+      reservationRef: string;
+      reservationHash: string;
+      terminalAuthorityRef: string;
+      terminalAuthorityHash: string;
+    }>,
+  ) => {
+    exactObjectKeys(input, ["reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID");
+    const reservation = await OWNER_ADMISSION_REPOSITORY_V1.resolveReservation(sql, {
+      reservationRef: input.reservationRef,
+      reservationHash: input.reservationHash,
+    });
+    const resolver = OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1[reservation.category];
+    if (!resolver) throw new Error("TERMINAL_AUTHORITY_UNAVAILABLE");
+    const terminalPair = validateOwnerAdmissionPairV1(
+      {
+        terminalAuthorityRef: input.terminalAuthorityRef,
+        terminalAuthorityHash: input.terminalAuthorityHash,
+      },
+      "terminalAuthorityRef",
+      "terminalAuthorityHash",
+      "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID",
+    ) as InternalProductionTerminalOwnerAuthorityPairV1;
+    const authority = validateInternalProductionTerminalOwnerAuthorityV1(
+      await resolver.resolveByAuthorityPair(sql, terminalPair),
+    );
+    validateInternalProductionTerminalOwnerAuthorityPairV1(terminalPair, authority);
+    return OWNER_ADMISSION_REPOSITORY_V1.closeInTransactionV1(sql, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      resolvedTerminalAuthority: authority,
+    });
+  },
+});
+
+export async function beginOrAdoptInternalProductionOwnerReservationV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ producerImplementationId: string; ownerKey: string }>,
+): Promise<InternalProductionOwnerReservationV1> {
+  return OWNER_ADMISSION_CONTROLLER_V1.beginOrAdoptInternalProductionOwnerReservationV1(sql, input);
+}
+
+export async function bindInternalProductionOwnerReservationV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    reservationRef: string;
+    reservationHash: string;
+    canonicalOwnerIdentity: InternalProductionCanonicalOwnerIdentityV1<Category>;
+  }>,
+): Promise<InternalProductionBoundOwnerReservationV1<Category>> {
+  return OWNER_ADMISSION_CONTROLLER_V1.bindInternalProductionOwnerReservationV1(sql, input);
+}
+
+export async function closeInternalProductionOwnerReservationV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    reservationRef: string;
+    reservationHash: string;
+    terminalAuthorityRef: string;
+    terminalAuthorityHash: string;
+  }>,
+): Promise<InternalProductionOwnerReservationCloseV1> {
+  return OWNER_ADMISSION_CONTROLLER_V1.closeInternalProductionOwnerReservationV1(sql, input);
+}
+
+export async function resolveInternalProductionOwnerReservationV1(input: Readonly<{
+  reservationRef: string;
+  reservationHash: string;
+}>): Promise<InternalProductionOwnerReservationV1> {
+  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction((sql) => (
+    OWNER_ADMISSION_REPOSITORY_V1.resolveReservation(sql, input)
+  ));
+}
+
+export async function resolveInternalProductionOwnerReservationCloseV1(input: Readonly<{
+  closeRef: string;
+  closeHash: string;
+}>): Promise<InternalProductionOwnerReservationCloseV1> {
+  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction((sql) => (
+    OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input)
+  ));
 }
 
 /**

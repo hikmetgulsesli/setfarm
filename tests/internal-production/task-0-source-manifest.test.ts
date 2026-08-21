@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const APPROVED_PLAN_PATH = fileURLToPath(new URL(
+  "../../docs/superpowers/plans/2026-08-13-internal-production-baseline-mc-handoff-plan.md",
+  import.meta.url,
+));
 
 const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json",
@@ -121,10 +129,36 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
   }
 }
 
+function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
+  const marker = "export const TASK_0_EXACT_SOURCE_PATHS_V1 = [";
+  const start = plan.indexOf(marker);
+  assert.notEqual(start, -1, "approved plan has no Task 0 source tuple");
+  const end = plan.indexOf("] as const;", start);
+  assert.notEqual(end, -1, "approved plan Task 0 source tuple is unterminated");
+  const block = plan.slice(start + marker.length, end);
+  return [...block.matchAll(/^  "([^"]+)",$/gm)].map((match) => match[1]!);
+}
+
+function assertExactInventory<Result extends string>(
+  actual: readonly Result[],
+  expected: readonly Result[],
+  label: string,
+): void {
+  assert.equal(new Set(actual).size, actual.length, `${label} contains a duplicate`);
+  assert.deepEqual(actual, expected, `${label} differs`);
+}
+
 describe("Task 0 exact source manifest", () => {
   it("accepts the literal 109-path tuple byte-for-byte and in order", () => {
     assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 109);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
+  });
+
+  it("matches the independent approved-plan tuple and every member exists", () => {
+    const approved = extractApprovedTask0SourcePathsV1(readFileSync(APPROVED_PLAN_PATH, "utf8"));
+    assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
+    const missing = approved.filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
+    assert.deepEqual(missing, [], "approved Task 0 source paths are missing from the repository");
   });
 
   it("rejects an omission, extra path, duplicate, and reorder", () => {
@@ -134,5 +168,54 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactTask0SourcePathsV1([...exact.slice(0, -1), exact[0]!]));
     [exact[0], exact[1]] = [exact[1]!, exact[0]!];
     assert.throws(() => assertExactTask0SourcePathsV1(exact));
+  });
+
+  it("review inventory rejects an omission, extra path, duplicate, and reorder", () => {
+    const exact = ["birth:a", "terminal:a", "birth:b"] as const;
+    assert.doesNotThrow(() => assertExactInventory(exact, exact, "owner mutation inventory"));
+    assert.throws(() => assertExactInventory(exact.slice(1), exact, "owner mutation inventory"));
+    assert.throws(() => assertExactInventory([...exact, "birth:c"], exact, "owner mutation inventory"));
+    assert.throws(() => assertExactInventory([...exact, exact[0]], exact, "owner mutation inventory"));
+    assert.throws(() => assertExactInventory([exact[1], exact[0], exact[2]], exact, "owner mutation inventory"));
+  });
+
+  it("package test surface runs internal-production database files one at a time and pure boundaries without database URLs", () => {
+    const packageJson = JSON.parse(readFileSync(`${REPOSITORY_ROOT}package.json`, "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    assert.match(packageJson.scripts.test, /npm run test:internal-production/);
+    const isolated = packageJson.scripts["test:internal-production:isolated"];
+    assert.equal(typeof isolated, "string");
+    for (const file of [
+      "tests/internal-production/owner-admission-v1.test.ts",
+      "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
+      "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+    ]) {
+      assert.equal(isolated.split(file).length - 1, 1, `${file} must have one isolated invocation`);
+    }
+    assert.equal(isolated.split("scripts/run-isolated-postgres-tests.ts").length - 1, 3);
+    assert.doesNotMatch(isolated, /\*\.test|--test[^&]*tests\/internal-production\/[^ ]+\.test\.ts [^&]*tests\/internal-production\//);
+    const anchored = packageJson.scripts["test:internal-production:anchored"];
+    assert.equal(typeof anchored, "string");
+    assert.equal(anchored.split("env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL").length - 1, 3);
+    const pure = packageJson.scripts["test:internal-production:pure"];
+    assert.equal(typeof pure, "string");
+    assert.equal(
+      pure.split("tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts").length - 1,
+      1,
+    );
+    assert.match(pure, /^env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL /);
+    const aggregate = [isolated, anchored, pure, packageJson.scripts["test:internal-production:manifest"]].join("\n");
+    for (const file of [
+      "tests/internal-production/owner-admission-v1.test.ts",
+      "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
+      "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+      "tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts",
+      "tests/internal-production/task-0-source-manifest.test.ts",
+    ]) {
+      assert.match(aggregate, new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.match(packageJson.scripts["test:internal-production"], /test:internal-production:manifest/);
+    assert.match(packageJson.scripts["test:internal-production"], /test:internal-production:pure/);
   });
 });
