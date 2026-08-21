@@ -215,6 +215,32 @@ const exactPbaCompileAssertions: readonly [
 ] = [true, true];
 void exactPbaCompileAssertions;
 
+test("workflow run canonical owner identity is byte exact", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  const db = await import("../../src/db-pg.js");
+  for (const runId of ["run-plain", "run/with/slash", "run % unicode-✓"] as const) {
+    const encodedRunId = encodeURIComponent(runId);
+    assert.deepEqual(db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId), {
+      schema: "setfarm.internal-production-canonical-owner-identity.v1",
+      category: "run",
+      ownerKey: runId,
+      ownerRef: `setfarm://runs/${encodedRunId}`,
+      ownerHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-workflow-run-owner.v1",
+        runId,
+      }),
+    });
+  }
+  assert.throws(
+    () => db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(""),
+    /^TypeError: INTERNAL_PRODUCTION_WORKFLOW_RUN_ID_INVALID$/,
+  );
+  assert.throws(
+    () => db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1("\ud800"),
+    /^TypeError: INTERNAL_PRODUCTION_WORKFLOW_RUN_ID_INVALID$/,
+  );
+});
+
 const COMPILE_PBA_REF = "mission-control://compile-fixture" as
   ExactProductBuildObservation["response"]["deliveryEvidenceRef"];
 const COMPILE_PBA_HASH = SHA_A as
@@ -837,7 +863,7 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
   }
 });
 
-test("real PostgreSQL owner admission begins adopts binds and keeps pair-only close fail-closed without a terminal resolver", async () => {
+test("real PostgreSQL owner admission begins adopts binds and rejects an unauthenticated terminal pair", async () => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   assert.ok(activatedOwnerAdmissionFixture, "the prior real activation fixture must remain available");
   const { db, sql, root } = activatedOwnerAdmissionFixture;
@@ -967,7 +993,7 @@ test("real PostgreSQL owner admission begins adopts binds and keeps pair-only cl
       reservationHash: first.reservationHash,
       ...terminalPair,
     })),
-    /^Error: TERMINAL_AUTHORITY_UNAVAILABLE$/,
+    /^Error: INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE$/,
   );
   assert.deepEqual(await sql<Array<{ state: string; head_version: string }>>`
     SELECT reservation.state, head.head_version::text
@@ -1095,6 +1121,462 @@ test("real PostgreSQL owner admission begins adopts binds and keeps pair-only cl
     activatedOwnerAdmissionFixture = null;
     throw error;
   }
+});
+
+test("real PostgreSQL workflow run owner pairs resolve only from authenticated stored state", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  const createBoundRun = async (runId: string, status: string) => sql.begin(async (transaction) => {
+    const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-runtime-run-v1",
+      ownerKey: runId,
+    });
+    await transaction`
+      INSERT INTO runs (id,workflow_id,task,status)
+      VALUES (${runId},'workflow-run-owner-task1','terminal fixture',${status})
+    `;
+    return db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+    });
+  });
+  const snapshot = async () => (await sql<Array<{ reservations: string; head_version: string }>>`
+    SELECT COUNT(reservation.reservation_ref)::text AS reservations,
+           head.head_version::text AS head_version
+      FROM internal_production_owner_reservations_v1 reservation
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     GROUP BY head.head_version
+  `)[0]!;
+
+  let completed: Awaited<ReturnType<typeof createBoundRun>> | null = null;
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    const runId = `run-owner-task1-${status}`;
+    const identity = db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+    const bound = await createBoundRun(runId, status);
+    if (status === "completed") completed = bound;
+    assert.deepEqual(await db.resolveBoundInternalProductionWorkflowRunOwnerV1({
+      runOwnerReservationRef: bound.reservationRef,
+      runOwnerReservationHash: bound.reservationHash,
+    }), bound);
+    assert.deepEqual(await db.recoverBoundInternalProductionWorkflowRunOwnerV1({ runId }), bound);
+    const terminalOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}/terminal/${status}`;
+    const terminalOwnerHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+      runId,
+      status,
+    });
+    const expectedTerminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: identity,
+        terminalOwnerRef,
+        terminalOwnerHash,
+      }),
+    );
+    assert.deepEqual(await sql.begin((transaction) => (
+      db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        transaction,
+        { runId },
+      )
+    )), {
+      runOwnerReservationRef: bound.reservationRef,
+      runOwnerReservationHash: bound.reservationHash,
+      ...expectedTerminalPair,
+    });
+  }
+  assert.ok(completed);
+
+  const beforeWrongPair = await snapshot();
+  await assert.rejects(
+    db.resolveBoundInternalProductionWorkflowRunOwnerV1({
+      runOwnerReservationRef: completed.reservationRef,
+      runOwnerReservationHash: SHA_A,
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await snapshot(), beforeWrongPair);
+
+  const secondMatchingRef = `setfarm://internal-production/owner-reservations/${SHA_C}`;
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO internal_production_owner_reservations_v1 (
+          reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+          producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+          reservation_payload,reservation_head_predecessor_hash,state,
+          canonical_owner_identity,binding_hash,binding_payload,head_version
+        )
+        SELECT ${secondMatchingRef},${SHA_C},category,owner_key,${SHA_B},
+               producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+               reservation_payload,reservation_head_predecessor_hash,state,
+               canonical_owner_identity,binding_hash,binding_payload,head_version
+          FROM internal_production_owner_reservations_v1
+         WHERE reservation_ref=${completed.reservationRef}
+      `;
+      return db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        transaction,
+        { runId: "run-owner-task1-completed" },
+      );
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await snapshot(), beforeWrongPair);
+
+  const crossedImplementationReservation = await sql.begin((transaction) => (
+    db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-recovery-source-bootstrap-run-v1",
+      ownerKey: "run-owner-task1-crossed-implementation",
+    })
+  ));
+  const crossedImplementationBound = await sql.begin((transaction) => (
+    db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: crossedImplementationReservation.reservationRef,
+      reservationHash: crossedImplementationReservation.reservationHash,
+      canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(
+        crossedImplementationReservation.ownerKey,
+      ),
+    })
+  ));
+  await assert.rejects(
+    db.resolveBoundInternalProductionWorkflowRunOwnerV1({
+      runOwnerReservationRef: crossedImplementationBound.reservationRef,
+      runOwnerReservationHash: crossedImplementationBound.reservationHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+  );
+
+  const pendingRunId = "run-owner-task1-pending";
+  await sql.begin((transaction) => db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+    producerImplementationId: "a-runtime-run-v1",
+    ownerKey: pendingRunId,
+  }));
+  const beforePending = await snapshot();
+  await assert.rejects(
+    db.recoverBoundInternalProductionWorkflowRunOwnerV1({ runId: pendingRunId }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await snapshot(), beforePending);
+
+  const nonterminalRunId = "run-owner-task1-running";
+  await createBoundRun(nonterminalRunId, "running");
+  const beforeNonterminal = await snapshot();
+  await assert.rejects(
+    sql.begin((transaction) => db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { runId: nonterminalRunId },
+    )),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_STATUS_INVALID$/,
+  );
+  assert.deepEqual(await snapshot(), beforeNonterminal);
+
+  const invalidStatusRunId = "run-owner-task1-invalid-status";
+  const invalidStatusBound = await createBoundRun(invalidStatusRunId, "terminal-ish");
+  const beforeInvalidStatus = await snapshot();
+  await assert.rejects(
+    sql.begin((transaction) => db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { runId: invalidStatusRunId },
+    )),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_STATUS_INVALID$/,
+  );
+  assert.deepEqual(await snapshot(), beforeInvalidStatus);
+
+  const crossedIdentity = {
+    ...db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(invalidStatusRunId),
+    ownerKey: `${invalidStatusRunId}-crossed`,
+  };
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE internal_production_owner_reservations_v1
+           SET canonical_owner_identity=${transaction.json(crossedIdentity)}
+         WHERE reservation_ref=${invalidStatusBound.reservationRef}
+      `;
+      return db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        transaction,
+        { runId: invalidStatusRunId },
+      );
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+  );
+  assert.deepEqual(await snapshot(), beforeInvalidStatus);
+
+  for (const [label, expected, mutate] of [
+    ["category", /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/, async (transaction: typeof sql) => {
+      await transaction`UPDATE internal_production_owner_reservations_v1 SET category='claim' WHERE reservation_ref=${invalidStatusBound.reservationRef}`;
+    }],
+    ["owner key", /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/, async (transaction: typeof sql) => {
+      await transaction`UPDATE internal_production_owner_reservations_v1 SET owner_key=${`${invalidStatusRunId}-crossed`} WHERE reservation_ref=${invalidStatusBound.reservationRef}`;
+    }],
+    ["binding body", /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/, async (transaction: typeof sql) => {
+      await transaction`UPDATE internal_production_owner_reservations_v1 SET binding_payload=binding_payload || '{"extra":true}'::jsonb WHERE reservation_ref=${invalidStatusBound.reservationRef}`;
+    }],
+  ] as const) {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await mutate(transaction as typeof sql);
+        return db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+          transaction,
+          { runId: invalidStatusRunId },
+        );
+      }),
+      expected,
+      label,
+    );
+    assert.deepEqual(await snapshot(), beforeInvalidStatus, label);
+  }
+
+  const completedRunId = "run-owner-task1-completed";
+  const completedPair = await sql.begin((transaction) => (
+    db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { runId: completedRunId },
+    )
+  ));
+  await sql.begin((transaction) => db.closeInternalProductionOwnerReservationV1(transaction, {
+    reservationRef: completedPair.runOwnerReservationRef,
+    reservationHash: completedPair.runOwnerReservationHash,
+    terminalAuthorityRef: completedPair.terminalAuthorityRef,
+    terminalAuthorityHash: completedPair.terminalAuthorityHash,
+  }));
+  await assert.rejects(
+    db.recoverBoundInternalProductionWorkflowRunOwnerV1({ runId: completedRunId }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+  );
+  await assert.rejects(
+    db.resolveBoundInternalProductionWorkflowRunOwnerV1({
+      runOwnerReservationRef: completedPair.runOwnerReservationRef,
+      runOwnerReservationHash: completedPair.runOwnerReservationHash,
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await sql.begin((transaction) => (
+    db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { runId: completedRunId },
+    )
+  )), completedPair);
+
+  const encodedRunId = "run/owner-task1-encoded";
+  const encodedBound = await createBoundRun(encodedRunId, "completed");
+  const encodedOwnerHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+    runId: encodedRunId,
+    status: "completed",
+  });
+  for (const terminalOwnerRef of [
+    `setfarm://runs/${encodedRunId}/terminal/completed`,
+    `setfarm://runs/${encodeURIComponent(encodedRunId).replace("%2F", "%2f")}/terminal/completed`,
+  ]) {
+    const noncanonicalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(encodedRunId),
+        terminalOwnerRef,
+        terminalOwnerHash: encodedOwnerHash,
+      }),
+    );
+    const beforeNoncanonical = await snapshot();
+    await assert.rejects(
+      sql.begin((transaction) => db.closeInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: encodedBound.reservationRef,
+        reservationHash: encodedBound.reservationHash,
+        ...noncanonicalPair,
+      })),
+      /^Error: INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE$/,
+    );
+    assert.deepEqual(await snapshot(), beforeNoncanonical);
+  }
+
+  const rawTerminal = deriveInternalProductionTerminalOwnerAuthorityPairV1(
+    createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(completedRunId),
+      terminalOwnerRef: `setfarm://runs/${completedRunId}/terminal/failed`,
+      terminalOwnerHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+        runId: completedRunId,
+        status: "failed",
+      }),
+    }),
+  );
+  const beforeCrossedTerminal = await snapshot();
+  await assert.rejects(
+    sql.begin((transaction) => db.closeInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: invalidStatusBound.reservationRef,
+      reservationHash: invalidStatusBound.reservationHash,
+      ...rawTerminal,
+    })),
+    /^Error: INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await snapshot(), beforeCrossedTerminal);
+});
+
+test("real PostgreSQL terminal pair replay locks only its exact run", { timeout: 15_000 }, async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  const boundByRun = new Map<string, Awaited<ReturnType<typeof db.bindInternalProductionOwnerReservationV1>>>();
+  for (const runId of ["run-owner-task1-concurrent-a", "run-owner-task1-concurrent-b"]) {
+    const bound = await sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: "a-runtime-run-v1",
+        ownerKey: runId,
+      });
+      await transaction`
+        INSERT INTO runs (id,workflow_id,task,status)
+        VALUES (${runId},'workflow-run-owner-task1','concurrent terminal fixture','running')
+      `;
+      return db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+      });
+    });
+    boundByRun.set(runId, bound);
+  }
+
+  let arrivals = 0;
+  let release!: () => void;
+  const bothRunRowsLocked = new Promise<void>((resolve) => { release = resolve; });
+  const transactionAttempts = new Map<string, number>();
+  const replay = (runId: string) => sql.begin(async (transaction) => {
+    transactionAttempts.set(runId, (transactionAttempts.get(runId) ?? 0) + 1);
+    await transaction`UPDATE runs SET status='completed' WHERE id=${runId}`;
+    arrivals += 1;
+    if (arrivals === 2) release();
+    await bothRunRowsLocked;
+    return db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { runId },
+    );
+  });
+  const runIds = ["run-owner-task1-concurrent-a", "run-owner-task1-concurrent-b"] as const;
+  const results = await Promise.allSettled(runIds.map(replay));
+  assert.deepEqual(
+    runIds.map((runId) => [runId, transactionAttempts.get(runId)]),
+    runIds.map((runId) => [runId, 1]),
+  );
+  for (const [index, result] of results.entries()) {
+    assert.equal(result.status, "fulfilled", result.status === "rejected" ? String(result.reason) : undefined);
+    if (result.status !== "fulfilled") continue;
+    const runId = runIds[index]!;
+    const bound = boundByRun.get(runId)!;
+    const expectedPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+        terminalOwnerRef: `setfarm://runs/${encodeURIComponent(runId)}/terminal/completed`,
+        terminalOwnerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+          runId,
+          status: "completed",
+        }),
+      }),
+    );
+    assert.deepEqual(result.value, {
+      runOwnerReservationRef: bound.reservationRef,
+      runOwnerReservationHash: bound.reservationHash,
+      ...expectedPair,
+    });
+  }
+
+  let lockedUnrelated!: () => void;
+  const unrelatedLocked = new Promise<void>((resolve) => { lockedUnrelated = resolve; });
+  let releaseUnrelated!: () => void;
+  const holdUnrelated = new Promise<void>((resolve) => { releaseUnrelated = resolve; });
+  const unrelatedRunId = runIds[1];
+  const unrelatedBlocker = sql.begin(async (transaction) => {
+    await transaction`UPDATE runs SET status=status WHERE id=${unrelatedRunId}`;
+    lockedUnrelated();
+    await holdUnrelated;
+  });
+  await unrelatedLocked;
+  let exactReplay: Awaited<ReturnType<typeof db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1>>;
+  try {
+    exactReplay = await sql.begin(async (transaction) => {
+      await transaction`SET LOCAL lock_timeout='250ms'`;
+      return db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        transaction,
+        { runId: runIds[0] },
+      );
+    });
+  } finally {
+    releaseUnrelated();
+    await unrelatedBlocker;
+  }
+  assert.deepEqual(exactReplay, results[0]!.status === "fulfilled" ? results[0]!.value : null);
+});
+
+test("real PostgreSQL closed workflow run rejects terminal status drift without mutation", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  const runId = "run-owner-task1-completed";
+  const before = (await sql<Array<{
+    status: string;
+    state: string;
+    terminal_owner_ref: string;
+    terminal_owner_hash: string;
+    close_ref: string;
+    close_hash: string;
+    head_version: string;
+  }>>`
+    SELECT run.status,reservation.state,reservation.terminal_owner_ref,
+           reservation.terminal_owner_hash,reservation.close_ref,reservation.close_hash,
+           head.head_version::text
+      FROM runs run
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.owner_key=run.id
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE run.id=${runId}
+       AND reservation.producer_implementation_id='a-runtime-run-v1'
+       AND reservation.category='run'
+  `)[0]!;
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await transaction`UPDATE runs SET status='failed' WHERE id=${runId}`;
+      await db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        transaction,
+        { runId },
+      );
+      throw new Error("TEST_ACCEPTED_CLOSED_WORKFLOW_RUN_TERMINAL_DRIFT");
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+  );
+  assert.deepEqual((await sql<typeof before[]>`
+    SELECT run.status,reservation.state,reservation.terminal_owner_ref,
+           reservation.terminal_owner_hash,reservation.close_ref,reservation.close_hash,
+           head.head_version::text
+      FROM runs run
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.owner_key=run.id
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE run.id=${runId}
+       AND reservation.producer_implementation_id='a-runtime-run-v1'
+       AND reservation.category='run'
+  `)[0], before);
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await transaction`UPDATE runs SET status='failed' WHERE id=${runId}`;
+      await db.resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction, {
+        closeRef: before.close_ref,
+        closeHash: before.close_hash,
+      });
+      throw new Error("TEST_ACCEPTED_CLOSED_WORKFLOW_RUN_TERMINAL_OWNER_DRIFT");
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+  );
+  assert.deepEqual((await sql<typeof before[]>`
+    SELECT run.status,reservation.state,reservation.terminal_owner_ref,
+           reservation.terminal_owner_hash,reservation.close_ref,reservation.close_hash,
+           head.head_version::text
+      FROM runs run
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.owner_key=run.id
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE run.id=${runId}
+       AND reservation.producer_implementation_id='a-runtime-run-v1'
+       AND reservation.category='run'
+  `)[0], before);
 });
 
 test("real PostgreSQL close resolver rejects a bare historical row and unavailable terminal authority", async (t) => {
@@ -1300,7 +1782,7 @@ test("real PostgreSQL close resolver rejects a bare historical row and unavailab
       closeRef: close.closeRef,
       closeHash: close.closeHash,
     }),
-    /^Error: TERMINAL_AUTHORITY_UNAVAILABLE$/,
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
   );
   const crossedReservation = createInternalProductionOwnerReservationV1({
     producer: row,

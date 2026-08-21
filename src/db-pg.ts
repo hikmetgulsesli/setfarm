@@ -21,6 +21,8 @@ import {
   createInternalProductionBoundOwnerReservationV1,
   createInternalProductionOwnerReservationCloseV1,
   createInternalProductionOwnerReservationV1,
+  createInternalProductionTerminalOwnerAuthorityV1,
+  deriveInternalProductionTerminalOwnerAuthorityPairV1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
@@ -614,6 +616,50 @@ type OwnerAdmissionAdvancingAuthorityV1 = Readonly<{
 
 const OWNER_ADMISSION_SHA256_V1 = /^[a-f0-9]{64}$/;
 const OWNER_ADMISSION_REF_V1 = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
+const WORKFLOW_RUN_TERMINAL_STATUSES_V1 = Object.freeze([
+  "completed", "failed", "cancelled",
+] as const);
+type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[number];
+
+function decodeCanonicalWorkflowRunIdSegmentV1(encodedRunId: string): string {
+  try {
+    if (!encodedRunId || encodedRunId.includes("/")) throw new Error();
+    const decoded = decodeURIComponent(encodedRunId);
+    if (!decoded || encodeURIComponent(decoded) !== encodedRunId) throw new Error();
+    return decoded;
+  } catch {
+    throw new TypeError("INTERNAL_PRODUCTION_WORKFLOW_RUN_REF_INVALID");
+  }
+}
+
+function encodeCanonicalWorkflowRunIdSegmentV1(runId: string): string {
+  if (typeof runId !== "string" || runId.length === 0) {
+    throw new TypeError("INTERNAL_PRODUCTION_WORKFLOW_RUN_ID_INVALID");
+  }
+  try {
+    const encoded = encodeURIComponent(runId);
+    if (decodeCanonicalWorkflowRunIdSegmentV1(encoded) !== runId) throw new Error();
+    return encoded;
+  } catch {
+    throw new TypeError("INTERNAL_PRODUCTION_WORKFLOW_RUN_ID_INVALID");
+  }
+}
+
+export function createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(
+  runId: string,
+): InternalProductionCanonicalOwnerIdentityV1<"run"> {
+  const encodedRunId = encodeCanonicalWorkflowRunIdSegmentV1(runId);
+  return Object.freeze({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: runId,
+    ownerRef: `setfarm://runs/${encodedRunId}`,
+    ownerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-workflow-run-owner.v1",
+      runId,
+    }),
+  });
+}
 
 function validateOwnerAdmissionPairV1(
   input: unknown,
@@ -1455,18 +1501,246 @@ async function closeOwnerReservationInTransactionV1<
   return close;
 }
 
-const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1 = Object.freeze({}) as Readonly<
-  Partial<Record<InternalProductionOwnerCategoryV1, Readonly<{
-    resolveByAuthorityPair: (
-      sql: InternalProductionPgTransactionSql,
-      pair: InternalProductionTerminalOwnerAuthorityPairV1,
-    ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
-    resolveByTerminalOwnerPair: (
-      sql: InternalProductionPgTransactionSql,
-      pair: Readonly<{ terminalOwnerRef: string; terminalOwnerHash: string }>,
-    ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
-  }>>>
->;
+type OwnerTerminalResolverV1 = Readonly<{
+  resolveByAuthorityPair: (
+    sql: InternalProductionPgTransactionSql,
+    pair: InternalProductionTerminalOwnerAuthorityPairV1,
+  ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
+  resolveByTerminalOwnerPair: (
+    sql: InternalProductionPgTransactionSql,
+    pair: Readonly<{ terminalOwnerRef: string; terminalOwnerHash: string }>,
+  ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
+}>;
+
+type WorkflowRunTerminalRowV1 = Readonly<{
+  id: string;
+  status: string;
+}>;
+
+async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ runOwnerReservationRef: string; runOwnerReservationHash: string }>,
+  allowedStates: readonly ("bound" | "closed")[],
+): Promise<Readonly<{
+  row: OwnerReservationRowV1;
+  bound: InternalProductionBoundOwnerReservationV1<"run">;
+}>> {
+  const pair = validateOwnerAdmissionPairV1(
+    input,
+    "runOwnerReservationRef",
+    "runOwnerReservationHash",
+    "INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_PAIR_INVALID",
+  );
+  const rows = await sql<OwnerReservationRowV1[]>`
+    SELECT *
+      FROM internal_production_owner_reservations_v1
+     WHERE reservation_ref=${pair.runOwnerReservationRef}
+       AND reservation_hash=${pair.runOwnerReservationHash}
+     FOR UPDATE
+  `;
+  const row = rows[0];
+  if (rows.length !== 1 || !row || !allowedStates.includes(row.state as "bound" | "closed")) {
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
+  }
+  try {
+    const reservation = await resolveOwnerReservationInTransactionV1(sql, {
+      reservationRef: pair.runOwnerReservationRef,
+      reservationHash: pair.runOwnerReservationHash,
+    }, true);
+    const bound = await validateBoundOwnerReservationRowV1<"run">(sql, row, reservation);
+    const expectedIdentity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(
+      reservation.ownerKey,
+    );
+    if (
+      reservation.producerImplementationId !== "a-runtime-run-v1"
+      || reservation.category !== "run"
+      || bound.producerImplementationId !== "a-runtime-run-v1"
+      || bound.category !== "run"
+      || bound.ownerKey !== reservation.ownerKey
+      || !sameJsonValueV1(bound.canonicalOwnerIdentity, expectedIdentity)
+    ) throw new Error();
+    return Object.freeze({ row, bound });
+  } catch {
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+  }
+}
+
+async function resolveLockedWorkflowRunOwnerByRunIdV1(
+  sql: InternalProductionPgTransactionSql,
+  runId: string,
+  allowedStates: readonly ("bound" | "closed")[],
+): Promise<Readonly<{
+  run: WorkflowRunTerminalRowV1;
+  row: OwnerReservationRowV1;
+  bound: InternalProductionBoundOwnerReservationV1<"run">;
+}>> {
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+  const runs = await sql<WorkflowRunTerminalRowV1[]>`
+    SELECT id,status FROM runs WHERE id=${runId} FOR UPDATE
+  `;
+  const pairs = await sql<Array<{ reservation_ref: string; reservation_hash: string }>>`
+    SELECT reservation_ref,reservation_hash
+      FROM internal_production_owner_reservations_v1
+     WHERE producer_implementation_id='a-runtime-run-v1'
+       AND category='run'
+       AND owner_key=${runId}
+       AND state=ANY(${allowedStates})
+     FOR UPDATE
+  `;
+  if (runs.length !== 1 || pairs.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
+  }
+  const resolved = await resolveStoredWorkflowRunOwnerByPairInTransactionV1(sql, {
+    runOwnerReservationRef: pairs[0]!.reservation_ref,
+    runOwnerReservationHash: pairs[0]!.reservation_hash,
+  }, allowedStates);
+  if (resolved.bound.ownerKey !== runId) {
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+  }
+  return Object.freeze({ run: runs[0]!, ...resolved });
+}
+
+function createWorkflowRunTerminalAuthorityFromLockedRowsV1(
+  run: WorkflowRunTerminalRowV1,
+  bound: InternalProductionBoundOwnerReservationV1<"run">,
+): InternalProductionTerminalOwnerAuthorityV1<"run"> {
+  if (!WORKFLOW_RUN_TERMINAL_STATUSES_V1.includes(run.status as WorkflowRunTerminalStatusV1)) {
+    throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_STATUS_INVALID");
+  }
+  const status = run.status as WorkflowRunTerminalStatusV1;
+  const encodedRunId = encodeCanonicalWorkflowRunIdSegmentV1(run.id);
+  return createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: bound.canonicalOwnerIdentity,
+    terminalOwnerRef: `setfarm://runs/${encodedRunId}/terminal/${status}`,
+    terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+      runId: run.id,
+      status,
+    }),
+  });
+}
+
+function bindWorkflowRunTerminalAuthorityToReservationStateV1(
+  resolved: Readonly<{ row: OwnerReservationRowV1 }>,
+  authority: InternalProductionTerminalOwnerAuthorityV1<"run">,
+): void {
+  if (
+    resolved.row.state === "closed"
+    && (
+      resolved.row.terminal_owner_ref !== authority.terminalOwnerRef
+      || resolved.row.terminal_owner_hash !== authority.terminalOwnerHash
+    )
+  ) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION");
+}
+
+async function resolveWorkflowRunTerminalAuthorityByTerminalOwnerPairV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ terminalOwnerRef: string; terminalOwnerHash: string }>,
+): Promise<InternalProductionTerminalOwnerAuthorityV1<"run">> {
+  const pair = validateOwnerAdmissionPairV1(
+    input,
+    "terminalOwnerRef",
+    "terminalOwnerHash",
+    "INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_OWNER_PAIR_INVALID",
+  );
+  const match = /^setfarm:\/\/runs\/([^/]+)\/terminal\/(completed|failed|cancelled)$/.exec(
+    pair.terminalOwnerRef,
+  );
+  if (!match) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_OWNER_PAIR_INVALID");
+  const runId = decodeCanonicalWorkflowRunIdSegmentV1(match[1]!);
+  const resolved = await resolveLockedWorkflowRunOwnerByRunIdV1(
+    sql,
+    runId,
+    ["bound", "closed"],
+  );
+  const authority = createWorkflowRunTerminalAuthorityFromLockedRowsV1(
+    resolved.run,
+    resolved.bound,
+  );
+  bindWorkflowRunTerminalAuthorityToReservationStateV1(resolved, authority);
+  if (
+    authority.terminalOwnerRef !== pair.terminalOwnerRef
+    || authority.terminalOwnerHash !== pair.terminalOwnerHash
+  ) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_OWNER_PAIR_INVALID");
+  return authority;
+}
+
+async function resolveWorkflowRunTerminalAuthorityByAuthorityPairV1(
+  sql: InternalProductionPgTransactionSql,
+  input: InternalProductionTerminalOwnerAuthorityPairV1,
+): Promise<InternalProductionTerminalOwnerAuthorityV1<"run">> {
+  const pair = validateOwnerAdmissionPairV1(
+    input,
+    "terminalAuthorityRef",
+    "terminalAuthorityHash",
+    "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID",
+  ) as InternalProductionTerminalOwnerAuthorityPairV1;
+  const candidates = await sql<Array<{
+    id: string;
+    status: string;
+  }>>`
+    SELECT run.id,run.status
+      FROM runs run
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.owner_key=run.id
+     WHERE reservation.producer_implementation_id='a-runtime-run-v1'
+       AND reservation.category='run'
+       AND reservation.state IN ('bound','closed')
+       AND run.status IN ('completed','failed','cancelled')
+  `;
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    const expectedIdentity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(candidate.id);
+    const status = candidate.status as WorkflowRunTerminalStatusV1;
+    const terminalOwnerRef = `setfarm://runs/${encodeCanonicalWorkflowRunIdSegmentV1(candidate.id)}/terminal/${status}`;
+    const terminalOwnerHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-workflow-run-terminal-owner.v1",
+      runId: candidate.id,
+      status,
+    });
+    const projected = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: expectedIdentity,
+      terminalOwnerRef,
+      terminalOwnerHash,
+    });
+    const projectedPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(projected);
+    if (
+      projectedPair.terminalAuthorityRef === pair.terminalAuthorityRef
+      && projectedPair.terminalAuthorityHash === pair.terminalAuthorityHash
+    ) {
+      matches.push(candidate.id);
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+  }
+  const resolved = await resolveLockedWorkflowRunOwnerByRunIdV1(
+    sql,
+    matches[0]!,
+    ["bound", "closed"],
+  );
+  const authority = createWorkflowRunTerminalAuthorityFromLockedRowsV1(
+    resolved.run,
+    resolved.bound,
+  );
+  bindWorkflowRunTerminalAuthorityToReservationStateV1(resolved, authority);
+  const lockedPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(authority);
+  if (
+    lockedPair.terminalAuthorityRef !== pair.terminalAuthorityRef
+    || lockedPair.terminalAuthorityHash !== pair.terminalAuthorityHash
+  ) throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+  return authority;
+}
+
+const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1: Readonly<Partial<Record<
+  InternalProductionOwnerCategoryV1,
+  OwnerTerminalResolverV1
+>>> = Object.freeze({
+  run: Object.freeze({
+    resolveByAuthorityPair: resolveWorkflowRunTerminalAuthorityByAuthorityPairV1,
+    resolveByTerminalOwnerPair: resolveWorkflowRunTerminalAuthorityByTerminalOwnerPairV1,
+  }),
+});
 
 const OWNER_ADMISSION_REPOSITORY_V1: InternalProductionOwnerAdmissionRepositoryV1 = Object.freeze({
   withTransaction: <Result>(operation: (sql: InternalProductionPgTransactionSql) => Promise<Result>) => (
@@ -1569,6 +1843,89 @@ export async function resolveInternalProductionOwnerReservationCloseV1(input: Re
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction((sql) => (
     OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input)
   ));
+}
+
+export async function resolveBoundInternalProductionWorkflowRunOwnerV1(input: Readonly<{
+  runOwnerReservationRef: string;
+  runOwnerReservationHash: string;
+}>): Promise<InternalProductionBoundOwnerReservationV1<"run">> {
+  exactObjectKeys(
+    input,
+    ["runOwnerReservationRef", "runOwnerReservationHash"],
+    "INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_PAIR_INVALID",
+  );
+  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => (
+    (await resolveStoredWorkflowRunOwnerByPairInTransactionV1(
+      sql,
+      input,
+      ["bound"],
+    )).bound
+  ));
+}
+
+export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Readonly<{
+  runId: string;
+}>): Promise<InternalProductionBoundOwnerReservationV1<"run">> {
+  exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_INPUT_INVALID");
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
+  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    const pairs = await sql<Array<{ reservation_ref: string; reservation_hash: string }>>`
+      SELECT reservation_ref,reservation_hash
+        FROM internal_production_owner_reservations_v1
+       WHERE producer_implementation_id='a-runtime-run-v1'
+         AND category='run'
+         AND owner_key=${input.runId}
+         AND state='bound'
+    `;
+    if (pairs.length !== 1) {
+      throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
+    }
+    return (await resolveStoredWorkflowRunOwnerByPairInTransactionV1(sql, {
+      runOwnerReservationRef: pairs[0]!.reservation_ref,
+      runOwnerReservationHash: pairs[0]!.reservation_hash,
+    }, ["bound"])).bound;
+  });
+}
+
+export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ runId: string }>,
+): Promise<Readonly<{
+  runOwnerReservationRef: string;
+  runOwnerReservationHash: string;
+  terminalAuthorityRef: string;
+  terminalAuthorityHash: string;
+}>> {
+  exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_INPUT_INVALID");
+  const resolved = await resolveLockedWorkflowRunOwnerByRunIdV1(
+    sql,
+    input.runId,
+    ["bound", "closed"],
+  );
+  const authority = createWorkflowRunTerminalAuthorityFromLockedRowsV1(
+    resolved.run,
+    resolved.bound,
+  );
+  bindWorkflowRunTerminalAuthorityToReservationStateV1(resolved, authority);
+  const terminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(authority);
+  const authenticated = await resolveWorkflowRunTerminalAuthorityByAuthorityPairV1(
+    sql,
+    terminalPair,
+  );
+  validateInternalProductionTerminalOwnerAuthorityPairV1(terminalPair, authenticated);
+  return Object.freeze({
+    runOwnerReservationRef: resolved.bound.reservationRef,
+    runOwnerReservationHash: resolved.bound.reservationHash,
+    terminalAuthorityRef: terminalPair.terminalAuthorityRef,
+    terminalAuthorityHash: terminalPair.terminalAuthorityHash,
+  });
+}
+
+export async function resolveInternalProductionOwnerReservationCloseInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ closeRef: string; closeHash: string }>,
+): Promise<InternalProductionOwnerReservationCloseV1> {
+  return OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input);
 }
 
 /**
