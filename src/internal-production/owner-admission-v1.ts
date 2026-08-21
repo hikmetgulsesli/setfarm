@@ -1112,7 +1112,7 @@ function canonicalClaimIdTextV1(value: unknown): string {
   if (
     typeof value !== "string"
     || !/^[1-9][0-9]{0,18}$/.test(value)
-    || BigInt(value) > 9_223_372_036_854_775_807n
+    || BigInt(value) > 9_007_199_254_740_991n
   ) fail("INTERNAL_PRODUCTION_CLAIM_ID_INVALID");
   return value;
 }

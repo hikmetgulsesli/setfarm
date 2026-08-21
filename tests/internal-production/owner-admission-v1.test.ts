@@ -44,6 +44,7 @@ import {
   validateInternalProductionOwnerProducerSourceBuildAuthorityV1,
   validateInternalProductionOwnerReservationCloseV1,
   validateInternalProductionOwnerReservationV1,
+  validateInternalProductionCanonicalOwnerIdentityV1,
   validateInternalProductionTerminalOwnerAuthorityPairV1,
   validateInternalProductionTerminalOwnerAuthorityV1,
   type InternalProductionCanonicalOwnerIdentityV1,
@@ -4186,6 +4187,51 @@ test("real PostgreSQL closed workflow run rejects terminal status drift without 
   `)[0], before);
 });
 
+test("real PostgreSQL persisted pre-P3 above-cap claim terminal authority fails closed", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  for (const [index, claimIdText] of ["9007199254740992", "9223372036854775807"].entries()) {
+    const persistedIdentity = validateInternalProductionCanonicalOwnerIdentityV1<"claim">({
+      schema: "setfarm.internal-production-canonical-owner-identity.v1",
+      category: "claim",
+      ownerKey: claimIdText,
+      ownerRef: `setfarm://claim-log/${claimIdText}`,
+      ownerHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-claim-owner.v1",
+        claimId: claimIdText,
+      }),
+    });
+    await sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: "a-claim-single-runtime-v1",
+        ownerKey: claimIdText,
+      });
+      await transaction`
+        INSERT INTO claim_log (
+          id,run_id,step_id,story_id,agent_id,claimed_at,outcome,duration_ms,diagnostic
+        ) VALUES (
+          ${claimIdText}::bigint,${`task2r-safe-cap-run-${index}`},${`task2r-safe-cap-step-${index}`},'',
+          'task2r-safe-cap-agent',NOW(),'completed',1,'pre-P3 persisted above-cap claim'
+        )
+      `;
+      await db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: persistedIdentity,
+      });
+    });
+    await assert.rejects(
+      sql.begin((transaction) => db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText }),
+      )),
+      (error: unknown) => error instanceof Error
+        && error.message === "INTERNAL_PRODUCTION_CLAIM_ID_INVALID",
+    );
+  }
+});
+
 test("real PostgreSQL claim terminal port locks authenticates and returns only the exact close input", async () => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
@@ -4555,7 +4601,8 @@ test("real PostgreSQL claim terminal port locks authenticates and returns only t
       transaction,
       Object.freeze({ claimIdText: "9223372036854775807" }),
     )),
-    /CLAIM_OWNER_UNAVAILABLE/,
+    (error: unknown) => error instanceof Error
+      && error.message === "INTERNAL_PRODUCTION_CLAIM_ID_INVALID",
   );
 
   const duplicateClaimIdText = "9199999";
@@ -6594,16 +6641,16 @@ test("eight P3 canonical owner builders are byte exact and reject every noncanon
     {
       label: "claim",
       build: () => createInternalProductionClaimCanonicalOwnerIdentityV1(
-        Object.freeze({ claimIdText: "9223372036854775807" }),
+        Object.freeze({ claimIdText: "9007199254740991" }),
       ),
       expected: {
         schema: "setfarm.internal-production-canonical-owner-identity.v1",
         category: "claim",
-        ownerKey: "9223372036854775807",
-        ownerRef: "setfarm://claim-log/9223372036854775807",
+        ownerKey: "9007199254740991",
+        ownerRef: "setfarm://claim-log/9007199254740991",
         ownerHash: hashCanonicalJson({
           schema: "setfarm.internal-production-claim-owner.v1",
-          claimId: "9223372036854775807",
+          claimId: "9007199254740991",
         }),
       },
     },
@@ -6741,14 +6788,14 @@ test("eight P3 canonical owner builders are byte exact and reject every noncanon
     consumer: "webhook",
   }));
 
-  for (const claimIdText of ["1", "9223372036854775807"]) {
+  for (const claimIdText of ["1", "9007199254740991"]) {
     assert.equal(
       createInternalProductionClaimCanonicalOwnerIdentityV1(Object.freeze({ claimIdText })).ownerKey,
       claimIdText,
     );
   }
   for (const claimIdText of [
-    "0", "01", "+1", "1.0", "9223372036854775808", 1, Number.MAX_SAFE_INTEGER,
+    "0", "01", "+1", "1.0", "9007199254740992", "9223372036854775807", 1, Number.MAX_SAFE_INTEGER,
   ]) {
     assert.throws(
       () => createInternalProductionClaimCanonicalOwnerIdentityV1(
@@ -6884,6 +6931,50 @@ test("eight P3 canonical owner builders are byte exact and reject every noncanon
       ownerKey,
       ownerAdmissionHeadPredecessorHash: SHA_A,
     }), /OWNER_KEY_INVALID/);
+  }
+});
+
+test("Task 2R keeps claim authority textual and capped at the JavaScript safe integer", async () => {
+  const [ownerCoreSource, databaseSource] = await Promise.all([
+    readFile(new URL("../../src/internal-production/owner-admission-v1.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(ownerCoreSource, /BigInt\(value\) > 9_007_199_254_740_991n/);
+  const ownerCoreClaimBoundary = ownerCoreSource.slice(
+    ownerCoreSource.indexOf("function canonicalClaimIdTextV1"),
+    ownerCoreSource.indexOf("export function createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1"),
+  );
+  const claimTerminalResolverBoundary = databaseSource.slice(
+    databaseSource.indexOf("const CLAIM_TERMINAL_RESOLVER_CONFIG_V1"),
+    databaseSource.indexOf("const EXECUTION_ATTEMPT_TERMINAL_RESOLVER_CONFIG_V1"),
+  );
+  const claimTerminalPortBoundary = databaseSource.slice(
+    databaseSource.indexOf("export async function resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1"),
+    databaseSource.indexOf("export async function resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1"),
+  );
+  assert.match(ownerCoreClaimBoundary, /ownerKey: claimIdText/);
+  assert.match(ownerCoreClaimBoundary, /ownerRef: `setfarm:\/\/claim-log\/\$\{claimIdText\}`/);
+  assert.match(claimTerminalResolverBoundary, /claimIdText: identity\.ownerKey/);
+  assert.match(claimTerminalResolverBoundary, /createInternalProductionClaimCanonicalOwnerIdentityV1\(input as never\)/);
+  assert.match(claimTerminalPortBoundary, /resolveP3TerminalCloseInputInTransactionV1\(/);
+  const assertTextualClaimAuthorityBoundary = (boundary: string): void => {
+    assert.doesNotMatch(boundary, /\b(?:Number|parseInt)\s*\(/);
+    assert.doesNotMatch(
+      boundary,
+      /(?:^|[=(:,;[{?]|\b(?:return|throw|case|delete|void|typeof|await|yield)\b|=>)\s*\+\s*(?=[A-Za-z_$({[\d"'`])/gm,
+    );
+  };
+  for (const boundary of [
+    ownerCoreClaimBoundary,
+    claimTerminalResolverBoundary,
+    claimTerminalPortBoundary,
+  ]) {
+    assertTextualClaimAuthorityBoundary(boundary);
+    for (const forbidden of [
+      "const claimId = Number(claimIdText);",
+      "const claimId = parseInt(claimIdText, 10);",
+      "const claimId = +claimIdText;",
+    ]) assert.throws(() => assertTextualClaimAuthorityBoundary(`${boundary}\n${forbidden}`));
   }
 });
 
