@@ -1115,6 +1115,7 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   const exactStoredInventory = async (ownerKey = input.run.id) => ({
     run: [...await sql`SELECT * FROM runs WHERE id=${ownerKey}`],
     steps: [...await sql`SELECT * FROM steps WHERE run_id=${ownerKey} ORDER BY step_index,id`],
+    stories: [...await sql`SELECT * FROM stories WHERE run_id=${ownerKey} ORDER BY story_index,id`],
     reservation: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 WHERE owner_key=${ownerKey}`],
     authorities: [...await sql`
       SELECT authority.*
@@ -1124,8 +1125,23 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
        WHERE reservation.owner_key=${ownerKey}
        ORDER BY authority.authority_kind,authority.authority_ref
     `],
-    claims: [...await sql`SELECT * FROM claim_log WHERE run_id=${input.run.id} ORDER BY id`],
-    attempts: [...await sql`SELECT * FROM execution_attempts WHERE run_id=${input.run.id} ORDER BY attempt_id`],
+    claims: [...await sql`SELECT * FROM claim_log WHERE run_id=${ownerKey} ORDER BY id`],
+    attempts: [...await sql`SELECT * FROM execution_attempts WHERE run_id=${ownerKey} ORDER BY attempt_id`],
+    runtimes: [...await sql`SELECT * FROM runtime_sessions WHERE run_id=${ownerKey} ORDER BY session_id`],
+    completionRequests: [...await sql`SELECT * FROM runtime_completion_requests WHERE run_id=${ownerKey} ORDER BY request_id`],
+    completionEffects: [...await sql`
+      SELECT effect.*
+        FROM runtime_completion_effects effect
+        JOIN runtime_completion_requests request ON request.request_id=effect.request_id
+       WHERE request.run_id=${ownerKey}
+       ORDER BY effect.request_id,effect.ordinal,effect.effect_key
+    `],
+    terminationRequests: [...await sql`SELECT * FROM run_termination_requests WHERE run_id=${ownerKey} ORDER BY request_id`],
+    outbox: [...await sql`
+      SELECT * FROM operational_outbox
+       WHERE aggregate_type='run' AND aggregate_id=${ownerKey}
+       ORDER BY outbox_id
+    `],
     head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE`],
   });
   const crossedRuns = [
@@ -1496,7 +1512,465 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   );
   assert.deepEqual(await ownerInventory(duplicateStepInput.run.id), emptyOwnerInventory);
 
-  await sql`UPDATE runs SET status='completed' WHERE id=${input.run.id}`;
+  const fixtureTerminal = await import(`${pathToFileURL(path.join(root, "src/execution/run-terminal-transition.ts")).href}?task3=${Date.now()}`);
+  const ownerHeadBeforeTerminal = (await sql<Array<{ head_version: string }>>`
+    SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+  `)[0]!.head_version;
+  const terminalResult = await sql.begin((transaction) => fixtureTerminal.transitionRunToTerminalInTransaction(
+    transaction,
+    {
+      runId: input.run.id,
+      status: "failed",
+      diagnostic: "task3 exact owner close",
+      unclaimedBootstrapFailure: true,
+    },
+  ));
+  assert.equal(terminalResult.status, "failed");
+  const terminalOwner = (await sql<Array<{
+    run_status: string;
+    owner_state: string;
+    close_ref: string | null;
+    close_hash: string | null;
+    head_version: string;
+  }>>`
+    SELECT run.status AS run_status,reservation.state AS owner_state,
+           reservation.close_ref,reservation.close_hash,head.head_version::text
+      FROM runs run
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.owner_key=run.id AND reservation.category='run'
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE run.id=${input.run.id} AND head.singleton=TRUE
+  `)[0]!;
+  assert.equal(terminalOwner.run_status, "failed");
+  assert.equal(terminalOwner.owner_state, "closed");
+  assert.match(terminalOwner.close_ref ?? "", /^setfarm:\/\/internal-production\/owner-reservation-closes\//);
+  assert.match(terminalOwner.close_hash ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(BigInt(terminalOwner.head_version), BigInt(ownerHeadBeforeTerminal) + 1n);
+  const beforeTerminalReplay = await exactStoredInventory();
+  const replayedTerminal = await sql.begin((transaction) => fixtureTerminal.transitionRunToTerminalInTransaction(
+    transaction,
+    {
+      runId: input.run.id,
+      status: "failed",
+      diagnostic: "task3 response-loss replay",
+      unclaimedBootstrapFailure: true,
+    },
+  ));
+  assert.equal(replayedTerminal.previousStatus, "failed");
+  assert.deepEqual(await exactStoredInventory(), beforeTerminalReplay);
+
+  const fixtureRuntimeCompletion = await import(
+    `${pathToFileURL(path.join(root, "src/execution/runtime-completion.ts")).href}?task3=${Date.now()}`
+  );
+  const fixtureRuntimeSession = await import(
+    `${pathToFileURL(path.join(root, "src/execution/runtime-session-repository.ts")).href}?task3=${Date.now()}`
+  );
+  const fixtureRuntimeCompletionOwner = await import(
+    pathToFileURL(path.join(root, "src/execution/runtime-completion-owner-context.ts")).href
+  );
+  const fixtureRuntimeCompletionPlan = await import(
+    `${pathToFileURL(path.join(root, "src/execution/schemas/runtime-completion-plan-v1.ts")).href}?task3=${Date.now()}`
+  );
+  const seedPopulatedTask3TerminalRun = async (runId: string, runNumber: number) => {
+    const runInput = {
+      ...input,
+      run: { ...input.run, id: runId, runNumber },
+      steps: input.steps.map((step, index) => ({ ...step, id: `${runId}-step-${index}` })),
+    };
+    await persistence.persistWorkflowRun(runInput);
+    const step = runInput.steps[0]!;
+    const storyDbId = `${runId}-story`;
+    const storyId = "US-TASK3-ROLLBACK";
+    await sql`UPDATE steps SET status='running',current_story_id=${storyDbId} WHERE id=${step.id}`;
+    await sql`
+      INSERT INTO stories (
+        id,run_id,story_index,story_id,title,status,claimed_by,claim_generation
+      ) VALUES (
+        ${storyDbId},${runId},1,${storyId},'Task 3 terminal rollback','running',
+        'feature-dev_developer',1
+      )
+    `;
+    const claimId = (await sql<Array<{ id: number }>>`
+      INSERT INTO claim_log (run_id,step_id,story_id,agent_id)
+      VALUES (${runId},${step.stepId},${storyId},'feature-dev_developer')
+      RETURNING id::integer AS id
+    `)[0]!.id;
+    const sessions = fixtureRuntimeSession.createRuntimeSessionRepository(sql);
+    const session = await sessions.reserve({
+      sessionId: `RTS_${runId}`,
+      runId,
+      stepDbId: step.id,
+      workflowStepId: step.stepId,
+      storyDbId,
+      storyId,
+      claimId,
+      claimAgentId: "feature-dev_developer",
+      runtimeAgentId: "prism",
+      runtimeKind: "openclaw_session",
+      ownerInstanceId: "task3-owner",
+    });
+    await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId: "task3-owner" });
+    await sessions.markRunning({
+      sessionId: session.sessionId,
+      ownerInstanceId: "task3-owner",
+      sessionKey: `task3-${runId}`,
+    });
+    const requestId = `RCR_${runId}`;
+    const requested = await fixtureRuntimeCompletion.requestRuntimeCompletion(sql, {
+      envelope: {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "legacy",
+        issuedAt: "2026-08-21T00:00:00.000Z",
+        stepId: step.id,
+        workflowStepId: step.stepId,
+        runId,
+        storyId,
+        storyDbId,
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+      },
+      output: "STATUS: failed\nERROR: Task 3 terminal rollback fixture",
+      requestId,
+    });
+    assert.equal(requested.status, "requested");
+    const completions = fixtureRuntimeCompletion.createRuntimeCompletionRepository(sql);
+    await completions.claim({ requestId, ownerInstanceId: "task3-completion-owner" });
+    await sessions.requestDrain({
+      sessionId: session.sessionId,
+      ownerInstanceId: "task3-owner",
+      diagnostic: "Task 3 terminal fixture drain",
+    });
+    await sessions.markDrained({
+      sessionId: session.sessionId,
+      ownerInstanceId: "task3-owner",
+      evidence: {
+        schema: "setfarm.runtime-drain-evidence.v1",
+        observedAt: "2026-08-21T00:00:00.000Z",
+        localProcessAbsent: true,
+        openClawTaskAbsent: true,
+        workspaceProcessAbsent: true,
+        stableObservations: 2,
+        evidenceRefs: ["setfarm://tests/task3/runtime-drained"],
+      },
+    });
+    await completions.markProcessing({ requestId, ownerInstanceId: "task3-completion-owner" });
+    const owned = await completions.findById(requestId);
+    assert.ok(owned?.ownerInstanceId && owned.leaseExpiresAt);
+    await fixtureRuntimeCompletionOwner.runWithRuntimeCompletionOwner({
+      requestId,
+      ownerInstanceId: owned.ownerInstanceId,
+      leaseExpiresAt: owned.leaseExpiresAt,
+      ownerAttemptCount: owned.ownerAttemptCount,
+    }, () => sql.begin(async (transaction) => {
+      const closedClaims = await transaction.unsafe<Array<{ id: number }>>(
+        `UPDATE claim_log
+            SET outcome='failed',abandoned_at=NOW(),duration_ms=0,
+                diagnostic='Task 3 processing completion owns terminal failure'
+          WHERE id=$1 AND run_id=$2 AND outcome IS NULL
+          RETURNING id::integer AS id`,
+        [claimId, runId],
+      );
+      assert.equal(closedClaims.length, 1);
+      assert.equal(closedClaims[0]!.id, claimId);
+      await fixtureRuntimeCompletion.markRuntimeCompletionOwnerCommittedInTransaction(transaction, {
+        claimId,
+        claimOutcome: "failed",
+        plan: fixtureRuntimeCompletionPlan.createSingleEffectCompletionPlanDescriptorV1({
+          kind: "terminal_transition",
+          continuation: { type: "terminal_finalize" },
+          effectPayload: { runStatus: "failed" },
+        }),
+      });
+    }));
+    await sql`UPDATE runs SET status='failing' WHERE id=${runId}`;
+    const terminationRequestId = `RTR_${runId}`;
+    await sql`
+      INSERT INTO run_termination_requests (
+        request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
+        diagnostic,evidence,created_at,updated_at
+      ) VALUES (
+        ${terminationRequestId},${runId},'failed','drained','task3-test',NOW(),NOW(),
+        'Task 3 terminal rollback fixture','{}'::jsonb,NOW(),NOW()
+      )
+    `;
+    await sql`
+      INSERT INTO operational_outbox (
+        outbox_id,event_key,event_type,aggregate_type,aggregate_id,payload,state
+      ) VALUES (
+        ${`OUT_${runId}`},${`task3/${runId}/preexisting`},'task3.fixture','run',${runId},
+        ${{ schema: "setfarm.task3-populated-terminal-fixture.v1", runId }},'pending'
+      )
+    `;
+    return { runInput, terminationRequestId };
+  };
+
+  const statusDriftFixture = await seedPopulatedTask3TerminalRun(
+    "run-persistence-task3-status-drift",
+    1890,
+  );
+  await sql.unsafe(`CREATE FUNCTION ip_task3_cross_terminal_status_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.id='run-persistence-task3-status-drift' AND NEW.status='failed' THEN
+        NEW.status='cancelled';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task3_cross_terminal_status_v1
+    BEFORE UPDATE ON runs
+    FOR EACH ROW EXECUTE FUNCTION ip_task3_cross_terminal_status_v1()`);
+  try {
+    const beforeStatusDrift = await exactStoredInventory(statusDriftFixture.runInput.run.id);
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
+          runId: statusDriftFixture.runInput.run.id,
+          status: "failed",
+          diagnostic: "task3 terminal status drift",
+          drainedTerminationRequestId: statusDriftFixture.terminationRequestId,
+        });
+        throw new Error("TEST_ACCEPTED_CROSSED_TERMINAL_STATUS");
+      }),
+      /^Error: RUN_TERMINAL_RUN_CAS_LOST$/,
+    );
+    assert.deepEqual(
+      await exactStoredInventory(statusDriftFixture.runInput.run.id),
+      beforeStatusDrift,
+    );
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task3_cross_terminal_status_v1 ON runs");
+    await sql.unsafe("DROP FUNCTION ip_task3_cross_terminal_status_v1()");
+  }
+  await sql`UPDATE runs SET status='completed' WHERE id=${statusDriftFixture.runInput.run.id}`;
+
+  const runIdDriftFixture = await seedPopulatedTask3TerminalRun(
+    "run-persistence-task3-run-id-drift",
+    1891,
+  );
+  await sql.unsafe("CREATE SEQUENCE ip_task3_cross_run_id_fired_v1 START WITH 1");
+  await sql.unsafe(`CREATE FUNCTION ip_task3_cross_run_id_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.id='run-persistence-task3-run-id-drift' AND NEW.status='failed' THEN
+        PERFORM nextval('ip_task3_cross_run_id_fired_v1');
+        NEW.id='run-persistence-task3-run-id-crossed';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task3_cross_run_id_v1
+    BEFORE UPDATE ON runs
+    FOR EACH ROW EXECUTE FUNCTION ip_task3_cross_run_id_v1()`);
+  try {
+    assert.deepEqual(
+      [...await sql`SELECT last_value::text,is_called FROM ip_task3_cross_run_id_fired_v1`],
+      [{ last_value: "1", is_called: false }],
+    );
+    const beforeRunIdDrift = await exactStoredInventory(runIdDriftFixture.runInput.run.id);
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        const foreignKeyTriggers = await transaction.unsafe<Array<{
+          table_name: string;
+          trigger_name: string;
+        }>>(
+          `SELECT format('%I.%I',namespace.nspname,relation.relname) AS table_name,
+                  quote_ident(trigger.tgname) AS trigger_name
+             FROM pg_constraint constraint_row
+             JOIN pg_trigger trigger ON trigger.tgconstraint=constraint_row.oid
+             JOIN pg_class relation ON relation.oid=trigger.tgrelid
+             JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+            WHERE constraint_row.contype='f'
+              AND constraint_row.confrelid='runs'::regclass
+            ORDER BY table_name,trigger_name`,
+        );
+        assert.ok(foreignKeyTriggers.length > 0);
+        for (const trigger of foreignKeyTriggers) {
+          await transaction.unsafe(
+            `ALTER TABLE ${trigger.table_name} DISABLE TRIGGER ${trigger.trigger_name}`,
+          );
+        }
+        await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
+          runId: runIdDriftFixture.runInput.run.id,
+          status: "failed",
+          diagnostic: "task3 stored run id drift",
+          drainedTerminationRequestId: runIdDriftFixture.terminationRequestId,
+        });
+        throw new Error("TEST_ACCEPTED_CROSSED_STORED_RUN_ID");
+      }),
+      /^Error: RUN_TERMINAL_RUN_CAS_LOST$/,
+    );
+    assert.deepEqual(
+      [...await sql`SELECT last_value::text,is_called FROM ip_task3_cross_run_id_fired_v1`],
+      [{ last_value: "1", is_called: true }],
+    );
+    assert.deepEqual(
+      await exactStoredInventory(runIdDriftFixture.runInput.run.id),
+      beforeRunIdDrift,
+    );
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task3_cross_run_id_v1 ON runs");
+    await sql.unsafe("DROP FUNCTION ip_task3_cross_run_id_v1()");
+    await sql.unsafe("DROP SEQUENCE ip_task3_cross_run_id_fired_v1");
+  }
+  await sql`UPDATE runs SET status='completed' WHERE id=${runIdDriftFixture.runInput.run.id}`;
+
+  const tamperFixture = await seedPopulatedTask3TerminalRun(
+    "run-persistence-task3-tamper-matrix",
+    1892,
+  );
+  type Task3TransactionSql = Parameters<
+    typeof fixtureTerminal.transitionRunToTerminalInTransaction
+  >[0];
+  const noTask3FixtureCleanup = async () => {};
+  for (const scenario of [
+    {
+      label: "crossed run identity",
+      expected: /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+      install: async () => noTask3FixtureCleanup,
+      mutate: async (transaction: Task3TransactionSql) => {
+        await transaction.unsafe(
+          "ALTER TABLE internal_production_owner_reservations_v1 DISABLE TRIGGER USER",
+        );
+        const changed = await transaction.unsafe<Array<{ owner_key: string }>>(
+          `UPDATE internal_production_owner_reservations_v1
+              SET binding_payload=jsonb_set(
+                    binding_payload,'{canonicalOwnerIdentity,ownerKey}',
+                    to_jsonb('run-persistence-task3-crossed-run'::text)
+                  )
+            WHERE owner_key=$1
+          RETURNING binding_payload #>> '{canonicalOwnerIdentity,ownerKey}' AS owner_key`,
+          [tamperFixture.runInput.run.id],
+        );
+        assert.equal(changed.length, 1);
+        assert.equal(changed[0]!.owner_key, "run-persistence-task3-crossed-run");
+      },
+    },
+    {
+      label: "crossed reservation pair",
+      expected: /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+      install: async () => noTask3FixtureCleanup,
+      mutate: async (transaction: Task3TransactionSql) => {
+        await transaction.unsafe(
+          "ALTER TABLE internal_production_owner_reservations_v1 DISABLE TRIGGER USER",
+        );
+        const changed = await transaction.unsafe<Array<{ reservation_hash: string }>>(
+          `UPDATE internal_production_owner_reservations_v1
+              SET reservation_hash=repeat('8',64)
+            WHERE owner_key=$1
+          RETURNING reservation_hash`,
+          [tamperFixture.runInput.run.id],
+        );
+        assert.equal(changed.length, 1);
+        assert.equal(changed[0]!.reservation_hash, "8".repeat(64));
+      },
+    },
+    {
+      label: "missing binding authority",
+      expected: /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+      install: async () => noTask3FixtureCleanup,
+      mutate: async (transaction: Task3TransactionSql) => {
+        await transaction.unsafe(
+          "ALTER TABLE internal_production_owner_admission_authorities_v1 DISABLE TRIGGER USER",
+        );
+        const removed = await transaction.unsafe<Array<{ authority_ref: string }>>(
+          `DELETE FROM internal_production_owner_admission_authorities_v1 authority
+            USING internal_production_owner_reservations_v1 reservation
+           WHERE reservation.owner_key=$1
+             AND authority.authority_kind='binding'
+             AND authority.phase_key=reservation.reservation_ref
+          RETURNING authority.authority_ref`,
+          [tamperFixture.runInput.run.id],
+        );
+        assert.equal(removed.length, 1);
+      },
+    },
+    {
+      label: "crossed terminal hash",
+      expected: /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_CORRUPTION$/,
+      install: async () => {
+        await sql.unsafe(`CREATE FUNCTION ip_task3_cross_terminal_hash_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF OLD.owner_key='run-persistence-task3-tamper-matrix'
+               AND OLD.state='bound' AND NEW.state='closed' THEN
+              NEW.terminal_owner_hash=repeat('9',64);
+            END IF;
+            RETURN NEW;
+          END $$`);
+        await sql.unsafe(`CREATE TRIGGER ip_task3_cross_terminal_hash_v1
+          BEFORE UPDATE ON internal_production_owner_reservations_v1
+          FOR EACH ROW EXECUTE FUNCTION ip_task3_cross_terminal_hash_v1()`);
+        return async () => {
+          await sql.unsafe(
+            "DROP TRIGGER ip_task3_cross_terminal_hash_v1 ON internal_production_owner_reservations_v1",
+          );
+          await sql.unsafe("DROP FUNCTION ip_task3_cross_terminal_hash_v1()");
+        };
+      },
+      mutate: async (_transaction: Task3TransactionSql) => {},
+    },
+  ] as const) {
+    const cleanup = await scenario.install();
+    try {
+      const beforeTamper = await exactStoredInventory(tamperFixture.runInput.run.id);
+      await assert.rejects(
+        sql.begin(async (transaction) => {
+          await scenario.mutate(transaction);
+          await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
+            runId: tamperFixture.runInput.run.id,
+            status: "failed",
+            diagnostic: `task3 ${scenario.label}`,
+            drainedTerminationRequestId: tamperFixture.terminationRequestId,
+          });
+          throw new Error(`TEST_ACCEPTED_${scenario.label.toUpperCase().replaceAll(" ", "_")}`);
+        }),
+        scenario.expected,
+        scenario.label,
+      );
+      assert.deepEqual(
+        await exactStoredInventory(tamperFixture.runInput.run.id),
+        beforeTamper,
+        scenario.label,
+      );
+    } finally {
+      await cleanup();
+    }
+  }
+  await sql`UPDATE runs SET status='completed' WHERE id=${tamperFixture.runInput.run.id}`;
+
+  const closeRollbackFixture = await seedPopulatedTask3TerminalRun(
+    "run-persistence-task3-close-rollback",
+    1893,
+  );
+  const closeRollbackInput = closeRollbackFixture.runInput;
+  const beforeCloseRollback = await exactStoredInventory(closeRollbackInput.run.id);
+  await sql.unsafe(`CREATE FUNCTION ip_task3_reject_owner_close_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.owner_key='run-persistence-task3-close-rollback'
+         AND OLD.state='bound' AND NEW.state='closed' THEN
+        RAISE EXCEPTION 'TEST_TASK3_OWNER_CLOSE_REJECTED';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task3_reject_owner_close_v1
+    BEFORE UPDATE ON internal_production_owner_reservations_v1
+    FOR EACH ROW EXECUTE FUNCTION ip_task3_reject_owner_close_v1()`);
+  try {
+    await assert.rejects(
+      sql.begin((transaction) => fixtureTerminal.transitionRunToTerminalInTransaction(
+        transaction,
+        {
+          runId: closeRollbackInput.run.id,
+          status: "failed",
+          diagnostic: "task3 close must roll back terminal update",
+          drainedTerminationRequestId: closeRollbackFixture.terminationRequestId,
+        },
+      )),
+      /TEST_TASK3_OWNER_CLOSE_REJECTED/,
+    );
+    assert.deepEqual(await exactStoredInventory(closeRollbackInput.run.id), beforeCloseRollback);
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task3_reject_owner_close_v1 ON internal_production_owner_reservations_v1");
+    await sql.unsafe("DROP FUNCTION ip_task3_reject_owner_close_v1()");
+  }
+  await sql`UPDATE runs SET status='completed' WHERE id=${closeRollbackInput.run.id}`;
 
   const canaryStoreRoot = mkdtempSync(path.join(tmpdir(), "setfarm-task2-canary-store-"));
   t.after(() => rmSync(canaryStoreRoot, { recursive: true, force: true }));
@@ -1555,6 +2029,92 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   );
   assert.deepEqual(await exactStoredInventory(canaryInput.run.id), beforeCrossedCanary);
   await sql`UPDATE runs SET status='completed' WHERE id=${canaryInput.run.id}`;
+
+  const completedInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task3-completed", runNumber: 1820 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task3-completed-step-${index}` })),
+  };
+  await persistence.persistWorkflowRun(completedInput);
+  await sql`UPDATE steps SET status='completed' WHERE run_id=${completedInput.run.id}`;
+  await sql.begin((transaction) => fixtureTerminal.transitionRunToTerminalInTransaction(
+    transaction,
+    { runId: completedInput.run.id, status: "completed", diagnostic: "task3 completed close" },
+  ));
+  assert.deepEqual(
+    { ...(await sql<Array<{ run_status: string; owner_state: string }>>`
+      SELECT run.status AS run_status,reservation.state AS owner_state
+        FROM runs run JOIN internal_production_owner_reservations_v1 reservation
+          ON reservation.owner_key=run.id AND reservation.category='run'
+       WHERE run.id=${completedInput.run.id}
+    `)[0]! },
+    { run_status: "completed", owner_state: "closed" },
+  );
+
+  const cancelledInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task3-cancelled", runNumber: 1821 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task3-cancelled-step-${index}` })),
+  };
+  await persistence.persistWorkflowRun(cancelledInput);
+  const cancelledRequestId = "RTR_task3-cancelled";
+  await sql.begin(async (transaction) => {
+    await transaction`UPDATE runs SET status='cancelling' WHERE id=${cancelledInput.run.id}`;
+    await transaction.unsafe(
+      `INSERT INTO run_termination_requests (
+         request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
+         diagnostic,evidence,created_at,updated_at
+       ) VALUES ($1,$2,'cancelled','drained','task3-test',NOW(),NOW(),
+                 'task3 cancelled close','{}'::jsonb,NOW(),NOW())`,
+      [cancelledRequestId, cancelledInput.run.id],
+    );
+    await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
+      runId: cancelledInput.run.id,
+      status: "cancelled",
+      diagnostic: "task3 cancelled close",
+      drainedTerminationRequestId: cancelledRequestId,
+    });
+  });
+  assert.deepEqual(
+    { ...(await sql<Array<{ run_status: string; owner_state: string; request_state: string }>>`
+      SELECT run.status AS run_status,reservation.state AS owner_state,request.state AS request_state
+        FROM runs run JOIN internal_production_owner_reservations_v1 reservation
+          ON reservation.owner_key=run.id AND reservation.category='run'
+        JOIN run_termination_requests request ON request.run_id=run.id
+       WHERE run.id=${cancelledInput.run.id}
+    `)[0]! },
+    { run_status: "cancelled", owner_state: "closed", request_state: "terminalized" },
+  );
+
+  const tamperedTerminalInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task3-tampered-terminal", runNumber: 1822 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task3-tampered-terminal-step-${index}` })),
+  };
+  await persistence.persistWorkflowRun(tamperedTerminalInput);
+  const beforeTamperedTerminal = await exactStoredInventory(tamperedTerminalInput.run.id);
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      const changed = await transaction.unsafe<Array<{ reservation_ref: string }>>(
+        `UPDATE internal_production_owner_reservations_v1
+            SET binding_payload=jsonb_set(binding_payload,'{canonicalOwnerIdentity,ownerHash}',to_jsonb(repeat('7',64)))
+          WHERE owner_key=$1
+        RETURNING reservation_ref`,
+        [tamperedTerminalInput.run.id],
+      );
+      assert.equal(changed.length, 1);
+      await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
+        runId: tamperedTerminalInput.run.id,
+        status: "failed",
+        diagnostic: "task3 tampered terminal pair",
+        unclaimedBootstrapFailure: true,
+      });
+      throw new Error("TEST_ACCEPTED_TAMPERED_TERMINAL_PAIR");
+    }),
+    /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION$/,
+  );
+  assert.deepEqual(await exactStoredInventory(tamperedTerminalInput.run.id), beforeTamperedTerminal);
+  await sql`UPDATE runs SET status='completed' WHERE id=${tamperedTerminalInput.run.id}`;
 
   const publisherInput = (id: string, runNumber: number, mode: "legacy" | "shadow") => ({
     ...input,
@@ -1631,7 +2191,11 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
       assert.equal(loserSettled, false);
       releaseRound();
       const [winnerResult, loserResult] = await Promise.all([winner, loser]);
-      assert.equal(winnerResult.status, "fulfilled");
+      assert.equal(
+        winnerResult.status,
+        "fulfilled",
+        String("reason" in winnerResult ? winnerResult.reason : ""),
+      );
       assert.equal(loserResult.status, "rejected");
       assert.match(String("reason" in loserResult ? loserResult.reason : ""), /RUN_ACTIVATION_CONFLICT/);
       assert.deepEqual(await ownerInventory(winnerInput.run.id), {

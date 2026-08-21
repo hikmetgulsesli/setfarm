@@ -1,5 +1,10 @@
 import type postgres from "postgres";
 
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionOwnerReservationCloseInTransactionV1,
+  resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1,
+} from "../db-pg.js";
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   lockV3TerminalRecoveryChainInTransaction,
@@ -444,17 +449,43 @@ export async function transitionRunToTerminalInTransaction(
     meta.terminal_reason = input.diagnostic.slice(0, 1_000);
   }
   if (!alreadyTerminal) {
-    const updatedRun = await sql.unsafe<Array<{ id: string }>>(
+    const updatedRun = await sql.unsafe<Array<{ id: string; status: string }>>(
       `UPDATE runs
           SET status = $2,
               meta = $3,
               updated_at = $4
         WHERE id = $1
-        RETURNING id`,
+        RETURNING id,status`,
       [input.runId, input.status, JSON.stringify(meta), transitionTime],
     );
-    if (updatedRun.length !== 1) throw new Error("RUN_TERMINAL_RUN_CAS_LOST");
+    if (
+      updatedRun.length !== 1
+      || updatedRun[0]!.id !== input.runId
+      || updatedRun[0]!.status !== input.status
+    ) throw new Error("RUN_TERMINAL_RUN_CAS_LOST");
   }
+
+  const ownerAdmissionSql = sql as unknown as Parameters<
+    typeof resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1
+  >[0];
+  const terminalPair = await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+    ownerAdmissionSql,
+    { runId: input.runId },
+  );
+  const close = await closeInternalProductionOwnerReservationV1(ownerAdmissionSql, {
+    reservationRef: terminalPair.runOwnerReservationRef,
+    reservationHash: terminalPair.runOwnerReservationHash,
+    terminalAuthorityRef: terminalPair.terminalAuthorityRef,
+    terminalAuthorityHash: terminalPair.terminalAuthorityHash,
+  });
+  const reopenedClose = await resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerAdmissionSql, {
+    closeRef: close.closeRef,
+    closeHash: close.closeHash,
+  });
+  if (
+    reopenedClose.reservationRef !== terminalPair.runOwnerReservationRef
+    || reopenedClose.reservationHash !== terminalPair.runOwnerReservationHash
+  ) throw new Error("RUN_TERMINAL_OWNER_CLOSE_IDENTITY_INVALID");
 
   let committedRuntimeCompletions = 0;
   if (input.status !== "cancelled") {
