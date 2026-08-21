@@ -11,7 +11,17 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
-import { getSql, pgBegin, pgClose, pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
+import {
+  getSql,
+  pgBegin,
+  pgClose,
+  pgGet,
+  pgMigrate,
+  pgQuery,
+  pgRun,
+  recoverBoundInternalProductionWorkflowRunOwnerV1,
+  resolveBoundInternalProductionWorkflowRunOwnerV1,
+} from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir } from "./installer/paths.js";
 import {
@@ -8965,9 +8975,33 @@ function processRunTerminationRequests(requestId?: string): Promise<void> {
   return runRecoveryCoordinator.signal(`run-termination:${requestId ?? "poll"}`);
 }
 
-async function handleStepPending(payload: { agentId: string; runId: string; stepId: string }) {
+async function handleStepPending(payload: {
+  agentId: string;
+  runId: string;
+  stepId: string;
+  runOwnerReservationRef?: string;
+  runOwnerReservationHash?: string;
+}) {
   if (shuttingDown) return;
   let { agentId, runId, stepId } = payload;
+  const hasReservationRef = payload.runOwnerReservationRef !== undefined;
+  const hasReservationHash = payload.runOwnerReservationHash !== undefined;
+  if (hasReservationRef !== hasReservationHash) {
+    throw new Error("SPAWNER_RUN_OWNER_PAIR_INCOMPLETE");
+  }
+  const boundRunOwner = hasReservationRef
+    ? await resolveBoundInternalProductionWorkflowRunOwnerV1({
+        runOwnerReservationRef: payload.runOwnerReservationRef!,
+        runOwnerReservationHash: payload.runOwnerReservationHash!,
+      })
+    : await recoverBoundInternalProductionWorkflowRunOwnerV1({ runId });
+  if (
+    boundRunOwner.ownerKey !== runId
+    || boundRunOwner.producerImplementationId !== "a-runtime-run-v1"
+    || boundRunOwner.category !== "run"
+  ) {
+    throw new Error("SPAWNER_RUN_OWNER_IDENTITY_INVALID");
+  }
   if (!agentId && runId && stepId) {
     const step = await pgGet<{ agent_id: string }>(
       "SELECT agent_id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
@@ -9013,6 +9047,27 @@ async function handleStepPending(payload: { agentId: string; runId: string; step
     const agents = resolveAgentId(wfId, role, wf.agent_mapping ?? {});
     if (agents[0]) spawnAgent(agents[0], wfId, role);
   } catch (err) { console.error(`[spawner] step handler: ${String(err)}`); }
+}
+
+function logStepPendingRejection(error: unknown): void {
+  const diagnostic = String(error)
+    .replace(/setfarm:\/\/[^\s]+/g, "[redacted-ref]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[redacted-sha256]")
+    .slice(0, 300);
+  console.error(`[spawner] step_pending rejected: ${diagnostic}`);
+}
+
+async function listenForStepPending(listener: Readonly<{
+  listen(channel: string, handler: (message: string) => void): Promise<unknown>;
+}>): Promise<void> {
+  await listener.listen("step_pending", (message) => {
+    try {
+      const parsed = JSON.parse(message);
+      void handleStepPending(parsed).catch(logStepPendingRejection);
+    } catch (error) {
+      logStepPendingRejection(error);
+    }
+  });
 }
 
 async function handleStoryPending(payload: { role: string; runId: string; storyId: string }) {
@@ -9687,7 +9742,8 @@ async function pollForPendingWork() {
        LIMIT 5`
     );
     for (const s of steps) {
-      await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
+      await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id })
+        .catch(logStepPendingRejection);
     }
     const stories = await pgQuery<{ run_id: string; story_id: string }>(
       `SELECT s.run_id, s.story_id
@@ -9868,9 +9924,7 @@ async function main() {
   process.on("SIGTERM", () => { void shutdown(); });
   process.on("SIGINT", () => { void shutdown(); });
 
-  await listener.listen("step_pending", (msg) => {
-    try { handleStepPending(JSON.parse(msg)); } catch {}
-  });
+  await listenForStepPending(listener);
   await listener.listen("story_pending", (msg) => {
     try { handleStoryPending(JSON.parse(msg)); } catch {}
   });
