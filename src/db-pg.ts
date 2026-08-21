@@ -626,6 +626,8 @@ type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[numb
 const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
   "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
 const RUN_PERSISTENCE_READINESS_MODULE_HREF_V1 = new URL("./internal-production/baseline-spawner-startup-admission-v1.js", import.meta.url).href;
+const WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1 =
+  "setfarm.workflow_run_owner_begin_provenance_v1";
 const RUN_PERSISTENCE_MIGRATION_31_FENCE_V1 = Object.freeze({
   version: 31 as const,
   name: "031_operational_failure_cause_authority_v3" as const,
@@ -1416,6 +1418,17 @@ async function beginOrAdoptOwnerReservationInTransactionV1(
     if (adopted.producerImplementationId !== producer.implementationId || adopted.ownerKey !== input.ownerKey) {
       throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CONFLICT");
     }
+    await sql`SELECT set_config(
+      ${WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1},
+      ${canonicalJsonStringify({
+        schema: "setfarm.internal-production-workflow-run-owner-begin-provenance.v1",
+        ownerKey: input.ownerKey,
+        reservationRef: adopted.reservationRef,
+        reservationHash: adopted.reservationHash,
+        createdHere: false,
+      })},
+      TRUE
+    )`;
     return adopted;
   }
   const successor = ownerAdmissionSuccessorV1({
@@ -1430,6 +1443,17 @@ async function beginOrAdoptOwnerReservationInTransactionV1(
   await sql`INSERT INTO internal_production_owner_admission_authorities_v1 (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body) VALUES (${candidate.reservationRef},${candidate.reservationHash},'reservation',${candidate.reservationRef},${head.hash},${successor.hash},${sql.json(candidate)})`;
   const updated = await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${successor.version},head_hash=${successor.hash},head_payload=${sql.json(successor.payload as postgres.JSONValue)},updated_at=NOW() WHERE singleton=TRUE AND head_version=${head.version} AND head_hash=${head.hash} RETURNING head_version`;
   if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CONFLICT");
+  await sql`SELECT set_config(
+    ${WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1},
+    ${canonicalJsonStringify({
+      schema: "setfarm.internal-production-workflow-run-owner-begin-provenance.v1",
+      ownerKey: input.ownerKey,
+      reservationRef: candidate.reservationRef,
+      reservationHash: candidate.reservationHash,
+      createdHere: true,
+    })},
+    TRUE
+  )`;
   return candidate;
 }
 

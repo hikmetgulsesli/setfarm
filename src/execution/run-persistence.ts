@@ -233,6 +233,69 @@ function persistedWorkflowRunResultV1(
   });
 }
 
+type WorkflowRunOwnerBeginProvenanceV1 = Readonly<{
+  reservation: Awaited<ReturnType<typeof beginOrAdoptInternalProductionOwnerReservationV1>>;
+  state: string;
+  createdHere: boolean;
+}>;
+
+const WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1 =
+  "setfarm.workflow_run_owner_begin_provenance_v1";
+
+async function beginWorkflowRunOwnerForPersistenceV1(
+  sql: PgTransactionSql,
+  runId: string,
+): Promise<WorkflowRunOwnerBeginProvenanceV1> {
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
+    producerImplementationId: "a-runtime-run-v1",
+    ownerKey: runId,
+  });
+  const rows = await sql.unsafe<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    state: string;
+    provenance: string | null;
+  }>>(
+    `SELECT reservation_ref,reservation_hash,state,
+            current_setting($2,TRUE) AS provenance
+       FROM internal_production_owner_reservations_v1
+      WHERE producer_implementation_id='a-runtime-run-v1'
+        AND category='run'
+        AND owner_key=$1
+      FOR UPDATE`,
+    [runId, WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1],
+  );
+  const row = rows[0];
+  let provenance: unknown;
+  try {
+    provenance = row?.provenance === null || row?.provenance === undefined
+      ? null
+      : JSON.parse(row.provenance);
+  } catch {
+    throw new Error("RUN_PERSISTENCE_OWNER_PROVENANCE_INVALID");
+  }
+  const provenanceRecord = provenance as Record<string, unknown> | null;
+  if (
+    rows.length !== 1
+    || !row
+    || row.reservation_ref !== reservation.reservationRef
+    || row.reservation_hash !== reservation.reservationHash
+    || provenanceRecord === null
+    || Object.getPrototypeOf(provenanceRecord) !== Object.prototype
+    || Reflect.ownKeys(provenanceRecord).length !== 5
+    || provenanceRecord.schema !== "setfarm.internal-production-workflow-run-owner-begin-provenance.v1"
+    || provenanceRecord.ownerKey !== runId
+    || provenanceRecord.reservationRef !== reservation.reservationRef
+    || provenanceRecord.reservationHash !== reservation.reservationHash
+    || typeof provenanceRecord.createdHere !== "boolean"
+  ) throw new Error("RUN_PERSISTENCE_OWNER_PROVENANCE_INVALID");
+  return Object.freeze({
+    reservation,
+    state: row.state,
+    createdHere: provenanceRecord.createdHere,
+  });
+}
+
 export async function persistWorkflowRunInTransaction(
   sql: PgTransactionSql,
   input: PersistWorkflowRunInputV1,
@@ -242,10 +305,8 @@ export async function persistWorkflowRunInTransaction(
     throw new Error("RUN_PERSISTENCE_CALLER_TIME_INVALID");
   }
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
-  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
-    producerImplementationId: "a-runtime-run-v1",
-    ownerKey: run.id,
-  });
+  const ownerBegin = await beginWorkflowRunOwnerForPersistenceV1(sql, run.id);
+  const { reservation } = ownerBegin;
   const existingRows = await sql.unsafe<PersistedWorkflowRunRowV1[]>(
     `SELECT id,run_number,workflow_id,task,status,context,notify_url,protocol,
             protocol_version,compiler_release_sha,activation_preflight_hash,
@@ -257,6 +318,10 @@ export async function persistWorkflowRunInTransaction(
   );
   if (existingRows.length > 1) throw new Error("RUN_PERSISTENCE_STORED_RUN_INVALID");
   const existing = existingRows[0] ?? null;
+  if (
+    existing === null
+    && (!ownerBegin.createdHere || ownerBegin.state !== "pending")
+  ) throw new Error("RUN_PERSISTENCE_PREEXISTING_OWNER_INVALID");
   const activity = await sql.unsafe<Array<{
     active_runs: number;
     active_compiler_runs: number;

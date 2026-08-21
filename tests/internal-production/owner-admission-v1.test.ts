@@ -1005,6 +1005,7 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   assert.ok(activatedOwnerAdmissionFixture, "the activated fixture must remain available");
   const { root, sql, backendWorker } = activatedOwnerAdmissionFixture;
   t.after(async () => { await backendWorker.terminate(); });
+  const fixtureDb = await import(pathToFileURL(path.join(root, "src/db-pg.js")).href);
   const persistence = await import(`${pathToFileURL(path.join(root, "src/execution/run-persistence.ts")).href}?task2=${Date.now()}`);
   const input = {
     run: {
@@ -1513,6 +1514,134 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   assert.deepEqual(await ownerInventory(duplicateStepInput.run.id), emptyOwnerInventory);
 
   const fixtureTerminal = await import(`${pathToFileURL(path.join(root, "src/execution/run-terminal-transition.ts")).href}?task3=${Date.now()}`);
+  const topologyInput = (state: "pending" | "bound" | "closed", runNumber: number) => {
+    const runId = `run-persistence-task2-preexisting-${state}`;
+    return {
+      ...input,
+      run: { ...input.run, id: runId, runNumber },
+      steps: input.steps.map((step, index) => ({ ...step, id: `${runId}-step-${index}` })),
+    };
+  };
+  for (const [state, runNumber] of [
+    ["pending", 1810],
+    ["bound", 1811],
+    ["closed", 1812],
+  ] as const) {
+    const topology = topologyInput(state, runNumber);
+    if (state === "closed") {
+      await persistence.persistWorkflowRun(topology);
+      await sql.begin((transaction) => fixtureTerminal.transitionRunToTerminalInTransaction(
+        transaction,
+        {
+          runId: topology.run.id,
+          status: "failed",
+          diagnostic: "task2 pre-existing closed sidecar fixture",
+          unclaimedBootstrapFailure: true,
+        },
+      ));
+      const deleted = await sql<Array<{ id: string }>>`
+        DELETE FROM runs WHERE id=${topology.run.id} RETURNING id
+      `;
+      assert.deepEqual(deleted.map((row) => row.id), [topology.run.id]);
+    } else {
+      await sql.begin(async (transaction) => {
+        const reservation = await fixtureDb.beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: topology.run.id },
+        );
+        if (state === "bound") {
+          await fixtureDb.bindInternalProductionOwnerReservationV1(transaction, {
+            reservationRef: reservation.reservationRef,
+            reservationHash: reservation.reservationHash,
+            canonicalOwnerIdentity: fixtureDb.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(
+              topology.run.id,
+            ),
+          });
+        }
+      });
+    }
+    assert.deepEqual(
+      [...await sql<Array<{ runs: string; steps: string; reservations: string; state: string }>>`
+        SELECT
+          (SELECT COUNT(*)::text FROM runs WHERE id=${topology.run.id}) AS runs,
+          (SELECT COUNT(*)::text FROM steps WHERE run_id=${topology.run.id}) AS steps,
+          COUNT(*)::text AS reservations,
+          MIN(state) AS state
+        FROM internal_production_owner_reservations_v1
+        WHERE owner_key=${topology.run.id}
+      `],
+      [{ runs: "0", steps: "0", reservations: "1", state }],
+    );
+    const beforeTopologyAttempt = await exactStoredInventory(topology.run.id);
+    const insertProbe = `ip_task2_preexisting_${state}_insert_probe_v1`;
+    await sql.unsafe(`CREATE SEQUENCE ${insertProbe} START WITH 1`);
+    await sql.unsafe(`CREATE FUNCTION ${insertProbe}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id='${topology.run.id}' THEN PERFORM nextval('${insertProbe}'); END IF;
+        RETURN NEW;
+      END $$`);
+    await sql.unsafe(`CREATE TRIGGER ${insertProbe}
+      BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUNCTION ${insertProbe}()`);
+    try {
+      await assert.rejects(
+        sql.begin(async (transaction) => {
+          await persistence.persistWorkflowRunInTransaction(transaction, topology);
+          throw new Error(`TEST_ACCEPTED_PREEXISTING_${state.toUpperCase()}_OWNER`);
+        }),
+        /^Error: RUN_PERSISTENCE_PREEXISTING_OWNER_INVALID$/,
+      );
+      assert.deepEqual(
+        [...await sql`SELECT last_value::text,is_called FROM ${sql(insertProbe)}`],
+        [{ last_value: "1", is_called: false }],
+        `${state} topology must reject before the run INSERT`,
+      );
+    } finally {
+      await sql.unsafe(`DROP TRIGGER ${insertProbe} ON runs`);
+      await sql.unsafe(`DROP FUNCTION ${insertProbe}()`);
+      await sql.unsafe(`DROP SEQUENCE ${insertProbe}`);
+    }
+    assert.deepEqual(await exactStoredInventory(topology.run.id), beforeTopologyAttempt);
+  }
+  const sameTransactionTopology = topologyInput("pending", 1813);
+  sameTransactionTopology.run.id = "run-persistence-task2-precreated-same-transaction";
+  sameTransactionTopology.steps = sameTransactionTopology.steps.map((step, index) => ({
+    ...step,
+    id: `${sameTransactionTopology.run.id}-step-${index}`,
+  }));
+  const sameTransactionProbe = "ip_task2_same_transaction_insert_probe_v1";
+  await sql.unsafe(`CREATE SEQUENCE ${sameTransactionProbe} START WITH 1`);
+  await sql.unsafe(`CREATE FUNCTION ${sameTransactionProbe}() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.id='${sameTransactionTopology.run.id}' THEN PERFORM nextval('${sameTransactionProbe}'); END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ${sameTransactionProbe}
+    BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUNCTION ${sameTransactionProbe}()`);
+  try {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await fixtureDb.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+          producerImplementationId: "a-runtime-run-v1",
+          ownerKey: sameTransactionTopology.run.id,
+        });
+        await persistence.persistWorkflowRunInTransaction(transaction, sameTransactionTopology);
+        throw new Error("TEST_ACCEPTED_SAME_TRANSACTION_PREEXISTING_OWNER");
+      }),
+      /^Error: RUN_PERSISTENCE_PREEXISTING_OWNER_INVALID$/,
+    );
+    assert.deepEqual(
+      [...await sql`SELECT last_value::text,is_called FROM ${sql(sameTransactionProbe)}`],
+      [{ last_value: "1", is_called: false }],
+    );
+  } finally {
+    await sql.unsafe(`DROP TRIGGER ${sameTransactionProbe} ON runs`);
+    await sql.unsafe(`DROP FUNCTION ${sameTransactionProbe}()`);
+    await sql.unsafe(`DROP SEQUENCE ${sameTransactionProbe}`);
+  }
+  assert.deepEqual(
+    await ownerInventory(sameTransactionTopology.run.id),
+    emptyOwnerInventory,
+  );
   const ownerHeadBeforeTerminal = (await sql<Array<{ head_version: string }>>`
     SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
   `)[0]!.head_version;
