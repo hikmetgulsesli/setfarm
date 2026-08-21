@@ -22,9 +22,17 @@ import type {
 } from "./internal-production/owner-admission-v1.js";
 import {
   createInternalProductionBoundOwnerReservationV1,
+  createInternalProductionClaimCanonicalOwnerIdentityV1,
+  createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
+  createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1,
+  createInternalProductionFindingCanonicalOwnerIdentityV1,
+  createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+  createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1,
   createInternalProductionOwnerReservationCloseV1,
   createInternalProductionOwnerReservationV1,
+  createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1,
   createInternalProductionTerminalOwnerAuthorityV1,
+  createInternalProductionTerminationCanonicalOwnerIdentityV1,
   deriveInternalProductionTerminalOwnerAuthorityPairV1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
@@ -57,10 +65,15 @@ import {
   type InternalProductionOwnerProducerSourceBuildAuthorityV1,
   type InternalProductionOwnerReservationCloseV1,
   type InternalProductionOwnerReservationV1,
+  type InternalProductionResolvedOwnerTerminalCloseInputV1,
   type InternalProductionTerminalOwnerAuthorityPairV1,
   type InternalProductionTerminalOwnerAuthorityV1,
 } from "./internal-production/owner-admission-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./product-compiler/canonical-json.js";
+import {
+  RuntimeCompletionEffectInputV1Schema,
+  RuntimeCompletionPlanV1Schema,
+} from "./execution/schemas/runtime-completion-plan-v1.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -199,6 +212,10 @@ function exactObjectKeys(value: unknown, keys: readonly string[], code: string):
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError(code);
   }
 }
+
+const P3_RESOLVED_CLOSE_INPUT_KEYS_V1 = Object.freeze([
+  "reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash",
+] as const);
 
 const OWNER_PRODUCER_REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OWNER_PRODUCER_CURRENT_SOURCE_DRIFT = Symbol("owner-producer-current-source-drift");
@@ -1088,11 +1105,13 @@ async function resolveOwnerCloseInTransactionV1(
   }
   const resolver = OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1[reservation.category];
   if (!resolver) throw new Error("TERMINAL_AUTHORITY_UNAVAILABLE");
+  const p3InputProjector = P3_TERMINAL_EXACT_INPUT_PROJECTORS_V1[reservation.category];
+  const exactInput = p3InputProjector?.(bound.canonicalOwnerIdentity);
   const terminal = validateInternalProductionTerminalOwnerAuthorityV1(
     await resolver.resolveByTerminalOwnerPair(sql, {
       terminalOwnerRef: close.terminalOwnerRef,
       terminalOwnerHash: close.terminalOwnerHash,
-    }),
+    }, exactInput),
   );
   if (
     terminal.category !== bound.category
@@ -1137,7 +1156,7 @@ async function resolveActiveOwnerProducerV1(
       ? "RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID"
       : "INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
   }
-  if (implementationId === "a-runtime-run-v1") await requireWorkflowRunAdmissionReadyV1(currentResolution);
+  if (producer.plan === "A") await requireWorkflowRunAdmissionReadyV1(currentResolution);
   return producer;
 }
 
@@ -1404,7 +1423,7 @@ async function beginOrAdoptOwnerReservationInTransactionV1(
   input: Readonly<{ producerImplementationId: string; ownerKey: string }>,
 ): Promise<InternalProductionOwnerReservationV1> {
   exactObjectKeys(input, ["producerImplementationId", "ownerKey"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_BEGIN_INPUT_INVALID");
-  if (typeof input.ownerKey !== "string" || input.ownerKey.length === 0 || input.ownerKey.length > 4_000 || /[\u0000-\u001f\u007f]/.test(input.ownerKey)) {
+  if (typeof input.ownerKey !== "string" || input.ownerKey.length === 0 || input.ownerKey.length > 8_462 || /[\u0000-\u001f\u007f]/.test(input.ownerKey)) {
     throw new TypeError("INTERNAL_PRODUCTION_OWNER_KEY_INVALID");
   }
   const head = await lockOwnerAdmissionHeadV1(sql);
@@ -1675,10 +1694,12 @@ type OwnerTerminalResolverV1 = Readonly<{
   resolveByAuthorityPair: (
     sql: InternalProductionPgTransactionSql,
     pair: InternalProductionTerminalOwnerAuthorityPairV1,
+    exactInput?: unknown,
   ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
   resolveByTerminalOwnerPair: (
     sql: InternalProductionPgTransactionSql,
     pair: Readonly<{ terminalOwnerRef: string; terminalOwnerHash: string }>,
+    exactInput?: unknown,
   ) => Promise<InternalProductionTerminalOwnerAuthorityV1>;
 }>;
 
@@ -1902,6 +1923,631 @@ async function resolveWorkflowRunTerminalAuthorityByAuthorityPairV1(
   return authority;
 }
 
+const CLAIM_TERMINAL_STATUSES_V1 = Object.freeze([
+  "completed", "infra_retry", "failed", "skipped", "abandoned", "cancelled",
+] as const);
+const EXECUTION_ATTEMPT_TERMINAL_STATUSES_V1 = Object.freeze([
+  "produced_delta", "already_satisfied", "no_progress", "inconclusive", "failed", "verified",
+] as const);
+const RUNTIME_SESSION_TERMINAL_STATUSES_V1 = Object.freeze([
+  "released", "quarantined",
+] as const);
+const COMPLETION_OWNER_TERMINAL_STATUSES_V1 = Object.freeze([
+  "accepted", "rejected", "quarantined",
+] as const);
+const MANDATORY_EFFECT_TERMINAL_STATUSES_V1 = Object.freeze([
+  "applied", "reconciled",
+] as const);
+const OPERATIONAL_DELIVERY_TERMINAL_STATUSES_V1 = Object.freeze([
+  "delivered", "skipped", "quarantined",
+] as const);
+
+const CLAIM_OWNER_IMPLEMENTATION_IDS_V1 = Object.freeze([
+  "a-claim-single-runtime-v1",
+  "a-claim-loop-runtime-v1",
+  "a-claim-v3-downstream-evidence-v1",
+  "a-claim-v3-evidence-only-v1",
+] as const);
+const FINDING_OWNER_IMPLEMENTATION_IDS_V1 = Object.freeze([
+  "a-finding-recovery-repository-v1",
+  "a-finding-v3-downstream-evidence-v1",
+  "a-finding-v3-evidence-only-v1",
+] as const);
+
+type P3TerminalProjectionV1<
+  Category extends InternalProductionOwnerCategoryV1,
+> = Readonly<{
+  identity: InternalProductionCanonicalOwnerIdentityV1<Category>;
+  status: string;
+  terminalOwnerHash: string;
+}>;
+
+type P3TerminalResolverConfigV1<
+  Category extends InternalProductionOwnerCategoryV1,
+> = Readonly<{
+  category: Category;
+  implementationIds: readonly string[];
+  exactInputFromIdentity: (
+    identity: InternalProductionCanonicalOwnerIdentityV1<Category>,
+  ) => Readonly<Record<string, unknown>>;
+  lockProjection: (
+    sql: InternalProductionPgTransactionSql,
+    input: unknown,
+  ) => Promise<P3TerminalProjectionV1<Category>>;
+}>;
+
+type P3IssuedTerminalCloseInputV1 = Readonly<{
+  sql: InternalProductionPgTransactionSql;
+  category: InternalProductionOwnerCategoryV1;
+  exactInput: Readonly<Record<string, unknown>>;
+  reservationRef: string;
+  reservationHash: string;
+  terminalAuthorityRef: string;
+  terminalAuthorityHash: string;
+}>;
+
+const P3_ISSUED_TERMINAL_CLOSE_INPUTS_V1 = new WeakMap<
+object,
+P3IssuedTerminalCloseInputV1
+>();
+
+function exactP3InputFromIdentityV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  identity: InternalProductionCanonicalOwnerIdentityV1<Category>,
+  input: Record<string, unknown>,
+  builder: (input: never) => InternalProductionCanonicalOwnerIdentityV1<Category>,
+  code: string,
+): Readonly<Record<string, unknown>> {
+  let expected: InternalProductionCanonicalOwnerIdentityV1<Category>;
+  try {
+    expected = builder(input as never);
+  } catch {
+    throw new Error(code);
+  }
+  if (!sameJsonValueV1(identity, expected)) throw new Error(code);
+  return Object.freeze({ ...input });
+}
+
+function p3CompositeOwnerKeyV1(
+  ownerKey: string,
+  keys: readonly string[],
+  schema: string,
+  code: string,
+): Record<string, unknown> {
+  let body: Record<string, unknown>;
+  try {
+    body = strictCanonicalText(ownerKey, code);
+    exactObjectKeys(body, keys, code);
+  } catch {
+    throw new Error(code);
+  }
+  if (body.schema !== schema) throw new Error(code);
+  return body;
+}
+
+function validateP3IssuedTerminalCloseInputV1(
+  sql: InternalProductionPgTransactionSql,
+  input: unknown,
+): P3IssuedTerminalCloseInputV1 {
+  const code = "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID";
+  if (
+    input === null
+    || typeof input !== "object"
+    || Array.isArray(input)
+    || Object.getPrototypeOf(input) !== Object.prototype
+    || !Object.isFrozen(input)
+  ) throw new TypeError(code);
+  const ownKeys = Reflect.ownKeys(input);
+  if (
+    ownKeys.length !== P3_RESOLVED_CLOSE_INPUT_KEYS_V1.length
+    || ownKeys.some((key, index) => key !== P3_RESOLVED_CLOSE_INPUT_KEYS_V1[index])
+  ) throw new TypeError(code);
+  const values: Record<string, unknown> = {};
+  for (const key of P3_RESOLVED_CLOSE_INPUT_KEYS_V1) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, key);
+    if (
+      !descriptor
+      || !("value" in descriptor)
+      || !descriptor.enumerable
+      || descriptor.configurable
+      || descriptor.writable
+      || typeof descriptor.value !== "string"
+    ) throw new TypeError(code);
+    values[key] = descriptor.value;
+  }
+  const issued = P3_ISSUED_TERMINAL_CLOSE_INPUTS_V1.get(input);
+  if (
+    !issued
+    || issued.sql !== sql
+    || issued.reservationRef !== values.reservationRef
+    || issued.reservationHash !== values.reservationHash
+    || issued.terminalAuthorityRef !== values.terminalAuthorityRef
+    || issued.terminalAuthorityHash !== values.terminalAuthorityHash
+  ) throw new TypeError(code);
+  return issued;
+}
+
+async function resolveUniqueP3OwnerSidecarV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  config: P3TerminalResolverConfigV1<Category>,
+  identity: InternalProductionCanonicalOwnerIdentityV1<Category>,
+): Promise<Readonly<{
+  row: OwnerReservationRowV1;
+  bound: InternalProductionBoundOwnerReservationV1<Category>;
+}>> {
+  const rows = await sql<OwnerReservationRowV1[]>`
+    SELECT *
+      FROM internal_production_owner_reservations_v1
+     WHERE category=${config.category}
+       AND owner_key=${identity.ownerKey}
+       AND producer_implementation_id=ANY(${config.implementationIds})
+       AND state IN ('bound','closed')
+     FOR UPDATE
+  `;
+  if (rows.length !== 1) throw new Error(`INTERNAL_PRODUCTION_${config.category.toUpperCase().replaceAll("-", "_")}_OWNER_UNAVAILABLE`);
+  const row = rows[0]!;
+  try {
+    const reservation = await resolveOwnerReservationInTransactionV1(sql, {
+      reservationRef: row.reservation_ref,
+      reservationHash: row.reservation_hash,
+    }, true);
+    const bound = await validateBoundOwnerReservationRowV1<Category>(sql, row, reservation);
+    if (
+      !config.implementationIds.includes(reservation.producerImplementationId)
+      || reservation.category !== config.category
+      || bound.category !== config.category
+      || bound.ownerKey !== identity.ownerKey
+      || !sameJsonValueV1(bound.canonicalOwnerIdentity, identity)
+    ) throw new Error();
+    return Object.freeze({ row, bound });
+  } catch {
+    throw new Error(`INTERNAL_PRODUCTION_${config.category.toUpperCase().replaceAll("-", "_")}_OWNER_CORRUPTION`);
+  }
+}
+
+async function resolveExactP3TerminalAuthorityV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  config: P3TerminalResolverConfigV1<Category>,
+  input: unknown,
+): Promise<Readonly<{
+  sidecar: Readonly<{
+    row: OwnerReservationRowV1;
+    bound: InternalProductionBoundOwnerReservationV1<Category>;
+  }>;
+  authority: InternalProductionTerminalOwnerAuthorityV1<Category>;
+}>> {
+  const projection = await config.lockProjection(sql, input);
+  const sidecar = await resolveUniqueP3OwnerSidecarV1(sql, config, projection.identity);
+  const authority = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: sidecar.bound.canonicalOwnerIdentity,
+    terminalOwnerRef: `${projection.identity.ownerRef}/terminal/${projection.status}`,
+    terminalOwnerHash: projection.terminalOwnerHash,
+  });
+  if (
+    sidecar.row.state === "closed"
+    && (
+      sidecar.row.terminal_owner_ref !== authority.terminalOwnerRef
+      || sidecar.row.terminal_owner_hash !== authority.terminalOwnerHash
+    )
+  ) throw new Error(`INTERNAL_PRODUCTION_${config.category.toUpperCase().replaceAll("-", "_")}_OWNER_CORRUPTION`);
+  return Object.freeze({ sidecar, authority });
+}
+
+function createPrivateP3TerminalResolverV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(config: P3TerminalResolverConfigV1<Category>): OwnerTerminalResolverV1 {
+  return Object.freeze({
+    resolveByAuthorityPair: async (sql, input, exactInput) => {
+      const pair = validateOwnerAdmissionPairV1(
+        input,
+        "terminalAuthorityRef",
+        "terminalAuthorityHash",
+        "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID",
+      ) as InternalProductionTerminalOwnerAuthorityPairV1;
+      if (exactInput === undefined) {
+        throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+      }
+      const resolved = await resolveExactP3TerminalAuthorityV1(sql, config, exactInput);
+      const exactPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(
+        resolved.authority,
+      );
+      if (
+        exactPair.terminalAuthorityRef !== pair.terminalAuthorityRef
+        || exactPair.terminalAuthorityHash !== pair.terminalAuthorityHash
+      ) throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+      return resolved.authority;
+    },
+    resolveByTerminalOwnerPair: async (sql, input, exactInput) => {
+      const pair = validateOwnerAdmissionPairV1(
+        input,
+        "terminalOwnerRef",
+        "terminalOwnerHash",
+        "INTERNAL_PRODUCTION_TERMINAL_OWNER_PAIR_INVALID",
+      );
+      if (exactInput === undefined) {
+        throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+      }
+      const resolved = await resolveExactP3TerminalAuthorityV1(sql, config, exactInput);
+      if (
+        resolved.authority.terminalOwnerRef !== pair.terminalOwnerRef
+        || resolved.authority.terminalOwnerHash !== pair.terminalOwnerHash
+      ) throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+      return resolved.authority;
+    },
+  });
+}
+
+const CLAIM_TERMINAL_RESOLVER_CONFIG_V1: P3TerminalResolverConfigV1<"claim"> = Object.freeze({
+  category: "claim",
+  implementationIds: CLAIM_OWNER_IMPLEMENTATION_IDS_V1,
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { claimIdText: identity.ownerKey },
+    createInternalProductionClaimCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_CLAIM_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionClaimCanonicalOwnerIdentityV1(input as never);
+    const rows = await sql<Array<{ claim_id_text: string; outcome: string | null }>>`
+      SELECT id::text AS claim_id_text,outcome FROM claim_log
+       WHERE id=${identity.ownerKey}::bigint FOR UPDATE
+    `;
+    const row = rows[0];
+    if (
+      rows.length !== 1
+      || !row
+      || row.claim_id_text !== identity.ownerKey
+      || !CLAIM_TERMINAL_STATUSES_V1.includes(row.outcome as never)
+    ) throw new Error("INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE");
+    const status = row.outcome as typeof CLAIM_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({
+      identity,
+      status,
+      terminalOwnerHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-claim-terminal-owner.v1",
+        claimId: identity.ownerKey,
+        status,
+      }),
+    });
+  },
+});
+
+const EXECUTION_ATTEMPT_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"execution-attempt"> = Object.freeze({
+  category: "execution-attempt",
+  implementationIds: Object.freeze(["a-execution-attempt-v1"]),
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { attemptId: identity.ownerKey },
+    createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1(input as never);
+    const rows = await sql<Array<{ attempt_id: string; disposition: string }>>`
+      SELECT attempt_id,disposition FROM execution_attempts
+       WHERE attempt_id=${identity.ownerKey} FOR UPDATE
+    `;
+    const row = rows[0];
+    if (
+      rows.length !== 1
+      || !row
+      || !EXECUTION_ATTEMPT_TERMINAL_STATUSES_V1.includes(row.disposition as never)
+    ) throw new Error("INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_OWNER_UNAVAILABLE");
+    const status = row.disposition as typeof EXECUTION_ATTEMPT_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-execution-attempt-terminal-owner.v1",
+      attemptId: row.attempt_id,
+      status,
+    }) });
+  },
+});
+
+const RUNTIME_SESSION_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"runtime-session"> = Object.freeze({
+  category: "runtime-session",
+  implementationIds: Object.freeze(["a-runtime-session-v1"]),
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { sessionId: identity.ownerKey },
+    createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_RUNTIME_SESSION_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(input as never);
+    const rows = await sql<Array<{ session_id: string; state: string }>>`
+      SELECT session_id,state FROM runtime_sessions
+       WHERE session_id=${identity.ownerKey} FOR UPDATE
+    `;
+    const row = rows[0];
+    if (rows.length !== 1 || !row || !RUNTIME_SESSION_TERMINAL_STATUSES_V1.includes(row.state as never)) {
+      throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_OWNER_UNAVAILABLE");
+    }
+    const status = row.state as typeof RUNTIME_SESSION_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-runtime-session-terminal-owner.v1",
+      sessionId: row.session_id,
+      status,
+    }) });
+  },
+});
+
+const COMPLETION_OWNER_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"completion-owner"> = Object.freeze({
+  category: "completion-owner",
+  implementationIds: Object.freeze(["a-completion-owner-v1"]),
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { requestId: identity.ownerKey },
+    createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_COMPLETION_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(input as never);
+    const rows = await sql<Array<{
+      request_id: string;
+      state: string;
+      claim_id_text: string;
+      run_id: string;
+      step_db_id: string;
+      workflow_step_id: string;
+      output_hash: string;
+      completion_plan: unknown;
+      completion_plan_hash: string | null;
+      prepared_at: Date | string | null;
+    }>>`
+      SELECT request_id,state,claim_id::text AS claim_id_text,run_id,step_db_id,
+             workflow_step_id,output_hash,completion_plan,completion_plan_hash,prepared_at
+        FROM runtime_completion_requests
+       WHERE request_id=${identity.ownerKey} FOR UPDATE
+    `;
+    const effects = await sql<Array<{
+      effect_key: string;
+      ordinal: number;
+      effect_type: string;
+      input_hash: string;
+      payload: unknown;
+      mandatory: boolean;
+    }>>`
+      SELECT effect_key,ordinal,effect_type,input_hash,payload,mandatory
+        FROM runtime_completion_effects
+       WHERE request_id=${identity.ownerKey} ORDER BY ordinal,effect_key FOR UPDATE`;
+    const row = rows[0];
+    if (rows.length !== 1 || !row || !COMPLETION_OWNER_TERMINAL_STATUSES_V1.includes(row.state as never)) {
+      throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_UNAVAILABLE");
+    }
+    try {
+      if (row.completion_plan === null) {
+        if (
+          row.state === "accepted"
+          || row.completion_plan_hash !== null
+          || row.prepared_at !== null
+          || effects.length !== 0
+        ) throw new Error();
+      } else {
+        const plan = RuntimeCompletionPlanV1Schema.parse(row.completion_plan);
+        const preparedAt = row.prepared_at instanceof Date
+          ? row.prepared_at.toISOString()
+          : new Date(row.prepared_at as string).toISOString();
+        if (
+          row.completion_plan_hash === null
+          || row.prepared_at === null
+          || hashCanonicalJson(plan) !== row.completion_plan_hash
+          || plan.requestId !== row.request_id
+          || String(plan.claimId) !== row.claim_id_text
+          || plan.runId !== row.run_id
+          || plan.stepDbId !== row.step_db_id
+          || plan.workflowStepId !== row.workflow_step_id
+          || plan.outputHash !== row.output_hash
+          || plan.preparedAt !== preparedAt
+          || plan.effects.some((effect, index) => effect.ordinal !== index)
+          || plan.effects.length !== effects.length
+        ) throw new Error();
+        for (const [index, effect] of effects.entries()) {
+          const spec = plan.effects[index]!;
+          const effectInput = RuntimeCompletionEffectInputV1Schema.parse(effect.payload);
+          if (
+            effect.effect_key !== spec.effectKey
+            || effect.ordinal !== spec.ordinal
+            || effect.effect_type !== spec.effectType
+            || effect.mandatory !== spec.mandatory
+            || hashCanonicalJson(effectInput) !== effect.input_hash
+            || effectInput.planHash !== row.completion_plan_hash
+            || !sameJsonValueV1(effectInput.plan, plan)
+            || !sameJsonValueV1(effectInput.effect, spec.payload)
+          ) throw new Error();
+        }
+      }
+    } catch {
+      throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_UNAVAILABLE");
+    }
+    const status = row.state as typeof COMPLETION_OWNER_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-completion-owner-terminal.v1",
+      requestId: row.request_id,
+      status,
+    }) });
+  },
+});
+
+const MANDATORY_EFFECT_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"mandatory-effect"> = Object.freeze({
+  category: "mandatory-effect",
+  implementationIds: Object.freeze(["a-mandatory-effect-v1"]),
+  exactInputFromIdentity: (identity) => {
+    const body = p3CompositeOwnerKeyV1(
+      identity.ownerKey,
+      ["schema", "requestId", "effectKey"],
+      "setfarm.internal-production-completion-request-id-effect-key.v1",
+      "INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_CORRUPTION",
+    );
+    return exactP3InputFromIdentityV1(
+      identity,
+      { requestId: body.requestId, effectKey: body.effectKey },
+      createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+      "INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_CORRUPTION",
+    );
+  },
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(input as never);
+    const exact = input as Readonly<{ requestId: string; effectKey: string }>;
+    const parents = await sql`SELECT request_id,state FROM runtime_completion_requests
+       WHERE request_id=${exact.requestId} FOR UPDATE`;
+    const rows = await sql<Array<{ request_id: string; effect_key: string; state: string }>>`
+      SELECT request_id,effect_key,state FROM runtime_completion_effects
+       WHERE request_id=${exact.requestId} AND effect_key=${exact.effectKey} AND mandatory=TRUE
+       FOR UPDATE
+    `;
+    const row = rows[0];
+    if (
+      parents.length !== 1
+      || rows.length !== 1
+      || !row
+      || !MANDATORY_EFFECT_TERMINAL_STATUSES_V1.includes(row.state as never)
+    ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_UNAVAILABLE");
+    const status = row.state as typeof MANDATORY_EFFECT_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-mandatory-effect-terminal-owner.v1",
+      requestId: row.request_id,
+      effectKey: row.effect_key,
+      status,
+    }) });
+  },
+});
+
+const TERMINATION_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"termination"> = Object.freeze({
+  category: "termination",
+  implementationIds: Object.freeze(["a-termination-v1"]),
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { requestId: identity.ownerKey },
+    createInternalProductionTerminationCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_TERMINATION_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionTerminationCanonicalOwnerIdentityV1(input as never);
+    const rows = await sql<Array<{ request_id: string; state: string }>>`
+      SELECT request_id,state FROM run_termination_requests
+       WHERE request_id=${identity.ownerKey} FOR UPDATE
+    `;
+    const row = rows[0];
+    if (rows.length !== 1 || !row || row.state !== "terminalized") {
+      throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_UNAVAILABLE");
+    }
+    const status = "terminalized" as const;
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-termination-terminal-owner.v1",
+      requestId: row.request_id,
+      status,
+    }) });
+  },
+});
+
+const FINDING_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"finding"> = Object.freeze({
+  category: "finding",
+  implementationIds: FINDING_OWNER_IMPLEMENTATION_IDS_V1,
+  exactInputFromIdentity: (identity) => exactP3InputFromIdentityV1(
+    identity,
+    { findingSetHash: identity.ownerKey },
+    createInternalProductionFindingCanonicalOwnerIdentityV1,
+    "INTERNAL_PRODUCTION_FINDING_OWNER_CORRUPTION",
+  ),
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(input as never);
+    const sets = await sql<Array<{ finding_set_hash: string; finding_ids: unknown }>>`
+      SELECT finding_set_hash,finding_ids FROM finding_sets
+       WHERE finding_set_hash=${identity.ownerKey} FOR UPDATE
+    `;
+    const children = await sql<Array<{ finding_id: string }>>`
+      SELECT finding_id FROM findings
+       WHERE finding_set_hash=${identity.ownerKey} ORDER BY finding_id FOR UPDATE
+    `;
+    const set = sets[0];
+    const childIds = children.map(({ finding_id }) => finding_id).sort();
+    const rawFindingIds = set?.finding_ids;
+    const expectedIds = Array.isArray(rawFindingIds)
+      ? [...rawFindingIds].map(String).sort()
+      : null;
+    if (sets.length !== 1 || !set || expectedIds === null || !sameJsonValueV1(childIds, expectedIds)) {
+      throw new Error("INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE");
+    }
+    const status = "published" as const;
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-finding-terminal-owner.v1",
+      findingSetHash: set.finding_set_hash,
+      status,
+    }) });
+  },
+});
+
+const OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1:
+P3TerminalResolverConfigV1<"operational-delivery"> = Object.freeze({
+  category: "operational-delivery",
+  implementationIds: Object.freeze(["a-operational-delivery-v1"]),
+  exactInputFromIdentity: (identity) => {
+    const body = p3CompositeOwnerKeyV1(
+      identity.ownerKey,
+      ["schema", "eventKey", "consumer"],
+      "setfarm.internal-production-operational-event-key-consumer.v1",
+      "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_CORRUPTION",
+    );
+    return exactP3InputFromIdentityV1(
+      identity,
+      { eventKey: body.eventKey, consumer: body.consumer },
+      createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1,
+      "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_CORRUPTION",
+    );
+  },
+  lockProjection: async (sql, input) => {
+    const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(input as never);
+    const exact = input as Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>;
+    const events = await sql`SELECT event_key,event_hash FROM operational_events
+       WHERE event_key=${exact.eventKey} FOR UPDATE`;
+    const rows = await sql<Array<{ event_key: string; consumer: "jsonl" | "webhook"; state: string }>>`
+      SELECT event_key,consumer,state FROM operational_event_deliveries
+       WHERE event_key=${exact.eventKey} AND consumer=${exact.consumer} FOR UPDATE
+    `;
+    const row = rows[0];
+    if (
+      events.length !== 1
+      || rows.length !== 1
+      || !row
+      || !OPERATIONAL_DELIVERY_TERMINAL_STATUSES_V1.includes(row.state as never)
+    ) throw new Error("INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_UNAVAILABLE");
+    const status = row.state as typeof OPERATIONAL_DELIVERY_TERMINAL_STATUSES_V1[number];
+    return Object.freeze({ identity, status, terminalOwnerHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-operational-delivery-terminal-owner.v1",
+      eventKey: row.event_key,
+      consumer: row.consumer,
+      status,
+    }) });
+  },
+});
+
+const CLAIM_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(CLAIM_TERMINAL_RESOLVER_CONFIG_V1);
+const EXECUTION_ATTEMPT_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(EXECUTION_ATTEMPT_TERMINAL_RESOLVER_CONFIG_V1);
+const RUNTIME_SESSION_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(RUNTIME_SESSION_TERMINAL_RESOLVER_CONFIG_V1);
+const COMPLETION_OWNER_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(COMPLETION_OWNER_TERMINAL_RESOLVER_CONFIG_V1);
+const MANDATORY_EFFECT_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(MANDATORY_EFFECT_TERMINAL_RESOLVER_CONFIG_V1);
+const TERMINATION_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(TERMINATION_TERMINAL_RESOLVER_CONFIG_V1);
+const FINDING_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(FINDING_TERMINAL_RESOLVER_CONFIG_V1);
+const OPERATIONAL_DELIVERY_TERMINAL_AUTHORITY_RESOLVER_V1 =
+  createPrivateP3TerminalResolverV1(OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1);
+
 const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1: Readonly<Partial<Record<
   InternalProductionOwnerCategoryV1,
   OwnerTerminalResolverV1
@@ -1910,6 +2556,56 @@ const OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1: Readonly<Partial<Record<
     resolveByAuthorityPair: resolveWorkflowRunTerminalAuthorityByAuthorityPairV1,
     resolveByTerminalOwnerPair: resolveWorkflowRunTerminalAuthorityByTerminalOwnerPairV1,
   }),
+  claim: CLAIM_TERMINAL_AUTHORITY_RESOLVER_V1,
+  "execution-attempt": EXECUTION_ATTEMPT_TERMINAL_AUTHORITY_RESOLVER_V1,
+  "runtime-session": RUNTIME_SESSION_TERMINAL_AUTHORITY_RESOLVER_V1,
+  "completion-owner": COMPLETION_OWNER_TERMINAL_AUTHORITY_RESOLVER_V1,
+  "mandatory-effect": MANDATORY_EFFECT_TERMINAL_AUTHORITY_RESOLVER_V1,
+  termination: TERMINATION_TERMINAL_AUTHORITY_RESOLVER_V1,
+  finding: FINDING_TERMINAL_AUTHORITY_RESOLVER_V1,
+  "operational-delivery": OPERATIONAL_DELIVERY_TERMINAL_AUTHORITY_RESOLVER_V1,
+});
+
+const P3_TERMINAL_EXACT_INPUT_PROJECTORS_V1: Readonly<Partial<Record<
+  InternalProductionOwnerCategoryV1,
+  (
+    identity: InternalProductionCanonicalOwnerIdentityV1,
+  ) => Readonly<Record<string, unknown>>
+>>> = Object.freeze({
+  claim: (identity) => CLAIM_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+    identity as InternalProductionCanonicalOwnerIdentityV1<"claim">,
+  ),
+  "execution-attempt": (identity) => (
+    EXECUTION_ATTEMPT_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+      identity as InternalProductionCanonicalOwnerIdentityV1<"execution-attempt">,
+    )
+  ),
+  "runtime-session": (identity) => (
+    RUNTIME_SESSION_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+      identity as InternalProductionCanonicalOwnerIdentityV1<"runtime-session">,
+    )
+  ),
+  "completion-owner": (identity) => (
+    COMPLETION_OWNER_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+      identity as InternalProductionCanonicalOwnerIdentityV1<"completion-owner">,
+    )
+  ),
+  "mandatory-effect": (identity) => (
+    MANDATORY_EFFECT_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+      identity as InternalProductionCanonicalOwnerIdentityV1<"mandatory-effect">,
+    )
+  ),
+  termination: (identity) => TERMINATION_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+    identity as InternalProductionCanonicalOwnerIdentityV1<"termination">,
+  ),
+  finding: (identity) => FINDING_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+    identity as InternalProductionCanonicalOwnerIdentityV1<"finding">,
+  ),
+  "operational-delivery": (identity) => (
+    OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1.exactInputFromIdentity(
+      identity as InternalProductionCanonicalOwnerIdentityV1<"operational-delivery">,
+    )
+  ),
 });
 
 const OWNER_ADMISSION_REPOSITORY_V1: InternalProductionOwnerAdmissionRepositoryV1 = Object.freeze({
@@ -1937,24 +2633,44 @@ const OWNER_ADMISSION_CONTROLLER_V1: InternalProductionOwnerAdmissionControllerV
       terminalAuthorityHash: string;
     }>,
   ) => {
-    exactObjectKeys(input, ["reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID");
+    const issuedCandidate = input !== null && typeof input === "object"
+      ? P3_ISSUED_TERMINAL_CLOSE_INPUTS_V1.get(input)
+      : undefined;
+    const p3Issued = issuedCandidate === undefined
+      ? null
+      : validateP3IssuedTerminalCloseInputV1(sql, input);
+    if (p3Issued === null) {
+      exactObjectKeys(
+        input,
+        P3_RESOLVED_CLOSE_INPUT_KEYS_V1,
+        "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID",
+      );
+    }
     const reservation = await OWNER_ADMISSION_REPOSITORY_V1.resolveReservation(sql, {
-      reservationRef: input.reservationRef,
-      reservationHash: input.reservationHash,
+      reservationRef: p3Issued?.reservationRef ?? input.reservationRef,
+      reservationHash: p3Issued?.reservationHash ?? input.reservationHash,
     });
     const resolver = OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1[reservation.category];
     if (!resolver) throw new Error("TERMINAL_AUTHORITY_UNAVAILABLE");
+    const p3InputProjector = P3_TERMINAL_EXACT_INPUT_PROJECTORS_V1[reservation.category];
+    if (
+      (p3Issued === null && p3InputProjector !== undefined)
+      || (p3Issued !== null && (
+        p3InputProjector === undefined
+        || p3Issued.category !== reservation.category
+      ))
+    ) throw new TypeError("INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_INPUT_INVALID");
     const terminalPair = validateOwnerAdmissionPairV1(
       {
-        terminalAuthorityRef: input.terminalAuthorityRef,
-        terminalAuthorityHash: input.terminalAuthorityHash,
+        terminalAuthorityRef: p3Issued?.terminalAuthorityRef ?? input.terminalAuthorityRef,
+        terminalAuthorityHash: p3Issued?.terminalAuthorityHash ?? input.terminalAuthorityHash,
       },
       "terminalAuthorityRef",
       "terminalAuthorityHash",
       "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID",
     ) as InternalProductionTerminalOwnerAuthorityPairV1;
     const authority = validateInternalProductionTerminalOwnerAuthorityV1(
-      await resolver.resolveByAuthorityPair(sql, terminalPair),
+      await resolver.resolveByAuthorityPair(sql, terminalPair, p3Issued?.exactInput),
     );
     validateInternalProductionTerminalOwnerAuthorityPairV1(terminalPair, authority);
     return OWNER_ADMISSION_REPOSITORY_V1.closeInTransactionV1(sql, {
@@ -2089,6 +2805,137 @@ export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairI
     terminalAuthorityRef: terminalPair.terminalAuthorityRef,
     terminalAuthorityHash: terminalPair.terminalAuthorityHash,
   });
+}
+
+async function resolveP3TerminalCloseInputInTransactionV1<
+  Category extends InternalProductionOwnerCategoryV1,
+>(
+  sql: InternalProductionPgTransactionSql,
+  input: unknown,
+  config: P3TerminalResolverConfigV1<Category>,
+  resolver: OwnerTerminalResolverV1,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  const resolved = await resolveExactP3TerminalAuthorityV1(sql, config, input);
+  const terminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(resolved.authority);
+  const authenticated = await resolver.resolveByAuthorityPair(sql, terminalPair, input);
+  validateInternalProductionTerminalOwnerAuthorityPairV1(terminalPair, authenticated);
+  if (!sameJsonValueV1(authenticated, resolved.authority)) {
+    throw new Error("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_UNAVAILABLE");
+  }
+  const issued = Object.freeze({
+    reservationRef: resolved.sidecar.bound.reservationRef,
+    reservationHash: resolved.sidecar.bound.reservationHash,
+    terminalAuthorityRef: terminalPair.terminalAuthorityRef,
+    terminalAuthorityHash: terminalPair.terminalAuthorityHash,
+  });
+  P3_ISSUED_TERMINAL_CLOSE_INPUTS_V1.set(issued, Object.freeze({
+    sql,
+    category: config.category,
+    exactInput: config.exactInputFromIdentity(
+      resolved.sidecar.bound.canonicalOwnerIdentity,
+    ),
+    reservationRef: issued.reservationRef,
+    reservationHash: issued.reservationHash,
+    terminalAuthorityRef: issued.terminalAuthorityRef,
+    terminalAuthorityHash: issued.terminalAuthorityHash,
+  }));
+  return issued;
+}
+
+export async function resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ claimIdText: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    CLAIM_TERMINAL_RESOLVER_CONFIG_V1,
+    CLAIM_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ attemptId: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    EXECUTION_ATTEMPT_TERMINAL_RESOLVER_CONFIG_V1,
+    EXECUTION_ATTEMPT_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ sessionId: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    RUNTIME_SESSION_TERMINAL_RESOLVER_CONFIG_V1,
+    RUNTIME_SESSION_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ requestId: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    COMPLETION_OWNER_TERMINAL_RESOLVER_CONFIG_V1,
+    COMPLETION_OWNER_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ requestId: string; effectKey: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    MANDATORY_EFFECT_TERMINAL_RESOLVER_CONFIG_V1,
+    MANDATORY_EFFECT_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ requestId: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    TERMINATION_TERMINAL_RESOLVER_CONFIG_V1,
+    TERMINATION_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ findingSetHash: string }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    FINDING_TERMINAL_RESOLVER_CONFIG_V1,
+    FINDING_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
+}
+
+export async function resolveInternalProductionOperationalDeliveryTerminalAuthorityPairInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>,
+): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  return resolveP3TerminalCloseInputInTransactionV1(
+    sql,
+    input,
+    OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1,
+    OPERATIONAL_DELIVERY_TERMINAL_AUTHORITY_RESOLVER_V1,
+  );
 }
 
 export async function resolveInternalProductionOwnerReservationCloseInTransactionV1(

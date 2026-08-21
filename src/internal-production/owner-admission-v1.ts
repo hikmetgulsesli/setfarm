@@ -1,10 +1,17 @@
 import type postgres from "postgres";
 
-import { canonicalJsonBytes, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  canonicalJsonBytes,
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../product-compiler/canonical-json.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const CANONICAL_REF = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
+const INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1 = 8_462;
+const INTERNAL_PRODUCTION_OWNER_REF_MAXIMUM_V1 = 12_499;
+const INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_MAXIMUM_V1 = 12_519;
 const PLANS = ["A", "B", "C", "D", "E"] as const;
 const PLAN_ROW_COUNTS = [16, 10, 6, 16, 9] as const;
 
@@ -78,8 +85,8 @@ function sha256(value: unknown, code: string): string {
   return value;
 }
 
-function canonicalRef(value: unknown, code: string): string {
-  if (typeof value !== "string" || value.length > 4_000 || !CANONICAL_REF.test(value)) fail(code);
+function canonicalRef(value: unknown, code: string, maximum = 4_000): string {
+  if (typeof value !== "string" || value.length > maximum || !CANONICAL_REF.test(value)) fail(code);
   return value;
 }
 
@@ -932,6 +939,13 @@ export type InternalProductionTerminalOwnerAuthorityPairV1 = Readonly<{
   terminalAuthorityHash: string;
 }>;
 
+export type InternalProductionResolvedOwnerTerminalCloseInputV1 = Readonly<{
+  reservationRef: string;
+  reservationHash: string;
+  terminalAuthorityRef: string;
+  terminalAuthorityHash: string;
+}>;
+
 export type InternalProductionOwnerReservationCloseV1 = Readonly<{
   schema: "setfarm.internal-production-owner-reservation-close.v1";
   closeKind: "ordinary" | "fence-target";
@@ -953,7 +967,11 @@ function reservationProjection(input: Readonly<{
   ownerAdmissionHeadPredecessorHash: string;
 }>) {
   const producer = validateProducerRow(input.producer);
-  const ownerKey = stringValue(input.ownerKey, "INTERNAL_PRODUCTION_OWNER_KEY_INVALID");
+  const ownerKey = stringValue(
+    input.ownerKey,
+    "INTERNAL_PRODUCTION_OWNER_KEY_INVALID",
+    INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1,
+  );
   const predecessor = sha256(
     input.ownerAdmissionHeadPredecessorHash,
     "INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_PREDECESSOR_HASH_INVALID",
@@ -1019,7 +1037,11 @@ export function validateInternalProductionOwnerReservationV1(
     fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_SHAPE_INVALID");
   }
   category(reservation.category, "INTERNAL_PRODUCTION_OWNER_RESERVATION_CATEGORY_INVALID");
-  stringValue(reservation.ownerKey, "INTERNAL_PRODUCTION_OWNER_KEY_INVALID");
+  stringValue(
+    reservation.ownerKey,
+    "INTERNAL_PRODUCTION_OWNER_KEY_INVALID",
+    INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1,
+  );
   sha256(reservation.ownerKeyHash, "INTERNAL_PRODUCTION_OWNER_KEY_HASH_INVALID");
   sha256(reservation.producerPurposeHash, "INTERNAL_PRODUCTION_OWNER_PRODUCER_PURPOSE_HASH_INVALID");
   stringValue(reservation.producerImplementationId,
@@ -1049,10 +1071,312 @@ export function validateInternalProductionCanonicalOwnerIdentityV1<
     fail("INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_SCHEMA_INVALID");
   }
   category(identity.category, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_CATEGORY_INVALID");
-  stringValue(identity.ownerKey, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_KEY_INVALID");
-  canonicalRef(identity.ownerRef, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_REF_INVALID");
+  stringValue(
+    identity.ownerKey,
+    "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_KEY_INVALID",
+    INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1,
+  );
+  canonicalRef(
+    identity.ownerRef,
+    "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_REF_INVALID",
+    INTERNAL_PRODUCTION_OWNER_REF_MAXIMUM_V1,
+  );
   sha256(identity.ownerHash, "INTERNAL_PRODUCTION_CANONICAL_OWNER_IDENTITY_OWNER_HASH_INVALID");
   return detachedDeepFreeze(value as InternalProductionCanonicalOwnerIdentityV1<Category>);
+}
+
+function exactBuilderInputV1(
+  value: unknown,
+  expected: readonly string[],
+  code: string,
+): Record<string, unknown> {
+  const input = record(value, code);
+  exactKeys(input, expected, code);
+  return input;
+}
+
+function canonicalSegmentV1(value: string, code: string): string {
+  try {
+    if (value.length === 0) throw new Error();
+    const encoded = encodeURIComponent(value);
+    if (encoded.includes("/") || decodeURIComponent(encoded) !== value) throw new Error();
+    const decoded = decodeURIComponent(encoded);
+    if (encodeURIComponent(decoded) !== encoded) throw new Error();
+    return encoded;
+  } catch {
+    fail(code);
+  }
+}
+
+function canonicalClaimIdTextV1(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || !/^[1-9][0-9]{0,18}$/.test(value)
+    || BigInt(value) > 9_223_372_036_854_775_807n
+  ) fail("INTERNAL_PRODUCTION_CLAIM_ID_INVALID");
+  return value;
+}
+
+function canonicalPrefixedIdV1(
+  value: unknown,
+  pattern: RegExp,
+  code: string,
+): string {
+  if (typeof value !== "string" || !pattern.test(value)) fail(code);
+  return value;
+}
+
+function canonicalPrintableKeyV1(value: unknown, code: string): string {
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value.length > 4_096
+    || !/^[\x21-\x7e]+$/.test(value)
+  ) fail(code);
+  return value;
+}
+
+export function createInternalProductionClaimCanonicalOwnerIdentityV1(
+  value: Readonly<{ claimIdText: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"claim"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["claimIdText"],
+    "INTERNAL_PRODUCTION_CLAIM_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const claimIdText = canonicalClaimIdTextV1(input.claimIdText);
+  const body = {
+    schema: "setfarm.internal-production-claim-owner.v1",
+    claimId: claimIdText,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "claim",
+    ownerKey: claimIdText,
+    ownerRef: `setfarm://claim-log/${claimIdText}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1(
+  value: Readonly<{ attemptId: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"execution-attempt"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["attemptId"],
+    "INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const attemptId = canonicalPrefixedIdV1(
+    input.attemptId,
+    /^ATT_[A-Za-z0-9-]{16,160}$/,
+    "INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_ID_INVALID",
+  );
+  const body = {
+    schema: "setfarm.internal-production-execution-attempt-owner.v1",
+    attemptId,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "execution-attempt",
+    ownerKey: attemptId,
+    ownerRef: `setfarm://execution-attempt/${canonicalSegmentV1(
+      attemptId,
+      "INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_REF_INVALID",
+    )}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(
+  value: Readonly<{ sessionId: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"runtime-session"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["sessionId"],
+    "INTERNAL_PRODUCTION_RUNTIME_SESSION_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const sessionId = canonicalPrefixedIdV1(
+    input.sessionId,
+    /^RTS_[A-Za-z0-9-]{16,160}$/,
+    "INTERNAL_PRODUCTION_RUNTIME_SESSION_ID_INVALID",
+  );
+  const body = {
+    schema: "setfarm.internal-production-runtime-session-owner.v1",
+    sessionId,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "runtime-session",
+    ownerKey: sessionId,
+    ownerRef: `setfarm://runtime-session/${canonicalSegmentV1(
+      sessionId,
+      "INTERNAL_PRODUCTION_RUNTIME_SESSION_REF_INVALID",
+    )}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(
+  value: Readonly<{ requestId: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"completion-owner"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["requestId"],
+    "INTERNAL_PRODUCTION_COMPLETION_OWNER_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const requestId = canonicalPrefixedIdV1(
+    input.requestId,
+    /^RCR_[A-Za-z0-9-]{16,160}$/,
+    "INTERNAL_PRODUCTION_COMPLETION_REQUEST_ID_INVALID",
+  );
+  const body = {
+    schema: "setfarm.internal-production-completion-owner.v1",
+    requestId,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "completion-owner",
+    ownerKey: requestId,
+    ownerRef: `setfarm://runtime-completion/${canonicalSegmentV1(
+      requestId,
+      "INTERNAL_PRODUCTION_COMPLETION_OWNER_REF_INVALID",
+    )}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(
+  value: Readonly<{ requestId: string; effectKey: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"mandatory-effect"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["requestId", "effectKey"],
+    "INTERNAL_PRODUCTION_MANDATORY_EFFECT_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const requestId = canonicalPrefixedIdV1(
+    input.requestId,
+    /^RCR_[A-Za-z0-9-]{16,160}$/,
+    "INTERNAL_PRODUCTION_COMPLETION_REQUEST_ID_INVALID",
+  );
+  const effectKey = canonicalPrintableKeyV1(
+    input.effectKey,
+    "INTERNAL_PRODUCTION_EFFECT_KEY_INVALID",
+  );
+  const ownerKey = canonicalJsonStringify({
+    schema: "setfarm.internal-production-completion-request-id-effect-key.v1",
+    requestId,
+    effectKey,
+  });
+  const body = {
+    schema: "setfarm.internal-production-mandatory-effect-owner.v1",
+    requestId,
+    effectKey,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "mandatory-effect",
+    ownerKey,
+    ownerRef: `setfarm://runtime-completion/${canonicalSegmentV1(
+      requestId,
+      "INTERNAL_PRODUCTION_MANDATORY_EFFECT_REF_INVALID",
+    )}/mandatory-effect/${canonicalSegmentV1(
+      effectKey,
+      "INTERNAL_PRODUCTION_MANDATORY_EFFECT_REF_INVALID",
+    )}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionTerminationCanonicalOwnerIdentityV1(
+  value: Readonly<{ requestId: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"termination"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["requestId"],
+    "INTERNAL_PRODUCTION_TERMINATION_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const requestId = canonicalPrefixedIdV1(
+    input.requestId,
+    /^RTR_[A-Za-z0-9-]{16,160}$/,
+    "INTERNAL_PRODUCTION_TERMINATION_REQUEST_ID_INVALID",
+  );
+  const body = {
+    schema: "setfarm.internal-production-termination-owner.v1",
+    requestId,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "termination",
+    ownerKey: requestId,
+    ownerRef: `setfarm://run-termination/${canonicalSegmentV1(
+      requestId,
+      "INTERNAL_PRODUCTION_TERMINATION_REF_INVALID",
+    )}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionFindingCanonicalOwnerIdentityV1(
+  value: Readonly<{ findingSetHash: string }>,
+): InternalProductionCanonicalOwnerIdentityV1<"finding"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["findingSetHash"],
+    "INTERNAL_PRODUCTION_FINDING_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const findingSetHash = sha256(
+    input.findingSetHash,
+    "INTERNAL_PRODUCTION_FINDING_SET_HASH_INVALID",
+  );
+  const body = {
+    schema: "setfarm.internal-production-finding-owner.v1",
+    findingSetHash,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "finding",
+    ownerKey: findingSetHash,
+    ownerRef: `setfarm://finding-set/${findingSetHash}`,
+    ownerHash: hashCanonicalJson(body),
+  });
+}
+
+export function createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(
+  value: Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>,
+): InternalProductionCanonicalOwnerIdentityV1<"operational-delivery"> {
+  const input = exactBuilderInputV1(
+    value,
+    ["eventKey", "consumer"],
+    "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_CANONICAL_OWNER_INPUT_INVALID",
+  );
+  const eventKey = canonicalPrintableKeyV1(
+    input.eventKey,
+    "INTERNAL_PRODUCTION_EVENT_KEY_INVALID",
+  );
+  if (input.consumer !== "jsonl" && input.consumer !== "webhook") {
+    fail("INTERNAL_PRODUCTION_CONSUMER_INVALID");
+  }
+  const consumer = input.consumer;
+  const ownerKey = canonicalJsonStringify({
+    schema: "setfarm.internal-production-operational-event-key-consumer.v1",
+    eventKey,
+    consumer,
+  });
+  const body = {
+    schema: "setfarm.internal-production-operational-delivery-owner.v1",
+    eventKey,
+    consumer,
+  } as const;
+  return validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "operational-delivery",
+    ownerKey,
+    ownerRef: `setfarm://operational-event/${canonicalSegmentV1(
+      eventKey,
+      "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_REF_INVALID",
+    )}/delivery/${consumer}`,
+    ownerHash: hashCanonicalJson(body),
+  });
 }
 
 function bindingProjection<Category extends InternalProductionOwnerCategoryV1>(
@@ -1103,7 +1427,11 @@ export function validateInternalProductionBoundOwnerReservationV1<
   const ownerCategory = category(bound.category, "INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_CATEGORY_INVALID");
   stringValue(bound.producerImplementationId,
     "INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_IMPLEMENTATION_ID_INVALID");
-  stringValue(bound.ownerKey, "INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_OWNER_KEY_INVALID");
+  stringValue(
+    bound.ownerKey,
+    "INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_OWNER_KEY_INVALID",
+    INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1,
+  );
   canonicalRef(bound.reservationRef, "INTERNAL_PRODUCTION_OWNER_RESERVATION_REF_INVALID");
   sha256(bound.reservationHash, "INTERNAL_PRODUCTION_OWNER_RESERVATION_HASH_INVALID");
   sha256(bound.bindingHash, "INTERNAL_PRODUCTION_BOUND_OWNER_RESERVATION_BINDING_HASH_INVALID");
@@ -1134,8 +1462,11 @@ export function createInternalProductionTerminalOwnerAuthorityV1<
     ownerKey: identity.ownerKey,
     ownerRef: identity.ownerRef,
     ownerHash: identity.ownerHash,
-    terminalOwnerRef: canonicalRef(input.terminalOwnerRef,
-      "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID"),
+    terminalOwnerRef: canonicalRef(
+      input.terminalOwnerRef,
+      "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID",
+      INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_MAXIMUM_V1,
+    ),
     terminalOwnerHash: sha256(input.terminalOwnerHash,
       "INTERNAL_PRODUCTION_TERMINAL_OWNER_HASH_INVALID"),
   });
@@ -1153,10 +1484,22 @@ export function validateInternalProductionTerminalOwnerAuthorityV1<
     fail("INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_SCHEMA_INVALID");
   }
   category(authority.category, "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_CATEGORY_INVALID");
-  stringValue(authority.ownerKey, "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_KEY_INVALID");
-  canonicalRef(authority.ownerRef, "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_REF_INVALID");
+  stringValue(
+    authority.ownerKey,
+    "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_KEY_INVALID",
+    INTERNAL_PRODUCTION_OWNER_KEY_MAXIMUM_V1,
+  );
+  canonicalRef(
+    authority.ownerRef,
+    "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_REF_INVALID",
+    INTERNAL_PRODUCTION_OWNER_REF_MAXIMUM_V1,
+  );
   sha256(authority.ownerHash, "INTERNAL_PRODUCTION_TERMINAL_OWNER_AUTHORITY_OWNER_HASH_INVALID");
-  canonicalRef(authority.terminalOwnerRef, "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID");
+  canonicalRef(
+    authority.terminalOwnerRef,
+    "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID",
+    INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_MAXIMUM_V1,
+  );
   sha256(authority.terminalOwnerHash, "INTERNAL_PRODUCTION_TERMINAL_OWNER_HASH_INVALID");
   return detachedDeepFreeze(value as InternalProductionTerminalOwnerAuthorityV1<Category>);
 }
@@ -1276,7 +1619,11 @@ export function validateInternalProductionOwnerReservationCloseV1(
   }
   canonicalRef(close.reservationRef, "INTERNAL_PRODUCTION_OWNER_RESERVATION_REF_INVALID");
   sha256(close.reservationHash, "INTERNAL_PRODUCTION_OWNER_RESERVATION_HASH_INVALID");
-  canonicalRef(close.terminalOwnerRef, "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID");
+  canonicalRef(
+    close.terminalOwnerRef,
+    "INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_INVALID",
+    INTERNAL_PRODUCTION_TERMINAL_OWNER_REF_MAXIMUM_V1,
+  );
   sha256(close.terminalOwnerHash, "INTERNAL_PRODUCTION_TERMINAL_OWNER_HASH_INVALID");
   sha256(close.ownerAdmissionHeadPredecessorHash,
     "INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_HEAD_PREDECESSOR_HASH_INVALID");

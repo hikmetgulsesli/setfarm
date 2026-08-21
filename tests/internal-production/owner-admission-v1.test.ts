@@ -23,9 +23,17 @@ import {
   INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
   assembleInternalProductionOwnerProducerRegistryV1,
   createInternalProductionBoundOwnerReservationV1,
+  createInternalProductionClaimCanonicalOwnerIdentityV1,
+  createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
+  createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1,
+  createInternalProductionFindingCanonicalOwnerIdentityV1,
+  createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+  createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1,
   createInternalProductionOwnerReservationCloseV1,
   createInternalProductionOwnerReservationV1,
+  createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1,
   createInternalProductionTerminalOwnerAuthorityV1,
+  createInternalProductionTerminationCanonicalOwnerIdentityV1,
   deriveInternalProductionTerminalOwnerAuthorityPairV1,
   validateInternalProductionBoundOwnerReservationV1,
   validateInternalProductionOwnerProducerManifestV1,
@@ -42,6 +50,7 @@ import {
   type InternalProductionOwnerProducerManifestV1,
   type InternalProductionOwnerProducerRowV1,
   type InternalProductionOwnerProducerSourceBuildAuthorityAV1,
+  type InternalProductionResolvedOwnerTerminalCloseInputV1,
 } from "../../src/internal-production/owner-admission-v1.js";
 
 const SHA_A = "a".repeat(64);
@@ -1848,16 +1857,51 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
         (SELECT current_revision::text FROM internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE) AS revision
     `)], [{ sources: "1", activations: "1", heads: "1", revision: "1" }]);
 
+    await fixtureSql.unsafe(`CREATE SEQUENCE task2_nonrun_readiness_probe_v1 START 1`);
+    await fixtureSql.unsafe(`CREATE FUNCTION task2_nonrun_readiness_probe_v1() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('task2_nonrun_readiness_probe_v1'); RETURN NEW; END $$`);
+    await fixtureSql.unsafe(`CREATE TRIGGER task2_nonrun_readiness_reservation_probe_v1 BEFORE INSERT ON internal_production_owner_reservations_v1 FOR EACH ROW EXECUTE FUNCTION task2_nonrun_readiness_probe_v1()`);
+    await fixtureSql.unsafe(`CREATE TRIGGER task2_nonrun_readiness_claim_probe_v1 BEFORE INSERT ON claim_log FOR EACH ROW EXECUTE FUNCTION task2_nonrun_readiness_probe_v1()`);
+    const readinessProbeState = async () => (await fixtureSql<Array<{
+      last_value: string;
+      is_called: boolean;
+    }>>`SELECT last_value::text,is_called FROM task2_nonrun_readiness_probe_v1`)[0]!;
+    const untouchedReadinessProbe = { last_value: "1", is_called: false };
+    assert.deepEqual(await readinessProbeState(), untouchedReadinessProbe);
+
+    const fixtureDbSourcePath = path.join(fixture.root, "src/db-pg.ts");
+    const fixtureDbSource = readFileSync(fixtureDbSourcePath, "utf8");
+    const beginStart = fixtureDbSource.indexOf(
+      "async function beginOrAdoptOwnerReservationInTransactionV1(",
+    );
+    const beginEnd = fixtureDbSource.indexOf(
+      "async function bindOwnerReservationInTransactionV1",
+      beginStart,
+    );
+    const beginSource = fixtureDbSource.slice(beginStart, beginEnd);
+    const readinessOrder = beginSource.indexOf("resolveActiveOwnerProducerV1(");
+    const reservationLockOrder = beginSource.indexOf(
+      "SELECT * FROM internal_production_owner_reservations_v1",
+    );
+    const reservationInsertOrder = beginSource.indexOf(
+      "INSERT INTO internal_production_owner_reservations_v1",
+    );
+    assert.ok(beginStart >= 0 && beginEnd > beginStart);
+    assert.ok(readinessOrder >= 0);
+    assert.ok(reservationLockOrder > readinessOrder);
+    assert.ok(reservationInsertOrder > reservationLockOrder);
+
     const beforeMissingReadiness = (await fixtureSql<Array<{
       head_version: string;
       reservations: string;
       runs: string;
       steps: string;
+      claims: string;
     }>>`
       SELECT head.head_version::text,
              (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
              (SELECT COUNT(*)::text FROM runs) AS runs,
-             (SELECT COUNT(*)::text FROM steps) AS steps
+             (SELECT COUNT(*)::text FROM steps) AS steps,
+             (SELECT COUNT(*)::text FROM claim_log) AS claims
         FROM internal_production_owner_admission_head_v1 head
        WHERE head.singleton=TRUE
     `)[0]!;
@@ -1875,7 +1919,38 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
       SELECT head.head_version::text,
              (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
              (SELECT COUNT(*)::text FROM runs) AS runs,
-             (SELECT COUNT(*)::text FROM steps) AS steps
+             (SELECT COUNT(*)::text FROM steps) AS steps,
+             (SELECT COUNT(*)::text FROM claim_log) AS claims
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `)[0], beforeMissingReadiness);
+
+    await assert.rejects(
+      fixtureSql.begin(async (transaction) => {
+        await transaction`SET LOCAL statement_timeout='2s'`;
+        await fixtureDb.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+          producerImplementationId: "a-claim-single-runtime-v1",
+          ownerKey: "9300001",
+        });
+        await transaction`
+          INSERT INTO claim_log (
+            id,run_id,step_id,story_id,agent_id,claimed_at,outcome,duration_ms,diagnostic
+          ) VALUES (
+            9300001,'task2-not-ready-run','task2-not-ready-step','',
+            'task2-not-ready-agent',NOW(),'completed',1,'must not insert'
+          )
+        `;
+        throw new Error("TEST_ACCEPTED_MISSING_NON_RUN_READINESS");
+      }),
+      /^Error: RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE$/,
+    );
+    assert.deepEqual(await readinessProbeState(), untouchedReadinessProbe);
+    assert.deepEqual((await fixtureSql<typeof beforeMissingReadiness[]>`
+      SELECT head.head_version::text,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
+             (SELECT COUNT(*)::text FROM runs) AS runs,
+             (SELECT COUNT(*)::text FROM steps) AS steps,
+             (SELECT COUNT(*)::text FROM claim_log) AS claims
         FROM internal_production_owner_admission_head_v1 head
        WHERE head.singleton=TRUE
     `)[0], beforeMissingReadiness);
@@ -1909,6 +1984,87 @@ const READY = deepFreeze(${JSON.stringify({
       admissionReadyRef,
       admissionReadyHash,
       manifestActivationRef: first.activationRef,
+      manifestActivationHash: SHA_C,
+      manifestHeadRef: readinessHead.head_ref,
+      manifestHeadHash: readinessHead.head_hash,
+    })});
+const STATUS = deepFreeze({
+  state: "normal_task0_admission_ready",
+  admissionReady: {
+    admissionReadyRef: READY.admissionReadyRef,
+    admissionReadyHash: READY.admissionReadyHash,
+  },
+});
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
+  return STATUS;
+}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
+  if (pair.admissionReadyRef !== READY.admissionReadyRef
+    || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
+  return READY;
+}
+`, "utf8");
+    const wrongReadinessWorkerPath = path.join(fixture.root, "task2-wrong-readiness-worker.mjs");
+    writeFileSync(wrongReadinessWorkerPath, `
+import postgres from "postgres";
+import * as db from "./src/db-pg.ts";
+const sql = postgres(process.env.SETFARM_PG_URL, { max: 1 });
+try {
+  await sql.begin(async (transaction) => {
+    await transaction\`SET LOCAL statement_timeout='2s'\`;
+    await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-claim-single-runtime-v1",
+      ownerKey: "9300002",
+    });
+    await transaction.unsafe("INSERT INTO claim_log (id,run_id,step_id,agent_id,claimed_at,outcome) VALUES (9300002,'task2-wrong-ready-run','task2-wrong-ready-step','task2',NOW(),'completed')");
+  });
+  process.stdout.write("TEST_ACCEPTED_WRONG_NON_RUN_READINESS");
+  process.exitCode = 2;
+} catch (error) {
+  process.stdout.write(String(error));
+} finally {
+  await sql.end({ timeout: 1 });
+}
+`, "utf8");
+    await fixtureSql`SELECT setval('task2_nonrun_readiness_probe_v1',1,FALSE)`;
+    const wrongReadiness = spawnSync(process.execPath, [
+      "--import", "tsx", wrongReadinessWorkerPath,
+    ], {
+      cwd: fixture.root,
+      env: process.env,
+      encoding: "utf8",
+      timeout: 15_000,
+    });
+    assert.equal(wrongReadiness.signal, null, String(wrongReadiness.error));
+    assert.equal(wrongReadiness.status, 0, wrongReadiness.stderr);
+    assert.equal(
+      wrongReadiness.stdout,
+      "Error: RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID",
+    );
+    assert.deepEqual(await readinessProbeState(), untouchedReadinessProbe);
+    assert.deepEqual((await fixtureSql<typeof beforeMissingReadiness[]>`
+      SELECT head.head_version::text,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
+             (SELECT COUNT(*)::text FROM runs) AS runs,
+             (SELECT COUNT(*)::text FROM steps) AS steps,
+             (SELECT COUNT(*)::text FROM claim_log) AS claims
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `)[0], beforeMissingReadiness);
+
+    writeFileSync(readinessModulePath, `
+const deepFreeze = (value) => {
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
+};
+const READY = deepFreeze(${JSON.stringify({
+      state: "normal-task0-admission-ready",
+      admissionReadyRef,
+      admissionReadyHash,
+      manifestActivationRef: first.activationRef,
       manifestActivationHash: first.activationHash,
       manifestHeadRef: readinessHead.head_ref,
       manifestHeadHash: readinessHead.head_hash,
@@ -1929,8 +2085,10 @@ export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair
   return READY;
 }
 `, "utf8");
-    const fixtureDbSourcePath = path.join(fixture.root, "src/db-pg.ts");
-    const fixtureDbSource = readFileSync(fixtureDbSourcePath, "utf8");
+    await fixtureSql.unsafe("DROP TRIGGER task2_nonrun_readiness_claim_probe_v1 ON claim_log");
+    await fixtureSql.unsafe("DROP TRIGGER task2_nonrun_readiness_reservation_probe_v1 ON internal_production_owner_reservations_v1");
+    await fixtureSql.unsafe("DROP FUNCTION task2_nonrun_readiness_probe_v1()");
+    await fixtureSql.unsafe("DROP SEQUENCE task2_nonrun_readiness_probe_v1");
     assert.match(fixtureDbSource, /let _schemaReady = false;/);
     writeFileSync(
       fixtureDbSourcePath,
@@ -4028,6 +4186,1090 @@ test("real PostgreSQL closed workflow run rejects terminal status drift without 
   `)[0], before);
 });
 
+test("real PostgreSQL claim terminal port locks authenticates and returns only the exact close input", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  const terminalPortNames = [
+    "resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1",
+    "resolveInternalProductionOperationalDeliveryTerminalAuthorityPairInTransactionV1",
+  ] as const;
+  for (const name of terminalPortNames) {
+    assert.equal(typeof db[name], "function", `${name} must be exported`);
+    assert.equal(db[name].length, 2, `${name} must retain exact arity two`);
+  }
+  for (const forbidden of [
+    "createInternalProductionTerminalOwnerAuthorityFromRowsV1",
+    "createInternalProductionTerminalAuthorityResolverV1",
+    "OWNER_TERMINAL_AUTHORITY_RESOLVERS_V1",
+    "resolveInternalProductionTerminalAuthorityPairInTransactionV1",
+    "scanInternalProductionOwnerSidecarsV1",
+  ]) assert.equal(forbidden in db, false, `${forbidden} must remain private`);
+
+  const statuses = [
+    "completed", "infra_retry", "failed", "skipped", "abandoned", "cancelled",
+  ] as const;
+  const implementationIds = [
+    "a-claim-single-runtime-v1",
+    "a-claim-loop-runtime-v1",
+    "a-claim-v3-downstream-evidence-v1",
+    "a-claim-v3-evidence-only-v1",
+  ] as const;
+  const outputs: InternalProductionResolvedOwnerTerminalCloseInputV1[] = [];
+  for (const [index, status] of statuses.entries()) {
+    const claimIdText = String(9_100_000 + index);
+    const implementationId = implementationIds[index % implementationIds.length]!;
+    const bound = await sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: implementationId,
+        ownerKey: claimIdText,
+      });
+      await transaction`
+        INSERT INTO claim_log (
+          id,run_id,step_id,story_id,agent_id,claimed_at,outcome,abandoned_at,
+          duration_ms,diagnostic
+        ) VALUES (
+          ${claimIdText}::bigint,${`task2-claim-run-${index}`},${`task2-claim-step-${index}`},
+          ${`task2-claim-story-${index}`},'task2-claim-agent',NOW(),${status},
+          ${status === "abandoned" ? new Date() : null},1,'task2 terminal fixture'
+        )
+      `;
+      return db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: createInternalProductionClaimCanonicalOwnerIdentityV1(
+          Object.freeze({ claimIdText }),
+        ),
+      });
+    });
+    const expectedTerminal = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: createInternalProductionClaimCanonicalOwnerIdentityV1(
+        Object.freeze({ claimIdText }),
+      ),
+      terminalOwnerRef: `${bound.canonicalOwnerIdentity.ownerRef}/terminal/${status}`,
+      terminalOwnerHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-claim-terminal-owner.v1",
+        claimId: claimIdText,
+        status,
+      }),
+    });
+    const expectedPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(expectedTerminal);
+    const resolved = await sql.begin(async (transaction) => {
+      const issued = await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText }),
+      );
+      assert.deepEqual(Object.keys(issued), [
+        "reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash",
+      ]);
+      assert.deepEqual(issued, {
+        reservationRef: bound.reservationRef,
+        reservationHash: bound.reservationHash,
+        terminalAuthorityRef: expectedPair.terminalAuthorityRef,
+        terminalAuthorityHash: expectedPair.terminalAuthorityHash,
+      });
+      assertDeepFrozen(issued, `claim ${status} close input`);
+      assert.throws(() => {
+        (issued as { reservationRef: string }).reservationRef = "setfarm://mutated";
+      }, TypeError);
+      const close = await db.closeInternalProductionOwnerReservationV1(transaction, issued);
+      assert.equal(close.terminalOwnerRef, expectedTerminal.terminalOwnerRef);
+      assert.deepEqual(
+        await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+          transaction,
+          Object.freeze({ claimIdText }),
+        ),
+        issued,
+      );
+      return issued;
+    });
+    outputs.push(resolved);
+  }
+  assert.equal(new Set(outputs.map(({ reservationRef }) => reservationRef)).size, statuses.length);
+
+  const bindAdditionalClaim = async (claimIdText: string) => sql.begin(async (transaction) => {
+    const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-claim-single-runtime-v1",
+      ownerKey: claimIdText,
+    });
+    await transaction`
+      INSERT INTO claim_log (
+        id,run_id,step_id,story_id,agent_id,claimed_at,outcome,duration_ms,diagnostic
+      ) VALUES (
+        ${claimIdText}::bigint,'task2-issued-run','task2-issued-step','',
+        'task2-issued-agent',NOW(),'completed',1,'task2 issued close fixture'
+      )
+    `;
+    return db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: createInternalProductionClaimCanonicalOwnerIdentityV1(
+        Object.freeze({ claimIdText }),
+      ),
+    });
+  });
+
+  const issuedClaimIdText = "9180000";
+  await bindAdditionalClaim(issuedClaimIdText);
+  const issuedInPriorTransaction = await sql.begin((transaction) => (
+    db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction,
+      Object.freeze({ claimIdText: issuedClaimIdText }),
+    )
+  ));
+  await assert.rejects(
+    sql.begin((transaction) => db.closeInternalProductionOwnerReservationV1(
+      transaction,
+      issuedInPriorTransaction,
+    )),
+    /CLOSE_INPUT_INVALID/,
+  );
+  await sql.begin(async (transaction) => {
+    const issued = await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction,
+      Object.freeze({ claimIdText: issuedClaimIdText }),
+    );
+    const reordered = Object.freeze({
+      reservationHash: issued.reservationHash,
+      reservationRef: issued.reservationRef,
+      terminalAuthorityRef: issued.terminalAuthorityRef,
+      terminalAuthorityHash: issued.terminalAuthorityHash,
+    });
+    const withExtra = Object.freeze({ ...issued, extra: true });
+    const missing = Object.freeze({
+      reservationRef: issued.reservationRef,
+      reservationHash: issued.reservationHash,
+      terminalAuthorityRef: issued.terminalAuthorityRef,
+    });
+    const symbol = Symbol("task2-close-input");
+    const withSymbol = {
+      reservationRef: issued.reservationRef,
+      reservationHash: issued.reservationHash,
+      terminalAuthorityRef: issued.terminalAuthorityRef,
+      terminalAuthorityHash: issued.terminalAuthorityHash,
+      [symbol]: true,
+    };
+    Object.freeze(withSymbol);
+    let getterCalls = 0;
+    const accessor = {};
+    for (const key of Object.keys(issued) as Array<keyof typeof issued>) {
+      Object.defineProperty(accessor, key, {
+        enumerable: true,
+        configurable: false,
+        get() {
+          getterCalls += 1;
+          return issued[key];
+        },
+      });
+    }
+    Object.freeze(accessor);
+    const mutable = { ...issued };
+    const clone = Object.freeze({ ...issued });
+    const crossedReservationRef = Object.freeze({
+      ...issued,
+      reservationRef: outputs[0]!.reservationRef,
+    });
+    const crossedReservationHash = Object.freeze({
+      ...issued,
+      reservationHash: outputs[0]!.reservationHash,
+    });
+    const crossedTerminalRef = Object.freeze({
+      ...issued,
+      terminalAuthorityRef: outputs[0]!.terminalAuthorityRef,
+    });
+    const crossedTerminalHash = Object.freeze({
+      ...issued,
+      terminalAuthorityHash: outputs[0]!.terminalAuthorityHash,
+    });
+    const crossedPair = Object.freeze({
+      reservationRef: issued.reservationRef,
+      reservationHash: issued.reservationHash,
+      terminalAuthorityRef: outputs[0]!.terminalAuthorityRef,
+      terminalAuthorityHash: outputs[0]!.terminalAuthorityHash,
+    });
+    for (const malformed of [
+      clone, reordered, withExtra, missing, withSymbol, accessor, mutable,
+      crossedReservationRef, crossedReservationHash, crossedTerminalRef,
+      crossedTerminalHash, crossedPair,
+    ]) {
+      await assert.rejects(
+        db.closeInternalProductionOwnerReservationV1(transaction, malformed as never),
+        /CLOSE_INPUT_INVALID|OWNER_RESERVATION_UNAVAILABLE/,
+      );
+    }
+    assert.equal(getterCalls, 0);
+    await db.closeInternalProductionOwnerReservationV1(transaction, issued);
+    assert.deepEqual(
+      await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText: issuedClaimIdText }),
+      ),
+      issued,
+    );
+  });
+
+  const exactCloseClaimIdText = "9180001";
+  await bindAdditionalClaim(exactCloseClaimIdText);
+  let unrelatedClaimLocked!: () => void;
+  const unrelatedClaimIsLocked = new Promise<void>((resolve) => {
+    unrelatedClaimLocked = resolve;
+  });
+  let releaseUnrelatedClaim!: () => void;
+  const holdUnrelatedClaim = new Promise<void>((resolve) => {
+    releaseUnrelatedClaim = resolve;
+  });
+  const unrelatedClaimBlocker = sql.begin(async (transaction) => {
+    await transaction`SELECT id FROM claim_log WHERE id=9100000 FOR UPDATE`;
+    unrelatedClaimLocked();
+    await holdUnrelatedClaim;
+  });
+  await unrelatedClaimIsLocked;
+  try {
+    await sql.begin(async (transaction) => {
+      await transaction`SET LOCAL lock_timeout='250ms'`;
+      const issued = await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText: exactCloseClaimIdText }),
+      );
+      const close = await db.closeInternalProductionOwnerReservationV1(transaction, issued);
+      assert.deepEqual(
+        await db.resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction, {
+          closeRef: close.closeRef,
+          closeHash: close.closeHash,
+        }),
+        close,
+      );
+    });
+  } finally {
+    releaseUnrelatedClaim();
+    await unrelatedClaimBlocker;
+  }
+
+  const rollbackClaimIdText = "9180002";
+  const rollbackBound = await bindAdditionalClaim(rollbackClaimIdText);
+  const beforeRollback = (await sql<Array<{ head_version: string; state: string }>>`
+    SELECT head.head_version::text,reservation.state
+      FROM internal_production_owner_admission_head_v1 head
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.reservation_ref=${rollbackBound.reservationRef}
+     WHERE head.singleton=TRUE
+  `)[0]!;
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      const issued = await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText: rollbackClaimIdText }),
+      );
+      await assert.rejects(
+        sql.begin(async (contender) => {
+          await contender`SET LOCAL lock_timeout='250ms'`;
+          await contender`UPDATE claim_log SET diagnostic=diagnostic
+             WHERE id=${rollbackClaimIdText}::bigint`;
+        }),
+        /lock timeout/,
+      );
+      await db.closeInternalProductionOwnerReservationV1(transaction, issued);
+      assert.deepEqual(
+        await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+          transaction,
+          Object.freeze({ claimIdText: rollbackClaimIdText }),
+        ),
+        issued,
+      );
+      throw new Error("TEST_ROLLBACK_ISSUED_CLOSE");
+    }),
+    /^Error: TEST_ROLLBACK_ISSUED_CLOSE$/,
+  );
+  assert.deepEqual((await sql<typeof beforeRollback[]>`
+    SELECT head.head_version::text,reservation.state
+      FROM internal_production_owner_admission_head_v1 head
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.reservation_ref=${rollbackBound.reservationRef}
+     WHERE head.singleton=TRUE
+  `)[0], beforeRollback);
+
+  const crossedClaimIdText = "9180003";
+  const crossedBound = await bindAdditionalClaim(crossedClaimIdText);
+  const crossedSnapshot = async () => (await sql<Array<{
+    head_hash: string;
+    head_payload: unknown;
+    owner_key: string;
+    outcome: string;
+    state: string;
+  }>>`
+    SELECT head.head_hash,head.head_payload,reservation.owner_key,claim.outcome,reservation.state
+      FROM internal_production_owner_admission_head_v1 head
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.reservation_ref=${crossedBound.reservationRef}
+      JOIN claim_log claim ON claim.id::text=${crossedClaimIdText}
+     WHERE head.singleton=TRUE
+  `)[0]!;
+  const beforeCrossed = await crossedSnapshot();
+  for (const [label, corrupt] of [
+    ["status", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`UPDATE claim_log SET outcome='failed'
+         WHERE id=${crossedClaimIdText}::bigint`;
+    }],
+    ["key", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`UPDATE internal_production_owner_reservations_v1
+         SET owner_key='9180999' WHERE reservation_ref=${crossedBound.reservationRef}`;
+    }],
+    ["stale-head", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`UPDATE internal_production_owner_admission_head_v1
+         SET head_payload=jsonb_set(head_payload,'{headVersion}','999999'::jsonb)
+         WHERE singleton=TRUE`;
+    }],
+  ] as const) {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        const issued = await db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+          transaction,
+          Object.freeze({ claimIdText: crossedClaimIdText }),
+        );
+        await corrupt(transaction);
+        await assert.rejects(
+          db.closeInternalProductionOwnerReservationV1(transaction, issued),
+        );
+        throw new Error(`TEST_ROLLBACK_CROSSED_${label.toUpperCase()}`);
+      }),
+      new RegExp(`^Error: TEST_ROLLBACK_CROSSED_${label.toUpperCase()}$`),
+    );
+    assert.deepEqual(await crossedSnapshot(), beforeCrossed);
+  }
+
+  await assert.rejects(
+    sql.begin((transaction) => db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction,
+      { claimIdText: "9100000", ownerReservationRef: outputs[0]!.reservationRef } as never,
+    )),
+    /INPUT_INVALID/,
+  );
+  await assert.rejects(
+    sql.begin((transaction) => db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction,
+      Object.freeze({ claimIdText: "9223372036854775807" }),
+    )),
+    /CLAIM_OWNER_UNAVAILABLE/,
+  );
+
+  const duplicateClaimIdText = "9199999";
+  const duplicateIdentity = createInternalProductionClaimCanonicalOwnerIdentityV1(
+    Object.freeze({ claimIdText: duplicateClaimIdText }),
+  );
+  const duplicateBound = await sql.begin(async (transaction) => {
+    const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: "a-claim-loop-runtime-v1",
+      ownerKey: duplicateClaimIdText,
+    });
+    await transaction`
+      INSERT INTO claim_log (
+        id,run_id,step_id,story_id,agent_id,claimed_at,outcome,duration_ms,diagnostic
+      ) VALUES (
+        ${duplicateClaimIdText}::bigint,'task2-duplicate-run','task2-duplicate-step','',
+        'task2-duplicate-agent',NOW(),'completed',1,'task2 duplicate sidecar fixture'
+      )
+    `;
+    return db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: duplicateIdentity,
+    });
+  });
+  try {
+    await sql`
+      UPDATE internal_production_owner_reservations_v1
+         SET owner_key='9100000'
+       WHERE reservation_ref=${duplicateBound.reservationRef}
+    `;
+    await assert.rejects(
+      sql.begin((transaction) => db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ claimIdText: "9100000" }),
+      )),
+      /CLAIM_OWNER_UNAVAILABLE/,
+    );
+    await sql`
+      UPDATE internal_production_owner_reservations_v1
+         SET owner_key=${duplicateClaimIdText}
+       WHERE reservation_ref=${duplicateBound.reservationRef}
+    `;
+  } finally {
+    await sql`
+      UPDATE internal_production_owner_reservations_v1
+         SET owner_key=${duplicateClaimIdText}
+       WHERE reservation_ref=${duplicateBound.reservationRef}
+    `;
+  }
+});
+
+test("real PostgreSQL remaining P3 terminal ports prove every status and fixed producer set", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql } = activatedOwnerAdmissionFixture;
+  const parent = (await sql<Array<{ run_id: string; step_id: string }>>`
+    SELECT run.id AS run_id,step.id AS step_id
+      FROM runs run JOIN steps step ON step.run_id=run.id
+     ORDER BY run.id,step.id LIMIT 1
+  `)[0]!;
+  assert.ok(parent);
+  let sequence = 0;
+  const nextSuffix = () => String(++sequence).padStart(16, "0");
+  const insertAttempt = async (
+    transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    attemptId: string,
+    disposition: string,
+    claimId: string | null = null,
+  ) => {
+    await transaction`
+      INSERT INTO execution_attempts (
+        attempt_id,run_id,step_id,story_id,generation,fence_token,attempt_class,
+        compilation_report_hash,source_before_sha,source_before_tree_hash,role,
+        lease_acquired_at,lease_expires_at,heartbeat_at,disposition,evidence_refs,claim_id
+      ) VALUES (
+        ${attemptId},${parent.run_id},${parent.step_id},'',1,${`fence-${attemptId}`},
+        'evidence_only',${SHA_A},${GIT_A},${GIT_B},'implement',NOW(),
+        NOW()+INTERVAL '1 hour',NOW(),${disposition},'[]',${claimId}::bigint
+      )
+    `;
+  };
+  const insertRuntimeChain = async (
+    transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    sessionId: string,
+    state: "released" | "quarantined",
+  ) => {
+    const claimIdText = String(9_200_000 + sequence);
+    const attemptId = `ATT_${nextSuffix()}`;
+    await transaction`
+      INSERT INTO claim_log (
+        id,run_id,step_id,story_id,agent_id,claimed_at,outcome,duration_ms,diagnostic
+      ) VALUES (
+        ${claimIdText}::bigint,${parent.run_id},${parent.step_id},'',
+        'task2-parent-claim',NOW(),'completed',1,'task2 runtime parent'
+      )
+    `;
+    await insertAttempt(transaction, attemptId, "verified", claimIdText);
+    await transaction`
+      INSERT INTO runtime_sessions (
+        session_id,run_id,step_db_id,workflow_step_id,story_db_id,story_id,claim_id,
+        attempt_id,claim_agent_id,runtime_agent_id,runtime_kind,state,owner_instance_id,
+        state_version,heartbeat_at,drained_at,released_at,diagnostic,drain_evidence,
+        process_identity
+      ) VALUES (
+        ${sessionId},${parent.run_id},${parent.step_id},'implementation',NULL,NULL,
+        ${claimIdText}::bigint,${attemptId},'task2-claim-agent','task2-runtime-agent',
+        'external_session',${state},'task2-owner',1,NOW(),
+        ${state === "released" ? new Date() : null},
+        ${state === "released" ? new Date() : null},
+        ${state === "quarantined" ? "task2 quarantine" : null},'{}'::jsonb,'{}'::jsonb
+      )
+    `;
+    return Object.freeze({ claimIdText, attemptId });
+  };
+  const bindTerminalOwner = async <Category extends ownerAdmissionApi.InternalProductionOwnerCategoryV1>(
+    implementationId: string,
+    identity: InternalProductionCanonicalOwnerIdentityV1<Category>,
+    insertTerminalRows: (
+      transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    ) => Promise<void>,
+  ) => sql.begin(async (transaction) => {
+    const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+      producerImplementationId: implementationId,
+      ownerKey: identity.ownerKey,
+    });
+    await insertTerminalRows(transaction);
+    return db.bindInternalProductionOwnerReservationV1(transaction, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    });
+  });
+  const assertPortAndClose = async <Category extends ownerAdmissionApi.InternalProductionOwnerCategoryV1>(
+    bound: Awaited<ReturnType<typeof bindTerminalOwner<Category>>>,
+    terminalOwnerHash: string,
+    status: string,
+    resolve: (
+      transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    ) => Promise<InternalProductionResolvedOwnerTerminalCloseInputV1>,
+  ) => {
+    const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: bound.canonicalOwnerIdentity,
+      terminalOwnerRef: `${bound.canonicalOwnerIdentity.ownerRef}/terminal/${status}`,
+      terminalOwnerHash,
+    });
+    const pair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+    await sql.begin(async (transaction) => {
+      const resolved = await resolve(transaction);
+      assert.deepEqual(resolved, {
+        reservationRef: bound.reservationRef,
+        reservationHash: bound.reservationHash,
+        terminalAuthorityRef: pair.terminalAuthorityRef,
+        terminalAuthorityHash: pair.terminalAuthorityHash,
+      });
+      assert.deepEqual(Object.keys(resolved), [
+        "reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash",
+      ]);
+      assertDeepFrozen(resolved, `${bound.category} ${status} close input`);
+      await db.closeInternalProductionOwnerReservationV1(transaction, resolved);
+      assert.deepEqual(await resolve(transaction), resolved);
+    });
+  };
+
+  for (const status of [
+    "produced_delta", "already_satisfied", "no_progress", "inconclusive", "failed", "verified",
+  ] as const) {
+    const attemptId = `ATT_${nextSuffix()}`;
+    const identity = createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1(
+      Object.freeze({ attemptId }),
+    );
+    const bound = await bindTerminalOwner("a-execution-attempt-v1", identity, (transaction) => (
+      insertAttempt(transaction, attemptId, status)
+    ));
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-execution-attempt-terminal-owner.v1",
+      attemptId,
+      status,
+    }), status, (transaction) => (
+      db.resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ attemptId }),
+      )
+    ));
+  }
+
+  for (const status of ["released", "quarantined"] as const) {
+    const sessionId = `RTS_${nextSuffix()}`;
+    const identity = createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(
+      Object.freeze({ sessionId }),
+    );
+    const bound = await bindTerminalOwner("a-runtime-session-v1", identity, async (transaction) => {
+      await insertRuntimeChain(transaction, sessionId, status);
+    });
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-runtime-session-terminal-owner.v1",
+      sessionId,
+      status,
+    }), status, (transaction) => (
+      db.resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ sessionId }),
+      )
+    ));
+  }
+
+  const insertCompletion = async (
+    transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    requestId: string,
+    status: "accepted" | "rejected" | "quarantined",
+    effectKeyOverride?: string,
+    effectStatus: "applied" | "reconciled" = "applied",
+  ) => {
+    const sessionId = `RTS_${nextSuffix()}`;
+    const { claimIdText, attemptId } = await insertRuntimeChain(
+      transaction,
+      sessionId,
+      "released",
+    );
+    const output = `task2 completion ${requestId}`;
+    const outputHash = hashCanonicalJson({ output });
+    if (status === "accepted") {
+      const effectKey = effectKeyOverride ?? `accepted-${sequence}`;
+      const preparedAt = new Date();
+      const effect = {
+        effectKey,
+        ordinal: 0,
+        effectType: "task2-test",
+        mandatory: true,
+        payload: { schema: "setfarm.task2-effect.v1" },
+      };
+      const completionPlan = {
+        schema: "setfarm.runtime-completion-plan.v1",
+        planVersion: 1,
+        requestId,
+        claimId: Number(claimIdText),
+        runId: parent.run_id,
+        stepDbId: parent.step_id,
+        workflowStepId: "implementation",
+        outputHash,
+        kind: "legacy_recovery",
+        continuation: { type: "legacy_receipt_only" },
+        effects: [effect],
+        preparedAt: preparedAt.toISOString(),
+      };
+      const completionPlanHash = hashCanonicalJson(completionPlan);
+      const effectInput = {
+        schema: "setfarm.runtime-completion-effect-input.v1",
+        planHash: completionPlanHash,
+        plan: completionPlan,
+        effect: effect.payload,
+      };
+      await transaction`
+        INSERT INTO runtime_completion_requests (
+          request_id,runtime_session_id,claim_id,run_id,step_db_id,workflow_step_id,
+          story_db_id,story_id,attempt_id,claim_envelope,output,output_hash,apply_phase,
+          claim_outcome,claim_committed_at,state,requested_by,requested_at,processing_at,
+          result,completion_plan,completion_plan_hash,prepared_at
+        ) VALUES (
+          ${requestId},${sessionId},${claimIdText}::bigint,${parent.run_id},${parent.step_id},
+          'implementation',NULL,NULL,${attemptId},'{}'::jsonb,${output},${outputHash},
+          'owner_committed','completed',NOW(),'processing','task2',NOW(),NOW(),'{}'::jsonb,
+          ${transaction.json(completionPlan)},${completionPlanHash},${preparedAt}
+        )
+      `;
+      await transaction`
+        INSERT INTO runtime_completion_effects (
+          request_id,effect_key,ordinal,effect_type,input_hash,payload,mandatory,state,
+          result,evidence,applied_at,reconciled_at
+        ) VALUES (
+          ${requestId},${effectKey},0,'task2-test',${hashCanonicalJson(effectInput)},
+          ${transaction.json(effectInput)},TRUE,${effectStatus},'{}'::jsonb,'{}'::jsonb,
+          ${effectStatus === "applied" ? new Date() : null},
+          ${effectStatus === "reconciled" ? new Date() : null}
+        )
+      `;
+      await transaction`
+        UPDATE runtime_completion_requests
+           SET state='accepted',apply_phase='effects_committed',effects_committed_at=NOW(),
+               accepted_at=NOW()
+         WHERE request_id=${requestId}
+      `;
+    } else {
+      await transaction`
+        INSERT INTO runtime_completion_requests (
+          request_id,runtime_session_id,claim_id,run_id,step_db_id,workflow_step_id,
+          story_db_id,story_id,attempt_id,claim_envelope,output,output_hash,state,
+          requested_by,requested_at,rejected_at,diagnostic,result
+        ) VALUES (
+          ${requestId},${sessionId},${claimIdText}::bigint,${parent.run_id},${parent.step_id},
+          'implementation',NULL,NULL,${attemptId},'{}'::jsonb,${output},${outputHash},
+          ${status},'task2',NOW(),${status === "rejected" ? new Date() : null},
+          ${status === "quarantined" ? "task2 quarantine" : null},'{}'::jsonb
+        )
+      `;
+    }
+  };
+
+  const completionInputs: Array<Readonly<{ requestId: string; status: string }>> = [];
+  for (const status of ["accepted", "rejected", "quarantined"] as const) {
+    const requestId = `RCR_${nextSuffix()}`;
+    const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId }),
+    );
+    const bound = await bindTerminalOwner("a-completion-owner-v1", identity, (transaction) => (
+      insertCompletion(transaction, requestId, status)
+    ));
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-completion-owner-terminal.v1",
+      requestId,
+      status,
+    }), status, (transaction) => (
+      db.resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ requestId }),
+      )
+    ));
+    completionInputs.push(Object.freeze({ requestId, status }));
+  }
+
+  const acceptedCompletion = completionInputs.find(({ status }) => status === "accepted")!;
+  for (const [label, corrupt] of [
+    ["partial", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`DELETE FROM runtime_completion_effects
+         WHERE request_id=${acceptedCompletion.requestId}`;
+    }],
+    ["extra", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`
+        INSERT INTO runtime_completion_effects (
+          request_id,effect_key,ordinal,effect_type,input_hash,payload,mandatory,state,
+          result,evidence,applied_at
+        )
+        SELECT request_id,'task2-extra-effect',1,effect_type,input_hash,payload,mandatory,state,
+               result,evidence,applied_at
+          FROM runtime_completion_effects
+         WHERE request_id=${acceptedCompletion.requestId}
+         LIMIT 1
+      `;
+    }],
+    ["mismatch", async (transaction: Parameters<Parameters<typeof sql.begin>[0]>[0]) => {
+      await transaction`UPDATE runtime_completion_effects SET effect_type='task2-crossed'
+         WHERE request_id=${acceptedCompletion.requestId}`;
+    }],
+  ] as const) {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await transaction`ALTER TABLE runtime_completion_effects DISABLE TRIGGER USER`;
+        await corrupt(transaction);
+        await db.resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(
+          transaction,
+          Object.freeze({ requestId: acceptedCompletion.requestId }),
+        );
+        throw new Error(`TEST_ACCEPTED_${label.toUpperCase()}_COMPLETION_EFFECT_PROJECTION`);
+      }),
+      /COMPLETION_OWNER_UNAVAILABLE/,
+    );
+  }
+
+  for (const status of ["applied", "reconciled"] as const) {
+    const requestId = `RCR_${nextSuffix()}`;
+    const effectKey = `effect-${sequence}`;
+    const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId, effectKey }),
+    );
+    const bound = await bindTerminalOwner("a-mandatory-effect-v1", identity, async (transaction) => {
+      await insertCompletion(transaction, requestId, "accepted", effectKey, status);
+    });
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-mandatory-effect-terminal-owner.v1",
+      requestId,
+      effectKey,
+      status,
+    }), status, (transaction) => (
+      db.resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ requestId, effectKey }),
+      )
+    ));
+  }
+
+  {
+    const requestId = `RTR_${nextSuffix()}`;
+    const identity = createInternalProductionTerminationCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId }),
+    );
+    const bound = await bindTerminalOwner("a-termination-v1", identity, async (transaction) => {
+      await transaction`
+        INSERT INTO run_termination_requests (
+          request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
+          terminalized_at,diagnostic,evidence
+        ) VALUES (
+          ${requestId},${parent.run_id},'failed','terminalized','task2',NOW(),NOW(),NOW(),
+          'task2 terminalized','{}'::jsonb
+        )
+      `;
+    });
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-termination-terminal-owner.v1",
+      requestId,
+      status: "terminalized",
+    }), "terminalized", (transaction) => (
+      db.resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ requestId }),
+      )
+    ));
+  }
+
+  const findingImplementations = [
+    "a-finding-recovery-repository-v1",
+    "a-finding-v3-downstream-evidence-v1",
+    "a-finding-v3-evidence-only-v1",
+  ] as const;
+  const findingInputs: Array<Readonly<{ findingSetHash: string }>> = [];
+  for (const implementationId of findingImplementations) {
+    const findingSetHash = hashCanonicalJson({ implementationId, sequence: ++sequence });
+    const findingSetId = `FSET_${findingSetHash}`;
+    const findingId = `FIND_${hashCanonicalJson({ findingSetHash })}`;
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(
+      Object.freeze({ findingSetHash }),
+    );
+    const payload = {
+      schema: "setfarm.finding-set.v1",
+      findingSetHash,
+      findingSetId,
+      runId: parent.run_id,
+      storyId: `task2-story-${sequence}`,
+      packetHash: SHA_A,
+      sliceHash: SHA_B,
+      sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+    };
+    const bound = await bindTerminalOwner(implementationId, identity, async (transaction) => {
+      await transaction`
+        INSERT INTO finding_sets (
+          finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+          source_sha,source_tree_hash,finding_ids,payload
+        ) VALUES (
+          ${findingSetHash},${findingSetId},${parent.run_id},${payload.storyId},${SHA_A},${SHA_B},
+          ${GIT_A},${GIT_B},${transaction.json([findingId])},${transaction.json(payload)}
+        )
+      `;
+      const findingPayload = {
+        findingId,
+        origin: "test",
+        classification: "structured",
+        invariantRef: "INV_TASK2",
+        status: "satisfied",
+      };
+      await transaction`
+        INSERT INTO findings (
+          finding_set_hash,finding_id,origin,classification,invariant_ref,status,
+          source_fingerprint,payload
+        ) VALUES (
+          ${findingSetHash},${findingId},'test','structured','INV_TASK2','satisfied',
+          ${SHA_C},${transaction.json(findingPayload)}
+        )
+      `;
+    });
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-finding-terminal-owner.v1",
+      findingSetHash,
+      status: "published",
+    }), "published", (transaction) => (
+      db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ findingSetHash }),
+      )
+    ));
+    findingInputs.push(Object.freeze({ findingSetHash }));
+  }
+
+  for (const status of ["delivered", "skipped", "quarantined"] as const) {
+    const eventKey = `task2-event-${nextSuffix()}`;
+    const consumer = status === "skipped" ? "jsonl" as const : "webhook" as const;
+    const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(
+      Object.freeze({ eventKey, consumer }),
+    );
+    const outboxId = `task2-outbox-${sequence}`;
+    const deliveryHash = hashCanonicalJson({ eventKey, consumer });
+    const bound = await bindTerminalOwner("a-operational-delivery-v1", identity, async (transaction) => {
+      await transaction`
+        INSERT INTO operational_outbox (
+          outbox_id,event_key,event_type,aggregate_type,aggregate_id,payload,state,published_at
+        ) VALUES (
+          ${outboxId},${eventKey},'task2','task2',${parent.run_id},'{}'::jsonb,'published',NOW()
+        )
+      `;
+      await transaction`
+        INSERT INTO operational_events (
+          event_key,outbox_id,event_type,aggregate_type,aggregate_id,run_id,payload,event_hash,
+          source_created_at,committed_at
+        ) VALUES (
+          ${eventKey},${outboxId},'task2','task2',${parent.run_id},${parent.run_id},
+          '{"schema":"setfarm.task2-event.v1"}'::jsonb,${SHA_A},NOW(),NOW()
+        )
+      `;
+      await transaction`
+        INSERT INTO operational_event_deliveries (
+          event_key,consumer,delivery_id,input_hash,idempotency_key,state,attempt_count,
+          delivered_at,diagnostic,result
+        ) VALUES (
+          ${eventKey},${consumer},${`OED_${deliveryHash}`},${SHA_B},${eventKey},${status},1,
+          ${status === "delivered" || status === "skipped" ? new Date() : null},
+          ${status === "quarantined" ? "task2 quarantine" : null},'{}'::jsonb
+        )
+      `;
+    });
+    await assertPortAndClose(bound, hashCanonicalJson({
+      schema: "setfarm.internal-production-operational-delivery-terminal-owner.v1",
+      eventKey,
+      consumer,
+      status,
+    }), status, (transaction) => (
+      db.resolveInternalProductionOperationalDeliveryTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ eventKey, consumer }),
+      )
+    ));
+  }
+
+  const realClaimReservation = (await sql<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    category: string;
+    producer_implementation_id: string;
+    producer_purpose_hash: string;
+    producer_implementation_hash: string;
+  }>>`
+    SELECT reservation_ref,reservation_hash,category,producer_implementation_id,
+           producer_purpose_hash,producer_implementation_hash
+      FROM internal_production_owner_reservations_v1
+     WHERE category='claim' AND owner_key='9100000' AND state='closed'
+  `)[0]!;
+  const realAttemptReservation = (await sql<typeof realClaimReservation[]>`
+    SELECT reservation_ref,reservation_hash,category,producer_implementation_id,
+           producer_purpose_hash,producer_implementation_hash
+      FROM internal_production_owner_reservations_v1
+     WHERE category='execution-attempt'
+       AND producer_implementation_id='a-execution-attempt-v1'
+       AND state='closed'
+     ORDER BY owner_key LIMIT 1
+  `)[0]!;
+  assert.ok(realClaimReservation);
+  assert.ok(realAttemptReservation);
+  const crossedClaimRowSnapshot = async () => (await sql<Array<{
+    head_version: string;
+    head_hash: string;
+    reservation_ref: string;
+    reservation_hash: string;
+    category: string;
+    producer_implementation_id: string;
+    producer_purpose_hash: string;
+    producer_implementation_hash: string;
+    state: string;
+  }>>`
+    SELECT head.head_version::text,head.head_hash,reservation.reservation_ref,
+           reservation.reservation_hash,reservation.category,
+           reservation.producer_implementation_id,reservation.producer_purpose_hash,
+           reservation.producer_implementation_hash,reservation.state
+      FROM internal_production_owner_admission_head_v1 head
+      JOIN internal_production_owner_reservations_v1 reservation
+        ON reservation.reservation_ref=${realClaimReservation.reservation_ref}
+     WHERE head.singleton=TRUE
+  `)[0]!;
+  const beforeCrossedClaimRow = await crossedClaimRowSnapshot();
+  for (const [label, crossRealRow] of [
+    ["disallowed-implementation", async (
+      transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    ) => {
+      await transaction`
+        UPDATE internal_production_owner_reservations_v1
+           SET producer_implementation_id=${realAttemptReservation.producer_implementation_id},
+               producer_purpose_hash=${realAttemptReservation.producer_purpose_hash},
+               producer_implementation_hash=${realAttemptReservation.producer_implementation_hash}
+         WHERE reservation_ref=${realClaimReservation.reservation_ref}
+      `;
+    }],
+    ["category", async (
+      transaction: Parameters<Parameters<typeof sql.begin>[0]>[0],
+    ) => {
+      await transaction`
+        UPDATE internal_production_owner_reservations_v1
+           SET category=${realAttemptReservation.category}
+         WHERE reservation_ref=${realClaimReservation.reservation_ref}
+      `;
+    }],
+  ] as const) {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await crossRealRow(transaction);
+        await assert.rejects(
+          db.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+            transaction,
+            Object.freeze({ claimIdText: "9100000" }),
+          ),
+          /^Error: INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE$/,
+        );
+        throw new Error(`TEST_ROLLBACK_REAL_CROSSED_CLAIM_${label.toUpperCase()}`);
+      }),
+      new RegExp(`^Error: TEST_ROLLBACK_REAL_CROSSED_CLAIM_${label.toUpperCase()}$`),
+    );
+    assert.deepEqual(await crossedClaimRowSnapshot(), beforeCrossedClaimRow);
+  }
+
+  const zeroSidecarAttemptId = `ATT_${nextSuffix()}`;
+  await insertAttempt(sql, zeroSidecarAttemptId, "verified");
+  await assert.rejects(
+    sql.begin((transaction) => (
+      db.resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ attemptId: zeroSidecarAttemptId }),
+      )
+    )),
+    /EXECUTION_ATTEMPT_OWNER_UNAVAILABLE/,
+  );
+
+  const partialFindingSetHash = hashCanonicalJson({ partial: ++sequence });
+  const partialFindingIdentity = createInternalProductionFindingCanonicalOwnerIdentityV1(
+    Object.freeze({ findingSetHash: partialFindingSetHash }),
+  );
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: "a-finding-recovery-repository-v1",
+        ownerKey: partialFindingSetHash,
+      });
+      const firstFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 0 })}`;
+      const missingFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 1 })}`;
+      const findingSetId = `FSET_${partialFindingSetHash}`;
+      const payload = {
+        schema: "setfarm.finding-set.v1",
+        findingSetHash: partialFindingSetHash,
+        findingSetId,
+        runId: parent.run_id,
+        storyId: `task2-partial-story-${sequence}`,
+        packetHash: SHA_A,
+        sliceHash: SHA_B,
+        sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+      };
+      await transaction`
+        INSERT INTO finding_sets (
+          finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+          source_sha,source_tree_hash,finding_ids,payload
+        ) VALUES (
+          ${partialFindingSetHash},${findingSetId},${parent.run_id},${payload.storyId},
+          ${SHA_A},${SHA_B},${GIT_A},${GIT_B},
+          ${transaction.json([firstFindingId, missingFindingId])},${transaction.json(payload)}
+        )
+      `;
+      const findingPayload = {
+        findingId: firstFindingId,
+        origin: "test",
+        classification: "structured",
+        invariantRef: "INV_TASK2_PARTIAL",
+        status: "satisfied",
+      };
+      await transaction`
+        INSERT INTO findings (
+          finding_set_hash,finding_id,origin,classification,invariant_ref,status,
+          source_fingerprint,payload
+        ) VALUES (
+          ${partialFindingSetHash},${firstFindingId},'test','structured','INV_TASK2_PARTIAL',
+          'satisfied',${SHA_C},${transaction.json(findingPayload)}
+        )
+      `;
+      await db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: partialFindingIdentity,
+      });
+      return db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+        transaction,
+        Object.freeze({ findingSetHash: partialFindingSetHash }),
+      );
+    }),
+    /FINDING_OWNER_UNAVAILABLE/,
+  );
+
+  let unrelatedChildLocked!: () => void;
+  const unrelatedChildIsLocked = new Promise<void>((resolve) => {
+    unrelatedChildLocked = resolve;
+  });
+  let releaseUnrelatedChild!: () => void;
+  const holdUnrelatedChild = new Promise<void>((resolve) => {
+    releaseUnrelatedChild = resolve;
+  });
+  const unrelatedFindingBlocker = sql.begin(async (transaction) => {
+    await transaction`
+      SELECT finding_id FROM findings
+       WHERE finding_set_hash=${findingInputs[1]!.findingSetHash}
+       FOR UPDATE
+    `;
+    unrelatedChildLocked();
+    await holdUnrelatedChild;
+  });
+  await unrelatedChildIsLocked;
+  let exactFindingResult!: InternalProductionResolvedOwnerTerminalCloseInputV1;
+  try {
+    exactFindingResult = await sql.begin(async (transaction) => {
+      await transaction`SET LOCAL lock_timeout='250ms'`;
+      return db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+        transaction,
+        findingInputs[0]!,
+      );
+    });
+  } finally {
+    releaseUnrelatedChild();
+    await unrelatedFindingBlocker;
+  }
+  assert.deepEqual(Object.keys(exactFindingResult), [
+    "reservationRef", "reservationHash", "terminalAuthorityRef", "terminalAuthorityHash",
+  ]);
+});
+
 test("real PostgreSQL close resolver rejects a bare historical row and unavailable terminal authority", async (t) => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
@@ -4579,6 +5821,1071 @@ function reservationFixture() {
   });
   return { row, reservation, identity, bound, terminal };
 }
+
+function exactAsciiRef(length: number): string {
+  const prefix = "setfarm://tests/";
+  assert.ok(length >= prefix.length);
+  return `${prefix}${"x".repeat(length - prefix.length)}`;
+}
+
+test("owner-core applies only the three exact P3 field maxima and preserves every 4000 default", () => {
+  const row = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0];
+  const reservationForOwnerKey = (length: number) => createInternalProductionOwnerReservationV1({
+    producer: row,
+    ownerKey: "k".repeat(length),
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+  });
+
+  for (const length of [8_461, 8_462]) {
+    const reservation = reservationForOwnerKey(length);
+    assert.equal(reservation.ownerKey.length, length);
+    assert.equal(validateInternalProductionOwnerReservationV1(reservation, row).ownerKey.length, length);
+    const identity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+      schema: "setfarm.internal-production-canonical-owner-identity.v1",
+      category: "run",
+      ownerKey: reservation.ownerKey,
+      ownerRef: "setfarm://tests/owner-key-boundary",
+      ownerHash: SHA_B,
+    };
+    assert.equal(
+      ownerAdmissionApi.validateInternalProductionCanonicalOwnerIdentityV1(identity).ownerKey.length,
+      length,
+    );
+    const bound = createInternalProductionBoundOwnerReservationV1({
+      reservation,
+      canonicalOwnerIdentity: identity,
+    });
+    assert.equal(validateInternalProductionBoundOwnerReservationV1(bound).ownerKey.length, length);
+    const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: identity,
+      terminalOwnerRef: "setfarm://tests/owner-key-boundary/terminal/completed",
+      terminalOwnerHash: SHA_C,
+    });
+    const authenticatedTerminal = validateInternalProductionTerminalOwnerAuthorityV1(terminal);
+    assert.equal(authenticatedTerminal.ownerKey.length, length);
+    const terminalPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+    assert.deepEqual(
+      validateInternalProductionTerminalOwnerAuthorityPairV1(terminalPair, terminal),
+      terminalPair,
+    );
+    const close = createInternalProductionOwnerReservationCloseV1({
+      closeKind: "ordinary",
+      boundReservation: bound,
+      terminalAuthority: terminal,
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+      ownerAdmissionHeadSuccessorHash: SHA_B,
+      preservedFenceRef: null,
+      preservedFenceHash: null,
+    });
+    assert.equal(validateInternalProductionOwnerReservationCloseV1(close).terminalOwnerRef,
+      terminal.terminalOwnerRef);
+  }
+  assert.throws(() => reservationForOwnerKey(8_463), /OWNER_KEY_INVALID/);
+
+  const shortReservation = reservationForOwnerKey(32);
+  for (const length of [12_498, 12_499]) {
+    const ownerRef = exactAsciiRef(length);
+    const identity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+      schema: "setfarm.internal-production-canonical-owner-identity.v1",
+      category: "run",
+      ownerKey: shortReservation.ownerKey,
+      ownerRef,
+      ownerHash: SHA_B,
+    };
+    assert.equal(ownerAdmissionApi.validateInternalProductionCanonicalOwnerIdentityV1(identity).ownerRef.length,
+      length);
+    const bound = createInternalProductionBoundOwnerReservationV1({
+      reservation: shortReservation,
+      canonicalOwnerIdentity: identity,
+    });
+    assert.equal(
+      validateInternalProductionBoundOwnerReservationV1(bound).canonicalOwnerIdentity.ownerRef.length,
+      length,
+    );
+    const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: identity,
+      terminalOwnerRef: "setfarm://tests/owner-ref-boundary/terminal/completed",
+      terminalOwnerHash: SHA_C,
+    });
+    assert.equal(validateInternalProductionTerminalOwnerAuthorityV1(terminal).ownerRef.length, length);
+    const pair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+    assert.deepEqual(validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal), pair);
+    const close = createInternalProductionOwnerReservationCloseV1({
+      closeKind: "ordinary",
+      boundReservation: bound,
+      terminalAuthority: terminal,
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+      ownerAdmissionHeadSuccessorHash: SHA_B,
+      preservedFenceRef: null,
+      preservedFenceHash: null,
+    });
+    assert.equal(validateInternalProductionOwnerReservationCloseV1(close).terminalOwnerRef,
+      terminal.terminalOwnerRef);
+  }
+  assert.throws(
+    () => ownerAdmissionApi.validateInternalProductionCanonicalOwnerIdentityV1({
+      schema: "setfarm.internal-production-canonical-owner-identity.v1",
+      category: "run",
+      ownerKey: shortReservation.ownerKey,
+      ownerRef: exactAsciiRef(12_500),
+      ownerHash: SHA_B,
+    }),
+    /OWNER_REF_INVALID/,
+  );
+
+  const shortIdentity: InternalProductionCanonicalOwnerIdentityV1<"run"> = {
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: shortReservation.ownerKey,
+    ownerRef: "setfarm://tests/terminal-ref-boundary",
+    ownerHash: SHA_B,
+  };
+  const shortBound = createInternalProductionBoundOwnerReservationV1({
+    reservation: shortReservation,
+    canonicalOwnerIdentity: shortIdentity,
+  });
+  for (const length of [12_518, 12_519]) {
+    const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: shortIdentity,
+      terminalOwnerRef: exactAsciiRef(length),
+      terminalOwnerHash: SHA_C,
+    });
+    assert.equal(validateInternalProductionTerminalOwnerAuthorityV1(terminal).terminalOwnerRef.length,
+      length);
+    const pair = deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal);
+    assert.deepEqual(validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal), pair);
+    const close = createInternalProductionOwnerReservationCloseV1({
+      closeKind: "ordinary",
+      boundReservation: shortBound,
+      terminalAuthority: terminal,
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+      ownerAdmissionHeadSuccessorHash: SHA_B,
+      preservedFenceRef: null,
+      preservedFenceHash: null,
+    });
+    assert.equal(validateInternalProductionOwnerReservationCloseV1(close).terminalOwnerRef.length,
+      length);
+  }
+  assert.throws(
+    () => createInternalProductionTerminalOwnerAuthorityV1({
+      canonicalOwnerIdentity: shortIdentity,
+      terminalOwnerRef: exactAsciiRef(12_520),
+      terminalOwnerHash: SHA_C,
+    }),
+    /TERMINAL_OWNER_REF_INVALID/,
+  );
+
+  const tooLongGeneric = "g".repeat(4_001);
+  assert.throws(
+    () => createInternalProductionOwnerReservationV1({
+      producer: { ...row, implementationId: tooLongGeneric },
+      ownerKey: "short-owner",
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+    }),
+    /IMPLEMENTATION_ID_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionOwnerReservationV1({
+      ...shortReservation,
+      reservationRef: exactAsciiRef(4_001),
+    }, row),
+    /RESERVATION_REF_INVALID/,
+  );
+  assert.throws(
+    () => createInternalProductionOwnerReservationCloseV1({
+      closeKind: "fence-target",
+      boundReservation: shortBound,
+      terminalAuthority: createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: shortIdentity,
+        terminalOwnerRef: "setfarm://tests/short-terminal",
+        terminalOwnerHash: SHA_C,
+      }),
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+      ownerAdmissionHeadSuccessorHash: SHA_B,
+      preservedFenceRef: exactAsciiRef(4_001),
+      preservedFenceHash: SHA_C,
+    }),
+    /PRESERVED_FENCE_REF_INVALID/,
+  );
+
+  for (const field of ["module", "function", "implementationId", "ownerKeyDerivationId"] as const) {
+    const rows = structuredClone(INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1) as unknown as
+      Array<Record<string, unknown>>;
+    rows[0]![field] = tooLongGeneric;
+    assert.throws(
+      () => validateInternalProductionOwnerProducerManifestV1({
+        schema: "setfarm.internal-production-owner-producer-manifest.v1",
+        plan: "A",
+        rows,
+        manifestHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-owner-producer-manifest.v1",
+          plan: "A",
+          rows,
+        }),
+      }),
+      /OWNER_PRODUCER_ROW_.*INVALID/,
+    );
+  }
+  assert.throws(
+    () => validateInternalProductionOwnerReservationV1({
+      ...shortReservation,
+      producerImplementationId: tooLongGeneric,
+    }, row),
+    /PRODUCER_IMPLEMENTATION_ID_INVALID/,
+  );
+  assert.throws(
+    () => createInternalProductionBoundOwnerReservationV1({
+      reservation: { ...shortReservation, reservationRef: exactAsciiRef(4_001) },
+      canonicalOwnerIdentity: shortIdentity,
+    }),
+    /RESERVATION_REF_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionBoundOwnerReservationV1({
+      ...shortBound,
+      producerImplementationId: tooLongGeneric,
+    }),
+    /IMPLEMENTATION_ID_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionBoundOwnerReservationV1({
+      ...shortBound,
+      reservationRef: exactAsciiRef(4_001),
+    }),
+    /RESERVATION_REF_INVALID/,
+  );
+  const shortTerminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: shortIdentity,
+    terminalOwnerRef: "setfarm://tests/default-terminal",
+    terminalOwnerHash: SHA_C,
+  });
+  const shortPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(shortTerminal);
+  assert.throws(
+    () => validateInternalProductionTerminalOwnerAuthorityPairV1({
+      ...shortPair,
+      terminalAuthorityRef: exactAsciiRef(4_001),
+    }, shortTerminal),
+    /PAIR_REF_INVALID/,
+  );
+  const shortClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "ordinary",
+    boundReservation: shortBound,
+    terminalAuthority: shortTerminal,
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+    ownerAdmissionHeadSuccessorHash: SHA_B,
+    preservedFenceRef: null,
+    preservedFenceHash: null,
+  });
+  assert.throws(
+    () => validateInternalProductionOwnerReservationCloseV1({
+      ...shortClose,
+      closeRef: exactAsciiRef(4_001),
+    }),
+    /CLOSE_REF_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionOwnerReservationCloseV1({
+      ...shortClose,
+      reservationRef: exactAsciiRef(4_001),
+    }),
+    /RESERVATION_REF_INVALID/,
+  );
+  const fenceClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "fence-target",
+    boundReservation: shortBound,
+    terminalAuthority: shortTerminal,
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+    ownerAdmissionHeadSuccessorHash: SHA_B,
+    preservedFenceRef: "setfarm://tests/preserved-fence",
+    preservedFenceHash: SHA_C,
+  });
+  assert.throws(
+    () => validateInternalProductionOwnerReservationCloseV1({
+      ...fenceClose,
+      preservedFenceRef: exactAsciiRef(4_001),
+    }),
+    /PRESERVED_FENCE_REF_INVALID/,
+  );
+
+  assert.throws(
+    () => validateInternalProductionOwnerProducerSourceBuildAuthorityV1({
+      ...authorityA(),
+      currentEntryOperationRef: exactAsciiRef(4_001),
+    }),
+    /SOURCE_BUILD_AUTHORITY_A_OPERATION_INVALID/,
+  );
+  const sourcePairs = (["A", "B"] as const).map((plan, index) => ({
+    plan,
+    sourceBuildAuthorityRef:
+      `setfarm://internal-production/owner-producer-source-build-authority/${plan}/sha256/${index === 0 ? SHA_A : SHA_B}`,
+    sourceBuildAuthorityHash: index === 0 ? SHA_A : SHA_B,
+  }));
+  const predecessorManifestSetHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-producer-manifest-set.v1",
+    phase: "A+B",
+    orderedPlans: ["A", "B"],
+    orderedManifestHashes: [
+      INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash,
+      SHA_C,
+    ],
+    orderedSourceBuildAuthorities: sourcePairs,
+    ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+    ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+  });
+  const predecessorReceipt = {
+    schema: "setfarm.internal-production-owner-producer-manifest-set-activation.v1",
+    phase: "A+B",
+    orderedPlans: ["A", "B"],
+    orderedManifestHashes: [
+      INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash,
+      SHA_C,
+    ],
+    orderedSourceBuildAuthorities: sourcePairs,
+    manifestSetHash: predecessorManifestSetHash,
+    ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+    ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+    predecessorActivationRef: "setfarm://tests/predecessor-activation",
+    predecessorActivationHash: SHA_A,
+    predecessorHeadRef: "setfarm://tests/predecessor-head",
+    predecessorHeadHash: SHA_B,
+    activationRef: "setfarm://tests/activation",
+    activationHash: SHA_C,
+  };
+  for (const field of ["predecessorActivationRef", "predecessorHeadRef"] as const) {
+    assert.throws(
+      () => validateInternalProductionOwnerProducerManifestSetActivationReceiptV1({
+        ...predecessorReceipt,
+        [field]: exactAsciiRef(4_001),
+      }),
+      /ACTIVATION_PREDECESSOR_INVALID/,
+    );
+  }
+  assert.throws(
+    () => validateInternalProductionOwnerProducerManifestSetActivationHeadV1({
+      schema: "setfarm.internal-production-owner-producer-manifest-set-activation-head.v1",
+      phase: "A",
+      activationRef: exactAsciiRef(4_001),
+      activationHash: SHA_A,
+      predecessorHeadRef: null,
+      predecessorHeadHash: null,
+      headRef: "setfarm://tests/head",
+      headHash: SHA_B,
+    }),
+    /HEAD_ACTIVATION_REF_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionOwnerProducerManifestSetActivationHeadV1({
+      schema: "setfarm.internal-production-owner-producer-manifest-set-activation-head.v1",
+      phase: "A+B",
+      activationRef: "setfarm://tests/activation",
+      activationHash: SHA_A,
+      predecessorHeadRef: exactAsciiRef(4_001),
+      predecessorHeadHash: SHA_B,
+      headRef: "setfarm://tests/head",
+      headHash: SHA_C,
+    }),
+    /HEAD_PREDECESSOR_INVALID/,
+  );
+});
+
+test("every owner maximum is forged independently at each construction and authentication site", () => {
+  const row = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0];
+  const shortReservation = createInternalProductionOwnerReservationV1({
+    producer: row,
+    ownerKey: "task2-independent-owner",
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+  });
+  const identity = (
+    ownerKeyLength = shortReservation.ownerKey.length,
+    ownerRefLength = "setfarm://tests/independent-owner".length,
+  ): InternalProductionCanonicalOwnerIdentityV1<"run"> => ({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category: "run",
+    ownerKey: ownerKeyLength === shortReservation.ownerKey.length
+      ? shortReservation.ownerKey
+      : "k".repeat(ownerKeyLength),
+    ownerRef: ownerRefLength === "setfarm://tests/independent-owner".length
+      ? "setfarm://tests/independent-owner"
+      : exactAsciiRef(ownerRefLength),
+    ownerHash: SHA_B,
+  });
+  const shortIdentity = identity();
+  const shortBound = createInternalProductionBoundOwnerReservationV1({
+    reservation: shortReservation,
+    canonicalOwnerIdentity: shortIdentity,
+  });
+  const shortTerminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: shortIdentity,
+    terminalOwnerRef: "setfarm://tests/independent-owner/terminal/completed",
+    terminalOwnerHash: SHA_C,
+  });
+  const shortPair = deriveInternalProductionTerminalOwnerAuthorityPairV1(shortTerminal);
+  const shortClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "ordinary",
+    boundReservation: shortBound,
+    terminalAuthority: shortTerminal,
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+    ownerAdmissionHeadSuccessorHash: SHA_B,
+    preservedFenceRef: null,
+    preservedFenceHash: null,
+  });
+  const assertBoundarySite = (
+    field: string,
+    site: string,
+    maximum: number,
+    invoke: (length: number) => unknown,
+    overError: RegExp,
+  ) => {
+    for (const length of [maximum - 1, maximum]) {
+      assert.doesNotThrow(() => invoke(length), `${field} ${site} length ${length}`);
+    }
+    assert.throws(
+      () => invoke(maximum + 1),
+      overError,
+      `${field} ${site} length ${maximum + 1}`,
+    );
+  };
+
+  const ownerKeySites = [
+    ["reservation construction", (length: number) => (
+      createInternalProductionOwnerReservationV1({
+        producer: row,
+        ownerKey: "k".repeat(length),
+        ownerAdmissionHeadPredecessorHash: SHA_A,
+      })
+    ), /OWNER_KEY_INVALID/],
+    ["reservation authentication", (length: number) => (
+      validateInternalProductionOwnerReservationV1(
+        length <= 8_462
+          ? createInternalProductionOwnerReservationV1({
+            producer: row,
+            ownerKey: "k".repeat(length),
+            ownerAdmissionHeadPredecessorHash: SHA_A,
+          })
+          : { ...shortReservation, ownerKey: "k".repeat(length) },
+        row,
+      )
+    ), /OWNER_KEY_INVALID/],
+    ["canonical authentication", (length: number) => (
+      ownerAdmissionApi.validateInternalProductionCanonicalOwnerIdentityV1(identity(length))
+    ), /OWNER_KEY_INVALID/],
+    ["bound construction", (length: number) => {
+      const canonical = identity(length);
+      const reservation = length <= 8_462
+        ? createInternalProductionOwnerReservationV1({
+          producer: row,
+          ownerKey: canonical.ownerKey,
+          ownerAdmissionHeadPredecessorHash: SHA_A,
+        })
+        : { ...shortReservation, ownerKey: canonical.ownerKey };
+      return createInternalProductionBoundOwnerReservationV1({
+        reservation: reservation as never,
+        canonicalOwnerIdentity: canonical,
+      });
+    }, /OWNER_KEY_INVALID/],
+    ["bound authentication", (length: number) => {
+      if (length <= 8_462) {
+        const reservation = createInternalProductionOwnerReservationV1({
+          producer: row,
+          ownerKey: "k".repeat(length),
+          ownerAdmissionHeadPredecessorHash: SHA_A,
+        });
+        return validateInternalProductionBoundOwnerReservationV1(
+          createInternalProductionBoundOwnerReservationV1({
+            reservation,
+            canonicalOwnerIdentity: identity(length),
+          }),
+        );
+      }
+      return validateInternalProductionBoundOwnerReservationV1({
+        ...shortBound,
+        ownerKey: "k".repeat(length),
+      });
+    }, /OWNER_KEY_INVALID/],
+    ["terminal construction", (length: number) => (
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: identity(length),
+        terminalOwnerRef: shortTerminal.terminalOwnerRef,
+        terminalOwnerHash: SHA_C,
+      })
+    ), /OWNER_KEY_INVALID/],
+    ["terminal authentication", (length: number) => (
+      validateInternalProductionTerminalOwnerAuthorityV1(
+        length <= 8_462
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: identity(length),
+            terminalOwnerRef: shortTerminal.terminalOwnerRef,
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, ownerKey: "k".repeat(length) },
+      )
+    ), /OWNER_KEY_INVALID/],
+    ["pair construction", (length: number) => (
+      deriveInternalProductionTerminalOwnerAuthorityPairV1(
+        length <= 8_462
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: identity(length),
+            terminalOwnerRef: shortTerminal.terminalOwnerRef,
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, ownerKey: "k".repeat(length) },
+      )
+    ), /OWNER_KEY_INVALID/],
+    ["pair authentication", (length: number) => {
+      const terminal = length <= 8_462
+        ? createInternalProductionTerminalOwnerAuthorityV1({
+          canonicalOwnerIdentity: identity(length),
+          terminalOwnerRef: shortTerminal.terminalOwnerRef,
+          terminalOwnerHash: SHA_C,
+        })
+        : { ...shortTerminal, ownerKey: "k".repeat(length) };
+      const pair = length <= 8_462
+        ? deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal as never)
+        : shortPair;
+      return validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal as never);
+    }, /OWNER_KEY_INVALID/],
+    ["close construction authentication", (length: number) => {
+      if (length <= 8_462) {
+        const reservation = createInternalProductionOwnerReservationV1({
+          producer: row,
+          ownerKey: "k".repeat(length),
+          ownerAdmissionHeadPredecessorHash: SHA_A,
+        });
+        const canonical = identity(length);
+        const bound = createInternalProductionBoundOwnerReservationV1({
+          reservation,
+          canonicalOwnerIdentity: canonical,
+        });
+        const terminal = createInternalProductionTerminalOwnerAuthorityV1({
+          canonicalOwnerIdentity: canonical,
+          terminalOwnerRef: shortTerminal.terminalOwnerRef,
+          terminalOwnerHash: SHA_C,
+        });
+        return createInternalProductionOwnerReservationCloseV1({
+          closeKind: "ordinary", boundReservation: bound, terminalAuthority: terminal,
+          ownerAdmissionHeadPredecessorHash: SHA_A,
+          ownerAdmissionHeadSuccessorHash: SHA_B,
+          preservedFenceRef: null, preservedFenceHash: null,
+        });
+      }
+      return createInternalProductionOwnerReservationCloseV1({
+        closeKind: "ordinary",
+        boundReservation: { ...shortBound, ownerKey: "k".repeat(length) },
+        terminalAuthority: { ...shortTerminal, ownerKey: "k".repeat(length) },
+        ownerAdmissionHeadPredecessorHash: SHA_A,
+        ownerAdmissionHeadSuccessorHash: SHA_B,
+        preservedFenceRef: null,
+        preservedFenceHash: null,
+      });
+    }, /OWNER_KEY_INVALID/],
+  ] as const;
+  for (const [site, invoke, error] of ownerKeySites) {
+    assertBoundarySite("ownerKey", site, 8_462, invoke, error);
+  }
+
+  const ownerRefIdentity = (length: number) => identity(
+    shortReservation.ownerKey.length,
+    length,
+  );
+  const ownerRefSites = [
+    ["canonical authentication", (length: number) => (
+      ownerAdmissionApi.validateInternalProductionCanonicalOwnerIdentityV1(
+        ownerRefIdentity(length),
+      )
+    )],
+    ["bound construction", (length: number) => (
+      createInternalProductionBoundOwnerReservationV1({
+        reservation: shortReservation,
+        canonicalOwnerIdentity: ownerRefIdentity(length),
+      })
+    )],
+    ["bound authentication", (length: number) => {
+      if (length <= 12_499) {
+        return validateInternalProductionBoundOwnerReservationV1(
+          createInternalProductionBoundOwnerReservationV1({
+            reservation: shortReservation,
+            canonicalOwnerIdentity: ownerRefIdentity(length),
+          }),
+        );
+      }
+      return validateInternalProductionBoundOwnerReservationV1({
+        ...shortBound,
+        canonicalOwnerIdentity: ownerRefIdentity(length),
+      });
+    }],
+    ["terminal construction", (length: number) => (
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: ownerRefIdentity(length),
+        terminalOwnerRef: shortTerminal.terminalOwnerRef,
+        terminalOwnerHash: SHA_C,
+      })
+    )],
+    ["terminal authentication", (length: number) => (
+      validateInternalProductionTerminalOwnerAuthorityV1(
+        length <= 12_499
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: ownerRefIdentity(length),
+            terminalOwnerRef: shortTerminal.terminalOwnerRef,
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, ownerRef: exactAsciiRef(length) },
+      )
+    )],
+    ["pair construction", (length: number) => (
+      deriveInternalProductionTerminalOwnerAuthorityPairV1(
+        length <= 12_499
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: ownerRefIdentity(length),
+            terminalOwnerRef: shortTerminal.terminalOwnerRef,
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, ownerRef: exactAsciiRef(length) },
+      )
+    )],
+    ["pair authentication", (length: number) => {
+      const terminal = length <= 12_499
+        ? createInternalProductionTerminalOwnerAuthorityV1({
+          canonicalOwnerIdentity: ownerRefIdentity(length),
+          terminalOwnerRef: shortTerminal.terminalOwnerRef,
+          terminalOwnerHash: SHA_C,
+        })
+        : { ...shortTerminal, ownerRef: exactAsciiRef(length) };
+      const pair = length <= 12_499
+        ? deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal as never)
+        : shortPair;
+      return validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal as never);
+    }],
+    ["close construction authentication", (length: number) => {
+      if (length <= 12_499) {
+        const canonical = ownerRefIdentity(length);
+        return createInternalProductionOwnerReservationCloseV1({
+          closeKind: "ordinary",
+          boundReservation: createInternalProductionBoundOwnerReservationV1({
+            reservation: shortReservation,
+            canonicalOwnerIdentity: canonical,
+          }),
+          terminalAuthority: createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: canonical,
+            terminalOwnerRef: shortTerminal.terminalOwnerRef,
+            terminalOwnerHash: SHA_C,
+          }),
+          ownerAdmissionHeadPredecessorHash: SHA_A,
+          ownerAdmissionHeadSuccessorHash: SHA_B,
+          preservedFenceRef: null,
+          preservedFenceHash: null,
+        });
+      }
+      return createInternalProductionOwnerReservationCloseV1({
+        closeKind: "ordinary",
+        boundReservation: {
+          ...shortBound,
+          canonicalOwnerIdentity: ownerRefIdentity(length),
+        },
+        terminalAuthority: { ...shortTerminal, ownerRef: exactAsciiRef(length) },
+        ownerAdmissionHeadPredecessorHash: SHA_A,
+        ownerAdmissionHeadSuccessorHash: SHA_B,
+        preservedFenceRef: null,
+        preservedFenceHash: null,
+      });
+    }],
+  ] as const;
+  for (const [site, invoke] of ownerRefSites) {
+    assertBoundarySite("ownerRef", site, 12_499, invoke, /OWNER_REF_INVALID/);
+  }
+
+  const terminalRefSites = [
+    ["terminal construction", (length: number) => (
+      createInternalProductionTerminalOwnerAuthorityV1({
+        canonicalOwnerIdentity: shortIdentity,
+        terminalOwnerRef: exactAsciiRef(length),
+        terminalOwnerHash: SHA_C,
+      })
+    )],
+    ["terminal authentication", (length: number) => (
+      validateInternalProductionTerminalOwnerAuthorityV1(
+        length <= 12_519
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: shortIdentity,
+            terminalOwnerRef: exactAsciiRef(length),
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, terminalOwnerRef: exactAsciiRef(length) },
+      )
+    )],
+    ["pair construction", (length: number) => (
+      deriveInternalProductionTerminalOwnerAuthorityPairV1(
+        length <= 12_519
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: shortIdentity,
+            terminalOwnerRef: exactAsciiRef(length),
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, terminalOwnerRef: exactAsciiRef(length) },
+      )
+    )],
+    ["pair authentication", (length: number) => {
+      const terminal = length <= 12_519
+        ? createInternalProductionTerminalOwnerAuthorityV1({
+          canonicalOwnerIdentity: shortIdentity,
+          terminalOwnerRef: exactAsciiRef(length),
+          terminalOwnerHash: SHA_C,
+        })
+        : { ...shortTerminal, terminalOwnerRef: exactAsciiRef(length) };
+      const pair = length <= 12_519
+        ? deriveInternalProductionTerminalOwnerAuthorityPairV1(terminal as never)
+        : shortPair;
+      return validateInternalProductionTerminalOwnerAuthorityPairV1(pair, terminal as never);
+    }],
+    ["close construction authentication", (length: number) => (
+      createInternalProductionOwnerReservationCloseV1({
+        closeKind: "ordinary",
+        boundReservation: shortBound,
+        terminalAuthority: length <= 12_519
+          ? createInternalProductionTerminalOwnerAuthorityV1({
+            canonicalOwnerIdentity: shortIdentity,
+            terminalOwnerRef: exactAsciiRef(length),
+            terminalOwnerHash: SHA_C,
+          })
+          : { ...shortTerminal, terminalOwnerRef: exactAsciiRef(length) },
+        ownerAdmissionHeadPredecessorHash: SHA_A,
+        ownerAdmissionHeadSuccessorHash: SHA_B,
+        preservedFenceRef: null,
+        preservedFenceHash: null,
+      })
+    )],
+    ["close authentication", (length: number) => (
+      validateInternalProductionOwnerReservationCloseV1(
+        length <= 12_519
+          ? createInternalProductionOwnerReservationCloseV1({
+            closeKind: "ordinary",
+            boundReservation: shortBound,
+            terminalAuthority: createInternalProductionTerminalOwnerAuthorityV1({
+              canonicalOwnerIdentity: shortIdentity,
+              terminalOwnerRef: exactAsciiRef(length),
+              terminalOwnerHash: SHA_C,
+            }),
+            ownerAdmissionHeadPredecessorHash: SHA_A,
+            ownerAdmissionHeadSuccessorHash: SHA_B,
+            preservedFenceRef: null,
+            preservedFenceHash: null,
+          })
+          : { ...shortClose, terminalOwnerRef: exactAsciiRef(length) },
+      )
+    )],
+  ] as const;
+  for (const [site, invoke] of terminalRefSites) {
+    assertBoundarySite("terminalOwnerRef", site, 12_519, invoke, /TERMINAL_OWNER_REF_INVALID/);
+  }
+});
+
+test("eight P3 canonical owner builders are byte exact and reject every noncanonical input", () => {
+  const attemptId = `ATT_${"a".repeat(16)}`;
+  const sessionId = `RTS_${"b".repeat(16)}`;
+  const completionRequestId = `RCR_${"c".repeat(16)}`;
+  const terminationRequestId = `RTR_${"d".repeat(16)}`;
+  const findingSetHash = "e".repeat(64);
+  const effectKey = "effect:key";
+  const eventKey = "event/key";
+  const completionEffectOwnerKey =
+    "{\"effectKey\":\"effect:key\",\"requestId\":\"RCR_cccccccccccccccc\",\"schema\":\"setfarm.internal-production-completion-request-id-effect-key.v1\"}";
+  const operationalOwnerKey =
+    "{\"consumer\":\"webhook\",\"eventKey\":\"event/key\",\"schema\":\"setfarm.internal-production-operational-event-key-consumer.v1\"}";
+  const rows = [
+    {
+      label: "claim",
+      build: () => createInternalProductionClaimCanonicalOwnerIdentityV1(
+        Object.freeze({ claimIdText: "9223372036854775807" }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "claim",
+        ownerKey: "9223372036854775807",
+        ownerRef: "setfarm://claim-log/9223372036854775807",
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-claim-owner.v1",
+          claimId: "9223372036854775807",
+        }),
+      },
+    },
+    {
+      label: "execution attempt",
+      build: () => createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1(
+        Object.freeze({ attemptId }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "execution-attempt",
+        ownerKey: attemptId,
+        ownerRef: `setfarm://execution-attempt/${attemptId}`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-execution-attempt-owner.v1",
+          attemptId,
+        }),
+      },
+    },
+    {
+      label: "runtime session",
+      build: () => createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(
+        Object.freeze({ sessionId }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "runtime-session",
+        ownerKey: sessionId,
+        ownerRef: `setfarm://runtime-session/${sessionId}`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-runtime-session-owner.v1",
+          sessionId,
+        }),
+      },
+    },
+    {
+      label: "completion owner",
+      build: () => createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(
+        Object.freeze({ requestId: completionRequestId }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "completion-owner",
+        ownerKey: completionRequestId,
+        ownerRef: `setfarm://runtime-completion/${completionRequestId}`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-completion-owner.v1",
+          requestId: completionRequestId,
+        }),
+      },
+    },
+    {
+      label: "mandatory effect",
+      build: () => createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(
+        Object.freeze({ requestId: completionRequestId, effectKey }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "mandatory-effect",
+        ownerKey: completionEffectOwnerKey,
+        ownerRef: `setfarm://runtime-completion/${completionRequestId}/mandatory-effect/effect%3Akey`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-mandatory-effect-owner.v1",
+          requestId: completionRequestId,
+          effectKey,
+        }),
+      },
+    },
+    {
+      label: "termination",
+      build: () => createInternalProductionTerminationCanonicalOwnerIdentityV1(
+        Object.freeze({ requestId: terminationRequestId }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "termination",
+        ownerKey: terminationRequestId,
+        ownerRef: `setfarm://run-termination/${terminationRequestId}`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-termination-owner.v1",
+          requestId: terminationRequestId,
+        }),
+      },
+    },
+    {
+      label: "finding",
+      build: () => createInternalProductionFindingCanonicalOwnerIdentityV1(
+        Object.freeze({ findingSetHash }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "finding",
+        ownerKey: findingSetHash,
+        ownerRef: `setfarm://finding-set/${findingSetHash}`,
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-finding-owner.v1",
+          findingSetHash,
+        }),
+      },
+    },
+    {
+      label: "operational delivery",
+      build: () => createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(
+        Object.freeze({ eventKey, consumer: "webhook" }),
+      ),
+      expected: {
+        schema: "setfarm.internal-production-canonical-owner-identity.v1",
+        category: "operational-delivery",
+        ownerKey: operationalOwnerKey,
+        ownerRef: "setfarm://operational-event/event%2Fkey/delivery/webhook",
+        ownerHash: hashCanonicalJson({
+          schema: "setfarm.internal-production-operational-delivery-owner.v1",
+          eventKey,
+          consumer: "webhook",
+        }),
+      },
+    },
+  ] as const;
+  for (const row of rows) {
+    const actual = row.build();
+    assert.deepEqual(Object.keys(actual), ["schema", "category", "ownerKey", "ownerRef", "ownerHash"],
+      `${row.label} property order`);
+    assert.deepEqual(actual, row.expected, row.label);
+    assertDeepFrozen(actual, row.label);
+  }
+
+  assert.equal(completionEffectOwnerKey, canonicalJsonStringify({
+    schema: "setfarm.internal-production-completion-request-id-effect-key.v1",
+    requestId: completionRequestId,
+    effectKey,
+  }));
+  assert.equal(operationalOwnerKey, canonicalJsonStringify({
+    schema: "setfarm.internal-production-operational-event-key-consumer.v1",
+    eventKey,
+    consumer: "webhook",
+  }));
+
+  for (const claimIdText of ["1", "9223372036854775807"]) {
+    assert.equal(
+      createInternalProductionClaimCanonicalOwnerIdentityV1(Object.freeze({ claimIdText })).ownerKey,
+      claimIdText,
+    );
+  }
+  for (const claimIdText of [
+    "0", "01", "+1", "1.0", "9223372036854775808", 1, Number.MAX_SAFE_INTEGER,
+  ]) {
+    assert.throws(
+      () => createInternalProductionClaimCanonicalOwnerIdentityV1(
+        Object.freeze({ claimIdText }) as never,
+      ),
+      /CLAIM_ID_INVALID/,
+    );
+  }
+
+  for (const [build, prefix] of [
+    [(value: string) => createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1(
+      Object.freeze({ attemptId: value }),
+    ), "ATT_"],
+    [(value: string) => createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(
+      Object.freeze({ sessionId: value }),
+    ), "RTS_"],
+    [(value: string) => createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId: value }),
+    ), "RCR_"],
+    [(value: string) => createInternalProductionTerminationCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId: value }),
+    ), "RTR_"],
+  ] as const) {
+    assert.equal(build(`${prefix}${"z".repeat(16)}`).ownerKey.length, 20);
+    assert.equal(build(`${prefix}${"z".repeat(160)}`).ownerKey.length, 164);
+    for (const invalid of [
+      `${prefix}${"z".repeat(15)}`,
+      `${prefix}${"z".repeat(161)}`,
+      `${prefix.toLowerCase()}${"z".repeat(16)}`,
+      `${prefix}${"z".repeat(15)}_`,
+    ]) assert.throws(() => build(invalid), /_ID_INVALID/);
+  }
+
+  for (const key of ["!", "~".repeat(4_096)]) {
+    assert.equal(createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(Object.freeze({
+      requestId: completionRequestId,
+      effectKey: key,
+    })).ownerKey, canonicalJsonStringify({
+      schema: "setfarm.internal-production-completion-request-id-effect-key.v1",
+      requestId: completionRequestId,
+      effectKey: key,
+    }));
+    assert.equal(createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(Object.freeze({
+      eventKey: key,
+      consumer: "jsonl",
+    })).ownerKey, canonicalJsonStringify({
+      schema: "setfarm.internal-production-operational-event-key-consumer.v1",
+      eventKey: key,
+      consumer: "jsonl",
+    }));
+  }
+  for (const invalidKey of ["", "x".repeat(4_097), " key", "key ", "key\n"]) {
+    assert.throws(() => createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(
+      Object.freeze({ requestId: completionRequestId, effectKey: invalidKey }),
+    ), /EFFECT_KEY_INVALID/);
+    assert.throws(() => createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(
+      Object.freeze({ eventKey: invalidKey, consumer: "jsonl" }),
+    ), /EVENT_KEY_INVALID/);
+  }
+  for (const invalidHash of ["a".repeat(63), "a".repeat(65), "A".repeat(64), `${"a".repeat(63)}g`]) {
+    assert.throws(
+      () => createInternalProductionFindingCanonicalOwnerIdentityV1(
+        Object.freeze({ findingSetHash: invalidHash }),
+      ),
+      /FINDING_SET_HASH_INVALID/,
+    );
+  }
+  for (const consumer of ["jsonl", "webhook"] as const) {
+    assert.equal(createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(Object.freeze({
+      eventKey: "consumer-boundary",
+      consumer,
+    })).ownerRef.endsWith(`/delivery/${consumer}`), true);
+  }
+  assert.throws(() => createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(
+    Object.freeze({ eventKey: "consumer-boundary", consumer: "queue" }) as never,
+  ), /CONSUMER_INVALID/);
+
+  const exactInputMutations = [
+    () => createInternalProductionClaimCanonicalOwnerIdentityV1({ claimIdText: "1", extra: true } as never),
+    () => createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1({} as never),
+    () => createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1(
+      Object.assign(Object.create(null), { sessionId }),
+    ),
+    () => {
+      const input = { requestId: completionRequestId };
+      Object.defineProperty(input, "hidden", { value: true, enumerable: false });
+      return createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1(input);
+    },
+    () => createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({ effectKey } as never),
+    () => createInternalProductionTerminationCanonicalOwnerIdentityV1(
+      Object.assign({ requestId: terminationRequestId }, { [Symbol("hidden")]: true }),
+    ),
+    () => createInternalProductionFindingCanonicalOwnerIdentityV1({ findingSetHash, extra: true } as never),
+    () => {
+      const input = { eventKey, consumer: "jsonl" };
+      Object.defineProperty(input, "eventKey", { get: () => eventKey, enumerable: true });
+      return createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(input as never);
+    },
+  ];
+  for (const mutate of exactInputMutations) assert.throws(mutate, /INPUT|INVALID/);
+
+  const unequalCompositeKeys = [
+    JSON.stringify({ schema: "setfarm.internal-production-completion-request-id-effect-key.v1",
+      effectKey, requestId: completionRequestId }),
+    `${completionRequestId}:${effectKey}`,
+  ];
+  const canonicalEffectIdentity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1(
+    Object.freeze({ requestId: completionRequestId, effectKey }),
+  );
+  const effectProducer = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[8];
+  for (const ownerKey of unequalCompositeKeys) {
+    assert.notEqual(ownerKey, completionEffectOwnerKey);
+    const reservation = createInternalProductionOwnerReservationV1({
+      producer: effectProducer,
+      ownerKey,
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+    });
+    assert.throws(() => createInternalProductionBoundOwnerReservationV1({
+      reservation,
+      canonicalOwnerIdentity: canonicalEffectIdentity,
+    }), /OWNER_IDENTITY_MISMATCH/);
+  }
+  for (const ownerKey of [
+    JSON.stringify({
+      schema: "setfarm.internal-production-completion-request-id-effect-key.v1",
+      requestId: completionRequestId,
+      effectKey,
+    }, null, 2),
+    JSON.stringify(JSON.parse(completionEffectOwnerKey), null, 1),
+  ]) {
+    assert.throws(() => createInternalProductionOwnerReservationV1({
+      producer: effectProducer,
+      ownerKey,
+      ownerAdmissionHeadPredecessorHash: SHA_A,
+    }), /OWNER_KEY_INVALID/);
+  }
+});
 
 test("constructs canonical reservation, binding, terminal authority, and pair", () => {
   const { row, reservation, bound, terminal } = reservationFixture();
