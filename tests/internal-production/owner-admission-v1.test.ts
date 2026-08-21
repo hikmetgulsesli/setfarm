@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 import test from "node:test";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
@@ -192,6 +193,7 @@ let activatedOwnerAdmissionFixture: Readonly<{
   root: string;
   db: typeof import("../../src/db-pg.js");
   sql: ReturnType<typeof import("../../src/db-pg.js")["getSql"]>;
+  backendWorker: Worker;
 }> | null = null;
 
 type ProductBuildObservationFromOwnerCore =
@@ -218,6 +220,11 @@ void exactPbaCompileAssertions;
 test("workflow run canonical owner identity is byte exact", async () => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   const db = await import("../../src/db-pg.js");
+  assert.equal(
+    "resolveBoundInternalProductionWorkflowRunOwnerInTransactionV1" in db,
+    false,
+    "the generic bind port must own its strict post-publication reopen",
+  );
   for (const runId of ["run-plain", "run/with/slash", "run % unicode-✓"] as const) {
     const encodedRunId = encodeURIComponent(runId);
     assert.deepEqual(db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId), {
@@ -748,6 +755,8 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
     const tempDbUrl = pathToFileURL(path.join(fixture.root, "src/db-pg.ts")).href;
     const fixtureDb = await import(`${tempDbUrl}?activation=${Date.now()}`);
     const fixtureSql = fixtureDb.getSql();
+    const persistenceDb = await import(pathToFileURL(path.join(fixture.root, "src/db-pg.js")).href);
+    await persistenceDb.pgBegin(async () => undefined);
     const input = {
       expectedPredecessor: null,
       manifests: [INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1],
@@ -764,6 +773,19 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
         (SELECT COUNT(*)::text FROM internal_production_owner_producer_manifest_activation_heads_v1) AS heads,
         (SELECT current_revision::text FROM internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE) AS revision
     `)], [{ sources: "0", activations: "0", heads: "0", revision: "0" }]);
+
+    await assert.rejects(
+      fixtureSql.begin((transaction) => fixtureDb.beginOrAdoptInternalProductionOwnerReservationV1(
+        transaction,
+        { producerImplementationId: "a-runtime-run-v1", ownerKey: "run-persistence-missing-a-ancestry" },
+      )),
+      /^Error: RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID$/,
+    );
+    assert.equal((await fixtureSql<Array<{ count: string }>>`
+      SELECT COUNT(*)::text AS count FROM internal_production_owner_reservations_v1
+       WHERE owner_key='run-persistence-missing-a-ancestry'
+    `)[0]!.count, "0");
+    await assertEmptyActivationStore();
 
     const conflictingHash = `${source.sourceBuildAuthorityHash[0] === "a" ? "b" : "a"}${source.sourceBuildAuthorityHash.slice(1)}`;
     let publicGenericDriftError: unknown;
@@ -854,11 +876,774 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
         (SELECT COUNT(*)::text FROM internal_production_owner_producer_manifest_activation_heads_v1) AS heads,
         (SELECT current_revision::text FROM internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE) AS revision
     `)], [{ sources: "1", activations: "1", heads: "1", revision: "1" }]);
-    activatedOwnerAdmissionFixture = { root: fixture.root, db: fixtureDb, sql: fixtureSql };
+
+    const beforeMissingReadiness = (await fixtureSql<Array<{
+      head_version: string;
+      reservations: string;
+      runs: string;
+      steps: string;
+    }>>`
+      SELECT head.head_version::text,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
+             (SELECT COUNT(*)::text FROM runs) AS runs,
+             (SELECT COUNT(*)::text FROM steps) AS steps
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `)[0]!;
+    await assert.rejects(
+      fixtureSql.begin(async (transaction) => {
+        await fixtureDb.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+          producerImplementationId: "a-runtime-run-v1",
+          ownerKey: "run-persistence-missing-readiness-module",
+        });
+        throw new Error("TEST_ACCEPTED_MISSING_RUN_PERSISTENCE_READINESS_MODULE");
+      }),
+      /^Error: RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE$/,
+    );
+    assert.deepEqual((await fixtureSql<typeof beforeMissingReadiness[]>`
+      SELECT head.head_version::text,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
+             (SELECT COUNT(*)::text FROM runs) AS runs,
+             (SELECT COUNT(*)::text FROM steps) AS steps
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `)[0], beforeMissingReadiness);
+
+    const readinessHead = (await fixtureSql<Array<{ head_ref: string; head_hash: string }>>`
+      SELECT head_ref,head_hash
+        FROM internal_production_owner_producer_manifest_activation_heads_v1
+       WHERE activation_ref=${first.activationRef}
+         AND activation_hash=${first.activationHash}
+    `)[0]!;
+    const admissionReadyRef = "setfarm://tests/run-persistence/admission-ready";
+    const admissionReadyHash = hashCanonicalJson({
+      schema: "setfarm.test-run-persistence-admission-ready.v1",
+      activationRef: first.activationRef,
+      activationHash: first.activationHash,
+    });
+    const readinessModulePath = path.join(
+      fixture.root,
+      "src/internal-production/baseline-spawner-startup-admission-v1.js",
+    );
+    writeFileSync(readinessModulePath, `
+const deepFreeze = (value) => {
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
+};
+const READY = deepFreeze(${JSON.stringify({
+      state: "normal-task0-admission-ready",
+      admissionReadyRef,
+      admissionReadyHash,
+      manifestActivationRef: first.activationRef,
+      manifestActivationHash: first.activationHash,
+      manifestHeadRef: readinessHead.head_ref,
+      manifestHeadHash: readinessHead.head_hash,
+    })});
+const STATUS = deepFreeze({
+  state: "normal_task0_admission_ready",
+  admissionReady: {
+    admissionReadyRef: READY.admissionReadyRef,
+    admissionReadyHash: READY.admissionReadyHash,
+  },
+});
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
+  return STATUS;
+}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
+  if (pair.admissionReadyRef !== READY.admissionReadyRef
+    || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
+  return READY;
+}
+`, "utf8");
+    const fixtureDbSourcePath = path.join(fixture.root, "src/db-pg.ts");
+    const fixtureDbSource = readFileSync(fixtureDbSourcePath, "utf8");
+    assert.match(fixtureDbSource, /let _schemaReady = false;/);
+    writeFileSync(
+      fixtureDbSourcePath,
+      fixtureDbSource.replace("let _schemaReady = false;", "let _schemaReady = true;"),
+      "utf8",
+    );
+    const backendWorkerPath = path.join(fixture.root, "task2-backend-worker.mjs");
+    writeFileSync(backendWorkerPath, `
+import { parentPort } from "node:worker_threads";
+parentPort.postMessage({ type: "ready" });
+parentPort.on("message", async ({ input }) => {
+  try {
+    const persistence = await import("./src/execution/run-persistence.ts");
+    const value = await persistence.persistWorkflowRun(input);
+    parentPort.postMessage({ type: "result", status: "fulfilled", value });
+  } catch (error) {
+    parentPort.postMessage({ type: "result", status: "rejected", error: String(error) });
+  }
+});
+`, "utf8");
+    const backendWorker = new Worker(pathToFileURL(backendWorkerPath), {
+      env: process.env,
+      execArgv: ["--import", "tsx"],
+    });
+    await new Promise<void>((resolve, reject) => {
+      backendWorker.once("error", reject);
+      backendWorker.once("message", (message) => {
+        if ((message as { type?: string }).type !== "ready") reject(new Error("TEST_BACKEND_WORKER_NOT_READY"));
+        else resolve();
+      });
+    });
+    activatedOwnerAdmissionFixture = { root: fixture.root, db: fixtureDb, sql: fixtureSql, backendWorker };
     await db.pgClose();
   } finally {
     if (activatedOwnerAdmissionFixture === null) {
       rmSync(path.dirname(fixture.root), { recursive: true, force: true });
+    }
+  }
+});
+
+test("real PostgreSQL run persistence fences before mutation and adopts an exact committed run", async (t) => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the activated fixture must remain available");
+  const { root, sql, backendWorker } = activatedOwnerAdmissionFixture;
+  t.after(async () => { await backendWorker.terminate(); });
+  const persistence = await import(`${pathToFileURL(path.join(root, "src/execution/run-persistence.ts")).href}?task2=${Date.now()}`);
+  const input = {
+    run: {
+      id: "run-persistence-task2-exact-adoption",
+      runNumber: 1801,
+      workflowId: "feature-dev",
+      task: "persist one authenticated ordinary run",
+      context: "{}",
+      notifyUrl: null,
+      createdAt: "2026-08-21T00:00:00.000Z",
+      protocol: {
+        mode: "legacy" as const,
+        version: 1 as const,
+        compilerReleaseSha: "a".repeat(40),
+        activationPreflightHash: null,
+        releaseAdmissionHash: null,
+        releaseAdmissionKind: null,
+        canaryAdmission: null,
+      },
+    },
+    steps: [{
+      id: "run-persistence-task2-step",
+      stepId: "plan",
+      agentId: "feature-dev_planner",
+      stepIndex: 0,
+      inputTemplate: "task",
+      expects: "plan",
+      status: "pending",
+      maxRetries: 2,
+      type: "single",
+      loopConfig: null,
+    }, {
+      id: "run-persistence-task2-step-design",
+      stepId: "design",
+      agentId: "feature-dev_designer",
+      stepIndex: 1,
+      inputTemplate: "plan",
+      expects: "design",
+      status: "waiting",
+      maxRetries: 1,
+      type: "single",
+      loopConfig: null,
+    }],
+  };
+  const snapshot = async () => (await sql<Array<{
+    head_version: string;
+    reservations: string;
+    bindings: string;
+    runs: string;
+    steps: string;
+  }>>`
+    SELECT head.head_version::text,
+           (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1) AS reservations,
+           (SELECT COUNT(*)::text FROM internal_production_owner_admission_authorities_v1 WHERE authority_kind='binding') AS bindings,
+           (SELECT COUNT(*)::text FROM runs) AS runs,
+           (SELECT COUNT(*)::text FROM steps) AS steps
+      FROM internal_production_owner_admission_head_v1 head
+     WHERE head.singleton=TRUE
+  `)[0]!;
+  const beforeFence = await snapshot();
+  await sql`UPDATE setfarm_schema_migrations SET state='adopted' WHERE version=31`;
+  try {
+    await assert.rejects(
+      sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, input)),
+      /^Error: RUN_PERSISTENCE_MIGRATION_31_FENCE_DRIFT$/,
+    );
+    assert.deepEqual(await snapshot(), beforeFence);
+  } finally {
+    await sql`UPDATE setfarm_schema_migrations SET state='applied' WHERE version=31`;
+  }
+
+  const first = await sql.begin((transaction) => (
+    persistence.persistWorkflowRunInTransaction(transaction, input)
+  ));
+  assert.equal(first.run.id, input.run.id);
+  assert.equal(first.run.status, "running");
+  assert.notEqual(first.run.createdAt, input.run.createdAt);
+  assert.match(first.runOwnerReservationRef, /^setfarm:\/\/internal-production\/owner-reservations\//);
+  assert.match(first.runOwnerReservationHash, /^[a-f0-9]{64}$/);
+  assert.deepEqual([...(await sql<Array<{ runs: string; steps: string; reservations: string; bindings: string }>>`
+    SELECT
+      (SELECT COUNT(*)::text FROM runs WHERE id=${input.run.id}) AS runs,
+      (SELECT COUNT(*)::text FROM steps WHERE run_id=${input.run.id}) AS steps,
+      (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1 WHERE owner_key=${input.run.id} AND state='bound') AS reservations,
+      (SELECT COUNT(*)::text FROM internal_production_owner_admission_authorities_v1 authority JOIN internal_production_owner_reservations_v1 reservation ON reservation.reservation_ref=authority.phase_key WHERE reservation.owner_key=${input.run.id} AND authority.authority_kind='binding') AS bindings
+  `)], [{ runs: "1", steps: "2", reservations: "1", bindings: "1" }]);
+  assert.deepEqual(
+    [...await sql<Array<{ id: string; created_at: Date; updated_at: Date }>>`
+      SELECT id,created_at,updated_at FROM steps WHERE run_id=${input.run.id} ORDER BY step_index,id
+    `].map((step) => ({
+      id: step.id,
+      createdAt: step.created_at.toISOString(),
+      updatedAt: step.updated_at.toISOString(),
+    })),
+    input.steps.map((step) => ({
+      id: step.id,
+      createdAt: first.run.createdAt,
+      updatedAt: first.run.createdAt,
+    })),
+  );
+  const beforeRetry = await snapshot();
+  assert.deepEqual(
+    await sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, input)),
+    first,
+  );
+  assert.deepEqual(await snapshot(), beforeRetry);
+
+  const exactStoredInventory = async (ownerKey = input.run.id) => ({
+    run: [...await sql`SELECT * FROM runs WHERE id=${ownerKey}`],
+    steps: [...await sql`SELECT * FROM steps WHERE run_id=${ownerKey} ORDER BY step_index,id`],
+    reservation: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 WHERE owner_key=${ownerKey}`],
+    authorities: [...await sql`
+      SELECT authority.*
+        FROM internal_production_owner_admission_authorities_v1 authority
+        JOIN internal_production_owner_reservations_v1 reservation
+          ON reservation.reservation_ref=authority.phase_key
+       WHERE reservation.owner_key=${ownerKey}
+       ORDER BY authority.authority_kind,authority.authority_ref
+    `],
+    claims: [...await sql`SELECT * FROM claim_log WHERE run_id=${input.run.id} ORDER BY id`],
+    attempts: [...await sql`SELECT * FROM execution_attempts WHERE run_id=${input.run.id} ORDER BY attempt_id`],
+    head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE`],
+  });
+  const crossedRuns = [
+    { ...input, run: { ...input.run, runNumber: input.run.runNumber + 1 } },
+    { ...input, run: { ...input.run, workflowId: "crossed-workflow" } },
+    { ...input, run: { ...input.run, task: `${input.run.task} crossed` } },
+    { ...input, run: { ...input.run, context: '{"crossed":true}' } },
+    { ...input, run: { ...input.run, notifyUrl: "https://example.invalid/crossed" } },
+    { ...input, run: { ...input.run, protocol: { ...input.run.protocol, version: 2 as 1 } } },
+    { ...input, run: { ...input.run, protocol: { ...input.run.protocol, compilerReleaseSha: "b".repeat(40) } } },
+  ];
+  const crossedSteps = [
+    { ...input, steps: [{ ...input.steps[0]!, id: "crossed-step-id" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, stepId: "crossed-step" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, agentId: "crossed_agent" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, stepIndex: 7 }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, inputTemplate: "crossed input" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, expects: "crossed output" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, status: "waiting" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, maxRetries: 9 }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, type: "loop" }, input.steps[1]!] },
+    { ...input, steps: [{ ...input.steps[0]!, loopConfig: "{}" }, input.steps[1]!] },
+    { ...input, steps: [...input.steps].reverse() },
+    { ...input, steps: [...input.steps, { ...input.steps[1]!, id: "run-persistence-task2-extra-step", stepIndex: 2 }] },
+    { ...input, steps: [] },
+  ];
+  for (const crossed of [...crossedRuns, ...crossedSteps]) {
+    const beforeCrossedRetry = await exactStoredInventory();
+    await assert.rejects(
+      sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, crossed)),
+      /^Error: RUN_PERSISTENCE_ADOPTION_IDENTITY_INVALID$/,
+    );
+    assert.deepEqual(await exactStoredInventory(), beforeCrossedRetry);
+  }
+  await sql`UPDATE steps SET created_at=created_at + INTERVAL '1 second' WHERE id=${input.steps[0]!.id}`;
+  const crossedTimestampInventory = await exactStoredInventory();
+  await assert.rejects(
+    sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, input)),
+    /^Error: RUN_PERSISTENCE_ADOPTION_IDENTITY_INVALID$/,
+  );
+  assert.deepEqual(await exactStoredInventory(), crossedTimestampInventory);
+  await sql`UPDATE steps SET created_at=${first.run.createdAt},updated_at=${first.run.createdAt} WHERE id=${input.steps[0]!.id}`;
+
+  for (const scenario of [
+    {
+      label: "pending",
+      dropStateShape: true,
+      disableAuthorityImmutability: false,
+      mutation: `UPDATE internal_production_owner_reservations_v1 SET state='pending' WHERE owner_key='${input.run.id}' RETURNING state AS observed`,
+      observed: "pending",
+    },
+    {
+      label: "closed",
+      dropStateShape: true,
+      disableAuthorityImmutability: false,
+      mutation: `UPDATE internal_production_owner_reservations_v1 SET state='closed' WHERE owner_key='${input.run.id}' RETURNING state AS observed`,
+      observed: "closed",
+    },
+    {
+      label: "crossed reservation",
+      dropStateShape: false,
+      disableAuthorityImmutability: false,
+      mutation: `UPDATE internal_production_owner_reservations_v1 SET owner_key='crossed-owner' WHERE owner_key='${input.run.id}' RETURNING owner_key AS observed`,
+      observed: "crossed-owner",
+    },
+    {
+      label: "crossed binding",
+      dropStateShape: false,
+      disableAuthorityImmutability: false,
+      mutation: `UPDATE internal_production_owner_reservations_v1 SET binding_payload=jsonb_set(binding_payload,'{canonicalOwnerIdentity,ownerHash}',to_jsonb(repeat('e',64))) WHERE owner_key='${input.run.id}' RETURNING binding_payload #>> '{canonicalOwnerIdentity,ownerHash}' AS observed`,
+      observed: "e".repeat(64),
+    },
+    {
+      label: "crossed authority",
+      dropStateShape: false,
+      disableAuthorityImmutability: true,
+      mutation: `UPDATE internal_production_owner_admission_authorities_v1 SET authority_body=jsonb_set(authority_body,'{canonicalOwnerIdentity,ownerHash}',to_jsonb(repeat('d',64))) WHERE authority_kind='binding' AND phase_key='${first.runOwnerReservationRef}' RETURNING authority_body #>> '{canonicalOwnerIdentity,ownerHash}' AS observed`,
+      observed: "d".repeat(64),
+    },
+  ] as const) {
+    const beforeSidecarDrift = await exactStoredInventory();
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        if (scenario.dropStateShape) {
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_reservations_v1 DROP CONSTRAINT internal_production_owner_reservation_state_shape_check",
+          );
+        }
+        if (scenario.disableAuthorityImmutability) {
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_admission_authorities_v1 DISABLE TRIGGER trg_internal_production_owner_admission_authority_immutable",
+          );
+        }
+        const changed = await transaction.unsafe<Array<{ observed: string }>>(scenario.mutation);
+        assert.equal(changed.length, 1, `${scenario.label} setup must change exactly one row before persistence`);
+        assert.equal(changed[0]!.observed, scenario.observed, `${scenario.label} setup must complete before persistence`);
+        await persistence.persistWorkflowRunInTransaction(transaction, input);
+        throw new Error(`TEST_ACCEPTED_${scenario.label.toUpperCase().replaceAll(" ", "_")}`);
+      }),
+      /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+    );
+    assert.deepEqual(await exactStoredInventory(), beforeSidecarDrift);
+  }
+
+  await sql`
+    INSERT INTO claim_log (run_id,step_id,story_id,agent_id,outcome)
+    VALUES (${input.run.id},${input.steps[0]!.stepId},'US-TASK2-ADOPTION','task2-reviewer','test_terminal')
+  `;
+  const downstreamInventory = await exactStoredInventory();
+  await assert.rejects(
+    sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, input)),
+    /^RunActivationConflictError: RUN_ACTIVATION_CONFLICT:/,
+  );
+  assert.deepEqual(await exactStoredInventory(), downstreamInventory);
+  await sql`DELETE FROM claim_log WHERE run_id=${input.run.id}`;
+
+  await sql.unsafe(
+    `INSERT INTO execution_attempts (
+       attempt_id,run_id,step_id,story_id,generation,fence_token,attempt_class,
+       compilation_report_hash,source_before_sha,source_before_tree_hash,role,
+       lease_acquired_at,lease_expires_at,heartbeat_at,disposition
+     ) VALUES ($1,$2,$3,'US-TASK2-ADOPTION',1,$4,'evidence_only',$5,$6,$7,
+               'reviewer',NOW(),NOW(),NOW(),'verified')`,
+    [
+      "ATT_task2-adoption-downstream",
+      input.run.id,
+      input.steps[0]!.stepId,
+      "f".repeat(64),
+      "e".repeat(64),
+      "d".repeat(40),
+      "c".repeat(40),
+    ],
+  );
+  const downstreamAttemptInventory = await exactStoredInventory();
+  await assert.rejects(
+    sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, input)),
+    /^RunActivationConflictError: RUN_ACTIVATION_CONFLICT:/,
+  );
+  assert.deepEqual(await exactStoredInventory(), downstreamAttemptInventory);
+  await sql`DELETE FROM execution_attempts WHERE run_id=${input.run.id}`;
+
+  const beforeSecondPair = await exactStoredInventory();
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await transaction.unsafe(
+        "ALTER TABLE internal_production_owner_reservations_v1 DROP CONSTRAINT internal_production_owner_reservation_key_unique",
+      );
+      await transaction.unsafe(
+        `INSERT INTO internal_production_owner_reservations_v1 (
+           reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+           producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+           reservation_payload,reservation_head_predecessor_hash,state,
+           canonical_owner_identity,binding_hash,binding_payload,head_version,
+           created_at,updated_at
+         ) SELECT $1,$2,category,owner_key,owner_key_hash,producer_purpose_hash,
+                  producer_implementation_id,producer_implementation_hash,
+                  reservation_payload,reservation_head_predecessor_hash,state,
+                  canonical_owner_identity,binding_hash,binding_payload,head_version,
+                  created_at,updated_at
+             FROM internal_production_owner_reservations_v1
+            WHERE owner_key=$3`,
+        [
+          "setfarm://tests/task2-second-run-owner-pair",
+          "9".repeat(64),
+          input.run.id,
+        ],
+      );
+      await persistence.persistWorkflowRunInTransaction(transaction, input);
+      throw new Error("TEST_ACCEPTED_SECOND_RUN_OWNER_PAIR");
+    }),
+    (error: unknown) => !String(error).includes("TEST_ACCEPTED_SECOND_RUN_OWNER_PAIR"),
+  );
+  assert.deepEqual(await exactStoredInventory(), beforeSecondPair);
+
+  const ownerInventory = async (ownerKey: string) => (await sql<Array<{
+    runs: string;
+    steps: string;
+    reservations: string;
+    bindings: string;
+  }>>`
+    SELECT
+      (SELECT COUNT(*)::text FROM runs WHERE id=${ownerKey}) AS runs,
+      (SELECT COUNT(*)::text FROM steps WHERE run_id=${ownerKey}) AS steps,
+      (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1 WHERE owner_key=${ownerKey}) AS reservations,
+      (SELECT COUNT(*)::text
+         FROM internal_production_owner_admission_authorities_v1 authority
+         JOIN internal_production_owner_reservations_v1 reservation
+           ON reservation.reservation_ref=authority.phase_key
+        WHERE reservation.owner_key=${ownerKey} AND authority.authority_kind='binding') AS bindings
+  `)[0]!;
+  const emptyOwnerInventory = { runs: "0", steps: "0", reservations: "0", bindings: "0" };
+  const forgedBindingInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-forged-binding", runNumber: 1802 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-forged-binding-step-${index}` })),
+  };
+  await sql.unsafe(`CREATE FUNCTION ip_task2_forge_binding_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.authority_kind='binding'
+         AND NEW.authority_body #>> '{canonicalOwnerIdentity,ownerKey}' = 'run-persistence-task2-forged-binding' THEN
+        NEW.authority_body = jsonb_set(
+          NEW.authority_body,
+          '{canonicalOwnerIdentity,ownerHash}',
+          to_jsonb(repeat('f', 64))
+        );
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task2_forge_binding_v1
+    BEFORE INSERT ON internal_production_owner_admission_authorities_v1
+    FOR EACH ROW EXECUTE FUNCTION ip_task2_forge_binding_v1()`);
+  try {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await persistence.persistWorkflowRunInTransaction(transaction, forgedBindingInput);
+        throw new Error("TEST_ACCEPTED_FORGED_BINDING_AUTHORITY");
+      }),
+      /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+    );
+    assert.deepEqual(await ownerInventory(forgedBindingInput.run.id), emptyOwnerInventory);
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task2_forge_binding_v1 ON internal_production_owner_admission_authorities_v1");
+    await sql.unsafe("DROP FUNCTION ip_task2_forge_binding_v1()");
+  }
+  const forgedReservationInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-forged-reservation", runNumber: 1803 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-forged-reservation-step-${index}` })),
+  };
+  await sql.unsafe(`CREATE FUNCTION ip_task2_forge_reservation_on_bind_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.state='pending'
+         AND NEW.state='bound'
+         AND NEW.owner_key='run-persistence-task2-forged-reservation' THEN
+        NEW.owner_key = 'run-persistence-task2-forged-reservation-crossed';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task2_forge_reservation_on_bind_v1
+    BEFORE UPDATE ON internal_production_owner_reservations_v1
+    FOR EACH ROW EXECUTE FUNCTION ip_task2_forge_reservation_on_bind_v1()`);
+  try {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await persistence.persistWorkflowRunInTransaction(transaction, forgedReservationInput);
+        throw new Error("TEST_ACCEPTED_FORGED_RESERVATION_DURING_BIND");
+      }),
+      /^Error: INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION$/,
+    );
+    assert.deepEqual(await ownerInventory(forgedReservationInput.run.id), emptyOwnerInventory);
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task2_forge_reservation_on_bind_v1 ON internal_production_owner_reservations_v1");
+    await sql.unsafe("DROP FUNCTION ip_task2_forge_reservation_on_bind_v1()");
+  }
+  const rollbackInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-rollback", runNumber: 1804 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-rollback-step-${index}` })),
+  };
+  await assert.rejects(
+    sql.begin(async (transaction) => {
+      await persistence.persistWorkflowRunInTransaction(transaction, rollbackInput);
+      throw new Error("TEST_ROLLBACK_AFTER_TENTATIVE_RESULT");
+    }),
+    /^Error: TEST_ROLLBACK_AFTER_TENTATIVE_RESULT$/,
+  );
+  assert.deepEqual(await ownerInventory(rollbackInput.run.id), emptyOwnerInventory);
+
+  const commitRejectedInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-commit-rejected", runNumber: 1805 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-commit-rejected-step-${index}` })),
+  };
+  await sql.unsafe(`CREATE FUNCTION ip_task2_reject_run_commit_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.id = 'run-persistence-task2-commit-rejected' THEN
+        RAISE EXCEPTION 'TEST_DEFERRED_RUN_COMMIT_REJECTED';
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE CONSTRAINT TRIGGER ip_task2_reject_run_commit_v1
+    AFTER INSERT ON runs DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION ip_task2_reject_run_commit_v1()`);
+  try {
+    await assert.rejects(
+      persistence.persistWorkflowRun(commitRejectedInput),
+      /TEST_DEFERRED_RUN_COMMIT_REJECTED/,
+    );
+    assert.deepEqual(await ownerInventory(commitRejectedInput.run.id), emptyOwnerInventory);
+  } finally {
+    await sql.unsafe("DROP TRIGGER ip_task2_reject_run_commit_v1 ON runs");
+    await sql.unsafe("DROP FUNCTION ip_task2_reject_run_commit_v1()");
+  }
+
+  const backendLossInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-backend-loss", runNumber: 1806 },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-backend-loss-step-${index}` })),
+  };
+  const advisoryKey = 882018;
+  await sql.unsafe(`CREATE FUNCTION ip_task2_wait_reservation_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.owner_key = 'run-persistence-task2-backend-loss' THEN
+        PERFORM pg_advisory_xact_lock(${advisoryKey});
+      END IF;
+      RETURN NEW;
+    END $$`);
+  await sql.unsafe(`CREATE TRIGGER ip_task2_wait_reservation_v1
+    BEFORE INSERT ON internal_production_owner_reservations_v1
+    FOR EACH ROW EXECUTE FUNCTION ip_task2_wait_reservation_v1()`);
+  let releaseAdvisoryHolder!: () => void;
+  let reportAdvisoryHeld!: () => void;
+  const advisoryHeld = new Promise<void>((resolve) => { reportAdvisoryHeld = resolve; });
+  const releaseAdvisory = new Promise<void>((resolve) => { releaseAdvisoryHolder = resolve; });
+  const advisoryHolder = sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [advisoryKey]);
+    reportAdvisoryHeld();
+    await releaseAdvisory;
+  });
+  await advisoryHeld;
+  try {
+    const publisher = new Promise<Readonly<{ type: string; status?: string; error?: string }>>((resolve) => {
+      backendWorker.once("message", (message) => resolve(message as { type: string; status?: string; error?: string }));
+      backendWorker.once("error", (error) => resolve({ type: "worker-error", error: String(error) }));
+      backendWorker.once("exit", (code) => resolve({ type: "worker-exit", error: String(code) }));
+    });
+    backendWorker.postMessage({ input: backendLossInput });
+    let blocked: Array<{ pid: number }> = [];
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      blocked = await sql<Array<{ pid: number }>>`
+        SELECT pid
+          FROM pg_stat_activity
+         WHERE datname=current_database()
+           AND pid <> pg_backend_pid()
+           AND wait_event_type='Lock'
+           AND wait_event='advisory'
+           AND query LIKE '%internal_production_owner_reservations_v1%'
+      `;
+      if (blocked.length === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(blocked.length, 1, `expected one exact blocked publisher, saw ${JSON.stringify(blocked)}`);
+    assert.deepEqual(
+      [...await sql`SELECT pg_terminate_backend(${blocked[0]!.pid}) AS terminated`],
+      [{ terminated: true }],
+    );
+    const outcome = await publisher;
+    assert.notEqual(outcome.status, "fulfilled");
+  } finally {
+    await backendWorker.terminate();
+    releaseAdvisoryHolder();
+    await advisoryHolder;
+    await sql.unsafe("DROP TRIGGER ip_task2_wait_reservation_v1 ON internal_production_owner_reservations_v1");
+    await sql.unsafe("DROP FUNCTION ip_task2_wait_reservation_v1()");
+  }
+  assert.deepEqual(await ownerInventory(backendLossInput.run.id), emptyOwnerInventory);
+
+  const duplicateStepInput = {
+    ...input,
+    run: { ...input.run, id: "run-persistence-task2-duplicate-step", runNumber: 1807 },
+    steps: [
+      { ...input.steps[0]!, id: "run-persistence-task2-duplicate" },
+      { ...input.steps[0]!, id: "run-persistence-task2-duplicate", stepIndex: 1 },
+    ],
+  };
+  await assert.rejects(
+    sql.begin((transaction) => persistence.persistWorkflowRunInTransaction(transaction, duplicateStepInput)),
+  );
+  assert.deepEqual(await ownerInventory(duplicateStepInput.run.id), emptyOwnerInventory);
+
+  await sql`UPDATE runs SET status='completed' WHERE id=${input.run.id}`;
+
+  const canaryStoreRoot = mkdtempSync(path.join(tmpdir(), "setfarm-task2-canary-store-"));
+  t.after(() => rmSync(canaryStoreRoot, { recursive: true, force: true }));
+  const fixtureReport = await import(`${pathToFileURL(path.join(root, "src/evals/report.ts")).href}?task2canary=${Date.now()}`);
+  const fixtureV3 = await import(`${pathToFileURL(path.join(root, "src/execution/v3-release-admission-repository.ts")).href}?task2canary=${Date.now()}`);
+  const fixtureProtocol = await import(`${pathToFileURL(path.join(root, "src/execution/run-protocol.ts")).href}?task2canary=${Date.now()}`);
+  const canaryRepository = fixtureV3.createV3ReleaseAdmissionRepository(
+    sql,
+    new fixtureReport.ContentAddressedEvalResultStore(canaryStoreRoot),
+  );
+  const canaryTask = "persist one owner-bound release canary";
+  const canaryCreated = await canaryRepository.createCanary({
+    releaseSha: "a".repeat(40),
+    suiteHash: "b".repeat(64),
+    preflightHash: "c".repeat(64),
+    ttlMs: 60 * 60 * 1_000,
+    slots: [1, 2].map((repetition) => ({
+      caseHash: hashCanonicalJson({ case: "task2-owner-canary", repetition }),
+      taskHash: hashCanonicalJson(canaryTask),
+      repetition,
+      slotToken: `task2-owner-canary-${repetition}-${"x".repeat(48)}`,
+    })),
+  });
+  const canaryProtocolFor = async (index: number) => fixtureProtocol.resolveNewRunProtocol({
+    requestedMode: "v3",
+    compilerReleaseSha: "a".repeat(40),
+    env: { SETFARM_V3_ACTIVATION: "enabled" },
+    activationPreflight: { status: "pass", hash: "c".repeat(64), stored: true },
+    releaseAdmission: await canaryRepository.verifyCanarySelection({
+      releaseSha: "a".repeat(40),
+      taskHash: hashCanonicalJson(canaryTask),
+      context: canaryCreated.contexts[index]!,
+    }),
+  });
+  const canaryInput = {
+    ...input,
+    run: {
+      ...input.run,
+      id: "run-persistence-task2-owner-canary",
+      runNumber: 1808,
+      task: canaryTask,
+      protocol: await canaryProtocolFor(0),
+    },
+    steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task2-owner-canary-step-${index}` })),
+  };
+  const canaryFirst = await persistence.persistWorkflowRun(canaryInput);
+  assert.deepEqual(await persistence.persistWorkflowRun(canaryInput), canaryFirst);
+  const crossedCanaryInput = {
+    ...canaryInput,
+    run: { ...canaryInput.run, protocol: await canaryProtocolFor(1) },
+  };
+  const beforeCrossedCanary = await exactStoredInventory(canaryInput.run.id);
+  await assert.rejects(
+    persistence.persistWorkflowRun(crossedCanaryInput),
+    /^Error: RUN_CANARY_ADMISSION_SLOT_UNAVAILABLE$/,
+  );
+  assert.deepEqual(await exactStoredInventory(canaryInput.run.id), beforeCrossedCanary);
+  await sql`UPDATE runs SET status='completed' WHERE id=${canaryInput.run.id}`;
+
+  const publisherInput = (id: string, runNumber: number, mode: "legacy" | "shadow") => ({
+    ...input,
+    run: {
+      ...input.run,
+      id,
+      runNumber,
+      task: `deterministic ${mode} publisher`,
+      protocol: mode === "legacy" ? input.run.protocol : {
+        mode: "shadow" as const,
+        version: 1 as const,
+        compilerReleaseSha: "a".repeat(40),
+        activationPreflightHash: "b".repeat(64),
+        releaseAdmissionHash: null,
+        releaseAdmissionKind: null,
+        canaryAdmission: null,
+      },
+    },
+    steps: input.steps.map((step, index) => ({ ...step, id: `${id}-step-${index}` })),
+  });
+  for (const [round, winnerMode, loserMode] of [
+    [0, "legacy", "shadow"],
+    [1, "shadow", "legacy"],
+  ] as const) {
+    const winnerInput = publisherInput(`run-persistence-task2-race-${round}-winner`, 1810 + round * 2, winnerMode);
+    const loserInput = publisherInput(`run-persistence-task2-race-${round}-loser`, 1811 + round * 2, loserMode);
+    const roundKey = 882100 + round;
+    const functionName = `ip_task2_wait_publisher_${round}_v1`;
+    await sql.unsafe(`CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.owner_key = '${winnerInput.run.id}' THEN
+          PERFORM pg_advisory_xact_lock(${roundKey});
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await sql.unsafe(`CREATE TRIGGER ${functionName}
+      BEFORE INSERT ON internal_production_owner_reservations_v1
+      FOR EACH ROW EXECUTE FUNCTION ${functionName}()`);
+    let releaseRound!: () => void;
+    let reportRoundHeld!: () => void;
+    const roundHeld = new Promise<void>((resolve) => { reportRoundHeld = resolve; });
+    const roundRelease = new Promise<void>((resolve) => { releaseRound = resolve; });
+    const holder = sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [roundKey]);
+      reportRoundHeld();
+      await roundRelease;
+    });
+    await roundHeld;
+    try {
+      const winner = persistence.persistWorkflowRun(winnerInput).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason) => ({ status: "rejected" as const, reason }),
+      );
+      let blocked: Array<{ pid: number }> = [];
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        blocked = await sql<Array<{ pid: number }>>`
+          SELECT pid FROM pg_stat_activity
+           WHERE datname=current_database()
+             AND pid <> pg_backend_pid()
+             AND wait_event_type='Lock'
+             AND wait_event='advisory'
+             AND query LIKE '%internal_production_owner_reservations_v1%'
+        `;
+        if (blocked.length === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.equal(blocked.length, 1);
+      let loserSettled = false;
+      const loser = persistence.persistWorkflowRun(loserInput).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason) => ({ status: "rejected" as const, reason }),
+      ).finally(() => { loserSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(loserSettled, false);
+      releaseRound();
+      const [winnerResult, loserResult] = await Promise.all([winner, loser]);
+      assert.equal(winnerResult.status, "fulfilled");
+      assert.equal(loserResult.status, "rejected");
+      assert.match(String("reason" in loserResult ? loserResult.reason : ""), /RUN_ACTIVATION_CONFLICT/);
+      assert.deepEqual(await ownerInventory(winnerInput.run.id), {
+        runs: "1", steps: "2", reservations: "1", bindings: "1",
+      });
+      assert.deepEqual(await ownerInventory(loserInput.run.id), emptyOwnerInventory);
+      await sql`UPDATE runs SET status='completed' WHERE id=${winnerInput.run.id}`;
+    } finally {
+      releaseRound();
+      await holder;
+      await sql.unsafe(`DROP TRIGGER ${functionName} ON internal_production_owner_reservations_v1`);
+      await sql.unsafe(`DROP FUNCTION ${functionName}()`);
     }
   }
 });

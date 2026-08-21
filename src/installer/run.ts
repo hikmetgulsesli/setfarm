@@ -127,7 +127,7 @@ export async function runWorkflow(params: {
     type: step.type ?? "single",
     loopConfig: step.loop ? JSON.stringify(step.loop) : null,
   }));
-  await pgBegin((sql) => persistWorkflowRun(sql, {
+  await persistWorkflowRun({
     run: {
       id: runId,
       runNumber,
@@ -139,7 +139,7 @@ export async function runWorkflow(params: {
       protocol,
     },
     steps: persistedSteps,
-  }));
+  });
 
   await refreshRunContractSafe(runId, "run.started");
 

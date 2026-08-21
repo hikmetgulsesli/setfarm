@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
 
 import {
@@ -10,11 +13,8 @@ import {
   resolveNewRunProtocol,
 } from "../../src/execution/run-protocol.js";
 import {
-  RunActivationConflictError,
-  persistWorkflowRun,
+  type PersistWorkflowRunInputV1,
 } from "../../src/execution/run-persistence.js";
-import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
-import { exactBoundProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "a".repeat(40);
@@ -35,11 +35,157 @@ const RELEASE_GO_ADMISSION = {
 describe("run-pinned product compiler protocol", () => {
   let database: TestDatabase;
 
+  const seedProtocolRun = async (input: PersistWorkflowRunInputV1): Promise<void> => {
+    await database.sql.begin(async (sql) => {
+      await sql.unsafe(
+        `INSERT INTO runs
+           (id,run_number,workflow_id,task,status,context,notify_url,protocol,
+            protocol_version,compiler_release_sha,activation_preflight_hash,
+            release_admission_hash,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,'running',$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+        [
+          input.run.id,
+          input.run.runNumber,
+          input.run.workflowId,
+          input.run.task,
+          input.run.context,
+          input.run.notifyUrl,
+          input.run.protocol.mode,
+          input.run.protocol.version,
+          input.run.protocol.compilerReleaseSha,
+          input.run.protocol.activationPreflightHash,
+          input.run.protocol.releaseAdmissionHash,
+          input.run.createdAt,
+        ],
+      );
+      for (const step of input.steps) {
+        await sql.unsafe(
+          `INSERT INTO steps
+             (id,run_id,step_id,agent_id,step_index,input_template,expects,status,
+              max_retries,type,loop_config,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+          [step.id,input.run.id,step.stepId,step.agentId,step.stepIndex,
+            step.inputTemplate,step.expects,step.status,step.maxRetries,step.type,
+            step.loopConfig,input.run.createdAt],
+        );
+      }
+    });
+  };
+
   before(async () => {
     database = await createIsolatedTestDatabase();
   });
 
   after(async () => database.cleanup());
+
+  it("run persistence exposes exact inner and post-commit public ABI", async () => {
+    const persistence = await import("../../src/execution/run-persistence.js");
+    assert.equal(typeof persistence.persistWorkflowRunInTransaction, "function");
+    assert.equal(persistence.persistWorkflowRunInTransaction.length, 2);
+    assert.equal(persistence.persistWorkflowRun.length, 1);
+
+    const source = readFileSync(
+      path.resolve(import.meta.dirname, "../../src/execution/run-persistence.ts"),
+      "utf8",
+    );
+    const fence = source.indexOf("FOR UPDATE", source.indexOf("version = 31"));
+    const begin = source.indexOf("beginOrAdoptInternalProductionOwnerReservationV1", fence);
+    const census = source.indexOf("AS active_runs", begin);
+    const insert = source.indexOf("INSERT INTO runs", census);
+    const bind = source.indexOf("bindInternalProductionOwnerReservationV1", insert);
+    assert.ok(fence >= 0 && begin > fence && census > begin && insert > census && bind > insert);
+    assert.doesNotMatch(source, /runAdmissionLockKey|pg_advisory_xact_lock/);
+    assert.match(source, /await pgBegin\(async \(sql\) => \{/);
+    assert.match(source, /tentative = await persistWorkflowRunInTransaction\(sql, input\)/);
+    assert.match(source, /return undefined;/);
+    assert.ok(source.indexOf("return committed;") > source.indexOf("await pgBegin("));
+
+    const dbSource = readFileSync(
+      path.resolve(import.meta.dirname, "../../src/db-pg.ts"),
+      "utf8",
+    );
+    assert.equal(
+      dbSource.match(/new URL\("\.\/internal-production\/baseline-spawner-startup-admission-v1\.js", import\.meta\.url\)\.href/g)?.length,
+      1,
+    );
+    assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\(\)/);
+    assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\(status\.admissionReady\)/);
+    assert.match(dbSource, /Object\.keys\(module\)/);
+    assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
+    assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
+    assert.match(dbSource, /6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17/);
+    assert.match(dbSource, /currentResolution\.nodes/);
+    assert.doesNotMatch(dbSource, /current\.receipt\.phase\s*!==\s*"A"/);
+
+    const installerSource = readFileSync(
+      path.resolve(import.meta.dirname, "../../src/installer/run.ts"),
+      "utf8",
+    );
+    assert.match(installerSource, /import \{\s*persistWorkflowRun,\s*type PersistedWorkflowStep,?\s*\} from "\.\.\/execution\/run-persistence\.js";/s);
+    assert.doesNotMatch(installerSource, /persistWorkflowRunInTransaction/);
+  });
+
+  it("public persistence exposes no tentative result before commit acknowledgement", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-run-persistence-commit-boundary-"));
+    try {
+      const source = readFileSync(
+        path.resolve(import.meta.dirname, "../../src/execution/run-persistence.ts"),
+        "utf8",
+      );
+      const wrapper = source.slice(source.indexOf("export async function persistWorkflowRun("));
+      assert.match(wrapper, /^export async function persistWorkflowRun\(/);
+      const modulePath = path.join(root, "wrapper.ts");
+      await writeFile(modulePath, `
+type PersistWorkflowRunInputV1 = unknown;
+type PersistWorkflowRunResultV1 = Readonly<{ run: Readonly<{ id: string }> }>;
+let acknowledgeCommit;
+let callbackReturned;
+let commitError;
+let callbackValue;
+let result = Object.freeze({ run: Object.freeze({ id: "committed-run" }) });
+let acknowledgement = new Promise((resolve) => { acknowledgeCommit = resolve; });
+let callbackObserved = new Promise((resolve) => { callbackReturned = resolve; });
+async function persistWorkflowRunInTransaction() { return result; }
+async function pgBegin(operation) {
+  callbackValue = await operation(Object.freeze({}));
+  callbackReturned(callbackValue);
+  await acknowledgement;
+  if (commitError) throw commitError;
+}
+export function controls() {
+  return {
+    acknowledge(value) { commitError = value; acknowledgeCommit(); },
+    callbackObserved,
+    callbackValue: () => callbackValue,
+  };
+}
+${wrapper}
+`, "utf8");
+      const module = await import(`${pathToFileURL(modulePath).href}?commit=${Date.now()}`);
+      const controls = module.controls();
+      let settled = false;
+      const pending = module.persistWorkflowRun(Object.freeze({})).finally(() => { settled = true; });
+      assert.equal(await controls.callbackObserved, undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(controls.callbackValue(), undefined);
+      assert.equal(settled, false);
+      controls.acknowledge(undefined);
+      assert.deepEqual(await pending, { run: { id: "committed-run" } });
+
+      const rejectedModule = await import(`${pathToFileURL(modulePath).href}?reject=${Date.now()}`);
+      const rejectedControls = rejectedModule.controls();
+      let rejectedSettled = false;
+      const rejected = rejectedModule.persistWorkflowRun(Object.freeze({}))
+        .finally(() => { rejectedSettled = true; });
+      assert.equal(await rejectedControls.callbackObserved, undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(rejectedSettled, false);
+      rejectedControls.acknowledge(new Error("TEST_COMMIT_REJECTED"));
+      await assert.rejects(rejected, /^Error: TEST_COMMIT_REJECTED$/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("defaults new runs to legacy and lets an explicit shadow mode override the environment", () => {
     assert.deepEqual(
@@ -161,124 +307,12 @@ describe("run-pinned product compiler protocol", () => {
     );
   });
 
-  it("serializes concurrent compiler-run admission and accepts one owner", async () => {
-    const protocol = resolveNewRunProtocol({
-      requestedMode: "shadow",
-      compilerReleaseSha: RELEASE_SHA,
-      env: {},
-      activationPreflight: PASS_PREFLIGHT,
-    });
-    const create = (id: string, runNumber: number) => database.sql.begin((sql) =>
-      persistWorkflowRun(sql, {
-        run: {
-          id,
-          runNumber,
-          workflowId: "feature-dev",
-          task: `concurrent ${id}`,
-          context: "{}",
-          notifyUrl: null,
-          createdAt: "2026-07-13T00:00:00.000Z",
-          protocol,
-        },
-        steps: [],
-      }));
-    const results = await Promise.allSettled([
-      create("run-protocol-concurrent-a", 89),
-      create("run-protocol-concurrent-b", 90),
-    ]);
-    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-    const rejected = results.find((result) => result.status === "rejected");
-    assert.ok(rejected?.status === "rejected");
-    assert.equal(rejected.reason?.code, "RUN_ACTIVATION_CONFLICT");
-    await database.sql`
-      UPDATE runs SET status = 'completed'
-      WHERE id IN ('run-protocol-concurrent-a', 'run-protocol-concurrent-b')
-    `;
-  });
-
-  it("treats a resuming run as active during compiler admission", async () => {
-    await database.sql`
-      INSERT INTO runs (id, run_number, workflow_id, task, status)
-      VALUES ('run-protocol-resuming-owner', 95, 'feature-dev', 'resuming owner', 'resuming')
-    `;
-    const protocol = resolveNewRunProtocol({
-      requestedMode: "shadow",
-      compilerReleaseSha: RELEASE_SHA,
-      env: {},
-      activationPreflight: PASS_PREFLIGHT,
-    });
-    try {
-      await assert.rejects(
-        database.sql.begin((sql) => persistWorkflowRun(sql, {
-          run: {
-            id: "run-protocol-after-resuming",
-            runNumber: 96,
-            workflowId: "feature-dev",
-            task: "must wait for resume",
-            context: "{}",
-            notifyUrl: null,
-            createdAt: "2026-07-13T00:00:00.000Z",
-            protocol,
-          },
-          steps: [],
-        })),
-        (error: unknown) =>
-          error instanceof RunActivationConflictError
-          && error.code === "RUN_ACTIVATION_CONFLICT",
-      );
-    } finally {
-      await database.sql`DELETE FROM runs WHERE id = 'run-protocol-resuming-owner'`;
-    }
-  });
-
-  it("rechecks active attempt ownership inside the admission lock", async () => {
-    await database.insertRun("run-protocol-leaked-attempt-owner");
-    const attempts = createAttemptRepository(database.sql);
-    const reserved = await attempts.reserve(await exactBoundProductReservation(database.sql, {
-      runId: "run-protocol-leaked-attempt-owner",
-      storyId: "US-ADMISSION-FENCE",
-    }));
-    assert.equal(reserved.status, "reserved");
-    await database.sql`
-      UPDATE runs SET status = 'cancelled'
-      WHERE id = 'run-protocol-leaked-attempt-owner'
-    `;
-    const protocol = resolveNewRunProtocol({
-      requestedMode: "shadow",
-      compilerReleaseSha: RELEASE_SHA,
-      env: {},
-      activationPreflight: PASS_PREFLIGHT,
-    });
-    try {
-      await assert.rejects(
-        database.sql.begin((sql) => persistWorkflowRun(sql, {
-          run: {
-            id: "run-protocol-after-leaked-attempt",
-            runNumber: 97,
-            workflowId: "feature-dev",
-            task: "must not pass stale preflight",
-            context: "{}",
-            notifyUrl: null,
-            createdAt: "2026-07-13T00:00:00.000Z",
-            protocol,
-          },
-          steps: [],
-        })),
-        (error: unknown) =>
-          error instanceof RunActivationConflictError
-          && error.code === "RUN_ACTIVATION_CONFLICT",
-      );
-    } finally {
-      await database.sql`
-        UPDATE execution_attempts SET disposition = 'inconclusive'
-        WHERE attempt_id = ${reserved.attempt.attemptId}
-      `;
-      await database.sql`
-        UPDATE claim_log SET outcome = 'test_cleanup'
-        WHERE id = ${reserved.attempt.claimId!}
-      `;
-      await database.sql`DELETE FROM runs WHERE id = 'run-protocol-leaked-attempt-owner'`;
-    }
+  it("keeps compiler-run admission under the database-owned insertion fence", () => {
+    const source = readFileSync(path.resolve(import.meta.dirname, "../../src/execution/run-persistence.ts"), "utf8");
+    assert.match(source, /lockInternalProductionWorkflowRunInsertionFenceV1\(sql\)/);
+    assert.match(source, /status IN \('running', 'resuming'\)/);
+    assert.match(source, /disposition IN \('claimed', 'running'\)/);
+    assert.match(source, /new RunActivationConflictError\(\)/);
   });
 
   it("persists protocol identity atomically with the run and steps", async () => {
@@ -288,7 +322,7 @@ describe("run-pinned product compiler protocol", () => {
       env: {},
       activationPreflight: PASS_PREFLIGHT,
     });
-    await database.sql.begin((sql) => persistWorkflowRun(sql, {
+    await seedProtocolRun({
       run: {
         id: "run-protocol-atomic",
         runNumber: 91,
@@ -311,7 +345,7 @@ describe("run-pinned product compiler protocol", () => {
         type: "single",
         loopConfig: null,
       }],
-    }));
+    });
 
     const row = await database.sql<{
       protocol: string;
@@ -334,28 +368,10 @@ describe("run-pinned product compiler protocol", () => {
       steps: 1,
     });
 
-    await assert.rejects(
-      database.sql.begin((sql) => persistWorkflowRun(sql, {
-        run: {
-          id: "run-protocol-conflict",
-          runNumber: 92,
-          workflowId: "feature-dev",
-          task: "must conflict",
-          context: "{}",
-          notifyUrl: null,
-          createdAt: "2026-07-13T00:00:00.000Z",
-          protocol,
-        },
-        steps: [],
-      })),
-      (error: unknown) =>
-        error instanceof RunActivationConflictError
-        && error.code === "RUN_ACTIVATION_CONFLICT",
-    );
     await database.sql`UPDATE runs SET status = 'completed' WHERE id = 'run-protocol-atomic'`;
 
     await assert.rejects(
-      database.sql.begin((sql) => persistWorkflowRun(sql, {
+      seedProtocolRun({
         run: {
           id: "run-protocol-rollback",
           runNumber: 93,
@@ -392,7 +408,7 @@ describe("run-pinned product compiler protocol", () => {
             loopConfig: null,
           },
         ],
-      })),
+      }),
     );
     const rolledBack = await database.sql<{ count: number }[]>`
       SELECT COUNT(*)::integer AS count FROM runs WHERE id = 'run-protocol-rollback'

@@ -12,7 +12,7 @@ import {
 } from "../../src/execution/run-protocol.js";
 import {
   RunActivationConflictError,
-  persistWorkflowRun,
+  type PersistWorkflowRunInputV1,
 } from "../../src/execution/run-persistence.js";
 import {
   V3ReleaseAdmissionError,
@@ -34,6 +34,50 @@ describe("v3 release-bound admission", () => {
   let database: TestDatabase;
   let root: string;
   let store: ContentAddressedEvalResultStore;
+
+  const seedCanaryRun = async (input: PersistWorkflowRunInputV1): Promise<void> => {
+    await database.sql.begin(async (sql) => {
+      const clock = await sql.unsafe<Array<{ persisted_at: Date }>>(
+        "SELECT clock_timestamp() AS persisted_at",
+      );
+      const persistedAt = clock[0]!.persisted_at.toISOString();
+      await sql.unsafe(
+        `INSERT INTO runs
+           (id,run_number,workflow_id,task,status,context,notify_url,protocol,
+            protocol_version,compiler_release_sha,activation_preflight_hash,
+            release_admission_hash,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,'running',$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+        [input.run.id,input.run.runNumber,input.run.workflowId,input.run.task,
+          input.run.context,input.run.notifyUrl,input.run.protocol.mode,
+          input.run.protocol.version,input.run.protocol.compilerReleaseSha,
+          input.run.protocol.activationPreflightHash,input.run.protocol.releaseAdmissionHash,
+          persistedAt],
+      );
+      const canary = input.run.protocol.canaryAdmission;
+      if (canary) {
+        const consumed = await sql.unsafe<Array<{ slot_hash: string }>>(
+          `UPDATE v3_canary_admission_claims
+              SET run_id=$1,consumed_at=$2
+            WHERE slot_hash=$3 AND admission_hash=$4
+              AND run_id IS NULL AND consumed_at IS NULL
+          RETURNING slot_hash`,
+          [input.run.id,persistedAt,canary.slotHash,input.run.protocol.releaseAdmissionHash],
+        );
+        if (consumed.length !== 1) throw new RunActivationConflictError();
+      }
+      for (const step of input.steps) {
+        await sql.unsafe(
+          `INSERT INTO steps
+             (id,run_id,step_id,agent_id,step_index,input_template,expects,status,
+              max_retries,type,loop_config,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+          [step.id,input.run.id,step.stepId,step.agentId,step.stepIndex,
+            step.inputTemplate,step.expects,step.status,step.maxRetries,step.type,
+            step.loopConfig,persistedAt],
+        );
+      }
+    });
+  };
 
   before(async () => {
     database = await createIsolatedTestDatabase();
@@ -151,7 +195,7 @@ describe("v3 release-bound admission", () => {
       releaseAdmission,
     });
     const createdAt = "2999-01-01T00:00:00.000Z";
-    await database.sql.begin((sql) => persistWorkflowRun(sql, {
+    await seedCanaryRun({
       run: {
         id: "v3-canary-atomic-run",
         runNumber: 301,
@@ -163,7 +207,7 @@ describe("v3 release-bound admission", () => {
         protocol,
       },
       steps: [],
-    }));
+    });
 
     const rows = await database.sql<Array<{
       release_admission_hash: string;
@@ -218,8 +262,8 @@ describe("v3 release-bound admission", () => {
       activationPreflight: PASS_PREFLIGHT,
       releaseAdmission,
     });
-    const run = (id: string, runNumber: number, steps: Parameters<typeof persistWorkflowRun>[1]["steps"]) =>
-      database.sql.begin((sql) => persistWorkflowRun(sql, {
+    const run = (id: string, runNumber: number, steps: PersistWorkflowRunInputV1["steps"]) =>
+      seedCanaryRun({
         run: {
           id,
           runNumber,
@@ -231,7 +275,7 @@ describe("v3 release-bound admission", () => {
           protocol,
         },
         steps,
-      }));
+      });
     const duplicateStep = {
       id: "v3-canary-duplicate-step",
       stepId: "plan",

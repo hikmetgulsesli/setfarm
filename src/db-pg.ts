@@ -14,6 +14,9 @@ import {
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
   verifyContractSpineMigrations,
 } from "./db/contract-spine-migrations.js";
+import { computeContractSpineMigrationChecksumV1 } from "./db/contract-spine-migration-checksum.js";
+import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./db/contract-spine-migration-digests.generated.js";
+import { OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS } from "./db/operational-failure-cause-authority-v3-migration.js";
 import type {
   PgTransactionSql as InternalProductionPgTransactionSql,
 } from "./internal-production/owner-admission-v1.js";
@@ -620,6 +623,34 @@ const WORKFLOW_RUN_TERMINAL_STATUSES_V1 = Object.freeze([
   "completed", "failed", "cancelled",
 ] as const);
 type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[number];
+const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
+  "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
+const RUN_PERSISTENCE_READINESS_MODULE_HREF_V1 = new URL("./internal-production/baseline-spawner-startup-admission-v1.js", import.meta.url).href;
+const RUN_PERSISTENCE_MIGRATION_31_FENCE_V1 = Object.freeze({
+  version: 31 as const,
+  name: "031_operational_failure_cause_authority_v3" as const,
+  checksum: computeContractSpineMigrationChecksumV1({
+    version: 31,
+    name: "031_operational_failure_cause_authority_v3",
+    statements: OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[31],
+  }),
+});
+
+function isRecursivelyFrozenV1(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return true;
+  const object = value as object;
+  if (seen.has(object) || !Object.isFrozen(object)) return false;
+  seen.add(object);
+  for (const key of Reflect.ownKeys(object)) {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor || !("value" in descriptor) || !isRecursivelyFrozenV1(descriptor.value, seen)) {
+      return false;
+    }
+  }
+  seen.delete(object);
+  return true;
+}
 
 function decodeCanonicalWorkflowRunIdSegmentV1(encodedRunId: string): string {
   try {
@@ -1077,15 +1108,98 @@ async function resolveActiveOwnerProducerV1(
   if (!producer) {
     throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
   }
-  const current = await resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1(sql);
+  let currentResolution: Awaited<ReturnType<typeof resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1>>;
+  try {
+    currentResolution = await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql);
+  } catch (error) {
+    if (implementationId === "a-runtime-run-v1") {
+      throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+    }
+    throw error;
+  }
+  const current = currentResolution?.current ?? null;
   const planIndex = current?.receipt.orderedPlans.indexOf("A") ?? -1;
   if (
     current === null
     || planIndex < 0
     || current.receipt.orderedManifestHashes[planIndex]
       !== INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
+  ) {
+    throw new Error(implementationId === "a-runtime-run-v1"
+      ? "RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID"
+      : "INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
+  }
+  if (implementationId === "a-runtime-run-v1") await requireWorkflowRunAdmissionReadyV1(currentResolution);
   return producer;
+}
+
+async function requireWorkflowRunAdmissionReadyV1(
+  currentResolution: Awaited<ReturnType<typeof resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1>>,
+): Promise<void> {
+  if (!currentResolution) throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+  const aNodes = currentResolution.nodes.filter(({ receipt }) => (
+    receipt.phase === "A"
+    && sameJsonValueV1(receipt.orderedPlans, ["A"])
+    && sameJsonValueV1(receipt.orderedManifestHashes, [WORKFLOW_RUN_MANIFEST_A_HASH_V1])
+  ));
+  if (
+    INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash !== WORKFLOW_RUN_MANIFEST_A_HASH_V1
+    || aNodes.length !== 1
+  ) throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+  const aNode = aNodes[0]!;
+  type ReadinessModuleV1 = Readonly<{
+    observeInternalProductionPreSchemaSpawnerRebindStatusV1: () => Promise<unknown>;
+    resolveInternalProductionTask0SpawnerAdmissionReadyV1: (pair: unknown) => Promise<unknown>;
+  }>;
+  let module: ReadinessModuleV1;
+  let status: Record<string, unknown>;
+  try {
+    const loaded = await import(RUN_PERSISTENCE_READINESS_MODULE_HREF_V1) as Readonly<Record<string, unknown>>;
+    module = loaded as unknown as ReadinessModuleV1;
+    if (
+      JSON.stringify(Object.keys(module)) !== JSON.stringify([
+        "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
+        "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
+      ])
+      || typeof module.observeInternalProductionPreSchemaSpawnerRebindStatusV1 !== "function"
+      || module.observeInternalProductionPreSchemaSpawnerRebindStatusV1.length !== 0
+      || typeof module.resolveInternalProductionTask0SpawnerAdmissionReadyV1 !== "function"
+      || module.resolveInternalProductionTask0SpawnerAdmissionReadyV1.length !== 1
+    ) throw new Error();
+    const observed = await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+    if (
+      !isRecursivelyFrozenV1(observed)
+      || observed === null
+      || typeof observed !== "object"
+      || (observed as Record<string, unknown>).state !== "normal_task0_admission_ready"
+      || (observed as Record<string, unknown>).admissionReady === null
+      || typeof (observed as Record<string, unknown>).admissionReady !== "object"
+    ) throw new Error();
+    status = observed as Record<string, unknown>;
+  } catch {
+    throw new Error("RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE");
+  }
+  try {
+    const admissionReady = status.admissionReady as Record<string, unknown>;
+    const ready = await module.resolveInternalProductionTask0SpawnerAdmissionReadyV1(status.admissionReady);
+    if (
+      !isRecursivelyFrozenV1(ready)
+      || ready === null
+      || typeof ready !== "object"
+      || (ready as Record<string, unknown>).state !== "normal-task0-admission-ready"
+    ) throw new Error();
+    const body = ready as Record<string, unknown>;
+    if (
+      body.admissionReadyRef !== admissionReady.admissionReadyRef
+      || body.admissionReadyHash !== admissionReady.admissionReadyHash
+      || body.manifestActivationRef !== aNode.receipt.activationRef
+      || body.manifestActivationHash !== aNode.receipt.activationHash
+      || body.manifestHeadRef !== aNode.head.headRef
+      || body.manifestHeadHash !== aNode.head.headHash
+    ) throw new Error();
+  } catch {
+    throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+  }
 }
 
 async function lockOwnerAdmissionHeadV1(
@@ -1282,11 +1396,11 @@ async function beginOrAdoptOwnerReservationInTransactionV1(
   input: Readonly<{ producerImplementationId: string; ownerKey: string }>,
 ): Promise<InternalProductionOwnerReservationV1> {
   exactObjectKeys(input, ["producerImplementationId", "ownerKey"], "INTERNAL_PRODUCTION_OWNER_RESERVATION_BEGIN_INPUT_INVALID");
-  const producer = await resolveActiveOwnerProducerV1(sql, input.producerImplementationId);
   if (typeof input.ownerKey !== "string" || input.ownerKey.length === 0 || input.ownerKey.length > 4_000 || /[\u0000-\u001f\u007f]/.test(input.ownerKey)) {
     throw new TypeError("INTERNAL_PRODUCTION_OWNER_KEY_INVALID");
   }
   const head = await lockOwnerAdmissionHeadV1(sql);
+  const producer = await resolveActiveOwnerProducerV1(sql, input.producerImplementationId);
   const candidate = createInternalProductionOwnerReservationV1({
     producer,
     ownerKey: input.ownerKey,
@@ -1381,7 +1495,33 @@ async function bindOwnerReservationInTransactionV1<Category extends InternalProd
   if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CONFLICT");
   const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
   await sql`INSERT INTO internal_production_owner_admission_authorities_v1 (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body) VALUES (${bindingRef},${bound.bindingHash},'binding',${reservation.reservationRef},${reservationSuccessorHash},${reservationSuccessorHash},${sql.json(bound)})`;
-  return bound;
+  const publishedReservation = await resolveOwnerReservationInTransactionV1(sql, {
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+  }, true);
+  const publishedRows = await sql<OwnerReservationRowV1[]>`
+    SELECT *
+      FROM internal_production_owner_reservations_v1
+     WHERE reservation_ref=${reservation.reservationRef}
+       AND reservation_hash=${reservation.reservationHash}
+     FOR UPDATE
+  `;
+  if (publishedRows.length !== 1) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  }
+  const published = await validateBoundOwnerReservationRowV1<Category>(
+    sql,
+    publishedRows[0]!,
+    publishedReservation,
+  );
+  const publishedHead = await lockOwnerAdmissionHeadV1(sql);
+  if (
+    publishedHead.version !== lockedHead.version
+    || publishedHead.hash !== reservationSuccessorHash
+    || !sameJsonValueV1(publishedReservation, reservation)
+    || !sameJsonValueV1(published, bound)
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+  return published;
 }
 
 async function closeOwnerReservationInTransactionV1<
@@ -1926,6 +2066,27 @@ export async function resolveInternalProductionOwnerReservationCloseInTransactio
   input: Readonly<{ closeRef: string; closeHash: string }>,
 ): Promise<InternalProductionOwnerReservationCloseV1> {
   return OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input);
+}
+
+export async function lockInternalProductionWorkflowRunInsertionFenceV1(
+  sql: InternalProductionPgTransactionSql,
+): Promise<void> {
+  const rows = await sql<Array<{ version: number; name: string; checksum: string; state: string }>>`
+    SELECT version,name,checksum,state
+      FROM public.setfarm_schema_migrations
+     WHERE version = 31
+     FOR UPDATE
+  `;
+  const row = rows[0];
+  if (rows.length !== 1 || !row) {
+    throw new Error("RUN_PERSISTENCE_MIGRATION_31_FENCE_UNAVAILABLE");
+  }
+  if (
+    row.version !== RUN_PERSISTENCE_MIGRATION_31_FENCE_V1.version
+    || row.name !== RUN_PERSISTENCE_MIGRATION_31_FENCE_V1.name
+    || row.checksum !== RUN_PERSISTENCE_MIGRATION_31_FENCE_V1.checksum
+    || row.state !== "applied"
+  ) throw new Error("RUN_PERSISTENCE_MIGRATION_31_FENCE_DRIFT");
 }
 
 /**
