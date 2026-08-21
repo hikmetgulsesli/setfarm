@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { cpSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { cpSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import test from "node:test";
+import postgres from "postgres";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import * as ownerAdmissionApi from "../../src/internal-production/owner-admission-v1.js";
@@ -46,6 +49,974 @@ const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
 const GIT_A = "a".repeat(40);
 const GIT_B = "b".repeat(40);
+
+function p3TestGit(root: string, args: readonly string[], input?: string): string {
+  const result = spawnSync("/usr/bin/git", args, {
+    cwd: root,
+    encoding: "utf8",
+    input,
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_COUNT: "0",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () => void }> {
+  const container = mkdtempSync("/tmp/setfarm-p3-refusal-");
+  const root = path.join(container, "setfarm");
+  const cloned = spawnSync("/usr/bin/git", ["clone", "-q", "--shared", realpathSync(process.cwd()), root], {
+    encoding: "utf8",
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_COUNT: "0",
+    },
+  });
+  assert.equal(cloned.status, 0, cloned.stderr);
+  for (const locator of [
+    "scripts/run-isolated-postgres-tests.ts",
+    "src/db-pg.ts",
+    "tests/execution-attempts/test-database.ts",
+    "tests/internal-production/owner-admission-v1.test.ts",
+  ]) {
+    cpSync(path.join(process.cwd(), locator), path.join(root, locator));
+  }
+  p3TestGit(root, ["config", "user.name", "Setfarm P3 Refusal Fixture"]);
+  p3TestGit(root, ["config", "user.email", "setfarm-p3-refusal@invalid"]);
+  p3TestGit(root, ["add", "scripts/run-isolated-postgres-tests.ts", "src/db-pg.ts", "tests/execution-attempts/test-database.ts", "tests/internal-production/owner-admission-v1.test.ts"]);
+  if (p3TestGit(root, ["diff", "--cached", "--name-only"]) !== "") {
+    p3TestGit(root, ["commit", "-qm", "P3 current-byte refusal fixture"]);
+  }
+  for (const entry of p3TestGit(root, ["ls-files", "--stage", "-z"]).split("\0").filter(Boolean)) {
+    const match = /^(100644|100755) [a-f0-9]{40,64} 0\t(.+)$/.exec(entry);
+    assert.ok(match, entry);
+    chmodSync(path.join(root, match[2]!), match[1] === "100755" ? 0o755 : 0o644);
+  }
+  symlinkSync(realpathSync(path.join(process.cwd(), "node_modules")), path.join(root, "node_modules"), "dir");
+  writeFileSync(path.join(root, ".git/info/exclude"), "node_modules\n");
+  return Object.freeze({
+    root,
+    cleanup: () => rmSync(container, { recursive: true, force: true }),
+  });
+}
+
+function runP3NestedRunner(root: string): Readonly<{ status: number | null; output: string }> {
+  const ambientCwd = mkdtempSync(path.join(tmpdir(), "setfarm-p3-nested-cwd-"));
+  const result = spawnSync(process.execPath, [
+    "--import",
+    realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")),
+    path.join(root, "scripts/run-isolated-postgres-tests.ts"),
+    "--",
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "tests/internal-production/task-0-source-manifest.test.ts",
+  ], {
+    cwd: ambientCwd,
+    encoding: "utf8",
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      SETFARM_TEST_PG_ADMIN_URL:
+        process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+    },
+  });
+  rmSync(ambientCwd, { recursive: true, force: true });
+  return Object.freeze({
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  });
+}
+
+function spawnP3NestedRunner(root: string): Readonly<{
+  pid: number;
+  temporaryRoot: string;
+  completed: Promise<Readonly<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    output: string;
+    temporaryEntries: readonly string[];
+  }>>;
+}> {
+  const ambientCwd = mkdtempSync(path.join(tmpdir(), "setfarm-p3-nested-cwd-"));
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "setfarm-p3-nested-tmp-"));
+  const child = spawn(process.execPath, [
+    "--import",
+    realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")),
+    path.join(root, "scripts/run-isolated-postgres-tests.ts"),
+    "--",
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "tests/internal-production/task-0-source-manifest.test.ts",
+  ], {
+    cwd: ambientCwd,
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      TMPDIR: temporaryRoot,
+      SETFARM_TEST_PG_ADMIN_URL:
+        process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.ok(child.pid);
+  let output = "";
+  child.stdout!.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+  child.stderr!.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+  const completed = new Promise<Readonly<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    output: string;
+    temporaryEntries: readonly string[];
+  }>>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (status, signal) => {
+      const temporaryEntries = readdirSync(temporaryRoot).sort();
+      rmSync(ambientCwd, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
+      resolve(Object.freeze({ status, signal, output, temporaryEntries }));
+    });
+  });
+  return Object.freeze({ pid: child.pid, temporaryRoot, completed });
+}
+
+async function waitForP3ConditionV1<T>(
+  observe: () => Promise<T | null> | T | null,
+  label: string,
+): Promise<T> {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const value = await observe();
+    if (value !== null) return value;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`P3_TEST_WAIT_TIMEOUT:${label}`);
+}
+
+async function p3DatabaseInventoryV1(
+  admin: ReturnType<typeof postgres>,
+): Promise<string[]> {
+  const rows = await admin<Array<{ datname: string }>>`
+    SELECT datname FROM pg_database
+     WHERE datname ~ '^setfarm_p3_[a-f0-9]{24}_(template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$'
+     ORDER BY datname
+  `;
+  return rows.map(({ datname }) => datname);
+}
+
+type P3SyntheticMarkerV1 = Readonly<{
+  schema: "setfarm.p3-isolated-projection-marker.v1";
+  projectionRoot: string;
+  projectedHead: string;
+  runDatabasePrefix: string;
+  templateDatabaseName: string;
+  adminUrlSha256: string;
+  setupNonceSha256: string;
+  testNonceSha256: string;
+}>;
+
+function p3Sha256(bytes: string | Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function writeP3SyntheticMarker(
+  root: string,
+  setupNonce: Buffer,
+  testNonce: Buffer,
+  mutation: (marker: P3SyntheticMarkerV1) => P3SyntheticMarkerV1 = (marker) => marker,
+): P3SyntheticMarkerV1 {
+  const admin = new URL(
+    process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+  );
+  admin.pathname = "/postgres";
+  const runDatabasePrefix = "setfarm_p3_1234567890abcdef12345678";
+  const marker = mutation(Object.freeze({
+    schema: "setfarm.p3-isolated-projection-marker.v1",
+    projectionRoot: realpathSync(root),
+    projectedHead: p3TestGit(root, ["rev-parse", "HEAD"]),
+    runDatabasePrefix,
+    templateDatabaseName: `${runDatabasePrefix}_template`,
+    adminUrlSha256: p3Sha256(admin.toString()),
+    setupNonceSha256: p3Sha256(setupNonce),
+    testNonceSha256: p3Sha256(testNonce),
+  }));
+  writeFileSync(
+    path.join(root, ".setfarm-p3-projection-marker.json"),
+    `${JSON.stringify(marker)}\n`,
+    { mode: 0o600 },
+  );
+  return marker;
+}
+
+async function runP3CapabilityChild(input: Readonly<{
+  root: string;
+  helperRoot?: string;
+  frame?: Buffer;
+  replay?: boolean;
+  authenticateOnly?: boolean;
+}>): Promise<Readonly<{ status: number | null; output: string }>> {
+  const target = new URL(
+    process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+  );
+  target.pathname = "/setfarm_p3_1234567890abcdef12345678_template";
+  const helperPath = path.join(input.helperRoot ?? input.root, "tests/execution-attempts/test-database.ts");
+  const args = input.replay || input.authenticateOnly
+    ? [
+        "--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")),
+        "--input-type=module", "--eval",
+        `const m=await import(${JSON.stringify(pathToFileURL(helperPath).href)});m.authenticateP3ProjectedReadinessTestCapabilityV1();${input.replay ? "m.authenticateP3ProjectedReadinessTestCapabilityV1();" : ""}`,
+      ]
+    : ["--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")), helperPath];
+  const child = spawn(process.execPath, args, {
+    cwd: input.root,
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      SETFARM_PG_URL: target.toString(),
+      SETFARM_TEST_PG_ADMIN_URL:
+        process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+    },
+  });
+  let output = "";
+  child.stdout!.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+  child.stderr!.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+  child.stdio[3]!.end(input.frame ?? Buffer.alloc(0));
+  return await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (status) => resolve(Object.freeze({ status, output })));
+  });
+}
+
+test("P3 runner projects authenticated current bytes from import meta root", async () => {
+  const projectionRoot = realpathSync(process.cwd());
+  const markerPath = path.join(projectionRoot, ".setfarm-p3-projection-marker.json");
+  const marker = JSON.parse(readFileSync(markerPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(Reflect.ownKeys(marker), [
+    "schema", "projectionRoot", "projectedHead", "runDatabasePrefix",
+    "templateDatabaseName", "adminUrlSha256", "setupNonceSha256", "testNonceSha256",
+  ]);
+  assert.equal(marker.schema, "setfarm.p3-isolated-projection-marker.v1");
+  assert.equal(marker.projectionRoot, projectionRoot);
+  assert.match(String(marker.projectedHead), /^[a-f0-9]{40,64}$/);
+  assert.match(String(marker.runDatabasePrefix), /^setfarm_p3_[a-f0-9]{24}$/);
+  assert.equal(marker.templateDatabaseName, `${marker.runDatabasePrefix}_template`);
+  for (const key of ["adminUrlSha256", "setupNonceSha256", "testNonceSha256"] as const) {
+    assert.match(String(marker[key]), /^[a-f0-9]{64}$/);
+  }
+  assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectionRoot, encoding: "utf8" }).trim(), marker.projectedHead);
+  assert.match(execFileSync("git", ["rev-parse", "HEAD^"], { cwd: projectionRoot, encoding: "utf8" }).trim(), /^[a-f0-9]{40,64}$/);
+  assert.equal(execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: projectionRoot, encoding: "utf8" }), "");
+  const indexEntries = execFileSync("git", ["ls-files", "--stage", "-z"], {
+    cwd: projectionRoot,
+  }).toString("utf8").split("\0").filter(Boolean).map((entry) => {
+    const match = /^(100644|100755) [a-f0-9]{40,64} 0\t(.+)$/.exec(entry);
+    assert.ok(match, entry);
+    return { mode: match[1]!, locator: match[2]! };
+  });
+  assert.deepEqual([...new Set(indexEntries.map(({ mode }) => mode))].sort(), ["100644", "100755"]);
+  const executable = indexEntries.find(({ mode }) => mode === "100755");
+  assert.ok(executable);
+  assert.equal(statSync(path.join(projectionRoot, executable.locator)).mode & 0o111, 0o111);
+  assert.ok(execFileSync("git", ["show", "HEAD^:package.json"], { cwd: projectionRoot }).length > 0);
+  assert.match(readFileSync(new URL(import.meta.url), "utf8"), /P3 runner projects authenticated current bytes/);
+  const runnerSource = readFileSync(
+    path.join(projectionRoot, "scripts/run-isolated-postgres-tests.ts"),
+    "utf8",
+  );
+  const childEnvironmentSource = runnerSource.slice(
+    runnerSource.indexOf("function childEnvironmentV1"),
+    runnerSource.indexOf("async function cleanupDatabasesV1"),
+  );
+  assert.match(
+    childEnvironmentSource,
+    /NODE_OPTIONS:\s*"--test-isolation=none --import=\.\/\.setfarm-p3-test-capability-preload\.mjs"/,
+  );
+  assert.doesNotMatch(childEnvironmentSource, /\.\.\.process\.env|process\.env\.NODE_OPTIONS/);
+  assert.doesNotMatch(
+    childEnvironmentSource,
+    /setupNonce|testNonce|SETFARM_P3_PROJECTION_CAPABILITY_V1|\brole\b/i,
+  );
+  assert.match(runnerSource, /stdio: \["inherit", "inherit", "inherit", "pipe"\]/);
+  assert.doesNotMatch(runnerSource, /setfarm-p3-capability-|capabilityPath|capabilityFd/);
+
+  if (process.env.SETFARM_PG_URL !== undefined) {
+    const db = await import(`../../src/db-pg.ts?p3-primary-ready=${Date.now()}-${Math.random()}`);
+    db.pgConfigureIsolatedTestDatabase(process.env.SETFARM_PG_URL);
+    try {
+      const current = await db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+      assert.ok(current, "the primary clone must inherit the quiescent template activation");
+      assert.equal(current.receipt.phase, "A");
+      assert.equal(current.receipt.orderedPlans.join(","), "A");
+    } finally {
+      await db.pgClose();
+    }
+  }
+});
+
+test("P3 isolated database names keep the exact loopback union", async () => {
+  const importDb = async (label: string) => import(
+    `../../src/db-pg.ts?p3-isolated-name=${encodeURIComponent(label)}-${Date.now()}-${Math.random()}`
+  );
+  const accepted = [
+    "setfarm_contract_spine_test_1_0123456789ab",
+    "setfarm_p3_0123456789abcdef01234567_template",
+    "setfarm_p3_0123456789abcdef01234567_primary",
+    "setfarm_p3_0123456789abcdef01234567_clone_0123456789ab",
+    "setfarm_p3_0123456789abcdef01234567_empty_0123456789ab",
+  ] as const;
+  for (const [index, database] of accepted.entries()) {
+    const db = await importDb(`accepted-${index}`);
+    assert.doesNotThrow(() => db.pgConfigureIsolatedTestDatabase(
+      `postgresql://setrox@127.0.0.1:5432/${database}`,
+    ), database);
+  }
+
+  const rejected = [
+    "setfarm_p3_0123456789abcdef0123456_template",
+    "setfarm_p3_0123456789abcdef012345678_template",
+    "setfarm_p3_0123456789abcdef01234567_TEMPLATE",
+    "setfarm_p3_0123456789abcdef01234567_clone_0123456789a",
+    "setfarm_p3_0123456789abcdef01234567_clone_0123456789abc",
+    "setfarm_p3_0123456789abcdef01234567_primary_extra",
+    "xsetfarm_p3_0123456789abcdef01234567_primary",
+    "setfarm_contract_spine_test_1_0123456789ab_extra",
+    "setfarm_contract_spine_test_1_0123456789AB",
+  ] as const;
+  for (const [index, database] of rejected.entries()) {
+    const db = await importDb(`rejected-${index}`);
+    assert.throws(() => db.pgConfigureIsolatedTestDatabase(
+      `postgresql://setrox@127.0.0.1:5432/${database}`,
+    ), /^Error: ISOLATED_TEST_DATABASE_URL_REJECTED$/, database);
+  }
+
+  for (const [index, url] of [
+    "postgresql://setrox@example.com:5432/setfarm_p3_0123456789abcdef01234567_primary",
+    "postgresql://setrox@127.0.0.1:5432/prefix/setfarm_p3_0123456789abcdef01234567_primary",
+    "postgresql://setrox@127.0.0.1:5432/setfarm_p3_0123456789abcdef01234567_primary/",
+  ].entries()) {
+    const db = await importDb(`url-rejected-${index}`);
+    assert.throws(() => db.pgConfigureIsolatedTestDatabase(url),
+      /^Error: ISOLATED_TEST_DATABASE_URL_REJECTED$/);
+  }
+});
+
+test("P3 runner carries each one-shot capability only through child FD3 pipe", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
+    "utf8",
+  );
+  const capability = source.slice(
+    source.indexOf("async function spawnWithCapabilityV1"),
+    source.indexOf("function childEnvironmentV1"),
+  );
+  assert.match(capability, /stdio: \["inherit", "inherit", "inherit", "pipe"\]/);
+  assert.match(capability, /child\.stdio\[3\].*\.end\(input\.frame\)/s);
+  assert.doesNotMatch(capability, /writeFileSync|openSync|setfarm-p3-capability-/);
+  assert.match(source, /SETFARM_P3_TEST_CAPABILITY_PRELOAD_V1/);
+  assert.match(source, /process\.env\.NODE_OPTIONS = "--test-isolation=none"/);
+  assert.doesNotMatch(source, /NODE_OPTIONS:[\s\S]{0,160}--import=tsx/);
+});
+
+test("P3 preload consumes FD3 and rejects descendant counterfeit authority before mutation", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const adminUrl = process.env.SETFARM_TEST_PG_ADMIN_URL
+    ?? "postgresql://setrox@localhost:5432/postgres";
+  const admin = postgres(adminUrl, { max: 1, onnotice: () => {} });
+  try {
+    const replay = createP3RunnerRefusalFixture();
+    try {
+      const target = path.join(replay.root, "tests/internal-production/task-0-source-manifest.test.ts");
+      writeFileSync(target, `
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { closeSync, readSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
+import postgres from "postgres";
+test("grandchild cannot replay P3 FD3", async () => {
+  const sql = postgres(process.env.SETFARM_PG_URL, { max: 1, onnotice: () => {} });
+  try {
+  const inventory = async () => (await sql.unsafe("SELECT current_revision::text,activation_ref,activation_hash,head_ref,head_hash FROM internal_production_owner_producer_manifest_set_current_v1 ORDER BY singleton_key")).map((row) => ({...row}));
+  const before = await inventory();
+  const frame = Buffer.alloc(256);
+  let frameLength = 0;
+  try { frameLength = readSync(3, frame, 0, frame.length, null); closeSync(3); } catch {}
+  const stolen = frame.subarray(0, frameLength);
+  const helper = path.join(process.cwd(), "tests/execution-attempts/test-database.ts");
+  const child = spawn(process.execPath, ["--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")), "--input-type=module", "--eval", "const m=await import(" + JSON.stringify(pathToFileURL(helper).href) + ");m.authenticateP3ProjectedReadinessTestCapabilityV1();"], { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  child.stdio[3].end(stolen);
+  const status = await completed;
+  assert.notEqual(status, 0, "grandchild authenticated the original one-shot FD3");
+  assert.match(stderr, /P3_PROJECTION_CAPABILITY_INVALID|EBADF|ENXIO/);
+  assert.deepEqual(await inventory(), before);
+  const databaseInventory = async () => (await sql.unsafe("SELECT datname FROM pg_database WHERE datname LIKE 'setfarm_p3_%' ORDER BY datname")).map((row) => row.datname);
+  const databaseBefore = await databaseInventory();
+  const readiness = path.join(process.cwd(), "src/internal-production/baseline-spawner-startup-admission-v1.js");
+  const counterfeitProgram = [
+    'Object.defineProperty(globalThis,Symbol.for("setfarm.p3-test-capability-preload-state.v1"),{configurable:true,enumerable:false,value:"authenticated",writable:false});',
+    'const m=await import(' + JSON.stringify(pathToFileURL(helper).href) + ');',
+    'm.authenticateP3ProjectedReadinessTestCapabilityV1();',
+    'const r=await import(' + JSON.stringify(pathToFileURL(readiness).href) + ');',
+    'await r.observeInternalProductionPreSchemaSpawnerRebindStatusV1();',
+    'await m.createIsolatedTestDatabase();',
+    'process.exit(0);',
+  ].join('');
+  const counterfeit = spawn(process.execPath, ["--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")), "--input-type=module", "--eval", counterfeitProgram], { cwd: process.cwd(), env: {...process.env, NODE_OPTIONS: "--test-isolation=none"}, stdio: ["ignore", "pipe", "pipe"] });
+  let counterfeitStderr = "";
+  counterfeit.stderr.setEncoding("utf8").on("data", (chunk) => { counterfeitStderr += chunk; });
+  const counterfeitStatus = await new Promise((resolve, reject) => { counterfeit.once("error", reject); counterfeit.once("exit", resolve); });
+  assert.notEqual(counterfeitStatus, 0, "grandchild forged the public Symbol.for sentinel without FD3");
+  assert.match(counterfeitStderr, /P3_PROJECTION_CAPABILITY_INVALID|EBADF|ENXIO/);
+  assert.deepEqual(await databaseInventory(), databaseBefore);
+  assert.deepEqual(await inventory(), before);
+  } finally { await sql.end({ timeout: 5 }); }
+});
+`);
+      const result = await spawnP3NestedRunner(replay.root).completed;
+      assert.equal(result.status, 0, result.output);
+    } finally {
+      replay.cleanup();
+    }
+
+    const baseline = await p3DatabaseInventoryV1(admin);
+    const earlyClose = createP3RunnerRefusalFixture();
+    try {
+      const helperPath = path.join(earlyClose.root, "tests/execution-attempts/test-database.ts");
+      const helperSource = readFileSync(helperPath, "utf8");
+      const helperAnchor = "async function setupP3TemplateDirectV1(): Promise<void> {\n";
+      assert.equal(helperSource.includes(helperAnchor), true);
+      writeFileSync(helperPath, helperSource.replace(
+        helperAnchor,
+        `${helperAnchor}  closeSync(3);\n  process.exit(0);\n`,
+      ));
+      const runnerPath = path.join(earlyClose.root, "scripts/run-isolated-postgres-tests.ts");
+      const runnerSource = readFileSync(runnerPath, "utf8");
+      const writerAnchor = "  deliveryStarted = true;\n  writer.end(input.frame);\n";
+      assert.equal(runnerSource.includes(writerAnchor), true);
+      writeFileSync(runnerPath, runnerSource.replace(
+        writerAnchor,
+        "  await new Promise((resolve) => child.once(\"exit\", resolve));\n  deliveryStarted = true;\n  writer.end(input.frame);\n",
+      ));
+      p3TestGit(earlyClose.root, ["add", helperPath, runnerPath]);
+      p3TestGit(earlyClose.root, ["commit", "-qm", "force early FD3 close"]);
+      const running = spawnP3NestedRunner(earlyClose.root);
+      const result = await running.completed;
+      assert.notEqual(result.status, 0);
+      assert.match(result.output, /P3_PROJECTION_CAPABILITY_DELIVERY_FAILED/);
+      assert.deepEqual(
+        result.temporaryEntries.filter((entry) => entry.startsWith("setfarm-p3-projection-")),
+        [],
+      );
+      assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
+    } finally {
+      earlyClose.cleanup();
+    }
+  } finally {
+    await admin.end({ timeout: 5 });
+  }
+});
+
+test("P3 database helper clones the activated template and bounds empty and migration31 fixtures", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const originalUrl = process.env.SETFARM_PG_URL;
+  const helper = await import("../execution-attempts/test-database.js");
+  helper.authenticateP3ProjectedReadinessTestCapabilityV1();
+  const normal = await helper.createIsolatedTestDatabase();
+  try {
+    assert.match(normal.database, /^setfarm_p3_[a-f0-9]{24}_clone_[a-f0-9]{12}$/);
+    const current = await normal.db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+    assert.ok(current);
+    assert.equal(current.receipt.phase, "A");
+    const readiness = await import(
+      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-ready=${Date.now()}`
+    );
+    const status = await readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+    assert.equal(status.state, "normal_task0_admission_ready");
+    const ready = await readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1(
+      status.admissionReady,
+    );
+    assert.equal(ready.state, "normal-task0-admission-ready");
+    assert.equal(Object.isFrozen(status), true);
+    assert.equal(Object.isFrozen(ready), true);
+    await normal.reset();
+    const resetDatabase = await normal.sql<Array<{ current_database: string; live: number }>>`
+      SELECT current_database() AS current_database, 1::int AS live
+    `;
+    assert.deepEqual(resetDatabase.map((row) => ({ ...row })), [
+      { current_database: normal.database, live: 1 },
+    ]);
+    const resetCurrent = await normal.db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+    assert.ok(resetCurrent);
+    assert.equal(resetCurrent.receipt.activationHash, current.receipt.activationHash);
+  } finally {
+    await normal.cleanup();
+    process.env.SETFARM_PG_URL = originalUrl;
+  }
+
+  const empty = await helper.createIsolatedTestDatabase({ migrate: false });
+  try {
+    assert.match(empty.database, /^setfarm_p3_[a-f0-9]{24}_empty_[a-f0-9]{12}$/);
+    const rows = await empty.sql<Array<{ relation: string | null }>>`
+      SELECT to_regclass('public.schema_migrations')::text AS relation
+    `;
+    assert.equal(rows[0]?.relation, null);
+    const emptyReadiness = await import(
+      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-empty=${Date.now()}`
+    );
+    await assert.rejects(
+      emptyReadiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1(),
+      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
+    );
+    await assert.rejects(
+      emptyReadiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1({
+        admissionReadyRef: "setfarm://tests/p3/admission-ready/sha256/" + "0".repeat(64),
+        admissionReadyHash: "0".repeat(64),
+      }),
+      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
+    );
+  } finally {
+    await empty.cleanup();
+    process.env.SETFARM_PG_URL = originalUrl;
+  }
+
+  const migration31 = await helper.createIsolatedMigration31TestDatabase();
+  try {
+    assert.match(migration31.database, /^setfarm_p3_[a-f0-9]{24}_empty_[a-f0-9]{12}$/);
+    const current = await migration31.sql<Array<{ version: string | null; activation_relation: string | null }>>`
+      SELECT MAX(version) FILTER (WHERE state='applied')::text AS version,
+             to_regclass('public.internal_production_owner_producer_manifest_set_current_v1')::text
+               AS activation_relation
+        FROM setfarm_schema_migrations
+    `;
+    assert.deepEqual(current.map((row) => ({ ...row })), [
+      { version: "31", activation_relation: null },
+    ]);
+    const v31Readiness = await import(
+      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-v31=${Date.now()}`
+    );
+    await assert.rejects(
+      v31Readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1(),
+      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
+    );
+    await assert.rejects(
+      v31Readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1({
+        admissionReadyRef: "setfarm://tests/p3/admission-ready/sha256/" + "0".repeat(64),
+        admissionReadyHash: "0".repeat(64),
+      }),
+      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
+    );
+  } finally {
+    await migration31.cleanup();
+    process.env.SETFARM_PG_URL = originalUrl;
+  }
+});
+
+test("P3 runner refuses every constructible indexed and physical projection drift before child spawn", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const member = "src/execution/attempt-repository.ts";
+  const cases: ReadonlyArray<Readonly<{
+    label: string;
+    expected: RegExp;
+    mutate: (root: string) => void;
+  }>> = [
+    {
+      label: "foreign tracked modification",
+      expected: /P3_PROJECTION_TRACKED_SCOPE_INVALID:package\.json/,
+      mutate: (root) => writeFileSync(
+        path.join(root, "package.json"),
+        `${readFileSync(path.join(root, "package.json"), "utf8")} `,
+      ),
+    },
+    {
+      label: "unexpected nonignored P3 path",
+      expected: /P3_PROJECTION_UNTRACKED_SCOPE_INVALID:src\/execution\/p3-unexpected\.ts/,
+      mutate: (root) => writeFileSync(path.join(root, "src/execution/p3-unexpected.ts"), "export {};\n"),
+    },
+    {
+      label: "missing tracked member",
+      expected: /ENOENT|P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => rmSync(path.join(root, member)),
+    },
+    {
+      label: "worktree symlink",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        rmSync(path.join(root, member));
+        symlinkSync(path.join(root, "package.json"), path.join(root, member));
+      },
+    },
+    {
+      label: "worktree directory",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        rmSync(path.join(root, member));
+        mkdirSync(path.join(root, member));
+      },
+    },
+    {
+      label: "worktree FIFO",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        rmSync(path.join(root, member));
+        execFileSync("/usr/bin/mkfifo", [path.join(root, member)]);
+      },
+    },
+    {
+      label: "executable bit drift",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => chmodSync(path.join(root, member), 0o755),
+    },
+    {
+      label: "120000 index symlink",
+      expected: /P3_PROJECTION_INDEX_ENTRY_INVALID/,
+      mutate: (root) => {
+        const blob = p3TestGit(root, ["hash-object", "-w", "--stdin"], "package.json\n");
+        p3TestGit(root, ["update-index", "--add", "--cacheinfo", `120000,${blob},${member}`]);
+      },
+    },
+    {
+      label: "160000 index submodule",
+      expected: /P3_PROJECTION_INDEX_ENTRY_INVALID/,
+      mutate: (root) => {
+        const commit = p3TestGit(root, ["rev-parse", "HEAD"]);
+        p3TestGit(root, ["update-index", "--add", "--cacheinfo", `160000,${commit},${member}`]);
+      },
+    },
+    {
+      label: "non-stage-zero index",
+      expected: /P3_PROJECTION_GIT_FAILED:status|P3_PROJECTION_INDEX_ENTRY_INVALID/,
+      mutate: (root) => {
+        const blob = p3TestGit(root, ["rev-parse", `HEAD:${member}`]);
+        p3TestGit(root, ["update-index", "--force-remove", member]);
+        p3TestGit(root, ["update-index", "--index-info"],
+          `100644 ${blob} 1\t${member}\n100644 ${blob} 2\t${member}\n`);
+      },
+    },
+  ];
+  for (const fixtureCase of cases) {
+    const fixture = createP3RunnerRefusalFixture();
+    try {
+      fixtureCase.mutate(fixture.root);
+      const result = runP3NestedRunner(fixture.root);
+      assert.notEqual(result.status, 0, fixtureCase.label);
+      assert.match(result.output, fixtureCase.expected, fixtureCase.label);
+      assert.doesNotMatch(result.output, /cloned setfarm_p3_|tests [0-9]+/i, fixtureCase.label);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+
+  const socketFixture = createP3RunnerRefusalFixture();
+  const socketPath = path.join(socketFixture.root, member);
+  rmSync(socketPath);
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    const result = runP3NestedRunner(socketFixture.root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PROJECTION_MEMBER_INVALID/);
+    assert.doesNotMatch(result.output, /cloned setfarm_p3_|tests [0-9]+/i);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    socketFixture.cleanup();
+  }
+
+  const runner = readFileSync(
+    path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
+    "utf8",
+  );
+  assert.match(runner, /path\.isAbsolute\(locator\) \|\| locator\.split\("\/"\)\.includes\("\.\."\)/);
+  assert.match(runner, /!first\.isFile\(\)/);
+  assert.match(runner, /O_RDONLY \| fsConstants\.O_NOFOLLOW/);
+});
+
+test("P3 marker and FD3 authentication reject malformed crossed stale and replayed authority", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const setupNonce = Buffer.alloc(32, 0x31);
+  const testNonce = Buffer.alloc(32, 0x32);
+  const setupFrame = Buffer.from(
+    `SETFARM_P3_PROJECTION_CAPABILITY_V1:setup:${setupNonce.toString("hex")}\n`,
+    "ascii",
+  );
+  const testFrame = Buffer.from(
+    `SETFARM_P3_PROJECTION_CAPABILITY_V1:test:${testNonce.toString("hex")}\n`,
+    "ascii",
+  );
+  const rows: ReadonlyArray<Readonly<{
+    label: string;
+    frame: Buffer;
+    mutate?: (marker: P3SyntheticMarkerV1) => P3SyntheticMarkerV1;
+    replay?: boolean;
+    authenticateOnly?: boolean;
+    expected: RegExp;
+  }>> = [
+    { label: "malformed", frame: Buffer.from("invalid\n"), expected: /P3_PROJECTION_CAPABILITY_INVALID/ },
+    { label: "duplicate/replayed frame", frame: Buffer.concat([setupFrame, setupFrame]), expected: /P3_PROJECTION_CAPABILITY_INVALID/ },
+    { label: "trailing", frame: Buffer.concat([setupFrame, Buffer.from("x")]), expected: /P3_PROJECTION_CAPABILITY_INVALID/ },
+    { label: "setup/test nonce crossing", frame: Buffer.from(`SETFARM_P3_PROJECTION_CAPABILITY_V1:setup:${testNonce.toString("hex")}\n`), expected: /P3_PROJECTION_CAPABILITY_INVALID/ },
+    { label: "wrong direct role", frame: testFrame, expected: /'test'\s*!==\s*'setup'|Expected values to be strictly equal/ },
+    { label: "wrong root", frame: setupFrame, mutate: (marker) => ({ ...marker, projectionRoot: path.dirname(marker.projectionRoot) }), expected: /projectionRoot|Expected values to be strictly equal/ },
+    { label: "stale HEAD", frame: setupFrame, mutate: (marker) => ({ ...marker, projectedHead: "0".repeat(40) }), expected: /projectedHead|Expected values to be strictly equal/ },
+    { label: "wrong template", frame: setupFrame, mutate: (marker) => ({ ...marker, templateDatabaseName: `${marker.runDatabasePrefix}_primary` }), expected: /templateDatabaseName|Expected values to be strictly equal/ },
+    { label: "wrong prefix", frame: setupFrame, mutate: (marker) => ({ ...marker, runDatabasePrefix: "setfarm_p3_1234" }), expected: /runDatabasePrefix|match/ },
+    { label: "wrong admin hash", frame: setupFrame, mutate: (marker) => ({ ...marker, adminUrlSha256: "0".repeat(64) }), expected: /P3_PROJECTION_ADMIN_URL_INVALID/ },
+    { label: "same setup/test nonce digest", frame: Buffer.from(`SETFARM_P3_PROJECTION_CAPABILITY_V1:test:${setupNonce.toString("hex")}\n`), authenticateOnly: true, mutate: (marker) => ({ ...marker, testNonceSha256: marker.setupNonceSha256 }), expected: /P3_PROJECTION_CAPABILITY_NONCES_INVALID/ },
+  ];
+  for (const row of rows) {
+    const fixture = createP3RunnerRefusalFixture();
+    try {
+      writeP3SyntheticMarker(fixture.root, setupNonce, testNonce, row.mutate);
+      const result = await runP3CapabilityChild({
+        root: fixture.root,
+        frame: row.frame,
+        replay: row.replay,
+        authenticateOnly: row.authenticateOnly,
+      });
+      assert.notEqual(result.status, 0, row.label);
+      assert.match(result.output, row.expected, row.label);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+
+  const noDescriptor = createP3RunnerRefusalFixture();
+  try {
+    writeP3SyntheticMarker(noDescriptor.root, setupNonce, testNonce);
+    const result = await runP3CapabilityChild({ root: noDescriptor.root });
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PROJECTION_CAPABILITY_INVALID/);
+  } finally {
+    noDescriptor.cleanup();
+  }
+
+  const markerGraph = createP3RunnerRefusalFixture();
+  const moduleGraph = createP3RunnerRefusalFixture();
+  try {
+    writeP3SyntheticMarker(markerGraph.root, setupNonce, testNonce);
+    const result = await runP3CapabilityChild({
+      root: markerGraph.root,
+      helperRoot: moduleGraph.root,
+      frame: testFrame,
+      authenticateOnly: true,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PROJECTION_MODULE_ROOT_INVALID/);
+  } finally {
+    markerGraph.cleanup();
+    moduleGraph.cleanup();
+  }
+});
+
+test("P3 runner refuses primary readiness tamper and projection-time source drift", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const tamperedPrimary = createP3RunnerRefusalFixture();
+  try {
+    const runnerPath = path.join(tamperedPrimary.root, "scripts/run-isolated-postgres-tests.ts");
+    const source = readFileSync(runnerPath, "utf8");
+    const anchor = "    await cloneDatabaseV1(adminUrl, primaryDatabaseName, templateDatabaseName);\n";
+    assert.equal(source.includes(anchor), true);
+    writeFileSync(runnerPath, source.replace(anchor, `${anchor}    const tamperSql = postgres(primaryUrl.toString(), { max: 1 });\n    await tamperSql.unsafe("SET session_replication_role=replica");\n    await tamperSql.unsafe("UPDATE internal_production_owner_producer_manifest_set_activations_v1 SET canonical_body='{}'");\n    await tamperSql.unsafe("SET session_replication_role=origin");\n    await tamperSql.end({ timeout: 5 });\n`));
+    p3TestGit(tamperedPrimary.root, ["add", runnerPath]);
+    p3TestGit(tamperedPrimary.root, ["commit", "-qm", "tamper primary before test spawn"]);
+    const result = runP3NestedRunner(tamperedPrimary.root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PRIMARY_VERIFICATION_FAILED/);
+  } finally {
+    tamperedPrimary.cleanup();
+  }
+
+  const tamperedReadiness = createP3RunnerRefusalFixture();
+  try {
+    const runnerPath = path.join(tamperedReadiness.root, "scripts/run-isolated-postgres-tests.ts");
+    const source = readFileSync(runnerPath, "utf8");
+    const anchor = "    await cloneDatabaseV1(adminUrl, primaryDatabaseName, templateDatabaseName);\n";
+    assert.equal(source.includes(anchor), true);
+    writeFileSync(runnerPath, source.replace(anchor, `${anchor}    const readinessPath = path.join(projection.root, "src/internal-production/baseline-spawner-startup-admission-v1.js");\n    const readinessBytes = readFileSync(readinessPath, "utf8");\n    const crossedReadiness = readinessBytes.replace(/"admissionReadyHash":"[a-f0-9]{64}"/, '"admissionReadyHash":"${"0".repeat(64)}"');\n    if (crossedReadiness === readinessBytes) throw new Error("TEST_READINESS_TAMPER_NOT_APPLIED");\n    writeFileSync(readinessPath, crossedReadiness, { mode: 0o600 });\n`));
+    p3TestGit(tamperedReadiness.root, ["add", runnerPath]);
+    p3TestGit(tamperedReadiness.root, ["commit", "-qm", "cross readiness before test spawn"]);
+    const result = runP3NestedRunner(tamperedReadiness.root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PRIMARY_VERIFICATION_FAILED/);
+  } finally {
+    tamperedReadiness.cleanup();
+  }
+
+  const driftingSource = createP3RunnerRefusalFixture();
+  try {
+    const ballast = path.join(driftingSource.root, "src/execution/attempt-repository.ts");
+    writeFileSync(ballast, `${readFileSync(ballast, "utf8")}\n${"x".repeat(32 * 1024 * 1024)}\n`);
+    p3TestGit(driftingSource.root, ["add", ballast]);
+    p3TestGit(driftingSource.root, ["commit", "-qm", "slow projection copy"]);
+    const running = spawnP3NestedRunner(driftingSource.root);
+    await waitForP3ConditionV1(() => readdirSync(running.temporaryRoot).some((name) => name.startsWith("setfarm-p3-projection-")) || null, "projection creation");
+    const late = path.join(driftingSource.root, "tests/steps/harness.ts");
+    writeFileSync(late, `${readFileSync(late, "utf8")}\n// concurrent P3 drift\n`);
+    const result = await running.completed;
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PROJECTION_SOURCE_CHANGED/);
+  } finally {
+    driftingSource.cleanup();
+  }
+});
+
+test("P3 runner cleans setup primary crash and signal failures without crossing a foreign prefix", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const adminUrl = new URL(
+    process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
+  );
+  adminUrl.pathname = "/postgres";
+  const admin = postgres(adminUrl.toString(), {
+    max: 2,
+    connect_timeout: 5,
+    idle_timeout: 1,
+    onnotice: () => {},
+  });
+  const foreignDatabase = "setfarm_p3_ffffffffffffffffffffffff_primary";
+  try {
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${foreignDatabase}"`);
+    await admin.unsafe(`CREATE DATABASE "${foreignDatabase}"`);
+    const baseline = await p3DatabaseInventoryV1(admin);
+    assert.equal(baseline.includes(foreignDatabase), true);
+
+    const setupLoss = createP3RunnerRefusalFixture();
+    try {
+      const running = spawnP3NestedRunner(setupLoss.root);
+      const template = await waitForP3ConditionV1(async () => {
+        const current = await p3DatabaseInventoryV1(admin);
+        return current.find((name) => !baseline.includes(name) && name.endsWith("_template")) ?? null;
+      }, "setup template creation");
+      const setupPid = await waitForP3ConditionV1(() => {
+        const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
+        for (const row of rows.split("\n")) {
+          const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.+)$/.exec(row);
+          if (
+            match
+            && Number(match[2]) === running.pid
+            && match[3]!.includes("tests/execution-attempts/test-database.ts")
+          ) return Number(match[1]);
+        }
+        return null;
+      }, "setup child pid");
+      process.kill(setupPid, "SIGKILL");
+      const result = await running.completed;
+      assert.notEqual(result.status, 0);
+      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL|P3_TEMPLATE_SETUP_FAILED/);
+      assert.match(template, /^setfarm_p3_[a-f0-9]{24}_template$/);
+      assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
+    } finally {
+      setupLoss.cleanup();
+    }
+
+    const moduleLoss = createP3RunnerRefusalFixture();
+    try {
+      const helperPath = path.join(moduleLoss.root, "tests/execution-attempts/test-database.ts");
+      const helperSource = readFileSync(helperPath, "utf8");
+      const holdAnchor = "      database,\n    );\n  } catch (error) {";
+      assert.equal(helperSource.includes(holdAnchor), true);
+      writeFileSync(helperPath, helperSource.replace(
+        holdAnchor,
+        "      database,\n    );\n    await new Promise((resolve) => setTimeout(resolve, 30_000));\n  } catch (error) {",
+      ));
+      p3TestGit(moduleLoss.root, ["add", helperPath]);
+      p3TestGit(moduleLoss.root, ["commit", "-qm", "hold after readiness publication"]);
+      const running = spawnP3NestedRunner(moduleLoss.root);
+      const setupPid = await waitForP3ConditionV1(() => {
+        const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
+        for (const row of rows.split("\n")) {
+          const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.+)$/.exec(row);
+          if (match && Number(match[2]) === running.pid && match[3]!.includes("test-database.ts")) {
+            return Number(match[1]);
+          }
+        }
+        return null;
+      }, "module-loss setup child");
+      const readinessPath = await waitForP3ConditionV1(() => {
+        const lsof = execFileSync("/usr/sbin/lsof", ["-a", "-p", String(setupPid), "-d", "cwd", "-Fn"], { encoding: "utf8" });
+        const cwd = lsof.split("\n").find((line) => line.startsWith("n"))?.slice(1);
+        if (!cwd) return null;
+        const candidate = path.join(cwd, "src/internal-production/baseline-spawner-startup-admission-v1.js");
+        return statSync(candidate, { throwIfNoEntry: false })?.isFile() ? candidate : null;
+      }, "readiness module publication");
+      assert.match(readinessPath, /baseline-spawner-startup-admission-v1\.js$/);
+      process.kill(setupPid, "SIGKILL");
+      const result = await running.completed;
+      assert.notEqual(result.status, 0);
+      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL|P3_TEMPLATE_SETUP_FAILED/);
+      assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
+    } finally {
+      moduleLoss.cleanup();
+    }
+
+    const primaryFailure = createP3RunnerRefusalFixture();
+    try {
+      const running = spawnP3NestedRunner(primaryFailure.root);
+      const template = await waitForP3ConditionV1(async () => {
+        const current = await p3DatabaseInventoryV1(admin);
+        return current.find((name) => !baseline.includes(name) && name.endsWith("_template")) ?? null;
+      }, "primary-failure template creation");
+      const primary = template.replace(/_template$/, "_primary");
+      await admin.unsafe(`CREATE DATABASE "${primary}"`);
+      const result = await running.completed;
+      assert.notEqual(result.status, 0);
+      assert.match(result.output, /database .*_primary.* already exists/i);
+      assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
+    } finally {
+      primaryFailure.cleanup();
+    }
+
+    for (const [label, terminalSource, expected] of [
+      [
+        "test crash",
+        `import test from "node:test"; test("P3 forced crash", () => process.exit(91));\n`,
+        /P3 forced crash|dropped setfarm_p3_/,
+      ],
+      [
+        "test signal",
+        `import test from "node:test"; test("P3 forced signal", () => process.kill(process.pid, "SIGKILL"));\n`,
+        /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL/,
+      ],
+    ] as const) {
+      const fixture = createP3RunnerRefusalFixture();
+      try {
+        writeFileSync(
+          path.join(fixture.root, "tests/internal-production/task-0-source-manifest.test.ts"),
+          terminalSource,
+        );
+        const result = runP3NestedRunner(fixture.root);
+        assert.notEqual(result.status, 0, label);
+        assert.match(result.output, expected, label);
+        assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline, label);
+      } finally {
+        fixture.cleanup();
+      }
+    }
+    assert.equal((await p3DatabaseInventoryV1(admin)).includes(foreignDatabase), true);
+  } finally {
+    await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=${foreignDatabase} AND pid<>pg_backend_pid()`;
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${foreignDatabase}"`);
+    await admin.end({ timeout: 5 });
+  }
+});
 
 const DELIVERED_PATHS = [
   "server/routes/setfarm-operational.test.ts",

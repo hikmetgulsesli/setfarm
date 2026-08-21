@@ -68,7 +68,13 @@ let _schemaReadyPromise: Promise<void> | null = null;
 let _isMigrating = false;
 let _isolatedTestPgUrl: string | null = null;
 
-const ISOLATED_TEST_DATABASE = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
+const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
+const P3_ISOLATED_TEST_DATABASE_V1 = /^setfarm_p3_[a-f0-9]{24}_(?:template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/;
+
+function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
+  return [LEGACY_ISOLATED_TEST_DATABASE_V1, P3_ISOLATED_TEST_DATABASE_V1]
+    .filter((pattern) => pattern.test(database)).length === 1;
+}
 
 export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
   if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating) {
@@ -78,7 +84,7 @@ export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
   const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
   if (
     !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)
-    || !ISOLATED_TEST_DATABASE.test(database)
+    || !isExactIsolatedTestDatabaseNameV1(database)
   ) {
     throw new Error("ISOLATED_TEST_DATABASE_URL_REJECTED");
   }
