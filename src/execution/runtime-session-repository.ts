@@ -4,6 +4,14 @@ import type postgres from "postgres";
 import { z } from "zod";
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import {
   ProcessIdentityV1Schema,
   sameProcessIdentity,
   type ProcessIdentityV1,
@@ -12,6 +20,20 @@ import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-autho
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
+
+async function closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1(
+  sql: TransactionSql,
+  sessionId: string,
+): Promise<void> {
+  const terminalClose = await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { sessionId },
+  );
+  await closeInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    terminalClose,
+  );
+}
 
 export type RecoveryRuntimeLeaseFence = Readonly<{
   revisionId: string;
@@ -575,10 +597,51 @@ export async function reserveRuntimeSessionInTransaction(
     if (attempts.length !== 1) throw new Error("RUNTIME_SESSION_ATTEMPT_BINDING_INVALID");
   }
 
+  // Category rows always precede their owner sidecars in the lock order. An
+  // adopted response may already have both, while a fresh birth has neither.
+  const existingRows = await sql.unsafe<RuntimeSessionRow[]>(
+    "SELECT * FROM runtime_sessions WHERE session_id=$1 FOR UPDATE",
+    [input.sessionId],
+  );
+  if (existingRows.length > 1) {
+    throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  }
+
   const now = await readDatabaseWallClock(
     sql,
     "RUNTIME_SESSION_RESERVATION_DATABASE_TIME_UNAVAILABLE",
   );
+  const identity = createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1({
+    sessionId: input.sessionId,
+  });
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      producerImplementationId: "a-runtime-session-v1",
+      ownerKey: identity.ownerKey,
+    },
+  );
+  const sidecars = await sql.unsafe<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    state: string;
+  }>>(
+    `SELECT reservation_ref,reservation_hash,state
+       FROM internal_production_owner_reservations_v1
+      WHERE producer_implementation_id='a-runtime-session-v1'
+        AND category='runtime-session'
+        AND owner_key=$1
+      FOR UPDATE`,
+    [input.sessionId],
+  );
+  const sidecar = sidecars[0];
+  if (
+    sidecars.length !== 1
+    || !sidecar
+    || sidecar.reservation_ref !== reservation.reservationRef
+    || sidecar.reservation_hash !== reservation.reservationHash
+    || !["pending", "bound"].includes(sidecar.state)
+  ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
 
   const inserted = await sql.unsafe<RuntimeSessionRow[]>(
     `INSERT INTO runtime_sessions (
@@ -592,6 +655,7 @@ export async function reserveRuntimeSessionInTransaction(
        $12, $13, $14, $15, $16,
        'reserved', $17, $17, $17
      )
+     ON CONFLICT (session_id) DO NOTHING
      RETURNING *`,
     [
       input.sessionId,
@@ -613,8 +677,73 @@ export async function reserveRuntimeSessionInTransaction(
       now,
     ],
   );
-  if (inserted.length !== 1) throw new Error("RUNTIME_SESSION_RESERVATION_FAILED");
-  return mapRuntimeSession(inserted[0]!);
+  if (
+    inserted.length > 1
+    || (inserted.length === 1 && sidecar.state !== "pending")
+    || (inserted.length === 0 && sidecar.state !== "bound")
+  ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_INSERT_IDENTITY_INVALID");
+  const storedRows = inserted.length === 0
+    ? existingRows
+    : await sql.unsafe<RuntimeSessionRow[]>(
+        "SELECT * FROM runtime_sessions WHERE session_id=$1 FOR UPDATE",
+        [input.sessionId],
+      );
+  const stored = storedRows[0];
+  const birthTime = stored ? new Date(stored.created_at).getTime() : Number.NaN;
+  const emptyObject = (value: unknown): boolean => {
+    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+    return !!parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && Object.keys(parsed as Record<string, unknown>).length === 0;
+  };
+  if (
+    storedRows.length !== 1
+    || !stored
+    || stored.session_id !== input.sessionId
+    || stored.run_id !== input.runId
+    || stored.step_db_id !== input.stepDbId
+    || stored.workflow_step_id !== input.workflowStepId
+    || stored.story_db_id !== (input.storyDbId ?? null)
+    || stored.story_id !== (input.storyId ?? null)
+    || stored.claim_id !== String(input.claimId)
+    || stored.attempt_id !== (input.attemptId ?? null)
+    || stored.claim_agent_id !== input.claimAgentId
+    || stored.runtime_agent_id !== input.runtimeAgentId
+    || stored.runtime_kind !== input.runtimeKind
+    || stored.session_key !== (input.sessionKey ?? null)
+    || stored.pid !== null
+    || stored.process_started_at !== null
+    || stored.process_group_id !== null
+    || !emptyObject(stored.process_identity)
+    || stored.worktree !== (input.worktree ?? null)
+    || stored.runtime_path !== (input.runtimePath ?? null)
+    || stored.transcript_path !== (input.transcriptPath ?? null)
+    || stored.state !== "reserved"
+    || stored.owner_instance_id !== input.ownerInstanceId
+    || stored.state_version !== 1
+    || stored.started_at !== null
+    || !Number.isFinite(birthTime)
+    || new Date(stored.heartbeat_at).getTime() !== birthTime
+    || stored.drain_requested_at !== null
+    || stored.drained_at !== null
+    || stored.released_at !== null
+    || stored.diagnostic !== null
+    || !emptyObject(stored.drain_evidence)
+    || new Date(stored.updated_at).getTime() !== birthTime
+  ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  const bound = await bindInternalProductionOwnerReservationV1(sql as PgTransactionSql, {
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+    canonicalOwnerIdentity: identity,
+  });
+  if (
+    bound.ownerKey !== input.sessionId
+    || bound.reservationRef !== reservation.reservationRef
+    || bound.reservationHash !== reservation.reservationHash
+    || bound.canonicalOwnerIdentity.ownerKey !== input.sessionId
+  ) throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_BINDING_INVALID");
+  return mapRuntimeSession(stored);
 }
 
 export async function bindRuntimeSessionAttemptInTransaction(
@@ -1034,40 +1163,62 @@ export function createRuntimeSessionRepository(sql: Sql) {
         throw new Error("RUNTIME_SESSION_QUARANTINE_STATE_VERSION_INVALID");
       }
       validTime(input.now);
-      const rows = await sql.unsafe<RuntimeSessionRow[]>(
-        `WITH wall_clock AS (SELECT clock_timestamp() AS now)
-         UPDATE runtime_sessions
-            SET state = 'quarantined', diagnostic = $2,
-                drain_evidence = CASE
-                  WHEN state = 'drained'
-                   AND drain_evidence->>'schema' = 'setfarm.runtime-drain-evidence.v1'
-                    THEN drain_evidence
-                  ELSE $3::text::jsonb
-                END,
-                state_version = state_version + 1, updated_at = wall_clock.now
-           FROM wall_clock
-          WHERE session_id = $1
-            AND owner_instance_id = $4
-            AND state_version = $5
-            AND state IN ('reserved', 'starting', 'running', 'drain_requested', 'drained')
-          RETURNING *`,
-        [
-          RuntimeSessionIdSchema.parse(input.sessionId),
-          input.diagnostic.slice(0, 4_000),
-          JSON.stringify(input.evidence ?? {}),
-          input.expectedOwnerInstanceId,
-          input.expectedStateVersion,
-        ],
-      );
-      if (rows.length === 1) return mapRuntimeSession(rows[0]!);
-
-      const current = await findById(input.sessionId);
-      if (!current) throw new Error("RUNTIME_SESSION_NOT_FOUND");
-      // Quarantine and release are both terminal runtime-session states. A
-      // lost-response replay may observe either one, but it must never rewrite
-      // that terminal receipt or turn release back into quarantine.
-      if (["quarantined", "released"].includes(current.state)) return current;
-      throw new Error("RUNTIME_SESSION_QUARANTINE_CAS_LOST");
+      const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<RuntimeSessionRow[]>(
+          "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
+          [sessionId],
+        );
+        const current = locked[0];
+        if (!current) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+        // Quarantine and release are both terminal runtime-session states. A
+        // lost-response replay may observe either one, but it must never rewrite
+        // that terminal receipt or turn release back into quarantine.
+        if (["quarantined", "released"].includes(current.state)) {
+          return mapRuntimeSession(current);
+        }
+        if (
+          current.owner_instance_id !== input.expectedOwnerInstanceId
+          || current.state_version !== input.expectedStateVersion
+          || !["reserved", "starting", "running", "drain_requested", "drained"].includes(current.state)
+        ) {
+          throw new Error("RUNTIME_SESSION_QUARANTINE_CAS_LOST");
+        }
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_SESSION_QUARANTINE_DATABASE_TIME_UNAVAILABLE",
+        );
+        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
+          `UPDATE runtime_sessions
+              SET state = 'quarantined', diagnostic = $2,
+                  drain_evidence = CASE
+                    WHEN state = 'drained'
+                     AND drain_evidence->>'schema' = 'setfarm.runtime-drain-evidence.v1'
+                      THEN drain_evidence
+                    ELSE $3::text::jsonb
+                  END,
+                  state_version = state_version + 1, updated_at = $6
+            WHERE session_id = $1
+              AND owner_instance_id = $4
+              AND state_version = $5
+              AND state IN ('reserved', 'starting', 'running', 'drain_requested', 'drained')
+            RETURNING *`,
+          [
+            sessionId,
+            input.diagnostic.slice(0, 4_000),
+            JSON.stringify(input.evidence ?? {}),
+            input.expectedOwnerInstanceId,
+            input.expectedStateVersion,
+            now,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_SESSION_QUARANTINE_CAS_LOST");
+        await closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1(
+          transaction,
+          rows[0]!.session_id,
+        );
+        return mapRuntimeSession(rows[0]!);
+      });
     },
     async listRecoverable(input: Readonly<{
       ownerInstanceId?: string;
@@ -1161,6 +1312,10 @@ export async function releaseReservedRuntimeSessionInTransaction(
     ],
   );
   if (updated.length !== 1) throw new Error("RUNTIME_SESSION_RESERVED_RELEASE_CAS_LOST");
+  await closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1(
+    sql,
+    updated[0]!.session_id,
+  );
   return mapRuntimeSession(updated[0]!);
 }
 
@@ -1175,6 +1330,7 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
        JOIN claim_log cl ON cl.id = rs.claim_id
       WHERE rs.run_id = $1
         AND rs.state = 'drained'
+      ORDER BY rs.session_id
       FOR UPDATE OF rs, cl`,
     [input.runId],
   );
@@ -1195,15 +1351,24 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
     sql,
     "RUNTIME_SESSION_RELEASE_DATABASE_TIME_UNAVAILABLE",
   );
-  const rows = await sql.unsafe<Array<{ session_id: string }>>(
-    `UPDATE runtime_sessions
-        SET state = 'released', released_at = $2,
-            state_version = state_version + 1, updated_at = $2
-      WHERE run_id = $1 AND state = 'drained'
-      RETURNING session_id`,
-    [input.runId, now],
-  );
-  return rows.length;
+  let released = 0;
+  for (const owner of owners) {
+    const rows = await sql.unsafe<Array<{ session_id: string }>>(
+      `UPDATE runtime_sessions
+          SET state = 'released', released_at = $2,
+              state_version = state_version + 1, updated_at = $2
+        WHERE session_id = $1 AND state = 'drained'
+        RETURNING session_id`,
+      [owner.session_id, now],
+    );
+    if (rows.length !== 1) throw new Error("RUNTIME_SESSION_RELEASE_CAS_LOST");
+    await closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1(
+      sql,
+      rows[0]!.session_id,
+    );
+    released += 1;
+  }
+  return released;
 }
 
 export async function releaseDrainedRuntimeSessionInTransaction(
@@ -1254,5 +1419,9 @@ export async function releaseDrainedRuntimeSessionInTransaction(
     [current.session_id, input.claimId, input.ownerInstanceId ?? null, now],
   );
   if (updated.length !== 1) throw new Error("RUNTIME_SESSION_DRAINED_RELEASE_CAS_LOST");
+  await closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1(
+    sql,
+    updated[0]!.session_id,
+  );
   return mapRuntimeSession(updated[0]!);
 }

@@ -48,6 +48,10 @@ import {
   RunOperationalSnapshotV3Schema,
   type RunOperationalSnapshotV3,
 } from "../server/schemas/run-operational-snapshot-v3.js";
+import {
+  SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1,
+  SetfarmOperationalActiveRunStatusV1Schema,
+} from "./operational-active-run-status-v1.js";
 
 export const MISSION_CONTROL_CONTRACT_ARTIFACT_DIRECTORY =
   "contracts/generated/mission-control" as const;
@@ -60,16 +64,35 @@ export type MissionControlContractName =
   | "setfarm.run-operational-snapshot.v2"
   | "setfarm.run-operational-snapshot.v3"
   | "setfarm.v3-deployment-observation.v1"
-  | "setfarm.v3-project-transfer-ack.v1";
+  | "setfarm.v3-project-transfer-ack.v1"
+  | "setfarm.operational-active-run-status.v1";
 
-export type MissionControlCompatibilityEnvelopeV1 = Readonly<{
+type MissionControlCompatibilityEnvelopeBaseV1 = Readonly<{
   schema: typeof MISSION_CONTROL_CONTRACT_ARTIFACT_SCHEMA;
-  contract: MissionControlContractName;
   producer: Readonly<{ name: "setfarm"; contractVersion: 1 }>;
   jsonSchemaHash: string;
   fixtureHash: string;
   fixture: unknown;
 }>;
+
+export type MissionControlOperationalActiveProducerExportsV1 = Readonly<{
+  statusesExport: "SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1";
+  schemaExport: "SetfarmOperationalActiveRunStatusV1Schema";
+  predicateExport: "isSetfarmOperationalActiveRunStatusV1";
+}>;
+
+export type MissionControlCompatibilityEnvelopeV1 =
+  | Readonly<MissionControlCompatibilityEnvelopeBaseV1 & {
+    contract: Exclude<
+      MissionControlContractName,
+      "setfarm.operational-active-run-status.v1"
+    >;
+    producerExports?: never;
+  }>
+  | Readonly<MissionControlCompatibilityEnvelopeBaseV1 & {
+    contract: "setfarm.operational-active-run-status.v1";
+    producerExports: MissionControlOperationalActiveProducerExportsV1;
+  }>;
 
 export type MissionControlContractArtifact = Readonly<{
   relativePath: string;
@@ -739,21 +762,45 @@ function jsonSchemaFor(contract: MissionControlContractName, schema: z.ZodType):
   };
 }
 
-function artifactPair(input: Readonly<{
-  contract: MissionControlContractName;
+type ArtifactPairBaseInput = Readonly<{
   stem: string;
   schema: z.ZodType;
   fixture: unknown;
-}>): readonly MissionControlContractArtifact[] {
+}>;
+
+type ArtifactPairInput =
+  | Readonly<ArtifactPairBaseInput & {
+    contract: Exclude<
+      MissionControlContractName,
+      "setfarm.operational-active-run-status.v1"
+    >;
+    producerExports?: never;
+  }>
+  | Readonly<ArtifactPairBaseInput & {
+    contract: "setfarm.operational-active-run-status.v1";
+    producerExports: MissionControlOperationalActiveProducerExportsV1;
+  }>;
+
+function artifactPair(input: ArtifactPairInput): readonly MissionControlContractArtifact[] {
   const jsonSchema = jsonSchemaFor(input.contract, input.schema);
-  const envelope: MissionControlCompatibilityEnvelopeV1 = {
+  const envelopeBase: MissionControlCompatibilityEnvelopeBaseV1 = {
     schema: MISSION_CONTROL_CONTRACT_ARTIFACT_SCHEMA,
-    contract: input.contract,
     producer: { name: "setfarm", contractVersion: 1 },
     jsonSchemaHash: hashCanonicalJson(jsonSchema),
     fixtureHash: hashCanonicalJson(input.fixture),
     fixture: input.fixture,
   };
+  const envelope: MissionControlCompatibilityEnvelopeV1 = input.contract ===
+    "setfarm.operational-active-run-status.v1"
+    ? {
+        ...envelopeBase,
+        contract: input.contract,
+        producerExports: input.producerExports,
+      }
+    : {
+        ...envelopeBase,
+        contract: input.contract,
+      };
   return [
     {
       relativePath: `${MISSION_CONTROL_CONTRACT_ARTIFACT_DIRECTORY}/${input.stem}.compatibility.json`,
@@ -818,6 +865,19 @@ export function createMissionControlContractArtifacts(): readonly MissionControl
       stem: "project-transfer-ack.v1",
       schema: V3ProjectTransferAckV1Schema,
       fixture: acknowledgement,
+    }),
+    ...artifactPair({
+      contract: "setfarm.operational-active-run-status.v1",
+      stem: "operational-active-run-status.v1",
+      schema: SetfarmOperationalActiveRunStatusV1Schema,
+      fixture: SetfarmOperationalActiveRunStatusV1Schema.parse(
+        SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1[0],
+      ),
+      producerExports: {
+        statusesExport: "SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1",
+        schemaExport: "SetfarmOperationalActiveRunStatusV1Schema",
+        predicateExport: "isSetfarmOperationalActiveRunStatusV1",
+      },
     }),
   ];
 }

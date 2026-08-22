@@ -207,6 +207,7 @@ describe("v3 downstream evidence publication", () => {
       attempt_count: number;
       child_claim_count: number;
       child_claim_outcome: string;
+      child_owner_state: string;
       parent_claim_outcome: string | null;
       parent_claim_story_id: string | null;
       attempt_disposition: string;
@@ -226,6 +227,8 @@ describe("v3 downstream evidence publication", () => {
          (SELECT COUNT(*)::integer FROM execution_attempts WHERE run_id = $1) AS attempt_count,
          (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = $1 AND story_id = 'US-001') AS child_claim_count,
          child.outcome AS child_claim_outcome,
+         (SELECT state FROM internal_production_owner_reservations_v1
+           WHERE category='claim' AND owner_key=child.id::text) AS child_owner_state,
          parent.outcome AS parent_claim_outcome,
          parent.story_id AS parent_claim_story_id,
          attempt.disposition AS attempt_disposition,
@@ -252,6 +255,7 @@ describe("v3 downstream evidence publication", () => {
       attempt_count: 1,
       child_claim_count: 1,
       child_claim_outcome: "completed",
+      child_owner_state: "closed",
       parent_claim_outcome: null,
       parent_claim_story_id: null,
       attempt_disposition: "no_progress",

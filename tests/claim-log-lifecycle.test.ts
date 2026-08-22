@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import ts from "typescript";
 import { preserveActionableStoryRetryOutput } from "../src/installer/retry-output.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -37,6 +38,129 @@ function repoSource(): string {
 
 function cliSource(): string {
   return fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
+}
+
+function runWorkflowSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "run.ts"), "utf-8");
+  const start = source.indexOf("export async function runWorkflow(");
+  assert.notEqual(start, -1, "runWorkflow source not found");
+  return source.slice(start);
+}
+
+function loadRunWorkflowPrivate(input: Readonly<Record<string, unknown>>): (params: Readonly<{
+  workflowId: string;
+  taskTitle: string;
+  compilerReleaseSha: string;
+}>) => Promise<unknown> {
+  const javascript = ts.transpileModule(
+    runWorkflowSource().replace("export async function runWorkflow", "async function runWorkflow"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.None,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  ).outputText;
+  const names = Object.keys(input);
+  const factory = new Function(...names, `${javascript}\nreturn runWorkflow;`) as (
+    ...parameters: unknown[]
+  ) => (params: Readonly<{
+    workflowId: string;
+    taskTitle: string;
+    compilerReleaseSha: string;
+  }>) => Promise<unknown>;
+  return factory(...names.map((name) => input[name]));
+}
+
+function spawnerSource(): string {
+  return fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+}
+
+function handleStepPendingSource(): string {
+  const source = spawnerSource();
+  const start = source.indexOf("async function handleStepPending(");
+  const end = source.indexOf("async function handleStoryPending(", start);
+  assert.notEqual(start, -1, "handleStepPending source not found");
+  assert.notEqual(end, -1, "handleStepPending end not found");
+  return source.slice(start, end);
+}
+
+type StepPendingPrivateModuleV1 = Readonly<{
+  handleStepPending(payload: Readonly<{
+    agentId: string;
+    runId: string;
+    stepId: string;
+    runOwnerReservationRef?: string;
+    runOwnerReservationHash?: string;
+  }>): Promise<void>;
+  listenForStepPending(listener: Readonly<{
+    listen(channel: string, handler: (message: string) => void): Promise<void>;
+  }>): Promise<void>;
+}>;
+
+function loadStepPendingPrivateModule(input: Readonly<{
+  resolvePair?: (pair: unknown) => Promise<unknown>;
+  recoverPair?: (locator: unknown) => Promise<unknown>;
+  pgGet?: (query: string, parameters: readonly unknown[]) => Promise<unknown>;
+  spawnAgent?: (...parameters: unknown[]) => unknown;
+  errors?: string[];
+}> = {}): StepPendingPrivateModuleV1 {
+  const source = handleStepPendingSource();
+  assert.match(source, /async function listenForStepPending\(/, "private listener adapter must exist");
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const errors = input.errors ?? [];
+  const factory = new Function(
+    "resolveBoundInternalProductionWorkflowRunOwnerV1",
+    "recoverBoundInternalProductionWorkflowRunOwnerV1",
+    "pgGet",
+    "loadWorkflowSpec",
+    "resolveWorkflowDir",
+    "resolveAgentId",
+    "spawnAgent",
+    "console",
+    "shuttingDown",
+    `${javascript}\nreturn { handleStepPending, listenForStepPending };`,
+  ) as (...parameters: unknown[]) => StepPendingPrivateModuleV1;
+  return factory(
+    input.resolvePair ?? (async () => ({
+      schema: "setfarm.internal-production-bound-owner-reservation.v1",
+      category: "run",
+      ownerKey: "run-owner",
+      producerImplementationId: "a-runtime-run-v1",
+      reservationRef: "setfarm://internal-production/owner-reservation/run/sha256/" + "1".repeat(64),
+      reservationHash: "1".repeat(64),
+      bindingRef: "setfarm://internal-production/owner-binding/run/sha256/" + "2".repeat(64),
+      bindingHash: "2".repeat(64),
+    })),
+    input.recoverPair ?? (async () => ({
+      schema: "setfarm.internal-production-bound-owner-reservation.v1",
+      category: "run",
+      ownerKey: "run-owner",
+      producerImplementationId: "a-runtime-run-v1",
+      reservationRef: "setfarm://internal-production/owner-reservation/run/sha256/" + "1".repeat(64),
+      reservationHash: "1".repeat(64),
+      bindingRef: "setfarm://internal-production/owner-binding/run/sha256/" + "2".repeat(64),
+      bindingHash: "2".repeat(64),
+    })),
+    input.pgGet ?? (async (query: string) => query.includes("FROM runs")
+      ? { workflow_id: "feature-dev" }
+      : { type: "single", loop_config: null }),
+    async () => ({ agent_mapping: {} }),
+    (workflowId: string) => `/fixtures/${workflowId}`,
+    () => ["feature-dev_developer"],
+    input.spawnAgent ?? (() => undefined),
+    {
+      error: (...parameters: unknown[]) => errors.push(parameters.map(String).join(" ")),
+      log: () => undefined,
+      warn: () => undefined,
+    },
+    false,
+  );
 }
 
 function handleVerifyEachSource(): string {
@@ -133,6 +257,297 @@ function previousStepSelectionBypassSource(source: string): string {
 }
 
 describe("single-step claim_log lifecycle", () => {
+  it("installer publishes only the committed run owner pair", () => {
+    const source = runWorkflowSource();
+    const persistence = source.indexOf("const persisted = await persistWorkflowRun({");
+    const persistenceEnd = source.indexOf("\n  });", persistence);
+    const notification = source.indexOf("const payload = JSON.stringify({", persistence);
+    const workspaceCleanup = source.indexOf("cleanAgentWorkspace(agentId)");
+    const cronPrerequisite = source.indexOf("await ensureWorkflowCrons(workflow)");
+    assert.notEqual(persistence, -1, "installer must await the public committed persistence result");
+    assert.notEqual(persistenceEnd, -1, "installer persistence call end not found");
+    assert.notEqual(notification, -1, "installer step_pending payload not found");
+    assert.ok(workspaceCleanup < cronPrerequisite, "workspace cleanup must precede the cron prerequisite");
+    assert.ok(cronPrerequisite < persistence, "cron prerequisite must complete before run publication");
+    assert.ok(persistence < notification, "notification must be constructed after committed persistence");
+    assert.doesNotMatch(source.slice(Math.max(0, persistence - 120), persistenceEnd), /pgBegin/);
+    const payload = source.slice(notification, source.indexOf("});", notification) + 3);
+    assert.match(payload, /agentId:/);
+    assert.match(payload, /runId,/);
+    assert.match(payload, /stepId:/);
+    assert.match(payload, /runOwnerReservationRef: persisted\.runOwnerReservationRef/);
+    assert.match(payload, /runOwnerReservationHash: persisted\.runOwnerReservationHash/);
+    assert.doesNotMatch(source, /unclaimedBootstrapFailure/);
+    assert.doesNotMatch(source, /transitionRunToTerminalInTransaction/);
+  });
+
+  it("installer completes cron prerequisites before a run owner becomes poll-visible", async () => {
+    const inventory = { runs: 0, steps: 0, owners: 0 };
+    const calls: string[] = [];
+    let enterCron!: () => void;
+    let failCron!: (error: Error) => void;
+    const cronEntered = new Promise<void>((resolve) => { enterCron = resolve; });
+    const cronBlocked = new Promise<void>((_resolve, reject) => { failCron = reject; });
+    let uuid = 0;
+    const runWorkflow = loadRunWorkflowPrivate({
+      resolveNewRunProtocol: () => ({ mode: "legacy", version: 1 }),
+      resolveWorkflowDir: () => "/fixtures/feature-dev",
+      loadWorkflowSpec: async () => ({
+        id: "feature-dev",
+        context: {},
+        notifications: {},
+        steps: [{ id: "implement", agent: "developer", input: "task", expects: "result" }],
+      }),
+      now: () => "2026-08-21T00:00:00.000Z",
+      crypto: { randomUUID: () => `uuid-${++uuid}` },
+      parseStackPrefix: () => null,
+      os: { homedir: () => "/fixtures/home" },
+      pgNextRunNumber: async () => 1,
+      pgGet: async () => null,
+      cleanAgentWorkspace: () => calls.push("clean"),
+      ensureWorkflowCrons: async () => {
+        calls.push("cron");
+        enterCron();
+        return cronBlocked;
+      },
+      persistWorkflowRun: async (value: { run: Record<string, unknown>; steps: unknown[] }) => {
+        calls.push("persist");
+        inventory.runs += 1;
+        inventory.steps += value.steps.length;
+        inventory.owners += 1;
+        return {
+          run: {
+            id: value.run.id,
+            runNumber: value.run.runNumber,
+            workflowId: value.run.workflowId,
+            task: value.run.task,
+            status: "running",
+            protocol: "legacy",
+            protocolVersion: 1,
+          },
+          runOwnerReservationRef: `setfarm://internal-production/owner-reservation/run/sha256/${"1".repeat(64)}`,
+          runOwnerReservationHash: "1".repeat(64),
+        };
+      },
+      refreshRunContractSafe: async () => calls.push("refresh"),
+      emitEvent: () => calls.push("event"),
+      pgRun: async () => calls.push("notify"),
+      logger: { info: () => undefined, warn: () => undefined },
+      pgBegin: async (callback: (sql: unknown) => Promise<void>) => callback({}),
+      transitionRunToTerminalInTransaction: async () => calls.push("terminalize"),
+    });
+    const spawns: string[] = [];
+    const spawner = loadStepPendingPrivateModule({
+      recoverPair: async () => {
+        if (inventory.owners !== 1) throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
+        return {
+          category: "run",
+          ownerKey: "uuid-1",
+          producerImplementationId: "a-runtime-run-v1",
+        };
+      },
+      pgGet: async (query) => query.includes("FROM runs")
+        ? (inventory.runs === 1 ? { workflow_id: "feature-dev" } : null)
+        : (inventory.steps === 1 ? { type: "single", loop_config: null } : null),
+      spawnAgent: () => spawns.push("spawn"),
+    });
+
+    const pendingRun = runWorkflow({
+      workflowId: "feature-dev",
+      taskTitle: "race fixture",
+      compilerReleaseSha: "a".repeat(40),
+    });
+    await cronEntered;
+    let pollFailure: unknown;
+    try {
+      await spawner.handleStepPending({
+        agentId: "feature-dev_developer",
+        runId: "uuid-1",
+        stepId: "implement",
+      });
+    } catch (error) {
+      pollFailure = error;
+    }
+    failCron(new Error("fixture cron failure"));
+    await assert.rejects(pendingRun, /Cannot start workflow run: cron setup failed/);
+
+    assert.match(String(pollFailure), /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE/);
+    assert.deepEqual(spawns, []);
+    assert.deepEqual(inventory, { runs: 0, steps: 0, owners: 0 });
+    assert.deepEqual(calls, ["clean", "cron"]);
+  });
+
+  it("spawner authenticates or recovers the exact bound run owner before work", () => {
+    const source = spawnerSource();
+    const handler = handleStepPendingSource();
+    const pairResolution = handler.indexOf("resolveBoundInternalProductionWorkflowRunOwnerV1({");
+    const locatorRecovery = handler.indexOf("recoverBoundInternalProductionWorkflowRunOwnerV1({ runId })");
+    const firstRead = handler.indexOf("pgGet<");
+    const spawn = handler.indexOf("spawnAgent(");
+    assert.notEqual(pairResolution, -1, "notification pair must use the full pair resolver");
+    assert.notEqual(locatorRecovery, -1, "polling must use the stored sidecar locator");
+    assert.ok(pairResolution < firstRead && locatorRecovery < firstRead, "owner authentication must precede workflow reads");
+    assert.ok(firstRead < spawn, "owner authentication and reads must precede spawn");
+    assert.match(handler, /SPAWNER_RUN_OWNER_PAIR_INCOMPLETE/);
+    assert.match(handler, /SPAWNER_RUN_OWNER_IDENTITY_INVALID/);
+    assert.doesNotMatch(source, /beginOrAdoptInternalProductionOwnerReservationV1/);
+    assert.doesNotMatch(source, /bindInternalProductionOwnerReservationV1/);
+    assert.doesNotMatch(source, /internal_production_owner_reservations_v1/);
+    assert.match(source, /void handleStepPending\(parsed\)\.catch\(logStepPendingRejection\)/);
+    assert.match(source, /\[redacted-ref\]/);
+    assert.match(source, /\[redacted-sha256\]/);
+  });
+
+  it("private step_pending handler authenticates notification pairs and recovers notification loss", async () => {
+    const calls: string[] = [];
+    const resolverInputs: unknown[] = [];
+    const recoveryInputs: unknown[] = [];
+    const module = loadStepPendingPrivateModule({
+      resolvePair: async (input) => {
+        calls.push("resolve-pair");
+        resolverInputs.push(input);
+        return {
+          category: "run",
+          ownerKey: "run-owner",
+          producerImplementationId: "a-runtime-run-v1",
+        };
+      },
+      recoverPair: async (input) => {
+        calls.push("recover-pair");
+        recoveryInputs.push(input);
+        return {
+          category: "run",
+          ownerKey: "run-owner",
+          producerImplementationId: "a-runtime-run-v1",
+        };
+      },
+      pgGet: async (query) => {
+        calls.push("read");
+        return query.includes("FROM runs")
+          ? { workflow_id: "feature-dev" }
+          : { type: "single", loop_config: null };
+      },
+      spawnAgent: () => calls.push("spawn"),
+    });
+    const pair = {
+      agentId: "feature-dev_developer",
+      runId: "run-owner",
+      stepId: "implement",
+      runOwnerReservationRef: `setfarm://internal-production/owner-reservation/run/sha256/${"1".repeat(64)}`,
+      runOwnerReservationHash: "1".repeat(64),
+    };
+
+    await module.handleStepPending(pair);
+    assert.deepEqual(calls, ["resolve-pair", "read", "read", "spawn"]);
+    assert.deepEqual(resolverInputs, [{
+      runOwnerReservationRef: pair.runOwnerReservationRef,
+      runOwnerReservationHash: pair.runOwnerReservationHash,
+    }]);
+    calls.length = 0;
+    await module.handleStepPending({ agentId: pair.agentId, runId: pair.runId, stepId: pair.stepId });
+    assert.deepEqual(calls, ["recover-pair", "read", "read", "spawn"]);
+    assert.deepEqual(recoveryInputs, [{ runId: pair.runId }]);
+
+    for (const invalid of [
+      { ...pair, runOwnerReservationHash: undefined },
+      { ...pair, runOwnerReservationRef: undefined },
+    ]) {
+      calls.length = 0;
+      await assert.rejects(module.handleStepPending(invalid), /SPAWNER_RUN_OWNER_PAIR_INCOMPLETE/);
+      assert.deepEqual(calls, []);
+    }
+
+    calls.length = 0;
+    const crossed = loadStepPendingPrivateModule({
+      resolvePair: async () => {
+        calls.push("resolve-pair");
+        return {
+          category: "run",
+          ownerKey: "different-run",
+          producerImplementationId: "a-runtime-run-v1",
+        };
+      },
+      pgGet: async () => {
+        calls.push("read");
+        return null;
+      },
+      spawnAgent: () => calls.push("spawn"),
+    });
+    await assert.rejects(crossed.handleStepPending(pair), /SPAWNER_RUN_OWNER_IDENTITY_INVALID/);
+    assert.deepEqual(calls, ["resolve-pair"]);
+
+    calls.length = 0;
+    const tampered = loadStepPendingPrivateModule({
+      resolvePair: async () => {
+        calls.push("resolve-pair");
+        throw new Error("INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION");
+      },
+      pgGet: async () => {
+        calls.push("read");
+        return null;
+      },
+      spawnAgent: () => calls.push("spawn"),
+    });
+    await assert.rejects(
+      tampered.handleStepPending(pair),
+      /INTERNAL_PRODUCTION_OWNER_RESERVATION_CORRUPTION/,
+    );
+    assert.deepEqual(calls, ["resolve-pair"]);
+  });
+
+  it("private step_pending listener fails closed with bounded redacted diagnostics", async () => {
+    const rawHash = "a".repeat(64);
+    const rawRef = `setfarm://internal-production/owner-reservation/run/sha256/${rawHash}`;
+    const errors: string[] = [];
+    const work: string[] = [];
+    let listener: ((message: string) => void) | undefined;
+    const module = loadStepPendingPrivateModule({
+      errors,
+      resolvePair: async () => {
+        throw new Error(`forged ${rawRef} ${rawHash} ${"x".repeat(600)}`);
+      },
+      pgGet: async () => {
+        work.push("read");
+        return null;
+      },
+      spawnAgent: () => work.push("spawn"),
+    });
+    await module.listenForStepPending({
+      async listen(channel, handler) {
+        assert.equal(channel, "step_pending");
+        listener = handler;
+      },
+    });
+    assert.ok(listener);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      listener(JSON.stringify({
+        agentId: "feature-dev_developer",
+        runId: "run-owner",
+        stepId: "implement",
+        runOwnerReservationRef: rawRef,
+        runOwnerReservationHash: rawHash,
+      }));
+      await new Promise((resolve) => setImmediate(resolve));
+      listener("{");
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    assert.equal(unhandled.length, 0);
+    assert.equal(errors.length, 2);
+    assert.deepEqual(work, []);
+    assert.ok(errors.every((entry) => entry.length <= 340));
+    assert.doesNotMatch(errors.join("\n"), new RegExp(rawHash));
+    assert.doesNotMatch(errors.join("\n"), /setfarm:\/\//);
+    assert.match(errors[0], /\[redacted-ref\]/);
+    assert.match(errors[1], /SyntaxError/);
+  });
+
   it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
     const publication = claimRuntimePublicationSource();
@@ -155,8 +570,8 @@ describe("single-step claim_log lifecycle", () => {
     const missingInputFailClose = source.indexOf("closeSingleStepHandoff(\"failed\"");
     const handoffReturn = source.indexOf("return {\n    found: true");
 
-    assert.match(publication, /publishSingleClaimRuntime[\s\S]*INSERT INTO claim_log/);
-    assert.match(publication, /INSERT INTO claim_log[\s\S]*reserveRuntimeSessionInTransaction/);
+    assert.match(publication, /publishSingleClaimRuntime[\s\S]*prepareInternalProductionClaimBirthV1[\s\S]*insertAndBindInternalProductionClaimBirthV1[\s\S]*reserveRuntimeSessionInTransaction/);
+    assert.match(publication, /SELECT nextval\(pg_get_serial_sequence\('claim_log','id'\)\)::bigint::text AS id/);
     assert.notEqual(publicationCall, -1, "single claim must use canonical claim/runtime publication");
     assert.doesNotMatch(source, /INSERT INTO claim_log/);
     assert.notEqual(transitionRecord, -1, "recordSingleStepHandoff must record a step transition");
@@ -430,7 +845,7 @@ describe("single-step claim_log lifecycle", () => {
     const source = handleVerifyEachSource();
     const acceptedOutputGuard = source.indexOf("UPDATE steps SET status = 'waiting'");
     const duplicateGuard = source.indexOf("if (_pgChanged.changes === 0)");
-    const claimUpdate = source.indexOf("UPDATE claim_log SET outcome = 'completed'");
+    const claimUpdate = source.indexOf("closeLegacyClaimOwnersInTransaction");
     const retryBranch = source.indexOf("if (status === \"retry\")");
     const passedBranch = source.indexOf("// Verify PASSED");
 
@@ -438,7 +853,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(claimUpdate > duplicateGuard, "claim_log must not close on duplicate/late verify completions");
     assert.ok(claimUpdate < retryBranch, "claim_log must close before retry branch returns");
     assert.ok(claimUpdate < passedBranch, "claim_log must close before passed branch returns");
-    assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
+    assert.match(source, /closeLegacyClaimOwnersInTransaction\(sql,[\s\S]*storyId: null/);
   });
 
   it("persists module onComplete context before continuing guardrails", () => {
@@ -970,7 +1385,7 @@ describe("single-step claim_log lifecycle", () => {
     const pushStart = source.indexOf("checkId: \"implement.platform_push.start\"");
     const pushFailure = source.indexOf("PLATFORM_STORY_PUSH_FAILED for", pushStart);
     const autoPrStart = source.indexOf("checkId: \"implement.auto_pr.start\"");
-    const storyUpdate = source.indexOf("UPDATE stories SET status = $1, output = $2, pr_url = $3", pushStart);
+    const storyUpdate = source.indexOf("UPDATE stories SET status=$1,output=$2,pr_url=$3", pushStart);
 
     assert.ok(pushStart > 0, "story completion must push branch before verify can inspect GitHub PR state");
     assert.ok(pushFailure > pushStart, "push failure must be classified before continuing");

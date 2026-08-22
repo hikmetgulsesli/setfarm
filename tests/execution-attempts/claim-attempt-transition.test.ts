@@ -7,6 +7,11 @@ import {
   completeSingleStepClaimAndState,
   completeStoryClaimAndBoundAttempt,
 } from "../../src/execution/claim-attempt-transition.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
@@ -16,22 +21,114 @@ async function insertClaim(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
   input: Readonly<{
     runId: string;
-    storyId?: string;
+    workflowStepId?: string;
+    storyId?: string | null;
     agentId?: string;
+    claimedAt?: Date;
   }>,
 ): Promise<number> {
-  const rows = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-    VALUES (
-      ${input.runId}, 'implement', ${input.storyId ?? "US-002"},
-      ${input.agentId ?? "feature-dev_developer"}, NOW() - INTERVAL '1 minute'
-    )
-    RETURNING id::integer AS id
-  `;
-  return rows[0]!.id;
+  const workflowStepId = input.workflowStepId ?? "implement";
+  const storyId = input.storyId === undefined ? "US-002" : input.storyId;
+  const claimAgentId = input.agentId ?? "feature-dev_developer";
+  const claimedAt = input.claimedAt ?? new Date(Date.now() - 60_000);
+  return database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      storyId === null ? "a-claim-single-runtime-v1" : "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId,
+      storyId,
+      claimAgentId,
+      claimedAt,
+    });
+  }) as Promise<number>;
 }
 
 describe("atomic claim-attempt terminal transition", () => {
+  it("rolls claim outcome back when authenticated sidecar close is rejected", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-claim-close-trigger-rollback";
+      await database.insertRun(runId);
+      const claimId = await insertClaim(database, { runId, storyId: null });
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_claim_owner_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='claim' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_CLAIM_OWNER_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_claim_owner_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_claim_owner_close_v1()
+      `);
+      await assert.rejects(
+        closeClaimAndBoundAttempt(database.sql, {
+          claimId,
+          runId,
+          stepId: "implement",
+          storyId: null,
+          agentId: "feature-dev_developer",
+          outcome: "failed",
+          diagnostic: "must roll back",
+        }),
+        /TEST_CLAIM_OWNER_CLOSE_REJECTED/,
+      );
+      const stored = (await database.sql<Array<{ outcome: string | null; owner_state: string }>>`
+        SELECT claim.outcome,reservation.state AS owner_state
+          FROM claim_log claim
+          JOIN internal_production_owner_reservations_v1 reservation
+            ON reservation.category='claim' AND reservation.owner_key=claim.id::text
+         WHERE claim.id=${claimId}
+      `)[0]!;
+      assert.deepEqual({ ...stored }, { outcome: null, owner_state: "bound" });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("closes authenticated claim owners for all six terminal outcomes", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      for (const outcome of [
+        "completed", "infra_retry", "failed", "skipped", "abandoned", "cancelled",
+      ] as const) {
+        const runId = `run-claim-terminal-${outcome}`;
+        await database.insertRun(runId);
+        const claimId = await insertClaim(database, { runId, storyId: null });
+        const result = await closeClaimAndBoundAttempt(database.sql, {
+          claimId,
+          runId,
+          stepId: "implement",
+          storyId: null,
+          agentId: "feature-dev_developer",
+          outcome,
+          diagnostic: `exact ${outcome}`,
+        });
+        assert.equal(result.status, "closed");
+        const stored = (await database.sql<Array<{ outcome: string; owner_state: string }>>`
+          SELECT claim.outcome,reservation.state AS owner_state
+            FROM claim_log claim
+            JOIN internal_production_owner_reservations_v1 reservation
+              ON reservation.category='claim' AND reservation.owner_key=claim.id::text
+           WHERE claim.id=${claimId}
+        `)[0]!;
+        assert.deepEqual({ ...stored }, { outcome, owner_state: "closed" });
+      }
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("closes an exact shadow claim and its bound fence in one transaction", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -882,12 +979,12 @@ describe("atomic claim-attempt terminal transition", () => {
         VALUES
           (${stepDbId}, ${runId}, 'verify', 'feature-dev_reviewer', 2, '', '', 'running')
       `;
-      const claims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${runId}, 'verify', NULL, 'feature-dev_reviewer', NOW())
-        RETURNING id::integer AS id
-      `;
-      const claimId = claims[0]!.id;
+      const claimId = await insertClaim(database, {
+        runId,
+        workflowStepId: "verify",
+        storyId: null,
+        agentId: "feature-dev_reviewer",
+      });
       const completedContext = JSON.stringify({
         product_spec_version: "v2",
         plan_english_authority_version: "compiler_review_v1",
@@ -944,12 +1041,12 @@ describe("atomic claim-attempt terminal transition", () => {
         VALUES
           (${stepDbId}, ${runId}, 'plan', 'feature-dev_planner', 1, '', '', 'running', 'before')
       `;
-      const claims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${runId}, 'plan', NULL, 'feature-dev_planner', NOW())
-        RETURNING id::integer AS id
-      `;
-      const claimId = claims[0]!.id;
+      const claimId = await insertClaim(database, {
+        runId,
+        workflowStepId: "plan",
+        storyId: null,
+        agentId: "feature-dev_planner",
+      });
 
       await assert.rejects(
         completeSingleStepClaimAndState(database.sql, {
@@ -1014,12 +1111,12 @@ describe("atomic claim-attempt terminal transition", () => {
         VALUES
           (${stepDbId}, ${runId}, 'plan', 'feature-dev_planner', 1, '', '', 'running', 'before')
       `;
-      const claims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${runId}, 'plan', NULL, 'feature-dev_planner', NOW())
-        RETURNING id::integer AS id
-      `;
-      const claimId = claims[0]!.id;
+      const claimId = await insertClaim(database, {
+        runId,
+        workflowStepId: "plan",
+        storyId: null,
+        agentId: "feature-dev_planner",
+      });
 
       await assert.rejects(
         completeSingleStepClaimAndState(database.sql, {
@@ -1077,11 +1174,12 @@ describe("atomic claim-attempt terminal transition", () => {
         VALUES
           (${stepDbId}, ${runId}, 'supervise', 'feature-dev_supervisor', 2, '', '', 'running')
       `;
-      const claims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${runId}, 'supervise', NULL, 'feature-dev_supervisor', NOW())
-        RETURNING id::integer AS id
-      `;
+      const claimId = await insertClaim(database, {
+        runId,
+        workflowStepId: "supervise",
+        storyId: null,
+        agentId: "feature-dev_supervisor",
+      });
 
       const result = await database.sql.begin((transaction) =>
         closeUniqueSingleStepClaimForRecoveryInTransaction(transaction, {
@@ -1095,11 +1193,11 @@ describe("atomic claim-attempt terminal transition", () => {
       assert.deepEqual(result, {
         status: "closed",
         protocol: "shadow",
-        claimId: claims[0]!.id,
+        claimId,
         claimAgentId: "feature-dev_supervisor",
       });
       const state = await database.sql<Array<{ outcome: string; diagnostic: string }>>`
-        SELECT outcome, diagnostic FROM claim_log WHERE id = ${claims[0]!.id}
+        SELECT outcome, diagnostic FROM claim_log WHERE id = ${claimId}
       `;
       assert.deepEqual({ ...state[0] }, {
         outcome: "infra_retry",

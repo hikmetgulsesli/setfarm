@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import type { PgTransactionSql } from "../db-pg.js";
 import {
   reserveAttemptInTransaction,
   createAttemptRepository,
@@ -602,26 +603,30 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
           transaction,
           "V3_DOWNSTREAM_EVIDENCE_DATABASE_TIME_UNAVAILABLE",
         );
-        const claimRows = await transaction.unsafe<Array<{ id: string }>>(
-          `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id::text`,
-          [
-            authority.runId,
-            authority.workflowStepId,
-            authority.storyId,
-            prepared.agentId,
-            now,
-          ],
+        const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+          SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+        `;
+        const claimBirthPorts = await import("../execution/claim-runtime-publication.js");
+        const claimBirth = await claimBirthPorts.prepareInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          "a-claim-v3-downstream-evidence-v1",
+          claimIdRows,
         );
-        const claimId = Number(claimRows[0]?.id);
-        if (!Number.isSafeInteger(claimId) || claimId <= 0) {
-          fail("V3_DOWNSTREAM_EVIDENCE_CHILD_CLAIM_INVALID", "story evidence claim was not allocated");
-        }
+        const claimId = await claimBirthPorts.insertAndBindInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          claimBirth,
+          {
+            runId: authority.runId,
+            workflowStepId: authority.workflowStepId,
+            storyId: authority.storyId,
+            claimAgentId: prepared.agentId,
+            claimedAt: now,
+          },
+        );
         const reservation = ExecutionAttemptReservationV1Schema.parse({
           ...prepared,
           claimId,
-          evidenceRefs: [`setfarm://claim-log/${claimId}`, ...prepared.evidenceRefs],
+          evidenceRefs: [`setfarm://claim-log/${claimBirth.claimIdText}`, ...prepared.evidenceRefs],
         });
         const reserved = await reserveAttemptInTransaction(transaction, reservation, {
           now,
@@ -783,6 +788,9 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         if (claims.length !== 1) {
           fail("V3_DOWNSTREAM_EVIDENCE_CHILD_CLAIM_CAS_LOST", "child evidence claim changed before completion");
         }
+        const claimClosePorts = await import("../db-pg.js");
+        const terminalClose = await claimClosePorts.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { claimIdText: claims[0]!.id });
+        await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
       });
       const attempt = await attempts.findById(input.attempt.attemptId);
       if (!attempt || attempt.outputHash !== bundleHash) {

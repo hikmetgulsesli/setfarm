@@ -5,6 +5,7 @@ import { after, before, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   planContractSpineMigrations,
   rollbackOperationalFailureCauseAuthorityV2ToV29,
@@ -26,7 +27,11 @@ import {
   createSingleEffectCompletionPlanDescriptorV1,
 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  createIsolatedTestDatabase,
+  type TestDatabase,
+} from "./test-database.js";
 
 type SubjectKind = "story_member" | "final_product";
 
@@ -387,7 +392,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("records a terminal historical-owner cutover without fabricating bindings", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackCurrentToV28(isolated);
       const historical = await seedBindingOwner(isolated, {
@@ -397,7 +402,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
       });
       await settleHistoricalOwner(isolated, historical);
       await applyContractSpineMigrations(isolated.sql);
-      await verifyContractSpineMigrations(isolated.sql);
+      await auditAuthorityV3ContractSpineThroughMigration31V1(isolated.sql);
       const authority = await isolated.sql.unsafe<Array<{
         cutover_id: string;
         historical_owner_count: string;
@@ -492,7 +497,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
       },
     ] as const;
     for (const scenario of scenarios) {
-      const isolated = await createIsolatedTestDatabase();
+      const isolated = await createIsolatedMigration31TestDatabase();
       try {
         await rollbackCurrentToV28(isolated);
         const owner = await seedBindingOwner(isolated, {
@@ -546,7 +551,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
 
   it("atomically rejects open claims without runtimes and mismatched runtime owners", async () => {
     for (const scenario of ["missing-runtime", "mismatched-runtime"] as const) {
-      const isolated = await createIsolatedTestDatabase();
+      const isolated = await createIsolatedMigration31TestDatabase();
       try {
         await rollbackCurrentToV28(isolated);
         const owner = await seedBindingOwner(isolated, {
@@ -611,7 +616,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("cuts over more than one exact historical owner page", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackCurrentToV28(isolated);
       const runId = "v29-historical-multipage";
@@ -665,7 +670,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
         [runId],
       );
       await applyContractSpineMigrations(isolated.sql);
-      await verifyContractSpineMigrations(isolated.sql);
+      await auditAuthorityV3ContractSpineThroughMigration31V1(isolated.sql);
       const rows = await isolated.sql.unsafe<Array<{
         historical_owner_count: string;
         binding_count: string;
@@ -696,7 +701,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("rejects oversized historical owner identity before cutover allocation", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackCurrentToV28(isolated);
       const owner = await seedBindingOwner(isolated, {
@@ -1046,16 +1051,21 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("audits current head 31 without granting production authority", async () => {
-    const audit = await auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql);
-    assert.equal(audit.schema, "setfarm.contract-spine-current-authority-ledgers-audit.v2");
-    assert.equal(audit.productionAuthority, false);
-    assert.equal(audit.productionAdmission, "forbidden");
-    assert.equal(audit.v3StoryClaimRuntimeBinding.bindingCount,
-      audit.v3StoryClaimRuntimeBinding.requiredOwnerCount);
+    const isolated = await createIsolatedMigration31TestDatabase();
+    try {
+      const audit = await auditCurrentContractSpineAuthorityLedgersAtV31Data(isolated.sql);
+      assert.equal(audit.schema, "setfarm.contract-spine-current-authority-ledgers-audit.v2");
+      assert.equal(audit.productionAuthority, false);
+      assert.equal(audit.productionAdmission, "forbidden");
+      assert.equal(audit.v3StoryClaimRuntimeBinding.bindingCount,
+        audit.v3StoryClaimRuntimeBinding.requiredOwnerCount);
+    } finally {
+      await isolated.cleanup();
+    }
   });
 
   it("refuses nonempty preinstalled adoption including forged hashes and wrong members", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackCurrentToV28(isolated);
       await isolated.sql.begin(async (transaction) =>
@@ -1125,7 +1135,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("plans and rejects exact unjournaled cutover topology instead of adopting it", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackCurrentToV28(isolated);
       await isolated.sql.begin(async (transaction) =>
@@ -1151,40 +1161,42 @@ describe("v3 story claim/runtime binding migration 29", () => {
   });
 
   it("refuses impossible adopted journal state for migration 29", async () => {
-    await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
-      targetReleaseSha: "6".repeat(40),
-    });
-    await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
-      targetReleaseSha: "7".repeat(40),
-    });
-    await database.sql.unsafe(
-      "UPDATE setfarm_schema_migrations SET state = 'adopted' WHERE version = 29",
-    );
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
+      await rollbackOperationalFailureCauseAuthorityV3ToV30(isolated.sql, {
+        targetReleaseSha: "6".repeat(40),
+      });
+      await rollbackOperationalFailureCauseAuthorityV2ToV29(isolated.sql, {
+        targetReleaseSha: "7".repeat(40),
+      });
+      await isolated.sql.unsafe(
+        "UPDATE setfarm_schema_migrations SET state = 'adopted' WHERE version = 29",
+      );
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        verifyContractSpineMigrations(isolated.sql),
         /Migration 29 existing relation does not match the expected shape/,
       );
       await assert.rejects(
-        auditCurrentContractSpineAuthorityLedgersAtV31Data(database.sql),
+        auditCurrentContractSpineAuthorityLedgersAtV31Data(isolated.sql),
         /current authority audit requires the exact 26, 27, 28, 29, 30, 31 head/,
       );
       await assert.rejects(
-        rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+        rollbackV3StoryClaimRuntimeBindingToV28(isolated.sql, {
           targetReleaseSha: "8".repeat(40),
         }),
         /Migration 29 is absent or differs from the rollback source contract/,
       );
     } finally {
-      await database.sql.unsafe(
+      await isolated.sql.unsafe(
         "UPDATE setfarm_schema_migrations SET state = 'applied' WHERE version = 29",
       );
-      await applyContractSpineMigrations(database.sql);
+      await applyContractSpineMigrations(isolated.sql);
+      await isolated.cleanup();
     }
   });
 
   it("rolls back only while empty, retains base relations, and refuses provenance", async () => {
-    const isolated = await createIsolatedTestDatabase();
+    const isolated = await createIsolatedMigration31TestDatabase();
     try {
       await isolated.sql.unsafe(
         `INSERT INTO setfarm_schema_migrations (

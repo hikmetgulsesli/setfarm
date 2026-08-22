@@ -42,7 +42,7 @@ import {
   createV3ReleaseAdmissionRepository,
 } from "../../src/execution/v3-release-admission-repository.js";
 import { resolveNewRunProtocol } from "../../src/execution/run-protocol.js";
-import { persistWorkflowRun } from "../../src/execution/run-persistence.js";
+import { type PersistWorkflowRunInputV1 } from "../../src/execution/run-persistence.js";
 import { createV3DownstreamTerminalOperationalFailureCauseV1 } from "../../src/recovery/v3-downstream-terminal-cause-v1.js";
 import {
   ProductConvergenceSuiteV1Schema,
@@ -1269,6 +1269,34 @@ describe("content-addressed convergence results", () => {
     const admissions = createV3ReleaseAdmissionRepository(database.sql, store, {
       now: () => new Date(NOW),
     });
+    const seedConvergenceRun = async (input: PersistWorkflowRunInputV1): Promise<void> => {
+      await database.sql.begin(async (sql) => {
+        await sql.unsafe(
+          `INSERT INTO runs
+             (id,run_number,workflow_id,task,status,context,notify_url,protocol,
+              protocol_version,compiler_release_sha,activation_preflight_hash,
+              release_admission_hash,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,'running',$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+          [input.run.id,input.run.runNumber,input.run.workflowId,input.run.task,
+            input.run.context,input.run.notifyUrl,input.run.protocol.mode,
+            input.run.protocol.version,input.run.protocol.compilerReleaseSha,
+            input.run.protocol.activationPreflightHash,input.run.protocol.releaseAdmissionHash,
+            input.run.createdAt],
+        );
+        const canary = input.run.protocol.canaryAdmission;
+        if (canary) {
+          const consumed = await sql.unsafe<Array<{ slot_hash: string }>>(
+            `UPDATE v3_canary_admission_claims
+                SET run_id=$1,consumed_at=$2
+              WHERE slot_hash=$3 AND admission_hash=$4
+                AND run_id IS NULL AND consumed_at IS NULL
+            RETURNING slot_hash`,
+            [input.run.id,input.run.createdAt,canary.slotHash,input.run.protocol.releaseAdmissionHash],
+          );
+          assert.equal(consumed.length, 1);
+        }
+      });
+    };
     try {
       const unconsumed = harness(loaded);
       await assert.rejects(
@@ -1317,7 +1345,7 @@ describe("content-addressed convergence results", () => {
                 canary: input.admission,
               },
             });
-            await database.sql.begin((sql) => persistWorkflowRun(sql, {
+            await seedConvergenceRun({
               run: {
                 id: started.runId,
                 runNumber: started.runNumber,
@@ -1329,7 +1357,7 @@ describe("content-addressed convergence results", () => {
                 protocol,
               },
               steps: [],
-            }));
+            });
             const evalCase = loaded.suite.cases.find((item) => item.task === input.task)!;
             const status = evalCase.oracle.expectedDecision.kind === "accepted_candidate"
               ? "completed"
@@ -1377,7 +1405,7 @@ describe("content-addressed convergence results", () => {
         },
         releaseAdmission: first,
       });
-      await database.sql.begin((sql) => persistWorkflowRun(sql, {
+      await seedConvergenceRun({
         run: {
           id: "release-go-normal-v3-run",
           runNumber: 501,
@@ -1389,7 +1417,7 @@ describe("content-addressed convergence results", () => {
           protocol,
         },
         steps: [],
-      }));
+      });
       const persisted = await database.sql<Array<{ release_admission_hash: string }>>`
         SELECT release_admission_hash FROM runs WHERE id = 'release-go-normal-v3-run'
       `;

@@ -8,6 +8,8 @@
  * execFileSync is safe against shell injection as it does not invoke a shell.
  */
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import { closeInternalProductionClaimOwnerAfterTerminalMutationV1 } from "../execution/claim-attempt-transition.js";
+import type postgres from "postgres";
 import { recordStepTransition } from "../installer/repo.js";
 import { emitEvent, type EventType } from "../installer/events.js";
 import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons, syncActiveCrons, gatewayAgentCronsEnabled } from "../installer/agent-cron.js";
@@ -34,6 +36,125 @@ function systemctlUser(...args: string[]): string {
   });
 }
 import { logger } from "../lib/logger.js";
+
+async function terminalizeMedicStoryResetInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    storyDbId: string;
+    storyId: string;
+    outcome: "abandoned" | "infra_retry";
+    abandonedAt: string;
+    diagnostic: string;
+    abandonCount: number;
+    terminal: boolean;
+  }>,
+): Promise<void> {
+  const runs = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM runs WHERE id=$1 AND protocol='legacy' FOR UPDATE",
+    [input.runId],
+  );
+  const steps = await sql.unsafe<Array<{ id: string; step_id: string }>>(
+    `SELECT id,step_id FROM steps WHERE run_id=$1 AND type='loop'
+       AND current_story_id=$2 AND status='running' ORDER BY id FOR UPDATE`,
+    [input.runId, input.storyDbId],
+  );
+  const stories = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='running' FOR UPDATE",
+    [input.storyDbId, input.runId, input.storyId],
+  );
+  if (runs.length !== 1 || steps.length !== 1 || stories.length !== 1) {
+    throw new Error("MEDIC_STORY_RESET_OWNER_STALE");
+  }
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text AS id FROM claim_log
+      WHERE run_id=$1 AND step_id=$2 AND story_id=$3 AND outcome IS NULL
+      ORDER BY id FOR UPDATE`,
+    [input.runId, steps[0]!.step_id, input.storyId],
+  );
+  if (owners.length !== 1) throw new Error("MEDIC_CLAIM_OWNER_CARDINALITY_INVALID");
+  const closed = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log SET outcome=$2,abandoned_at=$3,diagnostic=$4
+      WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+    [owners[0]!.id, input.outcome, input.abandonedAt, input.diagnostic],
+  );
+  if (closed.length !== 1) throw new Error("MEDIC_CLAIM_TERMINAL_CAS_LOST");
+  await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, closed[0]!.id);
+  await sql.unsafe(
+    `UPDATE stories SET status=$1,abandoned_count=$2,
+            claimed_by=NULL,claimed_at=NULL,
+            output=CASE WHEN $3::boolean THEN 'Medic: abandoned too many times — failed' ELSE output END,
+            updated_at=$4 WHERE id=$5`,
+    [input.terminal ? "failed" : "pending", input.abandonCount, input.terminal, input.abandonedAt, input.storyDbId],
+  );
+  await sql.unsafe(
+    "UPDATE steps SET current_story_id=NULL,updated_at=$1 WHERE id=$2",
+    [input.abandonedAt, steps[0]!.id],
+  );
+  if (!input.terminal) {
+    await sql.unsafe(
+      "UPDATE runs SET assigned_developer=NULL,updated_at=$1 WHERE id=$2",
+      [input.abandonedAt, input.runId],
+    );
+  }
+}
+
+async function terminalizeMedicMergedStoryInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    storyDbId: string;
+    storyId: string;
+    output: string;
+    completedAt: string;
+  }>,
+): Promise<void> {
+  const runs = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM runs WHERE id=$1 AND protocol='legacy' FOR UPDATE",
+    [input.runId],
+  );
+  const steps = await sql.unsafe<Array<{ id: string; step_id: string }>>(
+    `SELECT id,step_id FROM steps WHERE run_id=$1 AND type='loop'
+       AND current_story_id=$2 AND status='running' ORDER BY id FOR UPDATE`,
+    [input.runId, input.storyDbId],
+  );
+  const stories = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='running' FOR UPDATE",
+    [input.storyDbId, input.runId, input.storyId],
+  );
+  if (runs.length !== 1 || steps.length !== 1 || stories.length !== 1) {
+    throw new Error("MEDIC_MERGED_STORY_OWNER_STALE");
+  }
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text AS id FROM claim_log
+      WHERE run_id=$1 AND step_id=$2 AND story_id=$3 AND outcome IS NULL
+      ORDER BY id FOR UPDATE`,
+    [input.runId, steps[0]!.step_id, input.storyId],
+  );
+  if (owners.length !== 1) throw new Error("MEDIC_MERGED_STORY_OWNER_CARDINALITY_INVALID");
+  const terminal = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log SET outcome='completed',
+            duration_ms=LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT),2147483647)::INTEGER,
+            diagnostic=$2
+      WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+    [owners[0]!.id, input.output.slice(0, 1_000)],
+  );
+  if (terminal.length !== 1) throw new Error("MEDIC_MERGED_STORY_CLAIM_CAS_LOST");
+  await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, terminal[0]!.id);
+  const storyUpdated = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE stories SET status='done',abandoned_count=0,output=$2,updated_at=$3
+      WHERE id=$1 AND status='running' RETURNING id`,
+    [input.storyDbId, input.output, input.completedAt],
+  );
+  const stepUpdated = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE steps SET current_story_id=NULL,updated_at=$2
+      WHERE id=$1 AND current_story_id=$3 RETURNING id`,
+    [steps[0]!.id, input.completedAt, input.storyDbId],
+  );
+  if (storyUpdated.length !== 1 || stepUpdated.length !== 1) {
+    throw new Error("MEDIC_MERGED_STORY_STATE_CAS_LOST");
+  }
+}
 
 // ── DB Migration ────────────────────────────────────────────────────
 
@@ -85,7 +206,7 @@ function checkMergedPR(repoUrl: string, storyId: string, runId: string): string 
 
 // ── Remediation ─────────────────────────────────────────────────────
 
-async function remediate(finding: MedicFinding): Promise<boolean> {
+export async function remediateMedicFinding(finding: MedicFinding): Promise<boolean> {
   const compilerUnsafeActions = new Set([
     "reset_step",
     "fail_run",
@@ -444,8 +565,15 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         if (repoUrl) {
           const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
           if (prUrl) {
-            await pgRun("UPDATE stories SET status = 'done', abandoned_count = 0, output = $1, updated_at = $2 WHERE id = $3", [`STATUS: done\nPR_URL: ${prUrl}\nCHANGES: Medic v6: merged PR found`, now(), finding.storyId]);
-            await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [now(), story.run_id, finding.storyId]);
+            const completedAt = now();
+            const output = `STATUS: done\nPR_URL: ${prUrl}\nCHANGES: Medic v6: merged PR found`;
+            await pgBegin((sql) => terminalizeMedicMergedStoryInTransaction(sql, {
+              runId: story.run_id,
+              storyDbId: finding.storyId!,
+              storyId: storyMeta.story_id,
+              output,
+              completedAt,
+            }));
             emitEvent({ ts: now(), event: "story.done" as EventType, runId: story.run_id, detail: `Medic v6: PR merged — ${storyMeta.story_id} (${prUrl})` });
             return true;
           }
@@ -455,22 +583,28 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const newCount = (story.abandoned_count ?? 0) + 1;
       const MAX_STORY_ABANDONS = 10;
       if (newCount >= MAX_STORY_ABANDONS) {
-        await pgRun("UPDATE stories SET status = 'failed', abandoned_count = $1, output = 'Medic: abandoned too many times — failed', updated_at = $2 WHERE id = $3", [newCount, now(), finding.storyId]);
         if (storyMeta?.story_id) {
-          await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND story_id = $4 AND outcome IS NULL", [now(), `Medic: story abandoned ${newCount} times`, story.run_id, storyMeta.story_id]);
+          await pgBegin((sql) => terminalizeMedicStoryResetInTransaction(sql, {
+            runId: story.run_id, storyDbId: finding.storyId!, storyId: storyMeta.story_id,
+            outcome: "abandoned", abandonedAt: now(),
+            diagnostic: `Medic: story abandoned ${newCount} times`,
+            abandonCount: newCount, terminal: true,
+          }));
         }
         emitEvent({ ts: now(), event: "story.failed" as EventType, runId: story.run_id, detail: `Medic: story abandoned ${newCount} times` });
       } else {
-        await pgRun("UPDATE stories SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.storyId]);
-        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [now(), story.run_id, finding.storyId]);
         if (storyMeta?.story_id) {
-          await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND story_id = $4 AND outcome IS NULL", [now(), `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS})`, story.run_id, storyMeta.story_id]);
+          await pgBegin((sql) => terminalizeMedicStoryResetInTransaction(sql, {
+            runId: story.run_id, storyDbId: finding.storyId!, storyId: storyMeta.story_id,
+            outcome: "infra_retry", abandonedAt: now(),
+            diagnostic: `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS})`,
+            abandonCount: newCount, terminal: false,
+          }));
         }
         // Clear assigned_developer so any cron in the pool can pick up the abandoned
         // story. Without this, if the originally-assigned dev's cron is gone (gateway
         // restart, pool resync, etc) the run deadlocks — no other caller matches
         // runs.assigned_developer and every poll returns NO_WORK. Observed run #497.
-        await pgRun("UPDATE runs SET assigned_developer = NULL, updated_at = $1 WHERE id = $2", [now(), story.run_id]);
         emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: story.run_id, detail: `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS}), assigned_developer cleared` });
       }
       return true;
@@ -606,7 +740,7 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   }
 
   let actionsTaken = 0;
-  for (const finding of findings) { if (finding.action !== "none") { try { const success = await remediate(finding); if (success) { finding.remediated = true; actionsTaken++; } } catch (err) { logger.error(`[medic] remediate failed for ${finding.action} (${finding.check}): ${String(err)}`, { runId: finding.runId }); } } }
+  for (const finding of findings) { if (finding.action !== "none") { try { const success = await remediateMedicFinding(finding); if (success) { finding.remediated = true; actionsTaken++; } } catch (err) { logger.error(`[medic] remediate failed for ${finding.action} (${finding.check}): ${String(err)}`, { runId: finding.runId }); } } }
 
   const parts: string[] = [];
   if (findings.length === 0) { parts.push("All clear — no issues found"); } else { const critical = findings.filter(f => f.severity === "critical").length; const warnings = findings.filter(f => f.severity === "warning").length; if (critical > 0) parts.push(`${critical} critical`); if (warnings > 0) parts.push(`${warnings} warning(s)`); if (actionsTaken > 0) parts.push(`${actionsTaken} auto-fixed`); }

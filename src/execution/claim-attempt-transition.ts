@@ -1,6 +1,11 @@
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import type { TerminalAttemptDispositionV1 } from "./schemas/execution-attempt-v1.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
@@ -101,6 +106,20 @@ function assertV3AttemptContract(
   ) {
     throw new Error(errorCode);
   }
+}
+
+export async function closeInternalProductionClaimOwnerAfterTerminalMutationV1(
+  sql: postgres.TransactionSql,
+  claimIdText: string,
+): Promise<void> {
+  const terminalClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { claimIdText },
+  );
+  await closeInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    terminalClose,
+  );
 }
 
 /**
@@ -206,6 +225,7 @@ export async function closeExactSingleStepClaimInTransaction(
     ],
   );
   if (closed.length !== 1) throw new Error("SINGLE_STEP_CLAIM_CAS_LOST");
+  await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, closed[0]!.id);
 }
 
 /**
@@ -623,6 +643,7 @@ export async function closeClaimAndBoundAttemptInTransaction(
       [input.claimId, input.outcome, input.abandoned ?? true, now, input.diagnostic],
     );
     if (closed.length !== 1) throw new Error("CLAIM_LIFECYCLE_CAS_LOST");
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(transaction, closed[0]!.id);
 
   return {
     status: "closed" as const,
@@ -930,6 +951,7 @@ export async function completeStoryClaimAndBoundAttempt(
       [envelope.claimId, now, (input.diagnostic || "Exact story claim completed").slice(0, 1_000)],
     );
     if (closed.length !== 1) throw new Error("STORY_COMPLETION_CLAIM_CAS_LOST");
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(transaction, closed[0]!.id);
 
     if (input.runContextJson !== undefined) {
       if (input.runContextJson.length > 16_000_000

@@ -6,6 +6,7 @@ import { computeContractSpineMigrationChecksumV1 } from "../../src/db/contract-s
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract-spine-migration-digests.generated.js";
 import {
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtCurrentHeadData,
   ContractSpineMigrationError,
   contractSpineMigrationLockKey,
@@ -13,7 +14,6 @@ import {
   rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
-  verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
   RUNTIME_COMPLETION_MANIFEST_AUTHORITY_V1_STATEMENTS,
@@ -27,7 +27,11 @@ import {
   type RuntimeCompletionPlanV1,
 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  createIsolatedTestDatabase,
+  type TestDatabase,
+} from "./test-database.js";
 
 const ADVISORY_WAIT_TIMEOUT_MS = 20_000;
 
@@ -112,7 +116,13 @@ async function seedExecutingRequest(database: TestDatabase, suffix: string): Pro
   const sessionId = `RTS_${runId}-session`;
   const requestId = `RCR_${runId}-request`;
   const outputHash = hashCanonicalJson(`completion-${suffix}`);
-  await database.insertRun(runId);
+  await database.sql.unsafe(
+    `INSERT INTO runs (
+       id, workflow_id, task, status, protocol,
+       compiler_release_sha, activation_preflight_hash
+     ) VALUES ($1, 'feature-dev', 'contract test', 'running', 'shadow', $2, $3)`,
+    [runId, "d".repeat(40), "e".repeat(64)],
+  );
   await database.sql`
     INSERT INTO steps (
       id, run_id, step_id, agent_id, step_index, input_template, expects, status
@@ -393,7 +403,7 @@ describe("runtime completion manifest authority migration 28", () => {
   });
 
   it("audits the committed head after queued migration-28 rollback and apply", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     const blocker = isolatedClient(database.url);
     const writer = isolatedClient(database.url);
     const auditor = isolatedClient(database.url);
@@ -707,7 +717,7 @@ describe("runtime completion manifest authority migration 28", () => {
   });
 
   it("rejects an oversized legacy plan atomically before installing authority", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackEmptyV29ToV28(database.sql);
       await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
@@ -789,11 +799,14 @@ describe("runtime completion manifest authority migration 28", () => {
   });
 
   it("publishes one exact manifest atomically and protects its immutable identity", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const fixture = await seedExecutingRequest(database, "immutable");
       const prepared = await publishPlan(database, fixture);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      assert.equal(
+        (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+        "verified",
+      );
 
       await assert.rejects(
         database.sql`
@@ -839,7 +852,7 @@ describe("runtime completion manifest authority migration 28", () => {
         "ALTER TABLE public.runtime_completion_effects ENABLE ROW LEVEL SECURITY",
       );
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        auditAuthorityV3ContractSpineThroughMigration31V1(database.sql),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
       );
@@ -851,7 +864,7 @@ describe("runtime completion manifest authority migration 28", () => {
         "GRANT UPDATE (payload) ON public.runtime_completion_effects TO PUBLIC",
       );
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        auditAuthorityV3ContractSpineThroughMigration31V1(database.sql),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
       );
@@ -875,7 +888,7 @@ describe("runtime completion manifest authority migration 28", () => {
         EXECUTE FUNCTION public.setfarm_v28_test_external_trigger()
       `);
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        auditAuthorityV3ContractSpineThroughMigration31V1(database.sql),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
       );
@@ -883,7 +896,10 @@ describe("runtime completion manifest authority migration 28", () => {
         DROP TRIGGER zzz_v28_test_external ON public.runtime_completion_effects;
         DROP FUNCTION public.setfarm_v28_test_external_trigger()
       `);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      assert.equal(
+        (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+        "verified",
+      );
 
       const retained = await database.sql<Array<{
         completion_plan_hash: string;
@@ -1002,7 +1018,7 @@ describe("runtime completion manifest authority migration 28", () => {
   });
 
   it("rolls an empty authority back to the exact migration-27 head", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       await rollbackEmptyV29ToV28(database.sql);
       const result = await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {

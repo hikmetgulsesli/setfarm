@@ -1,7 +1,9 @@
 /**
  * Medic health checks — modular functions that inspect DB state and return findings.
  */
-import { pgGet, pgQuery, pgRun, now } from "../db-pg.js";
+import { pgGet, pgQuery, pgRun, pgBegin, now } from "../db-pg.js";
+import { closeInternalProductionClaimOwnerAfterTerminalMutationV1 } from "../execution/claim-attempt-transition.js";
+import type postgres from "postgres";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
 import { logger } from "../lib/logger.js";
 import { existsSync } from "fs";
@@ -49,6 +51,150 @@ export interface MedicFinding {
   /** Extra data for action handler (e.g. auto-complete output) */
   meta?: Record<string, any>;
   remediated: boolean;
+}
+
+async function terminalizeLegacyMedicRunInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    expectedStatuses: readonly string[];
+    diagnostic: string;
+    stepOutput: string;
+    terminalAt: string;
+  }>,
+): Promise<boolean> {
+  const runs = await sql.unsafe<Array<{ id: string; status: string }>>(
+    "SELECT id,status FROM runs WHERE id=$1 AND protocol='legacy' FOR UPDATE",
+    [input.runId],
+  );
+  const run = runs[0];
+  if (runs.length !== 1 || !run || !input.expectedStatuses.includes(run.status)) return false;
+  const steps = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM steps WHERE run_id=$1 ORDER BY id FOR UPDATE",
+    [input.runId],
+  );
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text AS id FROM claim_log
+      WHERE run_id=$1 AND outcome IS NULL ORDER BY id FOR UPDATE`,
+    [input.runId],
+  );
+  for (const owner of owners) {
+    const terminal = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE claim_log SET outcome='abandoned',abandoned_at=$2,diagnostic=$3
+        WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+      [owner.id, input.terminalAt, input.diagnostic],
+    );
+    if (terminal.length !== 1) throw new Error("MEDIC_TERMINAL_RUN_CLAIM_CAS_LOST");
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, terminal[0]!.id);
+  }
+  const stepRows = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE steps SET status='skipped',output=$2,updated_at=$3
+      WHERE run_id=$1 AND status NOT IN ('done','failed','skipped') RETURNING id`,
+    [input.runId, input.stepOutput, input.terminalAt],
+  );
+  if (stepRows.length > steps.length) throw new Error("MEDIC_TERMINAL_RUN_STEP_CARDINALITY_INVALID");
+  const runRows = await sql.unsafe<Array<{ id: string }>>(
+    "UPDATE runs SET status='failed',updated_at=$2 WHERE id=$1 AND status=$3 RETURNING id",
+    [input.runId, input.terminalAt, run.status],
+  );
+  if (runRows.length !== 1) throw new Error("MEDIC_TERMINAL_RUN_CAS_LOST");
+  return true;
+}
+
+async function healLegacyTerminalRunOrphansInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{ runId: string; terminalAt: string }>,
+): Promise<Readonly<{
+  runStatus: string;
+  steps: readonly Readonly<{ id: string; stepId: string; status: string }>[];
+  stories: readonly Readonly<{ id: string; storyId: string; status: string }>[];
+}>> {
+  const runs = await sql.unsafe<Array<{ status: string }>>(
+    `SELECT status FROM runs
+      WHERE id=$1 AND protocol='legacy' AND status IN ('cancelled','failed')
+      FOR UPDATE`,
+    [input.runId],
+  );
+  if (runs.length !== 1) {
+    return { runStatus: "", steps: [], stories: [] };
+  }
+  const steps = await sql.unsafe<Array<{ id: string; step_id: string; status: string }>>(
+    `SELECT id,step_id,status FROM steps
+      WHERE run_id=$1 AND status NOT IN ('done','failed','skipped')
+      ORDER BY id FOR UPDATE`,
+    [input.runId],
+  );
+  const stories = await sql.unsafe<Array<{ id: string; story_id: string; status: string }>>(
+    `SELECT id,story_id,status FROM stories
+      WHERE run_id=$1
+        AND status NOT IN ('done','verified','failed','skipped')
+        AND NOT EXISTS (
+          SELECT 1 FROM runtime_sessions rs
+           WHERE rs.run_id=$1 AND rs.state <> 'released'
+        )
+      ORDER BY id FOR UPDATE`,
+    [input.runId],
+  );
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT claim.id::text AS id
+       FROM claim_log claim
+      WHERE claim.run_id=$1 AND claim.outcome IS NULL
+        AND (
+          (claim.story_id IS NULL AND EXISTS (
+            SELECT 1 FROM steps step
+             WHERE step.run_id=claim.run_id AND step.step_id=claim.step_id
+               AND step.status NOT IN ('done','failed','skipped')
+          ))
+          OR
+          (claim.story_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM stories story
+             WHERE story.run_id=claim.run_id AND story.story_id=claim.story_id
+               AND story.status NOT IN ('done','verified','failed','skipped')
+               AND NOT EXISTS (
+                 SELECT 1 FROM runtime_sessions rs
+                  WHERE rs.run_id=claim.run_id AND rs.state <> 'released'
+               )
+          ))
+        )
+      ORDER BY claim.id FOR UPDATE`,
+    [input.runId],
+  );
+  for (const owner of owners) {
+    const terminal = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE claim_log
+          SET outcome='abandoned',abandoned_at=$2,
+              diagnostic='Medic: terminal-run orphan owner abandoned'
+        WHERE id=$1::bigint AND outcome IS NULL
+        RETURNING id::text AS id`,
+      [owner.id, input.terminalAt],
+    );
+    if (terminal.length !== 1) throw new Error("MEDIC_ORPHAN_CLAIM_CAS_LOST");
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, terminal[0]!.id);
+  }
+  for (const step of steps) {
+    const updated = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE steps
+          SET status='skipped',
+              output='Skipped: run is ' || $2 || ' (cascade, never ran)',
+              updated_at=$3
+        WHERE id=$1 AND run_id=$4 AND status=$5 RETURNING id`,
+      [step.id, runs[0]!.status, input.terminalAt, input.runId, step.status],
+    );
+    if (updated.length !== 1) throw new Error("MEDIC_ORPHAN_STEP_CAS_LOST");
+  }
+  for (const story of stories) {
+    const updated = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE stories SET status='failed',updated_at=$2
+        WHERE id=$1 AND run_id=$3 AND status=$4 RETURNING id`,
+      [story.id, input.terminalAt, input.runId, story.status],
+    );
+    if (updated.length !== 1) throw new Error("MEDIC_ORPHAN_STORY_CAS_LOST");
+  }
+  return {
+    runStatus: runs[0]!.status,
+    steps: steps.map((step) => ({ id: step.id, stepId: step.step_id, status: step.status })),
+    stories: stories.map((story) => ({ id: story.id, storyId: story.story_id, status: story.status })),
+  };
 }
 
 // ── Check: Stuck Steps ──────────────────────────────────────────────
@@ -142,10 +288,15 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
 
     if (ageMs > STALL_AUTOFAIL_MS) {
       // Auto-fail runs stalled for 6+ hours
-      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2 AND status IN ('running', 'resuming')",
-        [now(), run.id]);
-      await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run stalled for ' || $1 || ' minutes (cascade)', updated_at = $2 WHERE run_id = $3 AND status NOT IN ('done', 'failed', 'skipped')",
-        [String(ageMin), now(), run.id]);
+      const terminalAt = now();
+      const remediated = await pgBegin((sql) => terminalizeLegacyMedicRunInTransaction(sql, {
+        runId: run.id,
+        expectedStatuses: ["running", "resuming"],
+        diagnostic: `Medic: run stalled for ${ageMin} minutes`,
+        stepOutput: `Skipped: run stalled for ${ageMin} minutes (cascade)`,
+        terminalAt,
+      }));
+      if (!remediated) continue;
       findings.push({
         check: "stalled_runs",
         severity: "critical",
@@ -189,10 +340,15 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
   `);
 
   for (const run of stuckResuming) {
-    await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
-      [now(), run.id]);
-    await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run stuck in resuming state (cascade)', updated_at = $1 WHERE run_id = $2 AND status NOT IN ('done', 'failed', 'skipped')",
-      [now(), run.id]);
+    const terminalAt = now();
+    const remediated = await pgBegin((sql) => terminalizeLegacyMedicRunInTransaction(sql, {
+      runId: run.id,
+      expectedStatuses: ["resuming"],
+      diagnostic: "Medic: run stuck in resuming state",
+      stepOutput: "Skipped: run stuck in resuming state (cascade)",
+      terminalAt,
+    }));
+    if (!remediated) continue;
     findings.push({
       check: "stalled_runs",
       severity: "critical",
@@ -748,23 +904,6 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
     AND s.status NOT IN ('done', 'failed', 'skipped')
   `);
 
-  for (const step of orphanSteps) {
-    // 2026-04-23: mark cascade orphans as 'skipped' not 'failed' — these steps
-    // never ran (upstream fail/cancel), they are not real failures. Keeps
-    // per-step success rate stats honest (failed = real errors only, not cascade).
-    await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run is ' || $1 || ' (cascade, never ran)', updated_at = $2 WHERE id = $3",
-      [step.run_status, now(), step.id]);
-    findings.push({
-      check: "orphaned_in_terminal_run",
-      severity: "warning",
-      message: `Step ${step.step_id} was '${step.status}' in ${step.run_status} run ${step.run_id} — cascade skipped`,
-      action: "none",
-      runId: step.run_id,
-      stepId: step.id,
-      remediated: true,
-    });
-  }
-
   // Fix orphaned stories
   orphanStories = await pgQuery(`
     SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
@@ -778,18 +917,37 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
     AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
   `);
 
-  for (const story of orphanStories) {
-    await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2",
-      [now(), story.id]);
-    findings.push({
-      check: "orphaned_in_terminal_run",
-      severity: "warning",
-      message: `Story ${story.story_id} was '${story.status}' in ${story.run_status} run ${story.run_id} — auto-failed`,
-      action: "none",
-      runId: story.run_id,
-      storyId: story.id,
-      remediated: true,
-    });
+  const runIds = [...new Set([
+    ...orphanSteps.map((step) => step.run_id),
+    ...orphanStories.map((story) => story.run_id),
+  ])].sort();
+  for (const runId of runIds) {
+    const healed = await pgBegin((sql) => healLegacyTerminalRunOrphansInTransaction(sql, {
+      runId,
+      terminalAt: now(),
+    }));
+    for (const step of healed.steps) {
+      findings.push({
+        check: "orphaned_in_terminal_run",
+        severity: "warning",
+        message: `Step ${step.stepId} was '${step.status}' in ${healed.runStatus} run ${runId} — cascade skipped`,
+        action: "none",
+        runId,
+        stepId: step.id,
+        remediated: true,
+      });
+    }
+    for (const story of healed.stories) {
+      findings.push({
+        check: "orphaned_in_terminal_run",
+        severity: "warning",
+        message: `Story ${story.storyId} was '${story.status}' in ${healed.runStatus} run ${runId} — auto-failed`,
+        action: "none",
+        runId,
+        storyId: story.id,
+        remediated: true,
+      });
+    }
   }
 
   return findings;
@@ -1025,7 +1183,7 @@ export async function checkStaleClaims(db: any, logger: any): Promise<{ found: n
   let found = 0, fixed = 0;
   try {
     const stale = await pgQuery(
-      "SELECT cl.ctid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
+      "SELECT cl.id::text AS id, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
       "FROM claim_log cl JOIN runs r ON r.id = cl.run_id WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
       "AND r.protocol = 'legacy' " +
       "AND EXTRACT(EPOCH FROM NOW() - cl.claimed_at::timestamptz) / 60 > $1",
@@ -1034,11 +1192,29 @@ export async function checkStaleClaims(db: any, logger: any): Promise<{ found: n
     found = stale.length;
     for (const claim of stale) {
       logger.warn(`[MEDIC] Stale claim detected: agent=${claim.agent_id} step=${claim.step_id} story=${claim.story_id || 'N/A'} age=${STALE_THRESHOLD_MIN}+min`, { runId: claim.run_id });
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'abandoned', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 AS INTEGER), diagnostic = 'Stale claim detected by medic (60+ min)' WHERE run_id = $1 AND step_id = $2 AND claimed_at = $3 AND outcome IS NULL",
-        [claim.run_id, claim.step_id, claim.claimed_at]
-      );
-      fixed++;
+      const didClose = await pgBegin(async (sql) => {
+        const locked = await sql.unsafe<Array<{ id: string }>>(
+          `SELECT cl.id::text AS id FROM claim_log cl
+             JOIN runs r ON r.id=cl.run_id
+            WHERE cl.id=$1::bigint AND cl.outcome IS NULL
+              AND cl.claimed_at IS NOT NULL AND r.protocol='legacy'
+              AND EXTRACT(EPOCH FROM NOW()-cl.claimed_at::timestamptz)/60 > $2
+            FOR UPDATE OF cl`,
+          [claim.id, STALE_THRESHOLD_MIN],
+        );
+        if (locked.length === 0) return false;
+        const closed = await sql.unsafe<Array<{ id: string }>>(
+          `UPDATE claim_log SET outcome='abandoned',abandoned_at=NOW(),
+                  duration_ms=LEAST(CAST(EXTRACT(EPOCH FROM NOW()-claimed_at::timestamptz)*1000 AS BIGINT),2147483647)::INTEGER,
+                  diagnostic='Stale claim detected by medic (60+ min)'
+            WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+          [locked[0]!.id],
+        );
+        if (closed.length !== 1) throw new Error("MEDIC_STALE_CLAIM_CAS_LOST");
+        await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, closed[0]!.id);
+        return true;
+      });
+      if (didClose) fixed++;
     }
   } catch (e) { logger.warn("[MEDIC] checkStaleClaims error: " + String(e), {}); }
   return { found, fixed };

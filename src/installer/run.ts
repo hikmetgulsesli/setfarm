@@ -2,7 +2,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
-import { pgRun, pgGet, pgExec, pgBegin, pgNextRunNumber, now } from "../db-pg.js";
+import { pgRun, pgGet, pgExec, pgNextRunNumber, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
 import { cleanAgentWorkspace } from "./worktree-ops.js";
@@ -18,7 +18,6 @@ import {
   persistWorkflowRun,
   type PersistedWorkflowStep,
 } from "../execution/run-persistence.js";
-import { transitionRunToTerminalInTransaction } from "../execution/run-terminal-transition.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -115,6 +114,23 @@ export async function runWorkflow(params: {
     }
   }
 
+  // Finish local prerequisites before the running row and its owner can become
+  // visible to polling spawners.
+  const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));
+  for (const agentId of agentIds) {
+    try {
+      cleanAgentWorkspace(agentId);
+    } catch (err) {
+      logger.warn(`[run] Workspace cleanup failed for ${agentId}: ${err}`, {});
+    }
+  }
+  try {
+    await ensureWorkflowCrons(workflow);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
+  }
+
   const persistedSteps: PersistedWorkflowStep[] = workflow.steps.map((step, index) => ({
     id: crypto.randomUUID(),
     stepId: step.id,
@@ -127,7 +143,7 @@ export async function runWorkflow(params: {
     type: step.type ?? "single",
     loopConfig: step.loop ? JSON.stringify(step.loop) : null,
   }));
-  await pgBegin((sql) => persistWorkflowRun(sql, {
+  const persisted = await persistWorkflowRun({
     run: {
       id: runId,
       runNumber,
@@ -139,40 +155,9 @@ export async function runWorkflow(params: {
       protocol,
     },
     steps: persistedSteps,
-  }));
+  });
 
   await refreshRunContractSafe(runId, "run.started");
-
-  // Clean agent workspaces of stale files from previous runs
-  const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));
-  for (const agentId of agentIds) {
-    try {
-      cleanAgentWorkspace(agentId);
-    } catch (err) {
-      logger.warn(`[run] Workspace cleanup failed for ${agentId}: ${err}`, {});
-    }
-  }
-
-  // Start crons for this workflow (no-op if already running from another run)
-  try {
-    await ensureWorkflowCrons(workflow);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // No worker can have claimed this run before cron publication succeeds.
-    // Prove that invariant and terminalize the whole persisted bootstrap state
-    // atomically. This explicit pre-claim bootstrap exception is valid for
-    // either protocol; every post-publication failure uses durable termination.
-    await pgBegin(async (sql) => {
-      await transitionRunToTerminalInTransaction(sql, {
-        runId,
-        status: "failed",
-        diagnostic: `Cron setup failed before claim publication: ${message}`,
-        terminalFailure: true,
-        unclaimedBootstrapFailure: true,
-      });
-    });
-    throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
-  }
 
   emitEvent({ ts: now(), event: "run.started", runId, workflowId: workflow.id });
   const firstStep = workflow.steps[0];
@@ -181,6 +166,8 @@ export async function runWorkflow(params: {
       agentId: `${workflow.id}_${firstStep.agent}`,
       runId,
       stepId: firstStep.id,
+      runOwnerReservationRef: persisted.runOwnerReservationRef,
+      runOwnerReservationHash: persisted.runOwnerReservationHash,
     });
     try {
       await pgRun("SELECT pg_notify('step_pending', $1)", [payload]);
@@ -196,12 +183,12 @@ export async function runWorkflow(params: {
   });
 
   return {
-    id: runId,
-    runNumber,
-    workflowId: workflow.id,
-    task: params.taskTitle,
-    status: "running",
-    protocol: protocol.mode,
-    protocolVersion: protocol.version,
+    id: persisted.run.id,
+    runNumber: persisted.run.runNumber,
+    workflowId: persisted.run.workflowId,
+    task: persisted.run.task,
+    status: persisted.run.status,
+    protocol: persisted.run.protocol,
+    protocolVersion: persisted.run.protocolVersion,
   };
 }

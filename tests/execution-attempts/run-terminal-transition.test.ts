@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
@@ -19,13 +22,23 @@ import {
   rollbackRecoveryTerminalLeaseIdentityToV19,
 } from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
-import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
+import {
+  transitionRunToTerminal,
+  transitionRunToTerminalInTransaction,
+} from "../../src/execution/run-terminal-transition.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
+import {
+  lockV3TerminalRecoveryChainInTransaction,
+  settleV3TerminalRecoveryChainInTransaction,
+} from "../../src/recovery/v3-terminal-recovery-chain.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  createIsolatedTestDatabase,
+} from "./test-database.js";
 
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -173,6 +186,23 @@ async function seedActiveRecovery(
 }
 
 describe("canonical run terminal owner", () => {
+  it("terminal transition closes the authenticated run owner in the same transaction", async () => {
+    const source = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/run-terminal-transition.ts",
+    ), "utf8");
+    assert.equal(transitionRunToTerminal.length, 2);
+    assert.equal(transitionRunToTerminalInTransaction.length, 2);
+    assert.equal(/createInternalProduction(?:WorkflowRun)?TerminalOwnerAuthority/.test(source), false);
+    const runUpdate = source.indexOf("UPDATE runs\n          SET status = $2");
+    const terminalPair = source.indexOf("resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(", runUpdate);
+    const close = source.indexOf("closeInternalProductionOwnerReservationV1(ownerAdmissionSql", terminalPair);
+    const reopen = source.indexOf("resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerAdmissionSql", close);
+    assert.ok(runUpdate >= 0 && terminalPair > runUpdate && close > terminalPair && reopen > close);
+    const db = await import("../../src/db-pg.js");
+    assert.equal("createInternalProductionWorkflowRunTerminalOwnerAuthorityV1" in db, false);
+  });
+
   it("refuses to erase active shadow owners without a drained failure request", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -272,7 +302,7 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("reconciles a leaked active fence on an already-cancelled shadow run", async () => {
+  it("fails closed on a pre-owner-admission cancelled run without erasing its fence", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-cancel-reconcile";
@@ -291,16 +321,17 @@ describe("canonical run terminal owner", () => {
       await database.sql`UPDATE claim_log SET outcome = 'infra_retry' WHERE id = ${claimId}`;
       await database.sql`UPDATE runs SET status = 'cancelled' WHERE id = ${runId}`;
 
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "cancelled",
-        diagnostic: "Workflow cancelled by user",
-      });
-      assert.equal(result.closedClaims, 0);
-      assert.equal(result.closedAttempts, 1);
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "cancelled",
+          diagnostic: "Workflow cancelled by user",
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
       const attempt = await repository.findById("ATT_run-terminal-leak1");
-      assert.equal(attempt?.disposition, "inconclusive");
-      assert.ok(attempt?.evidenceRefs.includes("setfarm://run-terminal/cancelled"));
+      assert.equal(attempt?.disposition, "claimed");
+      assert.equal(attempt?.evidenceRefs.includes("setfarm://run-terminal/cancelled"), false);
     } finally {
       await database.cleanup();
     }
@@ -450,7 +481,7 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("atomically closes an explicitly unclaimed legacy bootstrap when cron publication fails", async () => {
+  it("rolls back a pre-owner-admission bootstrap terminal update", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-legacy-bootstrap";
@@ -468,28 +499,21 @@ describe("canonical run terminal owner", () => {
           ('run-terminal-legacy-bootstrap-step', ${runId}, 'plan', 'feature-dev_planner', 0, '', '', 'pending')
       `;
 
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "cron setup failed before claims",
-        unclaimedBootstrapFailure: true,
-      });
-      assert.deepEqual(result, {
-        status: "failed",
-        previousStatus: "running",
-        closedClaims: 0,
-        closedAttempts: 0,
-        closedRecoveryDeliveries: 0,
-        closedRecoveryCases: 0,
-        changedSteps: 1,
-        changedStories: 0,
-      });
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "cron setup failed before claims",
+          unclaimedBootstrapFailure: true,
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
       const state = await database.sql<Array<{ run_status: string; step_status: string }>>`
         SELECT r.status AS run_status, s.status AS step_status
           FROM runs r JOIN steps s ON s.run_id = r.id
          WHERE r.id = ${runId}
       `;
-      assert.deepEqual({ ...state[0] }, { run_status: "failed", step_status: "failed" });
+      assert.deepEqual({ ...state[0] }, { run_status: "running", step_status: "pending" });
     } finally {
       await database.cleanup();
     }
@@ -541,87 +565,29 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("atomically closes active recovery residue on an already-failed v3 run", async () => {
+  it("preserves active recovery residue on a pre-owner-admission terminal run", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-v3-recovery-residue";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "reconcile historical terminal recovery owner",
-      });
-      assert.equal(result.closedRecoveryDeliveries, 1);
-      assert.equal(result.closedRecoveryCases, 1);
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "reconcile historical terminal recovery owner",
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
 
       const delivery = await createRecoveryDeliveryRepository(database.sql)
         .findDelivery(fixture.dispatchId);
-      assert.equal(delivery?.schema, "setfarm.recovery-dispatch-delivery.v2");
-      assert.equal(delivery?.state, "blocked");
-      assert.equal(delivery?.ownerInstanceId, undefined);
-      assert.equal(delivery?.leaseToken, undefined);
-      assert.equal(delivery?.terminalResult.schema, "setfarm.run-terminal-recovery-chain.v1");
-      const rows = await database.sql<Array<{
-        case_status: string;
-        case_terminal: unknown;
-        event_deliveries: number;
-        event_cases: number;
-      }>>`
-        SELECT recovery_case.status AS case_status,
-               recovery_case.terminal AS case_terminal,
-               (outbox.payload->>'closedRecoveryDeliveries')::integer AS event_deliveries,
-               (outbox.payload->>'closedRecoveryCases')::integer AS event_cases
-          FROM recovery_cases recovery_case
-          JOIN operational_outbox outbox
-            ON outbox.aggregate_id = recovery_case.run_id
-           AND outbox.event_type = 'run.terminal'
-         WHERE recovery_case.recovery_case_id = ${fixture.recoveryCaseId}
-      `;
-      assert.equal(rows[0]?.case_status, "blocked");
-      assert.deepEqual(rows[0]?.case_terminal, {
-        owner: "implement",
-        outcome: "blocked",
-        reasonCode: "evidence_inconclusive",
-        evidenceBundleHashes: [],
-      });
-      assert.equal(rows[0]?.event_deliveries, 1);
-      assert.equal(rows[0]?.event_cases, 1);
-
-      const settled = await database.sql<Array<{
-        updated_at: Date;
-        terminal_events: number;
-      }>>`
-        SELECT run.updated_at,
-               (SELECT COUNT(*)::integer FROM operational_outbox event
-                 WHERE event.aggregate_id = run.id
-                   AND event.event_type = 'run.terminal') AS terminal_events
-          FROM runs run
-         WHERE run.id = ${runId}
-      `;
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "same settled state observed through different prose",
-      });
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "another operator description must remain a no-op",
-      });
-      const replayed = await database.sql<Array<{
-        updated_at: Date;
-        terminal_events: number;
-      }>>`
-        SELECT run.updated_at,
-               (SELECT COUNT(*)::integer FROM operational_outbox event
-                 WHERE event.aggregate_id = run.id
-                   AND event.event_type = 'run.terminal') AS terminal_events
-          FROM runs run
-         WHERE run.id = ${runId}
-      `;
-      assert.equal(replayed[0]!.updated_at.toISOString(), settled[0]!.updated_at.toISOString());
-      assert.equal(settled[0]!.terminal_events, 1);
-      assert.equal(replayed[0]!.terminal_events, 1);
+      assert.equal(delivery?.schema, "setfarm.recovery-dispatch-delivery.v1");
+      assert.equal(delivery?.state, "authorized");
+      assert.equal(
+        (await createFindingRecoveryRepository(database.sql)
+          .findRecoveryCase(fixture.recoveryCaseId))?.status,
+        "repairing",
+      );
     } finally {
       await database.cleanup();
     }
@@ -655,7 +621,7 @@ describe("canonical run terminal owner", () => {
   });
 
   it("downgrades migration 20 terminal rows to the exact v19 reader contract", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const runId = "run-terminal-v19-binary-rollback";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
@@ -668,10 +634,16 @@ describe("canonical run terminal owner", () => {
         rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, { targetReleaseSha }),
         /Migration 20 rollback requires zero active owners/,
       );
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "create a lease-free v2 terminal row before binary rollback",
+      await database.sql.begin(async (transaction) => {
+        const snapshot = await lockV3TerminalRecoveryChainInTransaction(transaction, runId);
+        const clock = await transaction.unsafe<Array<{ now: Date }>>("SELECT clock_timestamp() AS now");
+        await settleV3TerminalRecoveryChainInTransaction(transaction, {
+          runId,
+          status: "failed",
+          diagnostic: "create a lease-free v2 terminal row before binary rollback",
+          transitionTime: clock[0]!.now,
+          snapshot,
+        });
       });
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,

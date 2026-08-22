@@ -5,7 +5,12 @@ import { after, before, describe, it } from "node:test";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
 import { ensureCompilerClaimFence } from "../../src/execution/compiler-claim-fence.js";
-import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishLoopClaimRuntime,
+} from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../src/execution/compiler-english-admission-ledger-v1.js";
 import {
   createCompilerStoryEnglishAdmissionClaimProofV1,
@@ -129,12 +134,23 @@ async function prepareCompilerAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+      "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+    );
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      idRows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId,
+      claimedAt: new Date(),
+    });
+  });
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${token}`,
@@ -1561,6 +1577,8 @@ describe("v3 recovery lifecycle reconciler", () => {
       story_claimed_by: string | null;
       step_status: string;
       current_story_id: string | null;
+      claim_owner_state: string;
+      runtime_owner_state: string;
     }>>(
       `SELECT attempt.disposition AS attempt_disposition,
               claim.outcome AS claim_outcome,
@@ -1570,7 +1588,9 @@ describe("v3 recovery lifecycle reconciler", () => {
               story.status AS story_status,
               story.claimed_by AS story_claimed_by,
               step.status AS step_status,
-              step.current_story_id
+              step.current_story_id,
+              claim_owner.state AS claim_owner_state,
+              runtime_owner.state AS runtime_owner_state
          FROM execution_attempts attempt
          JOIN claim_log claim ON claim.id = attempt.claim_id
          JOIN runtime_sessions runtime ON runtime.attempt_id = attempt.attempt_id
@@ -1578,6 +1598,10 @@ describe("v3 recovery lifecycle reconciler", () => {
          JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id = delivery.recovery_case_id
          JOIN stories story ON story.run_id = attempt.run_id AND story.story_id = attempt.story_id
          JOIN steps step ON step.id = runtime.step_db_id
+         JOIN internal_production_owner_reservations_v1 claim_owner
+           ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+         JOIN internal_production_owner_reservations_v1 runtime_owner
+           ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
         WHERE attempt.attempt_id = $1`,
       [bound.attempt.attemptId],
     );
@@ -1591,6 +1615,8 @@ describe("v3 recovery lifecycle reconciler", () => {
       story_claimed_by: null,
       step_status: "running",
       current_story_id: null,
+      claim_owner_state: "closed",
+      runtime_owner_state: "closed",
     });
     const replay = await reconciler.reconcileActive(
       { runId: fixture.runId },

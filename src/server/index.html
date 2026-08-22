@@ -475,7 +475,7 @@ async function loadWorkflows() {
     try {
       for (const w of workflows) {
         const runs = await fetchJSON('/api/runs?workflow=' + w.id);
-        const active = runs.find(r => r.status === 'running' || r.status === 'pending');
+        const active = runs.find(r => r.operationalActive === true);
         if (active) { sel.value = w.id; selectWorkflow(w.id); break; }
       }
     } catch {}
