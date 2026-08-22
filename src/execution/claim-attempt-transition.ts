@@ -4,6 +4,7 @@ import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   closeInternalProductionOwnerReservationV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
   type PgTransactionSql,
 } from "../db-pg.js";
 import type { TerminalAttemptDispositionV1 } from "./schemas/execution-attempt-v1.js";
@@ -643,7 +644,26 @@ export async function closeClaimAndBoundAttemptInTransaction(
       [input.claimId, input.outcome, input.abandoned ?? true, now, input.diagnostic],
     );
     if (closed.length !== 1) throw new Error("CLAIM_LIFECYCLE_CAS_LOST");
-    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(transaction, closed[0]!.id);
+    const attemptClose = attempt
+      ? await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { attemptId: attempt.attempt_id },
+        )
+      : undefined;
+    const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction as PgTransactionSql,
+      { claimIdText: closed[0]!.id },
+    );
+    if (attemptClose) {
+      await closeInternalProductionOwnerReservationV1(
+        transaction as PgTransactionSql,
+        attemptClose,
+      );
+    }
+    await closeInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      claimClose,
+    );
 
   return {
     status: "closed" as const,
@@ -951,7 +971,26 @@ export async function completeStoryClaimAndBoundAttempt(
       [envelope.claimId, now, (input.diagnostic || "Exact story claim completed").slice(0, 1_000)],
     );
     if (closed.length !== 1) throw new Error("STORY_COMPLETION_CLAIM_CAS_LOST");
-    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(transaction, closed[0]!.id);
+    const attemptClose = envelope.attempt
+      ? await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { attemptId: envelope.attempt.attemptId },
+        )
+      : undefined;
+    const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+      transaction as PgTransactionSql,
+      { claimIdText: closed[0]!.id },
+    );
+    if (attemptClose) {
+      await closeInternalProductionOwnerReservationV1(
+        transaction as PgTransactionSql,
+        attemptClose,
+      );
+    }
+    await closeInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      claimClose,
+    );
 
     if (input.runContextJson !== undefined) {
       if (input.runContextJson.length > 16_000_000

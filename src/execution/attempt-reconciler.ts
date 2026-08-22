@@ -1,6 +1,11 @@
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import { createAttemptRepository } from "./attempt-repository.js";
 import type {
   ExecutionAttemptV1,
@@ -269,6 +274,16 @@ async function completeTerminalAttemptForRecovery(
         runtimeQuiesced,
       ],
     );
+    if (rows.length === 1) {
+      const terminalClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        transaction as PgTransactionSql,
+        { attemptId: rows[0]!.attempt_id },
+      );
+      await closeInternalProductionOwnerReservationV1(
+        transaction as PgTransactionSql,
+        terminalClose,
+      );
+    }
     return rows.length === 1
       ? { status: "completed" as const }
       : { status: "stale_fence" as const };

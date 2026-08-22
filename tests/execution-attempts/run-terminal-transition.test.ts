@@ -23,6 +23,16 @@ import {
 } from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
+import {
   transitionRunToTerminal,
   transitionRunToTerminalInTransaction,
 } from "../../src/execution/run-terminal-transition.js";
@@ -90,12 +100,28 @@ async function seedActiveStory(database: Awaited<ReturnType<typeof createIsolate
     VALUES
       (${storyDbId}, ${runId}, 1, 'US-002', 'Story', 'running', 'feature-dev_developer', 1)
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-    VALUES (${runId}, 'implement', 'US-002', 'feature-dev_developer', NOW())
-    RETURNING id::integer AS id
-  `;
-  return { stepDbId, storyDbId, claimId: claims[0]!.id };
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      birth,
+      {
+        runId,
+        workflowStepId: "implement",
+        storyId: "US-002",
+        claimAgentId: "feature-dev_developer",
+        claimedAt: new Date(),
+      },
+    );
+  }) as number;
+  return { stepDbId, storyDbId, claimId };
 }
 
 async function seedActiveRecovery(
@@ -186,6 +212,128 @@ async function seedActiveRecovery(
 }
 
 describe("canonical run terminal owner", () => {
+  it("keeps attempt birth, recovery pair publication, m33 use, and terminal closes in the exact Task 4 inventory", async () => {
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const productionPaths = [
+      "../../src/execution/attempt-repository.ts",
+      "../../src/execution/attempt-reconciler.ts",
+      "../../src/execution/claim-attempt-transition.ts",
+      "../../src/execution/pre-dispatch-withdrawal-authority.ts",
+      "../../src/execution/run-terminal-transition.ts",
+      "../../src/recovery/v3-downstream-evidence-publication.ts",
+      "../../src/recovery/v3-evidence-only-publication.ts",
+      "../../src/recovery/v3-evidence-only-worker.ts",
+      "../../src/recovery/v3-recovery-lifecycle-reconciler.ts",
+    ] as const;
+    const sources = await Promise.all(productionPaths.map(async (relativePath) => ({
+      relativePath,
+      source: await readFile(path.resolve(testDirectory, relativePath), "utf8"),
+    })));
+    const writerInventory = [
+      ["../../src/execution/attempt-repository.ts", "async complete(input:"],
+      ["../../src/execution/attempt-reconciler.ts", "async function completeTerminalAttemptForRecovery("],
+      ["../../src/execution/claim-attempt-transition.ts", "export async function closeClaimAndBoundAttemptInTransaction("],
+      ["../../src/execution/claim-attempt-transition.ts", "export async function completeStoryClaimAndBoundAttempt("],
+      ["../../src/execution/pre-dispatch-withdrawal-authority.ts", "export async function withdrawPreDispatchClaimInTransaction("],
+      ["../../src/execution/run-terminal-transition.ts", "export async function transitionRunToTerminalInTransaction("],
+      ["../../src/recovery/v3-downstream-evidence-publication.ts", "async complete(input:"],
+      ["../../src/recovery/v3-evidence-only-publication.ts", "async completeAttempt(input:"],
+      ["../../src/recovery/v3-evidence-only-worker.ts", "async function quarantineDelivery("],
+      ["../../src/recovery/v3-recovery-lifecycle-reconciler.ts", "async function blockExpiredEvidenceAttempt("],
+      ["../../src/recovery/v3-recovery-lifecycle-reconciler.ts", "async function blockExpiredModelAttempt("],
+    ] as const;
+    const terminalDispositionUpdate = /UPDATE execution_attempts[\s\S]{0,250}?SET disposition = (?:\$\d+|'(?:produced_delta|already_satisfied|verified|no_progress|failed|inconclusive)')/g;
+    const resolverSite = /await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1\(/g;
+    const assertExactInventory = (candidateSources: ReadonlyArray<Readonly<{
+      relativePath: string;
+      source: string;
+    }>>): void => {
+      assert.equal(
+        candidateSources.reduce((total, item) => total + (item.source.match(resolverSite)?.length ?? 0), 0),
+        11,
+        "the declared Task 4 inventory is the total resolver-site authority",
+      );
+      assert.equal(
+        candidateSources.reduce((total, item) => total + (item.source.match(terminalDispositionUpdate)?.length ?? 0), 0),
+        11,
+        "the declared Task 4 inventory is the total terminal disposition UPDATE authority",
+      );
+    };
+    assertExactInventory(sources);
+    for (const [relativePath, writerMarker] of writerInventory) {
+      const source = sources.find((item) => item.relativePath === relativePath)?.source;
+      assert.ok(source, relativePath);
+      const writerStart = source.indexOf(writerMarker);
+      assert.notEqual(writerStart, -1, `${relativePath}:${writerMarker}`);
+      const nextWriter = source.indexOf("\nasync function ", writerStart + writerMarker.length);
+      const nextExport = source.indexOf("\nexport async function ", writerStart + writerMarker.length);
+      const boundaries = [nextWriter, nextExport].filter((value) => value > writerStart);
+      const writerEnd = boundaries.length > 0 ? Math.min(...boundaries) : source.length;
+      const body = source.slice(writerStart, writerEnd);
+      assert.match(
+        body,
+        /await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1\(/,
+        `${relativePath}:${writerMarker} must resolve its own terminal attempt owner`,
+      );
+      assert.match(
+        body,
+        /await closeInternalProductionOwnerReservationV1\(/,
+        `${relativePath}:${writerMarker} must close its own terminal attempt owner`,
+      );
+    }
+    const undeclaredUpdateOnly = sources.map((item, index) => index === 0 ? {
+      ...item,
+      source: `${item.source}\nasync function undeclaredUpdateOnly(transaction: PgTransactionSql) {\n  await transaction.unsafe(\`UPDATE execution_attempts SET disposition = 'already_satisfied' WHERE attempt_id = 'ATT_undeclared'\`);\n}\n`,
+    } : item);
+    assert.throws(
+      () => assertExactInventory(undeclaredUpdateOnly),
+      /total terminal disposition UPDATE authority/,
+    );
+    const undeclaredResolverOnly = sources.map((item, index) => index === 0 ? {
+      ...item,
+      source: `${item.source}\nasync function undeclaredResolverOnly(transaction: PgTransactionSql) {\n  await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(transaction, { attemptId: 'ATT_undeclared' });\n}\n`,
+    } : item);
+    assert.throws(
+      () => assertExactInventory(undeclaredResolverOnly),
+      /total resolver-site authority/,
+    );
+    const count = (source: string, expression: RegExp): number => source.match(expression)?.length ?? 0;
+    assert.deepEqual(
+      sources.filter((item) => item.source.includes("INSERT INTO execution_attempts"))
+        .map((item) => item.relativePath),
+      ["../../src/execution/attempt-repository.ts"],
+    );
+    assert.deepEqual(
+      sources.filter((item) => /SET state = 'attempt_reserved',\s+claim_id =/m.test(item.source))
+        .map((item) => item.relativePath),
+      ["../../src/execution/attempt-repository.ts"],
+    );
+    assert.deepEqual(
+      sources.filter((item) => item.source.includes("internal_production_v3_recovery_claim_publications_v1"))
+        .map((item) => item.relativePath),
+      [
+        "../../src/execution/attempt-repository.ts",
+        "../../src/recovery/v3-evidence-only-publication.ts",
+        "../../src/recovery/v3-recovery-lifecycle-reconciler.ts",
+      ],
+    );
+    const ordinary = sources.find((item) => item.relativePath.endsWith("v3-downstream-evidence-publication.ts"))!.source;
+    assert.equal(ordinary.includes("recovery_dispatch_deliveries"), false);
+    assert.equal(ordinary.includes("internal_production_v3_recovery_claim_publications_v1"), false);
+    assert.equal(ordinary.includes("recoveryDispatchId:"), false);
+    const evidenceOnly = sources.find((item) => item.relativePath.endsWith("v3-evidence-only-publication.ts"))!.source;
+    assert.equal(count(evidenceOnly, /internal_production_v3_recovery_claim_publications_v1/g), 1);
+    assert.match(evidenceOnly, /runtime_count[\s\S]*publication_count[\s\S]*reserveAttemptInTransaction/);
+    const lifecycle = sources.find((item) => item.relativePath.endsWith("v3-recovery-lifecycle-reconciler.ts"))!.source;
+    const expiryWriter = lifecycle.slice(
+      lifecycle.indexOf("async function rollbackUnreservedPublication"),
+      lifecycle.indexOf("async function advanceDeliveryRunning"),
+    );
+    assert.match(expiryWriter, /state = 'blocked'/);
+    assert.equal(expiryWriter.includes("resetExpiredLease("), false);
+    assert.match(expiryWriter, /claim_id IS NULL[\s\S]*attempt_id IS NULL|attempt_id IS NULL[\s\S]*claim_id IS NULL/);
+  });
+
   it("terminal transition closes the authenticated run owner in the same transaction", async () => {
     const source = await readFile(path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -199,6 +347,27 @@ describe("canonical run terminal owner", () => {
     const close = source.indexOf("closeInternalProductionOwnerReservationV1(ownerAdmissionSql", terminalPair);
     const reopen = source.indexOf("resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerAdmissionSql", close);
     assert.ok(runUpdate >= 0 && terminalPair > runUpdate && close > terminalPair && reopen > close);
+    const attemptUpdate = source.indexOf("UPDATE execution_attempts");
+    const claimUpdate = source.indexOf("UPDATE claim_log", attemptUpdate);
+    const attemptResolver = source.indexOf(
+      "resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(",
+      claimUpdate,
+    );
+    const claimResolver = source.indexOf(
+      "resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(",
+      attemptResolver,
+    );
+    const attemptClose = source.indexOf("for (const terminalClose of attemptCloses)", claimResolver);
+    const claimClose = source.indexOf("for (const terminalClose of claimCloses)", attemptClose);
+    assert.ok(
+      attemptUpdate >= 0
+      && claimUpdate > attemptUpdate
+      && attemptResolver > claimUpdate
+      && claimResolver > attemptResolver
+      && attemptClose > claimResolver
+      && claimClose > attemptClose,
+      "claim and attempt must both be terminal before either resolver and both closes must precede commit",
+    );
     const db = await import("../../src/db-pg.js");
     assert.equal("createInternalProductionWorkflowRunTerminalOwnerAuthorityV1" in db, false);
   });
@@ -260,6 +429,160 @@ describe("canonical run terminal owner", () => {
         attempt_disposition: "claimed",
       });
       assert.equal(state[0]!.meta, null);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("terminalizes a drained failure and rolls every owner mutation back when attempt close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-drained-owner-close";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: runId },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+        });
+      });
+      const { stepDbId, storyDbId, claimId } = await seedActiveStory(database, runId);
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-drained-owner-close",
+        fenceToken: () => "9".repeat(64),
+      });
+      const reserved = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      assert.equal(reserved.status, "reserved");
+      const sessionId = "RTS_run-terminal-drained-owner-close";
+      const sessions = createRuntimeSessionRepository(database.sql);
+      await sessions.reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-002",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "feature-dev_developer",
+        runtimeKind: "local_process",
+        ownerInstanceId: "run-terminal-drained-owner",
+      });
+      await sessions.bindAttempt({
+        sessionId,
+        attemptId: reserved.attempt.attemptId,
+        ownerInstanceId: "run-terminal-drained-owner",
+      });
+      await database.sql`
+        UPDATE runtime_sessions
+           SET state='drained', drained_at=NOW(), updated_at=NOW()
+         WHERE session_id=${sessionId}
+      `;
+      const requestId = "RTR_run-terminal-drained-owner-close";
+      await database.sql`UPDATE runs SET status='failing' WHERE id=${runId}`;
+      await database.sql`
+        INSERT INTO run_termination_requests (
+          request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
+          diagnostic,evidence,created_at,updated_at
+        ) VALUES (
+          ${requestId},${runId},'failed','drained','task4-test',NOW(),NOW(),
+          'exact drained failure owner','{}'::jsonb,NOW(),NOW()
+        )
+      `;
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_run_terminal_attempt_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='execution-attempt' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_RUN_TERMINAL_ATTEMPT_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_run_terminal_attempt_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_run_terminal_attempt_close_v1()
+      `);
+      const terminate = () => transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "drained failure terminalization",
+        drainedTerminationRequestId: requestId,
+      });
+      await assert.rejects(terminate(), /TEST_RUN_TERMINAL_ATTEMPT_CLOSE_REJECTED/);
+      const rolledBack = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               claim.outcome AS claim_outcome,attempt.disposition AS attempt_disposition,
+               claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...rolledBack }, {
+        run_status: "failing",
+        request_state: "drained",
+        claim_outcome: null,
+        attempt_disposition: "claimed",
+        claim_owner_state: "bound",
+        attempt_owner_state: "bound",
+      });
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_run_terminal_attempt_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      const result = await terminate();
+      assert.equal(result.status, "failed");
+      const terminal = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        claim_outcome: string;
+        attempt_disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               claim.outcome AS claim_outcome,attempt.disposition AS attempt_disposition,
+               claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...terminal }, {
+        run_status: "failed",
+        request_state: "terminalized",
+        claim_outcome: "failed",
+        attempt_disposition: "failed",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
+      });
     } finally {
       await database.cleanup();
     }

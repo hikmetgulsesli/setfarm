@@ -5,6 +5,8 @@ import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   closeInternalProductionOwnerReservationV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1,
   type PgTransactionSql,
 } from "../db-pg.js";
 import {
@@ -12,8 +14,11 @@ import {
   releaseReservedRuntimeSessionInTransaction,
 } from "../execution/runtime-session-repository.js";
 import { enqueueOperationalOutboxEventInTransaction } from "../execution/operational-outbox-repository.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  V3RecoveryClaimHandoffV1Schema,
+  v3RecoveryStoryLockIdentity,
+} from "./v3-recovery-claim-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -121,6 +126,35 @@ type ChainRow = Readonly<{
   source_sha: string;
   source_tree_hash: string;
   recovery_state_version: number;
+  finding_ids: unknown;
+  expected_delta: unknown;
+  allowed_paths: unknown;
+  evidence_plan: unknown;
+  evidence_plan_artifact_hash: string | null;
+}>;
+
+type RecoveryClaimPublicationLifecycleRow = Readonly<{
+  claim_id: string;
+  runtime_session_id: string;
+  run_id: string;
+  step_db_id: string;
+  workflow_step_id: string;
+  story_db_id: string;
+  story_id: string;
+  story_index: number;
+  recovery_case_id: string;
+  revision_id: string;
+  dispatch_id: string;
+  status: string;
+  handoff_canonical_json: string;
+  handoff_hash: string;
+  bound_at: Date | string;
+  bound_matches_claim: boolean;
+  bound_matches_story: boolean;
+  bound_not_after_runtime_creation: boolean;
+  runtime_heartbeat_matches_creation: boolean;
+  delivery_authorization_matches_dispatch: boolean;
+  delivery_lease_matches_handoff: boolean | null;
 }>;
 
 type RuntimeRow = Readonly<{
@@ -137,6 +171,7 @@ type RuntimeRow = Readonly<{
   state: string;
   created_at: Date | string;
   heartbeat_at: Date | string;
+  heartbeat_matches_created_at: boolean;
 }>;
 
 type ClaimRow = Readonly<{
@@ -185,6 +220,7 @@ type StoryRow = Readonly<{
   id: string;
   run_id: string;
   story_id: string;
+  story_index: number;
   status: string;
   claimed_by: string | null;
   claimed_at: Date | string | null;
@@ -365,7 +401,12 @@ async function loadExactChain(
             revision.finding_set_hash,
             revision.source_sha,
             revision.source_tree_hash,
-            recovery_case.state_version AS recovery_state_version
+            recovery_case.state_version AS recovery_state_version,
+            revision.finding_ids,
+            revision.expected_delta,
+            revision.allowed_paths,
+            revision.evidence_plan,
+            revision.evidence_plan_artifact_hash
        FROM recovery_dispatch_deliveries delivery
        JOIN recovery_revision_dispatches dispatch
          ON dispatch.dispatch_id = delivery.dispatch_id
@@ -426,7 +467,7 @@ async function loadExactChain(
           OR (dispatch.dispatch_class = 'supervisor_repair' AND revision.owner = 'supervisor')
           OR (dispatch.dispatch_class = 'evidence_only' AND revision.owner IN ('supervisor', 'infrastructure'))
         )
-      FOR UPDATE OF recovery_case`,
+      FOR UPDATE OF recovery_case, revision, dispatch`,
     [
       delivery.dispatch_id,
       delivery.recovery_case_id,
@@ -438,6 +479,115 @@ async function loadExactChain(
   return rows.length === 1 ? rows[0] : undefined;
 }
 
+async function lockAndAuthenticatePreBirthModelPublication(
+  sql: TransactionSql,
+  input: Readonly<{
+    delivery: DeliveryRow;
+    chain: ChainRow;
+    runtime: RuntimeRow;
+    claim: ClaimRow;
+    step: StepRow;
+    story: StoryRow;
+  }>,
+): Promise<boolean> {
+  const exactClaimId = claimId(input.claim.id);
+  if (!exactClaimId) return false;
+  const rows = await sql.unsafe<RecoveryClaimPublicationLifecycleRow[]>(
+    `SELECT publication.claim_id::text, publication.runtime_session_id,
+            publication.run_id, publication.step_db_id, publication.workflow_step_id,
+            publication.story_db_id, publication.story_id, publication.story_index,
+            publication.recovery_case_id, publication.revision_id,
+            publication.dispatch_id, publication.status,
+            publication.handoff_canonical_json, publication.handoff_hash, publication.bound_at,
+            publication.bound_at = claim.claimed_at AS bound_matches_claim,
+            publication.bound_at = story.claimed_at AS bound_matches_story,
+            publication.bound_at <= runtime.created_at AS bound_not_after_runtime_creation,
+            runtime.heartbeat_at = runtime.created_at AS runtime_heartbeat_matches_creation,
+            delivery.authorized_at = dispatch.authorized_at AS delivery_authorization_matches_dispatch,
+            delivery.lease_expires_at = (
+              publication.handoff_canonical_json::jsonb #>> '{lease,expiresAt}'
+            )::timestamptz AS delivery_lease_matches_handoff
+       FROM internal_production_v3_recovery_claim_publications_v1 publication
+       JOIN runtime_sessions runtime
+         ON runtime.session_id=publication.runtime_session_id
+        AND runtime.claim_id=publication.claim_id
+       JOIN claim_log claim ON claim.id=publication.claim_id
+       JOIN stories story ON story.id=publication.story_db_id
+       JOIN recovery_dispatch_deliveries delivery
+         ON delivery.dispatch_id=publication.dispatch_id
+        AND delivery.revision_id=publication.revision_id
+       JOIN recovery_revision_dispatches dispatch
+         ON dispatch.dispatch_id=delivery.dispatch_id
+        AND dispatch.revision_id=delivery.revision_id
+      WHERE publication.claim_id = $1
+        AND publication.runtime_session_id = $2
+        AND publication.dispatch_id = $3
+        AND publication.revision_id = $4
+      FOR UPDATE OF publication, runtime, claim, story, delivery, dispatch`,
+    [exactClaimId, input.runtime.session_id, input.delivery.dispatch_id, input.delivery.revision_id],
+  );
+  const row = rows[0];
+  if (rows.length !== 1 || !row) return false;
+  let handoff: ReturnType<typeof V3RecoveryClaimHandoffV1Schema.parse>;
+  try {
+    handoff = V3RecoveryClaimHandoffV1Schema.parse(JSON.parse(row.handoff_canonical_json));
+  } catch {
+    return false;
+  }
+  const canonicalDirective = {
+    packetHash: input.chain.packet_hash,
+    contractSliceHash: input.chain.contract_slice_hash,
+    sourceRevision: {
+      sha: input.chain.source_sha,
+      treeHash: input.chain.source_tree_hash,
+    },
+    findingSetHash: input.chain.finding_set_hash,
+    findingIds: input.chain.finding_ids,
+    expectedDelta: input.chain.expected_delta,
+    allowedPaths: input.chain.allowed_paths,
+    evidencePlan: input.chain.evidence_plan,
+    ...(input.chain.evidence_plan_artifact_hash
+      ? { evidencePlanArtifactHash: input.chain.evidence_plan_artifact_hash }
+      : {}),
+  };
+  return row.claim_id === String(exactClaimId)
+    && row.runtime_session_id === input.runtime.session_id
+    && row.run_id === input.delivery.run_id
+    && row.step_db_id === input.step.id
+    && row.workflow_step_id === "implement"
+    && row.story_db_id === input.story.id
+    && row.story_id === input.delivery.story_id
+    && row.story_index === input.story.story_index
+    && row.recovery_case_id === input.delivery.recovery_case_id
+    && row.revision_id === input.delivery.revision_id
+    && row.dispatch_id === input.delivery.dispatch_id
+    && row.status === handoff.status
+    && row.handoff_canonical_json === canonicalJsonStringify(handoff)
+    && row.handoff_hash === hashCanonicalJson(handoff)
+    && row.bound_matches_claim
+    && row.bound_matches_story
+    && row.bound_not_after_runtime_creation
+    && row.runtime_heartbeat_matches_creation
+    && row.delivery_authorization_matches_dispatch
+    && row.delivery_lease_matches_handoff === true
+    && handoff.status !== "attempt_bound_reissue"
+    && handoff.attemptBinding === undefined
+    && handoff.runId === input.delivery.run_id
+    && handoff.storyId === input.delivery.story_id
+    && handoff.recoveryCaseId === input.delivery.recovery_case_id
+    && handoff.revisionId === input.delivery.revision_id
+    && handoff.dispatchId === input.delivery.dispatch_id
+    && handoff.dispatchClass === input.chain.dispatch_class
+    && handoff.recoveryOwner === input.chain.recovery_owner
+    && handoff.lease.ownerInstanceId === input.delivery.owner_instance_id
+    && handoff.lease.leaseToken === input.delivery.lease_token
+    && canonicalJsonStringify(handoff.directive) === canonicalJsonStringify(canonicalDirective)
+    && claimId(input.runtime.claim_id) === exactClaimId
+    && input.runtime.run_id === row.run_id
+    && input.runtime.story_id === row.story_id
+    && input.runtime.attempt_id === null;
+}
+
 async function lockRuntimes(
   sql: TransactionSql,
   candidate: CandidateRow,
@@ -445,7 +595,8 @@ async function lockRuntimes(
   return sql.unsafe<RuntimeRow[]>(
     `SELECT session_id, run_id, step_db_id, workflow_step_id, story_db_id,
             story_id, claim_id, attempt_id, claim_agent_id, owner_instance_id,
-            state, created_at, heartbeat_at
+            state, created_at, heartbeat_at,
+            heartbeat_at = created_at AS heartbeat_matches_created_at
       FROM runtime_sessions
       WHERE run_id = $1
         AND story_id = $2
@@ -477,9 +628,9 @@ async function lockOpenClaims(
 async function lockBoundClaim(
   sql: TransactionSql,
   candidate: CandidateRow,
-  delivery: DeliveryRow,
+  attempt: AttemptRow,
 ): Promise<ClaimRow | undefined> {
-  const exactClaimId = claimId(delivery.claim_id);
+  const exactClaimId = claimId(attempt.claim_id);
   if (!exactClaimId) return undefined;
   const rows = await sql.unsafe<ClaimRow[]>(
     `SELECT id::text, run_id, step_id, story_id, agent_id, claimed_at, outcome
@@ -538,7 +689,7 @@ async function lockStories(
   candidate: CandidateRow,
 ): Promise<StoryRow[]> {
   return sql.unsafe<StoryRow[]>(
-    `SELECT id, run_id, story_id, status, claimed_by, claimed_at, claim_generation
+    `SELECT id, run_id, story_id, story_index, status, claimed_by, claimed_at, claim_generation
        FROM stories
       WHERE run_id = $1 AND story_id = $2
       ORDER BY id
@@ -596,7 +747,6 @@ function exactPublicationOwner(input: Readonly<{
   const deliveryUpdatedAt = millis(input.delivery.updated_at);
   const claimAt = millis(input.claim.claimed_at);
   const runtimeCreatedAt = millis(input.runtime.created_at);
-  const runtimeHeartbeatAt = millis(input.runtime.heartbeat_at);
   const deliveryExpiresAt = millis(input.delivery.lease_expires_at);
   return expectedClaimId !== undefined
     && expectedClaimId === actualClaimId
@@ -608,6 +758,7 @@ function exactPublicationOwner(input: Readonly<{
     && input.runtime.story_db_id === input.story.id
     && input.runtime.story_id === input.candidate.story_id
     && input.runtime.attempt_id === null
+    && input.runtime.heartbeat_matches_created_at
     && input.runtime.claim_agent_id === input.claim.agent_id
     && input.claim.run_id === input.candidate.run_id
     && input.claim.step_id === "implement"
@@ -616,14 +767,11 @@ function exactPublicationOwner(input: Readonly<{
     && input.story.status === "running"
     && input.story.claimed_by === input.claim.agent_id
     && input.story.claimed_at !== null
-    && millis(input.story.claimed_at) === claimAt
     // Identity comes from the atomic claim/runtime/delivery fences above. DB
     // wall-clock reads within that transaction need only preserve causality;
     // treating independent reads as an exact timestamp identity rejects valid
     // publications whenever clock_timestamp() advances between statements.
     && deliveryUpdatedAt <= claimAt
-    && claimAt <= runtimeCreatedAt
-    && runtimeCreatedAt === runtimeHeartbeatAt
     && runtimeCreatedAt <= deliveryExpiresAt
     && input.story.claim_generation > 0
     && input.step.status === "running"
@@ -640,7 +788,6 @@ function exactAttemptOwner(input: Readonly<{
   step: StepRow;
   story: StoryRow;
 }>): boolean {
-  const deliveryClaimId = claimId(input.delivery.claim_id);
   const runtimeClaimId = claimId(input.runtime.claim_id);
   const claimRowId = claimId(input.claim.id);
   const attemptClaimId = claimId(input.attempt.claim_id);
@@ -649,10 +796,10 @@ function exactAttemptOwner(input: Readonly<{
   const runtimeHeartbeatAt = millis(input.runtime.heartbeat_at);
   const deliveryStartedAt = millis(input.delivery.started_at);
   const deliveryExpiresAt = millis(input.delivery.lease_expires_at);
-  return deliveryClaimId !== undefined
-    && deliveryClaimId === runtimeClaimId
-    && deliveryClaimId === claimRowId
-    && deliveryClaimId === attemptClaimId
+  return runtimeClaimId !== undefined
+    && runtimeClaimId === claimRowId
+    && runtimeClaimId === attemptClaimId
+    && runtimeClaimId === claimId(input.delivery.claim_id)
     && input.delivery.attempt_id !== null
     && input.delivery.execution_slice_hash !== null
     && input.runtime.session_id.length > 0
@@ -705,12 +852,11 @@ function exactEvidenceOnlyAttemptOwner(input: Readonly<{
   step: StepRow;
   story: StoryRow;
 }>): boolean {
-  const deliveryClaimId = claimId(input.delivery.claim_id);
   const claimRowId = claimId(input.claim.id);
   const attemptClaimId = claimId(input.attempt.claim_id);
-  return deliveryClaimId !== undefined
-    && deliveryClaimId === claimRowId
-    && deliveryClaimId === attemptClaimId
+  return claimRowId !== undefined
+    && claimRowId === attemptClaimId
+    && claimRowId === claimId(input.delivery.claim_id)
     && input.delivery.owner_instance_id !== null
     && input.delivery.lease_token !== null
     && input.delivery.attempt_id === input.attempt.attempt_id
@@ -816,6 +962,7 @@ async function rollbackUnreservedPublication(
   sql: TransactionSql,
   input: Readonly<{
     delivery: DeliveryRow;
+    chain: ChainRow;
     runtime: RuntimeRow;
     claim: ClaimRow;
     step: StepRow;
@@ -825,7 +972,18 @@ async function rollbackUnreservedPublication(
 ): Promise<void> {
   const exactClaimId = claimId(input.claim.id);
   if (!exactClaimId) mutationFail("V3_RECOVERY_LIFECYCLE_CLAIM_ID_INVALID", "publication claim id is invalid");
-  const diagnostic = "V3 recovery publication expired before attempt reservation; exact no-spawn owner rolled back";
+  const diagnostic = "V3 recovery publication expired before attempt reservation; exact no-spawn owner closed and recovery blocked";
+  const decisionRef = hashCanonicalJson({
+    schema: "setfarm.v3-model-recovery-pre-birth-expiry-decision.v1",
+    dispatchId: input.delivery.dispatch_id,
+    revisionId: input.delivery.revision_id,
+    claimId: exactClaimId,
+    runtimeSessionId: input.runtime.session_id,
+    sourceRevision: {
+      sha: input.chain.source_sha,
+      treeHash: input.chain.source_tree_hash,
+    },
+  });
   const closed = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log
         SET outcome = 'infra_retry',
@@ -857,23 +1015,49 @@ async function rollbackUnreservedPublication(
   if (closed.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_CLAIM_CAS_LOST", "open publication claim changed before exact close");
   }
-  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: closed[0]!.id });
-  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
-
-  try {
-    await releaseReservedRuntimeSessionInTransaction(sql, {
-      sessionId: input.runtime.session_id,
-      claimId: exactClaimId,
-      ownerInstanceId: input.runtime.owner_instance_id,
+  const runtimeRows = await sql.unsafe<Array<{ session_id: string }>>(
+    `UPDATE runtime_sessions
+        SET state = 'released',
+            drained_at = $5,
+            released_at = $5,
+            diagnostic = $6,
+            drain_evidence = $7::text::jsonb,
+            state_version = state_version + 1,
+            updated_at = $5
+      WHERE session_id = $1
+        AND claim_id = $2
+        AND owner_instance_id = $3
+        AND state = 'reserved'
+        AND attempt_id IS NULL
+        AND heartbeat_at = $4
+      RETURNING session_id`,
+    [
+      input.runtime.session_id,
+      exactClaimId,
+      input.runtime.owner_instance_id,
+      input.runtime.heartbeat_at,
+      input.now,
       diagnostic,
-      now: input.now,
-    });
-  } catch (error) {
-    mutationFail(
-      "V3_RECOVERY_LIFECYCLE_RUNTIME_RELEASE_REJECTED",
-      error instanceof Error ? error.message : String(error),
-    );
+      JSON.stringify({
+        schema: "setfarm.no-spawn-release-evidence.v1",
+        observedAt: input.now.toISOString(),
+        sourceState: "reserved",
+      }),
+    ],
+  );
+  if (runtimeRows.length !== 1) {
+    mutationFail("V3_RECOVERY_LIFECYCLE_RUNTIME_RELEASE_REJECTED", "reserved publication runtime changed before exact terminalization");
   }
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { claimIdText: closed[0]!.id },
+  );
+  const runtimeClose = await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { sessionId: runtimeRows[0]!.session_id },
+  );
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, runtimeClose);
 
   const stories = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE stories
@@ -923,7 +1107,94 @@ async function rollbackUnreservedPublication(
     mutationFail("V3_RECOVERY_LIFECYCLE_STEP_CAS_LOST", "loop step changed before exact pointer clear");
   }
 
-  await resetExpiredLease(sql, input.delivery, input.now);
+  const terminalResult = {
+    schema: "setfarm.v3-model-recovery-pre-birth-expiry.v1",
+    dispatchId: input.delivery.dispatch_id,
+    revisionId: input.delivery.revision_id,
+    claimId: exactClaimId,
+    runtimeSessionId: input.runtime.session_id,
+    decisionRef,
+  };
+  const deliveries = await sql.unsafe<Array<{ dispatch_id: string }>>(
+    `UPDATE recovery_dispatch_deliveries
+        SET state = 'blocked',
+            terminal_result = $10::text::jsonb,
+            diagnostic = $11,
+            terminal_at = $12,
+            updated_at = $12
+      WHERE dispatch_id = $1
+        AND recovery_case_id = $2
+        AND revision_id = $3
+        AND run_id = $4
+        AND story_id = $5
+        AND state = 'leased'
+        AND owner_instance_id = $6
+        AND lease_token = $7
+        AND lease_expires_at = $8
+        AND lease_expires_at <= $12
+        AND attempt_id IS NULL
+        AND claim_id IS NULL
+        AND execution_slice_hash IS NULL
+        AND attempt_count = 0
+        AND started_at IS NULL
+        AND updated_at = $9
+      RETURNING dispatch_id`,
+    [
+      input.delivery.dispatch_id,
+      input.delivery.recovery_case_id,
+      input.delivery.revision_id,
+      input.delivery.run_id,
+      input.delivery.story_id,
+      input.delivery.owner_instance_id,
+      input.delivery.lease_token,
+      input.delivery.lease_expires_at,
+      input.delivery.updated_at,
+      JSON.stringify(terminalResult),
+      diagnostic,
+      input.now,
+    ],
+  );
+  if (deliveries.length !== 1) {
+    mutationFail("V3_RECOVERY_LIFECYCLE_PUBLICATION_DELIVERY_CAS_LOST", "expired publication delivery changed before bounded block");
+  }
+  const terminal = {
+    owner: input.chain.recovery_owner,
+    outcome: "blocked",
+    reasonCode: "operator_required",
+    evidenceBundleHashes: [],
+  };
+  const cases = await sql.unsafe<Array<{ recovery_case_id: string }>>(
+    `UPDATE recovery_cases
+        SET status = 'blocked',
+            terminal = $5::text::jsonb,
+            decision_refs = (
+              SELECT jsonb_agg(value ORDER BY value)
+                FROM (
+                  SELECT DISTINCT value
+                    FROM jsonb_array_elements_text(decision_refs || $6::text::jsonb) AS item(value)
+                ) canonical
+            ),
+            state_version = state_version + 1,
+            updated_at = $7
+      WHERE recovery_case_id = $1
+        AND current_revision_id = $2
+        AND state_version = $3
+        AND owner = $4
+        AND status = 'repairing'
+      RETURNING recovery_case_id`,
+    [
+      input.delivery.recovery_case_id,
+      input.delivery.revision_id,
+      input.chain.recovery_state_version,
+      input.chain.recovery_owner,
+      JSON.stringify(terminal),
+      JSON.stringify([decisionRef]),
+      input.now,
+    ],
+  );
+  if (cases.length !== 1) {
+    mutationFail("V3_RECOVERY_LIFECYCLE_PUBLICATION_CASE_CAS_LOST", "expired publication recovery case changed before bounded block");
+  }
 }
 
 async function advanceDeliveryRunning(
@@ -944,8 +1215,8 @@ async function advanceDeliveryRunning(
         AND lease_token = $7
         AND lease_expires_at = $8
         AND attempt_id = $9
-        AND claim_id = $10
-        AND execution_slice_hash = $11
+        AND claim_id = $11
+        AND execution_slice_hash = $10
         AND updated_at = $12
       RETURNING dispatch_id`,
     [
@@ -958,8 +1229,8 @@ async function advanceDeliveryRunning(
       delivery.lease_token,
       delivery.lease_expires_at,
       delivery.attempt_id,
-      delivery.claim_id,
       delivery.execution_slice_hash,
+      delivery.claim_id,
       delivery.updated_at,
       now,
     ],
@@ -1050,7 +1321,15 @@ async function blockExpiredEvidenceAttempt(
   if (claims.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_EVIDENCE_CLAIM_CAS_LOST", "expired evidence claim changed before bounded close");
   }
-  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: claims[0]!.id });
+  const attemptClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { attemptId: attempts[0]!.attempt_id },
+  );
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { claimIdText: claims[0]!.id },
+  );
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, attemptClose);
   await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
   const terminalResult = {
     schema: "setfarm.v3-evidence-only-expired-owner.v1",
@@ -1076,8 +1355,8 @@ async function blockExpiredEvidenceAttempt(
         AND lease_token = $8
         AND lease_expires_at = $9
         AND attempt_id = $10
-        AND claim_id = $11
-        AND execution_slice_hash = $12
+        AND claim_id = $12
+        AND execution_slice_hash = $11
       RETURNING dispatch_id`,
     [
       input.delivery.dispatch_id,
@@ -1090,8 +1369,8 @@ async function blockExpiredEvidenceAttempt(
       input.delivery.lease_token,
       input.delivery.lease_expires_at,
       input.attempt.attempt_id,
-      exactClaimId,
       input.delivery.execution_slice_hash,
+      exactClaimId,
       JSON.stringify(terminalResult),
       diagnostic,
       input.now,
@@ -1296,7 +1575,15 @@ async function blockExpiredModelAttempt(
   if (claims.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_MODEL_CLAIM_CAS_LOST", "expired model claim changed before bounded close");
   }
-  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: claims[0]!.id });
+  const attemptClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { attemptId: attempts[0]!.attempt_id },
+  );
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { claimIdText: claims[0]!.id },
+  );
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, attemptClose);
   await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
 
   try {
@@ -1393,8 +1680,8 @@ async function blockExpiredModelAttempt(
         AND lease_token = $8
         AND lease_expires_at = $9
         AND attempt_id = $10
-        AND claim_id = $11
-        AND execution_slice_hash = $12
+        AND claim_id = $12
+        AND execution_slice_hash = $11
       RETURNING dispatch_id`,
     [
       input.delivery.dispatch_id,
@@ -1407,8 +1694,8 @@ async function blockExpiredModelAttempt(
       input.delivery.lease_token,
       input.delivery.lease_expires_at,
       input.attempt.attempt_id,
-      exactClaimId,
       input.delivery.execution_slice_hash,
+      exactClaimId,
       JSON.stringify(terminalResult),
       diagnostic,
       input.now,
@@ -1509,8 +1796,33 @@ async function reconcileUnbound(
 
   const chain = await loadExactChain(sql, delivery);
   const completionPresent = await hasRuntimeCompletion(sql, runtimes);
-  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   const owner = exactStepAndStory(candidate, steps, stories);
+  const structurallyExactPublication = chain
+    && owner
+    && chain.dispatch_class !== "evidence_only"
+    && runtimes.length === 1
+    && runtimes[0]!.state === "reserved"
+    && claims.length === 1
+    && attempts.length === 0
+    && exactPublicationOwner({
+      candidate,
+      delivery,
+      runtime: runtimes[0]!,
+      claim: claims[0]!,
+      step: owner.step,
+      story: owner.story,
+    });
+  const authenticatedPublication = structurallyExactPublication
+    ? await lockAndAuthenticatePreBirthModelPublication(sql, {
+        delivery,
+        chain: chain!,
+        runtime: runtimes[0]!,
+        claim: claims[0]!,
+        step: owner.step,
+        story: owner.story,
+      })
+    : undefined;
+  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   if (!chain) {
     return quarantine(candidate, delivery.state, now,
       "V3_RECOVERY_LIFECYCLE_CHAIN_MISMATCH",
@@ -1602,23 +1914,15 @@ async function reconcileUnbound(
       "Runtime crossed or may have crossed the spawn boundary; no lease, claim, story or runtime state was changed");
   }
 
-  if (
-    chain.dispatch_class !== "evidence_only"
-    && runtimes.length === 1
-    && runtimes[0]!.state === "reserved"
-    && claims.length === 1
-    && attempts.length === 0
-    && exactPublicationOwner({
-      candidate,
-      delivery,
-      runtime: runtimes[0]!,
-      claim: claims[0]!,
-      step: owner.step,
-      story: owner.story,
-    })
-  ) {
+  if (structurallyExactPublication) {
+    if (!authenticatedPublication) {
+      return quarantine(candidate, delivery.state, now,
+        "V3_RECOVERY_LIFECYCLE_PUBLICATION_AUTHORITY_MISMATCH",
+        "Immutable recovery publication or its exact claim/runtime/revision/dispatch handoff is absent or byte-inexact");
+    }
     await rollbackUnreservedPublication(sql, {
       delivery,
+      chain,
       runtime: runtimes[0]!,
       claim: claims[0]!,
       step: owner.step,
@@ -1627,9 +1931,9 @@ async function reconcileUnbound(
     });
     return event(candidate, delivery.state, now, {
       action: "rollback_unreserved_publication",
-      code: "V3_RECOVERY_LIFECYCLE_PUBLICATION_ROLLED_BACK",
+      code: "V3_RECOVERY_LIFECYCLE_PUBLICATION_BLOCKED",
       mutated: true,
-      detail: "Exact reserved no-spawn runtime released, claim closed infra_retry, failed story restored and delivery reauthorized",
+      detail: "Byte-authenticated pre-birth publication expired; exact claim/runtime owners closed and the same delivery/case blocked without changing immutable publication evidence",
     });
   }
 
@@ -1649,9 +1953,9 @@ async function reconcileEvidenceOnlyAttemptBound(
   step: StepRow,
   story: StoryRow,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
-  const boundClaim = await lockBoundClaim(sql, candidate, delivery);
-  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   const attempt = attempts.length === 1 ? attempts[0] : undefined;
+  const boundClaim = attempt ? await lockBoundClaim(sql, candidate, attempt) : undefined;
+  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   if (
     runtimes.length !== 0
     || !attempt
@@ -1746,11 +2050,11 @@ async function reconcileAttemptBound(
   candidate: CandidateRow,
   snapshot: DeliveryRow,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
-  if (!snapshot.attempt_id || !claimId(snapshot.claim_id)) {
+  if (!snapshot.attempt_id || claimId(snapshot.claim_id) === undefined) {
     const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, snapshot.state, now,
       "V3_RECOVERY_LIFECYCLE_ATTEMPT_BINDING_MISSING",
-      "Attempt-bound delivery lacks its exact attempt or claim identity");
+      "Attempt-bound delivery lacks its exact claim and attempt identity pair");
   }
 
   // markRunning owns runtime -> attempt -> delivery. Use the same order so a

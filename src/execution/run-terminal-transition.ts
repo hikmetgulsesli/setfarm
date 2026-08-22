@@ -2,6 +2,8 @@ import type postgres from "postgres";
 
 import {
   closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionOwnerReservationCloseInTransactionV1,
   resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1,
 } from "../db-pg.js";
@@ -307,6 +309,7 @@ export async function transitionRunToTerminalInTransaction(
     : Object.freeze({ closedDeliveries: 0, closedRecoveryCases: 0, decisionRefs: [] });
 
   let closedAttempts = 0;
+  const terminalAttemptIds: string[] = [];
   if (run.protocol !== "legacy") {
     const claimsById = new Map(claims.map((claim) => [claim.id, claim]));
     for (const attempt of attempts) {
@@ -357,11 +360,13 @@ export async function transitionRunToTerminalInTransaction(
         ],
       );
       if (updated.length !== 1) throw new Error("RUN_TERMINAL_ATTEMPT_FENCE_LOST");
+      terminalAttemptIds.push(updated[0]!.attempt_id);
       closedAttempts += 1;
     }
   }
 
   let closedClaims = 0;
+  let terminalClaimIds: string[] = [];
   if (input.status !== "completed" && openClaims.length > 0) {
     const claimOutcome = input.status === "cancelled" ? "cancelled" : "failed";
     const closed = await sql.unsafe<Array<{ id: string }>>(
@@ -380,6 +385,42 @@ export async function transitionRunToTerminalInTransaction(
     );
     closedClaims = closed.length;
     if (closedClaims !== openClaims.length) throw new Error("RUN_TERMINAL_CLAIM_CAS_LOST");
+    terminalClaimIds = closed.map((claim) => claim.id);
+  }
+
+  const attemptCloses: Array<Awaited<ReturnType<
+    typeof resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1
+  >>> = [];
+  for (const attemptId of terminalAttemptIds) {
+    attemptCloses.push(
+      await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        sql as Parameters<typeof resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1>[0],
+        { attemptId },
+      ),
+    );
+  }
+  const claimCloses: Array<Awaited<ReturnType<
+    typeof resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1
+  >>> = [];
+  for (const claimIdText of terminalClaimIds) {
+    claimCloses.push(
+      await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        sql as Parameters<typeof resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1>[0],
+        { claimIdText },
+      ),
+    );
+  }
+  for (const terminalClose of attemptCloses) {
+    await closeInternalProductionOwnerReservationV1(
+      sql as Parameters<typeof closeInternalProductionOwnerReservationV1>[0],
+      terminalClose,
+    );
+  }
+  for (const terminalClose of claimCloses) {
+    await closeInternalProductionOwnerReservationV1(
+      sql as Parameters<typeof closeInternalProductionOwnerReservationV1>[0],
+      terminalClose,
+    );
   }
 
   let changedStories = 0;

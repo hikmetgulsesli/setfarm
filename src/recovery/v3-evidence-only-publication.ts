@@ -2,7 +2,11 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
-import type { PgTransactionSql } from "../db-pg.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import {
   reserveAttemptInTransaction,
   type AttemptReservationResult,
@@ -383,7 +387,7 @@ async function loadExactPublication(
         AND finding_set.source_sha = revision.source_sha
         AND finding_set.source_tree_hash = revision.source_tree_hash
         AND finding_set.finding_ids = revision.finding_ids
-      FOR UPDATE OF delivery, recovery_case, step_row, story_row`,
+      FOR UPDATE OF delivery, recovery_case, revision, dispatch, step_row, story_row`,
     [
       lease.dispatchId,
       lease.revisionId,
@@ -507,7 +511,7 @@ function assertBoundEvidenceAttempt(
     !attempt.claimId
     || !Number.isSafeInteger(claim)
     || claim !== attempt.claimId
-    || Number(row.delivery_claim_id) !== claim
+    || Number(row.delivery_claim_id) !== attempt.claimId
     || row.delivery_attempt_id !== attempt.attemptId
     || row.delivery_execution_slice_hash !== attempt.sliceHash
     || row.delivery_attempt_count !== 1
@@ -636,6 +640,43 @@ async function assertIndexedArtifacts(
   }
 }
 
+async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(
+  transaction: TransactionSql,
+  input: Readonly<{
+    claimId: number;
+    runId: string;
+    storyId: string;
+    dispatchId: string;
+  }>,
+): Promise<void> {
+  const rows = await transaction.unsafe<Array<{
+    runtime_count: number;
+    publication_count: number;
+  }>>(
+    `SELECT
+       (SELECT COUNT(*)::integer
+          FROM runtime_sessions runtime
+         WHERE runtime.claim_id = $1::bigint
+           AND runtime.run_id = $2
+           AND runtime.story_id = $3) AS runtime_count,
+       (SELECT COUNT(*)::integer
+          FROM internal_production_v3_recovery_claim_publications_v1 publication
+         WHERE publication.claim_id = $1::bigint
+            OR publication.dispatch_id = $4) AS publication_count`,
+    [input.claimId, input.runId, input.storyId, input.dispatchId],
+  );
+  if (
+    rows.length !== 1
+    || rows[0]!.runtime_count !== 0
+    || rows[0]!.publication_count !== 0
+  ) {
+    fail(
+      "V3_EVIDENCE_ONLY_PUBLICATION_MODEL_AUTHORITY_FORBIDDEN",
+      "evidence-only claim/dispatch identity must have no runtime session or migration-33 publication",
+    );
+  }
+}
+
 export function createV3EvidenceOnlyPublication(sql: Sql) {
   return Object.freeze({
     async reserve(
@@ -684,18 +725,6 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (openClaims.length > 0) {
           fail("V3_EVIDENCE_ONLY_PUBLICATION_OPEN_CLAIM_CONFLICT", "failed story already has an operational claim owner");
         }
-        const runtimes = await transaction.unsafe<Array<{ session_id: string }>>(
-          `SELECT session_id
-             FROM runtime_sessions
-            WHERE run_id = $1
-              AND story_id = $2
-              AND state <> 'released'
-            LIMIT 1 FOR UPDATE`,
-          [lease.runId, lease.storyId],
-        );
-        if (runtimes.length > 0) {
-          fail("V3_EVIDENCE_ONLY_PUBLICATION_RUNTIME_FORBIDDEN", "evidence-only publication never owns a model runtime session");
-        }
         await assertIndexedArtifacts(transaction, lease, prepared);
         const now = await readDatabaseWallClock(
           transaction,
@@ -723,6 +752,12 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
             claimedAt: now,
           },
         );
+        await assertNoModelPublicationForEvidenceOnlyClaimInTransaction(transaction, {
+          claimId,
+          runId: lease.runId,
+          storyId: lease.storyId,
+          dispatchId: lease.dispatchId,
+        });
         const reserved: AttemptReservationResult = await reserveAttemptInTransaction(transaction, {
           claimId,
           runId: lease.runId,
@@ -948,6 +983,14 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (completed.length !== 1) {
           fail("V3_EVIDENCE_ONLY_TERMINAL_ATTEMPT_CAS_LOST", "attempt changed before atomic evidence terminalization");
         }
+        const terminalClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { attemptId: completed[0]!.attempt_id },
+        );
+        await closeInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          terminalClose,
+        );
       });
     },
 
@@ -1036,7 +1079,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           !row
           || !Number.isSafeInteger(exactClaimId)
           || exactClaimId !== input.attempt.claimId
-          || Number(row.delivery_claim_id) !== exactClaimId
+          || Number(row.delivery_claim_id) !== input.attempt.claimId
           || row.delivery_attempt_id !== input.attempt.attemptId
           || millis(row.delivery_lease_expires_at) <= now.getTime()
           || !["running", "resuming"].includes(row.run_status)

@@ -6,7 +6,13 @@ import { after, before, describe, it } from "node:test";
 
 import { computeObservationRef, createEvidenceBundleV2 } from "../../src/evidence/evidence-bundle-v2.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
@@ -317,13 +323,27 @@ describe("v3 evidence-only recovery worker", () => {
       async loadOrReserveAttempt({ lease }): Promise<V3EvidenceOnlyAttemptContext> {
         let attempt;
         if (lease.mode === "fresh_execution") {
-          const claims = await database.sql.unsafe<Array<{ id: number }>>(
-            `INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-             VALUES ($1, 'implement', $2, $3)
-             RETURNING id::integer AS id`,
-            [lease.runId, lease.storyId, agentId],
-          );
-          const claimId = claims[0]!.id;
+          const claimId = await database.sql.begin(async (transaction) => {
+            const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+              "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+            );
+            const birth = await prepareInternalProductionClaimBirthV1(
+              transaction as PgTransactionSql,
+              "a-claim-v3-evidence-only-v1",
+              idRows,
+            );
+            return insertAndBindInternalProductionClaimBirthV1(
+              transaction as PgTransactionSql,
+              birth,
+              {
+                runId: lease.runId,
+                workflowStepId: "implement",
+                storyId: lease.storyId,
+                claimAgentId: agentId,
+                claimedAt: at(1_000),
+              },
+            );
+          });
           const reserved = await attempts.reserve({
             claimId,
             runId: lease.runId,
@@ -561,6 +581,9 @@ describe("v3 evidence-only recovery worker", () => {
       delivery_state: string;
       delivery_claim_id: string | number | null;
       delivery_attempt_id: string | null;
+      attempt_claim_id: string | number | null;
+      runtime_count: number;
+      publication_count: number;
       story_status: string;
       story_claimed_by: string | null;
     }>>(
@@ -572,6 +595,16 @@ describe("v3 evidence-only recovery worker", () => {
          delivery.state AS delivery_state,
          delivery.claim_id AS delivery_claim_id,
          delivery.attempt_id AS delivery_attempt_id,
+         (SELECT attempt.claim_id
+            FROM execution_attempts attempt
+           WHERE attempt.attempt_id = delivery.attempt_id) AS attempt_claim_id,
+         (SELECT COUNT(*)::integer
+            FROM runtime_sessions runtime
+           WHERE runtime.claim_id = delivery.claim_id) AS runtime_count,
+         (SELECT COUNT(*)::integer
+            FROM internal_production_v3_recovery_claim_publications_v1 publication
+           WHERE publication.claim_id = delivery.claim_id
+              OR publication.dispatch_id = delivery.dispatch_id) AS publication_count,
          story.status AS story_status,
          story.claimed_by AS story_claimed_by
        FROM recovery_dispatch_deliveries delivery
@@ -583,19 +616,37 @@ describe("v3 evidence-only recovery worker", () => {
       claims: rows[0]?.claims,
       attempts: rows[0]?.attempts,
       deliveryState: rows[0]?.delivery_state,
-      hasClaim: rows[0]?.delivery_claim_id !== null,
+      exactClaimPair: String(rows[0]?.delivery_claim_id) === String(rows[0]?.attempt_claim_id),
       hasAttempt: rows[0]?.delivery_attempt_id !== null,
+      runtimeCount: rows[0]?.runtime_count,
+      publicationCount: rows[0]?.publication_count,
       storyStatus: rows[0]?.story_status,
       storyClaimedBy: rows[0]?.story_claimed_by,
     }, {
       claims: 1,
       attempts: 1,
       deliveryState: "attempt_reserved",
-      hasClaim: true,
+      exactClaimPair: true,
       hasAttempt: true,
+      runtimeCount: 0,
+      publicationCount: 0,
       storyStatus: "failed",
       storyClaimedBy: null,
     });
+    await assert.rejects(
+      database.sql.unsafe(
+        "UPDATE recovery_dispatch_deliveries SET claim_id=NULL WHERE dispatch_id=$1",
+        [fixture.dispatch.dispatchId],
+      ),
+      /recovery_dispatch_deliveries_attempt_claim_check/,
+    );
+    await assert.rejects(
+      database.sql.unsafe(
+        "UPDATE recovery_dispatch_deliveries SET attempt_id=NULL WHERE dispatch_id=$1",
+        [fixture.dispatch.dispatchId],
+      ),
+      /recovery_dispatch_deliveries_attempt_claim_check/,
+    );
   });
 
   it("rolls back the operational claim when durable artifact publication is incomplete", async () => {
@@ -636,6 +687,220 @@ describe("v3 evidence-only recovery worker", () => {
     assert.equal(delivery?.state, "leased");
     assert.equal(delivery?.attemptId, undefined);
     assert.equal(delivery?.claimId, undefined);
+  });
+
+  it("rejects a positive model-publication candidate without parsing it and rolls child birth back", async () => {
+    const fixture = await setup({ workflowId: "workflow-evidence-positive-model-authority" });
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, dependencies({ fixture, verdict: "pass" }));
+    const acquired = await worker.acquireNext({
+      workflowId: fixture.workflowId,
+      ownerInstanceId: "evidence-positive-model-authority",
+      leaseMs: 60_000,
+    }, { now: at() });
+    assert.ok(acquired);
+    const lease = publicationLease(acquired);
+    const legacyClaims = await database.sql<Array<{ id: number }>>`
+      INSERT INTO claim_log (run_id,step_id,story_id,agent_id,claimed_at)
+      VALUES (${fixture.runId},'implement',${fixture.slice.storyId},'legacy-model-agent',${at(100)})
+      RETURNING id::integer AS id
+    `;
+    const legacyClaimId = legacyClaims[0]!.id;
+    const runtimeSessionId = `RTS_${"m".repeat(20)}-${sequence}`;
+    await database.sql`
+      UPDATE steps
+         SET status='running', current_story_id=${fixture.storyDbId}
+       WHERE id=${fixture.stepDbId}
+    `;
+    await database.sql`
+      UPDATE stories
+         SET status='running', claimed_by='legacy-model-agent', claimed_at=${at(100)}
+       WHERE id=${fixture.storyDbId}
+    `;
+    await createRuntimeSessionRepository(database.sql).reserve({
+      sessionId: runtimeSessionId,
+      runId: fixture.runId,
+      stepDbId: fixture.stepDbId,
+      workflowStepId: "implement",
+      storyDbId: fixture.storyDbId,
+      storyId: fixture.slice.storyId,
+      claimId: legacyClaimId,
+      claimAgentId: "legacy-model-agent",
+      runtimeAgentId: "legacy-model-runtime",
+      runtimeKind: "local_process",
+      ownerInstanceId: "legacy-model-owner",
+    });
+    await database.sql`
+      UPDATE steps
+         SET status='pending', current_story_id=NULL
+       WHERE id=${fixture.stepDbId}
+    `;
+    await database.sql`
+      UPDATE stories
+         SET status='failed', claimed_by=NULL, claimed_at=NULL
+       WHERE id=${fixture.storyDbId}
+    `;
+    await database.sql`
+      UPDATE claim_log
+         SET outcome='infra_retry', abandoned_at=${at(200)}, diagnostic='legacy positive candidate'
+       WHERE id=${legacyClaimId}
+    `;
+    await database.sql`
+      INSERT INTO internal_production_v3_recovery_claim_publications_v1 (
+        claim_id,runtime_session_id,run_id,step_db_id,workflow_step_id,
+        story_db_id,story_id,story_index,recovery_case_id,revision_id,
+        dispatch_id,status,handoff_canonical_json,handoff_hash,bound_at
+      ) VALUES (
+        ${legacyClaimId},${runtimeSessionId},${fixture.runId},${fixture.stepDbId},'implement',
+        ${fixture.storyDbId},${fixture.slice.storyId},1,${lease.recoveryCaseId},${lease.revisionId},
+        ${lease.dispatchId},'lease_acquired','{}',${"0".repeat(64)},${at(300)}
+      )
+    `;
+    const sliceRefKey = `SLICE_${sequence}_POSITIVE_MODEL`;
+    const planRefKey = `EVIDENCE_PLAN_${sequence}_POSITIVE_MODEL`;
+    await indexPublicationArtifacts({
+      runId: fixture.runId,
+      sliceHash: lease.contractSliceHash,
+      planHash: lease.priorEvidencePlanArtifactHash!,
+      sliceRefKey,
+      planRefKey,
+    });
+    const headBefore = await database.sql<Array<{ head_version: number }>>`
+      SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+    `;
+    await assert.rejects(
+      createV3EvidenceOnlyPublication(database.sql).reserve(lease, {
+        compilationReportHash: COMPILATION_REPORT_HASH,
+        sliceHash: lease.contractSliceHash,
+        sliceRefKey,
+        evidencePlanArtifactHash: lease.priorEvidencePlanArtifactHash!,
+        evidencePlanRefKey: planRefKey,
+        worktree: fixture.workdir,
+        branch: "story/evidence-positive-model-authority",
+        role: "evidence-orchestrator",
+        agentId: "setfarm-evidence-orchestrator",
+        evidenceRefs: [],
+      }, { now: at(1_000) }),
+      /V3_EVIDENCE_ONLY_PUBLICATION_MODEL_AUTHORITY_FORBIDDEN/,
+    );
+    const residue = await database.sql<Array<{
+      open_claims: number;
+      attempts: number;
+      delivery_state: string;
+      delivery_claim_id: string | null;
+      delivery_attempt_id: string | null;
+    }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM claim_log claim
+          WHERE claim.run_id=${fixture.runId}
+            AND claim.story_id=${fixture.slice.storyId}
+            AND claim.outcome IS NULL) AS open_claims,
+        (SELECT COUNT(*)::integer FROM execution_attempts attempt
+          WHERE attempt.recovery_dispatch_id=${lease.dispatchId}) AS attempts,
+        delivery.state AS delivery_state,
+        delivery.claim_id::text AS delivery_claim_id,
+        delivery.attempt_id AS delivery_attempt_id
+        FROM recovery_dispatch_deliveries delivery
+       WHERE delivery.dispatch_id=${lease.dispatchId}
+    `;
+    assert.deepEqual({ ...residue[0]! }, {
+      open_claims: 0,
+      attempts: 0,
+      delivery_state: "leased",
+      delivery_claim_id: null,
+      delivery_attempt_id: null,
+    });
+    const headAfter = await database.sql<Array<{ head_version: number }>>`
+      SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+    `;
+    assert.equal(headAfter[0]!.head_version, headBefore[0]!.head_version);
+  });
+
+  it("rolls claim, attempt, both owner births, and delivery pair back when the pair CAS is rejected", async () => {
+    const fixture = await setup({ workflowId: "workflow-evidence-pair-cas-rollback" });
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, dependencies({ fixture, verdict: "pass" }));
+    const acquired = await worker.acquireNext({
+      workflowId: fixture.workflowId,
+      ownerInstanceId: "evidence-pair-cas-rollback",
+      leaseMs: 60_000,
+    }, { now: at() });
+    assert.ok(acquired);
+    const lease = publicationLease(acquired);
+    const sliceRefKey = `SLICE_${sequence}_PAIR_ROLLBACK`;
+    const planRefKey = `EVIDENCE_PLAN_${sequence}_PAIR_ROLLBACK`;
+    await indexPublicationArtifacts({
+      runId: fixture.runId,
+      sliceHash: lease.contractSliceHash,
+      planHash: lease.priorEvidencePlanArtifactHash!,
+      sliceRefKey,
+      planRefKey,
+    });
+    const headBefore = await database.sql<Array<{ head_version: number }>>`
+      SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+    `;
+    const functionName = `test_reject_evidence_pair_${sequence}`;
+    const triggerName = `trg_reject_evidence_pair_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.dispatch_id='${lease.dispatchId}' AND NEW.state='attempt_reserved' THEN
+             RAISE EXCEPTION 'TEST_EVIDENCE_PAIR_CAS_REJECTED';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${triggerName}
+         BEFORE UPDATE ON recovery_dispatch_deliveries
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      await assert.rejects(
+        createV3EvidenceOnlyPublication(database.sql).reserve(lease, {
+          compilationReportHash: COMPILATION_REPORT_HASH,
+          sliceHash: lease.contractSliceHash,
+          sliceRefKey,
+          evidencePlanArtifactHash: lease.priorEvidencePlanArtifactHash!,
+          evidencePlanRefKey: planRefKey,
+          worktree: fixture.workdir,
+          branch: "story/evidence-pair-cas-rollback",
+          role: "evidence-orchestrator",
+          agentId: "setfarm-evidence-orchestrator",
+          evidenceRefs: [],
+        }, { now: at(1_000) }),
+        /TEST_EVIDENCE_PAIR_CAS_REJECTED/,
+      );
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON recovery_dispatch_deliveries`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+    const residue = await database.sql<Array<{
+      claims: number;
+      attempts: number;
+      delivery_state: string;
+      claim_id: string | null;
+      attempt_id: string | null;
+      head_version: number;
+    }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM claim_log claim
+          WHERE claim.run_id=${fixture.runId} AND claim.story_id=${fixture.slice.storyId}) AS claims,
+        (SELECT COUNT(*)::integer FROM execution_attempts attempt
+          WHERE attempt.recovery_dispatch_id=${lease.dispatchId}) AS attempts,
+        delivery.state AS delivery_state,delivery.claim_id::text,delivery.attempt_id,
+        head.head_version
+        FROM recovery_dispatch_deliveries delivery
+        JOIN internal_production_owner_admission_head_v1 head ON head.singleton=TRUE
+       WHERE delivery.dispatch_id=${lease.dispatchId}
+    `;
+    assert.deepEqual({ ...residue[0]! }, {
+      claims: 0,
+      attempts: 0,
+      delivery_state: "leased",
+      claim_id: null,
+      attempt_id: null,
+      head_version: headBefore[0]!.head_version,
+    });
   });
 
   it("rolls back attempt running when delivery running publication fails in the same transaction", async () => {
@@ -682,7 +947,7 @@ describe("v3 evidence-only recovery worker", () => {
     assert.equal((await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatch.dispatchId))?.state, "attempt_reserved");
   });
 
-  it("rolls back durable evidence artifacts when terminal attempt publication fails", async () => {
+  it("rolls back durable evidence and the terminal attempt when its exact owner close rejects", async () => {
     const fixture = await setup({ workflowId: "workflow-evidence-terminal-atomic" });
     const owner = await publishEvidenceOwner({
       fixture,
@@ -711,12 +976,10 @@ describe("v3 evidence-only recovery worker", () => {
       await database.sql.unsafe(
         `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
          BEGIN
-           IF NEW.disposition NOT IN ('claimed', 'running', 'superseded')
-              AND EXISTS (
-                SELECT 1 FROM recovery_dispatch_deliveries delivery
-                 WHERE delivery.attempt_id = NEW.attempt_id
-                   AND delivery.diagnostic = 'TEST_FAIL_TERMINAL'
-              ) THEN
+           IF NEW.category='execution-attempt' AND NEW.state='closed'
+              AND EXISTS (SELECT 1 FROM recovery_dispatch_deliveries delivery
+                           WHERE delivery.attempt_id=NEW.owner_key
+                             AND delivery.diagnostic='TEST_FAIL_TERMINAL') THEN
              RAISE EXCEPTION 'TEST_FORCED_TERMINAL_PUBLICATION_FAILURE';
            END IF;
            RETURN NEW;
@@ -725,7 +988,7 @@ describe("v3 evidence-only recovery worker", () => {
       );
       await database.sql.unsafe(
         `CREATE TRIGGER ${triggerName}
-         BEFORE UPDATE ON execution_attempts
+         BEFORE UPDATE ON internal_production_owner_reservations_v1
          FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
       );
       await assert.rejects(
@@ -739,7 +1002,7 @@ describe("v3 evidence-only recovery worker", () => {
         /TEST_FORCED_TERMINAL_PUBLICATION_FAILURE/,
       );
     } finally {
-      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON execution_attempts`);
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON internal_production_owner_reservations_v1`);
       await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
     }
     const bundles = await database.sql.unsafe<Array<{ count: number }>>(
@@ -787,6 +1050,29 @@ describe("v3 evidence-only recovery worker", () => {
       [owner.lease.dispatchId],
     );
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
+    const closeFunction = `test_reject_expired_evidence_close_${sequence}`;
+    const closeTrigger = `trg_reject_expired_evidence_close_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${closeFunction}() RETURNS trigger AS $$ BEGIN
+           IF NEW.category='execution-attempt' AND NEW.owner_key='${owner.attempt.attemptId}'
+              AND NEW.state='closed' THEN RAISE EXCEPTION 'TEST_EXPIRED_EVIDENCE_CLOSE_REJECTED'; END IF;
+           RETURN NEW;
+         END $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${closeTrigger} BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+         FOR EACH ROW EXECUTE FUNCTION ${closeFunction}()`,
+      );
+      await assert.rejects(
+        reconciler.reconcileActive({ runId: fixture.runId }),
+        /TEST_EXPIRED_EVIDENCE_CLOSE_REJECTED/,
+      );
+      assert.equal((await createAttemptRepository(database.sql).findById(owner.attempt.attemptId))?.disposition, "claimed");
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${closeTrigger} ON internal_production_owner_reservations_v1`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${closeFunction}()`);
+    }
     const reports = await Promise.all([
       reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("1900-01-01T00:00:00.000Z") }),
       reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("2999-01-01T00:00:00.000Z") }),
@@ -798,6 +1084,10 @@ describe("v3 evidence-only recovery worker", () => {
     );
     const attempt = await createAttemptRepository(database.sql).findById(owner.attempt.attemptId);
     assert.equal(attempt?.disposition, "inconclusive");
+    assert.equal((await database.sql.unsafe<Array<{ state: string }>>(
+      "SELECT state FROM internal_production_owner_reservations_v1 WHERE category='execution-attempt' AND owner_key=$1",
+      [owner.attempt.attemptId],
+    ))[0]?.state, "closed");
     const claims = await database.sql.unsafe<Array<{ outcome: string | null }>>(
       "SELECT outcome FROM claim_log WHERE id = $1",
       [owner.attempt.claimId!],
@@ -906,6 +1196,10 @@ describe("v3 evidence-only recovery worker", () => {
     assert.equal(delivery?.state, "succeeded");
     const attempt = await createAttemptRepository(database.sql).findById(result.attemptId);
     assert.equal(attempt?.disposition, "verified");
+    assert.equal((await database.sql.unsafe<Array<{ state: string }>>(
+      "SELECT state FROM internal_production_owner_reservations_v1 WHERE category='execution-attempt' AND owner_key=$1",
+      [result.attemptId],
+    ))[0]?.state, "closed");
     assert.deepEqual(attempt?.sourceAfter, SOURCE_REVISION);
     const claims = await database.sql.unsafe<Array<{ outcome: string | null }>>(
       "SELECT outcome FROM claim_log WHERE id = $1",
@@ -1056,10 +1350,77 @@ describe("v3 evidence-only recovery worker", () => {
       outcome: "infra_retry",
       source_after_sha: null,
     });
+    assert.equal((await database.sql.unsafe<Array<{ state: string }>>(
+      "SELECT owner.state FROM internal_production_owner_reservations_v1 owner JOIN execution_attempts attempt ON attempt.attempt_id=owner.owner_key WHERE owner.category='execution-attempt' AND attempt.recovery_dispatch_id=$1",
+      [fixture.dispatch.dispatchId],
+    ))[0]?.state, "closed");
     assert.equal(await worker.acquireNext({
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-source-fence-worker",
     }), undefined);
+  });
+
+  it("rolls the complete quarantine owner chain back when its attempt close rejects", async () => {
+    const fixture = await setup({ workflowId: "workflow-evidence-only-quarantine-close-rollback" });
+    let captures = 0;
+    const mutated = { sha: "6".repeat(40), treeHash: "7".repeat(40) };
+    await database.sql.unsafe(`
+      CREATE FUNCTION reject_quarantine_attempt_close_v1() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.category='execution-attempt' AND NEW.state='closed' THEN
+          RAISE EXCEPTION 'TEST_QUARANTINE_ATTEMPT_CLOSE_REJECTED';
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await database.sql.unsafe(`
+      CREATE TRIGGER reject_quarantine_attempt_close_v1
+      BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+      FOR EACH ROW EXECUTE FUNCTION reject_quarantine_attempt_close_v1()
+    `);
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, dependencies({
+      fixture,
+      verdict: "pass",
+      captureSource: () => {
+        captures += 1;
+        return captures === 1 ? SOURCE_REVISION : mutated;
+      },
+    }));
+    await assert.rejects(worker.runNext({
+      workflowId: fixture.workflowId,
+      ownerInstanceId: "evidence-quarantine-close-worker",
+      leaseMs: 60_000,
+    }, { now: at() }), /V3_EVIDENCE_ONLY_SOURCE_MUTATED/);
+    const rows = (await database.sql<Array<{
+      delivery_state: string;
+      case_status: string;
+      disposition: string;
+      claim_outcome: string | null;
+      claim_owner_state: string;
+      attempt_owner_state: string;
+    }>>`
+      SELECT delivery.state AS delivery_state,recovery_case.status AS case_status,
+             attempt.disposition,claim.outcome AS claim_outcome,
+             claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+        FROM recovery_dispatch_deliveries delivery
+        JOIN recovery_cases recovery_case
+          ON recovery_case.recovery_case_id=delivery.recovery_case_id
+        JOIN execution_attempts attempt ON attempt.attempt_id=delivery.attempt_id
+        JOIN claim_log claim ON claim.id=attempt.claim_id
+        JOIN internal_production_owner_reservations_v1 claim_owner
+          ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+        JOIN internal_production_owner_reservations_v1 attempt_owner
+          ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+       WHERE delivery.dispatch_id=${fixture.dispatch.dispatchId}
+    `)[0]!;
+    assert.deepEqual({ ...rows }, {
+      delivery_state: "running",
+      case_status: "evidencing",
+      disposition: "running",
+      claim_outcome: null,
+      claim_owner_state: "bound",
+      attempt_owner_state: "bound",
+    });
   });
 
   it("does not quarantine through a non-finite delivery lease", async () => {

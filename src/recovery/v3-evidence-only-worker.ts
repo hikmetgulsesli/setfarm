@@ -4,6 +4,12 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import type { CanonicalEvidenceResultV1 } from "../evidence/canonical-evidence-runner.js";
 import {
   EvidenceBundleV2Schema,
@@ -742,13 +748,13 @@ async function quarantineDelivery(input: Readonly<{
       fail("V3_EVIDENCE_ONLY_QUARANTINE_DELIVERY_CONFLICT", "quarantine lost the exact delivery lease");
     }
     if ((deliveryOwner.attempt_id === null) !== (deliveryOwner.claim_id === null)) {
-      fail("V3_EVIDENCE_ONLY_QUARANTINE_OWNER_PARTIAL", "delivery has only one side of its attempt/claim binding");
+      fail("V3_EVIDENCE_ONLY_QUARANTINE_DELIVERY_OWNER_PAIR_INVALID", "delivery claim and attempt identities must be bound as an exact pair");
     }
     const deliveryLeaseExpiresAt = deliveryOwner.lease_expires_at
       ? new Date(deliveryOwner.lease_expires_at).getTime()
       : Number.NaN;
     let mutationTime: Date | undefined;
-    if (deliveryOwner.attempt_id && deliveryOwner.claim_id !== null) {
+    if (deliveryOwner.attempt_id) {
       const owners = await transaction.unsafe<Array<{
         attempt_id: string;
         claim_id: string | number | null;
@@ -769,17 +775,17 @@ async function quarantineDelivery(input: Readonly<{
                 attempt.source_before_sha, attempt.source_before_tree_hash,
                 attempt.lease_expires_at,
                 claim.outcome AS claim_outcome
-           FROM execution_attempts attempt
+          FROM execution_attempts attempt
            JOIN claim_log claim ON claim.id = attempt.claim_id
           WHERE attempt.attempt_id = $1
-            AND claim.id = $2
           FOR UPDATE OF attempt, claim`,
-        [deliveryOwner.attempt_id, deliveryOwner.claim_id],
+        [deliveryOwner.attempt_id],
       );
       const owner = owners[0];
       if (
         !owner
-        || Number(owner.claim_id) !== Number(deliveryOwner.claim_id)
+        || !Number.isSafeInteger(Number(owner.claim_id))
+        || Number(deliveryOwner.claim_id) !== Number(owner.claim_id)
         || owner.attempt_class !== "evidence_only"
         || owner.run_id !== input.lease.runId
         || owner.story_id !== input.lease.storyId
@@ -837,11 +843,27 @@ async function quarantineDelivery(input: Readonly<{
           WHERE id = $1
             AND outcome IS NULL
           RETURNING id::text`,
-        [deliveryOwner.claim_id, mutationTime, `V3_EVIDENCE_ONLY_QUARANTINED:${input.phase}:${diagnostic}`.slice(0, 10_000)],
+        [owner.claim_id, mutationTime, `V3_EVIDENCE_ONLY_QUARANTINED:${input.phase}:${diagnostic}`.slice(0, 10_000)],
       );
       if (closed.length !== 1) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_CLAIM_CAS_LOST", "active evidence claim changed before quarantine");
       }
+      const attemptClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        transaction as PgTransactionSql,
+        { attemptId: attempts[0]!.attempt_id },
+      );
+      const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+        transaction as PgTransactionSql,
+        { claimIdText: closed[0]!.id },
+      );
+      await closeInternalProductionOwnerReservationV1(
+        transaction as PgTransactionSql,
+        attemptClose,
+      );
+      await closeInternalProductionOwnerReservationV1(
+        transaction as PgTransactionSql,
+        claimClose,
+      );
     }
     const now = mutationTime ?? await readDatabaseWallClock(
       transaction,

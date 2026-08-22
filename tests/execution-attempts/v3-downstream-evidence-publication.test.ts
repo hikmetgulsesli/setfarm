@@ -208,6 +208,7 @@ describe("v3 downstream evidence publication", () => {
       child_claim_count: number;
       child_claim_outcome: string;
       child_owner_state: string;
+      attempt_owner_state: string;
       parent_claim_outcome: string | null;
       parent_claim_story_id: string | null;
       attempt_disposition: string;
@@ -229,6 +230,8 @@ describe("v3 downstream evidence publication", () => {
          child.outcome AS child_claim_outcome,
          (SELECT state FROM internal_production_owner_reservations_v1
            WHERE category='claim' AND owner_key=child.id::text) AS child_owner_state,
+         (SELECT state FROM internal_production_owner_reservations_v1
+           WHERE category='execution-attempt' AND owner_key=attempt.attempt_id) AS attempt_owner_state,
          parent.outcome AS parent_claim_outcome,
          parent.story_id AS parent_claim_story_id,
          attempt.disposition AS attempt_disposition,
@@ -256,6 +259,7 @@ describe("v3 downstream evidence publication", () => {
       child_claim_count: 1,
       child_claim_outcome: "completed",
       child_owner_state: "closed",
+      attempt_owner_state: "closed",
       parent_claim_outcome: null,
       parent_claim_story_id: null,
       attempt_disposition: "no_progress",
@@ -273,12 +277,123 @@ describe("v3 downstream evidence publication", () => {
     });
   });
 
+  it("rolls back writer seven when the attempt-owner close trigger rejects the terminal publication", async () => {
+    const value = await setup();
+    const publication = createV3DownstreamEvidencePublication(database.sql);
+    const reserved = (await publication.reserve(value.authority, value.prepared, { now: RESERVED_AT })).attempt;
+    const running = await publication.markRunning({
+      authority: value.authority,
+      attempt: reserved,
+      now: new Date("2026-07-13T10:00:01.000Z"),
+    });
+    const observation = {
+      kind: "runtime" as const,
+      owner: "setfarm-orchestrator" as const,
+      runtimeSessionId: `runtime-v3-downstream-close-reject-${sequence}`,
+      runtimeArtifactHash: "d".repeat(64),
+      startedAt: "2026-07-13T10:00:01.000Z",
+      completedAt: "2026-07-13T10:00:03.000Z",
+    };
+    const bundle = createEvidenceBundleV2({
+      runId: value.runId,
+      storyId: "US-001",
+      packetHash: PACKET_HASH,
+      sliceHash: SLICE_HASH,
+      sourceRevision: SOURCE,
+      attemptId: reserved.attemptId,
+      predicates: [{
+        invariantRef: "INV_PERSISTENCE_ROUND_TRIP",
+        predicateRef: "EVID_SAVE_RELOAD",
+        required: true,
+        verdict: "fail",
+        observationRefs: [computeObservationRef(observation)],
+      }],
+      observations: [observation],
+      artifacts: [{ hash: observation.runtimeArtifactHash, mediaType: "application/json", locator: "evidence/runtime.json" }],
+      runner: { id: "setfarm-downstream-close-reject", version: "1", environmentHash: "e".repeat(64) },
+      startedAt: "2026-07-13T10:00:01.000Z",
+      completedAt: "2026-07-13T10:00:04.000Z",
+    });
+    const bundleHash = computeEvidenceBundleHash(bundle);
+    const findingSet = createFindingSetV1({
+      runId: value.runId,
+      storyId: "US-001",
+      packetHash: PACKET_HASH,
+      sliceHash: SLICE_HASH,
+      sourceRevision: SOURCE,
+      findings: [{
+        origin: "runtime",
+        classification: "structured",
+        invariantRef: "INV_PERSISTENCE_ROUND_TRIP",
+        sourceLocators: [{ path: "src/App.tsx", contentHash: "f".repeat(64) }],
+        observedEvidenceRefs: [bundleHash],
+        expectedPredicateRef: "EVID_SAVE_RELOAD",
+        status: "open",
+      }],
+    });
+    const snapshot = async () => (await database.sql.unsafe<Array<{
+      attempt_row: string;
+      claim_row: string;
+      sidecars: string;
+      evidence_count: number;
+      finding_count: number;
+    }>>(
+      `SELECT to_jsonb(attempt)::text AS attempt_row,
+              to_jsonb(claim)::text AS claim_row,
+              (SELECT jsonb_agg(to_jsonb(owner) ORDER BY owner.category,owner.owner_key)::text
+                 FROM internal_production_owner_reservations_v1 owner
+                WHERE (owner.category='execution-attempt' AND owner.owner_key=attempt.attempt_id)
+                   OR (owner.category='claim' AND owner.owner_key=claim.id::text)) AS sidecars,
+              (SELECT count(*)::integer FROM evidence_bundles WHERE run_id=$1) AS evidence_count,
+              (SELECT count(*)::integer FROM finding_sets WHERE run_id=$1) AS finding_count
+         FROM execution_attempts attempt
+         JOIN claim_log claim ON claim.id=attempt.claim_id
+        WHERE attempt.attempt_id=$2`,
+      [value.runId, running.attemptId],
+    ))[0]!;
+    const before = { ...await snapshot() };
+    await database.sql.unsafe(`
+      CREATE FUNCTION test_reject_downstream_attempt_owner_close() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.category='execution-attempt' AND NEW.owner_key='${running.attemptId}' AND NEW.state='closed' THEN
+          RAISE EXCEPTION 'TEST_REJECT_DOWNSTREAM_ATTEMPT_OWNER_CLOSE';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await database.sql.unsafe(`
+      CREATE TRIGGER test_reject_downstream_attempt_owner_close
+      BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+      FOR EACH ROW EXECUTE FUNCTION test_reject_downstream_attempt_owner_close()
+    `);
+    await assert.rejects(
+      publication.complete({
+        authority: value.authority,
+        attempt: running,
+        disposition: "no_progress",
+        bundle,
+        findingSet,
+        now: COMPLETED_AT,
+      }),
+      /TEST_REJECT_DOWNSTREAM_ATTEMPT_OWNER_CLOSE/,
+    );
+    const after = { ...await snapshot() };
+    assert.deepEqual(after, before);
+    assert.equal(JSON.parse(after.attempt_row).disposition, "running");
+    assert.equal(JSON.parse(after.claim_row).outcome, null);
+    assert.deepEqual(JSON.parse(after.attempt_row).evidence_refs, JSON.parse(before.attempt_row).evidence_refs);
+    assert.ok(JSON.parse(after.sidecars).every((row: { state: string }) => row.state === "bound"));
+    assert.equal(after.evidence_count, 0);
+    assert.equal(after.finding_count, 0);
+  });
+
   it("adopts one expired unchanged-source owner with a new fence instead of allocating duplicate work", async () => {
     const value = await setup();
     const publication = createV3DownstreamEvidencePublication(database.sql);
     const first = await publication.reserve(value.authority, value.prepared, {
       now: new Date("2999-01-01T00:00:00.000Z"),
-      leaseMs: 1_000,
+      leaseMs: 30_000,
     });
     assert.equal(first.status, "reserved");
     const running = await publication.markRunning({
@@ -302,7 +417,7 @@ describe("v3 downstream evidence publication", () => {
     );
     const adopted = await publication.reserve(value.authority, value.prepared, {
       now: new Date("1900-01-01T00:00:00.000Z"),
-      leaseMs: 1_000,
+      leaseMs: 30_000,
     });
     assert.equal(adopted.status, "reserved");
     assert.equal(adopted.attempt.attemptId, running.attemptId);

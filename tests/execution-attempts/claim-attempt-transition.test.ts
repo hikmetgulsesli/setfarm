@@ -14,6 +14,7 @@ import {
 import type { PgTransactionSql } from "../../src/db-pg.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -51,17 +52,27 @@ async function insertClaim(
 }
 
 describe("atomic claim-attempt terminal transition", () => {
-  it("rolls claim outcome back when authenticated sidecar close is rejected", async () => {
+  it("rolls both terminal rows and owner closes back when the attempt close is rejected", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-claim-close-trigger-rollback";
       await database.insertRun(runId);
-      const claimId = await insertClaim(database, { runId, storyId: null });
+      const claimId = await insertClaim(database, { runId });
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_claim-close-trigger-rollback",
+        fenceToken: () => "6".repeat(64),
+      });
+      await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
       await database.sql.unsafe(`
         CREATE FUNCTION reject_claim_owner_close_v1() RETURNS trigger
         LANGUAGE plpgsql AS $$ BEGIN
-          IF NEW.category='claim' AND NEW.state='closed' THEN
-            RAISE EXCEPTION 'TEST_CLAIM_OWNER_CLOSE_REJECTED';
+          IF NEW.category='execution-attempt' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_ATTEMPT_OWNER_CLOSE_REJECTED';
           END IF;
           RETURN NEW;
         END $$
@@ -76,21 +87,36 @@ describe("atomic claim-attempt terminal transition", () => {
           claimId,
           runId,
           stepId: "implement",
-          storyId: null,
+          storyId: "US-002",
           agentId: "feature-dev_developer",
           outcome: "failed",
           diagnostic: "must roll back",
         }),
-        /TEST_CLAIM_OWNER_CLOSE_REJECTED/,
+        /TEST_ATTEMPT_OWNER_CLOSE_REJECTED/,
       );
-      const stored = (await database.sql<Array<{ outcome: string | null; owner_state: string }>>`
-        SELECT claim.outcome,reservation.state AS owner_state
+      const stored = (await database.sql<Array<{
+        outcome: string | null;
+        disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT claim.outcome,attempt.disposition,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state
           FROM claim_log claim
-          JOIN internal_production_owner_reservations_v1 reservation
-            ON reservation.category='claim' AND reservation.owner_key=claim.id::text
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
          WHERE claim.id=${claimId}
       `)[0]!;
-      assert.deepEqual({ ...stored }, { outcome: null, owner_state: "bound" });
+      assert.deepEqual({ ...stored }, {
+        outcome: null,
+        disposition: "claimed",
+        claim_owner_state: "bound",
+        attempt_owner_state: "bound",
+      });
     } finally {
       await database.cleanup();
     }
@@ -162,10 +188,29 @@ describe("atomic claim-attempt terminal transition", () => {
         attemptDisposition: "inconclusive",
       });
       assert.equal((await repository.findById("ATT_claim-transition-0001"))?.disposition, "inconclusive");
-      const claim = await database.sql<Array<{ outcome: string; diagnostic: string }>>`
-        SELECT outcome, diagnostic FROM claim_log WHERE id = ${claimId}
+      const claim = await database.sql<Array<{
+        outcome: string;
+        diagnostic: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT claim.outcome,claim.diagnostic,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE claim.id = ${claimId}
       `;
-      assert.deepEqual({ ...claim[0] }, { outcome: "infra_retry", diagnostic: "hard timeout" });
+      assert.deepEqual({ ...claim[0] }, {
+        outcome: "infra_retry",
+        diagnostic: "hard timeout",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
+      });
 
       const second = await closeClaimAndBoundAttempt(database.sql, {
         claimId,
@@ -180,6 +225,235 @@ describe("atomic claim-attempt terminal transition", () => {
         status: "cas_lost",
         claimId,
         claimOutcome: "infra_retry",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("deterministically serializes composite close before a competing pre-dispatch withdrawal", async () => {
+    const database = await createIsolatedTestDatabase();
+    const advisoryKey = 4_204_004;
+    const functionName = "test_latch_composite_claim_attempt_close";
+    const triggerName = "trg_latch_composite_claim_attempt_close";
+    let releaseBlocker!: () => void;
+    const releaseGate = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+    let blockerEntered!: () => void;
+    const blockerEnteredGate = new Promise<void>((resolve) => { blockerEntered = resolve; });
+    let blocker: PromiseLike<unknown> | undefined;
+    try {
+      const runId = "run-claim-withdrawal-race";
+      await database.insertRun(runId);
+      const claimId = await insertClaim(database, { runId });
+      await createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_claim-withdrawal-race",
+        fenceToken: () => "7".repeat(64),
+      }).reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.attempt_id='ATT_claim-withdrawal-race'
+              AND NEW.disposition='inconclusive' THEN
+             PERFORM pg_advisory_xact_lock(${advisoryKey});
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${triggerName}
+         BEFORE UPDATE ON execution_attempts
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      blocker = database.sql.begin(async (transaction) => {
+        await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [advisoryKey]);
+        blockerEntered();
+        await releaseGate;
+      });
+      await blockerEnteredGate;
+      const close = closeClaimAndBoundAttempt(database.sql, {
+        claimId,
+        runId,
+        stepId: "implement",
+        storyId: "US-002",
+        agentId: "feature-dev_developer",
+        outcome: "infra_retry",
+        diagnostic: "deterministic composite winner",
+      });
+      const waitForAdvisoryWaiters = async (minimum: number): Promise<void> => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          const rows = await database.sql<Array<{ count: number }>>`
+            SELECT COUNT(*)::integer AS count
+              FROM pg_locks
+             WHERE locktype='advisory' AND granted=FALSE
+          `;
+          if ((rows[0]?.count ?? 0) >= minimum) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error("TEST_ADVISORY_WAITER_NOT_OBSERVED");
+      };
+      await waitForAdvisoryWaiters(1);
+      const withdrawal = database.sql.begin((transaction) => withdrawPreDispatchClaimInTransaction(
+        transaction,
+        {
+          identity: {
+            claimId,
+            runId,
+            workflowStepId: "implement",
+            storyId: "US-002",
+            claimAgentId: "feature-dev_developer",
+          },
+          outcome: "infra_retry",
+          diagnostic: "competing withdrawal",
+        },
+      ));
+      await waitForAdvisoryWaiters(2);
+      releaseBlocker();
+      await blocker;
+      const [closed, withdrawn] = await Promise.allSettled([close, withdrawal]);
+      assert.equal(closed.status, "fulfilled");
+      assert.equal(closed.status === "fulfilled" ? closed.value.status : undefined, "closed");
+      assert.equal(withdrawn.status, "rejected");
+      assert.match(
+        withdrawn.status === "rejected" ? String(withdrawn.reason) : "",
+        /CLAIM_MUTATION_CLAIM_TERMINAL/,
+      );
+      const rows = await database.sql<Array<{
+        outcome: string;
+        disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT claim.outcome,attempt.disposition,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE claim.id=${claimId}
+      `;
+      assert.deepEqual({ ...rows[0]! }, {
+        outcome: "infra_retry",
+        disposition: "inconclusive",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
+      });
+    } finally {
+      releaseBlocker?.();
+      if (blocker) {
+        try {
+          await blocker;
+        } catch {
+          // The assertions retain the primary failure; teardown only drains the latch owner.
+        }
+      }
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON execution_attempts`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+      await database.cleanup();
+    }
+  });
+
+  it("withdraws an exact pre-dispatch claim and fence atomically with both owner closes", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-pre-dispatch-withdrawal-owner-close";
+      await database.insertRun(runId);
+      const claimId = await insertClaim(database, { runId });
+      await createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_pre-dispatch-withdrawal-owner-close",
+        fenceToken: () => "8".repeat(64),
+      }).reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_withdrawal_owner_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='execution-attempt' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_WITHDRAWAL_ATTEMPT_OWNER_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_withdrawal_owner_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_withdrawal_owner_close_v1()
+      `);
+      const withdraw = () => database.sql.begin((transaction) => (
+        withdrawPreDispatchClaimInTransaction(transaction, {
+          identity: {
+            claimId,
+            runId,
+            workflowStepId: "implement",
+            storyId: "US-002",
+            claimAgentId: "feature-dev_developer",
+          },
+          outcome: "infra_retry",
+          diagnostic: "exact pre-dispatch withdrawal",
+        })
+      ));
+      await assert.rejects(withdraw(), /TEST_WITHDRAWAL_ATTEMPT_OWNER_CLOSE_REJECTED/);
+      const rolledBack = (await database.sql<Array<{
+        outcome: string | null;
+        disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT claim.outcome,attempt.disposition,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE claim.id=${claimId}
+      `)[0]!;
+      assert.deepEqual({ ...rolledBack }, {
+        outcome: null,
+        disposition: "claimed",
+        claim_owner_state: "bound",
+        attempt_owner_state: "bound",
+      });
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_withdrawal_owner_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      assert.deepEqual(await withdraw(), { status: "withdrawn" });
+      const withdrawn = (await database.sql<Array<{
+        outcome: string;
+        disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT claim.outcome,attempt.disposition,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE claim.id=${claimId}
+      `)[0]!;
+      assert.deepEqual({ ...withdrawn }, {
+        outcome: "infra_retry",
+        disposition: "inconclusive",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
       });
     } finally {
       await database.cleanup();
@@ -593,6 +867,119 @@ describe("atomic claim-attempt terminal transition", () => {
         current_story_id: null,
         run_context: JSON.stringify({ phase: "core" }),
       });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back writer four byte-exactly when the attempt-owner close trigger rejects story completion", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-story-complete-owner-close-reject";
+      const stepDbId = `${runId}-step`;
+      const storyDbId = `${runId}-story`;
+      await database.insertRun(runId);
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status, current_story_id)
+        VALUES
+          (${stepDbId}, ${runId}, 'implement', 'feature-dev_developer', 1, '', '', 'running', ${storyDbId})
+      `;
+      await database.sql`
+        INSERT INTO stories
+          (id, run_id, story_index, story_id, title, status, claimed_by, claim_generation)
+        VALUES
+          (${storyDbId}, ${runId}, 1, 'US-002', 'Story', 'running', 'feature-dev_developer', 7)
+      `;
+      const claimId = await insertClaim(database, { runId });
+      const reservation = await createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_story-close-reject-01",
+        fenceToken: () => "f".repeat(64),
+      }).reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      const snapshot = async () => (await database.sql<Array<{
+        attempt_row: string;
+        claim_row: string;
+        story_row: string;
+        step_row: string;
+        run_row: string;
+        sidecars: string;
+      }>>`
+        SELECT to_jsonb(attempt)::text AS attempt_row,to_jsonb(claim)::text AS claim_row,
+               to_jsonb(story)::text AS story_row,to_jsonb(step)::text AS step_row,
+               to_jsonb(run_row)::text AS run_row,
+               (SELECT jsonb_agg(to_jsonb(owner) ORDER BY owner.category,owner.owner_key)::text
+                  FROM internal_production_owner_reservations_v1 owner
+                 WHERE (owner.category='execution-attempt' AND owner.owner_key=attempt.attempt_id)
+                    OR (owner.category='claim' AND owner.owner_key=claim.id::text)) AS sidecars
+          FROM execution_attempts attempt
+          JOIN claim_log claim ON claim.id=attempt.claim_id
+          JOIN stories story ON story.id=${storyDbId}
+          JOIN steps step ON step.id=${stepDbId}
+          JOIN runs run_row ON run_row.id=${runId}
+         WHERE attempt.attempt_id=${reservation.attempt.attemptId}
+      `)[0]!;
+      const before = { ...await snapshot() };
+      await database.sql.unsafe(`
+        CREATE FUNCTION test_reject_story_attempt_owner_close() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.category='execution-attempt'
+             AND NEW.owner_key='ATT_story-close-reject-01'
+             AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_REJECT_STORY_ATTEMPT_OWNER_CLOSE';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER test_reject_story_attempt_owner_close
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION test_reject_story_attempt_owner_close()
+      `);
+      await assert.rejects(
+        completeStoryClaimAndBoundAttempt(database.sql, {
+          envelope: {
+            schema: "setfarm.claim-envelope.v1",
+            protocol: "shadow",
+            issuedAt: new Date().toISOString(),
+            stepId: stepDbId,
+            workflowStepId: "implement",
+            runId,
+            storyId: "US-002",
+            storyDbId,
+            claimId,
+            claimAgentId: "feature-dev_developer",
+            runtimeAgentId: "prism",
+            claimGeneration: 7,
+            attempt: {
+              attemptId: reservation.attempt.attemptId,
+              generation: reservation.attempt.generation,
+              fenceToken: reservation.attempt.fenceToken,
+            },
+          },
+          sourceAfter: { sha: "2".repeat(40), treeHash: "4".repeat(40) },
+          outputHash: "9".repeat(64),
+          evidenceRefs: ["setfarm://test/story-completion-close-reject"],
+          storyStatus: "done",
+          storyOutput: "STATUS: done",
+          stepStatus: "running",
+          stepOutput: "STATUS: done",
+          runContextJson: JSON.stringify({ phase: "core" }),
+          expectedRunContextJson: "{}",
+        }),
+        /TEST_REJECT_STORY_ATTEMPT_OWNER_CLOSE/,
+      );
+      const after = { ...await snapshot() };
+      assert.deepEqual(after, before);
+      assert.equal(JSON.parse(after.attempt_row).disposition, "claimed");
+      assert.equal(JSON.parse(after.claim_row).outcome, null);
+      assert.deepEqual(JSON.parse(after.attempt_row).evidence_refs, JSON.parse(before.attempt_row).evidence_refs);
+      assert.ok(JSON.parse(after.sidecars).every((row: { state: string }) => row.state === "bound"));
     } finally {
       await database.cleanup();
     }

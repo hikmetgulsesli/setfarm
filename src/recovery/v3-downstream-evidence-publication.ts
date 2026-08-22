@@ -2,7 +2,12 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
-import type { PgTransactionSql } from "../db-pg.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import {
   reserveAttemptInTransaction,
   createAttemptRepository,
@@ -788,9 +793,22 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         if (claims.length !== 1) {
           fail("V3_DOWNSTREAM_EVIDENCE_CHILD_CLAIM_CAS_LOST", "child evidence claim changed before completion");
         }
-        const claimClosePorts = await import("../db-pg.js");
-        const terminalClose = await claimClosePorts.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { claimIdText: claims[0]!.id });
-        await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
+        const attemptClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { attemptId: completed[0]!.attempt_id },
+        );
+        const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { claimIdText: claims[0]!.id },
+        );
+        await closeInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          attemptClose,
+        );
+        await closeInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          claimClose,
+        );
       });
       const attempt = await attempts.findById(input.attempt.attemptId);
       if (!attempt || attempt.outputHash !== bundleHash) {
