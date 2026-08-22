@@ -34,6 +34,7 @@ import {
 } from "../execution/shadow-attempt-recorder.js";
 import {
   closeClaimAndBoundAttemptInTransaction,
+  closeInternalProductionClaimOwnerAfterTerminalMutationV1,
   closeExactSingleStepClaimInTransaction,
   type SingleStepClaimOutcome,
 } from "../execution/claim-attempt-transition.js";
@@ -207,10 +208,21 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
     [input.runId, input.stepId, input.storyId, input.agentId, input.claimEnvelope?.claimId ?? null],
   );
   if (!claim) throw new Error("LOOP_CLAIM_LIFECYCLE_NOT_FOUND");
+  if (!/^[1-9][0-9]*$/.test(claim.id)) {
+    throw new Error("LOOP_CLAIM_LIFECYCLE_ID_INVALID");
+  }
+  const claimIdBigInt = BigInt(claim.id);
+  if (claimIdBigInt > 9007199254740991n) {
+    throw new Error("LOOP_CLAIM_LIFECYCLE_ID_INVALID");
+  }
+  const claimId = Number(claimIdBigInt);
+  if (!Number.isSafeInteger(claimId) || String(claimId) !== claim.id) {
+    throw new Error("LOOP_CLAIM_LIFECYCLE_ID_INVALID");
+  }
   if (
     input.claimEnvelope
     && (
-      Number(claim.id) !== input.claimEnvelope.claimId
+      claimId !== input.claimEnvelope.claimId
       || claim.run_id !== input.runId
       || claim.step_id !== input.stepId
       || claim.story_id !== input.storyId
@@ -220,21 +232,41 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
     throw new Error("LOOP_CLAIM_LIFECYCLE_IDENTITY_MISMATCH");
   }
   if (claim.outcome !== null) {
-    const active = await pgGet<{ count: string }>(
-      `SELECT COUNT(*)::text AS count
-         FROM execution_attempts
-        WHERE run_id = $1
-          AND step_id = $2
-          AND story_id = $3
-          AND disposition IN ('claimed', 'running')`,
-      [input.runId, input.stepId, input.storyId],
-    );
-    if (active?.count !== "0") throw new Error("LOOP_CLAIM_TERMINAL_ATTEMPT_ACTIVE");
+    if (![
+      "completed", "infra_retry", "failed", "skipped", "abandoned", "cancelled",
+    ].includes(claim.outcome)) {
+      throw new Error("LOOP_CLAIM_TERMINAL_OUTCOME_INVALID");
+    }
+    await pgBegin(async (sql) => {
+      const lockedClaims = await sql.unsafe<Array<{
+        id: string; run_id: string; step_id: string; story_id: string; agent_id: string; outcome: string | null;
+      }>>(
+        `SELECT id::text AS id,run_id,step_id,story_id,agent_id,outcome
+           FROM claim_log WHERE id=$1::bigint FOR UPDATE`,
+        [claim.id],
+      );
+      const locked = lockedClaims[0];
+      if (
+        lockedClaims.length !== 1
+        || !locked
+        || locked.id !== claim.id
+        || locked.run_id !== input.runId
+        || locked.step_id !== input.stepId
+        || locked.story_id !== input.storyId
+        || locked.agent_id !== input.agentId
+        || locked.outcome !== claim.outcome
+      ) throw new Error("LOOP_CLAIM_LIFECYCLE_IDENTITY_MISMATCH");
+      const active = await sql.unsafe<Array<{ attempt_id: string }>>(
+        `SELECT attempt_id FROM execution_attempts
+          WHERE run_id=$1 AND step_id=$2 AND story_id=$3
+            AND disposition IN ('claimed','running')
+          ORDER BY attempt_id FOR UPDATE`,
+        [input.runId, input.stepId, input.storyId],
+      );
+      if (active.length !== 0) throw new Error("LOOP_CLAIM_TERMINAL_ATTEMPT_ACTIVE");
+      await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, claim.id);
+    });
     return;
-  }
-  const claimId = Number(claim.id);
-  if (!Number.isSafeInteger(claimId) || claimId <= 0) {
-    throw new Error("LOOP_CLAIM_LIFECYCLE_ID_INVALID");
   }
   const transitionTime = now();
   await pgBegin(async (sql) => {
@@ -567,7 +599,7 @@ async function closeSingleStepClaimForFailure(
 
   // Compatibility is deliberately restricted to legacy runs. Shadow/v3 must
   // carry an immutable claim capability and can never broad-close by run/step.
-  await sql.unsafe(
+  const closed = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log AS cl
         SET outcome = $1,
             abandoned_at = CASE WHEN $1 = 'infra_retry' THEN COALESCE(cl.abandoned_at, NOW()) ELSE cl.abandoned_at END,
@@ -582,9 +614,13 @@ async function closeSingleStepClaimForFailure(
         AND cl.run_id = $3
         AND cl.step_id = $4
         AND cl.story_id IS NULL
-        AND cl.outcome IS NULL`,
+        AND cl.outcome IS NULL
+      RETURNING cl.id::text AS id`,
     [input.outcome, input.diagnostic.slice(0, 1_000), input.runId, input.workflowStepId],
   );
+  for (const claim of closed) {
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, claim.id);
+  }
 }
 
 async function handleSingleStepFailurePG(

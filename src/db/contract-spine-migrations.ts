@@ -15,7 +15,10 @@ import {
   type BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
   type BootstrapMainClaimHandoffV1SchemaProjection,
 } from "./bootstrap-main-claim-handoff-v1-migration.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../product-compiler/canonical-json.js";
 import {
   OPERATIONAL_FAILURE_CAUSE_AUTHORITY_BINDINGS_V1,
   operationalFailureCauseAuthoritySqlPredicateV1,
@@ -24,6 +27,7 @@ import {
 import {
   V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1,
 } from "../recovery/v3-downstream-terminal-cause-v1.js";
+import { V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import {
   computeRecoveryDispatchDedupeKey,
   computeRecoveryFindingDispatchDedupeKey,
@@ -355,6 +359,7 @@ type JournalRow = {
   state: string;
 };
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:BEGIN
 export type ContractSpineMigrationPlan = Readonly<{
   schema: "setfarm.contract-spine-migration-plan.v1";
   status: "current" | "pending" | "drift";
@@ -365,6 +370,7 @@ export type ContractSpineMigrationPlan = Readonly<{
     checksum: string;
     state:
       | "pending"
+      | "blocked_by_guarded_predecessor"
       | "adoptable"
       | "applied"
       | "adopted"
@@ -12694,12 +12700,728 @@ const migrations: readonly Migration[] = Object.freeze([
 ]);
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-registration:END
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-identity-and-statements:BEGIN
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_ID =
+  "033_v3_recovery_claim_runtime_publication_v1";
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE =
+  "internal_production_v3_recovery_claim_publications_v1";
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION =
+  "ip_v3_recovery_publication_immutable_v1";
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_ROW_TRIGGER =
+  "ip_v3_recovery_publication_row_immutable_v1";
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TRUNCATE_TRIGGER =
+  "ip_v3_recovery_publication_truncate_forbidden_v1";
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION_BODY = `
+BEGIN
+  RAISE EXCEPTION 'V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE';
+END
+`.trim();
+
+const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_STATEMENTS = Object.freeze([
+  `CREATE TABLE public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE} (
+     claim_id BIGINT,
+     runtime_session_id TEXT NOT NULL,
+     run_id TEXT NOT NULL,
+     step_db_id TEXT NOT NULL,
+     workflow_step_id TEXT NOT NULL,
+     story_db_id TEXT NOT NULL,
+     story_id TEXT NOT NULL,
+     story_index INTEGER NOT NULL,
+     recovery_case_id TEXT NOT NULL,
+     revision_id TEXT NOT NULL,
+     dispatch_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     handoff_canonical_json TEXT NOT NULL,
+     handoff_hash TEXT NOT NULL,
+     bound_at TIMESTAMPTZ NOT NULL,
+     CONSTRAINT ip_v3_recovery_publications_pkey PRIMARY KEY (claim_id),
+     CONSTRAINT ip_v3_recovery_publications_runtime_key UNIQUE (runtime_session_id),
+     CONSTRAINT ip_v3_recovery_publications_dispatch_key UNIQUE (dispatch_id),
+     CONSTRAINT ip_v3_recovery_publications_hash_check
+       CHECK (handoff_hash ~ '^[a-f0-9]{64}$'),
+     CONSTRAINT ip_v3_recovery_publications_status_check
+       CHECK (status IN ('lease_acquired', 'lease_reissued')),
+     CONSTRAINT ip_v3_recovery_publications_handoff_json_check
+       CHECK (
+         length(handoff_canonical_json) > 0
+         AND jsonb_typeof(handoff_canonical_json::jsonb) = 'object'
+       ),
+     CONSTRAINT ip_v3_recovery_publications_run_fkey
+       FOREIGN KEY (run_id) REFERENCES public.runs(id) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_claim_fkey
+       FOREIGN KEY (claim_id, run_id, workflow_step_id)
+       REFERENCES public.claim_log(id, run_id, step_id) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_runtime_fkey
+       FOREIGN KEY (runtime_session_id, claim_id, run_id)
+       REFERENCES public.runtime_sessions(session_id, claim_id, run_id) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_step_fkey
+       FOREIGN KEY (step_db_id, run_id, workflow_step_id)
+       REFERENCES public.steps(id, run_id, step_id) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_story_fkey
+       FOREIGN KEY (story_db_id, run_id, story_id, story_index)
+       REFERENCES public.stories(id, run_id, story_id, story_index) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_case_fkey
+       FOREIGN KEY (recovery_case_id)
+       REFERENCES public.recovery_cases(recovery_case_id) ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_revision_fkey
+       FOREIGN KEY (revision_id, recovery_case_id)
+       REFERENCES public.recovery_case_revisions(revision_id, recovery_case_id)
+       ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_dispatch_fkey
+       FOREIGN KEY (dispatch_id, revision_id)
+       REFERENCES public.recovery_revision_dispatches(dispatch_id, revision_id)
+       ON DELETE RESTRICT,
+     CONSTRAINT ip_v3_recovery_publications_delivery_fkey
+       FOREIGN KEY (dispatch_id)
+       REFERENCES public.recovery_dispatch_deliveries(dispatch_id) ON DELETE RESTRICT
+   )`,
+  `REVOKE ALL ON TABLE public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE}
+     FROM PUBLIC`,
+  `CREATE FUNCTION public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()
+   RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION_BODY}$$`,
+  `REVOKE ALL ON FUNCTION public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()
+     FROM PUBLIC`,
+  `CREATE TRIGGER ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_ROW_TRIGGER}
+   BEFORE UPDATE OR DELETE
+   ON public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE}
+   FOR EACH ROW
+   EXECUTE FUNCTION public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()`,
+  `CREATE TRIGGER ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TRUNCATE_TRIGGER}
+   BEFORE TRUNCATE
+   ON public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE}
+   FOR EACH STATEMENT
+   EXECUTE FUNCTION public.${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()`,
+] as const);
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-identity-and-statements:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-schema-projector:BEGIN
+async function detectV3RecoveryClaimRuntimePublicationV1(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  const rows = await sql.unsafe<Array<{ relation_count: number; function_count: number; trigger_count: number }>>(
+    `SELECT
+       (SELECT COUNT(*)::integer
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relname = $1) AS relation_count,
+       (SELECT COUNT(*)::integer
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = $2 AND p.pronargs = 0) AS function_count,
+       (SELECT COUNT(*)::integer
+          FROM pg_trigger t
+         WHERE t.tgrelid = to_regclass('public.' || $1)
+           AND NOT t.tgisinternal
+           AND t.tgname IN ($3, $4)) AS trigger_count`,
+    [
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE,
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION,
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_ROW_TRIGGER,
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TRUNCATE_TRIGGER,
+    ],
+  );
+  const row = rows[0];
+  const present = (row?.relation_count ?? 0) + (row?.function_count ?? 0) + (row?.trigger_count ?? 0);
+  if (present === 0) return "absent";
+  if (row?.relation_count === 1 && row.function_count === 1 && row.trigger_count === 2) {
+    return "present";
+  }
+  return "partial";
+}
+
+async function verifyV3RecoveryClaimRuntimePublicationV1(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  if (await detectV3RecoveryClaimRuntimePublicationV1(sql) !== "present") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "recovery claim/runtime publication relation is not fully installed",
+    );
+  }
+  const topology = await sql.unsafe<Array<{
+    relkind: string;
+    relpersistence: string;
+    relispartition: boolean;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+    inheritance_edges: number;
+    rules: number;
+    policies: number;
+    owner_is_current: boolean;
+    public_select: boolean;
+    public_insert: boolean;
+    public_update: boolean;
+    public_delete: boolean;
+    public_truncate: boolean;
+    non_owner_grants: number;
+  }>>(
+    `SELECT c.relkind, c.relpersistence, c.relispartition,
+            c.relrowsecurity, c.relforcerowsecurity,
+            (SELECT COUNT(*)::integer FROM pg_inherits i
+              WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) AS inheritance_edges,
+            (SELECT COUNT(*)::integer FROM pg_rewrite r
+              WHERE r.ev_class = c.oid AND r.rulename <> '_RETURN') AS rules,
+            (SELECT COUNT(*)::integer FROM pg_policy p
+              WHERE p.polrelid = c.oid) AS policies,
+            pg_get_userbyid(c.relowner) = current_user AS owner_is_current,
+            has_table_privilege(0, c.oid, 'SELECT') AS public_select,
+            has_table_privilege(0, c.oid, 'INSERT') AS public_insert,
+            has_table_privilege(0, c.oid, 'UPDATE') AS public_update,
+            has_table_privilege(0, c.oid, 'DELETE') AS public_delete,
+            has_table_privilege(0, c.oid, 'TRUNCATE') AS public_truncate,
+            (SELECT COUNT(*)::integer
+               FROM aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) acl
+              WHERE acl.grantee <> c.relowner) AS non_owner_grants
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = $1`,
+    [V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE],
+  );
+  const relation = topology[0];
+  if (
+    topology.length !== 1
+    || relation?.relkind !== "r"
+    || relation.relpersistence !== "p"
+    || relation.relispartition
+    || relation.relrowsecurity
+    || relation.relforcerowsecurity
+    || relation.inheritance_edges !== 0
+    || relation.rules !== 0
+    || relation.policies !== 0
+    || !relation.owner_is_current
+    || relation.public_select
+    || relation.public_insert
+    || relation.public_update
+    || relation.public_delete
+    || relation.public_truncate
+    || relation.non_owner_grants !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "recovery claim/runtime publication relation topology or ACL mismatch",
+    );
+  }
+  const indexes = await sql.unsafe<Array<{
+    name: string;
+    primary: boolean;
+    unique: boolean;
+    valid: boolean;
+    ready: boolean;
+    live: boolean;
+  }>>(
+    `SELECT index_class.relname AS name,
+            index.indisprimary AS primary,
+            index.indisunique AS unique,
+            index.indisvalid AS valid,
+            index.indisready AS ready,
+            index.indislive AS live
+       FROM pg_index index
+       JOIN pg_class index_class ON index_class.oid = index.indexrelid
+      WHERE index.indrelid = ('public.' || $1)::regclass
+      ORDER BY index_class.relname`,
+    [V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE],
+  );
+  const expectedIndexes = [
+    { name: "ip_v3_recovery_publications_dispatch_key", primary: false, unique: true },
+    { name: "ip_v3_recovery_publications_pkey", primary: true, unique: true },
+    { name: "ip_v3_recovery_publications_runtime_key", primary: false, unique: true },
+  ] as const;
+  if (
+    indexes.length !== expectedIndexes.length
+    || indexes.some((index, position) => {
+      const expected = expectedIndexes[position];
+      return !expected
+        || index.name !== expected.name
+        || index.primary !== expected.primary
+        || index.unique !== expected.unique
+        || !index.valid
+        || !index.ready
+        || !index.live;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `recovery claim/runtime publication index authority mismatch:${JSON.stringify(indexes)}`,
+    );
+  }
+  const expectedColumns = [
+    ["claim_id", "bigint", "NO"],
+    ["runtime_session_id", "text", "NO"],
+    ["run_id", "text", "NO"],
+    ["step_db_id", "text", "NO"],
+    ["workflow_step_id", "text", "NO"],
+    ["story_db_id", "text", "NO"],
+    ["story_id", "text", "NO"],
+    ["story_index", "integer", "NO"],
+    ["recovery_case_id", "text", "NO"],
+    ["revision_id", "text", "NO"],
+    ["dispatch_id", "text", "NO"],
+    ["status", "text", "NO"],
+    ["handoff_canonical_json", "text", "NO"],
+    ["handoff_hash", "text", "NO"],
+    ["bound_at", "timestamp with time zone", "NO"],
+  ] as const;
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: string;
+    column_default: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1
+      ORDER BY ordinal_position`,
+    [V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE],
+  );
+  if (
+    columns.length !== expectedColumns.length
+    || columns.some((column, index) => {
+      const expected = expectedColumns[index];
+      return !expected
+        || column.column_name !== expected[0]
+        || column.data_type !== expected[1]
+        || column.is_nullable !== expected[2]
+        || column.column_default !== null;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "recovery claim/runtime publication column authority mismatch",
+    );
+  }
+  const expectedConstraints = new Map([
+    ["ip_v3_recovery_publications_pkey", "PRIMARY KEY (claim_id)"],
+    ["ip_v3_recovery_publications_runtime_key", "UNIQUE (runtime_session_id)"],
+    ["ip_v3_recovery_publications_dispatch_key", "UNIQUE (dispatch_id)"],
+    ["ip_v3_recovery_publications_hash_check", "CHECK (handoff_hash ~ '^[a-f0-9]{64}$'::text)"],
+    ["ip_v3_recovery_publications_status_check", "CHECK (status = ANY (ARRAY['lease_acquired'::text, 'lease_reissued'::text]))"],
+    ["ip_v3_recovery_publications_handoff_json_check", "CHECK (length(handoff_canonical_json) > 0 AND jsonb_typeof(handoff_canonical_json::jsonb) = 'object'::text)"],
+    ["ip_v3_recovery_publications_run_fkey", "FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_claim_fkey", "FOREIGN KEY (claim_id, run_id, workflow_step_id) REFERENCES claim_log(id, run_id, step_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_runtime_fkey", "FOREIGN KEY (runtime_session_id, claim_id, run_id) REFERENCES runtime_sessions(session_id, claim_id, run_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_step_fkey", "FOREIGN KEY (step_db_id, run_id, workflow_step_id) REFERENCES steps(id, run_id, step_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_story_fkey", "FOREIGN KEY (story_db_id, run_id, story_id, story_index) REFERENCES stories(id, run_id, story_id, story_index) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_case_fkey", "FOREIGN KEY (recovery_case_id) REFERENCES recovery_cases(recovery_case_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_revision_fkey", "FOREIGN KEY (revision_id, recovery_case_id) REFERENCES recovery_case_revisions(revision_id, recovery_case_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_dispatch_fkey", "FOREIGN KEY (dispatch_id, revision_id) REFERENCES recovery_revision_dispatches(dispatch_id, revision_id) ON DELETE RESTRICT"],
+    ["ip_v3_recovery_publications_delivery_fkey", "FOREIGN KEY (dispatch_id) REFERENCES recovery_dispatch_deliveries(dispatch_id) ON DELETE RESTRICT"],
+  ]);
+  const constraints = await sql.unsafe<Array<{ conname: string; definition: string; validated: boolean; deferrable: boolean; deferred: boolean }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition,
+            convalidated AS validated, condeferrable AS deferrable,
+            condeferred AS deferred
+       FROM pg_constraint
+      WHERE conrelid = ('public.' || $1)::regclass`,
+    [V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE],
+  );
+  const byName = new Map(constraints.map((constraint) => [constraint.conname, constraint]));
+  if (
+    constraints.length !== expectedConstraints.size
+    || [...expectedConstraints].some(([name, definition]) => {
+      const actual = byName.get(name);
+      return !actual
+        || normalizeSqlExact(actual.definition) !== normalizeSqlExact(definition)
+        || !actual.validated
+        || actual.deferrable
+        || actual.deferred;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `recovery claim/runtime publication constraint authority mismatch:${JSON.stringify(
+        constraints.map((constraint) => [constraint.conname, constraint.definition]),
+      )}`,
+    );
+  }
+  const functions = await sql.unsafe<Array<{
+    language: string;
+    result: string;
+    body: string;
+    volatility: string;
+    security_definer: boolean;
+    leakproof: boolean;
+    parallel: string;
+    config: string[] | null;
+    owner_is_current: boolean;
+    public_execute: boolean;
+    non_owner_grants: number;
+  }>>(
+    `SELECT language.lanname AS language,
+            pg_get_function_result(function.oid) AS result,
+            function.prosrc AS body,
+            function.provolatile AS volatility,
+            function.prosecdef AS security_definer,
+            function.proleakproof AS leakproof,
+            function.proparallel AS parallel,
+            function.proconfig AS config,
+            pg_get_userbyid(function.proowner) = current_user AS owner_is_current,
+            has_function_privilege(0, function.oid, 'EXECUTE') AS public_execute,
+            (SELECT COUNT(*)::integer
+               FROM aclexplode(COALESCE(
+                 function.proacl,
+                 acldefault('f', function.proowner)
+               )) acl
+              WHERE acl.grantee <> function.proowner) AS non_owner_grants
+       FROM pg_proc function
+       JOIN pg_namespace namespace ON namespace.oid = function.pronamespace
+       JOIN pg_language language ON language.oid = function.prolang
+      WHERE namespace.nspname = 'public'
+        AND function.proname = $1
+        AND function.pronargs = 0`,
+    [V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION],
+  );
+  const functionRow = functions[0];
+  if (
+    functions.length !== 1
+    || functionRow?.language !== "plpgsql"
+    || functionRow.result !== "trigger"
+    || functionRow.body.trim() !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION_BODY
+    || functionRow.volatility !== "v"
+    || functionRow.security_definer
+    || functionRow.leakproof
+    || functionRow.parallel !== "u"
+    || JSON.stringify(functionRow.config) !== JSON.stringify(["search_path=pg_catalog, public"])
+    || !functionRow.owner_is_current
+    || functionRow.public_execute
+    || functionRow.non_owner_grants !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "recovery claim/runtime publication trigger function authority mismatch",
+    );
+  }
+  const triggers = await sql.unsafe<Array<{
+    name: string;
+    definition: string;
+    enabled: string;
+    exact_function: boolean;
+  }>>(
+    `SELECT tgname AS name, pg_get_triggerdef(oid, true) AS definition,
+            tgenabled AS enabled,
+            tgfoid = ('public.' || $2 || '()')::regprocedure AS exact_function
+       FROM pg_trigger
+      WHERE tgrelid = ('public.' || $1)::regclass AND NOT tgisinternal
+      ORDER BY tgname`,
+    [
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE,
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION,
+    ],
+  );
+  if (
+    triggers.length !== 2
+    || triggers[0]?.name !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_ROW_TRIGGER
+    || normalizeSqlExact(triggers[0].definition) !== normalizeSqlExact(
+      `CREATE TRIGGER ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_ROW_TRIGGER}
+       BEFORE DELETE OR UPDATE ON ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE}
+       FOR EACH ROW EXECUTE FUNCTION ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()`,
+    )
+    || triggers[1]?.name !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TRUNCATE_TRIGGER
+    || normalizeSqlExact(triggers[1].definition) !== normalizeSqlExact(
+      `CREATE TRIGGER ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TRUNCATE_TRIGGER}
+       BEFORE TRUNCATE ON ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_TABLE}
+       FOR EACH STATEMENT EXECUTE FUNCTION ${V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_FUNCTION}()`,
+    )
+    || triggers.some((trigger) => trigger.enabled !== "O" || !trigger.exact_function)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `recovery claim/runtime publication trigger authority mismatch:${JSON.stringify(triggers)}`,
+    );
+  }
+  const storedRows = await sql.unsafe<Array<{
+    claim_id: string;
+    runtime_session_id: string;
+    run_id: string;
+    step_db_id: string;
+    workflow_step_id: string;
+    story_db_id: string;
+    story_id: string;
+    story_index: number;
+    recovery_case_id: string;
+    revision_id: string;
+    dispatch_id: string;
+    status: string;
+    handoff_canonical_json: string;
+    handoff_hash: string;
+    delivery_recovery_case_id: string;
+    delivery_revision_id: string;
+    delivery_run_id: string;
+    delivery_story_id: string;
+    case_run_id: string;
+    case_story_id: string;
+    revision_recovery_case_id: string;
+    revision_run_id: string;
+    revision_story_id: string;
+    recovery_owner: string;
+    revision_packet_hash: string;
+    revision_contract_slice_hash: string;
+    revision_source_sha: string;
+    revision_source_tree_hash: string;
+    revision_finding_set_hash: string;
+    revision_finding_ids: unknown;
+    revision_expected_delta: unknown;
+    revision_allowed_paths: unknown;
+    revision_evidence_plan: unknown;
+    revision_evidence_plan_artifact_hash: string | null;
+    dispatch_recovery_case_id: string;
+    dispatch_revision_id: string;
+    dispatch_class: string;
+    dispatch_packet_hash: string;
+    dispatch_contract_slice_hash: string;
+    dispatch_source_sha: string;
+    dispatch_source_tree_hash: string;
+    dispatch_finding_set_hash: string;
+    dispatch_finding_ids: unknown;
+    dispatch_evidence_plan: unknown;
+    dispatch_evidence_plan_artifact_hash: string | null;
+    claim_run_id: string | null;
+    claim_step_id: string | null;
+    claim_story_id: string | null;
+    runtime_claim_id: string | null;
+    runtime_run_id: string | null;
+    runtime_step_db_id: string | null;
+    runtime_workflow_step_id: string | null;
+    runtime_story_db_id: string | null;
+    runtime_story_id: string | null;
+    step_run_id: string | null;
+    step_workflow_step_id: string | null;
+    story_run_id: string | null;
+    stored_story_id: string | null;
+    stored_story_index: number | null;
+  }>>(
+    `SELECT publication.claim_id::text AS claim_id,
+            publication.runtime_session_id, publication.run_id,
+            publication.step_db_id, publication.workflow_step_id,
+            publication.story_db_id, publication.story_id, publication.story_index,
+            publication.recovery_case_id, publication.revision_id,
+            publication.dispatch_id, publication.status,
+            publication.handoff_canonical_json, publication.handoff_hash,
+            delivery.recovery_case_id AS delivery_recovery_case_id,
+            delivery.revision_id AS delivery_revision_id,
+            delivery.run_id AS delivery_run_id,
+            delivery.story_id AS delivery_story_id,
+            recovery_case.run_id AS case_run_id,
+            recovery_case.story_id AS case_story_id,
+            revision.recovery_case_id AS revision_recovery_case_id,
+            revision.run_id AS revision_run_id,
+            revision.story_id AS revision_story_id,
+            revision.owner AS recovery_owner,
+            revision.packet_hash AS revision_packet_hash,
+            revision.contract_slice_hash AS revision_contract_slice_hash,
+            revision.source_sha AS revision_source_sha,
+            revision.source_tree_hash AS revision_source_tree_hash,
+            revision.finding_set_hash AS revision_finding_set_hash,
+            revision.finding_ids AS revision_finding_ids,
+            revision.expected_delta AS revision_expected_delta,
+            revision.allowed_paths AS revision_allowed_paths,
+            revision.evidence_plan AS revision_evidence_plan,
+            revision.evidence_plan_artifact_hash AS revision_evidence_plan_artifact_hash,
+            dispatch.recovery_case_id AS dispatch_recovery_case_id,
+            dispatch.revision_id AS dispatch_revision_id,
+            dispatch.dispatch_class,
+            dispatch.packet_hash AS dispatch_packet_hash,
+            dispatch.contract_slice_hash AS dispatch_contract_slice_hash,
+            dispatch.source_sha AS dispatch_source_sha,
+            dispatch.source_tree_hash AS dispatch_source_tree_hash,
+            dispatch.finding_set_hash AS dispatch_finding_set_hash,
+            dispatch.finding_ids AS dispatch_finding_ids,
+            dispatch.evidence_plan AS dispatch_evidence_plan,
+            dispatch.evidence_plan_artifact_hash AS dispatch_evidence_plan_artifact_hash,
+            claim.run_id AS claim_run_id,
+            claim.step_id AS claim_step_id,
+            claim.story_id AS claim_story_id,
+            runtime.claim_id::text AS runtime_claim_id,
+            runtime.run_id AS runtime_run_id,
+            runtime.step_db_id AS runtime_step_db_id,
+            runtime.workflow_step_id AS runtime_workflow_step_id,
+            runtime.story_db_id AS runtime_story_db_id,
+            runtime.story_id AS runtime_story_id,
+            step.run_id AS step_run_id,
+            step.step_id AS step_workflow_step_id,
+            story.run_id AS story_run_id,
+            story.story_id AS stored_story_id,
+            story.story_index AS stored_story_index
+       FROM public.internal_production_v3_recovery_claim_publications_v1 publication
+       LEFT JOIN public.claim_log claim
+         ON claim.id = publication.claim_id
+       LEFT JOIN public.runtime_sessions runtime
+         ON runtime.session_id = publication.runtime_session_id
+       LEFT JOIN public.steps step
+         ON step.id = publication.step_db_id
+       LEFT JOIN public.stories story
+         ON story.id = publication.story_db_id
+       JOIN public.recovery_dispatch_deliveries delivery
+         ON delivery.dispatch_id = publication.dispatch_id
+       JOIN public.recovery_revision_dispatches dispatch
+         ON dispatch.dispatch_id = delivery.dispatch_id
+        AND dispatch.revision_id = delivery.revision_id
+       JOIN public.recovery_case_revisions revision
+         ON revision.revision_id = delivery.revision_id
+        AND revision.recovery_case_id = delivery.recovery_case_id
+       JOIN public.recovery_cases recovery_case
+         ON recovery_case.recovery_case_id = delivery.recovery_case_id
+      ORDER BY publication.claim_id`,
+  );
+  for (const row of storedRows) {
+    let handoff: unknown;
+    try {
+      handoff = V3RecoveryClaimHandoffV1Schema.parse(JSON.parse(row.handoff_canonical_json));
+    } catch {
+      handoff = null;
+    }
+    const record = handoff !== null && typeof handoff === "object" && !Array.isArray(handoff)
+      ? handoff as Record<string, unknown>
+      : null;
+    const directive = record?.["directive"] !== null
+      && typeof record?.["directive"] === "object"
+      && !Array.isArray(record["directive"])
+      ? record["directive"] as Record<string, unknown>
+      : null;
+    const sourceRevision = directive?.["sourceRevision"] !== null
+      && typeof directive?.["sourceRevision"] === "object"
+      && !Array.isArray(directive["sourceRevision"])
+      ? directive["sourceRevision"] as Record<string, unknown>
+      : null;
+    const lease = record?.["lease"] !== null
+      && typeof record?.["lease"] === "object"
+      && !Array.isArray(record["lease"])
+      ? record["lease"] as Record<string, unknown>
+      : null;
+    const boundary = record?.["reservationBoundary"] !== null
+      && typeof record?.["reservationBoundary"] === "object"
+      && !Array.isArray(record["reservationBoundary"])
+      ? record["reservationBoundary"] as Record<string, unknown>
+      : null;
+    const canonicalDirective = {
+      packetHash: row.revision_packet_hash,
+      contractSliceHash: row.revision_contract_slice_hash,
+      sourceRevision: {
+        sha: row.revision_source_sha,
+        treeHash: row.revision_source_tree_hash,
+      },
+      findingSetHash: row.revision_finding_set_hash,
+      findingIds: row.revision_finding_ids,
+      expectedDelta: row.revision_expected_delta,
+      allowedPaths: row.revision_allowed_paths,
+      evidencePlan: row.revision_evidence_plan,
+      ...(row.revision_evidence_plan_artifact_hash
+        ? { evidencePlanArtifactHash: row.revision_evidence_plan_artifact_hash }
+        : {}),
+    };
+    const dispatchDirective = {
+      packetHash: row.dispatch_packet_hash,
+      contractSliceHash: row.dispatch_contract_slice_hash,
+      sourceRevision: {
+        sha: row.dispatch_source_sha,
+        treeHash: row.dispatch_source_tree_hash,
+      },
+      findingSetHash: row.dispatch_finding_set_hash,
+      findingIds: row.dispatch_finding_ids,
+      evidencePlan: row.dispatch_evidence_plan,
+      ...(row.dispatch_evidence_plan_artifact_hash
+        ? { evidencePlanArtifactHash: row.dispatch_evidence_plan_artifact_hash }
+        : {}),
+    };
+    const exact = record !== null
+      && Object.keys(record).sort().join(",")
+        === "directive,dispatchClass,dispatchId,lease,recoveryCaseId,recoveryOwner,reservationBoundary,revisionId,runId,schema,status,storyId"
+      && record["schema"] === "setfarm.v3-recovery-claim-handoff.v1"
+      && record["status"] === row.status
+      && record["runId"] === row.run_id
+      && record["storyId"] === row.story_id
+      && record["recoveryCaseId"] === row.recovery_case_id
+      && record["revisionId"] === row.revision_id
+      && record["dispatchId"] === row.dispatch_id
+      && record["dispatchClass"] === row.dispatch_class
+      && record["recoveryOwner"] === row.recovery_owner
+      && lease !== null
+      && Object.keys(lease).sort().join(",") === "expiresAt,leaseToken,ownerInstanceId"
+      && typeof lease["ownerInstanceId"] === "string"
+      && typeof lease["leaseToken"] === "string"
+      && typeof lease["expiresAt"] === "string"
+      && Number.isFinite(Date.parse(lease["expiresAt"] as string))
+      && boundary !== null
+      && Object.keys(boundary).sort().join(",")
+        === "leaseAndAttemptAtomicInThisModule,reconcileRequired,requiredNextOperation,state"
+      && boundary["leaseAndAttemptAtomicInThisModule"] === false
+      && boundary["reconcileRequired"] === true
+      && boundary["state"] === "lease_acquired_attempt_not_reserved"
+      && boundary["requiredNextOperation"]
+        === "attempt_repository.reserve_exact_recovery_handoff"
+      && directive !== null
+      && sourceRevision !== null
+      && canonicalJsonStringify(handoff) === row.handoff_canonical_json
+      && hashCanonicalJson(handoff) === row.handoff_hash
+      && hashCanonicalJson(directive) === hashCanonicalJson(canonicalDirective)
+      && hashCanonicalJson(dispatchDirective) === hashCanonicalJson({
+        packetHash: row.revision_packet_hash,
+        contractSliceHash: row.revision_contract_slice_hash,
+        sourceRevision: {
+          sha: row.revision_source_sha,
+          treeHash: row.revision_source_tree_hash,
+        },
+        findingSetHash: row.revision_finding_set_hash,
+        findingIds: row.revision_finding_ids,
+        evidencePlan: row.revision_evidence_plan,
+        ...(row.revision_evidence_plan_artifact_hash
+          ? { evidencePlanArtifactHash: row.revision_evidence_plan_artifact_hash }
+          : {}),
+      })
+      && row.delivery_recovery_case_id === row.recovery_case_id
+      && row.delivery_revision_id === row.revision_id
+      && row.delivery_run_id === row.run_id
+      && row.delivery_story_id === row.story_id
+      && row.case_run_id === row.run_id
+      && row.case_story_id === row.story_id
+      && row.revision_recovery_case_id === row.recovery_case_id
+      && row.revision_run_id === row.run_id
+      && row.revision_story_id === row.story_id
+      && row.dispatch_recovery_case_id === row.recovery_case_id
+      && row.dispatch_revision_id === row.revision_id
+      && row.claim_run_id === row.run_id
+      && row.claim_step_id === row.workflow_step_id
+      && row.claim_story_id === row.story_id
+      && row.runtime_claim_id === row.claim_id
+      && row.runtime_run_id === row.run_id
+      && row.runtime_step_db_id === row.step_db_id
+      && row.runtime_workflow_step_id === row.workflow_step_id
+      && row.runtime_story_db_id === row.story_db_id
+      && row.runtime_story_id === row.story_id
+      && row.step_run_id === row.run_id
+      && row.step_workflow_step_id === row.workflow_step_id
+      && row.story_run_id === row.run_id
+      && row.stored_story_id === row.story_id
+      && row.stored_story_index === row.story_index;
+    if (!exact) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "stored recovery claim/runtime publication differs from its canonical delivery chain",
+      );
+    }
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-schema-projector:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-registration:BEGIN
+const migration33: Migration = Object.freeze({
+  version: 33,
+  name: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_ID,
+  migrationClass: "automatic" as const,
+  statements: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_STATEMENTS,
+  implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[33],
+  detect: detectV3RecoveryClaimRuntimePublicationV1,
+  verify: verifyV3RecoveryClaimRuntimePublicationV1,
+});
+const completeMigrations: readonly Migration[] = Object.freeze([
+  ...migrations,
+  migration33,
+]);
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
   const sourceDigests = new Map<number, string>(
     Object.entries(CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS)
       .map(([version, digest]) => [Number(version), digest]),
   );
-  for (const migration of migrations) {
+  for (const migration of completeMigrations) {
     const expectedDigest = sourceDigests.get(migration.version);
     if (migration.implementationDigest !== expectedDigest) {
       throw new Error(
@@ -12708,13 +13430,14 @@ function assertSemanticMigrationDefinitionsAreSourceBound(): void {
     }
   }
   for (const version of sourceDigests.keys()) {
-    if (!migrations.some((migration) => migration.version === version)) {
+    if (!completeMigrations.some((migration) => migration.version === version)) {
       throw new Error(`CONTRACT_SPINE_SEMANTIC_MIGRATION_DEFINITION_MISSING:v${version}`);
     }
   }
 }
 
 assertSemanticMigrationDefinitionsAreSourceBound();
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-registration:END
 
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-authority-audit:BEGIN
 export async function auditCurrentArtifactPublicationAuthorityLedgerData(
@@ -15493,7 +16216,7 @@ export async function readContractSpineMigrationAttestation(
            FROM public.setfarm_schema_migrations
           ORDER BY version`,
       );
-      const knownByVersion = new Map(migrations.map((migration) => [
+      const knownByVersion = new Map(completeMigrations.map((migration) => [
         migration.version,
         migration,
       ]));
@@ -15505,7 +16228,7 @@ export async function readContractSpineMigrationAttestation(
         );
       }
       const maximumVersion = rows[rows.length - 1]?.version ?? 0;
-      const expected = migrations.filter((migration) =>
+      const expected = completeMigrations.filter((migration) =>
         migration.version <= maximumVersion);
       if (
         rows.length !== expected.length
@@ -15618,6 +16341,22 @@ async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
     await verifyExactContractSpineJournalAuthority(sql);
   }
   return sql.unsafe<JournalRow[]>(
+    "SELECT version, name, checksum, state FROM public.setfarm_schema_migrations WHERE version <= 32 ORDER BY version",
+  );
+}
+
+async function completeJournalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
+  if (!await relationExists(sql, "setfarm_schema_migrations")) return [];
+  await verifyContractSpineJournalTopology(sql);
+  const attestation = await detectMigrationAttestationShape(sql);
+  if (attestation === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal attestation schema is partially installed",
+    );
+  }
+  if (attestation === "present") await verifyExactContractSpineJournalAuthority(sql);
+  return sql.unsafe<JournalRow[]>(
     "SELECT version, name, checksum, state FROM public.setfarm_schema_migrations ORDER BY version",
   );
 }
@@ -15625,15 +16364,21 @@ async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
 async function planContractSpineMigrationsOnConnection(
   sql: Sql | TransactionSql,
 ): Promise<ContractSpineMigrationPlan> {
-  const journal = await journalRows(sql);
+  const journal = await completeJournalRows(sql);
   const rows = new Map(journal.map((row) => [row.version, row]));
-  const knownVersions = new Set(migrations.map((migration) => migration.version));
+  const knownVersions = new Set(completeMigrations.map((migration) => migration.version));
   const planned: ContractSpineMigrationPlan["migrations"][number][] = [];
-  for (const migration of migrations) {
+  for (const migration of completeMigrations) {
     const expectedChecksum = checksum(migration);
     const row = rows.get(migration.version);
     let state: ContractSpineMigrationPlan["migrations"][number]["state"];
-    if (!row) {
+    if (
+      migration.version === 33
+      && !row
+      && planned.find((candidate) => candidate.version === 32)?.state !== "applied"
+    ) {
+      state = "blocked_by_guarded_predecessor";
+    } else if (!row) {
       const detected = await migration.detect(sql);
       if (detected === "absent") {
         state = "pending";
@@ -15746,7 +16491,10 @@ async function planContractSpineMigrationsOnConnection(
       || item.state === "adoption_mismatch"
       || item.state === "unexpected")
     ? "drift" as const
-    : planned.some((item) => item.state === "pending" || item.state === "adoptable")
+    : planned.some((item) =>
+      item.state === "pending"
+      || item.state === "adoptable"
+      || item.state === "blocked_by_guarded_predecessor")
       ? "pending" as const
       : "current" as const;
   return {
@@ -15755,6 +16503,7 @@ async function planContractSpineMigrationsOnConnection(
     migrations: planned,
   };
 }
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END
 
 export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
   return sql.begin(async (transaction) => {
@@ -15771,7 +16520,8 @@ function isLockTimeout(error: unknown): boolean {
     && error.code === "55P03";
 }
 
-export async function applyContractSpineMigrations(
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-automatic-successor-wrapper:BEGIN
+async function applyContractSpineMigrationsThroughV32Core(
   sql: Sql,
   options: Readonly<{ lockTimeoutMs?: number; statementTimeoutMs?: number; releaseSha?: string }> = {},
 ): Promise<ContractSpineMigrationApplyResult> {
@@ -16512,6 +17262,242 @@ export async function applyBootstrapMainClaimHandoffGuardedMigration32V1(
   }
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v32-guarded-dispatch:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-savepoint-facade:BEGIN
+function createMigration33SavepointFacade(transaction: TransactionSql): Sql {
+  return new Proxy(transaction as unknown as Sql, {
+    get(target, property) {
+      if (property === "begin") {
+        return (callback: (sql: TransactionSql) => unknown) => transaction.savepoint(callback);
+      }
+      const value = Reflect.get(target as unknown as object, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-savepoint-facade:END
+
+async function verifyContractSpineThroughMigration32ForSuccessor(
+  transaction: TransactionSql,
+): Promise<void> {
+  const journal = await completeJournalRows(transaction);
+  if (journal.length < 32) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "Migration 33 requires the exact complete journal through guarded migration 32",
+    );
+  }
+  for (const migration of migrations) {
+    const row = journal.find((candidate) => candidate.version === migration.version);
+    if (
+      !row
+      || row.name !== migration.name
+      || row.checksum !== checksum(migration)
+      || (migration.migrationClass === "guarded" && row.state !== "applied")
+      || await detectRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction)
+        !== "present"
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `Migration ${migration.version} is not the exact current predecessor of migration 33`,
+      );
+    }
+    if (migration.migrationClass === "guarded") {
+      await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(transaction);
+    }
+    await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction);
+  }
+  await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
+  await verifyExactContractSpineJournalAuthority(transaction);
+  await verifyExactContractSpineSourceChain(transaction, 32);
+}
+
+export async function applyContractSpineMigrations(
+  sql: Sql,
+  options: Readonly<{
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+    releaseSha?: string;
+  }> = {},
+): Promise<ContractSpineMigrationApplyResult> {
+  if (
+    options.releaseSha !== undefined
+    && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.releaseSha)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Migration release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+
+      const preflightPlan = await planContractSpineMigrationsOnConnection(transaction);
+      const preflightFailure = preflightPlan.migrations.find((candidate) =>
+        candidate.state === "unexpected"
+        || candidate.state === "checksum_mismatch"
+        || candidate.state === "adoption_mismatch");
+      if (preflightFailure) {
+        if (preflightFailure.state === "unexpected") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_UNKNOWN_VERSION",
+            `Migration journal contains unknown version ${preflightFailure.version}`,
+          );
+        }
+        throw new ContractSpineMigrationError(
+          preflightFailure.state === "checksum_mismatch"
+            ? "MIGRATION_CHECKSUM_MISMATCH"
+            : "MIGRATION_ADOPTION_MISMATCH",
+          `Migration ${preflightFailure.version} failed successor preflight`,
+        );
+      }
+      const preflightJournal = await completeJournalRows(transaction);
+      const preflight32 = preflightJournal.find((row) => row.version === 32);
+      const preflight33 = preflightJournal.find((row) => row.version === 33);
+      const preflight33Detection = await detectV3RecoveryClaimRuntimePublicationV1(transaction);
+      if (preflight33 && !preflight32) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 33 cannot precede guarded migration 32",
+        );
+      }
+      if (preflight33) {
+        if (
+          preflight33.name !== migration33.name
+          || preflight33.checksum !== checksum(migration33)
+          || (preflight33.state !== "applied" && preflight33.state !== "adopted")
+          || preflight33Detection !== "present"
+        ) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            "Migration 33 journal or relation differs from source",
+          );
+        }
+        await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+      } else if (preflight33Detection === "partial") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 33 relation is partially installed",
+        );
+      } else if (preflight33Detection === "present") {
+        await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+      }
+
+      const legacyResult = await applyContractSpineMigrationsThroughV32Core(
+        createMigration33SavepointFacade(transaction),
+        options,
+      );
+      if (legacyResult.guardedPending.includes(BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID)) {
+        const tail = await completeJournalRows(transaction);
+        if (tail.some((row) => row.version >= 33)) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_UNKNOWN_VERSION",
+            "Guarded-pending migration state contains an applied successor",
+          );
+        }
+        return legacyResult;
+      }
+
+      await verifyContractSpineThroughMigration32ForSuccessor(transaction);
+
+      const applied = [...legacyResult.applied];
+      const adopted = [...legacyResult.adopted];
+      const alreadyApplied = [...legacyResult.alreadyApplied];
+      if (preflight33) {
+        alreadyApplied.push(migration33.name);
+      } else {
+        let state: "applied" | "adopted";
+        if (preflight33Detection === "present") {
+          state = "adopted";
+          adopted.push(migration33.name);
+        } else {
+          for (const statement of migration33.statements) {
+            await transaction.unsafe(statement);
+          }
+          state = "applied";
+          applied.push(migration33.name);
+        }
+        await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+        const timestamps = await transaction.unsafe<Array<{ captured_at: Date }>>(
+          "SELECT NOW() AS captured_at",
+        );
+        if (timestamps.length !== 1 || !(timestamps[0]?.captured_at instanceof Date)) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_INCOMPLETE",
+            "Migration 33 database timestamp capture failed",
+          );
+        }
+        await transaction.unsafe(
+          `INSERT INTO public.setfarm_schema_migrations (
+             version, name, checksum, state, release_sha,
+             verified_release_sha, verified_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            migration33.version,
+            migration33.name,
+            checksum(migration33),
+            state,
+            options.releaseSha ?? null,
+            options.releaseSha ?? null,
+            options.releaseSha === undefined ? null : timestamps[0].captured_at,
+          ],
+        );
+      }
+
+      const finalJournal = await completeJournalRows(transaction);
+      if (
+        finalJournal.length !== completeMigrations.length
+        || finalJournal.some((row, index) => {
+          const expected = completeMigrations[index];
+          return !expected
+            || row.version !== expected.version
+            || row.name !== expected.name
+            || row.checksum !== checksum(expected);
+        })
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration source chain through version 33 differs from source",
+        );
+      }
+      await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+      await verifyContractSpineThroughMigration32ForSuccessor(transaction);
+      return {
+        schema: "setfarm.contract-spine-migration-apply.v1" as const,
+        applied,
+        adopted,
+        alreadyApplied,
+        guardedPending: [],
+      };
+    }) as ContractSpineMigrationApplyResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Contract spine migration lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-automatic-successor-wrapper:END
 
 /**
  * Roll migration 25 back only while no preparation authority provenance was
@@ -19492,7 +20478,7 @@ export async function verifyContractSpineMigrations(
           `Migration ${pending.version} is pending`,
         );
       }
-      for (const migration of migrations) {
+      for (const migration of completeMigrations) {
         if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(
           migration,
           transaction,

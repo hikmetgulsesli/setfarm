@@ -27,6 +27,25 @@ import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.j
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
+const recoveryPublicationMigrationId = "033_v3_recovery_claim_runtime_publication_v1";
+
+async function snapshotMigration33RollbackBoundary(database: TestDatabase) {
+  const rows = await database.sql<Array<{ legacy_metadata: string; migration_33_bytes: string }>>`
+    SELECT
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(journal) ORDER BY journal.version)::text
+          FROM setfarm_schema_migrations journal WHERE journal.version <= 32
+      ), '[]') AS legacy_metadata,
+      jsonb_build_object(
+        'relation', to_regclass('public.internal_production_v3_recovery_claim_publications_v1')::text,
+        'function', to_regprocedure('public.ip_v3_recovery_publication_immutable_v1()')::text,
+        'journal', (
+          SELECT to_jsonb(journal) FROM setfarm_schema_migrations journal WHERE journal.version=33
+        )
+      )::text AS migration_33_bytes
+  `;
+  return { ...rows[0]! };
+}
 
 async function typescriptFilesUnder(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -209,7 +228,7 @@ describe("contract spine migration journal", () => {
     assert.equal(plan.migrations[0]?.state, "pending");
   });
 
-  it("registers exact automatic ordinals 1-31 and sole guarded ordinal 32", async () => {
+  it("registers exact automatic ordinals 1-31, sole guarded ordinal 32, and blocked 33", async () => {
     const module = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js")
       .catch(() => null);
     assert.ok(module, "the dedicated guarded migration module must exist");
@@ -265,7 +284,7 @@ describe("contract spine migration journal", () => {
     );
 
     const plan = await planContractSpineMigrations(database.sql);
-    assert.equal(plan.migrations.length, 32);
+    assert.equal(plan.migrations.length, 33);
     assert.deepEqual(
       plan.migrations.slice(0, 31).map((migration) => migration.migrationClass),
       Array.from({ length: 31 }, () => "automatic"),
@@ -277,6 +296,760 @@ describe("contract spine migration journal", () => {
       checksum: plan.migrations[31]?.checksum,
       state: "pending",
     });
+  });
+
+  it("registers ordinary migration 33 but blocks it behind guarded migration 32", async () => {
+    const plan = await planContractSpineMigrations(database.sql);
+    assert.equal(plan.migrations.length, 33);
+    assert.deepEqual(plan.migrations[32], {
+      version: 33,
+      name: recoveryPublicationMigrationId,
+      migrationClass: "automatic",
+      checksum: plan.migrations[32]?.checksum,
+      state: "blocked_by_guarded_predecessor",
+    });
+
+    const applied = await applyContractSpineMigrations(database.sql, {
+      releaseSha: "c".repeat(40),
+    });
+    assert.deepEqual(applied.guardedPending, [guardedMigrationId]);
+    assert.equal([
+      ...applied.applied,
+      ...applied.adopted,
+      ...applied.alreadyApplied,
+    ].includes(recoveryPublicationMigrationId), false);
+    const state = await database.sql<Array<{
+      relation_name: string | null;
+      journal_count: number;
+    }>>`
+      SELECT to_regclass(
+               'public.internal_production_v3_recovery_claim_publications_v1'
+             )::text AS relation_name,
+             (SELECT COUNT(*)::integer
+                FROM public.setfarm_schema_migrations
+               WHERE version = 33) AS journal_count
+    `;
+    assert.deepEqual({ ...state[0] }, { relation_name: null, journal_count: 0 });
+  });
+
+  it("applies migration 33 after guarded 32 with one exact release metadata triple", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const releaseSha = "d".repeat(40);
+    const applied = await applyContractSpineMigrations(database.sql, { releaseSha });
+    assert.equal(applied.applied.at(-1), recoveryPublicationMigrationId);
+    assert.deepEqual(applied.guardedPending, []);
+    const rows = await database.sql<Array<{
+      name: string;
+      state: string;
+      release_sha: string | null;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+      relation_name: string | null;
+    }>>`
+      SELECT migration.name,
+             migration.state,
+             migration.release_sha,
+             migration.verified_release_sha,
+             migration.verified_at,
+             to_regclass(
+               'public.internal_production_v3_recovery_claim_publications_v1'
+             )::text AS relation_name
+        FROM public.setfarm_schema_migrations migration
+       WHERE migration.version = 33
+    `;
+    assert.equal(rows.length, 1);
+    assert.deepEqual({ ...rows[0], verified_at: rows[0]?.verified_at instanceof Date }, {
+      name: recoveryPublicationMigrationId,
+      state: "applied",
+      release_sha: releaseSha,
+      verified_release_sha: releaseSha,
+      verified_at: true,
+      relation_name: "internal_production_v3_recovery_claim_publications_v1",
+    });
+    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+  });
+
+  it("applies new migration 33 with the exact undefined metadata triple", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const applied = await applyContractSpineMigrations(database.sql);
+    assert.equal(applied.applied.at(-1), recoveryPublicationMigrationId);
+    const rows = await database.sql<Array<{
+      state: string;
+      release_sha: string | null;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+    }>>`
+      SELECT state,release_sha,verified_release_sha,verified_at
+        FROM setfarm_schema_migrations WHERE version=33
+    `;
+    assert.deepEqual({ ...rows[0] }, {
+      state: "applied",
+      release_sha: null,
+      verified_release_sha: null,
+      verified_at: null,
+    });
+  });
+
+  it("rolls migration 33 and legacy verification metadata back when its journal write fails", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const before = await database.sql<Array<{
+      version: number;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+    }>>`
+      SELECT version, verified_release_sha, verified_at
+        FROM public.setfarm_schema_migrations
+       ORDER BY version
+    `;
+    await database.sql.unsafe(`
+      CREATE FUNCTION reject_migration_33_ddl_v1() RETURNS event_trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF to_regclass('public.internal_production_v3_recovery_claim_publications_v1')
+           IS NOT NULL THEN
+          RAISE EXCEPTION 'reject migration 33 ddl';
+        END IF;
+      END
+      $$
+    `);
+    await database.sql.unsafe(`
+      CREATE EVENT TRIGGER reject_migration_33_ddl_v1
+      ON ddl_command_start WHEN TAG IN ('CREATE TRIGGER')
+      EXECUTE FUNCTION reject_migration_33_ddl_v1()
+    `);
+    try {
+      await assert.rejects(
+        applyContractSpineMigrations(database.sql, { releaseSha: "e".repeat(40) }),
+        /reject migration 33 ddl/,
+      );
+    } finally {
+      await database.sql.unsafe("DROP EVENT TRIGGER reject_migration_33_ddl_v1");
+      await database.sql.unsafe("DROP FUNCTION reject_migration_33_ddl_v1()");
+    }
+    const after = await database.sql<typeof before>`
+      SELECT version, verified_release_sha, verified_at
+        FROM public.setfarm_schema_migrations
+       ORDER BY version
+    `;
+    assert.deepEqual(after, before);
+    const relation = await database.sql<Array<{ relation_name: string | null }>>`
+      SELECT to_regclass(
+               'public.internal_production_v3_recovery_claim_publications_v1'
+             )::text AS relation_name
+    `;
+    assert.equal(relation[0]?.relation_name, null);
+  });
+
+  it("uses the savepoint facade and exposes no migration 33 result before outer commit acknowledgement", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    let savepointCalls = 0;
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    let callbackReady!: () => void;
+    const callbackCompleted = new Promise<void>((resolve) => { callbackReady = resolve; });
+    const instrumentedSql = new Proxy(database.sql as any, {
+      get(target, property) {
+        if (property === "begin") {
+          return (callback: (sql: unknown) => Promise<unknown>) => database.sql.begin(async (raw) => {
+            const instrumentedTransaction = new Proxy(raw as any, {
+              get(transactionTarget, transactionProperty) {
+                if (transactionProperty === "savepoint") {
+                  return (...args: unknown[]) => {
+                    savepointCalls += 1;
+                    return (raw.savepoint as any).apply(raw, args);
+                  };
+                }
+                const value = Reflect.get(transactionTarget, transactionProperty, transactionTarget);
+                return typeof value === "function" ? value.bind(transactionTarget) : value;
+              },
+            });
+            const result = await callback(instrumentedTransaction);
+            callbackReady();
+            await commitGate;
+            return result;
+          });
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    let settled = false;
+    const applying = applyContractSpineMigrations(instrumentedSql, {
+      releaseSha: "6".repeat(40),
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await callbackCompleted;
+    try {
+      await Promise.resolve();
+      assert.ok(savepointCalls > 0, "legacy core must use the outer transaction savepoint facade");
+      assert.equal(settled, false, "public result must await outer commit acknowledgement");
+      assert.equal(
+        (await database.sql<Array<{ relation_name: string | null }>>`
+          SELECT to_regclass('public.internal_production_v3_recovery_claim_publications_v1')::text AS relation_name
+        `)[0]?.relation_name,
+        null,
+      );
+    } finally {
+      releaseCommit();
+    }
+    const result = await applying;
+    assert.equal(result.applied.at(-1), recoveryPublicationMigrationId);
+    assert.equal(
+      (await database.sql<Array<{ relation_name: string | null }>>`
+        SELECT to_regclass('public.internal_production_v3_recovery_claim_publications_v1')::text AS relation_name
+      `)[0]?.relation_name,
+      "internal_production_v3_recovery_claim_publications_v1",
+    );
+  });
+
+  it("adopts the wholly committed migration 33 after outer commit acknowledgement loss", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const responseLossSql = new Proxy(database.sql as any, {
+      get(target, property) {
+        if (property === "begin") {
+          return async (callback: (sql: unknown) => Promise<unknown>) => {
+            await database.sql.begin((transaction) => callback(transaction));
+            throw new Error("TEST_MIGRATION_COMMIT_ACK_LOST");
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const releaseSha = "b".repeat(40);
+    await assert.rejects(
+      applyContractSpineMigrations(responseLossSql, { releaseSha }),
+      /TEST_MIGRATION_COMMIT_ACK_LOST/,
+    );
+    const committed = await database.sql<Array<{
+      count: number;
+      release_sha: string;
+      verified_release_sha: string;
+    }>>`
+      SELECT COUNT(*)::integer AS count,MIN(release_sha) AS release_sha,
+             MIN(verified_release_sha) AS verified_release_sha
+        FROM setfarm_schema_migrations WHERE version=33
+    `;
+    assert.deepEqual({ ...committed[0] }, {
+      count: 1,
+      release_sha: releaseSha,
+      verified_release_sha: releaseSha,
+    });
+    const replay = await applyContractSpineMigrations(database.sql, { releaseSha });
+    assert.equal(replay.alreadyApplied.at(-1), recoveryPublicationMigrationId);
+    assert.equal(
+      (await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count FROM setfarm_schema_migrations WHERE version=33
+      `)[0]?.count,
+      1,
+    );
+  });
+
+  it("rolls every migration 33 failure boundary back to byte-identical legacy metadata", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const before = await snapshotMigration33RollbackBoundary(database);
+
+    const cases: ReadonlyArray<Readonly<{
+      name: string;
+      sql: any;
+      expected: RegExp;
+      callbackObserved: () => boolean;
+    }>> = [];
+    const mutableCases = cases as Array<{
+      name: string;
+      sql: any;
+      expected: RegExp;
+      callbackObserved: () => boolean;
+    }>;
+
+    let callbackReached = false;
+    mutableCases.push({
+      name: "outer callback failure",
+      sql: new Proxy(database.sql as any, {
+        get(target, property) {
+          if (property === "begin") {
+            return (callback: (sql: unknown) => Promise<unknown>) => database.sql.begin(async (transaction) => {
+              await callback(transaction);
+              callbackReached = true;
+              throw new Error("TEST_MIGRATION_OUTER_CALLBACK_FAILURE");
+            });
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+      expected: /TEST_MIGRATION_OUTER_CALLBACK_FAILURE/,
+      callbackObserved: () => callbackReached,
+    });
+
+    let savepointReached = false;
+    mutableCases.push({
+      name: "private facade savepoint failure",
+      sql: new Proxy(database.sql as any, {
+        get(target, property) {
+          if (property === "begin") {
+            return (callback: (sql: unknown) => Promise<unknown>) => database.sql.begin((raw) => callback(new Proxy(raw as any, {
+              get(transactionTarget, transactionProperty) {
+                if (transactionProperty === "savepoint") {
+                  return () => {
+                    savepointReached = true;
+                    throw new Error("TEST_MIGRATION_PRIVATE_SAVEPOINT_FAILURE");
+                  };
+                }
+                const value = Reflect.get(transactionTarget, transactionProperty, transactionTarget);
+                return typeof value === "function" ? value.bind(transactionTarget) : value;
+              },
+            })));
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+      expected: /TEST_MIGRATION_PRIVATE_SAVEPOINT_FAILURE/,
+      callbackObserved: () => savepointReached,
+    });
+
+    let finalVerificationReached = false;
+    mutableCases.push({
+      name: "final verification failure",
+      sql: new Proxy(database.sql as any, {
+        get(target, property) {
+          if (property === "begin") {
+            return (callback: (sql: unknown) => Promise<unknown>) => database.sql.begin((raw) => {
+              let journaled33 = false;
+              const transaction = new Proxy(raw as any, {
+                get(transactionTarget, transactionProperty) {
+                  if (transactionProperty === "unsafe") {
+                    return async (query: string, parameters?: unknown[]) => {
+                      if (journaled33 && query.includes("internal_production_v3_recovery_claim_publications_v1")) {
+                        finalVerificationReached = true;
+                        throw new Error("TEST_MIGRATION_FINAL_VERIFICATION_FAILURE");
+                      }
+                      const result = await raw.unsafe(query, parameters as any);
+                      if (query.includes("INSERT INTO public.setfarm_schema_migrations")
+                        && parameters?.[0] === 33) journaled33 = true;
+                      return result;
+                    };
+                  }
+                  const value = Reflect.get(transactionTarget, transactionProperty, transactionTarget);
+                  return typeof value === "function" ? value.bind(transactionTarget) : value;
+                },
+              });
+              return callback(transaction);
+            });
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+      expected: /TEST_MIGRATION_FINAL_VERIFICATION_FAILURE/,
+      callbackObserved: () => finalVerificationReached,
+    });
+
+    for (const failure of cases) {
+      let settled = false;
+      let publicResultObserved = false;
+      const applying = applyContractSpineMigrations(failure.sql, {
+        releaseSha: "c".repeat(40),
+      }).then((result) => {
+        publicResultObserved = true;
+        return result;
+      }).finally(() => { settled = true; });
+      await assert.rejects(applying, failure.expected, failure.name);
+      assert.equal(settled, true);
+      assert.equal(publicResultObserved, false, `${failure.name} exposed a pre-ACK result`);
+      assert.equal(failure.callbackObserved(), true, `${failure.name} injection was not reached`);
+      assert.deepEqual(
+        await snapshotMigration33RollbackBoundary(database),
+        before,
+        `${failure.name} changed legacy metadata or migration 33 bytes`,
+      );
+    }
+
+    await database.sql.unsafe(`
+      CREATE SCHEMA test_migration_33_outer_commit_v1
+    `);
+    await database.sql.unsafe(`
+      CREATE TABLE test_migration_33_outer_commit_v1.commit_signal (
+        signal integer NOT NULL
+      )
+    `);
+    await database.sql.unsafe(`
+      CREATE FUNCTION test_migration_33_outer_commit_v1.reject_commit() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'TEST_MIGRATION_OUTER_COMMIT_REJECTED';
+      END
+      $$
+    `);
+    await database.sql.unsafe(`
+      CREATE CONSTRAINT TRIGGER test_reject_migration_33_outer_commit_v1
+      AFTER INSERT ON test_migration_33_outer_commit_v1.commit_signal
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW
+      EXECUTE FUNCTION test_migration_33_outer_commit_v1.reject_commit()
+    `);
+    let commitCallbackReturned = false;
+    const commitRejectingSql = new Proxy(database.sql as any, {
+      get(target, property) {
+        if (property === "begin") {
+          return (callback: (sql: unknown) => Promise<unknown>) => database.sql.begin(async (transaction) => {
+            const result = await callback(transaction);
+            await transaction.unsafe(
+              "INSERT INTO test_migration_33_outer_commit_v1.commit_signal (signal) VALUES (33)",
+            );
+            commitCallbackReturned = true;
+            return result;
+          });
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    let commitSettled = false;
+    let commitResultObserved = false;
+    const commitRejectingApply = applyContractSpineMigrations(commitRejectingSql, {
+      releaseSha: "c".repeat(40),
+    }).then((result) => {
+      commitResultObserved = true;
+      return result;
+    }).finally(() => { commitSettled = true; });
+    try {
+      await assert.rejects(
+        commitRejectingApply,
+        /TEST_MIGRATION_OUTER_COMMIT_REJECTED/,
+        "outer commit-time rejection",
+      );
+      assert.equal(commitCallbackReturned, true, "outer callback did not return before COMMIT rejection");
+      assert.equal(commitResultObserved, false, "migration result escaped before COMMIT acknowledgement");
+      assert.equal(commitSettled, true);
+      assert.deepEqual(
+        await snapshotMigration33RollbackBoundary(database),
+        before,
+        "outer COMMIT rejection changed legacy metadata or migration 33 bytes",
+      );
+    } finally {
+      await database.sql.unsafe("DROP SCHEMA test_migration_33_outer_commit_v1 CASCADE");
+    }
+  });
+
+  it("projects migration 33 exact columns, keys, foreign keys, function, triggers, owner and ACL", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    const columns = await database.sql<Array<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }>>`
+      SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'internal_production_v3_recovery_claim_publications_v1'
+       ORDER BY ordinal_position
+    `;
+    assert.deepEqual(columns.map((column) => ({ ...column })), [
+      { column_name: "claim_id", data_type: "bigint", is_nullable: "NO" },
+      { column_name: "runtime_session_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "run_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "step_db_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "workflow_step_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "story_db_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "story_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "story_index", data_type: "integer", is_nullable: "NO" },
+      { column_name: "recovery_case_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "revision_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "dispatch_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "status", data_type: "text", is_nullable: "NO" },
+      { column_name: "handoff_canonical_json", data_type: "text", is_nullable: "NO" },
+      { column_name: "handoff_hash", data_type: "text", is_nullable: "NO" },
+      { column_name: "bound_at", data_type: "timestamp with time zone", is_nullable: "NO" },
+    ]);
+    const catalog = await database.sql<Array<{
+      foreign_keys: number;
+      constraints: number;
+      triggers: number;
+      enabled_triggers: number;
+      table_owner_current: boolean;
+      public_table_access: boolean;
+      function_owner_current: boolean;
+      public_function_execute: boolean;
+      function_body: string;
+      function_config: string[] | null;
+    }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM pg_constraint
+          WHERE conrelid = 'internal_production_v3_recovery_claim_publications_v1'::regclass
+            AND contype = 'f') AS foreign_keys,
+        (SELECT COUNT(*)::integer FROM pg_constraint
+          WHERE conrelid = 'internal_production_v3_recovery_claim_publications_v1'::regclass) AS constraints,
+        (SELECT COUNT(*)::integer FROM pg_trigger
+          WHERE tgrelid = 'internal_production_v3_recovery_claim_publications_v1'::regclass
+            AND NOT tgisinternal) AS triggers,
+        (SELECT COUNT(*)::integer FROM pg_trigger
+          WHERE tgrelid = 'internal_production_v3_recovery_claim_publications_v1'::regclass
+            AND NOT tgisinternal AND tgenabled = 'O') AS enabled_triggers,
+        (SELECT pg_get_userbyid(relowner) = current_user FROM pg_class
+          WHERE oid = 'internal_production_v3_recovery_claim_publications_v1'::regclass)
+          AS table_owner_current,
+        has_table_privilege(
+          0, 'internal_production_v3_recovery_claim_publications_v1'::regclass, 'SELECT'
+        ) AS public_table_access,
+        pg_get_userbyid(function.proowner) = current_user AS function_owner_current,
+        has_function_privilege(0, function.oid, 'EXECUTE') AS public_function_execute,
+        function.prosrc AS function_body,
+        function.proconfig AS function_config
+      FROM pg_proc function
+      WHERE function.oid = 'ip_v3_recovery_publication_immutable_v1()'::regprocedure
+    `;
+    assert.deepEqual({ ...catalog[0], function_body: catalog[0]?.function_body.trim() }, {
+      foreign_keys: 9,
+      constraints: 15,
+      triggers: 2,
+      enabled_triggers: 2,
+      table_owner_current: true,
+      public_table_access: false,
+      function_owner_current: true,
+      public_function_execute: false,
+      function_body: "BEGIN\n  RAISE EXCEPTION 'V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE';\nEND",
+      function_config: ["search_path=pg_catalog, public"],
+    });
+  });
+
+  it("rejects extra migration 33 indexes instead of accepting expanded topology", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    await database.sql`
+      CREATE INDEX ip_v3_recovery_publications_unexpected_idx
+      ON internal_production_v3_recovery_claim_publications_v1 (run_id)
+    `;
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+  });
+
+  it("rejects every extra named-role and PUBLIC table/function grant on migration 33", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    for (const [grant, revoke] of [
+      [
+        "GRANT SELECT ON internal_production_v3_recovery_claim_publications_v1 TO pg_monitor",
+        "REVOKE ALL ON internal_production_v3_recovery_claim_publications_v1 FROM pg_monitor",
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION ip_v3_recovery_publication_immutable_v1() TO pg_monitor",
+        "REVOKE ALL ON FUNCTION ip_v3_recovery_publication_immutable_v1() FROM pg_monitor",
+      ],
+      [
+        "GRANT SELECT ON internal_production_v3_recovery_claim_publications_v1 TO PUBLIC",
+        "REVOKE ALL ON internal_production_v3_recovery_claim_publications_v1 FROM PUBLIC",
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION ip_v3_recovery_publication_immutable_v1() TO PUBLIC",
+        "REVOKE ALL ON FUNCTION ip_v3_recovery_publication_immutable_v1() FROM PUBLIC",
+      ],
+    ] as const) {
+      await database.sql.unsafe(grant);
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH",
+      );
+      await database.sql.unsafe(revoke);
+      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    }
+  });
+
+  it("rejects migration 33 owner and trigger-enabled drift", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    for (const [mutate, restore] of [
+      [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 OWNER TO pg_monitor",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 OWNER TO postgres",
+      ],
+      [
+        "ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO pg_monitor",
+        "ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO postgres",
+      ],
+      [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1",
+      ],
+      [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ip_v3_recovery_publication_truncate_forbidden_v1",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ip_v3_recovery_publication_truncate_forbidden_v1",
+      ],
+      [
+        "CREATE OR REPLACE FUNCTION ip_v3_recovery_publication_immutable_v1() RETURNS trigger LANGUAGE plpgsql SET search_path TO pg_catalog,public AS $$BEGIN RAISE EXCEPTION 'DRIFTED_RECOVERY_PUBLICATION_FUNCTION'; END$$",
+        "CREATE OR REPLACE FUNCTION ip_v3_recovery_publication_immutable_v1() RETURNS trigger LANGUAGE plpgsql SET search_path TO pg_catalog,public AS $$BEGIN\n  RAISE EXCEPTION 'V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE';\nEND$$",
+      ],
+    ] as const) {
+      await database.sql.unsafe(mutate);
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH",
+      );
+      await database.sql.unsafe(restore);
+      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    }
+  });
+
+  it("adopts only exact migration 33 schema with undefined and defined metadata triples", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 33`;
+    const withoutRelease = await applyContractSpineMigrations(database.sql);
+    assert.equal(withoutRelease.adopted.at(-1), recoveryPublicationMigrationId);
+    const undefinedRows = await database.sql<Array<{
+      state: string;
+      release_sha: string | null;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+    }>>`
+      SELECT state, release_sha, verified_release_sha, verified_at
+        FROM setfarm_schema_migrations WHERE version = 33
+    `;
+    assert.deepEqual({ ...undefinedRows[0] }, {
+      state: "adopted",
+      release_sha: null,
+      verified_release_sha: null,
+      verified_at: null,
+    });
+
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 33`;
+    const releaseSha = "f".repeat(40);
+    const withRelease = await applyContractSpineMigrations(database.sql, { releaseSha });
+    assert.equal(withRelease.adopted.at(-1), recoveryPublicationMigrationId);
+    const definedRows = await database.sql<typeof undefinedRows>`
+      SELECT state, release_sha, verified_release_sha, verified_at
+        FROM setfarm_schema_migrations WHERE version = 33
+    `;
+    assert.deepEqual({ ...definedRows[0], verified_at: definedRows[0]?.verified_at instanceof Date }, {
+      state: "adopted",
+      release_sha: releaseSha,
+      verified_release_sha: releaseSha,
+      verified_at: true,
+    });
+  });
+
+  it("preserves exact existing migration 33 metadata when release is undefined and rejects partial schema", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const releaseSha = "9".repeat(40);
+    await applyContractSpineMigrations(database.sql, { releaseSha });
+    const before = await database.sql<Array<{
+      release_sha: string | null;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+    }>>`
+      SELECT release_sha, verified_release_sha, verified_at
+        FROM setfarm_schema_migrations WHERE version = 33
+    `;
+    const repeated = await applyContractSpineMigrations(database.sql);
+    assert.equal(repeated.alreadyApplied.at(-1), recoveryPublicationMigrationId);
+    const after = await database.sql<typeof before>`
+      SELECT release_sha, verified_release_sha, verified_at
+        FROM setfarm_schema_migrations WHERE version = 33
+    `;
+    assert.deepEqual(after, before);
+
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 33`;
+    await database.sql`DROP TABLE internal_production_v3_recovery_claim_publications_v1`;
+    await database.sql`DROP FUNCTION ip_v3_recovery_publication_immutable_v1()`;
+    await database.sql`CREATE TABLE internal_production_v3_recovery_claim_publications_v1 (claim_id bigint)`;
+    await assert.rejects(
+      applyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+    assert.equal(
+      (await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count FROM setfarm_schema_migrations WHERE version = 33
+      `)[0]?.count,
+      0,
+    );
+  });
+
+  it("preserves existing migration 33 release identity while refreshing defined verification metadata", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const originalRelease = "7".repeat(40);
+    await applyContractSpineMigrations(database.sql, { releaseSha: originalRelease });
+    const original = await database.sql<Array<{ verified_at: Date }>>`
+      SELECT verified_at FROM setfarm_schema_migrations WHERE version=33
+    `;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const verificationRelease = "8".repeat(40);
+    const repeated = await applyContractSpineMigrations(database.sql, {
+      releaseSha: verificationRelease,
+    });
+    assert.equal(repeated.alreadyApplied.at(-1), recoveryPublicationMigrationId);
+    const rows = await database.sql<Array<{
+      state: string;
+      release_sha: string;
+      verified_release_sha: string;
+      verified_at: Date;
+    }>>`
+      SELECT state,release_sha,verified_release_sha,verified_at
+        FROM setfarm_schema_migrations WHERE version=33
+    `;
+    assert.equal(rows[0]?.state, "applied");
+    assert.equal(rows[0]?.release_sha, originalRelease);
+    assert.equal(rows[0]?.verified_release_sha, verificationRelease);
+    assert.ok(rows[0]!.verified_at.getTime() >= original[0]!.verified_at.getTime());
+  });
+
+  it("rejects extra pending migration 33 topology before mutating predecessor verification metadata", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const initialRelease = "4".repeat(40);
+    await applyContractSpineMigrations(database.sql, { releaseSha: initialRelease });
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version=33`;
+    await database.sql`
+      CREATE INDEX ip_v3_recovery_publications_preflight_extra_idx
+      ON internal_production_v3_recovery_claim_publications_v1 (story_id)
+    `;
+    const before = await database.sql<Array<{
+      version: number;
+      release_sha: string | null;
+      verified_release_sha: string | null;
+      verified_at: Date | null;
+    }>>`
+      SELECT version,release_sha,verified_release_sha,verified_at
+        FROM setfarm_schema_migrations ORDER BY version
+    `;
+    await assert.rejects(
+      applyContractSpineMigrations(database.sql, { releaseSha: "5".repeat(40) }),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+    const after = await database.sql<typeof before>`
+      SELECT version,release_sha,verified_release_sha,verified_at
+        FROM setfarm_schema_migrations ORDER BY version
+    `;
+    assert.deepEqual(after, before);
+    assert.equal(
+      (await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count FROM setfarm_schema_migrations WHERE version=33
+      `)[0]?.count,
+      0,
+    );
   });
 
   it("generic apply skips guarded 32 while targeted v31 audit and pending inspection succeed", async () => {
@@ -619,10 +1392,10 @@ describe("contract spine migration journal", () => {
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
-    assert.deepEqual(
-      (await applyContractSpineMigrations(database.sql)).guardedPending,
-      [guardedMigrationId],
-      "generic apply must not complete or journal a partial guarded schema",
+    await assert.rejects(
+      applyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
 
     await database.sql.unsafe("DROP TABLE internal_production_bootstrap_main_claim_handoff_operations_v1");
@@ -997,12 +1770,22 @@ describe("contract spine migration journal", () => {
       {
         symbol: seamSymbols[0],
         file: "tests/execution-attempts/test-database.ts",
-        count: 3,
+        count: 4,
       },
       {
         symbol: seamSymbols[1],
         file: "tests/execution-attempts/test-database.ts",
-        count: 5,
+        count: 6,
+      },
+      {
+        symbol: seamSymbols[0],
+        file: "tests/internal-production/owner-admission-v1.test.ts",
+        count: 1,
+      },
+      {
+        symbol: seamSymbols[1],
+        file: "tests/internal-production/owner-admission-v1.test.ts",
+        count: 2,
       },
     ]);
   });
@@ -1040,6 +1823,7 @@ describe("contract spine migration journal", () => {
     assert.deepEqual(first.adopted, []);
     assert.deepEqual(first.guardedPending, [guardedMigrationId]);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
 
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
@@ -1054,7 +1838,11 @@ describe("contract spine migration journal", () => {
     `;
     assert.equal(journal.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
     assert.equal(journal[31]?.release_sha, "a".repeat(40));
-    assert.equal(journal.every((row) => row.verified_release_sha === "a".repeat(40)), true);
+    assert.equal(
+      journal.slice(0, 32).every((row) => row.verified_release_sha === "a".repeat(40)),
+      true,
+    );
+    assert.deepEqual(journal[32], { release_sha: null, verified_release_sha: null });
 
     const nextReleaseSha = "d".repeat(40);
     const second = await applyContractSpineMigrations(database.sql, {
@@ -1074,6 +1862,7 @@ describe("contract spine migration journal", () => {
     `;
     assert.equal(originalReleases.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
     assert.equal(originalReleases[31]?.release_sha, "a".repeat(40));
+    assert.equal(originalReleases[32]?.release_sha, null);
   });
 
   it("adopts an exact existing attempt table only after catalog verification", async () => {
@@ -1128,6 +1917,7 @@ describe("contract spine migration journal", () => {
       "028_runtime_completion_manifest_authority",
     ]);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -1277,6 +2067,7 @@ describe("contract spine migration journal", () => {
     assert.equal(indexes.length, 2);
     assert.equal(indexes.every((index) => !index.indexdef.includes("agent_id")), true);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -1354,6 +2145,7 @@ describe("contract spine migration journal", () => {
     assert.deepEqual(repeated.applied, []);
     assert.equal((await effects.listForRequest(terminalIdentityUnknown.requestId)).length, 1);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
@@ -1598,6 +2390,7 @@ describe("contract spine migration journal", () => {
     const applied = await applyContractSpineMigrations(database.sql);
     assert.ok(applied.applied.includes("009_product_artifact_index"));
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.migrations.find((item) => item.version === 9)?.state, "applied");
     const relations = await database.sql<Array<{ tablename: string }>>`
@@ -1680,8 +2473,8 @@ describe("contract spine migration journal", () => {
       applyContractSpineMigrations(database.sql),
       applyContractSpineMigrations(database.sql),
     ]);
-    assert.equal(results.flatMap((result) => result.applied).length, migrationCount - 1);
-    assert.equal(results.flatMap((result) => result.alreadyApplied).length, migrationCount - 1);
+    assert.equal(results.flatMap((result) => result.applied).length, migrationCount - 2);
+    assert.equal(results.flatMap((result) => result.alreadyApplied).length, migrationCount - 2);
     assert.deepEqual(
       results.map((result) => result.guardedPending),
       [[guardedMigrationId], [guardedMigrationId]],
@@ -1690,7 +2483,7 @@ describe("contract spine migration journal", () => {
     const rows = await database.sql<{ count: number }[]>`
       SELECT COUNT(*)::integer AS count FROM setfarm_schema_migrations
     `;
-    assert.equal(rows[0]?.count, migrationCount - 1);
+    assert.equal(rows[0]?.count, migrationCount - 2);
   });
 
   it("bounds advisory-lock waiting", async () => {

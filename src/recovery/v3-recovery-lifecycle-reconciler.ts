@@ -3,6 +3,11 @@ import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import {
   releaseDrainedRuntimeSessionInTransaction,
   releaseReservedRuntimeSessionInTransaction,
 } from "../execution/runtime-session-repository.js";
@@ -852,6 +857,8 @@ async function rollbackUnreservedPublication(
   if (closed.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_CLAIM_CAS_LOST", "open publication claim changed before exact close");
   }
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: closed[0]!.id });
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
 
   try {
     await releaseReservedRuntimeSessionInTransaction(sql, {
@@ -1043,6 +1050,8 @@ async function blockExpiredEvidenceAttempt(
   if (claims.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_EVIDENCE_CLAIM_CAS_LOST", "expired evidence claim changed before bounded close");
   }
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: claims[0]!.id });
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
   const terminalResult = {
     schema: "setfarm.v3-evidence-only-expired-owner.v1",
     dispatchId: input.delivery.dispatch_id,
@@ -1287,6 +1296,8 @@ async function blockExpiredModelAttempt(
   if (claims.length !== 1) {
     mutationFail("V3_RECOVERY_LIFECYCLE_MODEL_CLAIM_CAS_LOST", "expired model claim changed before bounded close");
   }
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(sql as PgTransactionSql, { claimIdText: claims[0]!.id });
+  await closeInternalProductionOwnerReservationV1(sql as PgTransactionSql, claimClose);
 
   try {
     if (input.runtime.state === "reserved") {

@@ -570,8 +570,8 @@ describe("single-step claim_log lifecycle", () => {
     const missingInputFailClose = source.indexOf("closeSingleStepHandoff(\"failed\"");
     const handoffReturn = source.indexOf("return {\n    found: true");
 
-    assert.match(publication, /publishSingleClaimRuntime[\s\S]*INSERT INTO claim_log/);
-    assert.match(publication, /INSERT INTO claim_log[\s\S]*reserveRuntimeSessionInTransaction/);
+    assert.match(publication, /publishSingleClaimRuntime[\s\S]*prepareInternalProductionClaimBirthV1[\s\S]*insertAndBindInternalProductionClaimBirthV1[\s\S]*reserveRuntimeSessionInTransaction/);
+    assert.match(publication, /SELECT nextval\(pg_get_serial_sequence\('claim_log','id'\)\)::bigint::text AS id/);
     assert.notEqual(publicationCall, -1, "single claim must use canonical claim/runtime publication");
     assert.doesNotMatch(source, /INSERT INTO claim_log/);
     assert.notEqual(transitionRecord, -1, "recordSingleStepHandoff must record a step transition");
@@ -845,7 +845,7 @@ describe("single-step claim_log lifecycle", () => {
     const source = handleVerifyEachSource();
     const acceptedOutputGuard = source.indexOf("UPDATE steps SET status = 'waiting'");
     const duplicateGuard = source.indexOf("if (_pgChanged.changes === 0)");
-    const claimUpdate = source.indexOf("UPDATE claim_log SET outcome = 'completed'");
+    const claimUpdate = source.indexOf("closeLegacyClaimOwnersInTransaction");
     const retryBranch = source.indexOf("if (status === \"retry\")");
     const passedBranch = source.indexOf("// Verify PASSED");
 
@@ -853,7 +853,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(claimUpdate > duplicateGuard, "claim_log must not close on duplicate/late verify completions");
     assert.ok(claimUpdate < retryBranch, "claim_log must close before retry branch returns");
     assert.ok(claimUpdate < passedBranch, "claim_log must close before passed branch returns");
-    assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
+    assert.match(source, /closeLegacyClaimOwnersInTransaction\(sql,[\s\S]*storyId: null/);
   });
 
   it("persists module onComplete context before continuing guardrails", () => {
@@ -1385,7 +1385,7 @@ describe("single-step claim_log lifecycle", () => {
     const pushStart = source.indexOf("checkId: \"implement.platform_push.start\"");
     const pushFailure = source.indexOf("PLATFORM_STORY_PUSH_FAILED for", pushStart);
     const autoPrStart = source.indexOf("checkId: \"implement.auto_pr.start\"");
-    const storyUpdate = source.indexOf("UPDATE stories SET status = $1, output = $2, pr_url = $3", pushStart);
+    const storyUpdate = source.indexOf("UPDATE stories SET status=$1,output=$2,pr_url=$3", pushStart);
 
     assert.ok(pushStart > 0, "story completion must push branch before verify can inspect GitHub PR state");
     assert.ok(pushFailure > pushStart, "push failure must be classified before continuing");

@@ -9,7 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
-import { pgQuery, pgRun, pgGet, now } from "../db-pg.js";
+import { pgQuery, pgRun, pgGet, pgBegin, now } from "../db-pg.js";
+import { closeInternalProductionClaimOwnerAfterTerminalMutationV1 } from "../execution/claim-attempt-transition.js";
+import type postgres from "postgres";
 import type { LoopConfig } from "./types.js";
 import { logger } from "../lib/logger.js";
 import { emitEvent } from "./events.js";
@@ -25,10 +27,145 @@ import {
   STEP_STATUS,
 } from "./constants.js";
 import { autoSaveWorktree } from "./worktree-ops.js";
-import { getWorkflowId, getRunContext, failRun, recordStepTransition } from "./repo.js";
+import { failRun, getWorkflowId, getRunContext, recordStepTransition } from "./repo.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
 
 // ── Helper ──────────────────────────────────────────────────────────
+
+async function terminalizeAbandonedCleanupInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    storyDbId: string | null;
+    storyId: string | null;
+    abandonedAt: string;
+    diagnostic: string;
+    abandonCount: number;
+    durationMs?: number;
+    terminal: boolean;
+  }>,
+): Promise<void> {
+  const runs = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM runs WHERE id=$1 AND protocol='legacy' FOR UPDATE",
+    [input.runId],
+  );
+  const steps = await sql.unsafe<Array<{ id: string; current_story_id: string | null }>>(
+    "SELECT id,current_story_id FROM steps WHERE id=$1 AND run_id=$2 AND step_id=$3 AND status='running' FOR UPDATE",
+    [input.stepDbId, input.runId, input.workflowStepId],
+  );
+  if (runs.length !== 1 || steps.length !== 1
+    || steps[0]!.current_story_id !== input.storyDbId) {
+    throw new Error("CLEANUP_ABANDONED_OWNER_STALE");
+  }
+  if (input.storyDbId) {
+    const stories = await sql.unsafe<Array<{ id: string }>>(
+      "SELECT id FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3 AND status='running' FOR UPDATE",
+      [input.storyDbId, input.runId, input.storyId],
+    );
+    if (stories.length !== 1) throw new Error("CLEANUP_ABANDONED_OWNER_STALE");
+  }
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text AS id FROM claim_log
+      WHERE run_id=$1 AND step_id=$2
+        AND story_id IS NOT DISTINCT FROM $3::text AND outcome IS NULL
+      ORDER BY id FOR UPDATE`,
+    [input.runId, input.workflowStepId, input.storyId],
+  );
+  if (owners.length !== 1) throw new Error("CLEANUP_CLAIM_OWNER_CARDINALITY_INVALID");
+  const closed = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log SET outcome='abandoned', abandoned_at=$2,
+            duration_ms=COALESCE($3::integer, duration_ms), diagnostic=$4
+      WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+    [owners[0]!.id, input.abandonedAt, input.durationMs ?? null, input.diagnostic],
+  );
+  if (closed.length !== 1) throw new Error("CLEANUP_CLAIM_TERMINAL_CAS_LOST");
+  await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, closed[0]!.id);
+  if (input.storyDbId) {
+    const storyStatus = input.terminal ? "failed" : "pending";
+    await sql.unsafe(
+      `UPDATE stories SET status=$1, claimed_by=NULL, claimed_at=NULL,
+              abandoned_count=$2, retry_count=retry_count+CASE WHEN $6::boolean THEN 0 ELSE 1 END,
+              output=CASE WHEN output IS NULL OR output='' THEN $3 ELSE output END,
+              updated_at=$4 WHERE id=$5`,
+      [storyStatus, input.abandonCount, input.diagnostic, input.abandonedAt, input.storyDbId, input.terminal],
+    );
+    await sql.unsafe(
+      `UPDATE steps SET status=$1,current_story_id=NULL,abandoned_count=$2,
+              retry_count=retry_count+CASE WHEN $5::boolean THEN 0 ELSE 1 END,
+              output=CASE WHEN $1='failed' THEN 'Story abandoned and abandon limit reached' ELSE output END,
+              updated_at=$3 WHERE id=$4`,
+      [storyStatus, input.abandonCount, input.abandonedAt, input.stepDbId, input.terminal],
+    );
+  } else {
+    await sql.unsafe(
+      `UPDATE steps SET status=$1,output=CASE WHEN $1='failed' THEN $2 ELSE output END,
+              abandoned_count=$3,retry_count=retry_count+CASE WHEN $6::boolean THEN 0 ELSE 1 END,
+              updated_at=$4 WHERE id=$5`,
+      [input.terminal ? "failed" : "pending", input.diagnostic, input.abandonCount, input.abandonedAt, input.stepDbId, input.terminal],
+    );
+  }
+}
+
+async function terminalizeAbandonedStoryFallbackInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    storyDbId: string;
+    storyId: string;
+    abandonedAt: string;
+    diagnostic: string;
+  }>,
+): Promise<void> {
+  const runs = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM runs WHERE id=$1 AND protocol='legacy' FOR UPDATE",
+    [input.runId],
+  );
+  const stories = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT st.id FROM stories st
+      WHERE st.id=$1 AND st.run_id=$2 AND st.story_id=$3 AND st.status='running'
+        AND NOT EXISTS (
+          SELECT 1 FROM runtime_sessions rs
+           WHERE rs.story_db_id=st.id AND rs.state<>'released'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM run_termination_requests rtr
+           WHERE rtr.run_id=st.run_id AND rtr.state<>'terminalized'
+        )
+        AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 > $4
+      FOR UPDATE`,
+    [input.storyDbId, input.runId, input.storyId, BASE_ABANDONED_THRESHOLD_MS],
+  );
+  if (runs.length !== 1 || stories.length !== 1) {
+    throw new Error("CLEANUP_ABANDONED_STORY_FALLBACK_STALE");
+  }
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text AS id FROM claim_log
+      WHERE run_id=$1 AND story_id=$2 AND outcome IS NULL
+      ORDER BY id FOR UPDATE`,
+    [input.runId, input.storyId],
+  );
+  if (owners.length !== 1) {
+    throw new Error("CLEANUP_ABANDONED_STORY_FALLBACK_OWNER_CARDINALITY_INVALID");
+  }
+  const terminal = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log SET outcome='abandoned',abandoned_at=$2,diagnostic=$3
+      WHERE id=$1::bigint AND outcome IS NULL RETURNING id::text AS id`,
+    [owners[0]!.id, input.abandonedAt, input.diagnostic],
+  );
+  if (terminal.length !== 1) {
+    throw new Error("CLEANUP_ABANDONED_STORY_FALLBACK_CAS_LOST");
+  }
+  await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, terminal[0]!.id);
+  const reset = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE stories SET status='pending',claimed_by=NULL,claimed_at=NULL,
+            abandoned_count=abandoned_count+1,retry_count=retry_count+1,updated_at=$2
+      WHERE id=$1 AND status='running' RETURNING id`,
+    [input.storyDbId, input.abandonedAt],
+  );
+  if (reset.length !== 1) throw new Error("CLEANUP_ABANDONED_STORY_FALLBACK_CAS_LOST");
+}
 
 const PROJECT_ARTIFACT_PATHS = [
   "QA_REPORT.md",
@@ -524,23 +661,27 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
 
           if (newAbandonCount >= MAX_ABANDON_RESETS) {
             const diagnostic = `ABANDONED: Agent ${step.agent_id} claimed at ${claimedAt}, timed out after ~${durationMin}min. No output produced. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}. Limit reached — story failed.`;
-            await pgRun("UPDATE stories SET output = $1 WHERE id = $2 AND (output IS NULL OR output = '')", [diagnostic, story.id]);
-            await pgRun("UPDATE stories SET status = 'failed', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, story.id]);
-            await pgRun("UPDATE steps SET status = 'failed', output = 'Story abandoned and abandon limit reached', current_story_id = NULL, updated_at = $1 WHERE id = $2", [abandonedAt, step.id]);
+            await pgBegin((sql) => terminalizeAbandonedCleanupInTransaction(sql, {
+              runId: step.run_id, stepDbId: step.id, workflowStepId: step.step_id,
+              storyDbId: story.id, storyId: story.story_id, abandonedAt,
+              durationMs: durationMin * 60000, diagnostic,
+              abandonCount: newAbandonCount, terminal: true,
+            }));
+            await failRun(step.run_id, false, diagnostic);
             await recordStepTransition(step.id, step.run_id, "running", "failed", step.agent_id, "cleanup:storyAbandonLimit", { storyId: story.story_id, abandonCount: newAbandonCount });
-            try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, duration_ms = $2, diagnostic = $3 WHERE story_id = $4 AND outcome IS NULL", [abandonedAt, durationMin * 60000, diagnostic, story.story_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
-            await failRun(step.run_id);
             emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: `Abandoned — ${diagnostic}` });
             emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Story abandoned and abandon limit reached" });
             emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story abandoned and abandon limit reached" });
             scheduleRunCronTeardown(step.run_id);
           } else {
             const diagnostic = `ABANDONED: Agent ${step.agent_id} claimed at ${claimedAt}, timed out after ~${durationMin}min. No output produced. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}.`;
-            await pgRun("UPDATE stories SET output = $1 WHERE id = $2 AND (output IS NULL OR output = '')", [diagnostic, story.id]);
-            await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, story.id]);
-            await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, step.id]);
+            await pgBegin((sql) => terminalizeAbandonedCleanupInTransaction(sql, {
+              runId: step.run_id, stepDbId: step.id, workflowStepId: step.step_id,
+              storyDbId: story.id, storyId: story.story_id, abandonedAt,
+              durationMs: durationMin * 60000, diagnostic,
+              abandonCount: newAbandonCount, terminal: false,
+            }));
             await recordStepTransition(step.id, step.run_id, "running", "pending", step.agent_id, "cleanup:storyAbandoned", { storyId: story.story_id, abandonCount: newAbandonCount });
-            try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, duration_ms = $2, diagnostic = $3 WHERE story_id = $4 AND outcome IS NULL", [abandonedAt, durationMin * 60000, diagnostic, story.story_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
             emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — ${diagnostic}` });
             logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
             // Immediately recreate agent crons so the step is picked up without waiting for medic
@@ -560,19 +701,27 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
       await cleanupProjectEphemera(step.run_id, `step-abandoned:${step.step_id}`);
 
       if (newAbandonCount >= MAX_ABANDON_RESETS) {
-        await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", [singleDiagnostic, newAbandonCount, now(), step.id]);
+        const abandonedAt = now();
+        await pgBegin((sql) => terminalizeAbandonedCleanupInTransaction(sql, {
+          runId: step.run_id, stepDbId: step.id, workflowStepId: step.step_id,
+          storyDbId: null, storyId: null, abandonedAt, diagnostic: singleDiagnostic,
+          abandonCount: newAbandonCount, terminal: true,
+        }));
+        await failRun(step.run_id, false, singleDiagnostic);
         await recordStepTransition(step.id, step.run_id, "running", "failed", step.agent_id, "cleanup:abandonLimit", { abandonCount: newAbandonCount });
-        await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND outcome IS NULL", [now(), singleDiagnostic, step.run_id, step.step_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
         const wfId = await getWorkflowId(step.run_id);
         emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — ${singleDiagnostic}` });
         emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: singleDiagnostic });
         emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Step abandoned and retries exhausted" });
         scheduleRunCronTeardown(step.run_id);
       } else {
-        await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, now(), step.id]);
+        const abandonedAt = now();
+        await pgBegin((sql) => terminalizeAbandonedCleanupInTransaction(sql, {
+          runId: step.run_id, stepDbId: step.id, workflowStepId: step.step_id,
+          storyDbId: null, storyId: null, abandonedAt, diagnostic: singleDiagnostic,
+          abandonCount: newAbandonCount, terminal: false,
+        }));
         await recordStepTransition(step.id, step.run_id, "running", "pending", step.agent_id, "cleanup:abandoned", { abandonCount: newAbandonCount });
-        try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND outcome IS NULL", [now(), singleDiagnostic, step.run_id, step.step_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
         emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending — ${singleDiagnostic}` });
         // Immediately recreate agent crons so the step is picked up without waiting for medic
         try {
@@ -585,8 +734,8 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
     }
 
     // Reset running stories that are abandoned
-    const abandonedStories = await pgQuery<{ id: string; retry_count: number; max_retries: number; run_id: string }>(
-      `SELECT st.id, st.retry_count, st.max_retries, st.run_id
+    const abandonedStories = await pgQuery<{ id: string; story_id: string; retry_count: number; max_retries: number; run_id: string }>(
+      `SELECT st.id, st.story_id, st.retry_count, st.max_retries, st.run_id
          FROM stories st
          JOIN runs r ON r.id = st.run_id
         WHERE st.status = 'running'
@@ -604,8 +753,15 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
     );
 
     for (const story of abandonedStories) {
-      await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, abandoned_count = abandoned_count + 1, retry_count = retry_count + 1, updated_at = $1 WHERE id = $2", [now(), story.id]);
       await cleanupProjectEphemera(story.run_id, `story-abandoned:${story.id}`);
+      const abandonedAt = now();
+      await pgBegin((sql) => terminalizeAbandonedStoryFallbackInTransaction(sql, {
+        runId: story.run_id,
+        storyDbId: story.id,
+        storyId: story.story_id,
+        abandonedAt,
+        diagnostic: `ABANDONED: Story ${story.story_id} had no active step owner and exceeded the cleanup threshold.`,
+      }));
     }
 
     // Recover stuck pipelines

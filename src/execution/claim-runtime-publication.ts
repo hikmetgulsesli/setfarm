@@ -1,7 +1,16 @@
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionClaimCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../product-compiler/canonical-json.js";
 import {
   lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1,
   type CompilerStoryEnglishAdmissionClaimAuthorityV1,
@@ -27,6 +36,7 @@ import {
 } from "./v3-preparation-claim-authority.js";
 import {
   insertV3StoryClaimRuntimeBindingV1,
+  loadAndRevalidateV3StoryClaimRuntimeBindingV1,
   type V3StoryClaimRuntimeSubjectV1,
 } from "./v3-story-claim-runtime-binding-v1.js";
 import { parseV3SupervisorRetryDirectiveStoryOutputV1 } from "./v3-supervisor-retry-directive.js";
@@ -279,12 +289,158 @@ function validTime(value?: Date): Date {
   return result;
 }
 
-function claimIdFrom(rows: Array<{ id: string }>): number {
-  const claimId = Number(rows[0]?.id);
-  if (!Number.isSafeInteger(claimId) || claimId <= 0) {
-    throw new Error("CLAIM_PUBLICATION_CLAIM_ID_INVALID");
+type InternalProductionClaimProducerImplementationIdV1 =
+  | "a-claim-single-runtime-v1"
+  | "a-claim-loop-runtime-v1"
+  | "a-claim-v3-downstream-evidence-v1"
+  | "a-claim-v3-evidence-only-v1";
+
+export type InternalProductionPreparedClaimBirthV1 = Readonly<{
+  claimIdText: string;
+  claimId: number;
+  identity: ReturnType<typeof createInternalProductionClaimCanonicalOwnerIdentityV1>;
+  reservation: Awaited<ReturnType<typeof beginOrAdoptInternalProductionOwnerReservationV1>>;
+  producerImplementationId: InternalProductionClaimProducerImplementationIdV1;
+}>;
+
+export async function prepareInternalProductionClaimBirthV1(
+  sql: PgTransactionSql,
+  producerImplementationId: InternalProductionClaimProducerImplementationIdV1,
+  rows: Array<{ id: unknown }>,
+): Promise<InternalProductionPreparedClaimBirthV1> {
+  if (rows.length !== 1 || typeof rows[0]?.id !== "string") {
+    throw new Error("INTERNAL_PRODUCTION_CLAIM_ID_BIGINT_TEXT_INVALID");
   }
-  return claimId;
+  const claimIdText = rows[0].id;
+  if (!/^[1-9][0-9]{0,18}$/.test(claimIdText) || BigInt(claimIdText) > 9007199254740991n) {
+    throw new Error("INTERNAL_PRODUCTION_CLAIM_ID_BIGINT_TEXT_INVALID");
+  }
+  const identity = createInternalProductionClaimCanonicalOwnerIdentityV1({ claimIdText });
+  const claimId = Number(claimIdText);
+  if (!Number.isSafeInteger(claimId) || String(claimId) !== claimIdText) {
+    throw new Error("INTERNAL_PRODUCTION_CLAIM_ID_SAFE_INTEGER_INVALID");
+  }
+  const existingClaims = await sql.unsafe<Array<{ id: string }>>(
+    "SELECT id::text AS id FROM claim_log WHERE id=$1::bigint FOR UPDATE",
+    [claimIdText],
+  );
+  if (existingClaims.length > 1 || (existingClaims[0] && existingClaims[0].id !== claimIdText)) {
+    throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
+  }
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
+    producerImplementationId,
+    ownerKey: claimIdText,
+  });
+  return Object.freeze({
+    claimIdText,
+    claimId,
+    identity,
+    reservation,
+    producerImplementationId,
+  });
+}
+
+export async function insertAndBindInternalProductionClaimBirthV1(
+  sql: PgTransactionSql,
+  birth: InternalProductionPreparedClaimBirthV1,
+  input: Readonly<{
+    runId: string;
+    workflowStepId: string;
+    storyId: string | null;
+    claimAgentId: string;
+    claimedAt: Date;
+  }>,
+): Promise<number> {
+  const sidecars = await sql.unsafe<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    state: string;
+  }>>(
+    `SELECT reservation_ref,reservation_hash,state
+       FROM internal_production_owner_reservations_v1
+      WHERE producer_implementation_id=$1
+        AND category='claim'
+        AND owner_key=$2
+      FOR UPDATE`,
+    [birth.producerImplementationId, birth.claimIdText],
+  );
+  const sidecar = sidecars[0];
+  if (
+    sidecars.length !== 1
+    || !sidecar
+    || sidecar.reservation_ref !== birth.reservation.reservationRef
+    || sidecar.reservation_hash !== birth.reservation.reservationHash
+    || !["pending", "bound"].includes(sidecar.state)
+  ) throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
+
+  const inserted = await sql.unsafe<Array<{ id: string }>>(
+    `INSERT INTO claim_log (id,run_id,step_id,story_id,agent_id,claimed_at)
+     VALUES ($1::bigint,$2,$3,$4,$5,$6)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING id::text AS id`,
+    [
+      birth.claimIdText,
+      input.runId,
+      input.workflowStepId,
+      input.storyId,
+      input.claimAgentId,
+      input.claimedAt,
+    ],
+  );
+  if (
+    inserted.length > 1
+    || (inserted.length === 1
+      && (inserted[0]!.id !== birth.claimIdText || sidecar.state !== "pending"))
+    || (inserted.length === 0 && sidecar.state !== "bound")
+  ) throw new Error("INTERNAL_PRODUCTION_CLAIM_INSERT_IDENTITY_INVALID");
+
+  const storedRows = await sql.unsafe<Array<{
+    id: string;
+    run_id: string;
+    step_id: string;
+    story_id: string | null;
+    agent_id: string;
+    claimed_at: Date | string;
+    outcome: string | null;
+    abandoned_at: Date | string | null;
+    duration_ms: number | null;
+    diagnostic: string | null;
+  }>>(
+    `SELECT id::text AS id,run_id,step_id,story_id,agent_id,claimed_at,
+            outcome,abandoned_at,duration_ms,diagnostic
+       FROM claim_log
+      WHERE id=$1::bigint
+      FOR UPDATE`,
+    [birth.claimIdText],
+  );
+  const stored = storedRows[0];
+  if (
+    storedRows.length !== 1
+    || !stored
+    || stored.id !== birth.claimIdText
+    || stored.run_id !== input.runId
+    || stored.step_id !== input.workflowStepId
+    || stored.story_id !== input.storyId
+    || stored.agent_id !== input.claimAgentId
+    || new Date(stored.claimed_at).getTime() !== input.claimedAt.getTime()
+    || stored.outcome !== null
+    || stored.abandoned_at !== null
+    || stored.duration_ms !== null
+    || stored.diagnostic !== null
+  ) throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
+
+  const bound = await bindInternalProductionOwnerReservationV1(sql, {
+    reservationRef: birth.reservation.reservationRef,
+    reservationHash: birth.reservation.reservationHash,
+    canonicalOwnerIdentity: birth.identity,
+  });
+  if (
+    bound.ownerKey !== birth.claimIdText
+    || bound.reservationRef !== birth.reservation.reservationRef
+    || bound.reservationHash !== birth.reservation.reservationHash
+    || bound.canonicalOwnerIdentity.ownerKey !== birth.claimIdText
+  ) throw new Error("INTERNAL_PRODUCTION_CLAIM_BINDING_INVALID");
+  return birth.claimId;
 }
 
 function recoveryPublicationFail(code: string, message: string): never {
@@ -589,7 +745,7 @@ async function assertExactRecoveryPublicationHandoff(
     handoff: V3RecoveryClaimHandoffV1;
     runPacketHash: string | null;
   }>,
-): Promise<Date> {
+): Promise<Readonly<{ now: Date; handoff: V3RecoveryClaimHandoffV1 }>> {
   const rows = await transaction.unsafe<RecoveryPublicationRow[]>(
     `SELECT delivery.dispatch_id,
             delivery.recovery_case_id AS delivery_recovery_case_id,
@@ -742,7 +898,521 @@ async function assertExactRecoveryPublicationHandoff(
   ) {
     recoveryPublicationFail("V3_RECOVERY_PUBLICATION_LEASE_INVALID", "handoff does not own one exact unexpired unreserved delivery lease");
   }
-  return now;
+  const canonicalHandoffs = (["lease_acquired", "lease_reissued"] as const).map((status) =>
+    V3RecoveryClaimHandoffV1Schema.parse({
+      schema: "setfarm.v3-recovery-claim-handoff.v1",
+      status,
+      runId: row.delivery_run_id,
+      storyId: row.delivery_story_id,
+      recoveryCaseId: row.delivery_recovery_case_id,
+      revisionId: row.delivery_revision_id,
+      dispatchId: row.dispatch_id,
+      dispatchClass: row.dispatch_class,
+      recoveryOwner: row.recovery_owner,
+      lease: {
+        ownerInstanceId: row.owner_instance_id,
+        leaseToken: row.lease_token,
+        expiresAt: new Date(leaseExpiresAt).toISOString(),
+      },
+      directive: canonicalDirective,
+      reservationBoundary: {
+        leaseAndAttemptAtomicInThisModule: false,
+        state: "lease_acquired_attempt_not_reserved",
+        reconcileRequired: true,
+        requiredNextOperation: "attempt_repository.reserve_exact_recovery_handoff",
+      },
+    }));
+  const canonicalHandoff = canonicalHandoffs.find((candidate) => sameCanonical(candidate, input.handoff));
+  if (!canonicalHandoff) {
+    recoveryPublicationFail(
+      "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+      "handoff response state is not the complete canonical persisted recovery authority",
+    );
+  }
+  return { now, handoff: canonicalHandoff };
+}
+
+async function resolveCommittedRecoveryReplayHandoff(
+  transaction: TransactionSql,
+  input: Readonly<{
+    claimIdText: string;
+    runtimeSessionId: string;
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    storyDbId: string;
+    storyId: string;
+    runPacketHash: string | null;
+    callerHandoff?: V3RecoveryClaimHandoffV1;
+  }>,
+): Promise<V3RecoveryClaimHandoffV1 | undefined> {
+  const publications = await transaction.unsafe<Array<{
+    claim_id: string;
+    runtime_session_id: string;
+    run_id: string;
+    step_db_id: string;
+    workflow_step_id: string;
+    story_db_id: string;
+    story_id: string;
+    story_index: number;
+    recovery_case_id: string;
+    revision_id: string;
+    dispatch_id: string;
+    status: string;
+    handoff_canonical_json: string;
+    handoff_hash: string;
+    delivery_recovery_case_id: string;
+    delivery_revision_id: string;
+    delivery_run_id: string;
+    delivery_story_id: string;
+    owner_instance_id: string | null;
+    lease_token: string | null;
+    lease_expires_at: Date | string | null;
+    case_run_id: string;
+    case_story_id: string;
+    revision_recovery_case_id: string;
+    revision_run_id: string;
+    revision_story_id: string;
+    recovery_owner: string;
+    revision_packet_hash: string;
+    revision_contract_slice_hash: string;
+    revision_source_sha: string;
+    revision_source_tree_hash: string;
+    revision_finding_set_hash: string;
+    revision_finding_ids: unknown;
+    revision_expected_delta: unknown;
+    revision_allowed_paths: unknown;
+    revision_evidence_plan: unknown;
+    revision_evidence_plan_artifact_hash: string | null;
+    dispatch_recovery_case_id: string;
+    dispatch_revision_id: string;
+    dispatch_class: string;
+    dispatch_packet_hash: string;
+    dispatch_contract_slice_hash: string;
+    dispatch_source_sha: string;
+    dispatch_source_tree_hash: string;
+    dispatch_finding_set_hash: string;
+    dispatch_finding_ids: unknown;
+    dispatch_evidence_plan: unknown;
+    dispatch_evidence_plan_artifact_hash: string | null;
+  }>>(
+    `SELECT publication.claim_id::text AS claim_id,
+            publication.runtime_session_id, publication.run_id,
+            publication.step_db_id, publication.workflow_step_id,
+            publication.story_db_id, publication.story_id, publication.story_index,
+            publication.recovery_case_id, publication.revision_id,
+            publication.dispatch_id, publication.status,
+            publication.handoff_canonical_json, publication.handoff_hash,
+            delivery.recovery_case_id AS delivery_recovery_case_id,
+            delivery.revision_id AS delivery_revision_id,
+            delivery.run_id AS delivery_run_id,
+            delivery.story_id AS delivery_story_id,
+            delivery.owner_instance_id, delivery.lease_token, delivery.lease_expires_at,
+            recovery_case.run_id AS case_run_id,
+            recovery_case.story_id AS case_story_id,
+            revision.recovery_case_id AS revision_recovery_case_id,
+            revision.run_id AS revision_run_id,
+            revision.story_id AS revision_story_id,
+            revision.owner AS recovery_owner,
+            revision.packet_hash AS revision_packet_hash,
+            revision.contract_slice_hash AS revision_contract_slice_hash,
+            revision.source_sha AS revision_source_sha,
+            revision.source_tree_hash AS revision_source_tree_hash,
+            revision.finding_set_hash AS revision_finding_set_hash,
+            revision.finding_ids AS revision_finding_ids,
+            revision.expected_delta AS revision_expected_delta,
+            revision.allowed_paths AS revision_allowed_paths,
+            revision.evidence_plan AS revision_evidence_plan,
+            revision.evidence_plan_artifact_hash AS revision_evidence_plan_artifact_hash,
+            dispatch.recovery_case_id AS dispatch_recovery_case_id,
+            dispatch.revision_id AS dispatch_revision_id,
+            dispatch.dispatch_class,
+            dispatch.packet_hash AS dispatch_packet_hash,
+            dispatch.contract_slice_hash AS dispatch_contract_slice_hash,
+            dispatch.source_sha AS dispatch_source_sha,
+            dispatch.source_tree_hash AS dispatch_source_tree_hash,
+            dispatch.finding_set_hash AS dispatch_finding_set_hash,
+            dispatch.finding_ids AS dispatch_finding_ids,
+            dispatch.evidence_plan AS dispatch_evidence_plan,
+            dispatch.evidence_plan_artifact_hash AS dispatch_evidence_plan_artifact_hash
+       FROM internal_production_v3_recovery_claim_publications_v1 publication
+       JOIN recovery_dispatch_deliveries delivery
+         ON delivery.dispatch_id = publication.dispatch_id
+       JOIN recovery_revision_dispatches dispatch
+         ON dispatch.dispatch_id = delivery.dispatch_id
+        AND dispatch.revision_id = delivery.revision_id
+       JOIN recovery_case_revisions revision
+         ON revision.revision_id = delivery.revision_id
+        AND revision.recovery_case_id = delivery.recovery_case_id
+       JOIN recovery_cases recovery_case
+         ON recovery_case.recovery_case_id = delivery.recovery_case_id
+      WHERE publication.claim_id = $1::bigint
+        AND publication.runtime_session_id = $2
+      FOR UPDATE OF publication, delivery, recovery_case`,
+    [input.claimIdText, input.runtimeSessionId],
+  );
+  if (publications.length === 0) {
+    if (input.callerHandoff) {
+      recoveryPublicationFail(
+        "V3_RECOVERY_PUBLICATION_NOT_FOUND",
+        "committed replay has no durable claim/runtime recovery publication",
+      );
+    }
+    return undefined;
+  }
+  const row = publications[0]!;
+  let storedHandoff: V3RecoveryClaimHandoffV1;
+  try {
+    storedHandoff = V3RecoveryClaimHandoffV1Schema.parse(JSON.parse(row.handoff_canonical_json));
+  } catch (cause) {
+    recoveryPublicationFail(
+      "V3_RECOVERY_PUBLICATION_STORED_BYTES_INVALID",
+      `stored recovery publication is not a strict handoff:${String(cause)}`,
+    );
+  }
+  const storedCanonical = canonicalJsonStringify(storedHandoff);
+  const callerCanonical = input.callerHandoff
+    ? canonicalJsonStringify(V3RecoveryClaimHandoffV1Schema.parse(input.callerHandoff))
+    : null;
+  const directive = storedHandoff.directive;
+  const chainExact = row.claim_id === input.claimIdText
+    && row.runtime_session_id === input.runtimeSessionId
+    && row.run_id === input.runId
+    && row.step_db_id === input.stepDbId
+    && row.workflow_step_id === input.workflowStepId
+    && row.story_db_id === input.storyDbId
+    && row.story_id === input.storyId
+    && row.recovery_case_id === storedHandoff.recoveryCaseId
+    && row.revision_id === storedHandoff.revisionId
+    && row.dispatch_id === storedHandoff.dispatchId
+    && row.status === storedHandoff.status
+    && row.delivery_recovery_case_id === storedHandoff.recoveryCaseId
+    && row.delivery_revision_id === storedHandoff.revisionId
+    && row.delivery_run_id === storedHandoff.runId
+    && row.delivery_story_id === storedHandoff.storyId
+    && row.case_run_id === storedHandoff.runId
+    && row.case_story_id === storedHandoff.storyId
+    && row.revision_recovery_case_id === storedHandoff.recoveryCaseId
+    && row.revision_run_id === storedHandoff.runId
+    && row.revision_story_id === storedHandoff.storyId
+    && row.dispatch_recovery_case_id === storedHandoff.recoveryCaseId
+    && row.dispatch_revision_id === storedHandoff.revisionId
+    && row.dispatch_class === storedHandoff.dispatchClass
+    && row.recovery_owner === storedHandoff.recoveryOwner
+    && input.runPacketHash === directive.packetHash
+    && sameCanonical(directive, {
+      packetHash: row.revision_packet_hash,
+      contractSliceHash: row.revision_contract_slice_hash,
+      sourceRevision: {
+        sha: row.revision_source_sha,
+        treeHash: row.revision_source_tree_hash,
+      },
+      findingSetHash: row.revision_finding_set_hash,
+      findingIds: row.revision_finding_ids,
+      expectedDelta: row.revision_expected_delta,
+      allowedPaths: row.revision_allowed_paths,
+      evidencePlan: row.revision_evidence_plan,
+      ...(row.revision_evidence_plan_artifact_hash
+        ? { evidencePlanArtifactHash: row.revision_evidence_plan_artifact_hash }
+        : {}),
+    })
+    && sameCanonical({
+      packetHash: row.dispatch_packet_hash,
+      contractSliceHash: row.dispatch_contract_slice_hash,
+      sourceRevision: {
+        sha: row.dispatch_source_sha,
+        treeHash: row.dispatch_source_tree_hash,
+      },
+      findingSetHash: row.dispatch_finding_set_hash,
+      findingIds: row.dispatch_finding_ids,
+      evidencePlan: row.dispatch_evidence_plan,
+      ...(row.dispatch_evidence_plan_artifact_hash
+        ? { evidencePlanArtifactHash: row.dispatch_evidence_plan_artifact_hash }
+        : {}),
+    }, {
+      packetHash: row.revision_packet_hash,
+      contractSliceHash: row.revision_contract_slice_hash,
+      sourceRevision: {
+        sha: row.revision_source_sha,
+        treeHash: row.revision_source_tree_hash,
+      },
+      findingSetHash: row.revision_finding_set_hash,
+      findingIds: row.revision_finding_ids,
+      evidencePlan: row.revision_evidence_plan,
+      ...(row.revision_evidence_plan_artifact_hash
+        ? { evidencePlanArtifactHash: row.revision_evidence_plan_artifact_hash }
+        : {}),
+    });
+  if (
+    publications.length !== 1
+    || !input.callerHandoff
+    || row.handoff_canonical_json !== storedCanonical
+    || row.handoff_hash !== hashCanonicalJson(storedHandoff)
+    || callerCanonical !== storedCanonical
+    || !chainExact
+  ) {
+    recoveryPublicationFail(
+      "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+      "committed replay must exactly match the immutable stored claim/runtime publication",
+    );
+  }
+  return storedHandoff;
+}
+
+async function insertOrAdoptRecoveryClaimRuntimePublication(
+  transaction: TransactionSql,
+  input: Readonly<{
+    claimIdText: string;
+    runtimeSessionId: string;
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    storyDbId: string;
+    storyId: string;
+    storyIndex: number;
+    boundAt: Date;
+    handoff: V3RecoveryClaimHandoffV1;
+    handoffCanonicalJson: string;
+    handoffHash: string;
+  }>,
+): Promise<void> {
+  await transaction.unsafe(
+    `INSERT INTO internal_production_v3_recovery_claim_publications_v1 (
+       claim_id, runtime_session_id, run_id, step_db_id, workflow_step_id,
+       story_db_id, story_id, story_index, recovery_case_id, revision_id,
+       dispatch_id, status, handoff_canonical_json, handoff_hash, bound_at
+     ) VALUES (
+       $1::bigint, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+     ) ON CONFLICT DO NOTHING`,
+    [
+      input.claimIdText,
+      input.runtimeSessionId,
+      input.runId,
+      input.stepDbId,
+      input.workflowStepId,
+      input.storyDbId,
+      input.storyId,
+      input.storyIndex,
+      input.handoff.recoveryCaseId,
+      input.handoff.revisionId,
+      input.handoff.dispatchId,
+      input.handoff.status,
+      input.handoffCanonicalJson,
+      input.handoffHash,
+      input.boundAt,
+    ],
+  );
+  const rows = await transaction.unsafe<Array<{
+    claim_id: string;
+    runtime_session_id: string;
+    run_id: string;
+    step_db_id: string;
+    workflow_step_id: string;
+    story_db_id: string;
+    story_id: string;
+    story_index: number;
+    recovery_case_id: string;
+    revision_id: string;
+    dispatch_id: string;
+    status: string;
+    handoff_canonical_json: string;
+    handoff_hash: string;
+    bound_at: Date | string;
+  }>>(
+    `SELECT claim_id::text AS claim_id, runtime_session_id, run_id, step_db_id,
+            workflow_step_id, story_db_id, story_id, story_index,
+            recovery_case_id, revision_id, dispatch_id, status,
+            handoff_canonical_json, handoff_hash, bound_at
+       FROM internal_production_v3_recovery_claim_publications_v1
+      WHERE claim_id = $1::bigint AND runtime_session_id = $2
+      FOR UPDATE`,
+    [input.claimIdText, input.runtimeSessionId],
+  );
+  const row = rows[0];
+  if (
+    rows.length !== 1
+    || row?.claim_id !== input.claimIdText
+    || row.runtime_session_id !== input.runtimeSessionId
+    || row.run_id !== input.runId
+    || row.step_db_id !== input.stepDbId
+    || row.workflow_step_id !== input.workflowStepId
+    || row.story_db_id !== input.storyDbId
+    || row.story_id !== input.storyId
+    || row.story_index !== input.storyIndex
+    || row.recovery_case_id !== input.handoff.recoveryCaseId
+    || row.revision_id !== input.handoff.revisionId
+    || row.dispatch_id !== input.handoff.dispatchId
+    || row.status !== input.handoff.status
+    || row.handoff_canonical_json !== input.handoffCanonicalJson
+    || row.handoff_hash !== input.handoffHash
+    || timestampMillis(row.bound_at) !== input.boundAt.getTime()
+  ) {
+    recoveryPublicationFail(
+      "V3_RECOVERY_PUBLICATION_BINDING_MISMATCH",
+      "recovery claim/runtime publication does not exactly match its committed owner",
+    );
+  }
+}
+
+async function resolveCommittedPreparationReplayAuthority(
+  transaction: TransactionSql,
+  input: Readonly<{
+    runId: string;
+    stepId: string;
+    storyId: string;
+    claimId: string;
+    callerAuthority?: V3PreparationClaimAuthorityV1;
+  }>,
+): Promise<V3PreparationClaimAuthorityV1 | undefined> {
+  const states = await transaction.unsafe<Array<{
+    state_version: number;
+    state: string;
+    packet_hash: string;
+    base_source_sha: string;
+    base_source_tree_hash: string;
+    projected_dependency_ids: unknown;
+    dependency_attempts: unknown;
+    state_fingerprint: string;
+    claim_id: string | number | null;
+  }>>(
+    `SELECT state_version,state,packet_hash,base_source_sha,base_source_tree_hash,
+            projected_dependency_ids,dependency_attempts,state_fingerprint,claim_id
+       FROM v3_preparation_story_state
+      WHERE run_id=$1 AND step_id=$2 AND story_id=$3
+      FOR UPDATE`,
+    [input.runId, input.stepId, input.storyId],
+  );
+  const state = states[0];
+  if (!state || state.state !== "claimed" || String(state.claim_id) !== input.claimId) {
+    if (input.callerAuthority) {
+      preparationPublicationFail(
+        "V3_PREPARATION_PUBLICATION_AUTHORITY_STALE",
+        "committed replay is not bound to the exact durable claimed preparation state",
+      );
+    }
+    return undefined;
+  }
+  const canonicalAuthority = V3PreparationClaimAuthorityV1Schema.parse({
+    schema: "setfarm.v3-preparation-claim-authority.v1",
+    authorityVersion: 1,
+    stateVersion: state.state_version,
+    runId: input.runId,
+    stepId: input.stepId,
+    storyId: input.storyId,
+    packetHash: state.packet_hash,
+    baseRevision: {
+      sha: state.base_source_sha,
+      treeHash: state.base_source_tree_hash,
+    },
+    projectedDependencyIds: parsedJson(state.projected_dependency_ids),
+    dependencyAttempts: parsedJson(state.dependency_attempts),
+    authorityHash: state.state_fingerprint,
+  });
+  if (!input.callerAuthority || !sameCanonical(input.callerAuthority, canonicalAuthority)) {
+    preparationPublicationFail(
+      "V3_PREPARATION_PUBLICATION_AUTHORITY_STALE",
+      "committed replay caller authority differs from the complete canonical claimed state",
+    );
+  }
+  return canonicalAuthority;
+}
+
+async function replayCommittedSingleClaimRuntimeInTransaction(
+  transaction: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    claimAgentId: string;
+    runtimeIntent: RuntimeClaimIntentV1;
+    protocol: "legacy" | "shadow" | "v3";
+    storyClaimAuthority?: CompilerStoryEnglishAdmissionClaimAuthorityV1;
+  }>,
+): Promise<ClaimRuntimePublication | undefined> {
+  const observed = await transaction.unsafe<Array<{
+    claim_id: string;
+    run_id: string;
+    step_db_id: string;
+    workflow_step_id: string;
+    story_db_id: string | null;
+    story_id: string | null;
+  }>>(
+    `SELECT claim_id::text AS claim_id,run_id,step_db_id,workflow_step_id,story_db_id,story_id
+       FROM runtime_sessions WHERE session_id=$1`,
+    [input.runtimeIntent.sessionId],
+  );
+  if (observed.length === 0) return undefined;
+  if (observed.length !== 1
+    || observed[0]!.run_id !== input.runId
+    || observed[0]!.step_db_id !== input.stepDbId
+    || observed[0]!.workflow_step_id !== input.workflowStepId
+    || observed[0]!.story_db_id !== null
+    || observed[0]!.story_id !== null) {
+    throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  }
+  const claims = await transaction.unsafe<Array<{ id: string; claimed_at: Date }>>(
+    "SELECT id::text AS id,claimed_at FROM claim_log WHERE id=$1::bigint FOR UPDATE",
+    [observed[0]!.claim_id],
+  );
+  if (claims.length !== 1) throw new Error("INTERNAL_PRODUCTION_CLAIM_ADOPTION_INVALID");
+  const sessions = await transaction.unsafe<Array<{ claim_id: string }>>(
+    "SELECT claim_id::text AS claim_id FROM runtime_sessions WHERE session_id=$1 FOR UPDATE",
+    [input.runtimeIntent.sessionId],
+  );
+  if (sessions.length !== 1 || sessions[0]!.claim_id !== claims[0]!.id) {
+    throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  }
+  const birth = await prepareInternalProductionClaimBirthV1(
+    transaction as PgTransactionSql,
+    "a-claim-single-runtime-v1",
+    [{ id: claims[0]!.id }],
+  );
+  const claimId = await insertAndBindInternalProductionClaimBirthV1(
+    transaction as PgTransactionSql,
+    birth,
+    {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId: input.claimAgentId,
+      claimedAt: claims[0]!.claimed_at,
+    },
+  );
+  await reserveRuntimeSessionInTransaction(transaction, {
+    sessionId: input.runtimeIntent.sessionId,
+    runId: input.runId,
+    stepDbId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    claimId,
+    claimAgentId: input.claimAgentId,
+    runtimeAgentId: input.runtimeIntent.runtimeAgentId,
+    runtimeKind: input.runtimeIntent.runtimeKind,
+    ownerInstanceId: input.runtimeIntent.ownerInstanceId,
+    sessionKey: input.runtimeIntent.sessionKey,
+    worktree: input.runtimeIntent.worktree,
+    runtimePath: input.runtimeIntent.runtimePath,
+    transcriptPath: input.runtimeIntent.transcriptPath,
+  });
+  let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+  if (input.storyClaimAuthority) {
+    authenticatedStorySubject = await insertV3StoryClaimRuntimeBindingV1(transaction, {
+      claimId,
+      runtimeSessionId: input.runtimeIntent.sessionId,
+      runId: input.runId,
+      stepDbId: input.stepDbId,
+      workflowStepId: "supervise",
+      authority: input.storyClaimAuthority,
+    });
+  }
+  return {
+    claimId,
+    protocol: input.protocol,
+    runtime: {
+      sessionId: input.runtimeIntent.sessionId,
+      ownerInstanceId: input.runtimeIntent.ownerInstanceId,
+    },
+    ...(authenticatedStorySubject ? { storySubject: authenticatedStorySubject } : {}),
+  };
 }
 
 export async function publishSingleClaimRuntime(
@@ -789,14 +1459,26 @@ export async function publishSingleClaimRuntime(
     } else if (storySubjectCandidate) {
       throw new Error("V3_STORY_CLAIM_SUBJECT_SCOPE_INVALID");
     }
+    if (run.protocol !== "legacy" && !runtimeIntent) {
+      throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+    }
+    if (runtimeIntent) {
+      const replay = await replayCommittedSingleClaimRuntimeInTransaction(transaction, {
+        runId: rawInput.runId,
+        stepDbId: rawInput.stepDbId,
+        workflowStepId: rawInput.workflowStepId,
+        claimAgentId: rawInput.claimAgentId,
+        runtimeIntent,
+        protocol: run.protocol,
+        storyClaimAuthority,
+      });
+      if (replay) return replay;
+    }
     const requests = await transaction.unsafe<Array<{ request_id: string }>>(
       "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
       [rawInput.runId],
     );
     if (requests.length > 0) return undefined;
-    if (run.protocol !== "legacy" && !runtimeIntent) {
-      throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
-    }
     let sealedPlanContext: string | undefined;
     if (planAuthoritySeal) {
       if (run.protocol !== "v3" || rawInput.workflowStepId !== "plan") {
@@ -845,6 +1527,14 @@ export async function publishSingleClaimRuntime(
       transaction,
       "CLAIM_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
     );
+    const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const claimBirth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      claimIdRows,
+    );
     const updated = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
           SET status = 'running', started_at = COALESCE(started_at, $4), updated_at = $4
@@ -852,13 +1542,18 @@ export async function publishSingleClaimRuntime(
         RETURNING id`,
       [rawInput.stepDbId, rawInput.runId, rawInput.workflowStepId, now],
     );
-    if (updated.length !== 1) return undefined;
-    const claimId = claimIdFrom(await transaction.unsafe<Array<{ id: string }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-       VALUES ($1, $2, NULL, $3, $4)
-       RETURNING id::text AS id`,
-      [rawInput.runId, rawInput.workflowStepId, rawInput.claimAgentId, now],
-    ));
+    if (updated.length !== 1) throw new Error("SINGLE_STEP_CLAIM_CAS_LOST");
+    const claimId = await insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      claimBirth,
+      {
+        runId: rawInput.runId,
+        workflowStepId: rawInput.workflowStepId,
+        storyId: null,
+        claimAgentId: rawInput.claimAgentId,
+        claimedAt: now,
+      },
+    );
     let runtime: ClaimRuntimePublication["runtime"];
     let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
     if (runtimeIntent) {
@@ -927,6 +1622,201 @@ export type LoopClaimRuntimePublication = ClaimRuntimePublication & Readonly<{
   claimAuthority?: LoopClaimAuthorityPublication;
 }>;
 
+async function replayCommittedLoopClaimRuntimeInTransaction(
+  transaction: TransactionSql,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    storyDbId: string;
+    storyId: string;
+    claimAgentId: string;
+    runtimeIntent: RuntimeClaimIntentV1;
+    protocol: "legacy" | "shadow" | "v3";
+    runPacketHash: string | null;
+    recoveryHandoff?: V3RecoveryClaimHandoffV1;
+    preparationAuthority?: V3PreparationClaimAuthorityV1;
+    storyClaimAuthority?: CompilerStoryEnglishAdmissionClaimAuthorityV1;
+  }>,
+): Promise<LoopClaimRuntimePublication | undefined> {
+  const observed = await transaction.unsafe<Array<{
+    claim_id: string;
+    run_id: string;
+    step_db_id: string;
+    workflow_step_id: string;
+    story_db_id: string | null;
+    story_id: string | null;
+    claim_agent_id: string;
+    runtime_agent_id: string;
+    runtime_kind: string;
+    owner_instance_id: string;
+    session_key: string | null;
+    worktree: string | null;
+    runtime_path: string | null;
+    transcript_path: string | null;
+    state: string;
+    attempt_id: string | null;
+  }>>(
+    `SELECT claim_id::text AS claim_id,run_id,step_db_id,workflow_step_id,
+            story_db_id,story_id,claim_agent_id,runtime_agent_id,runtime_kind,
+            owner_instance_id,session_key,worktree,runtime_path,transcript_path,
+            state,attempt_id
+       FROM runtime_sessions WHERE session_id=$1`,
+    [input.runtimeIntent.sessionId],
+  );
+  if (observed.length === 0) return undefined;
+  if (observed.length !== 1
+    || observed[0]!.run_id !== input.runId
+    || observed[0]!.step_db_id !== input.stepDbId
+    || observed[0]!.workflow_step_id !== input.workflowStepId
+    || observed[0]!.story_db_id !== input.storyDbId
+    || observed[0]!.story_id !== input.storyId
+    || observed[0]!.claim_agent_id !== input.claimAgentId
+    || observed[0]!.runtime_agent_id !== input.runtimeIntent.runtimeAgentId
+    || observed[0]!.runtime_kind !== input.runtimeIntent.runtimeKind
+    || observed[0]!.owner_instance_id !== input.runtimeIntent.ownerInstanceId
+    || observed[0]!.session_key !== (input.runtimeIntent.sessionKey ?? null)
+    || observed[0]!.worktree !== (input.runtimeIntent.worktree ?? null)
+    || observed[0]!.runtime_path !== (input.runtimeIntent.runtimePath ?? null)
+    || observed[0]!.transcript_path !== (input.runtimeIntent.transcriptPath ?? null)
+    || observed[0]!.state !== "reserved"
+    || observed[0]!.attempt_id !== null) {
+    throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  }
+  const steps = await transaction.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM steps WHERE id=$1 AND run_id=$2 AND step_id=$3 FOR UPDATE",
+    [input.stepDbId, input.runId, input.workflowStepId],
+  );
+  const stories = await transaction.unsafe<Array<{ claim_generation: number }>>(
+    "SELECT claim_generation FROM stories WHERE id=$1 AND run_id=$2 AND story_id=$3 FOR UPDATE",
+    [input.storyDbId, input.runId, input.storyId],
+  );
+  const claims = await transaction.unsafe<Array<{ id: string; claimed_at: Date }>>(
+    "SELECT id::text AS id,claimed_at FROM claim_log WHERE id=$1::bigint FOR UPDATE",
+    [observed[0]!.claim_id],
+  );
+  const sessions = await transaction.unsafe<Array<{ claim_id: string }>>(
+    "SELECT claim_id::text AS claim_id FROM runtime_sessions WHERE session_id=$1 FOR UPDATE",
+    [input.runtimeIntent.sessionId],
+  );
+  if (steps.length !== 1 || stories.length !== 1 || claims.length !== 1
+    || sessions.length !== 1 || sessions[0]!.claim_id !== claims[0]!.id) {
+    throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+  }
+  const canonicalRecoveryHandoff = input.protocol === "v3"
+    ? await resolveCommittedRecoveryReplayHandoff(transaction, {
+        claimIdText: claims[0]!.id,
+        runtimeSessionId: input.runtimeIntent.sessionId,
+        runId: input.runId,
+        stepDbId: input.stepDbId,
+        workflowStepId: input.workflowStepId,
+        storyDbId: input.storyDbId,
+        storyId: input.storyId,
+        runPacketHash: input.runPacketHash,
+        callerHandoff: input.recoveryHandoff,
+      })
+    : undefined;
+  const canonicalPreparationAuthority = input.protocol === "v3"
+    ? await resolveCommittedPreparationReplayAuthority(transaction, {
+        runId: input.runId,
+        stepId: input.workflowStepId,
+        storyId: input.storyId,
+        claimId: claims[0]!.id,
+        callerAuthority: input.preparationAuthority,
+      })
+    : undefined;
+  if (canonicalRecoveryHandoff && canonicalPreparationAuthority) {
+    preparationPublicationFail(
+      "V3_PREPARATION_PUBLICATION_AUTHORITY_CONFLICT",
+      "committed replay cannot be owned by recovery and preparation authority together",
+    );
+  }
+  const birth = await prepareInternalProductionClaimBirthV1(
+    transaction as PgTransactionSql,
+    "a-claim-loop-runtime-v1",
+    [{ id: claims[0]!.id }],
+  );
+  const claimId = await insertAndBindInternalProductionClaimBirthV1(
+    transaction as PgTransactionSql,
+    birth,
+    {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: input.storyId,
+      claimAgentId: input.claimAgentId,
+      claimedAt: claims[0]!.claimed_at,
+    },
+  );
+  if (canonicalRecoveryHandoff) {
+    const sidecars = await transaction.unsafe<Array<{ state: string }>>(
+      `SELECT state
+         FROM internal_production_owner_reservations_v1
+        WHERE producer_implementation_id = 'a-runtime-session-v1'
+          AND category = 'runtime-session'
+          AND owner_key = $1
+        FOR UPDATE`,
+      [input.runtimeIntent.sessionId],
+    );
+    if (sidecars.length !== 1 || sidecars[0]!.state !== "bound") {
+      throw new Error("INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID");
+    }
+  } else {
+    await reserveRuntimeSessionInTransaction(transaction, {
+      sessionId: input.runtimeIntent.sessionId,
+      runId: input.runId,
+      stepDbId: input.stepDbId,
+      workflowStepId: input.workflowStepId,
+      storyDbId: input.storyDbId,
+      storyId: input.storyId,
+      claimId,
+      claimAgentId: input.claimAgentId,
+      runtimeAgentId: input.runtimeIntent.runtimeAgentId,
+      runtimeKind: input.runtimeIntent.runtimeKind,
+      ownerInstanceId: input.runtimeIntent.ownerInstanceId,
+      sessionKey: input.runtimeIntent.sessionKey,
+      worktree: input.runtimeIntent.worktree,
+      runtimePath: input.runtimeIntent.runtimePath,
+      transcriptPath: input.runtimeIntent.transcriptPath,
+    });
+  }
+  let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+  if (input.storyClaimAuthority) {
+    authenticatedStorySubject = await loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
+      claimId,
+      runtimeSessionId: input.runtimeIntent.sessionId,
+      runId: input.runId,
+      stepDbId: input.stepDbId,
+      workflowStepId: "implement",
+    });
+  }
+  return {
+    claimId,
+    claimGeneration: Number(stories[0]!.claim_generation),
+    protocol: input.protocol,
+    runtime: {
+      sessionId: input.runtimeIntent.sessionId,
+      ownerInstanceId: input.runtimeIntent.ownerInstanceId,
+    },
+    ...(authenticatedStorySubject ? { storySubject: authenticatedStorySubject } : {}),
+    ...(input.protocol === "v3"
+      ? {
+          claimAuthority: canonicalRecoveryHandoff
+            ? { mode: "recovery" as const, handoff: canonicalRecoveryHandoff }
+            : canonicalPreparationAuthority
+              ? {
+                  mode: "preparation" as const,
+                  authority: canonicalPreparationAuthority,
+                  baseRevision: canonicalPreparationAuthority.baseRevision,
+                }
+              : { mode: "normal" as const },
+          ...(canonicalPreparationAuthority
+            ? { baseRevision: canonicalPreparationAuthority.baseRevision }
+            : {}),
+        }
+      : {}),
+  };
+}
+
 export async function publishLoopClaimRuntime(
   sql: Sql,
   rawInput: Readonly<{
@@ -957,6 +1847,12 @@ export async function publishLoopClaimRuntime(
     : undefined;
   const recoveryHandoff = rawInput.recoveryHandoff
     ? V3RecoveryClaimHandoffV1Schema.parse(rawInput.recoveryHandoff)
+    : undefined;
+  const recoveryHandoffCanonicalJson = recoveryHandoff
+    ? canonicalJsonStringify(recoveryHandoff)
+    : undefined;
+  const recoveryHandoffHash = recoveryHandoff
+    ? hashCanonicalJson(recoveryHandoff)
     : undefined;
   const preparationAuthority = rawInput.preparationAuthority
     ? V3PreparationClaimAuthorityV1Schema.parse(rawInput.preparationAuthority)
@@ -1072,20 +1968,68 @@ export async function publishLoopClaimRuntime(
         },
       });
     }
+    if (run.protocol !== "legacy" && !runtimeIntent) {
+      throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+    }
+    if (runtimeIntent) {
+      const replay = await replayCommittedLoopClaimRuntimeInTransaction(transaction, {
+        runId: rawInput.runId,
+        stepDbId: rawInput.stepDbId,
+        workflowStepId: rawInput.workflowStepId,
+        storyDbId: rawInput.storyDbId,
+        storyId: rawInput.storyId,
+        claimAgentId: rawInput.claimAgentId,
+        runtimeIntent,
+        protocol: run.protocol,
+        runPacketHash: run.packet_hash,
+        recoveryHandoff,
+        preparationAuthority,
+        storyClaimAuthority,
+      });
+      if (replay) return replay;
+    }
+    if (recoveryHandoff) {
+      const committedDispatchOwners = await transaction.unsafe<Array<{
+        claim_id: string;
+        runtime_session_id: string;
+      }>>(
+        `SELECT claim_id::text AS claim_id,runtime_session_id
+           FROM internal_production_v3_recovery_claim_publications_v1
+          WHERE dispatch_id=$1
+          FOR UPDATE`,
+        [recoveryHandoff.dispatchId],
+      );
+      if (committedDispatchOwners.length > 0) {
+        recoveryPublicationFail(
+          "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+          "recovery dispatch is already bound to a different exact claim/runtime identity",
+        );
+      }
+    }
     const requests = await transaction.unsafe<Array<{ request_id: string }>>(
       "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
       [rawInput.runId],
     );
     if (requests.length > 0) return undefined;
-    if (run.protocol !== "legacy" && !runtimeIntent) {
-      throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
-    }
+    let canonicalRecoveryPublication:
+      | Readonly<{
+          now: Date;
+          handoff: V3RecoveryClaimHandoffV1;
+          handoffCanonicalJson: string;
+          handoffHash: string;
+        }>
+      | undefined;
     if (run.protocol === "v3") {
       if (recoveryHandoff) {
-        await assertExactRecoveryPublicationHandoff(transaction, {
+        const exactRecovery = await assertExactRecoveryPublicationHandoff(transaction, {
           handoff: recoveryHandoff,
           runPacketHash: run.packet_hash,
         });
+        canonicalRecoveryPublication = {
+          ...exactRecovery,
+          handoffCanonicalJson: recoveryHandoffCanonicalJson!,
+          handoffHash: recoveryHandoffHash!,
+        };
       } else {
         if (preparationAuthority) {
           await assertExactPreparationPublicationAuthority(transaction, {
@@ -1146,13 +2090,14 @@ export async function publishLoopClaimRuntime(
     const stories = await transaction.unsafe<Array<{
       status: string;
       story_id: string;
+      story_index: number;
       claim_generation: number;
       output: string | null;
       story_branch: string | null;
       retry_count: number;
       max_retries: number;
     }>>(
-      "SELECT status, story_id, story_branch, claim_generation, output, retry_count, max_retries FROM stories WHERE id = $1 AND run_id = $2 FOR UPDATE",
+      "SELECT status, story_id, story_index, story_branch, claim_generation, output, retry_count, max_retries FROM stories WHERE id = $1 AND run_id = $2 FOR UPDATE",
       [rawInput.storyDbId, rawInput.runId],
     );
     const story = stories[0];
@@ -1288,15 +2233,20 @@ export async function publishLoopClaimRuntime(
       [rawInput.runId],
     );
     if ((active[0]?.count ?? 0) >= rawInput.parallelLimit) return undefined;
-    const now = recoveryHandoff
-      ? await assertExactRecoveryPublicationHandoff(transaction, {
-          handoff: recoveryHandoff,
-          runPacketHash: run.packet_hash,
-        })
+    const now = canonicalRecoveryPublication
+      ? canonicalRecoveryPublication.now
       : await readDatabaseWallClock(
           transaction,
           "CLAIM_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
         );
+    const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const claimBirth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      claimIdRows,
+    );
     if (assignGatewayDeveloper && rawInput.callerGatewayAgent) {
       await transaction.unsafe(
         "UPDATE runs SET assigned_developer = $2, updated_at = $3 WHERE id = $1",
@@ -1312,7 +2262,7 @@ export async function publishLoopClaimRuntime(
         RETURNING claim_generation`,
       [rawInput.storyDbId, rawInput.runId, now, rawInput.claimAgentId, requiredStoryStatus],
     );
-    if (updatedStories.length !== 1) return undefined;
+    if (updatedStories.length !== 1) throw new Error("LOOP_STORY_CLAIM_CAS_LOST");
     const updatedSteps = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
           SET status = 'running', current_story_id = $2,
@@ -1322,12 +2272,17 @@ export async function publishLoopClaimRuntime(
       [rawInput.stepDbId, rawInput.storyDbId, now, rawInput.runId],
     );
     if (updatedSteps.length !== 1) throw new Error("LOOP_STEP_CLAIM_CAS_LOST");
-    const claimId = claimIdFrom(await transaction.unsafe<Array<{ id: string }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id::text AS id`,
-      [rawInput.runId, rawInput.workflowStepId, rawInput.storyId, rawInput.claimAgentId, now],
-    ));
+    const claimId = await insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      claimBirth,
+      {
+        runId: rawInput.runId,
+        workflowStepId: rawInput.workflowStepId,
+        storyId: rawInput.storyId,
+        claimAgentId: rawInput.claimAgentId,
+        claimedAt: now,
+      },
+    );
     if (preparationAuthority) {
       const claimedStates = await transaction.unsafe<Array<{ state_version: number }>>(
         `UPDATE v3_preparation_story_state
@@ -1388,6 +2343,23 @@ export async function publishLoopClaimRuntime(
         authority: storyClaimAuthority,
       });
     }
+    if (canonicalRecoveryPublication) {
+      if (!runtimeIntent) throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+      await insertOrAdoptRecoveryClaimRuntimePublication(transaction, {
+        claimIdText: claimBirth.claimIdText,
+        runtimeSessionId: runtimeIntent.sessionId,
+        runId: rawInput.runId,
+        stepDbId: rawInput.stepDbId,
+        workflowStepId: rawInput.workflowStepId,
+        storyDbId: rawInput.storyDbId,
+        storyId: rawInput.storyId,
+        storyIndex: story.story_index,
+        boundAt: canonicalRecoveryPublication.now,
+        handoff: canonicalRecoveryPublication.handoff,
+        handoffCanonicalJson: canonicalRecoveryPublication.handoffCanonicalJson,
+        handoffHash: canonicalRecoveryPublication.handoffHash,
+      });
+    }
     return {
       claimId,
       claimGeneration: Number(updatedStories[0]!.claim_generation),
@@ -1396,8 +2368,8 @@ export async function publishLoopClaimRuntime(
       ...(authenticatedStorySubject ? { storySubject: authenticatedStorySubject } : {}),
       ...(run.protocol === "v3"
         ? {
-            claimAuthority: recoveryHandoff
-              ? { mode: "recovery" as const, handoff: recoveryHandoff }
+            claimAuthority: canonicalRecoveryPublication
+              ? { mode: "recovery" as const, handoff: canonicalRecoveryPublication.handoff }
               : preparationAuthority
                 ? {
                     mode: "preparation" as const,

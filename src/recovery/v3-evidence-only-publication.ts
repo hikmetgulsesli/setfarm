@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import type { PgTransactionSql } from "../db-pg.js";
 import {
   reserveAttemptInTransaction,
   type AttemptReservationResult,
@@ -702,16 +703,26 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         );
         assertExactLease(row, lease, now);
 
-        const claimRows = await transaction.unsafe<Array<{ id: string }>>(
-          `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-           VALUES ($1, 'implement', $2, $3, $4)
-           RETURNING id::text`,
-          [lease.runId, lease.storyId, prepared.agentId, now],
+        const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+          SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+        `;
+        const claimBirthPorts = await import("../execution/claim-runtime-publication.js");
+        const claimBirth = await claimBirthPorts.prepareInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          "a-claim-v3-evidence-only-v1",
+          claimIdRows,
         );
-        const claimId = Number(claimRows[0]?.id);
-        if (!Number.isSafeInteger(claimId) || claimId <= 0) {
-          fail("V3_EVIDENCE_ONLY_PUBLICATION_CLAIM_INVALID", "operational claim identity was not durably allocated");
-        }
+        const claimId = await claimBirthPorts.insertAndBindInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          claimBirth,
+          {
+            runId: lease.runId,
+            workflowStepId: "implement",
+            storyId: lease.storyId,
+            claimAgentId: prepared.agentId,
+            claimedAt: now,
+          },
+        );
         const reserved: AttemptReservationResult = await reserveAttemptInTransaction(transaction, {
           claimId,
           runId: lease.runId,
@@ -734,7 +745,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           ...(prepared.branch ? { branch: prepared.branch } : {}),
           worktree: prepared.worktree,
           evidenceRefs: [
-            `setfarm://claim-log/${claimId}`,
+            `setfarm://claim-log/${claimBirth.claimIdText}`,
             ...prepared.evidenceRefs,
           ],
         }, {
@@ -1058,6 +1069,9 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (closed.length !== 1) {
           fail("V3_EVIDENCE_ONLY_CLAIM_COMPLETION_CAS_LOST", "terminal claim changed before exact close");
         }
+        const claimClosePorts = await import("../db-pg.js");
+        const terminalClose = await claimClosePorts.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { claimIdText: closed[0]!.id });
+        await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
       });
     },
   });
