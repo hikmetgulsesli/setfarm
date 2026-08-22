@@ -40,6 +40,9 @@ const SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../", import.meta.url)))
 const P3_TRACKED_SCOPE = new Set([
   "scripts/run-isolated-postgres-tests.ts",
   "src/db-pg.ts",
+  "src/db/contract-spine-migrations.ts",
+  "src/db/contract-spine-migration-source-integrity.ts",
+  "src/db/contract-spine-migration-digests.generated.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/execution/attempt-reconciler.ts",
   "src/execution/attempt-repository.ts",
@@ -69,6 +72,8 @@ const P3_TRACKED_SCOPE = new Set([
   "tests/execution-attempts/attempt-reconciler.test.ts",
   "tests/execution-attempts/claim-attempt-transition.test.ts",
   "tests/execution-attempts/claim-runtime-publication.test.ts",
+  "tests/execution-attempts/migrations.test.ts",
+  "tests/execution-attempts/migration-source-digests.test.ts",
   "tests/execution-attempts/operational-event-delivery.test.ts",
   "tests/execution-attempts/operational-outbox-repository.test.ts",
   "tests/execution-attempts/run-terminal-transition.test.ts",
@@ -226,81 +231,86 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
   const sourceIndex = git(["ls-files", "--stage", "-z"]);
   assertSourceScopeV1();
   const temporaryParent = mkdtempSync(path.join(tmpdir(), "setfarm-p3-projection-"));
-  const projectionRoot = path.join(temporaryParent, "setfarm");
-  mkdirSync(projectionRoot, { mode: 0o700 });
-  const sourceDevice = lstatSync(SOURCE_ROOT, { bigint: true }).dev;
-  const entries = sourceIndex.split("\0").filter(Boolean);
-  const observations = new Map<string, Readonly<{ bytes: Buffer; mode: number }>>();
-  for (const entry of entries) {
-    const match = /^(100644|100755) ([a-f0-9]{40,64}) 0\t(.+)$/.exec(entry);
-    if (!match) throw new Error(`P3_PROJECTION_INDEX_ENTRY_INVALID:${entry}`);
-    const locator = match[3]!;
-    if (path.isAbsolute(locator) || locator.split("/").includes("..")) {
-      throw new Error(`P3_PROJECTION_LOCATOR_INVALID:${locator}`);
-    }
-    const expectedMode = match[1] === "100755" ? 0o755 : 0o644;
-    const bytes = readStableIndexedMemberV1(locator, expectedMode, sourceDevice);
-    if (!P3_TRACKED_SCOPE.has(locator) && !bytes.equals(gitBytes(["cat-file", "blob", match[2]!])) ) {
-      throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
-    }
-    observations.set(locator, Object.freeze({ bytes, mode: expectedMode }));
-    const target = path.join(projectionRoot, locator);
-    mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-    writeFileSync(target, bytes, { mode: expectedMode });
-    chmodSync(target, expectedMode);
-  }
-
-  for (const [locator, observation] of observations) {
-    if (!readStableIndexedMemberV1(locator, observation.mode, sourceDevice).equals(observation.bytes)) {
-      throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
-    }
-  }
-  if (
-    git(["rev-parse", "HEAD"]).trim() !== sourceHead
-    || git(["ls-files", "--stage", "-z"]) !== sourceIndex
-  ) {
-    throw new Error("P3_PROJECTION_SOURCE_CHANGED");
-  }
   try {
-    assertSourceScopeV1();
-  } catch {
-    throw new Error("P3_PROJECTION_SOURCE_CHANGED");
-  }
+    const projectionRoot = path.join(temporaryParent, "setfarm");
+    mkdirSync(projectionRoot, { mode: 0o700 });
+    const sourceDevice = lstatSync(SOURCE_ROOT, { bigint: true }).dev;
+    const entries = sourceIndex.split("\0").filter(Boolean);
+    const observations = new Map<string, Readonly<{ bytes: Buffer; mode: number }>>();
+    for (const entry of entries) {
+      const match = /^(100644|100755) ([a-f0-9]{40,64}) 0\t(.+)$/.exec(entry);
+      if (!match) throw new Error(`P3_PROJECTION_INDEX_ENTRY_INVALID:${entry}`);
+      const locator = match[3]!;
+      if (path.isAbsolute(locator) || locator.split("/").includes("..")) {
+        throw new Error(`P3_PROJECTION_LOCATOR_INVALID:${locator}`);
+      }
+      const expectedMode = match[1] === "100755" ? 0o755 : 0o644;
+      const bytes = readStableIndexedMemberV1(locator, expectedMode, sourceDevice);
+      if (!P3_TRACKED_SCOPE.has(locator) && !bytes.equals(gitBytes(["cat-file", "blob", match[2]!])) ) {
+        throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
+      }
+      observations.set(locator, Object.freeze({ bytes, mode: expectedMode }));
+      const target = path.join(projectionRoot, locator);
+      mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, bytes, { mode: expectedMode });
+      chmodSync(target, expectedMode);
+    }
 
-  git(["init", "-q"], { cwd: projectionRoot });
-  git(["config", "user.name", "Setfarm P3 Isolated Projection"], { cwd: projectionRoot });
-  git(["config", "user.email", "setfarm-p3-projection@invalid"], { cwd: projectionRoot });
-  git(["config", "commit.gpgSign", "false"], { cwd: projectionRoot });
-  git(["config", "core.hooksPath", "/dev/null"], { cwd: projectionRoot });
-  const sourceCommonDirectory = git(["rev-parse", "--git-common-dir"]).trim();
-  const sourceObjects = realpathSync(path.join(
-    path.isAbsolute(sourceCommonDirectory) ? sourceCommonDirectory : path.resolve(SOURCE_ROOT, sourceCommonDirectory),
-    "objects",
-  ));
-  const alternatesPath = path.join(projectionRoot, ".git", "objects", "info", "alternates");
-  mkdirSync(path.dirname(alternatesPath), { recursive: true });
-  writeFileSync(alternatesPath, `${sourceObjects}\n`, { mode: 0o600 });
-  const nodeModules = realpathSync(path.join(SOURCE_ROOT, "node_modules"));
-  symlinkSync(nodeModules, path.join(projectionRoot, "node_modules"), "dir");
-  writeFileSync(
-    path.join(projectionRoot, ".git", "info", "exclude"),
-    "node_modules\n.setfarm-p3-projection-marker.json\n.setfarm-p3-test-capability-preload.mjs\nsrc/internal-production/baseline-spawner-startup-admission-v1.js\n",
-    { mode: 0o600 },
-  );
-  git(["add", "-A"], { cwd: projectionRoot });
-  const tree = git(["write-tree"], { cwd: projectionRoot }).trim();
-  const commitEnv = {
-    ...CODE_OWNED_GIT_ENVIRONMENT_V1,
-    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
-    GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-  };
-  const projectedHead = git(
-    ["commit-tree", tree, "-p", sourceHead, "-m", "setfarm p3 authenticated current-byte projection"],
-    { cwd: projectionRoot, env: commitEnv },
-  ).trim();
-  git(["update-ref", "HEAD", projectedHead], { cwd: projectionRoot });
-  git(["reset", "--mixed", "-q", projectedHead], { cwd: projectionRoot });
-  return Object.freeze({ root: realpathSync(projectionRoot), head: projectedHead });
+    for (const [locator, observation] of observations) {
+      if (!readStableIndexedMemberV1(locator, observation.mode, sourceDevice).equals(observation.bytes)) {
+        throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
+      }
+    }
+    if (
+      git(["rev-parse", "HEAD"]).trim() !== sourceHead
+      || git(["ls-files", "--stage", "-z"]) !== sourceIndex
+    ) {
+      throw new Error("P3_PROJECTION_SOURCE_CHANGED");
+    }
+    try {
+      assertSourceScopeV1();
+    } catch {
+      throw new Error("P3_PROJECTION_SOURCE_CHANGED");
+    }
+
+    git(["init", "-q"], { cwd: projectionRoot });
+    git(["config", "user.name", "Setfarm P3 Isolated Projection"], { cwd: projectionRoot });
+    git(["config", "user.email", "setfarm-p3-projection@invalid"], { cwd: projectionRoot });
+    git(["config", "commit.gpgSign", "false"], { cwd: projectionRoot });
+    git(["config", "core.hooksPath", "/dev/null"], { cwd: projectionRoot });
+    const sourceCommonDirectory = git(["rev-parse", "--git-common-dir"]).trim();
+    const sourceObjects = realpathSync(path.join(
+      path.isAbsolute(sourceCommonDirectory) ? sourceCommonDirectory : path.resolve(SOURCE_ROOT, sourceCommonDirectory),
+      "objects",
+    ));
+    const alternatesPath = path.join(projectionRoot, ".git", "objects", "info", "alternates");
+    mkdirSync(path.dirname(alternatesPath), { recursive: true });
+    writeFileSync(alternatesPath, `${sourceObjects}\n`, { mode: 0o600 });
+    const nodeModules = realpathSync(path.join(SOURCE_ROOT, "node_modules"));
+    symlinkSync(nodeModules, path.join(projectionRoot, "node_modules"), "dir");
+    writeFileSync(
+      path.join(projectionRoot, ".git", "info", "exclude"),
+      "node_modules\n.setfarm-p3-projection-marker.json\n.setfarm-p3-test-capability-preload.mjs\nsrc/internal-production/baseline-spawner-startup-admission-v1.js\n",
+      { mode: 0o600 },
+    );
+    git(["add", "-A"], { cwd: projectionRoot });
+    const tree = git(["write-tree"], { cwd: projectionRoot }).trim();
+    const commitEnv = {
+      ...CODE_OWNED_GIT_ENVIRONMENT_V1,
+      GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+      GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+    };
+    const projectedHead = git(
+      ["commit-tree", tree, "-p", sourceHead, "-m", "setfarm p3 authenticated current-byte projection"],
+      { cwd: projectionRoot, env: commitEnv },
+    ).trim();
+    git(["update-ref", "HEAD", projectedHead], { cwd: projectionRoot });
+    git(["reset", "--mixed", "-q", projectedHead], { cwd: projectionRoot });
+    return Object.freeze({ root: realpathSync(projectionRoot), head: projectedHead });
+  } catch (error) {
+    rmSync(temporaryParent, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function normalizedAdminUrlV1(): string {

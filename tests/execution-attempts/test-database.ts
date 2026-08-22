@@ -467,6 +467,14 @@ async function migrateP3TemplateV1(
   ]);
 }
 
+async function applyAndVerifyP3GenericSuccessorV1(
+  db: typeof import("../../src/db-pg.js"),
+): Promise<void> {
+  const automatic = await applyContractSpineMigrations(db.getSql());
+  assert.deepEqual(automatic.guardedPending, []);
+  assert.equal((await verifyContractSpineMigrations(db.getSql())).status, "verified");
+}
+
 function p3FixtureGitV1(root: string, args: readonly string[]): string {
   const result = spawnSync("/usr/bin/git", args, { cwd: root, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -707,7 +715,7 @@ async function activateP3TemplateAndWriteReadinessV1(
       preManifestMigration32AuthorizationConsumptionHash: fact("migration-32-authorization-consumption"),
     });
     await applyBootstrapMainClaimHandoffGuardedMigration32V1(db.getSql(), evidence);
-    assert.equal((await verifyContractSpineMigrations(db.getSql())).status, "verified");
+    await applyAndVerifyP3GenericSuccessorV1(db);
     await db.pgMigrate();
     const owner = await import(`${pathToFileURL(path.join(
       fixture.root,

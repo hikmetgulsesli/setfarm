@@ -376,6 +376,45 @@ test("P3 runner projects authenticated current bytes from import meta root", asy
   }
 });
 
+test("P3 setup owns the generic successor apply and full verification slot before A", async () => {
+  if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
+  const helperSource = readFileSync(
+    path.join(process.cwd(), "tests/execution-attempts/test-database.ts"),
+    "utf8",
+  );
+  const helperStart = helperSource.indexOf("async function applyAndVerifyP3GenericSuccessorV1");
+  const activationStart = helperSource.indexOf("async function activateP3TemplateAndWriteReadinessV1");
+  const activationEnd = helperSource.indexOf("async function setupP3TemplateDirectV1");
+  assert.ok(helperStart >= 0, "the code-owned generic successor helper must exist");
+  assert.ok(activationStart > helperStart && activationEnd > activationStart);
+  const helper = helperSource.slice(helperStart, activationStart);
+  assert.match(helper, /await applyContractSpineMigrations\(db\.getSql\(\)\)/);
+  assert.match(helper, /await verifyContractSpineMigrations\(db\.getSql\(\)\)/);
+  assert.doesNotMatch(helper, /migration.?33|033_v3_recovery/i);
+  const activation = helperSource.slice(activationStart, activationEnd);
+  const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
+  const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");
+  const activateIndex = activation.indexOf("await fixtureDb.activateInternalProductionOwnerProducerManifestSetV1");
+  assert.ok(guardedIndex >= 0);
+  assert.ok(successorIndex > guardedIndex);
+  assert.ok(activateIndex > successorIndex);
+
+  const sql = postgres(process.env.SETFARM_PG_URL, { max: 1, onnotice: () => {} });
+  try {
+    const journal = await sql<Array<{ current_version: string; migration_33_rows: string }>>`
+      SELECT MAX(version)::text AS current_version,
+             COUNT(*) FILTER (WHERE version=33)::text AS migration_33_rows
+        FROM setfarm_schema_migrations
+       WHERE state IN ('applied','adopted')
+    `;
+    assert.deepEqual(journal.map((row) => ({ ...row })), [
+      { current_version: "32", migration_33_rows: "0" },
+    ]);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 test("P3 isolated database names keep the exact loopback union", async () => {
   const importDb = async (label: string) => import(
     `../../src/db-pg.ts?p3-isolated-name=${encodeURIComponent(label)}-${Date.now()}-${Math.random()}`
@@ -724,10 +763,15 @@ test("P3 runner refuses every constructible indexed and physical projection drif
     const fixture = createP3RunnerRefusalFixture();
     try {
       fixtureCase.mutate(fixture.root);
-      const result = runP3NestedRunner(fixture.root);
+      const result = await spawnP3NestedRunner(fixture.root).completed;
       assert.notEqual(result.status, 0, fixtureCase.label);
       assert.match(result.output, fixtureCase.expected, fixtureCase.label);
       assert.doesNotMatch(result.output, /cloned setfarm_p3_|tests [0-9]+/i, fixtureCase.label);
+      assert.deepEqual(
+        result.temporaryEntries.filter((entry) => entry.startsWith("setfarm-p3-projection-")),
+        [],
+        fixtureCase.label,
+      );
     } finally {
       fixture.cleanup();
     }
@@ -742,10 +786,14 @@ test("P3 runner refuses every constructible indexed and physical projection drif
     server.listen(socketPath, resolve);
   });
   try {
-    const result = runP3NestedRunner(socketFixture.root);
+    const result = await spawnP3NestedRunner(socketFixture.root).completed;
     assert.notEqual(result.status, 0);
     assert.match(result.output, /P3_PROJECTION_MEMBER_INVALID/);
     assert.doesNotMatch(result.output, /cloned setfarm_p3_|tests [0-9]+/i);
+    assert.deepEqual(
+      result.temporaryEntries.filter((entry) => entry.startsWith("setfarm-p3-projection-")),
+      [],
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     socketFixture.cleanup();
@@ -758,6 +806,36 @@ test("P3 runner refuses every constructible indexed and physical projection drif
   assert.match(runner, /path\.isAbsolute\(locator\) \|\| locator\.split\("\/"\)\.includes\("\.\."\)/);
   assert.match(runner, /!first\.isFile\(\)/);
   assert.match(runner, /O_RDONLY \| fsConstants\.O_NOFOLLOW/);
+});
+
+test("P3 runner independently projects each new exact51 overlay after scope expansion", () => {
+  const newlyAuthorized = [
+    "src/db/contract-spine-migrations.ts",
+    "src/db/contract-spine-migration-source-integrity.ts",
+    "src/db/contract-spine-migration-digests.generated.ts",
+    "tests/execution-attempts/migrations.test.ts",
+    "tests/execution-attempts/migration-source-digests.test.ts",
+  ] as const;
+  for (const locator of newlyAuthorized) {
+    const fixture = createP3RunnerRefusalFixture();
+    try {
+      writeFileSync(
+        path.join(fixture.root, locator),
+        `${readFileSync(path.join(fixture.root, locator), "utf8")}\n// exact51 GREEN: ${locator}\n`,
+      );
+      writeFileSync(
+        path.join(fixture.root, "tests/internal-production/task-0-source-manifest.test.ts"),
+        `import assert from "node:assert/strict";\nimport { readFileSync } from "node:fs";\nimport test from "node:test";\ntest("projects exact51 member", () => { assert.equal(readFileSync(${JSON.stringify(locator)}, "utf8").includes(${JSON.stringify(`// exact51 GREEN: ${locator}`)}), true); });\n`,
+      );
+      const result = runP3NestedRunner(fixture.root);
+      assert.equal(result.status, 0, `${locator}\n${result.output}`);
+      assert.doesNotMatch(result.output, /P3_PROJECTION_TRACKED_SCOPE_INVALID/, locator);
+      assert.match(result.output, /cloned setfarm_p3_[a-f0-9]{24}_primary from setfarm_p3_[a-f0-9]{24}_template/, locator);
+      assert.match(result.output, /tests 1/, locator);
+    } finally {
+      fixture.cleanup();
+    }
+  }
 });
 
 test("P3 marker and FD3 authentication reject malformed crossed stale and replayed authority", async () => {
