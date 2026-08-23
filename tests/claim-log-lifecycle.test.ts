@@ -16,6 +16,26 @@ function claimSingleStepSource(): string {
   return source.slice(start, end);
 }
 
+function v3StageRetryClaimProjectionSource(): string {
+  const source = claimSingleStepSource();
+  const start = source.indexOf("type PreviousStageFailureRow = {");
+  const end = source.indexOf("let shouldRecordSingleStepTransition", start);
+  assert.notEqual(start, -1, "V3 stage retry row projection not found");
+  assert.notEqual(end, -1, "V3 stage retry projection end not found");
+  return source.slice(start, end);
+}
+
+function assertV3StageRetryClaimProjectionAuthority(source: string): void {
+  assert.match(source, /claim_id: string/);
+  assert.match(source, /SELECT cl\.id::text AS claim_id/);
+  assert.match(source, /const previousClaimId = Number\(row\.claim_id\)/);
+  assert.match(source, /Number\.isSafeInteger\(previousClaimId\)/);
+  assert.match(source, /previousClaimId > 0/);
+  assert.match(source, /String\(previousClaimId\) === row\.claim_id/);
+  assert.match(source, /previousClaimIds\.some\(\(claimId\) => claimId === null\)/);
+  assert.match(source, /previousClaimId: previousClaimIds\[index\]!/);
+}
+
 function stepOpsSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
 }
@@ -639,6 +659,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /Existing runtime \$\{existingOpenClaim\.session_id\} still owns/);
     assert.match(source, /existingOpenClaim\.session_id !== runtimeIntent\.sessionId/);
     assert.doesNotMatch(source, /INSERT INTO claim_log/);
+  });
+
+  it("keeps V3 stage retry claim projection inside the canonical safe integer domain", () => {
+    const source = v3StageRetryClaimProjectionSource();
+    assertV3StageRetryClaimProjectionAuthority(source);
+
+    const mutations = [
+      source.replace("cl.id::text AS claim_id", "cl.id::integer AS claim_id"),
+      source.replace("Number.isSafeInteger(previousClaimId)", "Number.isInteger(previousClaimId)"),
+      source.replace("previousClaimId > 0", "previousClaimId !== 0"),
+      source.replace("String(previousClaimId) === row.claim_id", "String(previousClaimId).length > 0"),
+      source.replace("previousClaimId: previousClaimIds[index]!", "previousClaimId: Number(row.claim_id)"),
+    ];
+    for (const mutation of mutations) {
+      assert.throws(() => assertV3StageRetryClaimProjectionAuthority(mutation));
+    }
   });
 
   it("does not repeatedly claim verify during the PR review delay window", () => {
@@ -2215,9 +2251,9 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(owner, /RUN_TERMINAL_FAIL_DRAIN_PROOF_REQUIRED/);
     assert.match(owner, /UPDATE execution_attempts[\s\S]*disposition = \$4/);
     assert.match(owner, /UPDATE claim_log[\s\S]*outcome = \$2[\s\S]*WHERE run_id = \$1[\s\S]*AND outcome IS NULL/);
-    assert.match(owner, /UPDATE stories[\s\S]*claimed_by = NULL[\s\S]*status IN \('pending', 'running'\)/);
-    assert.match(owner, /UPDATE steps[\s\S]*current_story_id = NULL[\s\S]*status IN \('waiting', 'pending', 'running'\)/);
-    assert.ok(owner.indexOf("UPDATE execution_attempts") < owner.indexOf("UPDATE claim_log"), "attempt fences close before claims");
+    assert.match(owner, /UPDATE stories[\s\S]*claimed_by = NULL[\s\S]*status IN \('pending',\s*'running'\)/);
+    assert.match(owner, /UPDATE steps[\s\S]*current_story_id = NULL[\s\S]*status IN \('waiting',\s*'pending',\s*'running'\)/);
+    assert.ok(owner.indexOf("UPDATE claim_log") < owner.indexOf("UPDATE execution_attempts"), "claims close before attempt fences");
     assert.ok(owner.indexOf("UPDATE claim_log") < owner.indexOf("UPDATE runs"), "claims close before terminal run publication");
   });
 

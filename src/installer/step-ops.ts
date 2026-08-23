@@ -5424,7 +5424,7 @@ async function claimSingleStep(
       return { found: false };
     }
     type PreviousStageFailureRow = {
-      claim_id: number;
+      claim_id: string;
       diagnostic: string | null;
       output: string;
       output_hash: string;
@@ -5432,7 +5432,7 @@ async function claimSingleStep(
       max_retries: number;
     };
     const previousRows = await pgQuery<PreviousStageFailureRow>(
-      `SELECT cl.id::integer AS claim_id,
+      `SELECT cl.id::text AS claim_id,
               cl.diagnostic,
               completion.output,
               completion.output_hash,
@@ -5452,8 +5452,17 @@ async function claimSingleStep(
       [step.id, step.run_id, step.step_id],
     );
     const previous = previousRows[previousRows.length - 1];
+    const previousClaimIds = previousRows.map((row) => {
+      const previousClaimId = Number(row.claim_id);
+      return Number.isSafeInteger(previousClaimId)
+        && previousClaimId > 0
+        && String(previousClaimId) === row.claim_id
+        ? previousClaimId
+        : null;
+    });
     const retryHistoryInvalid = previousRows.length !== step.retry_count
       || previousRows.length > 100
+      || previousClaimIds.some((claimId) => claimId === null)
       || previousRows.some((row) => !row.instruction || !row.output || !row.diagnostic);
     if (retryHistoryInvalid || !previous?.instruction || !previous.output || !previous.diagnostic) {
       const diagnostic = "V3_STAGE_RETRY_SOURCE_UNAVAILABLE: bounded stage retry requires the exact prior instruction, output, and validator failure; blind model redispatch is forbidden";
@@ -5485,7 +5494,7 @@ async function claimSingleStep(
         workflowStepId: step.step_id,
         retryOrdinal: index + 1,
         maxRetries: row.max_retries,
-        previousClaimId: row.claim_id,
+        previousClaimId: previousClaimIds[index]!,
         previousInstructionContent: row.instruction!,
         previousOutputContent: row.output,
         diagnostic: row.diagnostic!,
