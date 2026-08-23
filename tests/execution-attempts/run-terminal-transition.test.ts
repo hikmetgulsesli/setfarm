@@ -36,7 +36,13 @@ import {
   transitionRunToTerminal,
   transitionRunToTerminalInTransaction,
 } from "../../src/execution/run-terminal-transition.js";
+import {
+  createRuntimeCompletionRepository,
+  requestRuntimeCompletion,
+} from "../../src/execution/runtime-completion.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
@@ -49,6 +55,16 @@ import {
   createIsolatedMigration31TestDatabase,
   createIsolatedTestDatabase,
 } from "./test-database.js";
+
+const RUNTIME_DRAIN_EVIDENCE = {
+  schema: "setfarm.runtime-drain-evidence.v1" as const,
+  observedAt: "2026-07-13T12:00:00.000Z",
+  localProcessAbsent: true,
+  openClawTaskAbsent: true,
+  workspaceProcessAbsent: true,
+  stableObservations: 2,
+  evidenceRefs: ["setfarm://test/run-terminal-completion-drain"],
+};
 
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -368,8 +384,256 @@ describe("canonical run terminal owner", () => {
       && claimClose > attemptClose,
       "claim and attempt must both be terminal before either resolver and both closes must precede commit",
     );
+    const effectUpdate = source.indexOf("UPDATE runtime_completion_effects");
+    const effectResolver = source.indexOf(
+      "resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1(",
+      effectUpdate,
+    );
+    const effectClose = source.indexOf("closeInternalProductionOwnerReservationV1(", effectResolver);
+    const manifest = source.indexOf("assertRuntimeCompletionManifestInTransactionV1", effectClose);
+    const effectsCommitted = source.indexOf("SET apply_phase = 'effects_committed'", manifest);
+    assert.ok(
+      effectUpdate >= 0
+      && effectResolver > effectUpdate
+      && effectClose > effectResolver
+      && manifest > effectClose
+      && effectsCommitted > manifest,
+      "terminal-run effect must mutate, resolve, and close before manifest proof and effects_committed",
+    );
+    assert.equal(
+      source.slice(effectUpdate, effectsCommitted).includes(
+        "resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1",
+      ),
+      false,
+      "the effects_committed completion remains bound for Task 6",
+    );
     const db = await import("../../src/db-pg.js");
     assert.equal("createInternalProductionWorkflowRunTerminalOwnerAuthorityV1" in db, false);
+  });
+
+  it("atomically closes an applied terminal-run effect while its completion remains bound", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-completion-effect";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      const seeded = await seedActiveStory(database, runId);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-completion-effect",
+        fenceToken: () => "8".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId: seeded.claimId,
+        runId,
+        storyId: "US-002",
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${seeded.claimId}`],
+      }));
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_run-terminal-completion-effect",
+        runId,
+        stepDbId: seeded.stepDbId,
+        workflowStepId: "implement",
+        storyDbId: seeded.storyDbId,
+        storyId: "US-002",
+        claimId: seeded.claimId,
+        attemptId: attempt.attempt.attemptId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markStarting({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markRunning({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+        sessionKey: "terminal-completion-session",
+      });
+      const envelope: ClaimEnvelopeV1 = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "shadow",
+        issuedAt: "2026-07-13T12:00:00.000Z",
+        stepId: seeded.stepDbId,
+        workflowStepId: "implement",
+        runId,
+        storyId: "US-002",
+        storyDbId: seeded.storyDbId,
+        claimId: seeded.claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        claimGeneration: 1,
+        attempt: {
+          attemptId: attempt.attempt.attemptId,
+          generation: attempt.attempt.generation,
+          fenceToken: attempt.attempt.fenceToken,
+        },
+      };
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope,
+        output: "STATUS: done\nSUMMARY: terminal transition applies the effect",
+        requestId: "RCR_run-terminal-completion-effect",
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markDrained({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+        evidence: RUNTIME_DRAIN_EVIDENCE,
+      });
+      const processing = await completions.markProcessing({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      assert.ok(processing.leaseExpiresAt);
+      await database.sql`UPDATE runs SET status='failing' WHERE id=${runId}`;
+      const terminationRequestId = "RTR_run-terminal-completion-effect";
+      await database.sql`
+        INSERT INTO run_termination_requests (
+          request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
+          diagnostic,evidence,created_at,updated_at
+        ) VALUES (
+          ${terminationRequestId},${runId},'failed','drained','task5-test',NOW(),NOW(),
+          'terminal completion effect','{}'::jsonb,NOW(),NOW()
+        )
+      `;
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task5_effect_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='mandatory-effect' AND OLD.state='bound' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK5_EFFECT_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task5_effect_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_task5_effect_close_v1()
+      `);
+      const terminate = () => runWithRuntimeCompletionOwner({
+        requestId: processing.requestId,
+        ownerInstanceId: processing.ownerInstanceId!,
+        leaseExpiresAt: processing.leaseExpiresAt!,
+        ownerAttemptCount: processing.ownerAttemptCount,
+      }, () => transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "completion decided terminal failure",
+        drainedTerminationRequestId: terminationRequestId,
+      }));
+
+      await assert.rejects(terminate(), /TEST_TASK5_EFFECT_CLOSE_REJECTED/);
+      const rolledBack = (await database.sql<Array<{
+        run_status: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        completion_phase: string;
+        completion_owner_state: string;
+        effect_count: number;
+      }>>`
+        SELECT run_row.status AS run_status,claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               completion.apply_phase AS completion_phase,
+               completion_owner.state AS completion_owner_state,
+               (SELECT COUNT(*)::integer FROM runtime_completion_effects effect
+                 WHERE effect.request_id=completion.request_id) AS effect_count
+          FROM runs run_row
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_completion_requests completion ON completion.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.category='completion-owner'
+           AND completion_owner.owner_key=completion.request_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...rolledBack }, {
+        run_status: "failing",
+        claim_outcome: null,
+        attempt_disposition: "running",
+        completion_phase: "executing",
+        completion_owner_state: "bound",
+        effect_count: 0,
+      });
+
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task5_effect_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      const terminal = await terminate();
+      assert.equal(terminal.status, "failed");
+      const committed = (await database.sql<Array<{
+        run_status: string;
+        claim_outcome: string;
+        attempt_disposition: string;
+        completion_state: string;
+        completion_phase: string;
+        completion_owner_state: string;
+        effect_state: string;
+        effect_owner_state: string;
+        effect_owner_updated_at: string;
+      }>>`
+        SELECT run_row.status AS run_status,claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               completion.state AS completion_state,
+               completion.apply_phase AS completion_phase,
+               completion_owner.state AS completion_owner_state,
+               effect.state AS effect_state,effect_owner.state AS effect_owner_state,
+               effect_owner.updated_at::text AS effect_owner_updated_at
+          FROM runs run_row
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_completion_requests completion ON completion.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.category='completion-owner'
+           AND completion_owner.owner_key=completion.request_id
+          JOIN runtime_completion_effects effect ON effect.request_id=completion.request_id
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.category='mandatory-effect'
+           AND effect_owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND effect_owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...committed }, {
+        run_status: "failed",
+        claim_outcome: "failed",
+        attempt_disposition: "failed",
+        completion_state: "processing",
+        completion_phase: "effects_committed",
+        completion_owner_state: "bound",
+        effect_state: "applied",
+        effect_owner_state: "closed",
+        effect_owner_updated_at: committed.effect_owner_updated_at,
+      });
+      const replay = await terminate();
+      assert.equal(replay.status, "failed");
+      const afterReplay = (await database.sql<Array<{ effect_owner_updated_at: string }>>`
+        SELECT owner.updated_at::text AS effect_owner_updated_at
+          FROM internal_production_owner_reservations_v1 owner
+         WHERE owner.category='mandatory-effect'
+      `)[0]!;
+      assert.equal(afterReplay.effect_owner_updated_at, committed.effect_owner_updated_at);
+    } finally {
+      await database.cleanup();
+    }
   });
 
   it("refuses to erase active shadow owners without a drained failure request", async () => {

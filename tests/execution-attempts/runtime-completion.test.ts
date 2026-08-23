@@ -5,6 +5,10 @@ import type postgres from "postgres";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import {
   closeClaimAndBoundAttempt,
   closeClaimAndBoundAttemptInTransaction,
   closeExactSingleStepClaimInTransaction,
@@ -18,6 +22,8 @@ import {
   createRuntimeCompletionRepository,
   isRuntimeCompletionRecoveryOwnerInstanceIdV1,
   markRuntimeCompletionOwnerCommittedInTransaction,
+  quarantineExpiredRuntimeCompletionForRecoveryInTransaction,
+  rejectRuntimeCompletionsForTerminalRunInTransaction,
   requestRuntimeCompletion,
   RuntimeCompletionSubmissionEvidenceV1Schema,
 } from "../../src/execution/runtime-completion.js";
@@ -34,8 +40,18 @@ import {
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
+import {
+  createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
+  createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+} from "../../src/internal-production/owner-admission-v1.js";
 import { exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
 
 const DRAIN_EVIDENCE = {
   schema: "setfarm.runtime-drain-evidence.v1" as const,
@@ -46,6 +62,24 @@ const DRAIN_EVIDENCE = {
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/completion-drain-proof"],
 };
+
+async function bindTestRunOwner(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  runId: string,
+): Promise<void> {
+  await database.sql.begin(async (transaction) => {
+    const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+    const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+    );
+    await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    });
+  });
+}
 
 async function asRuntimeCompletionOwner<T>(
   repository: ReturnType<typeof createRuntimeCompletionRepository>,
@@ -87,6 +121,7 @@ async function seedManagedClaim(
   } else {
     await database.insertRun(runId);
   }
+  await bindTestRunOwner(database, runId);
   await database.sql`
     INSERT INTO steps
       (id, run_id, step_id, agent_id, step_index, input_template, expects, status, current_story_id)
@@ -99,12 +134,23 @@ async function seedManagedClaim(
     VALUES
       (${storyDbId}, ${runId}, 1, 'US-001', 'Story', 'running', 'feature-dev_developer', 1)
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'implement', 'US-001', 'feature-dev_developer')
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const ids = await transaction<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as any,
+      "a-claim-loop-runtime-v1",
+      ids,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as any, birth, {
+      runId,
+      workflowStepId: "implement",
+      storyId: "US-001",
+      claimAgentId: "feature-dev_developer",
+      claimedAt: new Date(),
+    });
+  }) as number;
   const attempts = createAttemptRepository(database.sql, {
     attemptId: () => `ATT_${runId}-attempt`,
     fenceToken: () => "f".repeat(64),
@@ -165,18 +211,30 @@ async function seedManagedSingleStepClaim(
 ) {
   const stepDbId = `${runId}-step`;
   await database.insertRun(runId);
+  await bindTestRunOwner(database, runId);
   await database.sql`
     INSERT INTO steps
       (id, run_id, step_id, agent_id, step_index, input_template, expects, status)
     VALUES
       (${stepDbId}, ${runId}, 'verify', 'feature-dev_reviewer', 1, '', '', 'running')
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'verify', NULL, 'feature-dev_reviewer')
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const ids = await transaction<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as any,
+      "a-claim-single-runtime-v1",
+      ids,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as any, birth, {
+      runId,
+      workflowStepId: "verify",
+      storyId: null,
+      claimAgentId: "feature-dev_reviewer",
+      claimedAt: new Date(),
+    });
+  }) as number;
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${runId}-session`,
@@ -261,7 +319,7 @@ async function waitForBlockedRuntimeQuarantine(
          WHERE datname = current_database()
            AND pid <> pg_backend_pid()
            AND wait_event_type = 'Lock'
-           AND query ILIKE '%UPDATE runtime_sessions%SET state = ''quarantined''%'
+           AND query ILIKE '%runtime_sessions%'
       ) AS blocked
     `;
     if (rows[0]?.blocked) return;
@@ -303,6 +361,42 @@ async function expireRuntimeCompletionLease(
     [requestId],
   );
   assert.equal(rows.length, 1, "fixture must expire one exact completion lease");
+}
+
+async function installCompletionCloseRejection(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  suffix: string,
+): Promise<void> {
+  const functionName = `task5_reject_completion_close_${suffix}`;
+  await database.sql.unsafe(`
+    CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF OLD.category='completion-owner' AND OLD.state='bound' AND NEW.state='closed' THEN
+        RAISE EXCEPTION 'TEST_TASK5_COMPLETION_CLOSE_REJECTED';
+      END IF;
+      RETURN NEW;
+    END $$
+  `);
+  await database.sql.unsafe(`
+    CREATE TRIGGER ${functionName} BEFORE UPDATE OF state
+    ON internal_production_owner_reservations_v1
+    FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+  `);
+}
+
+async function completionAndOwnerState(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  requestId: string,
+): Promise<Readonly<{ request_state: string; owner_state: string }>> {
+  const rows = await database.sql<Array<{ request_state: string; owner_state: string }>>`
+    SELECT request.state AS request_state,owner.state AS owner_state
+      FROM runtime_completion_requests request
+      JOIN internal_production_owner_reservations_v1 owner
+        ON owner.category='completion-owner'
+       AND owner.reservation_payload->>'ownerKey'=request.request_id
+     WHERE request.request_id=${requestId}
+  `;
+  if (rows.length !== 1) throw new Error("TEST_COMPLETION_OWNER_STATE_MISSING");
+  return { ...rows[0]! };
 }
 
 type ManagedCompletionSeed =
@@ -394,6 +488,95 @@ async function settleCompletionEffects(
   }
 }
 
+async function prepareFocusedCompletionEffect(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  suffix: string,
+  mandatory = false,
+) {
+  const requestId = `RCR_optional-${suffix}`;
+  const runId = `run-optional-${suffix}`;
+  const seeded = await seedManagedClaim(database, runId);
+  const output = `STATUS: done\nCHANGES: optional effect ${suffix}`;
+  const requested = await requestRuntimeCompletion(database.sql, {
+    envelope: seeded.envelope,
+    output,
+    requestId,
+  });
+  if (requested.status !== "requested") throw new Error("optional completion request missing");
+  const completions = createRuntimeCompletionRepository(database.sql);
+  await completions.claim({ requestId, ownerInstanceId: "optional-manager" });
+  await seeded.sessions.markDrained({
+    sessionId: seeded.session.sessionId,
+    ownerInstanceId: "spawner-a",
+    evidence: DRAIN_EVIDENCE,
+  });
+  await completions.markProcessing({ requestId, ownerInstanceId: "optional-manager" });
+  const effectKey = `telemetry/${suffix}`;
+  const completionPlan = {
+    kind: "story_completion" as const,
+    continuation: { type: "story_loop_continue" as const },
+    subject: { storyDbId: seeded.storyDbId, storyId: "US-001" },
+    effects: [{
+      effectKey,
+      ordinal: 0,
+      effectType: "story.telemetry",
+      mandatory,
+      payload: { suffix },
+    }],
+  };
+  await asRuntimeCompletionOwner(completions, requestId, () => completeStoryClaimAndBoundAttempt(database.sql, {
+    envelope: seeded.envelope,
+    sourceAfter: { sha: "2".repeat(40), treeHash: "3".repeat(64) },
+    outputHash: createHash("sha256").update(output, "utf8").digest("hex"),
+    storyStatus: "done",
+    storyOutput: output,
+    stepStatus: "running",
+    stepOutput: output,
+    completionPlan,
+  }));
+  const effects = createRuntimeCompletionEffectRepository(database.sql);
+  const effect = await effects.claimNext({ requestId, ownerInstanceId: "optional-manager" });
+  if (!effect?.leaseToken || effect.effectKey !== effectKey || effect.mandatory !== mandatory) {
+    throw new Error("focused completion effect lease missing");
+  }
+  return { requestId, effectKey, seeded, completions, effects, effect };
+}
+
+async function task5TerminalSnapshot(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  requestId: string,
+) {
+  const rows = await database.sql<Array<{
+    request_row: unknown;
+    runtime_row: unknown;
+    completion_owner_row: unknown;
+    effect_rows: unknown;
+    effect_owner_rows: unknown;
+    admission_head_row: unknown;
+  }>>`
+    SELECT to_jsonb(request) AS request_row,
+           to_jsonb(runtime) AS runtime_row,
+           to_jsonb(completion_owner) AS completion_owner_row,
+           (SELECT jsonb_agg(to_jsonb(effect) ORDER BY effect.effect_key)
+              FROM runtime_completion_effects effect
+             WHERE effect.request_id=request.request_id) AS effect_rows,
+           (SELECT jsonb_agg(to_jsonb(effect_owner) ORDER BY effect_owner.reservation_ref)
+              FROM internal_production_owner_reservations_v1 effect_owner
+             WHERE effect_owner.reservation_payload->>'producerImplementationId'='a-mandatory-effect-v1'
+               AND effect_owner.reservation_payload->>'ownerKey' LIKE ('%' || request.request_id || '%')) AS effect_owner_rows,
+           to_jsonb(head) AS admission_head_row
+      FROM runtime_completion_requests request
+      JOIN runtime_sessions runtime ON runtime.session_id=request.runtime_session_id
+      JOIN internal_production_owner_reservations_v1 completion_owner
+        ON completion_owner.reservation_payload->>'producerImplementationId'='a-completion-owner-v1'
+       AND completion_owner.reservation_payload->>'ownerKey'=request.request_id
+      CROSS JOIN internal_production_owner_admission_head_v1 head
+     WHERE request.request_id=${requestId} AND head.singleton
+  `;
+  if (rows.length !== 1) throw new Error("TEST_TASK5_TERMINAL_SNAPSHOT_MISSING");
+  return { ...rows[0]! };
+}
+
 describe("manager-owned runtime completion", () => {
   it("admits only the exact durable recovery owner identity format", () => {
     assert.equal(
@@ -410,6 +593,565 @@ describe("manager-owned runtime completion", () => {
       "prefix-setfarm-runtime-completion-recovery:v1:123e4567-e89b-12d3-a456-426614174000",
     ]) {
       assert.equal(isRuntimeCompletionRecoveryOwnerInstanceIdV1(invalid), false, invalid);
+    }
+  });
+
+  it("rolls completion birth back at reread, bind, and commit and hides pre-ACK state", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const blocker = postgresClient(database.url, { max: 1 });
+    try {
+      const runId = "run-completion-birth-rollback";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output: "STATUS: done\nSUMMARY: completion birth rollback matrix",
+        requestId: "RCR_completion-birth-rollback1",
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      const snapshot = async () => (await database.sql<Array<{
+        request_state: string;
+        owner_count: number;
+        head_version: string;
+        head_hash: string;
+      }>>`
+        SELECT request.state AS request_state,
+               (SELECT COUNT(*)::integer
+                  FROM internal_production_owner_reservations_v1 owner
+                 WHERE owner.category='completion-owner'
+                   AND owner.reservation_payload->>'ownerKey'=request.request_id) AS owner_count,
+               head.head_version::text AS head_version,head.head_hash
+          FROM runtime_completion_requests request
+          CROSS JOIN internal_production_owner_admission_head_v1 head
+         WHERE request.request_id=${requested.request.requestId} AND head.singleton
+      `)[0]!;
+      const before = await snapshot();
+
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_reread_mismatch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.state='requested' AND NEW.state='draining' THEN
+            UPDATE runtime_completion_requests
+               SET diagnostic='TEST_TASK5_POST_CAS_REREAD_MISMATCH'
+             WHERE request_id=NEW.request_id;
+          END IF;
+          RETURN NULL;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task5_completion_reread_mismatch_v1
+        AFTER UPDATE OF state ON runtime_completion_requests
+        FOR EACH ROW EXECUTE FUNCTION task5_completion_reread_mismatch_v1()
+      `);
+      await assert.rejects(
+        completions.claim({ requestId: requested.request.requestId, ownerInstanceId: "reread-owner" }),
+        /INTERNAL_PRODUCTION_COMPLETION_OWNER_REREAD_INVALID/,
+      );
+      assert.deepEqual({ ...await snapshot() }, { ...before });
+      await database.sql.unsafe(`DROP TRIGGER task5_completion_reread_mismatch_v1 ON runtime_completion_requests`);
+
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_bind_reject_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='completion-owner' AND OLD.state='pending' AND NEW.state='bound' THEN
+            RAISE EXCEPTION 'TEST_TASK5_COMPLETION_BIND_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task5_completion_bind_reject_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION task5_completion_bind_reject_v1()
+      `);
+      await assert.rejects(
+        completions.claim({ requestId: requested.request.requestId, ownerInstanceId: "bind-owner" }),
+        /TEST_TASK5_COMPLETION_BIND_REJECTED/,
+      );
+      assert.deepEqual({ ...await snapshot() }, { ...before });
+      await database.sql.unsafe(`DROP TRIGGER task5_completion_bind_reject_v1 ON internal_production_owner_reservations_v1`);
+
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_commit_reject_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='completion-owner' AND NEW.state='bound' THEN
+            RAISE EXCEPTION 'TEST_TASK5_COMPLETION_COMMIT_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE CONSTRAINT TRIGGER task5_completion_commit_reject_v1
+        AFTER UPDATE OF state ON internal_production_owner_reservations_v1
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION task5_completion_commit_reject_v1()
+      `);
+      await assert.rejects(
+        completions.claim({ requestId: requested.request.requestId, ownerInstanceId: "commit-owner" }),
+        /TEST_TASK5_COMPLETION_COMMIT_REJECTED/,
+      );
+      assert.deepEqual({ ...await snapshot() }, { ...before });
+      await database.sql.unsafe(`DROP TRIGGER task5_completion_commit_reject_v1 ON internal_production_owner_reservations_v1`);
+
+      await database.sql.unsafe("CREATE SEQUENCE task5_completion_preack_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_preack_latch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='completion-owner' AND OLD.state='pending' AND NEW.state='bound' THEN
+            PERFORM nextval('task5_completion_preack_latch_v1');
+            PERFORM pg_advisory_xact_lock(750051);
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task5_completion_preack_latch_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION task5_completion_preack_latch_v1()
+      `);
+      let release!: () => void;
+      const mayRelease = new Promise<void>((resolve) => { release = resolve; });
+      let locked!: () => void;
+      const blockerReady = new Promise<void>((resolve) => { locked = resolve; });
+      const held = blocker.begin(async (transaction) => {
+        await transaction.unsafe("SELECT pg_advisory_xact_lock(750051)");
+        locked();
+        await mayRelease;
+      });
+      await blockerReady;
+      const claiming = completions.claim({ requestId: requested.request.requestId, ownerInstanceId: "ack-owner" });
+      for (;;) {
+        const latch = await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM task5_completion_preack_latch_v1
+        `;
+        if (latch[0]?.is_called) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual({ ...await snapshot() }, { ...before }, "uncommitted birth is invisible pre-ACK");
+      release();
+      await held;
+      const claimed = await claiming;
+      assert.equal(claimed?.state, "draining");
+      await database.sql.unsafe(`DROP TRIGGER task5_completion_preack_latch_v1 ON internal_production_owner_reservations_v1`);
+      const committed = (await database.sql<Array<{
+        reservation_ref: string;
+        reservation_hash: string;
+        owner_state: string;
+        head_version: string;
+        head_hash: string;
+      }>>`
+        SELECT owner.reservation_ref,owner.reservation_hash,owner.state AS owner_state,
+               head.head_version::text AS head_version,head.head_hash
+          FROM internal_production_owner_reservations_v1 owner
+          CROSS JOIN internal_production_owner_admission_head_v1 head
+         WHERE owner.category='completion-owner'
+           AND owner.reservation_payload->>'ownerKey'=${requested.request.requestId}
+           AND head.singleton
+      `)[0]!;
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
+      const adopted = await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "ack-retry-owner",
+      });
+      assert.equal(adopted?.state, "draining");
+      const afterAdoption = (await database.sql<Array<typeof committed>>`
+        SELECT owner.reservation_ref,owner.reservation_hash,owner.state AS owner_state,
+               head.head_version::text AS head_version,head.head_hash
+          FROM internal_production_owner_reservations_v1 owner
+          CROSS JOIN internal_production_owner_admission_head_v1 head
+         WHERE owner.category='completion-owner'
+           AND owner.reservation_payload->>'ownerKey'=${requested.request.requestId}
+           AND head.singleton
+      `)[0]!;
+      assert.deepEqual({ ...afterAdoption }, { ...committed }, "ACK-loss adoption must not advance owner head");
+    } finally {
+      await blocker.end({ timeout: 5 });
+      await database.cleanup();
+    }
+  });
+
+  it("ignores valid cross-category owner-key collisions at optional settlement and completion close", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "cross-category");
+      const effectIdentity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+      });
+      await bindTestRunOwner(database, prepared.requestId);
+      await bindTestRunOwner(database, effectIdentity.ownerKey);
+      const result = { observed: true };
+      const evidence = { source: "cross-category-owner-key" };
+      const settled = await prepared.effects.settle({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+        ownerInstanceId: "optional-manager",
+        leaseToken: prepared.effect.leaseToken!,
+        resolution: "applied",
+        result,
+        evidence,
+      });
+      assert.equal(settled.state, "applied");
+      await prepared.completions.markEffectsCommitted({
+        requestId: prepared.requestId,
+        ownerInstanceId: "optional-manager",
+        ownerAttemptCount: (await prepared.completions.findById(prepared.requestId))!.ownerAttemptCount,
+        result,
+      });
+      const accepted = await prepared.completions.acceptAndRelease({
+        requestId: prepared.requestId,
+        ownerInstanceId: "optional-manager",
+        ownerAttemptCount: (await prepared.completions.findById(prepared.requestId))!.ownerAttemptCount,
+        result,
+      });
+      assert.equal(accepted.state, "accepted");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("ignores a valid cross-category owner-key collision when requested rejection has no completion owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-requested-cross-category";
+      const requestId = "RCR_requested-cross-category1";
+      const seeded = await seedManagedClaim(database, runId);
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output: "STATUS: done\nCHANGES: cross-category requested rejection",
+        requestId,
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      await bindTestRunOwner(database, requestId);
+      await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "cancelled",
+        requestedBy: "cli-user",
+        diagnostic: "cross-category requested rejection",
+        requestId: "RTR_requested-cross-category1",
+      });
+      const preempted = await createRuntimeCompletionRepository(database.sql).preemptForRunTermination({
+        requestId,
+        diagnostic: "termination owns requested rejection",
+      });
+      assert.equal(preempted.status, "preempted");
+      const census = await database.sql<Array<{
+        request_state: string;
+        completion_owner_count: number;
+        colliding_run_owner_state: string;
+      }>>`
+        SELECT request.state AS request_state,
+               (SELECT COUNT(*)::integer
+                  FROM internal_production_owner_reservations_v1 owner
+                 WHERE owner.reservation_payload->>'producerImplementationId'='a-completion-owner-v1'
+                   AND owner.reservation_payload->>'ownerKey'=request.request_id) AS completion_owner_count,
+               run_owner.state AS colliding_run_owner_state
+          FROM runtime_completion_requests request
+          JOIN internal_production_owner_reservations_v1 run_owner
+            ON run_owner.reservation_payload->>'producerImplementationId'='a-runtime-run-v1'
+           AND run_owner.reservation_payload->>'ownerKey'=request.request_id
+         WHERE request.request_id=${requestId}
+      `;
+      assert.deepEqual(census.map((row) => ({ ...row })), [{
+        request_state: "rejected",
+        completion_owner_count: 0,
+        colliding_run_owner_state: "bound",
+      }]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a scalar-key-tampered forbidden owner before optional settlement", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "settle-tamper");
+      const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+      });
+      await database.sql.begin(async (transaction) => {
+        await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-mandatory-effect-v1", ownerKey: identity.ownerKey },
+        );
+      });
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key=jsonb_pretty(owner_key::jsonb)
+         WHERE reservation_payload->>'producerImplementationId'='a-mandatory-effect-v1'
+           AND reservation_payload->>'ownerKey'=${identity.ownerKey}
+      `;
+      await assert.rejects(
+        prepared.effects.settle({
+          requestId: prepared.requestId,
+          effectKey: prepared.effectKey,
+          ownerInstanceId: "optional-manager",
+          leaseToken: prepared.effect.leaseToken!,
+          resolution: "applied",
+          result: { observed: true },
+          evidence: { source: "optional-settle-tamper" },
+        }),
+        /INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_CORRUPTION/,
+      );
+      assert.equal((await prepared.effects.listForRequest(prepared.requestId))[0]?.state, "leased");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a scalar-key-tampered forbidden owner on optional terminal replay", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "replay-tamper");
+      const result = { observed: true };
+      const evidence = { source: "optional-replay-tamper" };
+      const settled = await prepared.effects.settle({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+        ownerInstanceId: "optional-manager",
+        leaseToken: prepared.effect.leaseToken!,
+        resolution: "reconciled",
+        result,
+        evidence,
+      });
+      assert.equal(settled.state, "reconciled");
+      const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+      });
+      await database.sql.begin(async (transaction) => {
+        await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-mandatory-effect-v1", ownerKey: identity.ownerKey },
+        );
+      });
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key=jsonb_pretty(owner_key::jsonb)
+         WHERE reservation_payload->>'producerImplementationId'='a-mandatory-effect-v1'
+           AND reservation_payload->>'ownerKey'=${identity.ownerKey}
+      `;
+      await assert.rejects(
+        prepared.effects.settle({
+          requestId: prepared.requestId,
+          effectKey: prepared.effectKey,
+          ownerInstanceId: "ack-loss-owner",
+          leaseToken: "ack-loss-token",
+          resolution: "reconciled",
+          result,
+          evidence,
+        }),
+        /INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_CORRUPTION/,
+      );
+      assert.deepEqual(await prepared.effects.listForRequest(prepared.requestId), [settled]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls completion terminal commit failure back and hides post-close state before ACK", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const blocker = postgresClient(database.url, { max: 1 });
+    let releaseBlocker: (() => void) | undefined;
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "completion-terminal");
+      const result = { observed: true };
+      await prepared.effects.settle({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+        ownerInstanceId: "optional-manager",
+        leaseToken: prepared.effect.leaseToken!,
+        resolution: "applied",
+        result,
+        evidence: { source: "completion-terminal" },
+      });
+      await prepared.completions.markEffectsCommitted({
+        requestId: prepared.requestId,
+        ownerInstanceId: "optional-manager",
+        ownerAttemptCount: (await prepared.completions.findById(prepared.requestId))!.ownerAttemptCount,
+        result,
+      });
+      const before = await task5TerminalSnapshot(database, prepared.requestId);
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_terminal_commit_reject_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='completion-owner' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK5_COMPLETION_TERMINAL_COMMIT_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE CONSTRAINT TRIGGER task5_completion_terminal_commit_reject_v1
+        AFTER UPDATE OF state ON internal_production_owner_reservations_v1
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION task5_completion_terminal_commit_reject_v1()
+      `);
+      await assert.rejects(
+        prepared.completions.acceptAndRelease({
+          requestId: prepared.requestId,
+          ownerInstanceId: "optional-manager",
+          ownerAttemptCount: (await prepared.completions.findById(prepared.requestId))!.ownerAttemptCount,
+          result,
+        }),
+        /TEST_TASK5_COMPLETION_TERMINAL_COMMIT_REJECTED/,
+      );
+      assert.deepEqual(await task5TerminalSnapshot(database, prepared.requestId), before);
+      await database.sql.unsafe(`
+        DROP TRIGGER task5_completion_terminal_commit_reject_v1
+        ON internal_production_owner_reservations_v1
+      `);
+
+      await database.sql.unsafe("CREATE SEQUENCE task5_completion_terminal_preack_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_completion_terminal_preack_latch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task5_completion_terminal_preack_latch_v1');
+          PERFORM pg_advisory_xact_lock(750052);
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task5_completion_terminal_preack_latch_v1
+        AFTER UPDATE ON internal_production_owner_admission_head_v1
+        FOR EACH ROW EXECUTE FUNCTION task5_completion_terminal_preack_latch_v1()
+      `);
+      let blockerReady!: () => void;
+      const ready = new Promise<void>((resolve) => { blockerReady = resolve; });
+      const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+      const held = blocker.begin(async (transaction) => {
+        await transaction.unsafe("SELECT pg_advisory_xact_lock(750052)");
+        blockerReady();
+        await release;
+      });
+      await ready;
+      const accepting = prepared.completions.acceptAndRelease({
+        requestId: prepared.requestId,
+        ownerInstanceId: "optional-manager",
+        ownerAttemptCount: (await prepared.completions.findById(prepared.requestId))!.ownerAttemptCount,
+        result,
+      });
+      for (;;) {
+        const latch = await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM task5_completion_terminal_preack_latch_v1
+        `;
+        if (latch[0]?.is_called) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(
+        await task5TerminalSnapshot(database, prepared.requestId),
+        before,
+        "post-close completion state is invisible before commit ACK",
+      );
+      releaseBlocker();
+      releaseBlocker = undefined;
+      await held;
+      assert.equal((await accepting).state, "accepted");
+    } finally {
+      releaseBlocker?.();
+      await blocker.end({ timeout: 5 });
+      await database.cleanup();
+    }
+  });
+
+  it("rolls mandatory effect terminal commit failure back and hides post-close state before ACK", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const blocker = postgresClient(database.url, { max: 1 });
+    let releaseBlocker: (() => void) | undefined;
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "effect-terminal", true);
+      const result = { observed: true };
+      const evidence = { source: "effect-terminal" };
+      const before = await task5TerminalSnapshot(database, prepared.requestId);
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_effect_terminal_commit_reject_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='mandatory-effect' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK5_EFFECT_TERMINAL_COMMIT_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE CONSTRAINT TRIGGER task5_effect_terminal_commit_reject_v1
+        AFTER UPDATE OF state ON internal_production_owner_reservations_v1
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION task5_effect_terminal_commit_reject_v1()
+      `);
+      await assert.rejects(
+        prepared.effects.settle({
+          requestId: prepared.requestId,
+          effectKey: prepared.effectKey,
+          ownerInstanceId: "optional-manager",
+          leaseToken: prepared.effect.leaseToken!,
+          resolution: "reconciled",
+          result,
+          evidence,
+        }),
+        /TEST_TASK5_EFFECT_TERMINAL_COMMIT_REJECTED/,
+      );
+      assert.deepEqual(await task5TerminalSnapshot(database, prepared.requestId), before);
+      await database.sql.unsafe(`
+        DROP TRIGGER task5_effect_terminal_commit_reject_v1
+        ON internal_production_owner_reservations_v1
+      `);
+
+      await database.sql.unsafe("CREATE SEQUENCE task5_effect_terminal_preack_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task5_effect_terminal_preack_latch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task5_effect_terminal_preack_latch_v1');
+          PERFORM pg_advisory_xact_lock(750053);
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task5_effect_terminal_preack_latch_v1
+        AFTER UPDATE ON internal_production_owner_admission_head_v1
+        FOR EACH ROW EXECUTE FUNCTION task5_effect_terminal_preack_latch_v1()
+      `);
+      let blockerReady!: () => void;
+      const ready = new Promise<void>((resolve) => { blockerReady = resolve; });
+      const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+      const held = blocker.begin(async (transaction) => {
+        await transaction.unsafe("SELECT pg_advisory_xact_lock(750053)");
+        blockerReady();
+        await release;
+      });
+      await ready;
+      const settling = prepared.effects.settle({
+        requestId: prepared.requestId,
+        effectKey: prepared.effectKey,
+        ownerInstanceId: "optional-manager",
+        leaseToken: prepared.effect.leaseToken!,
+        resolution: "reconciled",
+        result,
+        evidence,
+      });
+      for (;;) {
+        const latch = await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM task5_effect_terminal_preack_latch_v1
+        `;
+        if (latch[0]?.is_called) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(
+        await task5TerminalSnapshot(database, prepared.requestId),
+        before,
+        "post-close mandatory effect state is invisible before commit ACK",
+      );
+      releaseBlocker();
+      releaseBlocker = undefined;
+      await held;
+      assert.equal((await settling).state, "reconciled");
+    } finally {
+      releaseBlocker?.();
+      await blocker.end({ timeout: 5 });
+      await database.cleanup();
     }
   });
 
@@ -473,6 +1215,21 @@ describe("manager-owned runtime completion", () => {
         ownerInstanceId: "spawner-a",
       });
       assert.equal(owned?.state, "draining");
+      const completionOwner = await database.sql<Array<{
+        category: string;
+        owner_key: string;
+        state: string;
+      }>>`
+        SELECT category, owner_key, state
+          FROM internal_production_owner_reservations_v1
+         WHERE producer_implementation_id = 'a-completion-owner-v1'
+           AND owner_key = ${requested.request.requestId}
+      `;
+      assert.deepEqual(completionOwner.map((row) => ({ ...row })), [{
+        category: "completion-owner",
+        owner_key: requested.request.requestId,
+        state: "bound",
+      }]);
       await assert.rejects(
         completions.markProcessing({
           requestId: requested.request.requestId,
@@ -490,6 +1247,30 @@ describe("manager-owned runtime completion", () => {
         ownerInstanceId: "spawner-a",
       })).state, "processing");
 
+      const completionPlan = {
+        kind: "story_completion" as const,
+        continuation: { type: "story_loop_continue" as const },
+        subject: { storyDbId: seeded.storyDbId, storyId: "US-001" },
+        effects: [{
+          effectKey: "continuation/story/mandatory",
+          ordinal: 0,
+          effectType: "story.loop.continue",
+          mandatory: true,
+          payload: { route: "next" },
+        }, {
+          effectKey: "continuation/story/mandatory-audit",
+          ordinal: 1,
+          effectType: "story.audit.persist",
+          mandatory: true,
+          payload: { audit: "completion" },
+        }, {
+          effectKey: "telemetry/story/optional",
+          ordinal: 2,
+          effectType: "story.telemetry",
+          mandatory: false,
+          payload: { metric: "completion" },
+        }],
+      };
       await asRuntimeCompletionOwner(completions, requested.request.requestId, () => completeStoryClaimAndBoundAttempt(database.sql, {
         envelope: seeded.envelope,
         sourceAfter: { sha: "2".repeat(40), treeHash: "3".repeat(64) },
@@ -498,7 +1279,55 @@ describe("manager-owned runtime completion", () => {
         storyOutput: output,
         stepStatus: "running",
         stepOutput: output,
+        completionPlan,
       }));
+      const ownerCommitted = await database.sql<Array<{
+        completion_state: string;
+        effect_state: string;
+        effect_owner_state: string;
+      }>>`
+        SELECT completion_owner.state AS completion_state,
+               effect.state AS effect_state,
+               effect_owner.state AS effect_owner_state
+          FROM runtime_completion_requests completion
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.producer_implementation_id = 'a-completion-owner-v1'
+           AND completion_owner.owner_key = completion.request_id
+          JOIN runtime_completion_effects effect
+            ON effect.request_id = completion.request_id AND effect.mandatory
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.producer_implementation_id = 'a-mandatory-effect-v1'
+           AND effect_owner.category = 'mandatory-effect'
+           AND effect_owner.owner_key::jsonb->>'requestId' = effect.request_id
+           AND effect_owner.owner_key::jsonb->>'effectKey' = effect.effect_key
+         WHERE completion.request_id = ${requested.request.requestId}
+      `;
+      assert.deepEqual(ownerCommitted.map((row) => ({ ...row })), [{
+        completion_state: "bound",
+        effect_state: "pending",
+        effect_owner_state: "bound",
+      }, {
+        completion_state: "bound",
+        effect_state: "pending",
+        effect_owner_state: "bound",
+      }]);
+      const ownerCensus = await database.sql<Array<{
+        effect_count: number;
+        mandatory_count: number;
+        owner_count: number;
+      }>>`
+        SELECT (SELECT COUNT(*)::integer FROM runtime_completion_effects
+                 WHERE request_id = ${requested.request.requestId}) AS effect_count,
+               (SELECT COUNT(*)::integer FROM runtime_completion_effects
+                 WHERE request_id = ${requested.request.requestId} AND mandatory) AS mandatory_count,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE producer_implementation_id = 'a-mandatory-effect-v1') AS owner_count
+      `;
+      assert.deepEqual({ ...ownerCensus[0] }, {
+        effect_count: 3,
+        mandatory_count: 2,
+        owner_count: 2,
+      });
       const completionResult = { advanced: false, runCompleted: false };
       await settleCompletionEffects(
         database,
@@ -506,12 +1335,89 @@ describe("manager-owned runtime completion", () => {
         "spawner-a",
         completionResult,
       );
+      const afterEffect = await database.sql<Array<{
+        completion_state: string;
+        effect_state: string;
+        effect_owner_state: string;
+      }>>`
+        SELECT completion_owner.state AS completion_state,
+               effect.state AS effect_state,
+               effect_owner.state AS effect_owner_state
+          FROM runtime_completion_requests completion
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.producer_implementation_id = 'a-completion-owner-v1'
+           AND completion_owner.owner_key = completion.request_id
+          JOIN runtime_completion_effects effect
+            ON effect.request_id = completion.request_id AND effect.mandatory
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.producer_implementation_id = 'a-mandatory-effect-v1'
+           AND effect_owner.category = 'mandatory-effect'
+           AND effect_owner.owner_key::jsonb->>'requestId' = effect.request_id
+           AND effect_owner.owner_key::jsonb->>'effectKey' = effect.effect_key
+         WHERE completion.request_id = ${requested.request.requestId}
+      `;
+      assert.deepEqual(afterEffect.map((row) => ({ ...row })), [{
+        completion_state: "bound",
+        effect_state: "applied",
+        effect_owner_state: "closed",
+      }, {
+        completion_state: "bound",
+        effect_state: "applied",
+        effect_owner_state: "closed",
+      }]);
       await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
         ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task5_completion_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='completion-owner' AND OLD.state='bound' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK5_COMPLETION_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task5_completion_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_task5_completion_close_v1()
+      `);
+      await assert.rejects(
+        completions.acceptAndRelease({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "spawner-a",
+          ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
+          result: completionResult,
+        }),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      const acceptRolledBack = await database.sql<Array<{
+        request_state: string;
+        apply_phase: string;
+        owner_state: string;
+        runtime_state: string;
+      }>>`
+        SELECT request.state AS request_state,request.apply_phase,
+               owner.state AS owner_state,runtime.state AS runtime_state
+          FROM runtime_completion_requests request
+          JOIN runtime_sessions runtime ON runtime.session_id=request.runtime_session_id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='completion-owner' AND owner.owner_key=request.request_id
+         WHERE request.request_id=${requested.request.requestId}
+      `;
+      assert.deepEqual(acceptRolledBack.map((row) => ({ ...row })), [{
+        request_state: "processing",
+        apply_phase: "effects_committed",
+        owner_state: "bound",
+        runtime_state: "drained",
+      }]);
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task5_completion_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
       const accepted = await completions.acceptAndRelease({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
@@ -519,6 +1425,52 @@ describe("manager-owned runtime completion", () => {
         result: completionResult,
       });
       assert.equal(accepted.state, "accepted");
+      const acceptedOwner = await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE producer_implementation_id = 'a-completion-owner-v1'
+           AND owner_key = ${requested.request.requestId}
+      `;
+      assert.deepEqual(acceptedOwner.map((row) => ({ ...row })), [{ state: "closed" }]);
+      const acceptedCloseReceipt = (await database.sql<Array<{
+        reservation_ref: string;
+        reservation_hash: string;
+        close_ref: string;
+        close_hash: string;
+        owner_updated_at: string;
+        head_version: string;
+        head_hash: string;
+      }>>`
+        SELECT owner.reservation_ref,owner.reservation_hash,owner.close_ref,owner.close_hash,
+               owner.updated_at::text AS owner_updated_at,
+               head.head_version::text AS head_version,head.head_hash
+          FROM internal_production_owner_reservations_v1 owner
+          CROSS JOIN internal_production_owner_admission_head_v1 head
+         WHERE owner.category='completion-owner'
+           AND owner.owner_key=${requested.request.requestId}
+           AND head.singleton
+      `)[0]!;
+      const acceptedReplay = await completions.acceptAndRelease({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "ack-loss-retry-does-not-select-owner",
+        ownerAttemptCount: accepted.ownerAttemptCount,
+        result: completionResult,
+      });
+      assert.deepEqual(acceptedReplay, accepted);
+      const afterAcceptedReplay = (await database.sql<Array<typeof acceptedCloseReceipt>>`
+        SELECT owner.reservation_ref,owner.reservation_hash,owner.close_ref,owner.close_hash,
+               owner.updated_at::text AS owner_updated_at,
+               head.head_version::text AS head_version,head.head_hash
+          FROM internal_production_owner_reservations_v1 owner
+          CROSS JOIN internal_production_owner_admission_head_v1 head
+         WHERE owner.category='completion-owner'
+           AND owner.owner_key=${requested.request.requestId}
+           AND head.singleton
+      `)[0]!;
+      assert.deepEqual(
+        { ...afterAcceptedReplay },
+        { ...acceptedCloseReceipt },
+        "terminal ACK-loss replay adopts the exact close without head advance",
+      );
       assert.equal((await seeded.sessions.findById(seeded.session.sessionId))?.state, "released");
       const finalOwner = await database.sql<Array<{
         claim_outcome: string;
@@ -537,6 +1489,32 @@ describe("manager-owned runtime completion", () => {
         attempt_disposition: "produced_delta",
         story_status: "done",
       });
+      const forbiddenOptionalIdentity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+        requestId: requested.request.requestId,
+        effectKey: "telemetry/story/optional",
+      });
+      await database.sql.begin(async (transaction) => {
+        await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          {
+            producerImplementationId: "a-mandatory-effect-v1",
+            ownerKey: forbiddenOptionalIdentity.ownerKey,
+          },
+        );
+      });
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key = jsonb_pretty(owner_key::jsonb)
+         WHERE producer_implementation_id = 'a-mandatory-effect-v1'
+           AND reservation_payload->>'ownerKey' = ${forbiddenOptionalIdentity.ownerKey}
+      `;
+      await assert.rejects(
+        database.sql.begin((transaction) => markRuntimeCompletionOwnerCommittedInTransaction(
+          transaction,
+          { claimId: seeded.claimId, claimOutcome: "completed", plan: completionPlan },
+        )),
+        /INTERNAL_PRODUCTION_(?:MANDATORY_EFFECT_OWNER_CORRUPTION|OPTIONAL_EFFECT_OWNER_FORBIDDEN)/,
+      );
     } finally {
       await database.cleanup();
     }
@@ -723,6 +1701,235 @@ describe("manager-owned runtime completion", () => {
     }
   });
 
+  it("rolls requested rejection back when an unexpected completion sidecar exists", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-requested-sidecar-reject";
+      const seeded = await seedManagedClaim(database, runId);
+      const completion = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output: "STATUS: done\nCHANGES: reject unexpected sidecar",
+        requestId: "RCR_requested-sidecar-reject1",
+      });
+      if (completion.status !== "requested") throw new Error("completion request missing");
+      const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({
+        requestId: completion.request.requestId,
+      });
+      await database.sql.begin(async (transaction) => {
+        await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-completion-owner-v1", ownerKey: identity.ownerKey },
+        );
+      });
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key = jsonb_pretty(to_jsonb(owner_key))
+         WHERE producer_implementation_id = 'a-completion-owner-v1'
+           AND reservation_payload->>'ownerKey' = ${completion.request.requestId}
+      `;
+      await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "cancelled",
+        requestedBy: "cli-user",
+        diagnostic: "reject requested completion",
+        requestId: "RTR_requested-sidecar-reject1",
+      });
+
+      await assert.rejects(
+        createRuntimeCompletionRepository(database.sql).preemptForRunTermination({
+          requestId: completion.request.requestId,
+          diagnostic: "termination owns rejection",
+        }),
+        /INTERNAL_PRODUCTION_COMPLETION_OWNER_(?:ADOPTION_INVALID|CORRUPTION|OWNER_UNAVAILABLE|UNAVAILABLE)/,
+      );
+      const state = await database.sql<Array<{
+        request_state: string;
+        owner_state: string;
+        owner_key_is_canonical: boolean;
+      }>>`
+        SELECT request.state AS request_state, owner.state AS owner_state,
+               owner.owner_key = request.request_id AS owner_key_is_canonical
+          FROM runtime_completion_requests request
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.producer_implementation_id = 'a-completion-owner-v1'
+           AND owner.reservation_payload->>'ownerKey' = request.request_id
+         WHERE request.request_id = ${completion.request.requestId}
+      `;
+      assert.deepEqual(state.map((row) => ({ ...row })), [{
+        request_state: "requested",
+        owner_state: "pending",
+        owner_key_is_canonical: false,
+      }]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls preempt and repository-quarantine writers back when completion close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const preemptRunId = "run-preempt-close-rollback";
+      const preemptSeed = await seedManagedSingleStepClaim(database, preemptRunId);
+      const preempt = await publishCompletionInState(
+        database,
+        preemptSeed,
+        "draining",
+        "RCR_preempt-close-rollback1",
+      );
+      await requestRunTermination(database.sql, {
+        runId: preemptRunId,
+        targetStatus: "cancelled",
+        requestedBy: "task5-test",
+        diagnostic: "preempt close rollback",
+        requestId: "RTR_preempt-close-rollback1",
+      });
+      await installCompletionCloseRejection(database, "preempt_quarantine_v1");
+      await assert.rejects(
+        createRuntimeCompletionRepository(database.sql).preemptForRunTermination({
+          requestId: preempt.requestId,
+          diagnostic: "preempt must close atomically",
+        }),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      assert.deepEqual(await completionAndOwnerState(database, preempt.requestId), {
+        request_state: "draining",
+        owner_state: "bound",
+      });
+
+      const quarantineRunId = "run-quarantine-close-rollback";
+      const quarantineSeed = await seedManagedSingleStepClaim(database, quarantineRunId);
+      const quarantine = await publishCompletionInState(
+        database,
+        quarantineSeed,
+        "draining",
+        "RCR_quarantine-close-rollback1",
+      );
+      const repository = createRuntimeCompletionRepository(database.sql);
+      const draining = await repository.findById(quarantine.requestId);
+      if (!draining?.ownerInstanceId || !draining.leaseExpiresAt) {
+        throw new Error("test draining owner missing");
+      }
+      await assert.rejects(
+        repository.quarantine({
+          requestId: quarantine.requestId,
+          ownerInstanceId: draining.ownerInstanceId,
+          expectedState: "draining",
+          expectedLeaseExpiresAt: draining.leaseExpiresAt,
+          expectedUpdatedAt: draining.updatedAt,
+          diagnostic: "quarantine must close atomically",
+        }),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      assert.deepEqual(await completionAndOwnerState(database, quarantine.requestId), {
+        request_state: "draining",
+        owner_state: "bound",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls recovery quarantine back when completion close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-recovery-quarantine-close";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const completion = await publishCompletionInState(
+        database,
+        seeded,
+        "processing",
+        "RCR_recovery-quarantine-close1",
+      );
+      await expireRuntimeCompletionLease(database, completion.requestId);
+      const expired = await createRuntimeCompletionRepository(database.sql).findById(completion.requestId);
+      if (!expired?.ownerInstanceId || !expired.leaseExpiresAt) throw new Error("expired owner missing");
+      await installCompletionCloseRejection(database, "recovery_quarantine_v1");
+      await assert.rejects(
+        database.sql.begin((transaction) => quarantineExpiredRuntimeCompletionForRecoveryInTransaction(
+          transaction,
+          {
+            requestId: completion.requestId,
+            expectedOwnerInstanceId: expired.ownerInstanceId!,
+            expectedLeaseExpiresAt: expired.leaseExpiresAt!,
+            expectedUpdatedAt: expired.updatedAt,
+            expectedApplyPhase: expired.applyPhase,
+            diagnostic: "recovery quarantine must close atomically",
+          },
+        )),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      assert.deepEqual(await completionAndOwnerState(database, completion.requestId), {
+        request_state: "processing",
+        owner_state: "bound",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls expired-processing rejection back when completion close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-recovery-reject-close";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const completion = await publishCompletionInState(
+        database,
+        seeded,
+        "processing",
+        "RCR_recovery-reject-close01",
+      );
+      await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "cancelled",
+        requestedBy: "task5-test",
+        diagnostic: "recovery rejection close rollback",
+        requestId: "RTR_recovery-reject-close01",
+      });
+      await expireRuntimeCompletionLease(database, completion.requestId);
+      await installCompletionCloseRejection(database, "recovery_reject_v1");
+      await assert.rejects(
+        createRuntimeCompletionRepository(database.sql).recoverExpiredProcessing({
+          ownerInstanceId: "recovery-close-test",
+        }),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      assert.deepEqual(await completionAndOwnerState(database, completion.requestId), {
+        request_state: "processing",
+        owner_state: "bound",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls the terminal-run bulk rejection writer back when completion close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-bulk-reject-close-rollback";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const completion = await publishCompletionInState(
+        database,
+        seeded,
+        "draining",
+        "RCR_bulk-reject-close-rollback1",
+      );
+      await installCompletionCloseRejection(database, "bulk_reject_v1");
+      await assert.rejects(
+        database.sql.begin((transaction) => rejectRuntimeCompletionsForTerminalRunInTransaction(
+          transaction,
+          { runId, diagnostic: "bulk rejection must close atomically" },
+        )),
+        /TEST_TASK5_COMPLETION_CLOSE_REJECTED/,
+      );
+      assert.deepEqual(await completionAndOwnerState(database, completion.requestId), {
+        request_state: "draining",
+        owner_state: "bound",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("elects only one run-scoped drain owner when cancellation races a claimed completion", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -857,18 +2064,22 @@ describe("manager-owned runtime completion", () => {
         run_status: string;
         completion_state: string;
         termination_state: string;
+        completion_owner_state: string;
       }>>`
         SELECT r.status AS run_status, rcr.state AS completion_state,
-               rtr.state AS termination_state
+               rtr.state AS termination_state,owner.state AS completion_owner_state
           FROM runs r
           JOIN runtime_completion_requests rcr ON rcr.run_id = r.id
           JOIN run_termination_requests rtr ON rtr.run_id = r.id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='completion-owner' AND owner.owner_key=rcr.request_id
          WHERE r.id = ${runId}
       `;
       assert.deepEqual({ ...final[0] }, {
         run_status: "cancelled",
         completion_state: "rejected",
         termination_state: "terminalized",
+        completion_owner_state: "closed",
       });
     } finally {
       await database.cleanup();
@@ -1456,6 +2667,10 @@ describe("manager-owned runtime completion", () => {
       assert.equal(quarantined.state, "quarantined");
       assert.equal(quarantined.ownerInstanceId, "current-manager");
       assert.equal(quarantined.leaseExpiresAt, undefined);
+      assert.deepEqual((await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE category='completion-owner' AND owner_key=${quarantined.requestId}
+      `).map((row) => ({ ...row })), [{ state: "closed" }]);
     } finally {
       await database.cleanup();
     }
@@ -2123,6 +3338,42 @@ describe("manager-owned runtime completion", () => {
         apply_phase: "owner_committed",
         effect_count: 1,
       });
+      await assert.rejects(
+        database.sql`
+          UPDATE runtime_completion_effects
+             SET ordinal = ordinal + 1
+           WHERE request_id = ${requested.request.requestId}
+        `,
+        /RUNTIME_COMPLETION_EFFECT_IDENTITY_IMMUTABLE/,
+      );
+      const exactPlan = createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: { type: "single_pipeline_advance" },
+      });
+      assert.equal(await asRuntimeCompletionOwner(
+        completions,
+        requested.request.requestId,
+        () => database.sql.begin((transaction) => markRuntimeCompletionOwnerCommittedInTransaction(
+          transaction,
+          { claimId: seeded.claimId, claimOutcome: "completed", plan: exactPlan },
+        )),
+      ), true, "exact owner-commit replay adopts without mutation");
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key = jsonb_pretty(owner_key::jsonb)
+         WHERE producer_implementation_id = 'a-mandatory-effect-v1'
+      `;
+      await assert.rejects(
+        asRuntimeCompletionOwner(
+          completions,
+          requested.request.requestId,
+          () => database.sql.begin((transaction) => markRuntimeCompletionOwnerCommittedInTransaction(
+            transaction,
+            { claimId: seeded.claimId, claimOutcome: "completed", plan: exactPlan },
+          )),
+        ),
+        /INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_CORRUPTION/,
+      );
     } finally {
       await database.cleanup();
     }
@@ -2228,16 +3479,102 @@ describe("manager-owned runtime completion", () => {
         }),
         /RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST/,
       );
-      await effects.settle({
+      await effects.releaseForRetry({
         requestId: requested.request.requestId,
         effectKey: adopted!.effectKey,
         ownerInstanceId: "manager-a",
         leaseToken: adopted!.leaseToken!,
+        diagnostic: "retry preserves the mandatory owner",
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      });
+      assert.equal((await effects.listForRequest(requested.request.requestId))[0]?.state, "pending");
+      assert.deepEqual((await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE producer_implementation_id = 'a-mandatory-effect-v1'
+      `).map((row) => ({ ...row })), [{ state: "bound" }]);
+      const reclaimed = await effects.claimNext({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "manager-a",
+        leaseMs: 30_000,
+        now: new Date("1900-01-01T00:00:01.000Z"),
+      });
+      assert.ok(reclaimed?.leaseToken);
+      assert.notEqual(reclaimed.leaseToken, adopted?.leaseToken);
+      const reconciledResult = { advanced: true, runCompleted: false };
+      const reconciledEvidence = { source: "canonical-state-reconciliation" };
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task5_settle_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='mandatory-effect' AND OLD.state='bound' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK5_SETTLE_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task5_settle_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_task5_settle_close_v1()
+      `);
+      await assert.rejects(
+        effects.settle({
+          requestId: requested.request.requestId,
+          effectKey: reclaimed.effectKey,
+          ownerInstanceId: "manager-a",
+          leaseToken: reclaimed.leaseToken,
+          resolution: "reconciled",
+          result: reconciledResult,
+          evidence: reconciledEvidence,
+          now: new Date("2999-01-01T00:00:00.000Z"),
+        }),
+        /TEST_TASK5_SETTLE_CLOSE_REJECTED/,
+      );
+      const settleRolledBack = await database.sql<Array<{
+        effect_state: string;
+        owner_state: string;
+      }>>`
+        SELECT effect.state AS effect_state,owner.state AS owner_state
+          FROM runtime_completion_effects effect
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='mandatory-effect'
+           AND owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE effect.request_id=${requested.request.requestId}
+      `;
+      assert.deepEqual(settleRolledBack.map((row) => ({ ...row })), [{
+        effect_state: "leased",
+        owner_state: "bound",
+      }]);
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task5_settle_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      const settled = await effects.settle({
+        requestId: requested.request.requestId,
+        effectKey: reclaimed.effectKey,
+        ownerInstanceId: "manager-a",
+        leaseToken: reclaimed.leaseToken,
         resolution: "reconciled",
-        result: { advanced: true, runCompleted: false },
-        evidence: { source: "canonical-state-reconciliation" },
+        result: reconciledResult,
+        evidence: reconciledEvidence,
         now: new Date("2999-01-01T00:00:00.000Z"),
       });
+      const replayed = await effects.settle({
+        requestId: requested.request.requestId,
+        effectKey: reclaimed.effectKey,
+        ownerInstanceId: "manager-a",
+        leaseToken: reclaimed.leaseToken,
+        resolution: "reconciled",
+        result: reconciledResult,
+        evidence: reconciledEvidence,
+        now: new Date("2999-01-01T00:00:00.000Z"),
+      });
+      assert.deepEqual(replayed, settled);
+      const effectOwner = await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE producer_implementation_id = 'a-mandatory-effect-v1'
+      `;
+      assert.deepEqual(effectOwner.map((row) => ({ ...row })), [{ state: "closed" }]);
       assert.equal(await effects.allMandatorySettled(requested.request.requestId), true);
       assert.equal((await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
@@ -2246,6 +3583,79 @@ describe("manager-owned runtime completion", () => {
         result: { advanced: true, runCompleted: false },
         now: new Date(startedAt.getTime() + 42_000),
       })).applyPhase, "effects_committed");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps a quarantined mandatory effect and its nonterminal completion owner bound", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-effect-quarantine-open";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const output = "STATUS: done\nSUMMARY: effect quarantine remains open";
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output,
+        requestId: "RCR_effect-quarantine-open1",
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "quarantine-manager",
+      });
+      await seeded.sessions.markDrained({
+        sessionId: seeded.session.sessionId,
+        ownerInstanceId: "spawner-a",
+        evidence: DRAIN_EVIDENCE,
+      });
+      await completions.markProcessing({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "quarantine-manager",
+      });
+      await asRuntimeCompletionOwner(
+        completions,
+        requested.request.requestId,
+        () => completeSingleStepClaimAndState(database.sql, {
+          envelope: seeded.envelope,
+          stepStatus: "done",
+          stepOutput: output,
+        }),
+      );
+      const effects = createRuntimeCompletionEffectRepository(database.sql);
+      const leased = await effects.claimNext({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "quarantine-manager",
+      });
+      assert.ok(leased?.leaseToken);
+      const quarantined = await effects.quarantine({
+        requestId: requested.request.requestId,
+        effectKey: leased.effectKey,
+        ownerInstanceId: "quarantine-manager",
+        leaseToken: leased.leaseToken,
+        diagnostic: "effect exhausted retry budget",
+        evidence: { source: "task5-quarantine-proof" },
+      });
+      assert.equal(quarantined.state, "quarantined");
+      const owners = await database.sql<Array<{
+        completion_state: string;
+        effect_state: string;
+      }>>`
+        SELECT completion_owner.state AS completion_state,
+               effect_owner.state AS effect_state
+          FROM internal_production_owner_reservations_v1 completion_owner
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.producer_implementation_id='a-mandatory-effect-v1'
+           AND effect_owner.owner_key::jsonb->>'requestId'=${requested.request.requestId}
+         WHERE completion_owner.producer_implementation_id='a-completion-owner-v1'
+           AND completion_owner.owner_key=${requested.request.requestId}
+      `;
+      assert.deepEqual(owners.map((row) => ({ ...row })), [{
+        completion_state: "bound",
+        effect_state: "bound",
+      }]);
+      assert.equal(await effects.allMandatorySettled(requested.request.requestId), false);
     } finally {
       await database.cleanup();
     }

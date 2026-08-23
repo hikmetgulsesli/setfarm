@@ -5,6 +5,14 @@ import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-completion-manifest-authority-v1.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionOwnerReservationCloseInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -189,6 +197,82 @@ function hasLiveEffectLease(
     && authority.wallClock
     && new Date(authority.effect.lease_expires_at).getTime() > authority.wallClock.getTime(),
   );
+}
+
+async function closeMandatoryEffectOwnerAfterTerminalMutationV1(
+  sql: TransactionSql,
+  effect: RuntimeCompletionEffectRow,
+): Promise<void> {
+  if (!effect.mandatory) {
+    const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+      requestId: effect.request_id,
+      effectKey: effect.effect_key,
+    });
+    const expectedOwnerKeyHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-owner-key.v1",
+      ownerKeyDerivationId: "completion-request-id-effect-key-v1",
+      ownerKey: identity.ownerKey,
+    });
+    const sidecars = await sql.unsafe<Array<{
+      reservation_ref: string;
+      category: string;
+      owner_key: string;
+      owner_key_hash: string;
+      producer_implementation_id: string;
+      reservation_owner_key: string | null;
+      reservation_owner_key_hash: string | null;
+    }>>(
+      `SELECT reservation_ref,category,owner_key,owner_key_hash,producer_implementation_id,
+              reservation_payload->>'ownerKey' AS reservation_owner_key,
+              reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash
+         FROM internal_production_owner_reservations_v1
+        WHERE (
+                (producer_implementation_id = 'a-mandatory-effect-v1'
+                  AND category = 'mandatory-effect')
+                OR reservation_payload->>'producerImplementationId' = 'a-mandatory-effect-v1'
+                OR binding_payload->>'producerImplementationId' = 'a-mandatory-effect-v1'
+              )
+          AND (
+                owner_key = $1
+                OR owner_key_hash = $2
+                OR reservation_payload->>'ownerKey' = $1
+                OR reservation_payload->>'ownerKeyHash' = $2
+                OR canonical_owner_identity->>'ownerKey' = $1
+                OR binding_payload->>'ownerKey' = $1
+                OR binding_payload->'canonicalOwnerIdentity'->>'ownerKey' = $1
+              )
+        FOR UPDATE`,
+      [identity.ownerKey, expectedOwnerKeyHash],
+    );
+    if (sidecars.length > 1) throw new Error("INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_AMBIGUOUS");
+    const sidecar = sidecars[0];
+    if (sidecar && (
+      sidecar.category !== "mandatory-effect"
+      || sidecar.producer_implementation_id !== "a-mandatory-effect-v1"
+      || sidecar.owner_key !== identity.ownerKey
+      || sidecar.owner_key_hash !== expectedOwnerKeyHash
+      || sidecar.reservation_owner_key !== identity.ownerKey
+      || sidecar.reservation_owner_key_hash !== expectedOwnerKeyHash
+    )) throw new Error("INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_CORRUPTION");
+    if (sidecar) throw new Error("INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_FORBIDDEN");
+    return;
+  }
+  const terminalClose = await resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { requestId: effect.request_id, effectKey: effect.effect_key },
+  );
+  const close = await closeInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    terminalClose,
+  );
+  const reopened = await resolveInternalProductionOwnerReservationCloseInTransactionV1(
+    sql as PgTransactionSql,
+    { closeRef: close.closeRef, closeHash: close.closeHash },
+  );
+  if (
+    reopened.reservationRef !== terminalClose.reservationRef
+    || reopened.reservationHash !== terminalClose.reservationHash
+  ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_CLOSE_IDENTITY_INVALID");
 }
 
 export async function assertRuntimeCompletionEffectLeaseInTransaction(
@@ -456,6 +540,20 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       validTime(input.now);
       return sql.begin(async (transaction) => {
         const authority = await lockEffectAuthorityInTransaction(transaction, input);
+        const exactTerminal = authority.effect
+          && authority.effect.state === input.resolution
+          && canonicalJsonStringify(objectValue(
+            authority.effect.result,
+            "RUNTIME_COMPLETION_EFFECT_RESULT_INVALID",
+          )) === canonicalJsonStringify(input.result)
+          && canonicalJsonStringify(objectValue(
+            authority.effect.evidence,
+            "RUNTIME_COMPLETION_EFFECT_EVIDENCE_INVALID",
+          )) === canonicalJsonStringify(input.evidence);
+        if (exactTerminal && authority.effect) {
+          await closeMandatoryEffectOwnerAfterTerminalMutationV1(transaction, authority.effect);
+          return mapEffect(authority.effect);
+        }
         if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) {
           throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST");
         }
@@ -483,6 +581,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
           ],
         );
         if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST");
+        await closeMandatoryEffectOwnerAfterTerminalMutationV1(transaction, rows[0]!);
         return mapEffect(rows[0]!);
       }) as Promise<RuntimeCompletionEffect>;
     },

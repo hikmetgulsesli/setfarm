@@ -4,6 +4,7 @@ import {
   closeInternalProductionOwnerReservationV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionOwnerReservationCloseInTransactionV1,
   resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1,
 } from "../db-pg.js";
@@ -589,6 +590,24 @@ export async function transitionRunToTerminalInTransaction(
       );
       if (appliedEffects.length !== 1) {
         throw new Error("RUN_TERMINAL_COMPLETION_EFFECT_CAS_LOST");
+      }
+      for (const effect of appliedEffects) {
+        const effectClose = await resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1(
+          sql as Parameters<typeof resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1>[0],
+          { requestId: completion.request_id, effectKey: effect.effect_key },
+        );
+        const closedEffect = await closeInternalProductionOwnerReservationV1(
+          sql as Parameters<typeof closeInternalProductionOwnerReservationV1>[0],
+          effectClose,
+        );
+        const reopenedEffect = await resolveInternalProductionOwnerReservationCloseInTransactionV1(
+          sql as Parameters<typeof resolveInternalProductionOwnerReservationCloseInTransactionV1>[0],
+          { closeRef: closedEffect.closeRef, closeHash: closedEffect.closeHash },
+        );
+        if (
+          reopenedEffect.reservationRef !== effectClose.reservationRef
+          || reopenedEffect.reservationHash !== effectClose.reservationHash
+        ) throw new Error("RUN_TERMINAL_COMPLETION_EFFECT_CLOSE_IDENTITY_INVALID");
       }
       await assertRuntimeCompletionManifestInTransactionV1(sql, {
         requestId: completion.request_id,

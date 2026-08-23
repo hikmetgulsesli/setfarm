@@ -28,6 +28,18 @@ import { compileV3ImplementationTransportProposalV1 } from "./v3-implementation-
 import { compileV3ImplementationCompletionProposal } from "./v3-implementation-completion.js";
 import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-authority.js";
 import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-completion-manifest-authority-v1.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionOwnerReservationCloseInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import {
+  createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
+  createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+} from "../internal-production/owner-admission-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -258,6 +270,156 @@ export function newRuntimeCompletionRequestId(): string {
   return `RCR_${randomUUID()}`;
 }
 
+type CompletionOwnerReservationV1 = Awaited<ReturnType<
+  typeof beginOrAdoptInternalProductionOwnerReservationV1
+>>;
+
+async function beginCompletionOwnerReservationInTransactionV1(
+  sql: TransactionSql,
+  requestId: string,
+  expectedState: "pending" | "bound",
+): Promise<Readonly<{
+  identity: ReturnType<typeof createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1>;
+  reservation: CompletionOwnerReservationV1;
+}>> {
+  const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({ requestId });
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      producerImplementationId: "a-completion-owner-v1",
+      ownerKey: identity.ownerKey,
+    },
+  );
+  const sidecars = await sql.unsafe<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    state: string;
+  }>>(
+    `SELECT reservation_ref,reservation_hash,state
+       FROM internal_production_owner_reservations_v1
+      WHERE producer_implementation_id = 'a-completion-owner-v1'
+        AND category = 'completion-owner'
+        AND owner_key = $1
+      FOR UPDATE`,
+    [requestId],
+  );
+  if (
+    sidecars.length !== 1
+    || sidecars[0]?.reservation_ref !== reservation.reservationRef
+    || sidecars[0]?.reservation_hash !== reservation.reservationHash
+    || sidecars[0]?.state !== expectedState
+  ) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_ADOPTION_INVALID");
+  return Object.freeze({ identity, reservation });
+}
+
+async function bindCompletionOwnerReservationInTransactionV1(
+  sql: TransactionSql,
+  birth: Awaited<ReturnType<typeof beginCompletionOwnerReservationInTransactionV1>>,
+  expected: RuntimeCompletionRow,
+): Promise<RuntimeCompletionRow> {
+  const reread = await sql.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+    [expected.request_id],
+  );
+  if (
+    reread.length !== 1
+    || !reread[0]
+    || canonicalJsonStringify(JSON.parse(JSON.stringify(mapRequest(reread[0]))))
+      !== canonicalJsonStringify(JSON.parse(JSON.stringify(mapRequest(expected))))
+  ) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_REREAD_INVALID");
+  const bound = await bindInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      reservationRef: birth.reservation.reservationRef,
+      reservationHash: birth.reservation.reservationHash,
+      canonicalOwnerIdentity: birth.identity,
+    },
+  );
+  if (
+    bound.ownerKey !== expected.request_id
+    || bound.reservationRef !== birth.reservation.reservationRef
+    || bound.reservationHash !== birth.reservation.reservationHash
+    || bound.canonicalOwnerIdentity.ownerKey !== expected.request_id
+  ) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_BINDING_INVALID");
+  return reread[0];
+}
+
+async function closeCompletionOwnerAfterTerminalMutationV1(
+  sql: TransactionSql,
+  requestId: string,
+): Promise<void> {
+  const terminalClose = await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(
+    sql as PgTransactionSql,
+    { requestId },
+  );
+  const close = await closeInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    terminalClose,
+  );
+  const reopened = await resolveInternalProductionOwnerReservationCloseInTransactionV1(
+    sql as PgTransactionSql,
+    { closeRef: close.closeRef, closeHash: close.closeHash },
+  );
+  if (
+    reopened.reservationRef !== terminalClose.reservationRef
+    || reopened.reservationHash !== terminalClose.reservationHash
+  ) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_CLOSE_IDENTITY_INVALID");
+}
+
+async function closeCompletionOwnerIfPresentAfterTerminalMutationV1(
+  sql: TransactionSql,
+  requestId: string,
+): Promise<void> {
+  const expectedOwnerKeyHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-key.v1",
+    ownerKeyDerivationId: "completion-request-id-v1",
+    ownerKey: requestId,
+  });
+  const owners = await sql.unsafe<Array<{
+    reservation_ref: string;
+    category: string;
+    owner_key: string;
+    owner_key_hash: string;
+    producer_implementation_id: string;
+    reservation_owner_key: string | null;
+    reservation_owner_key_hash: string | null;
+  }>>(
+    `SELECT reservation_ref,category,owner_key,owner_key_hash,producer_implementation_id,
+            reservation_payload->>'ownerKey' AS reservation_owner_key,
+            reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash
+       FROM internal_production_owner_reservations_v1
+      WHERE (
+              (producer_implementation_id = 'a-completion-owner-v1'
+                AND category = 'completion-owner')
+              OR reservation_payload->>'producerImplementationId' = 'a-completion-owner-v1'
+              OR binding_payload->>'producerImplementationId' = 'a-completion-owner-v1'
+            )
+        AND (
+              owner_key = $1
+              OR owner_key_hash = $2
+              OR reservation_payload->>'ownerKey' = $1
+              OR reservation_payload->>'ownerKeyHash' = $2
+              OR canonical_owner_identity->>'ownerKey' = $1
+              OR binding_payload->>'ownerKey' = $1
+              OR binding_payload->'canonicalOwnerIdentity'->>'ownerKey' = $1
+            )
+      FOR UPDATE`,
+    [requestId, expectedOwnerKeyHash],
+  );
+  if (owners.length > 1) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_AMBIGUOUS");
+  if (owners.length === 0) return;
+  const owner = owners[0]!;
+  if (
+    owner.category !== "completion-owner"
+    || owner.producer_implementation_id !== "a-completion-owner-v1"
+    || owner.owner_key !== requestId
+    || owner.owner_key_hash !== expectedOwnerKeyHash
+    || owner.reservation_owner_key !== requestId
+    || owner.reservation_owner_key_hash !== expectedOwnerKeyHash
+  ) throw new Error("INTERNAL_PRODUCTION_COMPLETION_OWNER_CORRUPTION");
+  await closeCompletionOwnerAfterTerminalMutationV1(sql, requestId);
+}
+
 export function isRuntimeCompletionRecoveryOwnerInstanceIdV1(value: string): boolean {
   return RuntimeCompletionRecoveryOwnerInstanceIdV1Schema.safeParse(value).success;
 }
@@ -288,6 +450,209 @@ function completionReplayOutputMatches(
       .canonicalOutputHash === candidateOutputHash;
   } catch {
     return replay.output === rawOutput;
+  }
+}
+
+type PreparedCompletionEffectOwnerV1 = Readonly<{
+  effect: RuntimeCompletionPlanV1["effects"][number];
+  effectPayload: Record<string, unknown>;
+  inputHash: string;
+}>;
+
+type MandatoryEffectOwnerBirthV1 = Readonly<{
+  effectKey: string;
+  identity: ReturnType<typeof createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1>;
+  reservation: CompletionOwnerReservationV1;
+}>;
+
+async function inspectEffectOwnerSidecarInTransactionV1(
+  sql: TransactionSql,
+  identity: ReturnType<typeof createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1>,
+): Promise<Readonly<{
+  reservation_ref: string;
+  reservation_hash: string;
+  state: string;
+  category: string;
+  owner_key: string;
+  owner_key_hash: string;
+  producer_implementation_id: string;
+  reservation_owner_key: string | null;
+  reservation_owner_key_hash: string | null;
+}> | undefined> {
+  const expectedOwnerKeyHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-key.v1",
+    ownerKeyDerivationId: "completion-request-id-effect-key-v1",
+    ownerKey: identity.ownerKey,
+  });
+  const rows = await sql.unsafe<Array<{
+    reservation_ref: string;
+    reservation_hash: string;
+    state: string;
+    category: string;
+    owner_key: string;
+    owner_key_hash: string;
+    producer_implementation_id: string;
+    reservation_owner_key: string | null;
+    reservation_owner_key_hash: string | null;
+  }>>(
+    `SELECT reservation_ref,reservation_hash,state,category,owner_key,owner_key_hash,
+            producer_implementation_id,
+            reservation_payload->>'ownerKey' AS reservation_owner_key,
+            reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash
+       FROM internal_production_owner_reservations_v1
+      WHERE (
+              (producer_implementation_id = 'a-mandatory-effect-v1'
+                AND category = 'mandatory-effect')
+              OR reservation_payload->>'producerImplementationId' = 'a-mandatory-effect-v1'
+              OR binding_payload->>'producerImplementationId' = 'a-mandatory-effect-v1'
+            )
+        AND (
+              owner_key = $1
+              OR owner_key_hash = $2
+              OR reservation_payload->>'ownerKey' = $1
+              OR reservation_payload->>'ownerKeyHash' = $2
+              OR canonical_owner_identity->>'ownerKey' = $1
+              OR binding_payload->>'ownerKey' = $1
+              OR binding_payload->'canonicalOwnerIdentity'->>'ownerKey' = $1
+            )
+      FOR UPDATE`,
+    [identity.ownerKey, expectedOwnerKeyHash],
+  );
+  if (rows.length > 1) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_AMBIGUOUS");
+  const row = rows[0];
+  if (!row) return undefined;
+  if (
+    row.category !== "mandatory-effect"
+    || row.producer_implementation_id !== "a-mandatory-effect-v1"
+    || row.owner_key !== identity.ownerKey
+    || row.owner_key_hash !== expectedOwnerKeyHash
+    || row.reservation_owner_key !== identity.ownerKey
+    || row.reservation_owner_key_hash !== expectedOwnerKeyHash
+  ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_CORRUPTION");
+  return row;
+}
+
+async function beginMandatoryEffectOwnerInTransactionV1(
+  sql: TransactionSql,
+  requestId: string,
+  prepared: PreparedCompletionEffectOwnerV1,
+): Promise<MandatoryEffectOwnerBirthV1 | undefined> {
+  const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+    requestId,
+    effectKey: prepared.effect.effectKey,
+  });
+  if (!prepared.effect.mandatory) {
+    if (await inspectEffectOwnerSidecarInTransactionV1(sql, identity)) {
+      throw new Error("INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_FORBIDDEN");
+    }
+    return undefined;
+  }
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      producerImplementationId: "a-mandatory-effect-v1",
+      ownerKey: identity.ownerKey,
+    },
+  );
+  const sidecar = await inspectEffectOwnerSidecarInTransactionV1(sql, identity);
+  if (
+    !sidecar
+    || sidecar.state !== "pending"
+    || sidecar.reservation_ref !== reservation.reservationRef
+    || sidecar.reservation_hash !== reservation.reservationHash
+  ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_ADOPTION_INVALID");
+  return Object.freeze({ effectKey: prepared.effect.effectKey, identity, reservation });
+}
+
+async function bindMandatoryEffectOwnersInTransactionV1(
+  sql: TransactionSql,
+  births: readonly MandatoryEffectOwnerBirthV1[],
+): Promise<void> {
+  for (const birth of births) {
+    const bound = await bindInternalProductionOwnerReservationV1(
+      sql as PgTransactionSql,
+      {
+        reservationRef: birth.reservation.reservationRef,
+        reservationHash: birth.reservation.reservationHash,
+        canonicalOwnerIdentity: birth.identity,
+      },
+    );
+    if (
+      bound.ownerKey !== birth.identity.ownerKey
+      || bound.reservationRef !== birth.reservation.reservationRef
+      || bound.reservationHash !== birth.reservation.reservationHash
+      || bound.canonicalOwnerIdentity.ownerHash !== birth.identity.ownerHash
+    ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_BINDING_INVALID");
+  }
+}
+
+async function authenticateCommittedEffectOwnersInTransactionV1(
+  sql: TransactionSql,
+  requestId: string,
+  plan: RuntimeCompletionPlanV1,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    effect_key: string;
+    ordinal: number;
+    effect_type: string;
+    input_hash: string;
+    payload: unknown;
+    mandatory: boolean;
+    state: string;
+  }>>(
+    `SELECT effect_key,ordinal,effect_type,input_hash,payload,mandatory,state
+       FROM runtime_completion_effects
+      WHERE request_id = $1
+      ORDER BY ordinal,effect_key
+      FOR UPDATE`,
+    [requestId],
+  );
+  if (rows.length !== plan.effects.length) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_CENSUS_INVALID");
+  }
+  for (const [index, row] of rows.entries()) {
+    const effect = plan.effects[index]!;
+    const payload = {
+      schema: "setfarm.runtime-completion-effect-input.v1",
+      planHash: hashCanonicalJson(plan),
+      plan,
+      effect: effect.payload,
+    };
+    if (
+      row.effect_key !== effect.effectKey
+      || row.ordinal !== effect.ordinal
+      || row.effect_type !== effect.effectType
+      || row.input_hash !== hashCanonicalJson(payload)
+      || row.mandatory !== effect.mandatory
+      || canonicalJsonStringify(row.payload) !== canonicalJsonStringify(payload)
+    ) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_BINDING_INVALID");
+    const identity = createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1({
+      requestId,
+      effectKey: effect.effectKey,
+    });
+    const sidecar = await inspectEffectOwnerSidecarInTransactionV1(sql, identity);
+    if (!effect.mandatory) {
+      if (sidecar) throw new Error("INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_FORBIDDEN");
+      continue;
+    }
+    const expectedState = ["applied", "reconciled"].includes(row.state) ? "closed" : "bound";
+    if (!sidecar || sidecar.state !== expectedState) {
+      throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_ADOPTION_INVALID");
+    }
+    const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+      sql as PgTransactionSql,
+      {
+        producerImplementationId: "a-mandatory-effect-v1",
+        ownerKey: identity.ownerKey,
+      },
+    );
+    if (
+      reservation.reservationRef !== sidecar.reservation_ref
+      || reservation.reservationHash !== sidecar.reservation_hash
+    ) throw new Error("INTERNAL_PRODUCTION_MANDATORY_EFFECT_OWNER_ADOPTION_INVALID");
+    await bindMandatoryEffectOwnersInTransactionV1(sql, [
+      Object.freeze({ effectKey: effect.effectKey, identity, reservation }),
+    ]);
   }
 }
 
@@ -328,7 +693,33 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     if (
       current.apply_phase === "effects_committed"
       && current.claim_outcome === input.claimOutcome
-    ) return true;
+    ) {
+      const storedPlan = current.completion_plan
+        ? RuntimeCompletionPlanV1Schema.parse(
+          typeof current.completion_plan === "string"
+            ? JSON.parse(current.completion_plan)
+            : current.completion_plan,
+        )
+        : undefined;
+      if (!storedPlan || hashCanonicalJson({
+        kind: storedPlan.kind,
+        continuation: storedPlan.continuation,
+        ...(storedPlan.subject ? { subject: storedPlan.subject } : {}),
+        effects: storedPlan.effects,
+      }) !== hashCanonicalJson(descriptor)) {
+        throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_PLAN_CONFLICT");
+      }
+      await assertRuntimeCompletionManifestInTransactionV1(sql, {
+        requestId: current.request_id,
+        requireSettledMandatoryEffects: true,
+      });
+      await authenticateCommittedEffectOwnersInTransactionV1(
+        sql,
+        current.request_id,
+        storedPlan,
+      );
+      return true;
+    }
     throw new Error(`RUNTIME_COMPLETION_OWNER_COMMIT_STATE_INVALID:${current.state}`);
   }
   const capability = currentRuntimeCompletionOwnerCapability();
@@ -354,11 +745,19 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     if (!storedPlan || hashCanonicalJson({
       kind: storedPlan.kind,
       continuation: storedPlan.continuation,
-      subject: storedPlan.subject,
+      ...(storedPlan.subject ? { subject: storedPlan.subject } : {}),
       effects: storedPlan.effects,
     }) !== hashCanonicalJson(descriptor)) {
       throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_PLAN_CONFLICT");
     }
+    await assertRuntimeCompletionManifestInTransactionV1(sql, {
+      requestId: current.request_id,
+    });
+    await authenticateCommittedEffectOwnersInTransactionV1(
+      sql,
+      current.request_id,
+      storedPlan,
+    );
     return true;
   }
   if (current.apply_phase !== "executing") {
@@ -448,6 +847,11 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
   if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_CAS_LOST");
   for (const preparedEffect of preparedEffects) {
     const { effect, effectPayload, inputHash } = preparedEffect;
+    const mandatoryEffectOwnerBirth = await beginMandatoryEffectOwnerInTransactionV1(
+      sql,
+      current.request_id,
+      preparedEffect,
+    );
     const insertedEffects = await sql.unsafe<Array<{ effect_key: string }>>(
       `INSERT INTO runtime_completion_effects (
          request_id, effect_key, ordinal, effect_type, input_hash,
@@ -467,6 +871,36 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     );
     if (insertedEffects.length !== 1 || insertedEffects[0]!.effect_key !== effect.effectKey) {
       throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_INSERT_FAILED");
+    }
+    const reread = await sql.unsafe<Array<{
+      effect_key: string;
+      ordinal: number;
+      effect_type: string;
+      input_hash: string;
+      payload: unknown;
+      mandatory: boolean;
+      state: string;
+    }>>(
+      `SELECT effect_key,ordinal,effect_type,input_hash,payload,mandatory,state
+         FROM runtime_completion_effects
+        WHERE request_id = $1 AND effect_key = $2
+        FOR UPDATE`,
+      [current.request_id, effect.effectKey],
+    );
+    const stored = reread[0];
+    if (
+      reread.length !== 1
+      || !stored
+      || stored.effect_key !== effect.effectKey
+      || stored.ordinal !== effect.ordinal
+      || stored.effect_type !== effect.effectType
+      || stored.input_hash !== inputHash
+      || stored.mandatory !== effect.mandatory
+      || stored.state !== "pending"
+      || canonicalJsonStringify(stored.payload) !== canonicalJsonStringify(effectPayload)
+    ) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_BINDING_INVALID");
+    if (mandatoryEffectOwnerBirth) {
+      await bindMandatoryEffectOwnersInTransactionV1(sql, [mandatoryEffectOwnerBirth]);
     }
   }
   const storedEffects = await sql.unsafe<Array<{
@@ -500,7 +934,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
       || stored.effect_type !== expected.effectType
       || stored.mandatory !== expected.mandatory
       || stored.input_hash !== hashCanonicalJson(expectedPayload)
-      || hashCanonicalJson(stored.payload) !== hashCanonicalJson(expectedPayload)) {
+      || canonicalJsonStringify(stored.payload) !== canonicalJsonStringify(expectedPayload)) {
       throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_BINDING_INVALID");
     }
   }
@@ -1014,6 +1448,7 @@ export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction
   if (rows.length !== 1) {
     throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_CAS_LOST");
   }
+  await closeCompletionOwnerAfterTerminalMutationV1(sql, rows[0]!.request_id);
   return mapRequest(rows[0]!);
 }
 
@@ -1171,6 +1606,11 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         // exact drain proof; markProcessing will then observe cancellation and
         // reject the completion before product state can change.
         if (chain.terminationRequestId && request.state === "requested") return undefined;
+        const ownerBirth = await beginCompletionOwnerReservationInTransactionV1(
+          transaction,
+          request.request_id,
+          request.state === "requested" ? "pending" : "bound",
+        );
         const leaseExpiresAt = new Date(wallClock.getTime() + leaseMs);
         const updated = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
@@ -1181,7 +1621,15 @@ export function createRuntimeCompletionRepository(sql: Sql) {
             RETURNING *`,
           [request.request_id, input.ownerInstanceId, leaseExpiresAt, wallClock, wallClock],
         );
-        return updated[0] ? mapRequest(updated[0]) : undefined;
+        if (updated.length !== 1 || !updated[0]) {
+          throw new Error("RUNTIME_COMPLETION_CLAIM_CAS_LOST");
+        }
+        const bound = await bindCompletionOwnerReservationInTransactionV1(
+          transaction,
+          ownerBirth,
+          updated[0],
+        );
+        return mapRequest(bound);
       }) as Promise<RuntimeCompletionRequest | undefined>;
     },
     async recoverExpiredProcessing(input: Readonly<{
@@ -1251,6 +1699,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
             ],
           );
           if (rejected.length !== 1) throw new Error("RUNTIME_COMPLETION_RECOVERY_PREEMPT_CAS_LOST");
+          await closeCompletionOwnerAfterTerminalMutationV1(
+            transaction,
+            rejected[0]!.request_id,
+          );
           return { status: "preempted" as const, request: mapRequest(rejected[0]!) };
         }
         if (
@@ -1503,6 +1955,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const canonicalResult = hashCanonicalJson(input.result);
         if (request.state === "accepted") {
           if (hashCanonicalJson(objectValue(request.result, "RUNTIME_COMPLETION_RESULT_INVALID")) === canonicalResult) {
+            await closeCompletionOwnerAfterTerminalMutationV1(transaction, request.request_id);
             return mapRequest(request);
           }
           throw new Error("RUNTIME_COMPLETION_ACCEPT_TERMINAL_CONFLICT");
@@ -1549,6 +2002,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           ],
         );
         if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_ACCEPT_CAS_LOST");
+        await closeCompletionOwnerAfterTerminalMutationV1(
+          transaction,
+          updated[0]!.request_id,
+        );
         return mapRequest(updated[0]!);
       }) as Promise<RuntimeCompletionRequest>;
     },
@@ -1568,6 +2025,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const current = chain?.request;
         if (!current) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
         if (current.state === "rejected") {
+          await closeCompletionOwnerIfPresentAfterTerminalMutationV1(
+            transaction,
+            current.request_id,
+          );
           return { status: "preempted" as const, request: mapRequest(current) };
         }
         if (current.state === "processing" && current.apply_phase === "owner_committed") {
@@ -1616,6 +2077,17 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           ],
         );
         if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_REJECT_CAS_LOST");
+        if (current.state === "requested") {
+          await closeCompletionOwnerIfPresentAfterTerminalMutationV1(
+            transaction,
+            rows[0]!.request_id,
+          );
+        } else {
+          await closeCompletionOwnerAfterTerminalMutationV1(
+            transaction,
+            rows[0]!.request_id,
+          );
+        }
         return { status: "preempted" as const, request: mapRequest(rows[0]!) };
       }) as Promise<Readonly<{
         status: "preempted" | "resume_effects" | "finalize" | "not_pending" | "not_preemptible";
@@ -1647,7 +2119,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
         const current = chain?.request;
         if (!current) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
-        if (current.state === "quarantined") return mapRequest(current);
+        if (current.state === "quarantined") {
+          await closeCompletionOwnerAfterTerminalMutationV1(transaction, current.request_id);
+          return mapRequest(current);
+        }
         const wallClock = await readDatabaseWallClock(
           transaction,
           "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
@@ -1688,6 +2163,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           ],
         );
         if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST");
+        await closeCompletionOwnerAfterTerminalMutationV1(
+          transaction,
+          rows[0]!.request_id,
+        );
         return mapRequest(rows[0]!);
       }) as Promise<RuntimeCompletionRequest>;
     },
@@ -1699,6 +2178,17 @@ export async function rejectRuntimeCompletionsForTerminalRunInTransaction(
   sql: TransactionSql,
   input: Readonly<{ runId: string; diagnostic: string }>,
 ): Promise<number> {
+  await sql.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [input.runId]);
+  const candidates = await sql.unsafe<Array<{ request_id: string; state: string }>>(
+    `SELECT request_id,state
+       FROM runtime_completion_requests
+      WHERE run_id = $1
+        AND state IN ('requested', 'draining')
+      ORDER BY request_id
+      FOR UPDATE`,
+    [input.runId],
+  );
+  if (candidates.length === 0) return 0;
   const wallClock = await readDatabaseWallClock(
     sql,
     "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
@@ -1709,8 +2199,28 @@ export async function rejectRuntimeCompletionsForTerminalRunInTransaction(
             lease_expires_at = NULL, diagnostic = $3, updated_at = $2
       WHERE run_id = $1
         AND state IN ('requested', 'draining')
+        AND request_id = ANY($4::text[])
       RETURNING request_id`,
-    [input.runId, wallClock, input.diagnostic.slice(0, 4_000)],
+    [
+      input.runId,
+      wallClock,
+      input.diagnostic.slice(0, 4_000),
+      candidates.map((candidate) => candidate.request_id),
+    ],
   );
+  if (rows.length !== candidates.length) {
+    throw new Error("RUNTIME_COMPLETION_TERMINAL_REJECT_CAS_LOST");
+  }
+  const updated = new Set(rows.map((row) => row.request_id));
+  for (const candidate of candidates) {
+    if (!updated.has(candidate.request_id)) {
+      throw new Error("RUNTIME_COMPLETION_TERMINAL_REJECT_CAS_LOST");
+    }
+    if (candidate.state === "requested") {
+      await closeCompletionOwnerIfPresentAfterTerminalMutationV1(sql, candidate.request_id);
+    } else {
+      await closeCompletionOwnerAfterTerminalMutationV1(sql, candidate.request_id);
+    }
+  }
   return rows.length;
 }

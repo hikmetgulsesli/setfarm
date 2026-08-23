@@ -159,7 +159,7 @@ export async function runRuntimeCompletionEffectLedger(input: Readonly<{
           return input.handler.apply(context);
         },
       });
-      await input.repository.settle({
+      const settled = await input.repository.settle({
         requestId: effect.requestId,
         effectKey: effect.effectKey,
         ownerInstanceId: input.ownerInstanceId,
@@ -168,6 +168,15 @@ export async function runRuntimeCompletionEffectLedger(input: Readonly<{
         result: resolution.result,
         evidence: resolution.evidence,
       });
+      if (
+        settled.requestId !== effect.requestId
+        || settled.effectKey !== effect.effectKey
+        || settled.state !== resolution.resolution
+        || hashCanonicalJson(settled.result) !== hashCanonicalJson(resolution.result)
+        || hashCanonicalJson(settled.evidence) !== hashCanonicalJson(resolution.evidence)
+      ) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLEMENT_MISMATCH");
+      }
     } catch (error) {
       const diagnostic = compactDiagnostic(error);
       if (effect.attemptCount >= maxAttempts) {

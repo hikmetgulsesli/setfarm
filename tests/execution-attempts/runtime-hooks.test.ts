@@ -22,6 +22,15 @@ const claimPublication = readFileSync(path.join(root, "src/execution/claim-runti
 const runtimeSessions = readFileSync(path.join(root, "src/execution/runtime-session-repository.ts"), "utf8");
 const downstreamPublication = readFileSync(path.join(root, "src/recovery/v3-downstream-evidence-publication.ts"), "utf8");
 const evidenceOnlyPublication = readFileSync(path.join(root, "src/recovery/v3-evidence-only-publication.ts"), "utf8");
+const runtimeCompletion = readFileSync(path.join(root, "src/execution/runtime-completion.ts"), "utf8");
+const runtimeCompletionEffects = readFileSync(
+  path.join(root, "src/execution/runtime-completion-effect-repository.ts"),
+  "utf8",
+);
+const runtimeCompletionEffectRunner = readFileSync(
+  path.join(root, "src/execution/runtime-completion-effect-runner.ts"),
+  "utf8",
+);
 
 async function seedLegacyMedicLoop(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -931,5 +940,80 @@ describe("shadow runtime hook boundaries", () => {
     assert.ok(claimUpdate >= 0 && helperCall > claimUpdate);
     assert.match(runtimeSessions, /UPDATE runtime_sessions[\s\S]*SET state = 'released'[\s\S]*closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1/);
     assert.match(runtimeSessions, /SELECT \* FROM runtime_sessions WHERE session_id = \$1 FOR UPDATE[\s\S]*SET state = 'quarantined'[\s\S]*closeInternalProductionRuntimeSessionOwnerAfterTerminalMutationV1/);
+  });
+
+  it("keeps completion and mandatory-effect ownership at their exact Task 5 writers", () => {
+    const completionBirth = runtimeCompletion.indexOf(
+      "async function beginCompletionOwnerReservationInTransactionV1",
+    );
+    const claimWriter = runtimeCompletion.indexOf("async claim(input:");
+    const claimCas = runtimeCompletion.indexOf("SET state = 'draining'", claimWriter);
+    const claimBind = runtimeCompletion.indexOf(
+      "bindCompletionOwnerReservationInTransactionV1(",
+      claimCas,
+    );
+    assert.ok(completionBirth >= 0 && claimWriter > completionBirth && claimCas > claimWriter && claimBind > claimCas);
+
+    const completionTerminalWriters = [{
+      name: "recovery quarantine",
+      start: "export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction",
+      end: "type LockedRuntimeCompletionChain",
+    }, {
+      name: "expired-processing rejection",
+      start: "async recoverExpiredProcessing(input:",
+      end: "async heartbeatProcessing(input:",
+    }, {
+      name: "accept and release",
+      start: "async acceptAndRelease(input:",
+      end: "async preemptForRunTermination(input:",
+    }, {
+      name: "termination preemption",
+      start: "async preemptForRunTermination(input:",
+      end: "async quarantine(input:",
+    }, {
+      name: "repository quarantine",
+      start: "async quarantine(input:",
+      end: "export async function rejectRuntimeCompletionsForTerminalRunInTransaction",
+    }, {
+      name: "terminal-run bulk rejection",
+      start: "export async function rejectRuntimeCompletionsForTerminalRunInTransaction",
+      end: undefined,
+    }] as const;
+    const terminalMutation = /SET state = '(?:accepted|rejected|quarantined)'/g;
+    for (const writer of completionTerminalWriters) {
+      const start = runtimeCompletion.indexOf(writer.start);
+      const end = writer.end === undefined
+        ? runtimeCompletion.length
+        : runtimeCompletion.indexOf(writer.end, start + writer.start.length);
+      assert.ok(start >= 0 && end > start, writer.name);
+      const block = runtimeCompletion.slice(start, end);
+      assert.equal(block.match(terminalMutation)?.length, 1, `${writer.name} terminal mutation census`);
+      const mutation = block.search(terminalMutation);
+      const close = block.indexOf("closeCompletionOwner", mutation);
+      assert.ok(mutation >= 0 && close > mutation, `${writer.name} closes after mutation`);
+    }
+    assert.equal(
+      runtimeCompletion.match(terminalMutation)?.length,
+      completionTerminalWriters.length,
+      "no undeclared completion terminal UPDATE may bypass the six fixed writers",
+    );
+
+    const settle = runtimeCompletionEffects.indexOf("async settle(input:");
+    const effectMutation = runtimeCompletionEffects.indexOf("UPDATE runtime_completion_effects", settle);
+    const effectClose = runtimeCompletionEffects.indexOf(
+      "closeMandatoryEffectOwnerAfterTerminalMutationV1(",
+      effectMutation,
+    );
+    assert.ok(settle >= 0 && effectMutation > settle && effectClose > effectMutation);
+    const quarantine = runtimeCompletionEffects.indexOf("async quarantine(input:");
+    assert.equal(
+      runtimeCompletionEffects.slice(quarantine, settle).includes(
+        "closeMandatoryEffectOwnerAfterTerminalMutationV1",
+      ),
+      false,
+      "effect quarantine remains bound and open",
+    );
+    assert.equal(runtimeCompletionEffectRunner.includes("../db-pg.js"), false);
+    assert.equal(runtimeCompletionEffectRunner.includes("OwnerReservation"), false);
   });
 });
