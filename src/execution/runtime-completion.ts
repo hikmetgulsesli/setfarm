@@ -1954,7 +1954,16 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const ownerAttemptCount = z.number().int().positive().parse(input.ownerAttemptCount);
         const canonicalResult = hashCanonicalJson(input.result);
         if (request.state === "accepted") {
-          if (hashCanonicalJson(objectValue(request.result, "RUNTIME_COMPLETION_RESULT_INVALID")) === canonicalResult) {
+          const storedResultHash = hashCanonicalJson(
+            objectValue(request.result, "RUNTIME_COMPLETION_RESULT_INVALID"),
+          );
+          const compoundReplayHash = (
+            ["completed", "failed", "cancelled"].includes(chain.runStatus)
+            && !Object.prototype.hasOwnProperty.call(input.result, "terminalRunStatus")
+          )
+            ? hashCanonicalJson({ ...input.result, terminalRunStatus: chain.runStatus })
+            : undefined;
+          if (storedResultHash === canonicalResult || storedResultHash === compoundReplayHash) {
             await closeCompletionOwnerAfterTerminalMutationV1(transaction, request.request_id);
             return mapRequest(request);
           }
@@ -2171,6 +2180,78 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       }) as Promise<RuntimeCompletionRequest>;
     },
   });
+}
+
+export async function terminalizeRuntimeCompletionForRunInTransactionV1(
+  sql: TransactionSql,
+  input: Readonly<{
+    requestId: string;
+    runId: string;
+    terminalRunStatus: "completed" | "failed" | "cancelled";
+    transitionTime: Date;
+  }>,
+): Promise<string> {
+  const requestId = RuntimeCompletionRequestIdSchema.parse(input.requestId);
+  const terminalRunStatus = z.enum(["completed", "failed", "cancelled"]).parse(input.terminalRunStatus);
+  if (!input.runId.trim() || !Number.isFinite(input.transitionTime.getTime())) {
+    throw new Error("RUN_TERMINAL_COMPLETION_INPUT_INVALID");
+  }
+  const current = await sql.unsafe<Array<{ state: string; apply_phase: string }>>(
+    `SELECT state,apply_phase FROM runtime_completion_requests
+      WHERE request_id=$1 AND run_id=$2 FOR UPDATE`,
+    [requestId, input.runId],
+  );
+  const stored = current[0];
+  if (current.length !== 1 || !stored) throw new Error("RUN_TERMINAL_COMPLETION_NOT_FOUND");
+  const resolution = (
+    (stored.state === "requested" && stored.apply_phase === "proposed")
+    || (stored.state === "draining" && stored.apply_phase === "proposed")
+  )
+    ? "rejected"
+    : stored.state === "processing" && stored.apply_phase === "effects_committed"
+      ? "accepted"
+      : undefined;
+  if (!resolution) {
+    throw new Error(`RUN_TERMINAL_COMPLETION_STATE_OPEN:${stored.state}:${stored.apply_phase}`);
+  }
+  const rows = await sql.unsafe<RuntimeCompletionRow[]>(
+    `UPDATE runtime_completion_requests
+        SET state = $5,
+            accepted_at = CASE WHEN $5 = 'accepted' THEN $6 ELSE accepted_at END,
+            rejected_at = CASE WHEN $5 = 'rejected' THEN $6 ELSE rejected_at END,
+            lease_expires_at = NULL,
+            diagnostic = CASE WHEN $5 = 'rejected' THEN $7 ELSE diagnostic END,
+            result = (result || $8::text::jsonb),
+            updated_at = $6
+      WHERE request_id = $1 AND run_id = $2
+        AND state = $3 AND apply_phase = $4
+      RETURNING *`,
+    [
+      requestId,
+      input.runId,
+      stored.state,
+      stored.apply_phase,
+      resolution,
+      input.transitionTime,
+      `Completion terminalized by canonical run ${terminalRunStatus}`,
+      JSON.stringify({ terminalRunStatus }),
+    ],
+  );
+  if (rows.length !== 1 || rows[0]?.request_id !== requestId) {
+    throw new Error("RUN_TERMINAL_COMPLETION_CAS_LOST");
+  }
+  const reread = await sql.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+    [requestId],
+  );
+  if (
+    reread.length !== 1
+    || reread[0]?.request_id !== requestId
+    || reread[0]?.run_id !== input.runId
+    || reread[0]?.state !== resolution
+    || reread[0]?.apply_phase !== stored.apply_phase
+  ) throw new Error("RUN_TERMINAL_COMPLETION_REREAD_INVALID");
+  return requestId;
 }
 
 /** Canonical run terminalization rejects any completion proposal it preempted. */

@@ -5,6 +5,13 @@ import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionTerminationCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
   transitionRunToTerminal,
   type RunTerminalTransitionResult,
 } from "./run-terminal-transition.js";
@@ -125,6 +132,140 @@ export type RequestRunTerminationInput = Readonly<{
   now?: Date;
 }>;
 
+type TerminationOwnerBirthV1 = Readonly<{
+  identity: ReturnType<typeof createInternalProductionTerminationCanonicalOwnerIdentityV1>;
+  reservation: Awaited<ReturnType<typeof beginOrAdoptInternalProductionOwnerReservationV1>>;
+}>;
+
+async function beginTerminationOwnerReservationInTransactionV1(
+  sql: postgres.TransactionSql,
+  requestId: string,
+  expectedState: "pending" | "bound",
+): Promise<TerminationOwnerBirthV1> {
+  const identity = createInternalProductionTerminationCanonicalOwnerIdentityV1({ requestId });
+  const ownerKeyHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-owner-key.v1",
+    ownerKeyDerivationId: "termination-request-id-v1",
+    ownerKey: identity.ownerKey,
+  });
+  type SidecarRow = Readonly<{
+    reservation_ref: string;
+    reservation_hash: string;
+    producer_implementation_id: string;
+    category: string;
+    owner_key: string;
+    owner_key_hash: string;
+    reservation_owner_key: string | null;
+    reservation_owner_key_hash: string | null;
+    canonical_owner_identity: unknown | null;
+    state: string;
+  }>;
+  const readSidecars = () => sql.unsafe<SidecarRow[]>(
+    `SELECT reservation_ref,reservation_hash,producer_implementation_id,category,
+            owner_key,owner_key_hash,
+            reservation_payload->>'ownerKey' AS reservation_owner_key,
+            reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash,
+            canonical_owner_identity,state
+       FROM internal_production_owner_reservations_v1
+      WHERE (
+              producer_implementation_id='a-termination-v1'
+              OR reservation_payload->>'producerImplementationId'='a-termination-v1'
+              OR binding_payload->>'producerImplementationId'='a-termination-v1'
+            )
+        AND (
+              owner_key=$1 OR owner_key_hash=$2
+              OR reservation_payload->>'ownerKey'=$1
+              OR reservation_payload->>'ownerKeyHash'=$2
+              OR canonical_owner_identity->>'ownerKey'=$1
+              OR binding_payload->>'ownerKey'=$1
+              OR binding_payload->'canonicalOwnerIdentity'->>'ownerKey'=$1
+            )
+      ORDER BY reservation_ref FOR UPDATE`,
+    [requestId, ownerKeyHash],
+  );
+  const isExact = (sidecar: SidecarRow, state: "pending" | "bound") => (
+    sidecar.producer_implementation_id === "a-termination-v1"
+    && sidecar.category === "termination"
+    && sidecar.owner_key === requestId
+    && sidecar.owner_key_hash === ownerKeyHash
+    && sidecar.reservation_owner_key === requestId
+    && sidecar.reservation_owner_key_hash === ownerKeyHash
+    && sidecar.state === state
+    && (
+      state === "pending"
+        ? sidecar.canonical_owner_identity === null
+        : canonicalJsonStringify(sidecar.canonical_owner_identity) === canonicalJsonStringify(identity)
+    )
+  );
+  const before = await readSidecars();
+  if (expectedState === "pending" && before.length !== 0) {
+    throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_PARTIAL_BIRTH");
+  }
+  if (
+    expectedState === "bound"
+    && (before.length !== 1 || !before[0] || !isExact(before[0], "bound"))
+  ) throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_ADOPTION_INVALID");
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      producerImplementationId: "a-termination-v1",
+      ownerKey: identity.ownerKey,
+    },
+  );
+  const sidecars = await readSidecars();
+  if (
+    sidecars.length !== 1
+    || sidecars[0]?.reservation_ref !== reservation.reservationRef
+    || sidecars[0]?.reservation_hash !== reservation.reservationHash
+    || !isExact(sidecars[0], expectedState)
+  ) throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_ADOPTION_INVALID");
+  return Object.freeze({ identity, reservation });
+}
+
+function exactTerminationRequestBodyV1(row: RequestRow): string {
+  const mapped = mapRequest(row);
+  return canonicalJsonStringify({
+    requestId: mapped.requestId,
+    runId: mapped.runId,
+    targetStatus: mapped.targetStatus,
+    state: mapped.state,
+    requestedBy: mapped.requestedBy,
+    diagnostic: mapped.diagnostic,
+    evidence: mapped.evidence,
+  });
+}
+
+async function bindTerminationOwnerReservationInTransactionV1(
+  sql: postgres.TransactionSql,
+  birth: TerminationOwnerBirthV1,
+  expected: RequestRow,
+): Promise<RequestRow> {
+  const reread = await sql.unsafe<RequestRow[]>(
+    "SELECT * FROM run_termination_requests WHERE request_id = $1 FOR UPDATE",
+    [expected.request_id],
+  );
+  if (
+    reread.length !== 1
+    || !reread[0]
+    || exactTerminationRequestBodyV1(reread[0]) !== exactTerminationRequestBodyV1(expected)
+  ) throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_REREAD_INVALID");
+  const bound = await bindInternalProductionOwnerReservationV1(
+    sql as PgTransactionSql,
+    {
+      reservationRef: birth.reservation.reservationRef,
+      reservationHash: birth.reservation.reservationHash,
+      canonicalOwnerIdentity: birth.identity,
+    },
+  );
+  if (
+    bound.ownerKey !== expected.request_id
+    || bound.reservationRef !== birth.reservation.reservationRef
+    || bound.reservationHash !== birth.reservation.reservationHash
+    || bound.canonicalOwnerIdentity.ownerKey !== expected.request_id
+  ) throw new Error("INTERNAL_PRODUCTION_TERMINATION_OWNER_BINDING_INVALID");
+  return reread[0];
+}
+
 export async function requestRunTerminationInTransaction(
   sql: postgres.TransactionSql,
   rawInput: RequestRunTerminationInput,
@@ -148,6 +289,9 @@ export async function requestRunTerminationInTransaction(
     }
   }).parse(rawInput);
   assertOperationalFailureCauseEvidenceKeyAbsent(input.evidence);
+  if (Object.hasOwn(input.evidence ?? {}, "deferredForCompletionRequestId")) {
+    throw new Error("RUN_TERMINATION_EVIDENCE_RESERVED_KEY");
+  }
   if (input.failureCause) {
     const authority = evaluateOperationalFailureCauseEvidenceAuthorityV3({
       requestedBy: input.requestedBy,
@@ -168,6 +312,12 @@ export async function requestRunTerminationInTransaction(
   if (run.status === input.targetStatus) {
     return { status: "already_terminal" as const, runId: input.runId, targetStatus: input.targetStatus };
   }
+  const callerEvidence = {
+    ...(input.evidence ?? {}),
+    ...(input.failureCause ? {
+      [OPERATIONAL_FAILURE_CAUSE_EVIDENCE_KEY]: input.failureCause,
+    } : {}),
+  };
   const existing = await sql.unsafe<RequestRow[]>(
     `SELECT * FROM run_termination_requests
       WHERE run_id = $1 AND state <> 'terminalized'
@@ -190,21 +340,72 @@ export async function requestRunTerminationInTransaction(
     if (input.failureCause && existingRequest.requestedBy !== input.requestedBy) {
       throw new Error("RUN_TERMINATION_FAILURE_CAUSE_REQUESTER_CONFLICT");
     }
-    return { status: "existing" as const, request: existingRequest };
+    if (input.requestId && existingRequest.requestId !== input.requestId) {
+      throw new Error("RUN_TERMINATION_REQUEST_ID_CONFLICT");
+    }
+    const storedCallerEvidence = { ...existingRequest.evidence };
+    const storedDeferredBoundary = storedCallerEvidence.deferredForCompletionRequestId;
+    delete storedCallerEvidence.deferredForCompletionRequestId;
+    if (
+      storedDeferredBoundary !== undefined
+      && (typeof storedDeferredBoundary !== "string" || !storedDeferredBoundary.trim())
+    ) throw new Error("RUN_TERMINATION_DEFERRED_BOUNDARY_INVALID");
+    if (typeof storedDeferredBoundary === "string") {
+      const storedCompletionBoundary = await sql.unsafe<Array<{ request_id: string }>>(
+        `SELECT request_id FROM runtime_completion_requests
+          WHERE request_id = $1 AND run_id = $2
+          FOR UPDATE`,
+        [storedDeferredBoundary, input.runId],
+      );
+      if (storedCompletionBoundary.length !== 1) {
+        throw new Error("RUN_TERMINATION_DEFERRED_BOUNDARY_INVALID");
+      }
+    }
+    if (
+      existingRequest.requestedBy !== input.requestedBy
+      || existingRequest.diagnostic !== input.diagnostic
+      || canonicalJsonStringify(storedCallerEvidence) !== canonicalJsonStringify(callerEvidence)
+    ) throw new Error("RUN_TERMINATION_REQUEST_BODY_CONFLICT");
+    const ownerBirth = await beginTerminationOwnerReservationInTransactionV1(
+      sql,
+      existingRequest.requestId,
+      "bound",
+    );
+    const bound = await bindTerminationOwnerReservationInTransactionV1(
+      sql,
+      ownerBirth,
+      existing[0]!,
+    );
+    return { status: "existing" as const, request: mapRequest(bound) };
   }
   if (!["running", "resuming"].includes(run.status)) {
     throw new Error(`RUN_TERMINATION_SOURCE_STATUS_INVALID:${run.status}`);
   }
-  const requestId = input.requestId ?? newRunTerminationRequestId();
-  const sourceStatus = input.targetStatus === "cancelled" ? "cancelling" : "failing";
   const activeCompletionOwner = await sql.unsafe<Array<{ request_id: string }>>(
     `SELECT request_id FROM runtime_completion_requests
       WHERE run_id = $1 AND state IN ('draining', 'processing')
-      LIMIT 1 FOR UPDATE`,
+      ORDER BY request_id
+      FOR UPDATE`,
     [input.runId],
   );
+  if (activeCompletionOwner.length > 1) {
+    throw new Error("RUN_TERMINATION_ACTIVE_COMPLETION_AMBIGUOUS");
+  }
+  const deferredForCompletion = activeCompletionOwner.length === 1;
+  const expectedEvidence = {
+    ...callerEvidence,
+    ...(deferredForCompletion ? {
+      deferredForCompletionRequestId: activeCompletionOwner[0]!.request_id,
+    } : {}),
+  };
+  const requestId = input.requestId ?? newRunTerminationRequestId();
+  const sourceStatus = input.targetStatus === "cancelled" ? "cancelling" : "failing";
   const now = await readDatabaseWallClock(sql, "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE");
-  const deferredForCompletion = activeCompletionOwner.length > 0;
+  const ownerBirth = await beginTerminationOwnerReservationInTransactionV1(
+    sql,
+    requestId,
+    "pending",
+  );
   if (!deferredForCompletion) {
     const updated = await sql.unsafe<Array<{ id: string }>>(
       `UPDATE runs SET status = $2, updated_at = $3
@@ -227,19 +428,16 @@ export async function requestRunTerminationInTransaction(
       input.requestedBy,
       now,
       input.diagnostic,
-      JSON.stringify({
-        ...(input.evidence ?? {}),
-        ...(input.failureCause ? {
-          [OPERATIONAL_FAILURE_CAUSE_EVIDENCE_KEY]: input.failureCause,
-        } : {}),
-        ...(deferredForCompletion ? {
-          deferredForCompletionRequestId: activeCompletionOwner[0]!.request_id,
-        } : {}),
-      }),
+      JSON.stringify(expectedEvidence),
     ],
   );
   if (inserted.length !== 1) throw new Error("RUN_TERMINATION_REQUEST_INSERT_FAILED");
-  return { status: "requested" as const, request: mapRequest(inserted[0]!) };
+  const bound = await bindTerminationOwnerReservationInTransactionV1(
+    sql,
+    ownerBirth,
+    inserted[0]!,
+  );
+  return { status: "requested" as const, request: mapRequest(bound) };
 }
 
 export async function requestRunTermination(
@@ -315,13 +513,20 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
         // Match the completion claimant's run -> completion -> termination
         // order. The run row serializes all same-run recovery ownership, and a
         // processing completion remains the only non-preemptible phase.
-        const activeCompletionOwner = await transaction.unsafe<Array<{ request_id: string }>>(
-          `SELECT request_id FROM runtime_completion_requests
+        const activeCompletionOwner = await transaction.unsafe<Array<{
+          request_id: string;
+          state: string;
+          apply_phase: string;
+        }>>(
+          `SELECT request_id,state,apply_phase FROM runtime_completion_requests
             WHERE run_id = $1 AND state IN ('draining', 'processing')
-            LIMIT 1 FOR UPDATE`,
+            ORDER BY request_id FOR UPDATE`,
           [candidate.run_id],
         );
-        if (activeCompletionOwner.length > 0) return undefined;
+        if (activeCompletionOwner.some((completion) => !(
+          completion.state === "processing"
+          && completion.apply_phase === "effects_committed"
+        ))) return undefined;
         const rows = await transaction.unsafe<RequestRow[]>(
           `SELECT * FROM run_termination_requests
             WHERE request_id = $1
@@ -585,6 +790,7 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
           runId: request.runId,
           status: request.targetStatus,
           diagnostic: input.diagnostic ?? request.diagnostic,
+          drainedTerminationRequestId: request.requestId,
           now: input.now,
         });
       }

@@ -26,6 +26,7 @@ import {
   rejectRuntimeCompletionsForTerminalRunInTransaction,
   requestRuntimeCompletion,
   RuntimeCompletionSubmissionEvidenceV1Schema,
+  terminalizeRuntimeCompletionForRunInTransactionV1,
 } from "../../src/execution/runtime-completion.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
@@ -37,7 +38,10 @@ import {
   requestRunTermination,
   requestRunTerminationInTransaction,
 } from "../../src/execution/run-termination.js";
-import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
+import {
+  transitionRunToTerminal,
+  transitionRunToTerminalInTransaction,
+} from "../../src/execution/run-terminal-transition.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import {
@@ -863,6 +867,275 @@ describe("manager-owned runtime completion", () => {
     }
   });
 
+  it("exactly replays a compound prebirth completion rejection without inventing an owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-compound-prebirth-replay";
+      const requestId = "RCR_compound-prebirth-replay1";
+      const terminationRequestId = "RTR_compound-prebirth-replay1";
+      const seeded = await seedManagedClaim(database, runId);
+      await publishCompletionInState(database, seeded, "requested", requestId);
+      await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "cancelled",
+        requestedBy: "task6-prebirth-replay",
+        diagnostic: "compound rejects the prebirth completion",
+        requestId: terminationRequestId,
+      });
+      const terminations = createRunTerminationRepository(database.sql);
+      const claimed = await terminations.claim({
+        requestId: terminationRequestId,
+        ownerInstanceId: "task6-prebirth-replay",
+      });
+      assert.equal(claimed?.state, "draining");
+      await seeded.sessions.markDrained({
+        sessionId: seeded.session.sessionId,
+        ownerInstanceId: "spawner-a",
+        evidence: DRAIN_EVIDENCE,
+      });
+      await terminations.markDrained({
+        requestId: terminationRequestId,
+        ownerInstanceId: "task6-prebirth-replay",
+        evidence: { task6PrebirthReplay: true },
+      });
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({ requestId });
+          const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+            transaction as PgTransactionSql,
+            { producerImplementationId: "a-completion-owner-v1", ownerKey: identity.ownerKey },
+          );
+          await transaction.unsafe(
+            `UPDATE internal_production_owner_reservations_v1
+                SET owner_key=$2
+              WHERE reservation_ref=$1`,
+            [reservation.reservationRef, `${requestId}-crossed`],
+          );
+          await transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "cancelled",
+            diagnostic: "crossed prebirth completion sidecar must reject",
+            drainedTerminationRequestId: terminationRequestId,
+          });
+        }),
+        /RUN_TERMINAL_COMPLETION_OWNER_INVALID/,
+      );
+
+      const terminal = await terminations.terminalize({ requestId: terminationRequestId });
+      assert.equal(terminal.status, "cancelled");
+      const replay = await terminations.terminalize({ requestId: terminationRequestId });
+      assert.equal(replay.status, "cancelled");
+      const census = await database.sql<Array<{
+        completion_state: string;
+        completion_owner_count: number;
+      }>>`
+        SELECT request.state AS completion_state,
+               (SELECT COUNT(*)::integer
+                  FROM internal_production_owner_reservations_v1 owner
+                 WHERE owner.category='completion-owner'
+                   AND owner.owner_key=request.request_id) AS completion_owner_count
+          FROM runtime_completion_requests request
+         WHERE request.request_id=${requestId}
+      `;
+      assert.deepEqual(census.map((row) => ({ ...row })), [{
+        completion_state: "rejected",
+        completion_owner_count: 0,
+      }]);
+      await database.sql`
+        UPDATE runtime_completion_requests
+           SET state='requested',rejected_at=NULL,diagnostic=NULL,result='{}'::jsonb,updated_at=NOW()
+         WHERE request_id=${requestId}
+      `;
+      const historicalCompletionReconciliation = await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "cancelled",
+        diagnostic: "reconcile only historical prebirth completion residue",
+        drainedTerminationRequestId: terminationRequestId,
+      });
+      assert.equal(historicalCompletionReconciliation.closedClaims, 0);
+      assert.equal(historicalCompletionReconciliation.closedAttempts, 0);
+      const historicalEvents = await database.sql<Array<{
+        rejected_completions: number;
+        released_runtimes: number;
+        changed_steps: number;
+        changed_stories: number;
+      }>>`
+        SELECT (payload->>'rejectedRuntimeCompletions')::integer AS rejected_completions,
+               (payload->>'releasedRuntimes')::integer AS released_runtimes,
+               (payload->>'changedSteps')::integer AS changed_steps,
+               (payload->>'changedStories')::integer AS changed_stories
+          FROM operational_outbox
+         WHERE aggregate_type='run' AND aggregate_id=${runId}
+           AND event_type='run.terminal'
+           AND payload->>'reasonCode'='historical_terminal_residue_reconciled'
+      `;
+      assert.deepEqual(historicalEvents.map((row) => ({ ...row })), [{
+        rejected_completions: 1,
+        released_runtimes: 0,
+        changed_steps: 0,
+        changed_stories: 0,
+      }]);
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "cancelled",
+        diagnostic: "exact historical completion replay",
+        drainedTerminationRequestId: terminationRequestId,
+      });
+      assert.equal((await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count FROM operational_outbox
+         WHERE aggregate_type='run' AND aggregate_id=${runId}
+           AND event_type='run.terminal'
+           AND payload->>'reasonCode'='historical_terminal_residue_reconciled'
+      `)[0]!.count, 1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("normalizes the exact Task 5 terminal contract before Task 6 accepts the completion", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-task5-terminal-normalization";
+      const requestId = "RCR_task5-terminal-normalize1";
+      const seeded = await seedManagedClaim(database, runId);
+      await publishCompletionInState(database, seeded, "processing", requestId);
+      const completions = createRuntimeCompletionRepository(database.sql);
+      const closed = await asRuntimeCompletionOwner(completions, requestId, () => (
+        closeClaimAndBoundAttempt(database.sql, {
+          claimId: seeded.claimId,
+          runId,
+          stepId: "implement",
+          storyId: "US-001",
+          agentId: "feature-dev_developer",
+          outcome: "completed",
+          diagnostic: "Task 5 terminal contract prefix is canonical",
+          abandoned: false,
+        })
+      ));
+      assert.equal(closed.status, "closed");
+      await database.sql`
+        UPDATE stories SET status='done',claimed_by=NULL,updated_at=NOW()
+         WHERE id=${seeded.storyDbId}
+      `;
+      await database.sql`
+        UPDATE steps SET status='done',current_story_id=NULL,updated_at=NOW()
+         WHERE id=${seeded.stepDbId}
+      `;
+
+      const terminal = await asRuntimeCompletionOwner(
+        completions,
+        requestId,
+        () => transitionRunToTerminal(database.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "Task 5 normalized before Task 6 acceptance",
+        }),
+      );
+      assert.equal(terminal.status, "completed");
+      const rows = await database.sql<Array<{
+        run_status: string;
+        completion_state: string;
+        apply_phase: string;
+        completion_owner_state: string;
+        effect_state: string;
+        effect_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS completion_state,
+               request.apply_phase,completion_owner.state AS completion_owner_state,
+               effect.state AS effect_state,effect_owner.state AS effect_owner_state
+          FROM runs run_row
+          JOIN runtime_completion_requests request ON request.run_id=run_row.id
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.category='completion-owner'
+           AND completion_owner.owner_key=request.request_id
+          JOIN runtime_completion_effects effect ON effect.request_id=request.request_id
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.category='mandatory-effect'
+           AND effect_owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND effect_owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE request.request_id=${requestId}
+      `;
+      assert.deepEqual(rows.map((row) => ({ ...row })), [{
+        run_status: "completed",
+        completion_state: "accepted",
+        apply_phase: "effects_committed",
+        completion_owner_state: "closed",
+        effect_state: "applied",
+        effect_owner_state: "closed",
+      }]);
+      const replay = await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "completed",
+        diagnostic: "exact terminal replay adopts Task 5 effect close",
+      });
+      assert.equal(replay.status, "completed");
+      await database.sql`
+        UPDATE internal_production_owner_reservations_v1
+           SET owner_key=jsonb_pretty(owner_key::jsonb)
+         WHERE category='mandatory-effect'
+           AND owner_key::jsonb->>'requestId'=${requestId}
+      `;
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "tampered Task 5 effect close must not replay",
+        }),
+        /RUN_TERMINAL_MANDATORY_EFFECT_REPLAY_INVALID/,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps a compound-terminal completion owner bound until close-all and rolls the mutation back", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-completion-compound-barrier";
+      const seeded = await seedManagedClaim(database, runId);
+      const requestId = "RCR_completion-compound-barrier1";
+      await publishCompletionInState(database, seeded, "draining", requestId);
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await terminalizeRuntimeCompletionForRunInTransactionV1(transaction, {
+            requestId,
+            runId,
+            terminalRunStatus: "cancelled",
+            transitionTime: new Date("2026-08-23T00:00:00.000Z"),
+          });
+          const inside = await transaction.unsafe<Array<{
+            completion_state: string;
+            owner_state: string;
+          }>>(
+            `SELECT request.state AS completion_state,owner.state AS owner_state
+               FROM runtime_completion_requests request
+               JOIN internal_production_owner_reservations_v1 owner
+                 ON owner.category='completion-owner' AND owner.owner_key=request.request_id
+              WHERE request.request_id=$1`,
+            [requestId],
+          );
+          assert.deepEqual({ ...inside[0] }, {
+            completion_state: "rejected",
+            owner_state: "bound",
+          });
+          throw new Error("TEST_TASK6_AFTER_COMPLETION_MUTATION");
+        }),
+        /TEST_TASK6_AFTER_COMPLETION_MUTATION/,
+      );
+      const after = await createRuntimeCompletionRepository(database.sql).findById(requestId);
+      assert.equal(after?.state, "draining");
+      const owners = await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE category='completion-owner' AND owner_key=${requestId}
+      `;
+      assert.deepEqual(owners.map((row) => ({ ...row })), [{ state: "bound" }]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("rejects a scalar-key-tampered forbidden owner before optional settlement", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -946,6 +1219,42 @@ describe("manager-owned runtime completion", () => {
         /INTERNAL_PRODUCTION_OPTIONAL_EFFECT_OWNER_CORRUPTION/,
       );
       assert.deepEqual(await prepared.effects.listForRequest(prepared.requestId), [settled]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("excludes an optional effect from compound owner inventory and preserves it byte-for-byte", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const prepared = await prepareFocusedCompletionEffect(database, "compound-exclusion");
+      await database.sql`
+        UPDATE steps SET status='done',current_story_id=NULL,updated_at=NOW()
+         WHERE id=${prepared.seeded.stepDbId}
+      `;
+      const completion = await prepared.completions.findById(prepared.requestId);
+      assert.ok(completion);
+      await prepared.completions.markEffectsCommitted({
+        requestId: prepared.requestId,
+        ownerInstanceId: "optional-manager",
+        ownerAttemptCount: completion.ownerAttemptCount,
+        result: { advanced: false, runCompleted: true },
+      });
+      const before = await task5TerminalSnapshot(database, prepared.requestId);
+      const terminal = await asRuntimeCompletionOwner(
+        prepared.completions,
+        prepared.requestId,
+        () => transitionRunToTerminal(database.sql, {
+          runId: prepared.seeded.envelope.runId,
+          status: "completed",
+          diagnostic: "optional effect is outside Task 6 owner inventory",
+        }),
+      );
+      assert.equal(terminal.status, "completed");
+      const after = await task5TerminalSnapshot(database, prepared.requestId);
+      assert.deepEqual(after.effect_rows, before.effect_rows);
+      assert.equal(after.effect_owner_rows, null);
+      assert.equal(before.effect_owner_rows, null);
     } finally {
       await database.cleanup();
     }
@@ -3576,13 +3885,124 @@ describe("manager-owned runtime completion", () => {
       `;
       assert.deepEqual(effectOwner.map((row) => ({ ...row })), [{ state: "closed" }]);
       assert.equal(await effects.allMandatorySettled(requested.request.requestId), true);
-      assert.equal((await completions.markEffectsCommitted({
+      const effectsCommitted = await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "manager-a",
         ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: { advanced: true, runCompleted: false },
         now: new Date(startedAt.getTime() + 42_000),
-      })).applyPhase, "effects_committed");
+      });
+      assert.equal(effectsCommitted.applyPhase, "effects_committed");
+      const beforeCompound = (await database.sql<Array<{
+        effect_state: string;
+        effect_updated_at: string;
+        owner_state: string;
+        close_ref: string;
+        close_hash: string;
+        owner_updated_at: string;
+      }>>`
+        SELECT effect.state AS effect_state,effect.updated_at::text AS effect_updated_at,
+               owner.state AS owner_state,owner.close_ref,owner.close_hash,
+               owner.updated_at::text AS owner_updated_at
+          FROM runtime_completion_effects effect
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='mandatory-effect'
+           AND owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE effect.request_id=${requested.request.requestId}
+      `)[0]!;
+      if (!effectsCommitted.ownerInstanceId || !effectsCommitted.leaseExpiresAt) {
+        throw new Error("reconciled completion owner capability missing");
+      }
+      const [compound, managerReplay] = await Promise.all([
+        runWithRuntimeCompletionOwner({
+          requestId: effectsCommitted.requestId,
+          ownerInstanceId: effectsCommitted.ownerInstanceId,
+          leaseExpiresAt: effectsCommitted.leaseExpiresAt,
+          ownerAttemptCount: effectsCommitted.ownerAttemptCount,
+        }, () => transitionRunToTerminal(database.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "Task 6 exact-adopts reconciled Task 5 effect",
+        })),
+        completions.acceptAndRelease({
+          requestId: effectsCommitted.requestId,
+          ownerInstanceId: effectsCommitted.ownerInstanceId,
+          ownerAttemptCount: effectsCommitted.ownerAttemptCount,
+          result: { advanced: true, runCompleted: false },
+        }),
+      ]);
+      assert.equal(compound.status, "completed");
+      assert.equal(managerReplay.state, "accepted");
+      await assert.rejects(
+        completions.acceptAndRelease({
+          requestId: effectsCommitted.requestId,
+          ownerInstanceId: effectsCommitted.ownerInstanceId,
+          ownerAttemptCount: effectsCommitted.ownerAttemptCount,
+          result: {
+            advanced: true,
+            runCompleted: false,
+            terminalRunStatus: "failed",
+          },
+        }),
+        /RUNTIME_COMPLETION_ACCEPT_TERMINAL_CONFLICT/,
+      );
+      const exactExplicitTerminalReplay = await completions.acceptAndRelease({
+        requestId: effectsCommitted.requestId,
+        ownerInstanceId: effectsCommitted.ownerInstanceId,
+        ownerAttemptCount: effectsCommitted.ownerAttemptCount,
+        result: {
+          advanced: true,
+          runCompleted: false,
+          terminalRunStatus: "completed",
+        },
+      });
+      assert.equal(exactExplicitTerminalReplay.state, "accepted");
+      const afterCompound = (await database.sql<Array<{
+        effect_state: string;
+        effect_updated_at: string;
+        owner_state: string;
+        close_ref: string;
+        close_hash: string;
+        owner_updated_at: string;
+      }>>`
+        SELECT effect.state AS effect_state,effect.updated_at::text AS effect_updated_at,
+               owner.state AS owner_state,owner.close_ref,owner.close_hash,
+               owner.updated_at::text AS owner_updated_at
+          FROM runtime_completion_effects effect
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='mandatory-effect'
+           AND owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE effect.request_id=${requested.request.requestId}
+      `)[0]!;
+      assert.deepEqual({ ...afterCompound }, { ...beforeCompound });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("leaves a processing/executing completion unchanged when cancellation lacks Task 5 normalization", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-task5-terminal-normalization-required";
+      const requestId = "RCR_task5-normalization-required1";
+      const seeded = await seedManagedClaim(database, runId);
+      await publishCompletionInState(database, seeded, "processing", requestId);
+      const before = await task5TerminalSnapshot(database, requestId);
+      await assert.rejects(
+        database.sql.begin((transaction) => terminalizeRuntimeCompletionForRunInTransactionV1(
+          transaction,
+          {
+            requestId,
+            runId,
+            terminalRunStatus: "cancelled",
+            transitionTime: new Date("2026-07-13T12:05:00.000Z"),
+          },
+        )),
+        /RUN_TERMINAL_COMPLETION_STATE_OPEN:processing:executing/,
+      );
+      assert.deepEqual(await task5TerminalSnapshot(database, requestId), before);
     } finally {
       await database.cleanup();
     }

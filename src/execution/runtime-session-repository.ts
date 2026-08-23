@@ -1371,6 +1371,38 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
   return released;
 }
 
+export async function releaseRuntimeSessionForTerminalRunInTransactionV1(
+  sql: TransactionSql,
+  input: Readonly<{ sessionId: string; runId: string; transitionTime: Date }>,
+): Promise<string> {
+  const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
+  if (!input.runId.trim() || !Number.isFinite(input.transitionTime.getTime())) {
+    throw new Error("RUN_TERMINAL_RUNTIME_INPUT_INVALID");
+  }
+  const rows = await sql.unsafe<RuntimeSessionRow[]>(
+    `UPDATE runtime_sessions
+        SET state = 'released', released_at = COALESCE(released_at, $3),
+            state_version = state_version + 1, updated_at = $3
+      WHERE session_id = $1 AND run_id = $2 AND state = 'drained'
+      RETURNING *`,
+    [sessionId, input.runId, input.transitionTime],
+  );
+  if (rows.length !== 1 || rows[0]?.session_id !== sessionId) {
+    throw new Error("RUN_TERMINAL_RUNTIME_CAS_LOST");
+  }
+  const reread = await sql.unsafe<RuntimeSessionRow[]>(
+    "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
+    [sessionId],
+  );
+  if (
+    reread.length !== 1
+    || reread[0]?.session_id !== sessionId
+    || reread[0]?.run_id !== input.runId
+    || reread[0]?.state !== "released"
+  ) throw new Error("RUN_TERMINAL_RUNTIME_REREAD_INVALID");
+  return sessionId;
+}
+
 export async function releaseDrainedRuntimeSessionInTransaction(
   sql: TransactionSql,
   input: Readonly<{
