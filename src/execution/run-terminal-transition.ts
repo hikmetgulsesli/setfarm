@@ -875,7 +875,11 @@ export async function transitionRunToTerminalInTransaction(
         WHERE id = $1 RETURNING id,status`,
       [input.runId, input.status, JSON.stringify(meta), transitionTime],
     );
-    if (updatedRun.length !== 1 || updatedRun[0]?.status !== input.status) {
+    if (
+      updatedRun.length !== 1
+      || updatedRun[0]?.id !== input.runId
+      || updatedRun[0]?.status !== input.status
+    ) {
       throw new Error("RUN_TERMINAL_RUN_CAS_LOST");
     }
   }

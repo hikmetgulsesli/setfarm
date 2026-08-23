@@ -56,6 +56,7 @@ import {
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import {
@@ -183,9 +184,61 @@ async function seedActiveStory(database: Awaited<ReturnType<typeof createIsolate
   return { stepDbId, storyDbId, claimId };
 }
 
+async function publishMigration31FindingSet(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  findingSet: ReturnType<typeof createFindingSetV1>,
+): Promise<void> {
+  const ownerLedger = await database.sql<Array<{ owner_table: string | null }>>`
+    SELECT to_regclass('public.internal_production_owner_reservations_v1')::text AS owner_table
+  `;
+  assert.equal(ownerLedger[0]?.owner_table, null);
+  await database.sql.begin(async (transaction) => {
+    await transaction.unsafe(
+      `INSERT INTO finding_sets (
+         finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
+         source_sha, source_tree_hash, finding_ids, payload
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)`,
+      [
+        findingSet.findingSetHash,
+        findingSet.findingSetId,
+        findingSet.runId,
+        findingSet.storyId,
+        findingSet.packetHash,
+        findingSet.sliceHash,
+        findingSet.sourceRevision.sha,
+        findingSet.sourceRevision.treeHash,
+        JSON.stringify(findingSet.findings.map((finding) => finding.findingId)),
+        JSON.stringify(findingSet),
+      ],
+    );
+    for (const finding of findingSet.findings) {
+      await transaction.unsafe(
+        `INSERT INTO findings (
+           finding_set_hash, finding_id, origin, classification, invariant_ref,
+           status, source_fingerprint, payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
+        [
+          findingSet.findingSetHash,
+          finding.findingId,
+          finding.origin,
+          finding.classification,
+          finding.invariantRef,
+          finding.status,
+          hashCanonicalJson(finding.sourceLocators),
+          JSON.stringify(finding),
+        ],
+      );
+    }
+  });
+}
+
 async function seedActiveRecovery(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
-  input: Readonly<{ runId: string; runStatus: "failed" | "completed" }>,
+  input: Readonly<{
+    runId: string;
+    runStatus: "failed" | "completed";
+    findingPublication?: "current" | "migration31";
+  }>,
 ) {
   const releaseSha = "d".repeat(40);
   const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
@@ -230,7 +283,11 @@ async function seedActiveRecovery(
     }],
   });
   const findings = createFindingRecoveryRepository(database.sql);
-  await findings.putFindingSet(findingSet);
+  if (input.findingPublication === "migration31") {
+    await publishMigration31FindingSet(database, findingSet);
+  } else {
+    await findings.putFindingSet(findingSet);
+  }
   const opened = await findings.openRecoveryCase({
     runId: input.runId,
     storyId,
@@ -1617,6 +1674,161 @@ describe("canonical run terminal owner", () => {
     }
   });
 
+  it("rejects a terminal run CAS whose trigger rewrites the returned run identity", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-rewritten-cas";
+      const rewrittenRunId = `${runId}-rewritten`;
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: runId },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+        });
+      });
+      const { stepDbId, storyDbId, claimId } = await seedActiveStory(database, runId);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-rewritten-cas",
+        fenceToken: () => "6".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const sessionId = "RTS_run-terminal-rewritten-cas";
+      await sessions.reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-002",
+        claimId,
+        attemptId: attempt.attempt.attemptId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "feature-dev_developer",
+        runtimeKind: "local_process",
+        ownerInstanceId: "run-terminal-rewritten-cas-owner",
+      });
+      await database.sql`
+        UPDATE runtime_sessions
+           SET state='drained',drained_at=NOW(),updated_at=NOW()
+         WHERE session_id=${sessionId}
+      `;
+      const terminationRequestId = "RTR_run-terminal-rewritten-cas";
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId: terminationRequestId,
+        targetStatus: "failed",
+        diagnostic: "rewritten terminal CAS fixture",
+      });
+
+      const snapshot = async () => ({ ...(await database.sql<Array<{
+        run_rows: unknown;
+        step_rows: unknown;
+        story_rows: unknown;
+        claim_rows: unknown;
+        attempt_rows: unknown;
+        runtime_rows: unknown;
+        termination_rows: unknown;
+        owner_rows: unknown;
+        authority_rows: unknown;
+        head_row: unknown;
+        outbox_rows: unknown;
+      }>>`
+        SELECT
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM runs row WHERE row.id IN (${runId},${rewrittenRunId})) AS run_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM steps row WHERE row.run_id=${runId}) AS step_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM stories row WHERE row.run_id=${runId}) AS story_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM claim_log row WHERE row.run_id=${runId}) AS claim_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.attempt_id)
+             FROM execution_attempts row WHERE row.run_id=${runId}) AS attempt_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.session_id)
+             FROM runtime_sessions row WHERE row.run_id=${runId}) AS runtime_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.request_id)
+             FROM run_termination_requests row WHERE row.run_id=${runId}) AS termination_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.category,row.owner_key)
+             FROM internal_production_owner_reservations_v1 row) AS owner_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.authority_ref)
+             FROM internal_production_owner_admission_authorities_v1 row) AS authority_rows,
+          (SELECT to_jsonb(row) FROM internal_production_owner_admission_head_v1 row
+             WHERE row.singleton) AS head_row,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.outbox_id)
+             FROM operational_outbox row
+            WHERE row.aggregate_type='run' AND row.aggregate_id IN (${runId},${rewrittenRunId})) AS outbox_rows
+      `)[0]! });
+      const before = await snapshot();
+
+      await database.sql.unsafe("CREATE SEQUENCE task6_rewritten_run_cas_fired_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task6_rewrite_terminal_run_id_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task6_rewritten_run_cas_fired_v1');
+          NEW.id := NEW.id || '-rewritten';
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task6_rewrite_terminal_run_id_v1
+        BEFORE UPDATE OF status ON runs
+        FOR EACH ROW
+        WHEN (OLD.id='${runId}' AND NEW.status='failed')
+        EXECUTE FUNCTION task6_rewrite_terminal_run_id_v1()
+      `);
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(`
+            DO $$ DECLARE item record; BEGIN
+              FOR item IN
+                SELECT conrelid::regclass AS table_name,conname
+                  FROM pg_constraint
+                 WHERE contype='f' AND confrelid='runs'::regclass
+              LOOP
+                EXECUTE format(
+                  'ALTER TABLE %s ALTER CONSTRAINT %I DEFERRABLE INITIALLY DEFERRED',
+                  item.table_name,
+                  item.conname
+                );
+              END LOOP;
+            END $$
+          `);
+          await transaction.unsafe("SET CONSTRAINTS ALL DEFERRED");
+          await transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "failed",
+            diagnostic: "rewritten terminal CAS must fail closed",
+            drainedTerminationRequestId: terminationRequestId,
+          });
+          throw new Error("TEST_TASK6_REWRITTEN_RUN_CAS_ACCEPTED");
+        }),
+        (error: unknown) => {
+          assert.equal(error instanceof Error ? error.message : String(error), "RUN_TERMINAL_RUN_CAS_LOST");
+          return true;
+        },
+      );
+      const triggerState = (await database.sql<Array<{ is_called: boolean }>>`
+        SELECT is_called FROM task6_rewritten_run_cas_fired_v1
+      `)[0]!;
+      assert.equal(triggerState.is_called, true);
+      assert.deepEqual(await snapshot(), before);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("terminalizes a drained failure and rolls every owner mutation back when attempt close rejects", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -2268,7 +2480,11 @@ describe("canonical run terminal owner", () => {
     const database = await createIsolatedMigration31TestDatabase();
     try {
       const runId = "run-terminal-v19-binary-rollback";
-      const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
+      const fixture = await seedActiveRecovery(database, {
+        runId,
+        runStatus: "failed",
+        findingPublication: "migration31",
+      });
       const targetReleaseSha = "7".repeat(40);
       await rollbackCurrentToV21(database);
       await rollbackOperationalFailureCauseSealToV20(database.sql, {
