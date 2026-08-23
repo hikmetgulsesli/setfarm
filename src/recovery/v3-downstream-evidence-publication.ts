@@ -3,11 +3,15 @@ import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
   closeInternalProductionOwnerReservationV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1,
   type PgTransactionSql,
 } from "../db-pg.js";
+import { createInternalProductionFindingCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
 import {
   reserveAttemptInTransaction,
   createAttemptRepository,
@@ -34,6 +38,29 @@ import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
+
+type FindingPublicationParentRow = Readonly<{
+  finding_set_hash: string;
+  finding_set_id: string;
+  run_id: string;
+  story_id: string;
+  packet_hash: string;
+  slice_hash: string;
+  source_sha: string;
+  source_tree_hash: string;
+  finding_ids: unknown;
+  payload: unknown;
+}>;
+
+type FindingPublicationChildRow = Readonly<{
+  finding_id: string;
+  origin: string;
+  classification: string;
+  invariant_ref: string;
+  status: string;
+  source_fingerprint: string;
+  payload: unknown;
+}>;
 
 const BoundedIdentitySchema = z.string().min(1).max(500);
 const DEFAULT_DOWNSTREAM_EVIDENCE_LEASE_MS = 30 * 60 * 1_000;
@@ -391,58 +418,124 @@ async function putFindingSet(
   transaction: TransactionSql,
   findingSet: FindingSetV1,
 ): Promise<void> {
+  const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({
+    findingSetHash: findingSet.findingSetHash,
+  });
   await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [findingSet.findingSetHash]);
-  const inserted = await transaction.unsafe<Array<{ finding_set_hash: string }>>(
-    `INSERT INTO finding_sets (
-       finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
-       source_sha, source_tree_hash, finding_ids, payload
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)
-     ON CONFLICT (finding_set_hash) DO NOTHING
-     RETURNING finding_set_hash`,
-    [
-      findingSet.findingSetHash,
-      findingSet.findingSetId,
-      findingSet.runId,
-      findingSet.storyId,
-      findingSet.packetHash,
-      findingSet.sliceHash,
-      findingSet.sourceRevision.sha,
-      findingSet.sourceRevision.treeHash,
-      JSON.stringify(findingSet.findings.map((finding) => finding.findingId)),
-      JSON.stringify(findingSet),
-    ],
+  const expectedIds = findingSet.findings.map((finding) => finding.findingId);
+  const readParent = () => transaction.unsafe<FindingPublicationParentRow[]>(
+    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    [findingSet.findingSetHash],
   );
-  if (inserted.length === 0) {
-    const existing = await transaction.unsafe<Array<{ payload: unknown }>>(
-      "SELECT payload FROM finding_sets WHERE finding_set_hash = $1 FOR KEY SHARE",
-      [findingSet.findingSetHash],
-    );
-    if (
-      existing.length !== 1
-      || canonicalJsonStringify(FindingSetV1Schema.parse(existing[0]!.payload)) !== canonicalJsonStringify(findingSet)
-    ) {
-      fail("V3_DOWNSTREAM_EVIDENCE_FINDING_COLLISION", "stored finding set differs from its content hash");
+  const readChildren = () => transaction.unsafe<FindingPublicationChildRow[]>(
+    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id FOR UPDATE`,
+    [findingSet.findingSetHash, expectedIds],
+  );
+  const parentMatches = (row: FindingPublicationParentRow | undefined) => Boolean(row
+    && row.finding_set_hash === findingSet.findingSetHash
+    && row.finding_set_id === findingSet.findingSetId
+    && row.run_id === findingSet.runId
+    && row.story_id === findingSet.storyId
+    && row.packet_hash === findingSet.packetHash
+    && row.slice_hash === findingSet.sliceHash
+    && row.source_sha === findingSet.sourceRevision.sha
+    && row.source_tree_hash === findingSet.sourceRevision.treeHash
+    && canonicalJsonStringify(row.finding_ids) === canonicalJsonStringify(expectedIds)
+    && canonicalJsonStringify(FindingSetV1Schema.parse(row.payload)) === canonicalJsonStringify(findingSet));
+  const childrenMatch = (rows: readonly FindingPublicationChildRow[]) => rows.length === findingSet.findings.length
+    && rows.every((row, index) => {
+      const finding = findingSet.findings[index];
+      return finding !== undefined
+        && row.finding_id === finding.findingId
+        && row.origin === finding.origin
+        && row.classification === finding.classification
+        && row.invariant_ref === finding.invariantRef
+        && row.status === finding.status
+        && row.source_fingerprint === hashCanonicalJson(finding.sourceLocators)
+        && canonicalJsonStringify(row.payload) === canonicalJsonStringify(finding);
+    });
+  const beforeParent = await readParent();
+  const beforeChildren = await readChildren();
+  const beforeOwners = await transaction.unsafe<Array<{ producer_implementation_id: string; state: string }>>(
+    `SELECT producer_implementation_id,state FROM internal_production_owner_reservations_v1
+      WHERE category='finding' AND owner_key=$1`,
+    [findingSet.findingSetHash],
+  );
+  const adopting = beforeParent.length !== 0 || beforeChildren.length !== 0 || beforeOwners.length !== 0;
+  const allowedProducer = [
+    "a-finding-recovery-repository-v1",
+    "a-finding-v3-downstream-evidence-v1",
+    "a-finding-v3-evidence-only-v1",
+  ].includes(beforeOwners[0]?.producer_implementation_id ?? "");
+  if (adopting && (
+    beforeParent.length !== 1
+    || !parentMatches(beforeParent[0])
+    || !childrenMatch(beforeChildren)
+    || beforeOwners.length !== 1
+    || !allowedProducer
+    || !["bound", "closed"].includes(beforeOwners[0]?.state ?? "")
+  )) fail("V3_DOWNSTREAM_EVIDENCE_FINDING_OWNER_ADOPTION_INVALID", "stored finding publication is incomplete or crossed");
+  if (
+    adopting
+    && beforeOwners[0]?.producer_implementation_id !== "a-finding-v3-downstream-evidence-v1"
+  ) {
+    if (beforeOwners[0]?.state !== "closed") {
+      fail("V3_DOWNSTREAM_EVIDENCE_FINDING_OWNER_ADOPTION_INVALID", "cross-producer finding owner is not terminal");
     }
+    const closeInput = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+      transaction as PgTransactionSql,
+      { findingSetHash: findingSet.findingSetHash },
+    );
+    await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
     return;
   }
-  for (const finding of findingSet.findings) {
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    { producerImplementationId: "a-finding-v3-downstream-evidence-v1", ownerKey: identity.ownerKey },
+  );
+  if (!adopting) {
     await transaction.unsafe(
-      `INSERT INTO findings (
-         finding_set_hash, finding_id, origin, classification, invariant_ref,
-         status, source_fingerprint, payload
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
+      `INSERT INTO finding_sets (
+         finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
+         source_sha, source_tree_hash, finding_ids, payload
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::jsonb,$10::text::jsonb)`,
       [
-        findingSet.findingSetHash,
-        finding.findingId,
-        finding.origin,
-        finding.classification,
-        finding.invariantRef,
-        finding.status,
-        hashCanonicalJson(finding.sourceLocators),
-        JSON.stringify(finding),
+        findingSet.findingSetHash, findingSet.findingSetId, findingSet.runId,
+        findingSet.storyId, findingSet.packetHash, findingSet.sliceHash,
+        findingSet.sourceRevision.sha, findingSet.sourceRevision.treeHash,
+        JSON.stringify(expectedIds), JSON.stringify(findingSet),
       ],
     );
+    for (const finding of findingSet.findings) {
+      await transaction.unsafe(
+        `INSERT INTO findings (
+           finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb)`,
+        [
+          findingSet.findingSetHash, finding.findingId, finding.origin, finding.classification,
+          finding.invariantRef, finding.status, hashCanonicalJson(finding.sourceLocators),
+          JSON.stringify(finding),
+        ],
+      );
+    }
   }
+  const parent = await readParent();
+  const children = await readChildren();
+  if (parent.length !== 1 || !parentMatches(parent[0]) || !childrenMatch(children)) {
+    fail("V3_DOWNSTREAM_EVIDENCE_FINDING_OWNER_REREAD_INVALID", "stored finding publication is not byte exact");
+  }
+  await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+    canonicalOwnerIdentity: identity,
+  });
+  const closeInput = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+    transaction as PgTransactionSql,
+    { findingSetHash: findingSet.findingSetHash },
+  );
+  await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
 }
 
 function assertTerminalEvidence(input: Readonly<{

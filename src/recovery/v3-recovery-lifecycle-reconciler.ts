@@ -2057,11 +2057,10 @@ async function reconcileAttemptBound(
       "Attempt-bound delivery lacks its exact claim and attempt identity pair");
   }
 
-  // markRunning owns runtime -> attempt -> delivery. Use the same order so a
-  // live worker and this reconciler serialize instead of deadlocking.
-  const runtimes = await lockRuntimes(sql, candidate);
-  const attempts = await lockRelevantAttempts(sql, candidate);
-  const deliveries = await lockActiveDeliveries(sql, candidate);
+  const { runtimes, attempts, deliveries } = await lockAttemptBoundAuthorityChain(
+    sql,
+    candidate,
+  );
   if (deliveries.length === 0) {
     const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, snapshot.state, now, {
@@ -2238,6 +2237,19 @@ async function reconcileAttemptBound(
   return quarantine(candidate, delivery.state, now,
     "V3_RECOVERY_LIFECYCLE_ATTEMPT_RUNTIME_STATE_UNSAFE",
     `Delivery ${delivery.state} cannot be repaired from runtime state ${runtime.state}`);
+}
+
+async function lockAttemptBoundAuthorityChain(
+  sql: TransactionSql,
+  candidate: CandidateRow,
+) {
+  // Task 4 A-prime: markRunning owns runtime -> attempt -> delivery. Keep the
+  // whole ordered acquisition in one boundary so worker and reconciler cannot
+  // drift into an ABBA order while Task 7 adds terminal owner adoption.
+  const runtimes = await lockRuntimes(sql, candidate);
+  const attempts = await lockRelevantAttempts(sql, candidate);
+  const deliveries = await lockActiveDeliveries(sql, candidate);
+  return Object.freeze({ runtimes, attempts, deliveries });
 }
 
 async function reconcileCandidate(

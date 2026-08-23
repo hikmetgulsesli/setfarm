@@ -208,30 +208,72 @@ describe("operational outbox repository", () => {
         leaseMs: 5_000,
         now: new Date(START.getTime() + 2),
       });
-      const published = await repository.publish({
+      const publishInput = {
         outboxId: claimed!.outboxId,
         ownerInstanceId: "publisher-a",
         leaseToken: claimed!.leaseToken!,
         now: new Date(START.getTime() + 3),
-      });
+      } as const;
+      const publications = await Promise.all([
+        repository.publish(publishInput),
+        repository.publish(publishInput),
+      ]);
+      const published = publications[0]!;
+      assert.equal(publications[1]?.publishedAt, published.publishedAt);
+      assert.equal(publications[1]?.updatedAt, published.updatedAt);
       const replayed = await repository.enqueue({ ...input, now: new Date(START.getTime() + 4) });
       assert.equal(replayed.outboxId, published.outboxId);
       assert.equal(replayed.eventKey, input.eventKey);
       assert.equal(replayed.state, "published");
+      const deliveryOwners = await database.sql.unsafe<Array<{
+        owner_key: string;
+        state: string;
+        producer_implementation_id: string;
+      }>>(
+        `SELECT owner_key,state,producer_implementation_id
+           FROM internal_production_owner_reservations_v1
+          WHERE category='operational-delivery'
+            AND owner_key::jsonb->>'eventKey'=$1
+          ORDER BY owner_key::jsonb->>'consumer'`,
+        [input.eventKey],
+      );
+      assert.deepEqual(deliveryOwners.map((row) => ({
+        ...row,
+        owner_key: JSON.parse(row.owner_key),
+      })), [
+        {
+          owner_key: {
+            schema: "setfarm.internal-production-operational-event-key-consumer.v1",
+            eventKey: input.eventKey,
+            consumer: "jsonl",
+          },
+          state: "bound",
+          producer_implementation_id: "a-operational-delivery-v1",
+        },
+        {
+          owner_key: {
+            schema: "setfarm.internal-production-operational-event-key-consumer.v1",
+            eventKey: input.eventKey,
+            consumer: "webhook",
+          },
+          state: "bound",
+          producer_implementation_id: "a-operational-delivery-v1",
+        },
+      ]);
       assert.equal((await repository.list({ state: "published" })).length, 1);
       assert.equal(await repository.claimNext({
         ownerInstanceId: "publisher-b",
         now: new Date(START.getTime() + 20_000),
       }), undefined);
-      await assert.rejects(
-        repository.publish({
-          outboxId: claimed!.outboxId,
-          ownerInstanceId: "publisher-a",
-          leaseToken: claimed!.leaseToken!,
-          now: new Date(START.getTime() + 4),
-        }),
-        /OPERATIONAL_OUTBOX_PUBLISH_FENCE_LOST/,
-      );
+      const publicationReplay = await repository.publish({
+        outboxId: claimed!.outboxId,
+        ownerInstanceId: "publisher-a",
+        leaseToken: claimed!.leaseToken!,
+        now: new Date(START.getTime() + 4),
+      });
+      assert.equal(publicationReplay.state, "published");
+      assert.equal(publicationReplay.publishedAt, published.publishedAt);
+      assert.equal(publicationReplay.updatedAt, published.updatedAt);
     } finally {
       await database.cleanup();
     }

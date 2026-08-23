@@ -1246,6 +1246,23 @@ describe("v3 evidence-only recovery worker", () => {
     const attempt = await createAttemptRepository(database.sql).findById(result.attemptId);
     assert.equal(attempt?.disposition, "no_progress");
     assert.equal(attempt?.evidenceRefs.filter((ref) => ref.startsWith("setfarm://finding-set/")).length, 1);
+    const findingSetHash = attempt?.evidenceRefs
+      .find((ref) => ref.startsWith("setfarm://finding-set/"))
+      ?.slice("setfarm://finding-set/".length);
+    assert.ok(findingSetHash);
+    const findingOwner = await database.sql.unsafe<Array<{
+      state: string;
+      producer_implementation_id: string;
+    }>>(
+      `SELECT state,producer_implementation_id
+         FROM internal_production_owner_reservations_v1
+        WHERE category='finding' AND owner_key=$1`,
+      [findingSetHash],
+    );
+    assert.deepEqual(findingOwner.map((row) => ({ ...row })), [{
+      state: "closed",
+      producer_implementation_id: "a-finding-v3-evidence-only-v1",
+    }]);
     const delivery = await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatch.dispatchId);
     assert.equal(delivery?.state, "failed");
     const cases = await database.sql.unsafe<Array<{ status: string; used_evidence_only: number }>>(

@@ -223,6 +223,8 @@ describe("v3 downstream evidence publication", () => {
       qa_fix_count: number;
       evidence_bundle_count: number;
       finding_set_count: number;
+      finding_owner_state: string;
+      finding_owner_implementation: string;
     }>>(
       `SELECT
          (SELECT COUNT(*)::integer FROM execution_attempts WHERE run_id = $1) AS attempt_count,
@@ -245,14 +247,18 @@ describe("v3 downstream evidence publication", () => {
          run_row.context AS run_context,
          (SELECT COUNT(*)::integer FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%') AS qa_fix_count,
          (SELECT COUNT(*)::integer FROM evidence_bundles WHERE run_id = $1) AS evidence_bundle_count,
-         (SELECT COUNT(*)::integer FROM finding_sets WHERE run_id = $1) AS finding_set_count
+         (SELECT COUNT(*)::integer FROM finding_sets WHERE run_id = $1) AS finding_set_count,
+         (SELECT state FROM internal_production_owner_reservations_v1
+           WHERE category='finding' AND owner_key=$5) AS finding_owner_state,
+         (SELECT producer_implementation_id FROM internal_production_owner_reservations_v1
+           WHERE category='finding' AND owner_key=$5) AS finding_owner_implementation
        FROM execution_attempts attempt
        JOIN claim_log child ON child.id = attempt.claim_id
        JOIN claim_log parent ON parent.id = $2
        JOIN stories story ON story.id = $3
        JOIN runs run_row ON run_row.id = $1
        WHERE attempt.attempt_id = $4`,
-      [value.runId, value.parentClaimId, value.storyDbId, completed.attemptId],
+      [value.runId, value.parentClaimId, value.storyDbId, completed.attemptId, findingSet.findingSetHash],
     );
     assert.deepEqual({ ...rows[0] }, {
       attempt_count: 1,
@@ -274,6 +280,8 @@ describe("v3 downstream evidence publication", () => {
       qa_fix_count: 0,
       evidence_bundle_count: 1,
       finding_set_count: 1,
+      finding_owner_state: "closed",
+      finding_owner_implementation: "a-finding-v3-downstream-evidence-v1",
     });
   });
 
@@ -337,6 +345,7 @@ describe("v3 downstream evidence publication", () => {
       sidecars: string;
       evidence_count: number;
       finding_count: number;
+      finding_owner_count: number;
     }>>(
       `SELECT to_jsonb(attempt)::text AS attempt_row,
               to_jsonb(claim)::text AS claim_row,
@@ -345,11 +354,13 @@ describe("v3 downstream evidence publication", () => {
                 WHERE (owner.category='execution-attempt' AND owner.owner_key=attempt.attempt_id)
                    OR (owner.category='claim' AND owner.owner_key=claim.id::text)) AS sidecars,
               (SELECT count(*)::integer FROM evidence_bundles WHERE run_id=$1) AS evidence_count,
-              (SELECT count(*)::integer FROM finding_sets WHERE run_id=$1) AS finding_count
+              (SELECT count(*)::integer FROM finding_sets WHERE run_id=$1) AS finding_count,
+              (SELECT count(*)::integer FROM internal_production_owner_reservations_v1
+                WHERE category='finding' AND owner_key=$3) AS finding_owner_count
          FROM execution_attempts attempt
          JOIN claim_log claim ON claim.id=attempt.claim_id
         WHERE attempt.attempt_id=$2`,
-      [value.runId, running.attemptId],
+      [value.runId, running.attemptId, findingSet.findingSetHash],
     ))[0]!;
     const before = { ...await snapshot() };
     await database.sql.unsafe(`

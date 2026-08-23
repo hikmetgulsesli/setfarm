@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
@@ -74,6 +75,47 @@ const STORY_ADMISSION_DRAIN_EVIDENCE = {
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/v3-recovery-lifecycle-story-admission-drain"],
 };
+
+function assertTask7RecoveryAuthoritySourceBoundary(
+  workerSource: string,
+  reconcilerSource: string,
+): void {
+  const combined = `${workerSource}\n${reconcilerSource}`;
+  for (const prohibited of [
+    "createInternalProductionFindingCanonicalOwnerIdentityV1",
+    "FINDING_OWNER_PRODUCER_IMPLEMENTATION",
+    "reserveInternalProductionExecutionAttemptV1",
+  ]) {
+    assert.equal(
+      combined.includes(prohibited),
+      false,
+      `${prohibited} must remain owned by the canonical publication boundary`,
+    );
+  }
+  assert.doesNotMatch(
+    combined,
+    /ORDER\s+BY\s+(?:finding_set\.)?(?:created_at|updated_at)\s+DESC/i,
+    "worker and reconciler must never infer authority from the latest finding set",
+  );
+  assert.doesNotMatch(
+    combined,
+    /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:finding_sets|findings)\b/i,
+    "worker and reconciler must not mutate canonical finding rows",
+  );
+  assert.match(workerSource, /coordinateTerminalEvidenceOnlyAttempt\(coordinator, attempt,/);
+
+  const lockBoundary = reconcilerSource.match(
+    /async function lockAttemptBoundAuthorityChain\([\s\S]*?return Object\.freeze\(\{ runtimes, attempts, deliveries \}\);\n\}/,
+  )?.[0];
+  assert.ok(lockBoundary, "attempt-bound reconciliation must retain one code-owned lock boundary");
+  const runtimeLock = lockBoundary.indexOf("lockRuntimes(sql, candidate)");
+  const attemptLock = lockBoundary.indexOf("lockRelevantAttempts(sql, candidate)");
+  const deliveryLock = lockBoundary.indexOf("lockActiveDeliveries(sql, candidate)");
+  assert.ok(
+    runtimeLock >= 0 && runtimeLock < attemptLock && attemptLock < deliveryLock,
+    "Task 4 A-prime lock order must remain runtime -> attempt -> delivery",
+  );
+}
 
 function finding(runId: string, storyId: string) {
   return createFindingSetV1({
@@ -495,6 +537,42 @@ async function seedCanonicalStoryAdmission(
 }
 
 describe("v3 recovery lifecycle reconciler", () => {
+  it("retains terminal-only evidence coordination, finding isolation, and the Task 4 A-prime lock order", async () => {
+    const [workerSource, reconcilerSource] = await Promise.all([
+      readFile(new URL("../../src/recovery/v3-evidence-only-worker.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../src/recovery/v3-recovery-lifecycle-reconciler.ts", import.meta.url), "utf8"),
+    ]);
+    assert.doesNotThrow(() => assertTask7RecoveryAuthoritySourceBoundary(workerSource, reconcilerSource));
+
+    const mutations: ReadonlyArray<readonly [string, string]> = [
+      [`${workerSource}\ncreateInternalProductionFindingCanonicalOwnerIdentityV1`, reconcilerSource],
+      [`${workerSource}\nreserveInternalProductionExecutionAttemptV1`, reconcilerSource],
+      [`${workerSource}\nSELECT * FROM finding_sets ORDER BY created_at DESC`, reconcilerSource],
+      [`${workerSource}\nUPDATE finding_sets SET status = 'closed'`, reconcilerSource],
+      [`${workerSource}\nUPDATE findings SET status = 'closed'`, reconcilerSource],
+      [
+        workerSource.replace(
+          "coordinateTerminalEvidenceOnlyAttempt(coordinator, attempt,",
+          "coordinator.coordinate(",
+        ),
+        reconcilerSource,
+      ],
+      [
+        workerSource,
+        reconcilerSource.replaceAll(
+          "const runtimes = await lockRuntimes(sql, candidate);\n  const attempts = await lockRelevantAttempts(sql, candidate);\n  const deliveries = await lockActiveDeliveries(sql, candidate);",
+          "const deliveries = await lockActiveDeliveries(sql, candidate);\n  const attempts = await lockRelevantAttempts(sql, candidate);\n  const runtimes = await lockRuntimes(sql, candidate);",
+        ),
+      ],
+    ];
+    for (const [mutatedWorker, mutatedReconciler] of mutations) {
+      assert.throws(() => assertTask7RecoveryAuthoritySourceBoundary(
+        mutatedWorker,
+        mutatedReconciler,
+      ));
+    }
+  });
+
   let database: TestDatabase;
   let sequence = 0;
 
@@ -3163,15 +3241,14 @@ describe("v3 recovery lifecycle reconciler", () => {
     await database.sql`
       UPDATE runtime_sessions
          SET state = 'running',
-             created_at = (
-               SELECT claim.claimed_at + interval '1 second'
-                 FROM claim_log claim
-                WHERE claim.id = runtime_sessions.claim_id
-             ),
-             started_at = ${new Date(leaseAt.getTime() + 400)},
-             heartbeat_at = ${new Date(leaseAt.getTime() + 400)},
-             updated_at = ${new Date(leaseAt.getTime() + 400)}
-       WHERE session_id = ${sessionId} AND state = 'reserved'
+             created_at = claim.claimed_at + interval '1 second',
+             started_at = claim.claimed_at + interval '1500 milliseconds',
+             heartbeat_at = claim.claimed_at + interval '1500 milliseconds',
+             updated_at = claim.claimed_at + interval '1500 milliseconds'
+        FROM claim_log claim
+       WHERE session_id = ${sessionId}
+         AND state = 'reserved'
+         AND claim.id = runtime_sessions.claim_id
     `;
     await database.sql`
       UPDATE recovery_dispatch_deliveries delivery

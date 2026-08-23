@@ -158,6 +158,10 @@ export type V3EvidenceOnlyWorkerOptions = Readonly<{
   ownerLeaseMs?: number;
 }>;
 
+type V3RecoveryCoordinateInput = Parameters<
+  ReturnType<typeof createV3RecoveryCoordinator>["coordinate"]
+>[0];
+
 type CandidateRow = Readonly<{
   workflow_id: string;
   run_id: string;
@@ -965,6 +969,23 @@ async function assertClaimClosed(sql: Sql, lease: V3EvidenceOnlyLeaseV1, attempt
   }
 }
 
+async function coordinateTerminalEvidenceOnlyAttempt(
+  coordinator: ReturnType<typeof createV3RecoveryCoordinator>,
+  attempt: ExecutionAttemptV1,
+  input: V3RecoveryCoordinateInput,
+): Promise<V3RecoveryCoordinatorResult> {
+  // Recovery delivery and m33 status transitions consume a completed attempt;
+  // they never acquire finding ownership or become an alternate attempt-birth
+  // path. Keep this terminal gate shared by fresh execution and ACK-loss replay.
+  if (!terminalAttemptDisposition(attempt.disposition)) {
+    fail(
+      "V3_EVIDENCE_ONLY_COORDINATOR_ATTEMPT_NOT_TERMINAL",
+      "recovery coordination requires one durably terminal evidence-only attempt",
+    );
+  }
+  return coordinator.coordinate(input);
+}
+
 export function createV3EvidenceOnlyRecoveryWorker(
   sql: Sql,
   dependencies: V3EvidenceOnlyWorkerDependencies,
@@ -1182,7 +1203,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
       phase = "recovery_coordination";
       const bundleHash = computeEvidenceBundleHash(bundle);
       const failureClass = classifyV3EvidenceFailure(bundle);
-      const coordinated = await coordinator.coordinate({
+      const coordinated = await coordinateTerminalEvidenceOnlyAttempt(coordinator, attempt, {
         kind: "recovery_evidence",
         recoveryCaseId: lease.recoveryCaseId,
         revisionId: lease.revisionId,
