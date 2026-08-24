@@ -2835,7 +2835,7 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
     });
     const readinessModulePath = path.join(
       fixture.root,
-      "src/internal-production/baseline-spawner-startup-admission-v1.js",
+      "src/internal-production/baseline-spawner-startup-admission-v1.ts",
     );
     writeFileSync(readinessModulePath, `
 const deepFreeze = (value) => {
