@@ -1788,6 +1788,11 @@ describe("contract spine migration journal", () => {
       ));
     assert.deepEqual(seamOccurrences, [
       {
+        symbol: seamSymbols[1],
+        file: "src/db-pg.ts",
+        count: 2,
+      },
+      {
         symbol: seamSymbols[0],
         file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
         count: 1,
@@ -1795,6 +1800,11 @@ describe("contract spine migration journal", () => {
       {
         symbol: seamSymbols[1],
         file: "src/db/contract-spine-migrations.ts",
+        count: 1,
+      },
+      {
+        symbol: seamSymbols[1],
+        file: "tests/execution-attempts/migrations.test.ts",
         count: 1,
       },
       {
@@ -1810,7 +1820,7 @@ describe("contract spine migration journal", () => {
       {
         symbol: seamSymbols[0],
         file: "tests/internal-production/owner-admission-v1.test.ts",
-        count: 1,
+        count: 2,
       },
       {
         symbol: seamSymbols[1],
