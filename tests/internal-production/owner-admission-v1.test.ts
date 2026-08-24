@@ -61,9 +61,352 @@ const GIT_A = "a".repeat(40);
 const GIT_B = "b".repeat(40);
 const TERMINATION_REQUEST_ID_PATTERN = /^RTR_[A-Za-z0-9-]{16,160}$/;
 
+type P4DeferredV1<T> = Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}>;
+
+function p4DeferredV1<T>(): P4DeferredV1<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return Object.freeze({ promise, resolve, reject });
+}
+
+async function loadP4Migration32TransactionKernelV1(dependencies: Readonly<{
+  sql: Readonly<{ begin: (...args: any[]) => Promise<unknown> }>;
+}>): Promise<Record<string, (...args: any[]) => any>> {
+  const database = await import(
+    `../../src/db-pg.ts?p4-transaction=${Date.now()}-${Math.random()}`
+  );
+  const sql = database.getSql() as unknown as { begin: (...args: any[]) => Promise<unknown> };
+  sql.begin = dependencies.sql.begin;
+  return database as unknown as Record<string, (...args: any[]) => any>;
+}
+
 function assertCanonicalTerminationRequestId(requestId: string): void {
   assert.match(requestId, TERMINATION_REQUEST_ID_PATTERN);
 }
+
+test("P4 transaction handle locks exact v31 and hides tentative result", async () => {
+  const [guarded, checksumModule, digests, v31] = await Promise.all([
+    import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js"),
+    import("../../src/db/contract-spine-migration-checksum.js"),
+    import("../../src/db/contract-spine-migration-digests.generated.js"),
+    import("../../src/db/operational-failure-cause-authority-v3-migration.js"),
+  ]);
+  const v31Checksum = checksumModule.computeContractSpineMigrationChecksumV1({
+    version: 31,
+    name: "031_operational_failure_cause_authority_v3",
+    statements: v31.OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS,
+    implementationDigest: digests.CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[31],
+  });
+  const authenticEvidence = guarded.mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1({
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1",
+    purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
+    currentEntryOperationRef: "setfarm://tests/p4/operation",
+    currentEntryOperationHash: SHA_A,
+    sealedSpawnerAdmissionRef: "setfarm://tests/p4/sealed",
+    sealedSpawnerAdmissionHash: SHA_A,
+    postPredecessorTerminationLegacyZeroOwnerObservationRef: "setfarm://tests/p4/postzero",
+    postPredecessorTerminationLegacyZeroOwnerObservationHash: SHA_A,
+    authorityV3Migration31AuditRef: "setfarm://tests/p4/v31-audit",
+    authorityV3Migration31AuditHash: SHA_A,
+    pendingBootstrapHandoffMigrationRef: "setfarm://tests/p4/pending-32",
+    pendingBootstrapHandoffMigrationHash: SHA_A,
+    cleanSetfarmSourceSha: GIT_A,
+    cleanSetfarmTreeHash: GIT_A,
+    cleanSetfarmBuildHash: SHA_A,
+    migrationSourceSha: GIT_A,
+    freshLegacyZeroOwnerObservationRef: "setfarm://tests/p4/fresh-zero",
+    freshLegacyZeroOwnerObservationHash: SHA_A,
+    preManifestMigration32AuthorizationRef: "setfarm://tests/p4/authorization",
+    preManifestMigration32AuthorizationHash: SHA_A,
+    preManifestMigration32AuthorizationConsumptionRef: "setfarm://tests/p4/consumption",
+    preManifestMigration32AuthorizationConsumptionHash: SHA_A,
+  });
+  const tentativeResult = Object.freeze({
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-apply.v1",
+    status: "applied",
+  });
+
+  function fakeTransaction(input: Readonly<{
+    rows?: readonly Readonly<Record<string, unknown>>[];
+    holdLock?: boolean;
+    commitError?: Error;
+    commitAck?: P4DeferredV1<void>;
+    backendLoss?: P4DeferredV1<void>;
+    stageError?: Error;
+  }> = {}) {
+    const lockStarted = p4DeferredV1<void>();
+    const lockRelease = p4DeferredV1<void>();
+    if (!input.holdLock) lockRelease.resolve(undefined);
+    const events: string[] = [];
+    let commits = 0;
+    let rollbacks = 0;
+    let savepoints = 0;
+    let stagedResidue = false;
+    let durableResidue = false;
+    const transaction = Object.assign(
+      async (strings: TemplateStringsArray) => {
+        const normalized = strings.join("?").replace(/\s+/g, " ").trim();
+        events.push(normalized);
+        if (/WHERE version = 31 FOR UPDATE$/.test(normalized)) {
+          lockStarted.resolve(undefined);
+          await lockRelease.promise;
+          return input.rows ?? [{
+            version: 31,
+            name: "031_operational_failure_cause_authority_v3",
+            checksum: v31Checksum,
+            state: "applied",
+          }];
+        }
+        return [];
+      },
+      {
+        unsafe: async (query: string) => {
+          const normalized = query.replace(/\s+/g, " ").trim();
+          events.push(normalized);
+          if (/WHERE version = 31 FOR UPDATE$/.test(normalized)) {
+            lockStarted.resolve(undefined);
+            await lockRelease.promise;
+            return input.rows ?? [{
+              version: 31,
+              name: "031_operational_failure_cause_authority_v3",
+              checksum: "expected-v31-checksum",
+              state: "applied",
+            }];
+          }
+          return [];
+        },
+        savepoint: async (callback: (sql: unknown) => Promise<unknown>) => {
+          savepoints += 1;
+          stagedResidue = true;
+          if (input.stageError) {
+            stagedResidue = false;
+            throw input.stageError;
+          }
+          void callback;
+          return tentativeResult;
+        },
+      },
+    );
+    const sql = {
+      begin: async (callback: (sql: unknown) => Promise<unknown>) => {
+        try {
+          const callbackResult = Promise.resolve(callback(transaction));
+          const result = input.backendLoss
+            ? await Promise.race([
+                callbackResult,
+                input.backendLoss.promise.then(() => {
+                  throw new Error("P4_FAKE_BACKEND_LOSS");
+                }),
+              ])
+            : await callbackResult;
+          if (input.commitAck) await input.commitAck.promise;
+          if (input.commitError) throw input.commitError;
+          durableResidue = stagedResidue;
+          stagedResidue = false;
+          commits += 1;
+          return result;
+        } catch (error) {
+          stagedResidue = false;
+          rollbacks += 1;
+          throw error;
+        }
+      },
+    };
+    return Object.freeze({
+      sql,
+      events,
+      lockStarted,
+      lockRelease,
+      counts: () => Object.freeze({ commits, rollbacks, savepoints, stagedResidue, durableResidue }),
+    });
+  }
+
+  const commitAck = p4DeferredV1<void>();
+  const held = fakeTransaction({ holdLock: true, commitAck });
+  const api = await loadP4Migration32TransactionKernelV1(held);
+  let openSettled = false;
+  const opening = api.openInternalProductionCurrentEntryMigration32TransactionV1()
+    .finally(() => { openSettled = true; });
+  await held.lockStarted.promise;
+  assert.equal(openSettled, false, "handle escaped before exact v31 FOR UPDATE resolved");
+  held.lockRelease.resolve(undefined);
+  const handle = await opening;
+  assert.deepEqual(Reflect.ownKeys(handle), ["schema"]);
+  assert.equal(handle.schema, "setfarm.internal-production-current-entry-migration-32-transaction.v1");
+  assert.ok(Object.isFrozen(handle));
+
+  assert.equal(
+    await api.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+      handle,
+      authenticEvidence,
+    ),
+    undefined,
+  );
+  assert.deepEqual(held.counts(), {
+    commits: 0, rollbacks: 0, savepoints: 1, stagedResidue: true, durableResidue: false,
+  });
+  await assert.rejects(
+    api.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+      structuredClone(handle),
+      authenticEvidence,
+    ),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID/,
+  );
+  await assert.rejects(
+    api.stageInternalProductionCurrentEntryMigration32InTransactionV1(handle, authenticEvidence),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID/,
+  );
+  const otherApi = await loadP4Migration32TransactionKernelV1(fakeTransaction());
+  await assert.rejects(
+    otherApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(handle, authenticEvidence),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID/,
+  );
+
+  let commitSettled = false;
+  const committing = api.commitInternalProductionCurrentEntryMigration32TransactionV1(handle)
+    .finally(() => { commitSettled = true; });
+  await Promise.resolve();
+  assert.equal(commitSettled, false, "tentative result escaped before outer commit acknowledgement");
+  await assert.rejects(
+    api.abortInternalProductionCurrentEntryMigration32TransactionV1(handle),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID/,
+  );
+  commitAck.resolve(undefined);
+  assert.equal(await committing, tentativeResult);
+  assert.deepEqual(held.counts(), {
+    commits: 1, rollbacks: 0, savepoints: 1, stagedResidue: false, durableResidue: true,
+  });
+  await assert.rejects(
+    api.abortInternalProductionCurrentEntryMigration32TransactionV1(handle),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID|INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID/,
+  );
+
+  const aborted = fakeTransaction();
+  const abortApi = await loadP4Migration32TransactionKernelV1(aborted);
+  const abortedHandle = await abortApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await abortApi.abortInternalProductionCurrentEntryMigration32TransactionV1(abortedHandle);
+  assert.deepEqual(aborted.counts(), {
+    commits: 0, rollbacks: 1, savepoints: 0, stagedResidue: false, durableResidue: false,
+  });
+  await assert.rejects(
+    abortApi.commitInternalProductionCurrentEntryMigration32TransactionV1(abortedHandle),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID|INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID/,
+  );
+
+  const replay = fakeTransaction();
+  const replayApi = await loadP4Migration32TransactionKernelV1(replay);
+  const clonedEvidenceHandle = await replayApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await assert.rejects(
+    replayApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+      clonedEvidenceHandle,
+      structuredClone(authenticEvidence),
+    ),
+    /rejects unauthenticated or cloned evidence/,
+  );
+  assert.deepEqual(replay.counts(), {
+    commits: 0, rollbacks: 1, savepoints: 0, stagedResidue: false, durableResidue: false,
+  });
+  const identicalReplayHandle = await replayApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await replayApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+    identicalReplayHandle,
+    authenticEvidence,
+  );
+  await replayApi.abortInternalProductionCurrentEntryMigration32TransactionV1(
+    identicalReplayHandle,
+  );
+  assert.deepEqual(replay.counts(), {
+    commits: 0, rollbacks: 2, savepoints: 1, stagedResidue: false, durableResidue: false,
+  });
+  const committedReplayHandle = await replayApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await replayApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+    committedReplayHandle,
+    authenticEvidence,
+  );
+  assert.equal(
+    await replayApi.commitInternalProductionCurrentEntryMigration32TransactionV1(
+      committedReplayHandle,
+    ),
+    tentativeResult,
+  );
+  assert.deepEqual(replay.counts(), {
+    commits: 1, rollbacks: 2, savepoints: 2, stagedResidue: false, durableResidue: true,
+  });
+
+  const invalidV31Rows = [
+    [],
+    [{ version: 31, name: "031_operational_failure_cause_authority_v3", checksum: v31Checksum, state: "adopted" }],
+    [{ version: 31, name: "wrong", checksum: v31Checksum, state: "applied" }],
+    [{ version: 31, name: "031_operational_failure_cause_authority_v3", checksum: "wrong", state: "applied" }],
+    [{ version: 30, name: "031_operational_failure_cause_authority_v3", checksum: v31Checksum, state: "applied" }],
+  ] as const;
+  for (const rows of invalidV31Rows) {
+    const invalid = fakeTransaction({ rows });
+    const invalidApi = await loadP4Migration32TransactionKernelV1(invalid);
+    await assert.rejects(
+      invalidApi.openInternalProductionCurrentEntryMigration32TransactionV1(),
+      /RUN_PERSISTENCE_MIGRATION_31_FENCE_(?:UNAVAILABLE|DRIFT)/,
+    );
+    assert.deepEqual(invalid.counts(), {
+      commits: 0, rollbacks: 1, savepoints: 0, stagedResidue: false, durableResidue: false,
+    });
+  }
+
+  const stageFailure = fakeTransaction({ stageError: new Error("P4_FAKE_STAGE_FAILURE") });
+  const stageFailureApi = await loadP4Migration32TransactionKernelV1(stageFailure);
+  const stageFailureHandle = await stageFailureApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await assert.rejects(
+    stageFailureApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+      stageFailureHandle,
+      authenticEvidence,
+    ),
+    /P4_FAKE_STAGE_FAILURE/,
+  );
+  assert.deepEqual(stageFailure.counts(), {
+    commits: 0, rollbacks: 1, savepoints: 1, stagedResidue: false, durableResidue: false,
+  });
+  await assert.rejects(
+    stageFailureApi.commitInternalProductionCurrentEntryMigration32TransactionV1(stageFailureHandle),
+    /INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID|INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID/,
+  );
+
+  const commitFailure = fakeTransaction({ commitError: new Error("P4_FAKE_COMMIT_FAILURE") });
+  const commitFailureApi = await loadP4Migration32TransactionKernelV1(commitFailure);
+  const commitFailureHandle = await commitFailureApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await commitFailureApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(
+    commitFailureHandle,
+    authenticEvidence,
+  );
+  await assert.rejects(
+    commitFailureApi.commitInternalProductionCurrentEntryMigration32TransactionV1(commitFailureHandle),
+    /P4_FAKE_COMMIT_FAILURE/,
+  );
+  assert.deepEqual(commitFailure.counts(), {
+    commits: 0, rollbacks: 1, savepoints: 1, stagedResidue: false, durableResidue: false,
+  });
+
+  const backendLoss = p4DeferredV1<void>();
+  const lost = fakeTransaction({ backendLoss });
+  const lostApi = await loadP4Migration32TransactionKernelV1(lost);
+  const lostHandle = await lostApi.openInternalProductionCurrentEntryMigration32TransactionV1();
+  await lostApi.stageInternalProductionCurrentEntryMigration32InTransactionV1(lostHandle, authenticEvidence);
+  backendLoss.resolve(undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(
+    lostApi.commitInternalProductionCurrentEntryMigration32TransactionV1(lostHandle),
+    /P4_FAKE_BACKEND_LOSS/,
+  );
+  assert.deepEqual(lost.counts(), {
+    commits: 0, rollbacks: 1, savepoints: 1, stagedResidue: false, durableResidue: false,
+  });
+});
 
 type Task8ExpiryOwnerCloseWitnessV1 = Readonly<{
   category: string;

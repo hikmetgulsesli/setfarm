@@ -8,12 +8,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeConfig } from "./runtime-config.js";
 import {
+  applyBootstrapMainClaimHandoffGuardedMigration32V1,
   applyContractSpineMigrations,
   auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
   verifyContractSpineMigrations,
+  type BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1,
 } from "./db/contract-spine-migrations.js";
+import type {
+  BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+} from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import { computeContractSpineMigrationChecksumV1 } from "./db/contract-spine-migration-checksum.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./db/contract-spine-migration-digests.generated.js";
 import { OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS } from "./db/operational-failure-cause-authority-v3-migration.js";
@@ -2965,6 +2970,239 @@ export async function lockInternalProductionWorkflowRunInsertionFenceV1(
     || row.state !== "applied"
   ) throw new Error("RUN_PERSISTENCE_MIGRATION_31_FENCE_DRIFT");
 }
+
+// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN
+export type InternalProductionCurrentEntryMigration32TransactionV1 = Readonly<{
+  schema: "setfarm.internal-production-current-entry-migration-32-transaction.v1";
+}>;
+
+type InternalProductionMigration32TransactionPhaseV1 =
+  | "locked_v31"
+  | "staged"
+  | "committing"
+  | "terminal";
+
+type InternalProductionMigration32TransactionDispositionV1 = "commit" | "abort";
+type InternalProductionMigration32TransactionSettlementV1 =
+  | Readonly<{ status: "pending" }>
+  | Readonly<{ status: "committed" }>
+  | Readonly<{ status: "rejected"; error: unknown }>;
+
+type InternalProductionMigration32TransactionStateV1 = {
+  transaction: postgres.TransactionSql | null;
+  phase: InternalProductionMigration32TransactionPhaseV1;
+  stageInFlight: boolean;
+  tentativeResult: BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1 | null;
+  releaseDisposition: (disposition: InternalProductionMigration32TransactionDispositionV1) => void;
+  settlement: InternalProductionMigration32TransactionSettlementV1;
+  settlementPromise: Promise<void>;
+};
+
+const INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_SCHEMA_V1 =
+  "setfarm.internal-production-current-entry-migration-32-transaction.v1" as const;
+const INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_ABORT_V1 = Symbol(
+  "setfarm.internal-production-current-entry-migration-32-transaction-abort.v1",
+);
+const internalProductionMigration32TransactionsV1 = new WeakMap<
+  object,
+  InternalProductionMigration32TransactionStateV1
+>();
+const applyInternalProductionBaselineBootstrapHandoffMigrationV1 =
+  applyBootstrapMainClaimHandoffGuardedMigration32V1;
+
+function createInternalProductionMigration32DeferredV1<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return Object.freeze({ promise, resolve, reject });
+}
+
+function requireInternalProductionMigration32TransactionStateV1(
+  transaction: InternalProductionCurrentEntryMigration32TransactionV1,
+): InternalProductionMigration32TransactionStateV1 {
+  if (!transaction || typeof transaction !== "object") {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID");
+  }
+  const state = internalProductionMigration32TransactionsV1.get(transaction);
+  if (!state) {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INVALID");
+  }
+  return state;
+}
+
+function createInternalProductionMigration32HeldSqlFacadeV1(
+  transaction: postgres.TransactionSql,
+): postgres.Sql {
+  return new Proxy(transaction as unknown as postgres.Sql, {
+    apply(_target, _thisArgument, argumentsList) {
+      return Reflect.apply(
+        transaction as unknown as (...args: unknown[]) => unknown,
+        transaction,
+        argumentsList,
+      );
+    },
+    get(target, property) {
+      if (property === "begin") {
+        return (callback: (sql: postgres.TransactionSql) => unknown) =>
+          transaction.savepoint(callback);
+      }
+      const value = Reflect.get(target as unknown as object, property, transaction);
+      return typeof value === "function" ? value.bind(transaction) : value;
+    },
+  });
+}
+
+export async function openInternalProductionCurrentEntryMigration32TransactionV1():
+Promise<InternalProductionCurrentEntryMigration32TransactionV1> {
+  if (arguments.length !== 0) {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
+  }
+  const handle = Object.freeze({
+    schema: INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_SCHEMA_V1,
+  });
+  const ready = createInternalProductionMigration32DeferredV1<
+    InternalProductionCurrentEntryMigration32TransactionV1
+  >();
+  const disposition = createInternalProductionMigration32DeferredV1<
+    InternalProductionMigration32TransactionDispositionV1
+  >();
+  const state: InternalProductionMigration32TransactionStateV1 = {
+    transaction: null,
+    phase: "locked_v31",
+    stageInFlight: false,
+    tentativeResult: null,
+    releaseDisposition: disposition.resolve,
+    settlement: Object.freeze({ status: "pending" }),
+    settlementPromise: Promise.resolve(),
+  };
+  internalProductionMigration32TransactionsV1.set(handle, state);
+  let readySettled = false;
+  let outerTransaction: Promise<unknown>;
+  try {
+    outerTransaction = getSql().begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', '5000ms', true)");
+      await transaction.unsafe("SELECT set_config('statement_timeout', '30000ms', true)");
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await lockInternalProductionWorkflowRunInsertionFenceV1(
+        transaction as unknown as InternalProductionPgTransactionSql,
+      );
+      state.transaction = transaction;
+      readySettled = true;
+      ready.resolve(handle);
+      if (await disposition.promise === "abort") {
+        throw INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_ABORT_V1;
+      }
+    }) as unknown as Promise<unknown>;
+  } catch (error) {
+    readySettled = true;
+    state.phase = "terminal";
+    state.settlement = Object.freeze({ status: "rejected", error });
+    internalProductionMigration32TransactionsV1.delete(handle);
+    ready.reject(error);
+    return ready.promise;
+  }
+  state.settlementPromise = Promise.resolve(outerTransaction).then(
+    () => {
+      state.settlement = Object.freeze({ status: "committed" });
+    },
+    (error: unknown) => {
+      state.settlement = Object.freeze({ status: "rejected", error });
+      if (!readySettled) {
+        readySettled = true;
+        state.phase = "terminal";
+        internalProductionMigration32TransactionsV1.delete(handle);
+        ready.reject(error);
+      }
+    },
+  );
+  return ready.promise;
+}
+
+export async function stageInternalProductionCurrentEntryMigration32InTransactionV1(
+  transaction: InternalProductionCurrentEntryMigration32TransactionV1,
+  evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
+): Promise<void> {
+  if (arguments.length !== 2) {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
+  }
+  const state = requireInternalProductionMigration32TransactionStateV1(transaction);
+  if (state.phase !== "locked_v31" || state.stageInFlight || !state.transaction) {
+    throw new Error("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID");
+  }
+  state.stageInFlight = true;
+  try {
+    const facade = createInternalProductionMigration32HeldSqlFacadeV1(state.transaction);
+    state.tentativeResult = await applyInternalProductionBaselineBootstrapHandoffMigrationV1(
+      facade,
+      evidence,
+    );
+    state.phase = "staged";
+  } catch (error) {
+    state.phase = "terminal";
+    state.releaseDisposition("abort");
+    await state.settlementPromise;
+    internalProductionMigration32TransactionsV1.delete(transaction);
+    throw error;
+  } finally {
+    state.stageInFlight = false;
+  }
+}
+
+export async function commitInternalProductionCurrentEntryMigration32TransactionV1(
+  transaction: InternalProductionCurrentEntryMigration32TransactionV1,
+): Promise<BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1> {
+  if (arguments.length !== 1) {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
+  }
+  const state = requireInternalProductionMigration32TransactionStateV1(transaction);
+  if (state.phase !== "staged" || state.stageInFlight || !state.tentativeResult) {
+    throw new Error("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID");
+  }
+  state.phase = "committing";
+  state.releaseDisposition("commit");
+  await state.settlementPromise;
+  state.phase = "terminal";
+  internalProductionMigration32TransactionsV1.delete(transaction);
+  if (state.settlement.status === "rejected") throw state.settlement.error;
+  if (state.settlement.status !== "committed") {
+    throw new Error("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_SETTLEMENT_INVALID");
+  }
+  return state.tentativeResult;
+}
+
+export async function abortInternalProductionCurrentEntryMigration32TransactionV1(
+  transaction: InternalProductionCurrentEntryMigration32TransactionV1,
+): Promise<void> {
+  if (arguments.length !== 1) {
+    throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
+  }
+  const state = requireInternalProductionMigration32TransactionStateV1(transaction);
+  if (
+    (state.phase !== "locked_v31" && state.phase !== "staged")
+    || state.stageInFlight
+  ) {
+    throw new Error("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_PHASE_INVALID");
+  }
+  state.phase = "terminal";
+  state.releaseDisposition("abort");
+  await state.settlementPromise;
+  internalProductionMigration32TransactionsV1.delete(transaction);
+  if (
+    state.settlement.status === "rejected"
+    && state.settlement.error !== INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_ABORT_V1
+  ) throw state.settlement.error;
+  if (state.settlement.status !== "rejected") {
+    throw new Error("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_SETTLEMENT_INVALID");
+  }
+}
+// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:END
 
 /**
  * Read-only current-entry composition. The called audit implementations own

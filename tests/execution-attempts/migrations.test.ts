@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { after, before, beforeEach, describe, it } from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,35 @@ import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.j
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
 const recoveryPublicationMigrationId = "033_v3_recovery_claim_runtime_publication_v1";
+
+it("P4 guarded stage uses held savepoint without changing v32 digest", async () => {
+  const [databaseSource, migrationSource, guardedSource, generatedDigests] = await Promise.all([
+    readFile(path.join(repoRoot, "src/db-pg.ts"), "utf8"),
+    readFile(path.join(repoRoot, "src/db/bootstrap-main-claim-handoff-v1-migration.ts")),
+    readFile(path.join(repoRoot, "src/db/contract-spine-migrations.ts")),
+    readFile(path.join(repoRoot, "src/db/contract-spine-migration-digests.generated.ts")),
+  ]);
+  const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+  assert.deepEqual(
+    [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
+    [
+      "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
+      "a2ae3847427ea087c5a850a9263d89c810815c7e006b2c7e4ecababf6963fad6",
+      "366a60b471443d89e386365fa58d35e36277baad654dab596e3a2335af01219d",
+    ],
+  );
+
+  const start = databaseSource.indexOf("// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN");
+  const end = databaseSource.indexOf("// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:END");
+  assert.ok(start >= 0 && end > start, "P4 transaction kernel is absent");
+  const kernel = databaseSource.slice(start, end);
+  assert.match(
+    kernel,
+    /const applyInternalProductionBaselineBootstrapHandoffMigrationV1\s*=\s*applyBootstrapMainClaimHandoffGuardedMigration32V1/,
+  );
+  assert.match(kernel, /property === ["']begin["'][\s\S]*transaction\.savepoint\(callback\)/);
+  assert.doesNotMatch(kernel, /export[^\n]*(?:Sql|savepoint|callback|facade)/i);
+});
 
 async function snapshotMigration33RollbackBoundary(database: TestDatabase) {
   const rows = await database.sql<Array<{ legacy_metadata: string; migration_33_bytes: string }>>`
