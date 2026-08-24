@@ -1066,17 +1066,6 @@ test("P3 database helper clones the activated template and bounds empty and migr
     const current = await normal.db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
     assert.ok(current);
     assert.equal(current.receipt.phase, "A");
-    const readiness = await import(
-      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-ready=${Date.now()}`
-    );
-    const status = await readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
-    assert.equal(status.state, "normal_task0_admission_ready");
-    const ready = await readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1(
-      status.admissionReady,
-    );
-    assert.equal(ready.state, "normal-task0-admission-ready");
-    assert.equal(Object.isFrozen(status), true);
-    assert.equal(Object.isFrozen(ready), true);
     await normal.reset();
     const resetDatabase = await normal.sql<Array<{ current_database: string; live: number }>>`
       SELECT current_database() AS current_database, 1::int AS live
@@ -1099,20 +1088,6 @@ test("P3 database helper clones the activated template and bounds empty and migr
       SELECT to_regclass('public.schema_migrations')::text AS relation
     `;
     assert.equal(rows[0]?.relation, null);
-    const emptyReadiness = await import(
-      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-empty=${Date.now()}`
-    );
-    await assert.rejects(
-      emptyReadiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1(),
-      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
-    );
-    await assert.rejects(
-      emptyReadiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1({
-        admissionReadyRef: "setfarm://tests/p3/admission-ready/sha256/" + "0".repeat(64),
-        admissionReadyHash: "0".repeat(64),
-      }),
-      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
-    );
   } finally {
     await empty.cleanup();
     process.env.SETFARM_PG_URL = originalUrl;
@@ -1130,20 +1105,6 @@ test("P3 database helper clones the activated template and bounds empty and migr
     assert.deepEqual(current.map((row) => ({ ...row })), [
       { version: "31", activation_relation: null },
     ]);
-    const v31Readiness = await import(
-      `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-v31=${Date.now()}`
-    );
-    await assert.rejects(
-      v31Readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1(),
-      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
-    );
-    await assert.rejects(
-      v31Readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1({
-        admissionReadyRef: "setfarm://tests/p3/admission-ready/sha256/" + "0".repeat(64),
-        admissionReadyHash: "0".repeat(64),
-      }),
-      /P3_PROJECTED_READINESS_DATABASE_INVALID/,
-    );
   } finally {
     await migration31.cleanup();
     process.env.SETFARM_PG_URL = originalUrl;
@@ -1151,13 +1112,43 @@ test("P3 database helper clones the activated template and bounds empty and migr
 });
 
 test("P4 owner fixtures separate real ts startup from p3 js shadow", async () => {
-  const real = await import(`../../src/internal-production/baseline-spawner-startup-admission-v1.js?p4-owner-real=${Date.now()}`);
+  const real = await import(`../../src/internal-production/baseline-spawner-startup-admission-v1.ts?p4-owner-real=${Date.now()}`);
   assert.equal(Object.keys(real).length, 11);
   assert.equal(typeof real.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1, "function");
   assert.equal(typeof real.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1, "function");
+  const resolutionFixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-tsx-shadow-resolution-"));
+  try {
+    writeFileSync(path.join(resolutionFixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+    writeFileSync(path.join(resolutionFixture, "target.ts"), `export const marker = "real-ts";\n`);
+    writeFileSync(path.join(resolutionFixture, "target.js"), `export const marker = "shadow-js";\n`);
+    writeFileSync(path.join(resolutionFixture, "relative-parent.ts"), `const loaded = await import("./target.js"); process.stdout.write(loaded.marker);\n`);
+    writeFileSync(path.join(resolutionFixture, "file-parent.ts"), `const loaded = await import(process.env.P4_TARGET_HREF); process.stdout.write(loaded.marker);\n`);
+    for (const [parent, extraEnvironment] of [
+      ["relative-parent.ts", {}],
+      ["file-parent.ts", { P4_TARGET_HREF: pathToFileURL(path.join(resolutionFixture, "target.js")).href }],
+    ] as const) {
+      const result = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), path.join(resolutionFixture, parent)], {
+        cwd: resolutionFixture,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...extraEnvironment },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "real-ts");
+    }
+  } finally {
+    rmSync(resolutionFixture, { recursive: true, force: true });
+  }
   const source = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
   assert.match(source, /RUN_PERSISTENCE_READINESS_DECLARED_EXTRA_EXPORTS_V1/);
   assert.match(source, /new URL\("\.\/internal-production\/baseline-spawner-startup-admission-v1\.js", import\.meta\.url\)\.href/);
+  const fixtureSource = readFileSync(path.resolve(import.meta.dirname, "../execution-attempts/test-database.ts"), "utf8");
+  for (const literal of [
+    "P3_READINESS_SHADOW_MAX_BYTES_V1 = 65_536",
+    "constants.O_RDONLY | constants.O_NOFOLLOW",
+    "data:text/javascript;base64,",
+    "P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1",
+    "P3_READINESS_SHADOW_DB_IMPORT_V1",
+  ]) assert.ok(fixtureSource.includes(literal), `missing fixed P3 shadow boundary ${literal}`);
 });
 
 test("P4 sealed spawner gate authenticates replacement and exits before normal startup", async () => {

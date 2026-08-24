@@ -4,11 +4,14 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants,
   cpSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
   lstatSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -41,6 +44,13 @@ const TEST_DATABASE_PATTERN = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$
 const P3_DATABASE_PATTERN = /^setfarm_p3_[a-f0-9]{24}_(?:template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/;
 const DEFAULT_ADMIN_URL = "postgresql://postgres@localhost:5432/postgres";
 const P3_FIXTURE_SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
+const P3_READINESS_SHADOW_PATH_V1 = fileURLToPath(new URL(
+  "../../src/internal-production/baseline-spawner-startup-admission-v1.js",
+  import.meta.url,
+));
+const P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1 = "../../tests/execution-attempts/test-database.ts";
+const P3_READINESS_SHADOW_DB_IMPORT_V1 = "../../src/db-pg.ts?p3-readiness=";
+const P3_READINESS_SHADOW_MAX_BYTES_V1 = 65_536;
 const P3_DELIVERED_PATHS = [
   "server/routes/setfarm-operational.test.ts",
   "server/routes/setfarm-operational.ts",
@@ -163,6 +173,7 @@ export async function createIsolatedMigration31TestDatabase(): Promise<TestDatab
     assert.equal(pending.status, "exact_pending_guarded_successor");
     assert.equal(pending.migration.version, 32);
     assert.equal(pending.migration.state, "pending");
+    await verifyP3ReadinessUnavailableV1();
     return database;
   } catch (error) {
     await database.cleanup();
@@ -224,6 +235,65 @@ function assertRecursivelyFrozenV1(value: unknown): void {
   for (const nested of Object.values(value)) assertRecursivelyFrozenV1(nested);
 }
 
+function readStableP3ReadinessShadowV1(): Buffer {
+  const descriptor = openSync(
+    P3_READINESS_SHADOW_PATH_V1,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  try {
+    const beforeDescriptor = fstatSync(descriptor, { bigint: true });
+    const beforePath = lstatSync(P3_READINESS_SHADOW_PATH_V1, { bigint: true });
+    for (const observed of [beforeDescriptor, beforePath]) {
+      assert.equal(observed.isFile() && !observed.isSymbolicLink(), true);
+      assert.equal(observed.mode & 0o777n, 0o600n);
+      assert.equal(observed.nlink, 1n);
+      assert.ok(observed.size > 0n && observed.size <= BigInt(P3_READINESS_SHADOW_MAX_BYTES_V1));
+    }
+    for (const key of ["dev", "ino", "mode", "nlink", "size", "mtimeNs", "ctimeNs"] as const) {
+      assert.equal(beforeDescriptor[key], beforePath[key]);
+    }
+    const bytes = readFileSync(descriptor);
+    const afterDescriptor = fstatSync(descriptor, { bigint: true });
+    const afterPath = lstatSync(P3_READINESS_SHADOW_PATH_V1, { bigint: true });
+    for (const key of ["dev", "ino", "mode", "nlink", "size", "mtimeNs", "ctimeNs"] as const) {
+      assert.equal(afterDescriptor[key], beforeDescriptor[key]);
+      assert.equal(afterPath[key], beforePath[key]);
+      assert.equal(afterDescriptor[key], afterPath[key]);
+    }
+    assert.equal(BigInt(bytes.length), beforeDescriptor.size);
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+async function importP3ReadinessShadowV1(): Promise<Record<string, unknown>> {
+  authenticateP3ProjectedReadinessTestCapabilityV1();
+  const source = readStableP3ReadinessShadowV1().toString("utf8");
+  assert.equal(source.match(/\bimport\b/g)?.length, 2);
+  const importInventory = [
+    ...source.matchAll(/\bfrom\s+(["'])([^"']+)\1/g),
+    ...source.matchAll(/\bimport\(\s*(["'])([^"']+)\1/g),
+  ].map((match) => match[2]);
+  assert.deepEqual(importInventory, [
+    P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1,
+    P3_READINESS_SHADOW_DB_IMPORT_V1,
+  ]);
+  for (const literal of importInventory) {
+    assert.equal(source.split(literal!).length - 1, 1);
+  }
+  const rewritten = source
+    .replace(P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1, import.meta.url)
+    .replace(
+      P3_READINESS_SHADOW_DB_IMPORT_V1,
+      `${new URL("../../src/db-pg.ts", import.meta.url).href}?p3-readiness=`,
+    );
+  assert.equal(rewritten.includes(P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1), false);
+  assert.equal(rewritten.includes(P3_READINESS_SHADOW_DB_IMPORT_V1), false);
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(rewritten).toString("base64")}#${sha256(rewritten)}`;
+  return import(moduleUrl) as Promise<Record<string, unknown>>;
+}
+
 async function verifyP3ActivatedCloneV1(
   db: typeof import("../../src/db-pg.js"),
 ): Promise<void> {
@@ -231,9 +301,7 @@ async function verifyP3ActivatedCloneV1(
   assert.ok(current);
   assert.equal(current.receipt.phase, "A");
   assert.deepEqual(current.receipt.orderedPlans, ["A"]);
-  const readiness = await import(
-    `../../src/internal-production/baseline-spawner-startup-admission-v1.js?p3-clone=${Date.now()}-${Math.random()}`
-  );
+  const readiness = await importP3ReadinessShadowV1();
   assert.deepEqual(Object.keys(readiness).sort(), [
     "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
     "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
@@ -258,6 +326,23 @@ async function verifyP3ActivatedCloneV1(
     headRef: current.head.headRef,
     headHash: current.head.headHash,
   });
+}
+
+async function verifyP3ReadinessUnavailableV1(): Promise<void> {
+  const readiness = await importP3ReadinessShadowV1();
+  assert.deepEqual(Object.keys(readiness).sort(), [
+    "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
+    "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
+  ]);
+  const observe = readiness.observeInternalProductionPreSchemaSpawnerRebindStatusV1 as () => Promise<unknown>;
+  const resolve = readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1 as (pair: unknown) => Promise<unknown>;
+  assert.equal(observe.length, 0);
+  assert.equal(resolve.length, 1);
+  await assert.rejects(observe(), /P3_PROJECTED_READINESS_DATABASE_INVALID/);
+  await assert.rejects(resolve({
+    admissionReadyRef: `setfarm://tests/p3/admission-ready/sha256/${"0".repeat(64)}`,
+    admissionReadyHash: "0".repeat(64),
+  }), /P3_PROJECTED_READINESS_DATABASE_INVALID/);
 }
 
 export async function createIsolatedTestDatabase(
@@ -395,6 +480,8 @@ export async function createIsolatedTestDatabase(
     assert.equal(connected[0]?.current_database, database);
     if (marker !== null && options.migrate !== false) {
       await verifyP3ActivatedCloneV1(db);
+    } else if (marker !== null) {
+      await verifyP3ReadinessUnavailableV1();
     }
   } catch (error) {
     await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`;
