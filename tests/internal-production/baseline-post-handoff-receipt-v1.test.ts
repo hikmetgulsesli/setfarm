@@ -377,12 +377,23 @@ async function loadDatabaseOnlyForIsolatedLifecycleTest<T>(
 ): Promise<T | undefined> {
   if (rawDatabaseUrl === undefined) return undefined;
   const parsed = new URL(rawDatabaseUrl);
-  assert.match(
-    parsed.pathname,
-    /^\/setfarm_contract_spine_test_[a-z0-9_]+$/,
-    "ISOLATED_LIFECYCLE_DATABASE_URL_REQUIRED",
-  );
-  assert.equal(process.env.SETFARM_TEST_PG_ADMIN_URL, undefined, "ISOLATED_LIFECYCLE_ADMIN_URL_FORBIDDEN_IN_CHILD");
+  assert.equal(parsed.protocol, "postgresql:");
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(parsed.hostname));
+  const isLegacyDatabase = /^\/setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/.test(parsed.pathname);
+  const isAuthenticatedProjection = /^\/setfarm_p3_[a-f0-9]{24}_(?:primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/.test(parsed.pathname);
+  assert.equal(isLegacyDatabase || isAuthenticatedProjection, true, "ISOLATED_LIFECYCLE_DATABASE_URL_REQUIRED");
+  if (isAuthenticatedProjection) {
+    const capability = await import("../execution-attempts/test-database.js");
+    capability.authenticateP3ProjectedReadinessTestCapabilityV1();
+    const rawAdminUrl = process.env.SETFARM_TEST_PG_ADMIN_URL;
+    assert.ok(rawAdminUrl, "ISOLATED_LIFECYCLE_ADMIN_URL_REQUIRED_IN_PROJECTION");
+    const adminUrl = new URL(rawAdminUrl);
+    assert.equal(adminUrl.protocol, "postgresql:");
+    assert.ok(["localhost", "127.0.0.1", "::1"].includes(adminUrl.hostname));
+    assert.equal(adminUrl.pathname, "/postgres");
+  } else {
+    assert.equal(process.env.SETFARM_TEST_PG_ADMIN_URL, undefined, "ISOLATED_LIFECYCLE_ADMIN_URL_FORBIDDEN_IN_CHILD");
+  }
   return loadDatabase();
 }
 
@@ -610,9 +621,38 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "/bin/ps", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command=", "/usr/sbin/lsof", "-F0pcRfn", "+D", "-iTCP", "-sTCP:LISTEN",
     ]) assert.ok(production.includes(literal), `missing fixed physical literal ${literal}`);
   });
-  it("does not receive the isolated-runner administrator URL in a database child", () => {
+  it("receives the administrator URL only in an authenticated projection child", async () => {
     if (process.env.SETFARM_PG_URL === undefined) return;
-    assert.equal(process.env.SETFARM_TEST_PG_ADMIN_URL, undefined);
+    const databaseUrl = new URL(process.env.SETFARM_PG_URL);
+    const isAuthenticatedProjection = /^\/setfarm_p3_[a-f0-9]{24}_(?:primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/.test(databaseUrl.pathname);
+    if (!isAuthenticatedProjection) {
+      assert.equal(process.env.SETFARM_TEST_PG_ADMIN_URL, undefined);
+      return;
+    }
+    await loadDatabaseOnlyForIsolatedLifecycleTest(process.env.SETFARM_PG_URL, async () => undefined);
+    if (process.env.P4_PROJECTION_ENVIRONMENT_NEGATIVE_CHILD === "1") return;
+    const runNegative = (database: string) => spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--test", "--test-concurrency=1", "--test-name-pattern=^receives the administrator URL only in an authenticated projection child$", fileURLToPath(import.meta.url)],
+      {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          SETFARM_PG_URL: database,
+          SETFARM_TEST_PG_ADMIN_URL: "postgresql://postgres@localhost:5432/postgres",
+          P4_PROJECTION_ENVIRONMENT_NEGATIVE_CHILD: "1",
+        },
+      },
+    );
+    for (const database of [
+      "postgresql://postgres@localhost:5432/setfarm_p3_0123456789abcdef01234567_primary",
+      "postgresql://ambient.invalid:5432/setfarm_p3_0123456789abcdef01234567_primary",
+    ]) {
+      const refused = runNegative(database);
+      assert.notEqual(refused.status, 0, `unauthenticated projection environment accepted: ${database}`);
+      assert.doesNotMatch(refused.stdout, /P4_PROJECTION_DATABASE_CALLBACK_REACHED/);
+    }
   });
 
   it("rejects an ambient child database URL before reading the administrator URL", () => {
