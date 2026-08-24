@@ -748,13 +748,19 @@ async function runP3CapabilityChild(input: Readonly<{
   frame?: Buffer;
   replay?: boolean;
   authenticateOnly?: boolean;
+  entryPath?: string;
 }>): Promise<Readonly<{ status: number | null; output: string }>> {
   const target = new URL(
     process.env.SETFARM_TEST_PG_ADMIN_URL ?? "postgresql://setrox@localhost:5432/postgres",
   );
   target.pathname = "/setfarm_p3_1234567890abcdef12345678_template";
   const helperPath = path.join(input.helperRoot ?? input.root, "tests/execution-attempts/test-database.ts");
-  const args = input.replay || input.authenticateOnly
+  const args = input.entryPath !== undefined
+    ? [
+        "--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")),
+        input.entryPath,
+      ]
+    : input.replay || input.authenticateOnly
     ? [
         "--import", realpathSync(path.join(process.cwd(), "node_modules/tsx/dist/loader.mjs")),
         "--input-type=module", "--eval",
@@ -1138,14 +1144,179 @@ test("P4 owner fixtures separate real ts startup from p3 js shadow", async () =>
   } finally {
     rmSync(resolutionFixture, { recursive: true, force: true });
   }
+  const createAuthenticatedHookFixture = (extraImport = "") => {
+    const fixture = createP3RunnerRefusalFixture();
+    const setupNonce = Buffer.from("11".repeat(32), "hex");
+    const testNonce = Buffer.from("22".repeat(32), "hex");
+    const shadowPath = path.join(
+      fixture.root,
+      "src/internal-production/baseline-spawner-startup-admission-v1.js",
+    );
+    writeFileSync(shadowPath, `
+import { authenticateP3ProjectedReadinessTestCapabilityV1 } from "../../tests/execution-attempts/test-database.ts";
+import { pgConfigureIsolatedTestDatabase as readinessDbBoundary } from "../../src/db-pg.ts?p3-readiness=";
+${extraImport}
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){ authenticateP3ProjectedReadinessTestCapabilityV1(); void readinessDbBoundary; return Object.freeze({state:"shadow-ready"}); }
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(value){ authenticateP3ProjectedReadinessTestCapabilityV1(); return value; }
+`, { mode: 0o600 });
+    writeFileSync(
+      path.join(fixture.root, "src/internal-production/p4-hook-sibling.js"),
+      'export const marker = "sibling-js";\n',
+    );
+    const helperPath = path.join(fixture.root, "tests/execution-attempts/test-database.ts");
+    const helperSource = readFileSync(helperPath, "utf8");
+    const registerAnchor = "  register(hookUrl, {\n";
+    assert.equal(helperSource.split(registerAnchor).length - 1, 1);
+    const instrumentedHelperSource = helperSource.replace(
+      registerAnchor,
+      `  const p4HookTestState = globalThis as Record<string, unknown>;\n  p4HookTestState.__setfarmP4HookRegisterCount = Number(p4HookTestState.__setfarmP4HookRegisterCount ?? 0) + 1;\n${registerAnchor}`,
+    );
+    writeFileSync(
+      helperPath,
+      `${instrumentedHelperSource}\nexport async function p4TestImportP3ReadinessShadowV1(){ return importP3ReadinessShadowV1(); }\nexport function p4TestReadP3ReadinessShadowHookSourceV1(){ return P3_READINESS_SHADOW_HOOK_SOURCE_V1; }\n`,
+    );
+    const databasePath = path.join(fixture.root, "src/db-pg.ts");
+    writeFileSync(
+      databasePath,
+      `${readFileSync(databasePath, "utf8")}\nexport async function p4TestImportRunPersistenceReadinessModuleV1(){ return import(RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1); }\n`,
+    );
+    writeP3SyntheticMarker(fixture.root, setupNonce, testNonce);
+    return Object.freeze({
+      ...fixture,
+      shadowPath,
+      frame: Buffer.from(`SETFARM_P3_PROJECTION_CAPABILITY_V1:test:${testNonce.toString("hex")}\n`, "ascii"),
+    });
+  };
+
+  const hookFixture = createAuthenticatedHookFixture();
+  try {
+    const helperHref = pathToFileURL(path.join(
+      hookFixture.root,
+      "tests/execution-attempts/test-database.ts",
+    )).href;
+    const databaseHref = pathToFileURL(path.join(hookFixture.root, "src/db-pg.ts")).href;
+    const shadowHref = pathToFileURL(hookFixture.shadowPath).href;
+    const successProbe = path.join(
+      hookFixture.root,
+      "tests/execution-attempts/p4-hook-success-probe.ts",
+    );
+    writeFileSync(successProbe, `
+import assert from "node:assert/strict";
+const helper = await import(${JSON.stringify(helperHref)});
+helper.authenticateP3ProjectedReadinessTestCapabilityV1();
+assert.equal(Number((globalThis as Record<string, unknown>).__setfarmP4HookRegisterCount), 1);
+helper.authenticateP3ProjectedReadinessTestCapabilityV1();
+assert.equal(Number((globalThis as Record<string, unknown>).__setfarmP4HookRegisterCount), 1);
+const absolute = await import(${JSON.stringify(shadowHref)});
+const query = await import(${JSON.stringify(`${shadowHref}?delegated=1`)});
+const hash = await import(${JSON.stringify(`${shadowHref}#delegated`)});
+assert.equal(Object.keys(absolute).length, 11);
+assert.equal(Object.keys(query).length, 11);
+assert.equal(Object.keys(hash).length, 2);
+assert.equal(await import(${JSON.stringify(shadowHref)}), absolute);
+assert.equal(await import(${JSON.stringify(`${shadowHref}?delegated=1`)}), query);
+assert.equal(await import(${JSON.stringify(`${shadowHref}#delegated`)}), hash);
+const relative = await helper.p4TestImportP3ReadinessShadowV1();
+assert.deepEqual(Object.keys(relative).sort(), ["observeInternalProductionPreSchemaSpawnerRebindStatusV1", "resolveInternalProductionTask0SpawnerAdmissionReadyV1"]);
+assert.notEqual(relative, hash);
+const database = await import(${JSON.stringify(`${databaseHref}?p4-hook-owner=1`)});
+assert.equal(await database.p4TestImportRunPersistenceReadinessModuleV1(), relative);
+assert.equal((await import("../../src/internal-production/p4-hook-sibling.js")).marker, "sibling-js");
+assert.equal(typeof (await import("node:path")).resolve, "function");
+process.stdout.write("HOOK_OK");
+`);
+    const success = await runP3CapabilityChild({
+      root: hookFixture.root,
+      frame: hookFixture.frame,
+      entryPath: successProbe,
+    });
+    assert.equal(success.status, 0, success.output);
+    assert.equal(success.output.startsWith("HOOK_OK"), true, success.output);
+
+    const failureProbe = path.join(
+      hookFixture.root,
+      "tests/execution-attempts/p4-hook-auth-failure-probe.ts",
+    );
+    writeFileSync(failureProbe, `
+import assert from "node:assert/strict";
+const helper = await import(${JSON.stringify(helperHref)});
+await assert.rejects(async () => helper.authenticateP3ProjectedReadinessTestCapabilityV1(), /P3_PROJECTION_CAPABILITY_INVALID/);
+const unresolved = await import("../../src/internal-production/baseline-spawner-startup-admission-v1.js");
+assert.equal(Object.keys(unresolved).length, 11);
+process.stdout.write("NO_HOOK");
+`);
+    const failure = await runP3CapabilityChild({
+      root: hookFixture.root,
+      frame: Buffer.from("invalid\n", "ascii"),
+      entryPath: failureProbe,
+    });
+    assert.equal(failure.status, 0, failure.output);
+    assert.equal(failure.output, "NO_HOOK");
+
+    const extraDataProbe = path.join(
+      hookFixture.root,
+      "tests/execution-attempts/p4-hook-extra-data-probe.ts",
+    );
+    writeFileSync(extraDataProbe, `
+import assert from "node:assert/strict";
+import { register } from "node:module";
+const helper = await import(${JSON.stringify(helperHref)});
+const hookSource = helper.p4TestReadP3ReadinessShadowHookSourceV1();
+const hookUrl = "data:text/javascript;base64," + Buffer.from(hookSource).toString("base64");
+assert.throws(() => register(hookUrl, { parentURL: import.meta.url, data: { targetUrl: ${JSON.stringify(shadowHref)}, source: "export {};", extra: true } }), /P3_READINESS_SHADOW_HOOK_DATA_INVALID/);
+process.stdout.write("EXTRA_DATA_REFUSED");
+`);
+    const extraData = await runP3CapabilityChild({
+      root: hookFixture.root,
+      frame: Buffer.alloc(0),
+      entryPath: extraDataProbe,
+    });
+    assert.equal(extraData.status, 0, extraData.output);
+    assert.equal(extraData.output.startsWith("EXTRA_DATA_REFUSED"), true, extraData.output);
+  } finally {
+    hookFixture.cleanup();
+  }
+
+  const malformedFixture = createAuthenticatedHookFixture(
+    'import "../../src/internal-production/p4-hook-sibling.js";',
+  );
+  try {
+    const malformedProbe = path.join(malformedFixture.root, "p4-hook-malformed-probe.ts");
+    writeFileSync(malformedProbe, `
+import assert from "node:assert/strict";
+const helper = await import(${JSON.stringify(pathToFileURL(path.join(
+      malformedFixture.root,
+      "tests/execution-attempts/test-database.ts",
+    )).href)});
+assert.throws(() => helper.authenticateP3ProjectedReadinessTestCapabilityV1());
+process.stdout.write("MALFORMED_REFUSED");
+`);
+    const malformed = await runP3CapabilityChild({
+      root: malformedFixture.root,
+      frame: malformedFixture.frame,
+      entryPath: malformedProbe,
+    });
+    assert.equal(malformed.status, 0, malformed.output);
+    assert.equal(malformed.output, "MALFORMED_REFUSED");
+  } finally {
+    malformedFixture.cleanup();
+  }
   const source = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
   assert.match(source, /RUN_PERSISTENCE_READINESS_DECLARED_EXTRA_EXPORTS_V1/);
-  assert.match(source, /new URL\("\.\/internal-production\/baseline-spawner-startup-admission-v1\.js", import\.meta\.url\)\.href/);
+  assert.match(source, /RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1 = "\.\/internal-production\/baseline-spawner-startup-admission-v1\.js"/);
   const fixtureSource = readFileSync(path.resolve(import.meta.dirname, "../execution-attempts/test-database.ts"), "utf8");
   for (const literal of [
     "P3_READINESS_SHADOW_MAX_BYTES_V1 = 65_536",
     "constants.O_RDONLY | constants.O_NOFOLLOW",
-    "data:text/javascript;base64,",
+    'import { register } from "node:module"',
+    "P3_READINESS_SHADOW_HOOK_SOURCE_V1",
+    "P3_READINESS_SHADOW_MODULE_SPECIFIER_V1",
+    'format: "module", shortCircuit: true',
+    'JSON.stringify(["targetUrl", "source"])',
+    "data.source instanceof Uint8Array",
+    'Buffer.from(source, "utf8")',
+    "return nextResolve(specifier, context)",
+    "return nextLoad(url, context)",
     "P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1",
     "P3_READINESS_SHADOW_DB_IMPORT_V1",
   ]) assert.ok(fixtureSource.includes(literal), `missing fixed P3 shadow boundary ${literal}`);

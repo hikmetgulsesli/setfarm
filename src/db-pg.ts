@@ -653,7 +653,7 @@ const WORKFLOW_RUN_TERMINAL_STATUSES_V1 = Object.freeze([
 type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[number];
 const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
   "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
-const RUN_PERSISTENCE_READINESS_MODULE_HREF_V1 = new URL("./internal-production/baseline-spawner-startup-admission-v1.js", import.meta.url).href;
+const RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1 = "./internal-production/baseline-spawner-startup-admission-v1.js";
 const RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1 = Object.freeze([
   "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
   "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
@@ -1232,7 +1232,7 @@ async function requireWorkflowRunAdmissionReadyV1(
   let module: RunPersistenceReadinessModuleV1;
   let status: Record<string, unknown>;
   try {
-    const loaded = await import(RUN_PERSISTENCE_READINESS_MODULE_HREF_V1);
+    const loaded = await import(RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1);
     module = validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(loaded);
     const observed = await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
     if (

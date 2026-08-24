@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { register } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import postgres from "postgres";
@@ -48,9 +49,65 @@ const P3_READINESS_SHADOW_PATH_V1 = fileURLToPath(new URL(
   "../../src/internal-production/baseline-spawner-startup-admission-v1.js",
   import.meta.url,
 ));
+const P3_READINESS_SHADOW_MODULE_SPECIFIER_V1 = "../../src/internal-production/baseline-spawner-startup-admission-v1.js";
+const P3_READINESS_SHADOW_MODULE_HREF_V1 = pathToFileURL(P3_READINESS_SHADOW_PATH_V1).href;
 const P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1 = "../../tests/execution-attempts/test-database.ts";
 const P3_READINESS_SHADOW_DB_IMPORT_V1 = "../../src/db-pg.ts?p3-readiness=";
 const P3_READINESS_SHADOW_MAX_BYTES_V1 = 65_536;
+const P3_READINESS_SHADOW_HOOK_SOURCE_V1 = `
+let targetUrl;
+let source;
+
+export function initialize(data) {
+  if (
+    data === null
+    || typeof data !== "object"
+    || JSON.stringify(Reflect.ownKeys(data)) !== JSON.stringify(["targetUrl", "source"])
+    || typeof data.targetUrl !== "string"
+    || !(data.source instanceof Uint8Array)
+  ) {
+    throw new Error("P3_READINESS_SHADOW_HOOK_DATA_INVALID");
+  }
+  targetUrl = data.targetUrl;
+  source = Uint8Array.from(data.source);
+}
+
+export async function resolve(specifier, context, nextResolve) {
+  let matchesTarget = false;
+  if (typeof context.parentURL === "string") {
+    try {
+      const parent = new URL(context.parentURL);
+      parent.search = "";
+      parent.hash = "";
+      const helperUrl = new URL("../../tests/execution-attempts/test-database.ts", targetUrl).href;
+      const databaseUrl = new URL("../db-pg.ts", targetUrl).href;
+      const isHelper = parent.href === helperUrl;
+      const isDatabase = parent.href === databaseUrl;
+      const literalMatches =
+        (isHelper && specifier === "../../src/internal-production/baseline-spawner-startup-admission-v1.js")
+        || (isDatabase && specifier === "./internal-production/baseline-spawner-startup-admission-v1.js");
+      const tsxSubstitutedTargetUrl = targetUrl.slice(0, -3) + ".ts";
+      const substitutedLiteralMatches =
+        (isHelper && specifier === "../../src/internal-production/baseline-spawner-startup-admission-v1.ts")
+        || (isDatabase && specifier === "./internal-production/baseline-spawner-startup-admission-v1.ts");
+      const substitutedMatches =
+        (isHelper || isDatabase)
+        && (specifier === targetUrl || specifier === tsxSubstitutedTargetUrl);
+      matchesTarget = literalMatches
+        || (substitutedLiteralMatches
+          && new URL(specifier, context.parentURL).href === tsxSubstitutedTargetUrl)
+        || substitutedMatches;
+    } catch {}
+  }
+  if (matchesTarget) return { url: targetUrl, format: "module", shortCircuit: true };
+  return nextResolve(specifier, context);
+}
+
+export async function load(url, context, nextLoad) {
+  if (url === targetUrl) return { format: "module", source, shortCircuit: true };
+  return nextLoad(url, context);
+}
+`;
 const P3_DELIVERED_PATHS = [
   "server/routes/setfarm-operational.test.ts",
   "server/routes/setfarm-operational.ts",
@@ -88,6 +145,7 @@ type P3ProjectionMarkerV1 = Readonly<{
 }>;
 
 let cachedCapabilityRoleV1: "setup" | "test" | null = null;
+let p3ReadinessShadowHookRegisteredV1 = false;
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
@@ -153,6 +211,7 @@ export function authenticateP3ProjectedReadinessTestCapabilityV1(): void {
     readAuthenticateAndCloseFd3ExactlyOnceV1();
   }
   assert.equal(cachedCapabilityRoleV1, "test");
+  installP3ReadinessShadowHookV1();
 }
 
 export type TestDatabase = Awaited<ReturnType<typeof createIsolatedTestDatabase>>;
@@ -267,9 +326,11 @@ function readStableP3ReadinessShadowV1(): Buffer {
   }
 }
 
-async function importP3ReadinessShadowV1(): Promise<Record<string, unknown>> {
-  authenticateP3ProjectedReadinessTestCapabilityV1();
-  const source = readStableP3ReadinessShadowV1().toString("utf8");
+function installP3ReadinessShadowHookV1(): void {
+  if (p3ReadinessShadowHookRegisteredV1) return;
+  const authenticatedBytes = readStableP3ReadinessShadowV1();
+  const source = authenticatedBytes.toString("utf8");
+  assert.deepEqual(Buffer.from(source, "utf8"), authenticatedBytes);
   assert.equal(source.match(/\bimport\b/g)?.length, 2);
   const importInventory = [
     ...source.matchAll(/\bfrom\s+(["'])([^"']+)\1/g),
@@ -282,16 +343,20 @@ async function importP3ReadinessShadowV1(): Promise<Record<string, unknown>> {
   for (const literal of importInventory) {
     assert.equal(source.split(literal!).length - 1, 1);
   }
-  const rewritten = source
-    .replace(P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1, import.meta.url)
-    .replace(
-      P3_READINESS_SHADOW_DB_IMPORT_V1,
-      `${new URL("../../src/db-pg.ts", import.meta.url).href}?p3-readiness=`,
-    );
-  assert.equal(rewritten.includes(P3_READINESS_SHADOW_TEST_DATABASE_IMPORT_V1), false);
-  assert.equal(rewritten.includes(P3_READINESS_SHADOW_DB_IMPORT_V1), false);
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(rewritten).toString("base64")}#${sha256(rewritten)}`;
-  return import(moduleUrl) as Promise<Record<string, unknown>>;
+  const hookUrl = `data:text/javascript;base64,${Buffer.from(P3_READINESS_SHADOW_HOOK_SOURCE_V1).toString("base64")}#${sha256(P3_READINESS_SHADOW_HOOK_SOURCE_V1)}`;
+  register(hookUrl, {
+    parentURL: import.meta.url,
+    data: Object.freeze({
+      targetUrl: P3_READINESS_SHADOW_MODULE_HREF_V1,
+      source: Uint8Array.from(authenticatedBytes),
+    }),
+  });
+  p3ReadinessShadowHookRegisteredV1 = true;
+}
+
+async function importP3ReadinessShadowV1(): Promise<Record<string, unknown>> {
+  authenticateP3ProjectedReadinessTestCapabilityV1();
+  return import(P3_READINESS_SHADOW_MODULE_SPECIFIER_V1) as Promise<Record<string, unknown>>;
 }
 
 async function verifyP3ActivatedCloneV1(
