@@ -59,6 +59,136 @@ const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
 const GIT_A = "a".repeat(40);
 const GIT_B = "b".repeat(40);
+const TERMINATION_REQUEST_ID_PATTERN = /^RTR_[A-Za-z0-9-]{16,160}$/;
+
+function assertCanonicalTerminationRequestId(requestId: string): void {
+  assert.match(requestId, TERMINATION_REQUEST_ID_PATTERN);
+}
+
+type Task8ExpiryOwnerCloseWitnessV1 = Readonly<{
+  category: string;
+  state: string;
+  close_ref: string | null;
+  close_hash: string | null;
+  updated_at: string;
+}>;
+
+type Task8SuccessorCanonicalSnapshotV1 = Readonly<{
+  delivery: unknown;
+  recoveryCase: unknown;
+}>;
+
+type Task8ExpiryFirstWitnessV1 = Readonly<{
+  expiredDispatchId: string;
+  successorDispatchId: string;
+  expiredCaseId: string;
+  successorCaseId: string;
+  expiredDeliveryState: string;
+  expiredCaseStatus: string;
+  expiredDeliveryStateAfterCompound: string;
+  expiredCaseStatusAfterCompound: string;
+  expiredDeliveryStateAfterCompoundReplay: string;
+  expiredCaseStatusAfterCompoundReplay: string;
+  successorDeliveryState: string;
+  sameDispatchRefusalCode: string;
+  ownerHeadBeforeExpiry: string;
+  ownerHeadAfterExpiry: string;
+  ownerHeadBeforeCompound: string;
+  ownerHeadAfterCompound: string;
+  ownerHeadAfterCompoundReplay: string;
+  expiryOwnerClosesBeforeCompound: readonly Task8ExpiryOwnerCloseWitnessV1[];
+  expiryOwnerClosesAfterCompound: readonly Task8ExpiryOwnerCloseWitnessV1[];
+  expiryOwnerClosesAfterCompoundReplay: readonly Task8ExpiryOwnerCloseWitnessV1[];
+  successorBeforeCompound: Task8SuccessorCanonicalSnapshotV1;
+  successorAfterCompound: Task8SuccessorCanonicalSnapshotV1;
+  successorAfterCompoundReplay: Task8SuccessorCanonicalSnapshotV1;
+}>;
+
+function assertTask8ExpiryFirstWitnessV1(input: Task8ExpiryFirstWitnessV1): void {
+  assert.notEqual(
+    input.successorDispatchId,
+    input.expiredDispatchId,
+    "Task 8 requires one distinct successor dispatch",
+  );
+  assert.notEqual(
+    input.successorCaseId,
+    input.expiredCaseId,
+    "Task 8 requires one distinct successor case",
+  );
+  assert.equal(input.expiredDeliveryState, "blocked", "expired delivery must remain blocked");
+  assert.equal(input.expiredCaseStatus, "blocked", "expired case must remain blocked");
+  assert.equal(
+    input.expiredDeliveryStateAfterCompound,
+    "blocked",
+    "expired delivery must remain blocked after compound",
+  );
+  assert.equal(
+    input.expiredCaseStatusAfterCompound,
+    "blocked",
+    "expired case must remain blocked after compound",
+  );
+  assert.equal(
+    input.expiredDeliveryStateAfterCompoundReplay,
+    "blocked",
+    "expired delivery must remain blocked after compound replay",
+  );
+  assert.equal(
+    input.expiredCaseStatusAfterCompoundReplay,
+    "blocked",
+    "expired case must remain blocked after compound replay",
+  );
+  assert.equal(input.successorDeliveryState, "leased", "distinct successor must remain constructible");
+  assert.equal(
+    input.sameDispatchRefusalCode,
+    "V3_RECOVERY_AUTHORITY_DELIVERY_NOT_FOUND",
+    "Task 8 same dispatch refusal differs",
+  );
+  assert.equal(
+    BigInt(input.ownerHeadAfterExpiry),
+    BigInt(input.ownerHeadBeforeExpiry) + 2n,
+    "Task 8 requires exactly two expiry owner closes",
+  );
+  assert.equal(
+    BigInt(input.ownerHeadAfterCompound),
+    BigInt(input.ownerHeadBeforeCompound) + 2n,
+    "Task 8 compound must close only termination and run owners after expiry",
+  );
+  assert.equal(
+    input.ownerHeadAfterCompoundReplay,
+    input.ownerHeadAfterCompound,
+    "Task 8 compound replay advanced owner head",
+  );
+  assert.deepEqual(
+    input.expiryOwnerClosesBeforeCompound.map((row) => [row.category, row.state]),
+    [["claim", "closed"], ["runtime-session", "closed"]],
+    "Task 8 expiry owner close category/state inventory differs",
+  );
+  for (const row of input.expiryOwnerClosesBeforeCompound) {
+    assert.match(row.close_ref ?? "", /^setfarm:\/\/internal-production\/owner-reservation-closes\//);
+    assert.match(row.close_hash ?? "", /^[a-f0-9]{64}$/);
+    assert.notEqual(row.updated_at, "", "Task 8 expiry owner close timestamp is absent");
+  }
+  assert.deepEqual(
+    input.expiryOwnerClosesAfterCompound,
+    input.expiryOwnerClosesBeforeCompound,
+    "Task 8 expiry owner closes changed during compound adoption",
+  );
+  assert.deepEqual(
+    input.expiryOwnerClosesAfterCompoundReplay,
+    input.expiryOwnerClosesBeforeCompound,
+    "Task 8 expiry owner closes changed during compound replay",
+  );
+  assert.deepEqual(
+    input.successorAfterCompound,
+    input.successorBeforeCompound,
+    "Task 8 successor delivery/case changed during compound",
+  );
+  assert.deepEqual(
+    input.successorAfterCompoundReplay,
+    input.successorBeforeCompound,
+    "Task 8 successor delivery/case changed during compound replay",
+  );
+}
 
 function p3TestGit(root: string, args: readonly string[], input?: string): string {
   const result = spawnSync("/usr/bin/git", args, {
@@ -408,7 +538,7 @@ test("P3 setup owns the generic successor apply and full verification slot befor
        WHERE state IN ('applied','adopted')
     `;
     assert.deepEqual(journal.map((row) => ({ ...row })), [
-      { current_version: "32", migration_33_rows: "0" },
+      { current_version: "33", migration_33_rows: "1" },
     ]);
   } finally {
     await sql.end({ timeout: 5 });
@@ -1782,6 +1912,9 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
       preManifestMigration32AuthorizationConsumptionHash: fact("migration-consumption"),
     });
     await migrations.applyBootstrapMainClaimHandoffGuardedMigration32V1(sql, evidence);
+    const successor = await migrations.applyContractSpineMigrations(sql);
+    assert.deepEqual(successor.guardedPending, []);
+    assert.equal((await migrations.verifyContractSpineMigrations(sql)).status, "verified");
 
     const response = operation.productBuildAuthorityV2Observation.response;
     const sourceBody = {
@@ -2722,6 +2855,9 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   assert.deepEqual(await ownerInventory(duplicateStepInput.run.id), emptyOwnerInventory);
 
   const fixtureTerminal = await import(`${pathToFileURL(path.join(root, "src/execution/run-terminal-transition.ts")).href}?task3=${Date.now()}`);
+  const fixtureRunTermination = await import(
+    `${pathToFileURL(path.join(root, "src/execution/run-termination.ts")).href}?task3=${Date.now()}`
+  );
   const topologyInput = (state: "pending" | "bound" | "closed", runNumber: number) => {
     const runId = `run-persistence-task2-preexisting-${state}`;
     return {
@@ -2908,6 +3044,12 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
   const fixtureRuntimeCompletionPlan = await import(
     `${pathToFileURL(path.join(root, "src/execution/schemas/runtime-completion-plan-v1.ts")).href}?task3=${Date.now()}`
   );
+  const fixtureClaimRuntime = await import(
+    `${pathToFileURL(path.join(root, "src/execution/claim-runtime-publication.ts")).href}?task3=${Date.now()}`
+  );
+  const fixtureRuntimeCompletionEffect = await import(
+    `${pathToFileURL(path.join(root, "src/execution/runtime-completion-effect-repository.ts")).href}?task3=${Date.now()}`
+  );
   const seedPopulatedTask3TerminalRun = async (runId: string, runNumber: number) => {
     const runInput = {
       ...input,
@@ -2927,11 +3069,27 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
         'feature-dev_developer',1
       )
     `;
-    const claimId = (await sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id,step_id,story_id,agent_id)
-      VALUES (${runId},${step.stepId},${storyId},'feature-dev_developer')
-      RETURNING id::integer AS id
-    `)[0]!.id;
+    const claimId = await sql.begin(async (transaction) => {
+      const idRows = await transaction.unsafe<Array<{ id: string }>>(
+        "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+      );
+      const birth = await fixtureClaimRuntime.prepareInternalProductionClaimBirthV1(
+        transaction,
+        "a-claim-loop-runtime-v1",
+        idRows,
+      );
+      return fixtureClaimRuntime.insertAndBindInternalProductionClaimBirthV1(
+        transaction,
+        birth,
+        {
+          runId,
+          workflowStepId: step.stepId,
+          storyId,
+          claimAgentId: "feature-dev_developer",
+          claimedAt: new Date(),
+        },
+      );
+    });
     const sessions = fixtureRuntimeSession.createRuntimeSessionRepository(sql);
     const session = await sessions.reserve({
       sessionId: `RTS_${runId}`,
@@ -3020,17 +3178,57 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
         }),
       });
     }));
-    await sql`UPDATE runs SET status='failing' WHERE id=${runId}`;
+    const effectResult = {
+      runStatus: "failed",
+      advanced: false,
+      runCompleted: false,
+      runFailed: true,
+    };
+    const effects = fixtureRuntimeCompletionEffect.createRuntimeCompletionEffectRepository(sql);
+    const leasedEffect = await effects.claimNext({
+      requestId,
+      ownerInstanceId: owned.ownerInstanceId,
+    });
+    assert.ok(leasedEffect?.leaseToken);
+    await effects.settle({
+      requestId,
+      effectKey: leasedEffect.effectKey,
+      ownerInstanceId: owned.ownerInstanceId,
+      leaseToken: leasedEffect.leaseToken,
+      resolution: "applied",
+      result: effectResult,
+      evidence: { schema: "setfarm.task3-terminal-fixture-effect.v1" },
+    });
+    const effectsCommitted = await completions.markEffectsCommitted({
+      requestId,
+      ownerInstanceId: owned.ownerInstanceId,
+      ownerAttemptCount: owned.ownerAttemptCount,
+      result: effectResult,
+    });
+    assert.equal(effectsCommitted.applyPhase, "effects_committed");
     const terminationRequestId = `RTR_${runId}`;
-    await sql`
-      INSERT INTO run_termination_requests (
-        request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
-        diagnostic,evidence,created_at,updated_at
-      ) VALUES (
-        ${terminationRequestId},${runId},'failed','drained','task3-test',NOW(),NOW(),
-        'Task 3 terminal rollback fixture','{}'::jsonb,NOW(),NOW()
-      )
-    `;
+    assertCanonicalTerminationRequestId(terminationRequestId);
+    const requestedTermination = await fixtureRunTermination.requestRunTermination(sql, {
+      runId,
+      targetStatus: "failed",
+      requestedBy: "task3-test",
+      diagnostic: "Task 3 terminal rollback fixture",
+      requestId: terminationRequestId,
+    });
+    assert.equal(requestedTermination.status, "requested");
+    const terminations = fixtureRunTermination.createRunTerminationRepository(sql);
+    const terminationOwnerInstanceId = `task3-${runNumber}-termination-owner`;
+    const claimedTermination = await terminations.claim({
+      requestId: terminationRequestId,
+      ownerInstanceId: terminationOwnerInstanceId,
+    });
+    assert.equal(claimedTermination?.state, "draining");
+    const drainedTermination = await terminations.markDrained({
+      requestId: terminationRequestId,
+      ownerInstanceId: terminationOwnerInstanceId,
+      evidence: { proofRef: `setfarm://tests/task3/${runNumber}/termination-drain` },
+    });
+    assert.equal(drainedTermination.state, "drained");
     await sql`
       INSERT INTO operational_outbox (
         outbox_id,event_key,event_type,aggregate_type,aggregate_id,payload,state
@@ -3394,17 +3592,46 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
     steps: input.steps.map((step, index) => ({ ...step, id: `run-persistence-task3-cancelled-step-${index}` })),
   };
   await persistence.persistWorkflowRun(cancelledInput);
-  const cancelledRequestId = "RTR_task3-cancelled";
+  const cancelledRequestId = "RTR_task3-cancelled-v1";
+  assertCanonicalTerminationRequestId(cancelledRequestId);
+  const requestedCancellation = await fixtureRunTermination.requestRunTermination(sql, {
+    runId: cancelledInput.run.id,
+    targetStatus: "cancelled",
+    requestedBy: "task3-test",
+    diagnostic: "task3 cancelled close",
+    requestId: cancelledRequestId,
+  });
+  assert.equal(requestedCancellation.status, "requested");
+  const cancellations = fixtureRunTermination.createRunTerminationRepository(sql);
+  const cancellationOwnerInstanceId = "task3-cancelled-termination-owner";
+  const claimedCancellation = await cancellations.claim({
+    requestId: cancelledRequestId,
+    ownerInstanceId: cancellationOwnerInstanceId,
+  });
+  assert.equal(claimedCancellation?.state, "draining");
+  assert.equal((await cancellations.markDrained({
+    requestId: cancelledRequestId,
+    ownerInstanceId: cancellationOwnerInstanceId,
+    evidence: { proofRef: "setfarm://tests/task3/cancelled-drain" },
+  })).state, "drained");
+  assert.deepEqual(
+    [...await sql`
+      SELECT run.status AS run_status,request.state AS request_state,
+             termination_owner.state AS termination_owner_state
+        FROM runs run
+        JOIN run_termination_requests request ON request.run_id=run.id
+        JOIN internal_production_owner_reservations_v1 termination_owner
+          ON termination_owner.category='termination'
+         AND termination_owner.owner_key=request.request_id
+       WHERE run.id=${cancelledInput.run.id}
+    `],
+    [{
+      run_status: "cancelling",
+      request_state: "drained",
+      termination_owner_state: "bound",
+    }],
+  );
   await sql.begin(async (transaction) => {
-    await transaction`UPDATE runs SET status='cancelling' WHERE id=${cancelledInput.run.id}`;
-    await transaction.unsafe(
-      `INSERT INTO run_termination_requests (
-         request_id,run_id,target_status,state,requested_by,requested_at,drained_at,
-         diagnostic,evidence,created_at,updated_at
-       ) VALUES ($1,$2,'cancelled','drained','task3-test',NOW(),NOW(),
-                 'task3 cancelled close','{}'::jsonb,NOW(),NOW())`,
-      [cancelledRequestId, cancelledInput.run.id],
-    );
     await fixtureTerminal.transitionRunToTerminalInTransaction(transaction, {
       runId: cancelledInput.run.id,
       status: "cancelled",
@@ -3413,14 +3640,28 @@ test("real PostgreSQL run persistence fences before mutation and adopts an exact
     });
   });
   assert.deepEqual(
-    { ...(await sql<Array<{ run_status: string; owner_state: string; request_state: string }>>`
-      SELECT run.status AS run_status,reservation.state AS owner_state,request.state AS request_state
+    { ...(await sql<Array<{
+      run_status: string;
+      owner_state: string;
+      request_state: string;
+      termination_owner_state: string;
+    }>>`
+      SELECT run.status AS run_status,reservation.state AS owner_state,request.state AS request_state,
+             termination_owner.state AS termination_owner_state
         FROM runs run JOIN internal_production_owner_reservations_v1 reservation
           ON reservation.owner_key=run.id AND reservation.category='run'
         JOIN run_termination_requests request ON request.run_id=run.id
+        JOIN internal_production_owner_reservations_v1 termination_owner
+          ON termination_owner.category='termination'
+         AND termination_owner.owner_key=request.request_id
        WHERE run.id=${cancelledInput.run.id}
     `)[0]! },
-    { run_status: "cancelled", owner_state: "closed", request_state: "terminalized" },
+    {
+      run_status: "cancelled",
+      owner_state: "closed",
+      request_state: "terminalized",
+      termination_owner_state: "closed",
+    },
   );
 
   const tamperedTerminalInput = {
@@ -5063,6 +5304,7 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
 
   {
     const requestId = `RTR_${nextSuffix()}`;
+    assertCanonicalTerminationRequestId(requestId);
     const identity = createInternalProductionTerminationCanonicalOwnerIdentityV1(
       Object.freeze({ requestId }),
     );
@@ -5395,15 +5637,10 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
   ]);
 });
 
-test("real PostgreSQL close resolver rejects a bare historical row and unavailable terminal authority", async (t) => {
+test("real PostgreSQL close resolver rejects a bare historical row and unavailable terminal authority", async () => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
-  const { db, sql, root } = activatedOwnerAdmissionFixture;
-  t.after(async () => {
-    await db.pgClose();
-    rmSync(path.dirname(root), { recursive: true, force: true });
-    activatedOwnerAdmissionFixture = null;
-  });
+  const { db, sql } = activatedOwnerAdmissionFixture;
   const row = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0];
   const currentHead = (await sql<Array<{
     head_version: string;
@@ -6708,6 +6945,7 @@ test("eight P3 canonical owner builders are byte exact and reject every noncanon
   const sessionId = `RTS_${"b".repeat(16)}`;
   const completionRequestId = `RCR_${"c".repeat(16)}`;
   const terminationRequestId = `RTR_${"d".repeat(16)}`;
+  assertCanonicalTerminationRequestId(terminationRequestId);
   const findingSetHash = "e".repeat(64);
   const effectKey = "effect:key";
   const eventKey = "event/key";
@@ -7275,4 +7513,817 @@ test("the A source-build body exposes the complete exact PBA evidence ABI", asyn
     source,
     /type InternalProductionProductBuildAuthorityV2DeliveryEvidenceObservationV1 = import\(\s*["']\.\/product-build-authority-v2-delivery-evidence-v1\.js["']\s*\)\.ProductBuildAuthorityV2DeliveryEvidenceObservationV1;/,
   );
+});
+
+test("Task 8 binds the fail-fast PostgreSQL matrix to its reviewed behavior witnesses", () => {
+  const databaseWitnesses = [
+    ["tests/claim-log-lifecycle.test.ts", [
+      "installer publishes only the committed run owner pair",
+    ]],
+    ["tests/cleanup-ops.test.ts", [
+      "stabilizes the exact source fingerprint only when cleanup runs before acceptance",
+    ]],
+    ["tests/execution-attempts/attempt-reconciler.test.ts", [
+      "exact-adopts response loss, rejects a missing sidecar, and rolls insert/reread/bind failures back to the prior head",
+    ]],
+    ["tests/execution-attempts/claim-attempt-transition.test.ts", [
+      "rolls both terminal rows and owner closes back when the attempt close is rejected",
+    ]],
+    ["tests/execution-attempts/claim-runtime-publication.test.ts", [
+      "replays a committed single publication from its stable runtime session",
+    ]],
+    ["tests/execution-attempts/migration-source-digests.test.ts", [
+      "binds guarded migration 32 without changing any historical digest",
+      "binds ordinary migration 33 without changing migration 32 authority",
+    ]],
+    ["tests/execution-attempts/migrations.test.ts", [
+      "rejects a live or non-isolated URL before a test connection can open",
+    ]],
+    ["tests/execution-attempts/operational-event-delivery.test.ts", [
+      "exact-adopts terminal acknowledgement loss without lease identity or owner-head advance",
+      "serializes terminal settlement against release and heartbeat without a partial close",
+      "rolls the complete final-expiry close set back before selecting new work",
+    ]],
+    ["tests/execution-attempts/operational-outbox-repository.test.ts", [
+      "keeps one deterministic published identity for idempotent event-key replay",
+    ]],
+    ["tests/execution-attempts/run-terminal-transition.test.ts", [
+      "keeps attempt birth, recovery pair publication, m33 use, and terminal closes in the exact Task 4 inventory",
+      "authenticates an applied Task 5 effect while atomically accepting its completion",
+      "refuses to erase active shadow owners without a drained failure request",
+    ]],
+    ["tests/execution-attempts/run-termination.test.ts", [
+      "binds the sole termination owner at request birth and exactly adopts ACK-loss replay",
+    ]],
+    ["tests/execution-attempts/runtime-completion-effect-runner.test.ts", [
+      "reconciles an externally applied effect after a crash without applying twice",
+    ]],
+    ["tests/execution-attempts/runtime-completion.test.ts", [
+      "rolls completion birth back at reread, bind, and commit and hides pre-ACK state",
+    ]],
+    ["tests/execution-attempts/runtime-hooks.test.ts", [
+      "rolls back medic story reset when the exact claim owner close rejects",
+    ]],
+    ["tests/execution-attempts/runtime-session-repository.test.ts", [
+      "serializes pre-attempt expiry with compound failure in both constructible lock orders",
+    ]],
+    ["tests/execution-attempts/v3-downstream-evidence-publication.test.ts", [
+      "atomically owns one story-bound child attempt, publishes typed evidence, and replays unchanged source",
+    ]],
+    ["tests/findings/repository.test.ts", [
+      "publishes one complete ordered finding set under one immediately closed owner",
+      "rejects a preexisting parent with a missing ordered child set instead of repairing it",
+      "rejects extra children and reordered parent identity without creating an owner",
+    ]],
+    ["tests/findings/v3-evidence-only-worker.test.ts", [
+      "atomically publishes one non-model claim, attempt, and delivery under concurrent publishers",
+      "rejects a positive model-publication candidate without parsing it and rolls child birth back",
+      "rolls claim, attempt, both owner births, and delivery pair back when the pair CAS is rejected",
+    ]],
+    ["tests/findings/v3-recovery-lifecycle-reconciler.test.ts", [
+      "rejects a caller-selected model slice before attempt birth and preserves the null delivery pair",
+      "allows supervisor repair only for the supervisor owner and starting only as an exact complete replay",
+      "linearizes attempt birth and pre-birth expiry in both run-lock orders and uses waiter-side database time",
+      "terminally blocks an expired reserved publication before attempt birth without mutating m33",
+    ]],
+    ["tests/internal-production/owner-admission-v1.test.ts", [
+      "P3 runner projects authenticated current bytes from import meta root",
+    ]],
+  ] as const;
+
+  function assertDatabaseWitnesses(candidate: ReadonlyMap<string, string>): void {
+    assert.equal(candidate.size, 20, "Task 8 must execute exactly twenty PostgreSQL files");
+    for (const [relativePath, titles] of databaseWitnesses) {
+      const source = candidate.get(relativePath);
+      assert.notEqual(source, undefined, `missing PostgreSQL source ${relativePath}`);
+      for (const title of titles) {
+        assert.equal(
+          source!.includes(`it("${title}"`) || source!.includes(`test("${title}"`),
+          true,
+          `${relativePath} lost reviewed PostgreSQL witness: ${title}`,
+        );
+      }
+    }
+  }
+
+  assert.equal(databaseWitnesses.length, 20);
+  assert.equal(new Set(databaseWitnesses.map(([relativePath]) => relativePath)).size, 20);
+  const sources = new Map(databaseWitnesses.map(([relativePath]) => [
+    relativePath,
+    readFileSync(path.join(process.cwd(), relativePath), "utf8"),
+  ]));
+  assertDatabaseWitnesses(sources);
+
+  const [mutatedPath, [mutatedTitle]] = databaseWitnesses[0];
+  const mutatedSources = new Map(sources);
+  mutatedSources.set(mutatedPath, sources.get(mutatedPath)!.replace(mutatedTitle, "removed-witness"));
+  assert.throws(
+    () => assertDatabaseWitnesses(mutatedSources),
+    /lost reviewed PostgreSQL witness/,
+  );
+
+  const lifecycleSource = readFileSync(
+    path.join(process.cwd(), "src/recovery/v3-recovery-lifecycle-reconciler.ts"),
+    "utf8",
+  );
+  assert.match(lifecycleSource, /V3_RECOVERY_LIFECYCLE_RUN_NOT_ACTIVE/);
+  assert.match(lifecycleSource, /V3_RECOVERY_LIFECYCLE_TERMINATION_PENDING/);
+  assert.match(lifecycleSource, /Quarantine is deliberately a report-only result/);
+
+  const terminalSource = readFileSync(
+    path.join(process.cwd(), "src/execution/run-terminal-transition.ts"),
+    "utf8",
+  );
+  assert.match(terminalSource, /RUN_TERMINAL_TERMINATION_PENDING/);
+});
+
+test("Task 8 expiry-first witness rejects successor aliasing and duplicate owner closes", () => {
+  const closedOwners = [
+    {
+      category: "claim",
+      state: "closed",
+      close_ref: "setfarm://internal-production/owner-reservation-closes/claim",
+      close_hash: SHA_A,
+      updated_at: "2026-08-23T10:00:00.000Z",
+    },
+    {
+      category: "runtime-session",
+      state: "closed",
+      close_ref: "setfarm://internal-production/owner-reservation-closes/runtime-session",
+      close_hash: SHA_B,
+      updated_at: "2026-08-23T10:00:01.000Z",
+    },
+  ] as const;
+  const successorSnapshot: Task8SuccessorCanonicalSnapshotV1 = {
+    delivery: {
+      dispatchId: "RDD_successor",
+      recoveryCaseId: "RC_successor",
+      state: "leased",
+      updatedAt: "2026-08-23T10:00:00.000Z",
+    },
+    recoveryCase: {
+      recoveryCaseId: "RC_successor",
+      status: "repairing",
+      stateVersion: 2,
+      updatedAt: "2026-08-23T10:00:00.000Z",
+    },
+  };
+  const witness: Task8ExpiryFirstWitnessV1 = {
+    expiredDispatchId: "RDD_expired",
+    successorDispatchId: "RDD_successor",
+    expiredCaseId: "RC_expired",
+    successorCaseId: "RC_successor",
+    expiredDeliveryState: "blocked",
+    expiredCaseStatus: "blocked",
+    expiredDeliveryStateAfterCompound: "blocked",
+    expiredCaseStatusAfterCompound: "blocked",
+    expiredDeliveryStateAfterCompoundReplay: "blocked",
+    expiredCaseStatusAfterCompoundReplay: "blocked",
+    successorDeliveryState: "leased",
+    sameDispatchRefusalCode: "V3_RECOVERY_AUTHORITY_DELIVERY_NOT_FOUND",
+    ownerHeadBeforeExpiry: "40",
+    ownerHeadAfterExpiry: "42",
+    ownerHeadBeforeCompound: "46",
+    ownerHeadAfterCompound: "48",
+    ownerHeadAfterCompoundReplay: "48",
+    expiryOwnerClosesBeforeCompound: closedOwners,
+    expiryOwnerClosesAfterCompound: closedOwners,
+    expiryOwnerClosesAfterCompoundReplay: closedOwners,
+    successorBeforeCompound: successorSnapshot,
+    successorAfterCompound: successorSnapshot,
+    successorAfterCompoundReplay: successorSnapshot,
+  };
+  assert.doesNotThrow(() => assertTask8ExpiryFirstWitnessV1(witness));
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    successorDispatchId: witness.expiredDispatchId,
+  }), /distinct successor dispatch/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    sameDispatchRefusalCode: "accepted",
+  }), /same dispatch refusal/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    ownerHeadAfterExpiry: "43",
+  }), /exactly two expiry owner closes/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    expiryOwnerClosesAfterCompound: closedOwners.map((row) => ({
+      ...row,
+      updated_at: "2026-08-23T10:00:02.000Z",
+    })),
+  }), /expiry owner closes changed/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    ownerHeadAfterCompoundReplay: "49",
+  }), /compound replay advanced owner head/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    successorAfterCompound: {
+      ...successorSnapshot,
+      delivery: { ...(successorSnapshot.delivery as object), state: "blocked" },
+    },
+  }), /successor delivery\/case changed during compound/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    successorAfterCompoundReplay: {
+      ...successorSnapshot,
+      recoveryCase: { ...(successorSnapshot.recoveryCase as object), status: "blocked" },
+    },
+  }), /successor delivery\/case changed during compound replay/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    expiredDeliveryStateAfterCompound: "leased",
+  }), /expired delivery must remain blocked after compound/);
+  assert.throws(() => assertTask8ExpiryFirstWitnessV1({
+    ...witness,
+    expiredCaseStatusAfterCompoundReplay: "repairing",
+  }), /expired case must remain blocked after compound replay/);
+});
+
+test("Task 8 executes the three honest sequential compound and expiry rows", async () => {
+  if (process.env.SETFARM_PG_URL === undefined) return;
+  assert.ok(activatedOwnerAdmissionFixture, "the owner-admission fixture must remain available");
+  const { db, sql, root } = activatedOwnerAdmissionFixture;
+  try {
+    const fixtureImport = async <Module>(relativePath: string): Promise<Module> => import(
+    `${pathToFileURL(path.join(root, relativePath)).href}?task8=${Date.now()}-${Math.random()}`
+  ) as Promise<Module>;
+  const { createFindingSetV1 } = await fixtureImport<typeof import(
+    "../../src/findings/finding-set.js"
+  )>("src/findings/finding-set.ts");
+  const { createFindingRecoveryRepository } = await fixtureImport<typeof import(
+    "../../src/recovery/finding-recovery-repository.js"
+  )>("src/recovery/finding-recovery-repository.ts");
+  const { createRecoveryDeliveryRepository } = await fixtureImport<typeof import(
+    "../../src/recovery/recovery-delivery-repository.js"
+  )>("src/recovery/recovery-delivery-repository.ts");
+  const { createV3RecoveryClaimAuthority } = await fixtureImport<typeof import(
+    "../../src/recovery/v3-recovery-claim-authority.js"
+  )>("src/recovery/v3-recovery-claim-authority.ts");
+  const { createV3RecoveryLifecycleReconciler } = await fixtureImport<typeof import(
+    "../../src/recovery/v3-recovery-lifecycle-reconciler.js"
+  )>("src/recovery/v3-recovery-lifecycle-reconciler.ts");
+  const {
+    insertAndBindInternalProductionClaimBirthV1,
+    prepareInternalProductionClaimBirthV1,
+  } = await fixtureImport<typeof import(
+    "../../src/execution/claim-runtime-publication.js"
+  )>("src/execution/claim-runtime-publication.ts");
+  const {
+    createRuntimeSessionRepository,
+    reserveRuntimeSessionInTransaction,
+  } = await fixtureImport<typeof import(
+    "../../src/execution/runtime-session-repository.js"
+  )>("src/execution/runtime-session-repository.ts");
+  const {
+    createRunTerminationRepository,
+    requestRunTermination,
+  } = await fixtureImport<typeof import(
+    "../../src/execution/run-termination.js"
+  )>("src/execution/run-termination.ts");
+  const { transitionRunToTerminal } = await fixtureImport<typeof import(
+    "../../src/execution/run-terminal-transition.js"
+  )>("src/execution/run-terminal-transition.ts");
+  const { seedV3ReleaseGoAdmission } = await import(
+    "../execution-attempts/test-database.js"
+  );
+
+  const drainEvidence = Object.freeze({
+    schema: "setfarm.runtime-drain-evidence.v1" as const,
+    observedAt: "2026-08-23T10:00:00.000Z",
+    localProcessAbsent: true,
+    openClawTaskAbsent: true,
+    workspaceProcessAbsent: true,
+    stableObservations: 2,
+    evidenceRefs: ["setfarm://test/task8/compound-expiry-drain"],
+  });
+
+  async function seedPreAttemptPublication(label: string) {
+    const runId = `run-task8-compound-expiry-${label}`;
+    const stepDbId = `${runId}-step`;
+    const storyDbId = `${runId}-story`;
+    const storyId = "US-001";
+    const sessionId = `RTS_task8-compound-expiry-${label}`;
+    const packetHash = hashCanonicalJson({ schema: "setfarm.task8.packet.v1", label });
+    const sliceHash = hashCanonicalJson({ schema: "setfarm.task8.slice.v1", label });
+    const sourceSha = hashCanonicalJson({ schema: "setfarm.task8.source.v1", label });
+    const sourceTreeHash = hashCanonicalJson({ schema: "setfarm.task8.tree.v1", label });
+    const releaseSha = hashCanonicalJson({ schema: "setfarm.task8.release.v1", label }).slice(0, 40);
+    const releaseAdmissionHash = await seedV3ReleaseGoAdmission(sql, releaseSha);
+    await sql`
+      INSERT INTO runs (
+        id,workflow_id,task,status,context,protocol,protocol_version,
+        compiler_release_sha,packet_hash,activation_preflight_hash,release_admission_hash
+      ) VALUES (
+        ${runId},'feature-dev','Task 8 compound expiry','running','{}'::jsonb,
+        'v3',1,${releaseSha},${packetHash},${"e".repeat(64)},${releaseAdmissionHash}
+      )
+    `;
+    await sql.begin(async (transaction) => {
+      const identity = db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(
+        transaction,
+        { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+      );
+      await db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: identity,
+      });
+    });
+    await sql`
+      INSERT INTO steps (
+        id,run_id,step_id,agent_id,step_index,input_template,expects,status,type,
+        retry_count,max_retries,current_story_id
+      ) VALUES (
+        ${stepDbId},${runId},'implement','feature-dev_developer',1,'','',
+        'running','loop',0,3,NULL
+      )
+    `;
+    await sql`
+      INSERT INTO stories (
+        id,run_id,story_index,story_id,title,status,claimed_by,claim_generation
+      ) VALUES (
+        ${storyDbId},${runId},1,${storyId},'Task 8 story','failed',NULL,0
+      )
+    `;
+
+    const findingSet = createFindingSetV1({
+      runId,
+      storyId,
+      packetHash,
+      sliceHash,
+      sourceRevision: { sha: sourceSha, treeHash: sourceTreeHash },
+      findings: [{
+        origin: "runtime",
+        classification: "structured",
+        invariantRef: `INV_TASK8_${label.toUpperCase().replaceAll("-", "_")}`,
+        sourceLocators: [{ path: "src/App.tsx", contentHash: SHA_A }],
+        observedEvidenceRefs: [SHA_B],
+        expectedPredicateRef: "EVID_TASK8_COMPOUND_EXPIRY",
+        status: "open",
+      }],
+    });
+    const findings = createFindingRecoveryRepository(sql);
+    await findings.putFindingSet(findingSet);
+    const opened = await findings.openRecoveryCase({
+      runId,
+      storyId,
+      findingSetHash: findingSet.findingSetHash,
+      findingIds: findingSet.findings.map((finding) => finding.findingId),
+      packetHash,
+      sliceHash,
+      sourceRevision: findingSet.sourceRevision,
+      owner: "implement",
+      expectedDelta: {
+        kind: "source_change",
+        invariantRefs: [`INV_TASK8_${label.toUpperCase().replaceAll("-", "_")}`],
+        requiredPaths: ["src/App.tsx"],
+      },
+      allowedPaths: ["src/App.tsx"],
+      evidencePlan: ["EVID_TASK8_COMPOUND_EXPIRY"],
+      priorAttemptRefs: [],
+      budget: {
+        limits: { implement: 1, supervisorRepair: 1, evidenceOnly: 1 },
+        used: { implement: 0, supervisorRepair: 0, evidenceOnly: 0 },
+      },
+      status: "open",
+      decisionRefs: [],
+    });
+    const deliveries = createRecoveryDeliveryRepository(sql);
+    const revision = await deliveries.findCurrentRevision(opened.recoveryCase.recoveryCaseId);
+    assert.ok(revision);
+    const authorized = await deliveries.authorizeCurrentRevision({
+      recoveryCaseId: opened.recoveryCase.recoveryCaseId,
+      revisionId: revision.revisionId,
+      expectedStateVersion: opened.recoveryCase.stateVersion,
+      dispatchClass: "product_implementation",
+    });
+    assert.equal(authorized.status, "authorized");
+    if (authorized.status !== "authorized") throw new Error("Task 8 authorization missing");
+    const handoff = await createV3RecoveryClaimAuthority(sql).acquireRecoveryClaim({
+      runId,
+      storyId,
+      ownerInstanceId: `task8-${label}-owner`,
+      leaseMs: 10_000,
+    });
+    const publication = await sql.begin(async (transaction) => {
+      const clock = await transaction.unsafe<Array<{ now: Date }>>(
+        "SELECT clock_timestamp() AS now",
+      );
+      const boundAt = clock[0]!.now;
+      const idRows = await transaction.unsafe<Array<{ id: string }>>(
+        "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+      );
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction,
+        "a-claim-loop-runtime-v1",
+        idRows,
+      );
+      const claimId = await insertAndBindInternalProductionClaimBirthV1(
+        transaction,
+        birth,
+        {
+          runId,
+          workflowStepId: "implement",
+          storyId,
+          claimAgentId: "feature-dev_developer",
+          claimedAt: boundAt,
+        },
+      );
+      await transaction`
+        UPDATE stories
+           SET status='running',claimed_by='feature-dev_developer',
+               claimed_at=${boundAt},claim_generation=1,updated_at=${boundAt}
+         WHERE id=${storyDbId} AND status='failed' AND claimed_by IS NULL
+      `;
+      await transaction`
+        UPDATE steps SET current_story_id=${storyDbId},updated_at=${boundAt}
+         WHERE id=${stepDbId} AND status='running' AND current_story_id IS NULL
+      `;
+      const runtime = await reserveRuntimeSessionInTransaction(transaction, {
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId,
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: handoff.lease.ownerInstanceId,
+      });
+      const handoffCanonicalJson = canonicalJsonStringify(handoff);
+      const handoffHash = hashCanonicalJson(handoff);
+      await transaction.unsafe(
+        `INSERT INTO internal_production_v3_recovery_claim_publications_v1 (
+           claim_id,runtime_session_id,run_id,step_db_id,workflow_step_id,
+           story_db_id,story_id,story_index,recovery_case_id,revision_id,
+           dispatch_id,status,handoff_canonical_json,handoff_hash,bound_at
+         ) VALUES ($1::bigint,$2,$3,$4,$5,$6,$7,1,$8,$9,$10,$11,$12,$13,$14)`,
+        [
+          String(claimId),runtime.sessionId,runId,stepDbId,"implement",storyDbId,storyId,
+          handoff.recoveryCaseId,handoff.revisionId,handoff.dispatchId,handoff.status,
+          handoffCanonicalJson,handoffHash,boundAt,
+        ],
+      );
+      return Object.freeze({ claimId, runtime });
+    });
+    return Object.freeze({
+      runId,
+      storyId,
+      sessionId,
+      claimId: publication.claimId,
+      packetHash,
+      sliceHash,
+      sourceRevision: Object.freeze({ sha: sourceSha, treeHash: sourceTreeHash }),
+      handoff,
+      reconciler: createV3RecoveryLifecycleReconciler(sql),
+      sessions: createRuntimeSessionRepository(sql),
+    });
+  }
+
+  async function snapshot(runId: string) {
+    const rows = await sql<Array<{
+      run_status: string;
+      claim_outcome: string | null;
+      runtime_state: string;
+      claim_owner_state: string;
+      runtime_owner_state: string;
+      delivery_state: string;
+      case_status: string;
+      termination_state: string | null;
+    }>>`
+      SELECT run.status AS run_status,claim.outcome AS claim_outcome,
+             runtime.state AS runtime_state,claim_owner.state AS claim_owner_state,
+             runtime_owner.state AS runtime_owner_state,delivery.state AS delivery_state,
+             recovery_case.status AS case_status,termination.state AS termination_state
+        FROM runs run
+        JOIN claim_log claim ON claim.run_id=run.id
+        JOIN runtime_sessions runtime ON runtime.claim_id=claim.id
+        JOIN internal_production_owner_reservations_v1 claim_owner
+          ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+        JOIN internal_production_owner_reservations_v1 runtime_owner
+          ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
+        JOIN recovery_dispatch_deliveries delivery ON delivery.run_id=run.id
+        JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id=delivery.recovery_case_id
+        LEFT JOIN run_termination_requests termination ON termination.run_id=run.id
+       WHERE run.id=${runId}
+    `;
+    assert.equal(rows.length, 1);
+    return { ...rows[0]! };
+  }
+
+  async function expire(handoff: Readonly<{ dispatchId: string }>): Promise<void> {
+    await sql.unsafe(
+      `SELECT pg_sleep(GREATEST(
+         EXTRACT(EPOCH FROM (
+           (SELECT lease_expires_at FROM recovery_dispatch_deliveries WHERE dispatch_id=$1)
+           - clock_timestamp()
+         )) + 0.05,
+         0
+       ))`,
+      [handoff.dispatchId],
+    );
+  }
+
+  async function ownerHead(): Promise<string> {
+    const rows = await sql<Array<{ head_version: string }>>`
+      SELECT head_version::text
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton=TRUE
+    `;
+    assert.equal(rows.length, 1);
+    return rows[0]!.head_version;
+  }
+
+  async function expiryOwnerCloses(
+    fixture: Awaited<ReturnType<typeof seedPreAttemptPublication>>,
+  ): Promise<readonly Task8ExpiryOwnerCloseWitnessV1[]> {
+    return sql<Array<Task8ExpiryOwnerCloseWitnessV1>>`
+      SELECT category,state,close_ref,close_hash,updated_at::text AS updated_at
+        FROM internal_production_owner_reservations_v1
+       WHERE (category='claim' AND owner_key=${String(fixture.claimId)})
+          OR (category='runtime-session' AND owner_key=${fixture.sessionId})
+       ORDER BY category
+    `;
+  }
+
+  async function terminateAfterDrain(
+    fixture: Awaited<ReturnType<typeof seedPreAttemptPublication>>,
+    label: string,
+    observeBoundary?: (
+      boundary: "after-compound" | "after-compound-replay",
+    ) => Promise<void>,
+  ): Promise<Readonly<{
+    ownerHeadBeforeCompound: string;
+    ownerHeadAfterCompound: string;
+    ownerHeadAfterCompoundReplay: string;
+    expiryOwnerClosesAfterCompound: readonly Task8ExpiryOwnerCloseWitnessV1[];
+    expiryOwnerClosesAfterCompoundReplay: readonly Task8ExpiryOwnerCloseWitnessV1[];
+  }>> {
+    const requestId = `RTR_task8-compound-expiry-${label}`;
+    assertCanonicalTerminationRequestId(requestId);
+    const diagnostic = `Task 8 ${label} termination`;
+    const beforeRequests = await sql<Array<{
+      request_id: string;
+      target_status: string;
+      requested_by: string;
+      diagnostic: string;
+    }>>`
+      SELECT request_id,target_status,requested_by,diagnostic
+        FROM run_termination_requests
+       WHERE run_id=${fixture.runId}
+       ORDER BY request_id
+    `;
+    assert.ok(beforeRequests.length === 0 || beforeRequests.length === 1);
+    const requested = await requestRunTermination(sql, {
+      runId: fixture.runId,
+      targetStatus: "failed",
+      requestedBy: "task8-compound-expiry",
+      diagnostic,
+      requestId,
+    });
+    assert.equal(requested.status, beforeRequests.length === 0 ? "requested" : "existing");
+    if (requested.status === "already_terminal") throw new Error("Task 8 termination absent");
+    assert.deepEqual(
+      [...await sql`
+        SELECT request_id,target_status,requested_by,diagnostic
+          FROM run_termination_requests
+         WHERE run_id=${fixture.runId}
+         ORDER BY request_id
+      `],
+      [{
+        request_id: requestId,
+        target_status: "failed",
+        requested_by: "task8-compound-expiry",
+        diagnostic,
+      }],
+    );
+    const terminations = createRunTerminationRepository(sql);
+    const ownerInstanceId = `task8-${label}-termination-owner`;
+    const claimed = await terminations.claim({ requestId, ownerInstanceId });
+    assert.ok(claimed);
+    const runtime = await fixture.sessions.findById(fixture.sessionId);
+    assert.ok(runtime);
+    if (runtime.state === "drain_requested") {
+      await fixture.sessions.markDrained({
+        sessionId: fixture.sessionId,
+        ownerInstanceId: runtime.ownerInstanceId,
+        evidence: drainEvidence,
+      });
+    }
+    await terminations.markDrained({
+      requestId,
+      ownerInstanceId,
+      evidence: { proofRef: `setfarm://test/task8/${label}` },
+    });
+    const ownerHeadBeforeCompound = await ownerHead();
+    const terminal = await terminations.terminalize({ requestId });
+    assert.equal(terminal.status, "failed");
+    const ownerHeadAfterCompound = await ownerHead();
+    const expiryOwnerClosesAfterCompound = await expiryOwnerCloses(fixture);
+    await observeBoundary?.("after-compound");
+    assert.equal((await terminations.terminalize({ requestId })).status, "failed");
+    const ownerHeadAfterCompoundReplay = await ownerHead();
+    const expiryOwnerClosesAfterCompoundReplay = await expiryOwnerCloses(fixture);
+    await observeBoundary?.("after-compound-replay");
+    return Object.freeze({
+      ownerHeadBeforeCompound,
+      ownerHeadAfterCompound,
+      ownerHeadAfterCompoundReplay,
+      expiryOwnerClosesAfterCompound,
+      expiryOwnerClosesAfterCompoundReplay,
+    });
+  }
+
+    const compoundFirst = await seedPreAttemptPublication("compound-first");
+    const pristine = await snapshot(compoundFirst.runId);
+    await assert.rejects(
+      transitionRunToTerminal(sql, {
+        runId: compoundFirst.runId,
+        status: "failed",
+        diagnostic: "Task 8 pristine compound-first",
+      }),
+      /RUN_TERMINAL_FAIL_DRAIN_PROOF_REQUIRED/,
+    );
+    assert.deepEqual(await snapshot(compoundFirst.runId), pristine);
+    await expire(compoundFirst.handoff);
+    const compoundFirstExpiry = await compoundFirst.reconciler.reconcileActive({
+      runId: compoundFirst.runId,
+    });
+    assert.equal(
+      compoundFirstExpiry.counts.rolledBackPublications,
+      1,
+      JSON.stringify(compoundFirstExpiry),
+    );
+
+    const terminationFirst = await seedPreAttemptPublication("termination-first");
+    const terminationFirstRequestId = "RTR_task8-compound-expiry-termination-first";
+    assertCanonicalTerminationRequestId(terminationFirstRequestId);
+    const requested = await requestRunTermination(sql, {
+      runId: terminationFirst.runId,
+      targetStatus: "failed",
+      requestedBy: "task8-compound-expiry",
+      diagnostic: "Task 8 termination-first termination",
+      requestId: terminationFirstRequestId,
+    });
+    assert.equal(requested.status, "requested");
+    const beforeReport = await snapshot(terminationFirst.runId);
+    const reportOnly = await terminationFirst.reconciler.reconcileActive({
+      runId: terminationFirst.runId,
+    });
+    assert.ok(reportOnly.events.some((event) => (
+      event.code === "V3_RECOVERY_LIFECYCLE_TERMINATION_PENDING"
+      || event.code === "V3_RECOVERY_LIFECYCLE_RUN_NOT_ACTIVE"
+    )));
+    assert.deepEqual(await snapshot(terminationFirst.runId), beforeReport);
+    await terminateAfterDrain(terminationFirst, "termination-first");
+
+    const expiryFirst = await seedPreAttemptPublication("expiry-first");
+    await expire(expiryFirst.handoff);
+    const ownerHeadBeforeExpiry = await ownerHead();
+    const expiryCommitted = await expiryFirst.reconciler.reconcileActive({
+      runId: expiryFirst.runId,
+    });
+    assert.equal(expiryCommitted.counts.rolledBackPublications, 1);
+    const ownerHeadAfterExpiry = await ownerHead();
+    assert.deepEqual(await snapshot(expiryFirst.runId), {
+      run_status: "running",
+      claim_outcome: "infra_retry",
+      runtime_state: "released",
+      claim_owner_state: "closed",
+      runtime_owner_state: "closed",
+      delivery_state: "blocked",
+      case_status: "blocked",
+      termination_state: null,
+    });
+    const expiryOwnerClosesBeforeCompound = await expiryOwnerCloses(expiryFirst);
+    let sameDispatchRefusalCode = "";
+    await assert.rejects(
+      createV3RecoveryClaimAuthority(sql).acquireRecoveryClaim({
+        runId: expiryFirst.runId,
+        storyId: expiryFirst.storyId,
+        ownerInstanceId: "task8-expiry-first-refused-owner",
+        leaseMs: 60_000,
+      }),
+      (error: unknown) => {
+        sameDispatchRefusalCode = String((error as { code?: unknown }).code ?? "");
+        return sameDispatchRefusalCode === "V3_RECOVERY_AUTHORITY_DELIVERY_NOT_FOUND";
+      },
+    );
+    assert.equal(await ownerHead(), ownerHeadAfterExpiry, "same-dispatch refusal advanced owner head");
+
+    const successor = await seedPreAttemptPublication("expiry-first-successor");
+    const successorFindings = createFindingRecoveryRepository(sql);
+    const successorDeliveries = createRecoveryDeliveryRepository(sql);
+    const successorHandoff = successor.handoff;
+    assert.equal(successorHandoff.status, "lease_acquired");
+    assert.notEqual(successor.runId, expiryFirst.runId, "Task 8 successor must use an isolated run");
+    async function successorCanonicalSnapshot(): Promise<Task8SuccessorCanonicalSnapshotV1> {
+      const [delivery, recoveryCase] = await Promise.all([
+        successorDeliveries.findDelivery(successorHandoff.dispatchId),
+        successorFindings.findRecoveryCase(successorHandoff.recoveryCaseId),
+      ]);
+      assert.ok(delivery, "Task 8 successor canonical delivery is missing");
+      assert.ok(recoveryCase, "Task 8 successor canonical recovery case is missing");
+      return structuredClone({ delivery, recoveryCase });
+    }
+    async function expiredTerminalState(): Promise<Readonly<{
+      deliveryState: string;
+      caseStatus: string;
+    }>> {
+      const [delivery, recoveryCases] = await Promise.all([
+        successorDeliveries.findDelivery(expiryFirst.handoff.dispatchId),
+        sql<Array<{ status: string }>>`
+          SELECT status FROM recovery_cases WHERE recovery_case_id=${expiryFirst.handoff.recoveryCaseId}
+        `,
+      ]);
+      assert.ok(delivery, "Task 8 expired delivery is missing");
+      assert.equal(recoveryCases.length, 1, "Task 8 expired recovery case is missing");
+      return Object.freeze({
+        deliveryState: delivery.state,
+        caseStatus: recoveryCases[0]!.status,
+      });
+    }
+    const expiredDeliveryBeforeCompound = await successorDeliveries.findDelivery(expiryFirst.handoff.dispatchId);
+    const successorDeliveryBeforeCompound = await successorDeliveries.findDelivery(successorHandoff.dispatchId);
+    const expiredCaseBeforeCompound = await sql<Array<{ status: string }>>`
+      SELECT status FROM recovery_cases WHERE recovery_case_id=${expiryFirst.handoff.recoveryCaseId}
+    `;
+    const successorBeforeCompound = await successorCanonicalSnapshot();
+    let successorAfterCompound: Task8SuccessorCanonicalSnapshotV1 | undefined;
+    let successorAfterCompoundReplay: Task8SuccessorCanonicalSnapshotV1 | undefined;
+    let expiredAfterCompound: Awaited<ReturnType<typeof expiredTerminalState>> | undefined;
+    let expiredAfterCompoundReplay: Awaited<ReturnType<typeof expiredTerminalState>> | undefined;
+    const compoundHeads = await terminateAfterDrain(
+      expiryFirst,
+      "expiry-first",
+      async (boundary) => {
+        const [successor, expired] = await Promise.all([
+          successorCanonicalSnapshot(),
+          expiredTerminalState(),
+        ]);
+        if (boundary === "after-compound") {
+          successorAfterCompound = successor;
+          expiredAfterCompound = expired;
+          return;
+        }
+        successorAfterCompoundReplay = successor;
+        expiredAfterCompoundReplay = expired;
+      },
+    );
+    assert.ok(successorAfterCompound, "Task 8 successor post-compound snapshot is missing");
+    assert.ok(successorAfterCompoundReplay, "Task 8 successor replay snapshot is missing");
+    assert.ok(expiredAfterCompound, "Task 8 expired post-compound snapshot is missing");
+    assert.ok(expiredAfterCompoundReplay, "Task 8 expired replay snapshot is missing");
+    assertTask8ExpiryFirstWitnessV1({
+      expiredDispatchId: expiryFirst.handoff.dispatchId,
+      successorDispatchId: successorHandoff.dispatchId,
+      expiredCaseId: expiryFirst.handoff.recoveryCaseId,
+      successorCaseId: successorHandoff.recoveryCaseId,
+      expiredDeliveryState: expiredDeliveryBeforeCompound?.state ?? "missing",
+      expiredCaseStatus: expiredCaseBeforeCompound[0]?.status ?? "missing",
+      expiredDeliveryStateAfterCompound: expiredAfterCompound.deliveryState,
+      expiredCaseStatusAfterCompound: expiredAfterCompound.caseStatus,
+      expiredDeliveryStateAfterCompoundReplay: expiredAfterCompoundReplay.deliveryState,
+      expiredCaseStatusAfterCompoundReplay: expiredAfterCompoundReplay.caseStatus,
+      successorDeliveryState: successorDeliveryBeforeCompound?.state ?? "missing",
+      sameDispatchRefusalCode,
+      ownerHeadBeforeExpiry,
+      ownerHeadAfterExpiry,
+      ...compoundHeads,
+      expiryOwnerClosesBeforeCompound,
+      successorBeforeCompound,
+      successorAfterCompound,
+      successorAfterCompoundReplay,
+    });
+    assert.deepEqual(
+      [...await sql`SELECT status FROM runs WHERE id=${expiryFirst.runId}`],
+      [{ status: "failed" }],
+    );
+    await terminateAfterDrain(successor, "expiry-first-successor-cleanup");
+    const successorCleanupRequestId = "RTR_task8-compound-expiry-expiry-first-successor-cleanup";
+    const successorOwnerStates = await sql<Array<{ category: string; state: string }>>`
+      SELECT category,state
+        FROM internal_production_owner_reservations_v1
+       WHERE (category='run' AND owner_key=${successor.runId})
+          OR (category='claim' AND owner_key=${String(successor.claimId)})
+          OR (category='runtime-session' AND owner_key=${successor.sessionId})
+          OR (category='termination' AND owner_key=${successorCleanupRequestId})
+       ORDER BY category
+    `;
+    assert.deepEqual([...successorOwnerStates], [
+      { category: "claim", state: "closed" },
+      { category: "run", state: "closed" },
+      { category: "runtime-session", state: "closed" },
+      { category: "termination", state: "closed" },
+    ]);
+  } finally {
+    await db.pgClose();
+    rmSync(path.dirname(root), { recursive: true, force: true });
+    activatedOwnerAdmissionFixture = null;
+  }
 });
