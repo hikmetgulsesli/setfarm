@@ -8039,6 +8039,109 @@ test("Task 8 executes the three honest sequential compound and expiry rows", asy
     return rows[0]!.head_version;
   }
 
+  async function assertExactPreAttemptPublication(
+    fixture: Awaited<ReturnType<typeof seedPreAttemptPublication>>,
+  ): Promise<void> {
+    const rows = await sql<Array<{
+      claim_id: string;
+      runtime_session_id: string;
+      run_id: string;
+      step_db_id: string;
+      workflow_step_id: string;
+      story_db_id: string;
+      story_id: string;
+      story_index: number;
+      recovery_case_id: string;
+      revision_id: string;
+      dispatch_id: string;
+      status: string;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+      bound_matches_claim: boolean;
+    }>>`
+      SELECT publication.claim_id::text,publication.runtime_session_id,publication.run_id,
+             publication.step_db_id,publication.workflow_step_id,publication.story_db_id,
+             publication.story_id,publication.story_index,publication.recovery_case_id,
+             publication.revision_id,publication.dispatch_id,publication.status,
+             publication.handoff_canonical_json,publication.handoff_hash,
+             publication.bound_at=claim.claimed_at AS bound_matches_claim
+        FROM internal_production_v3_recovery_claim_publications_v1 publication
+        JOIN runtime_sessions runtime ON runtime.session_id=publication.runtime_session_id
+        JOIN claim_log claim ON claim.id=publication.claim_id
+       WHERE publication.claim_id=${String(fixture.claimId)}::bigint
+    `;
+    assert.deepEqual([...rows], [{
+      claim_id: String(fixture.claimId),
+      runtime_session_id: fixture.sessionId,
+      run_id: fixture.runId,
+      step_db_id: `${fixture.runId}-step`,
+      workflow_step_id: "implement",
+      story_db_id: `${fixture.runId}-story`,
+      story_id: fixture.storyId,
+      story_index: 1,
+      recovery_case_id: fixture.handoff.recoveryCaseId,
+      revision_id: fixture.handoff.revisionId,
+      dispatch_id: fixture.handoff.dispatchId,
+      status: fixture.handoff.status,
+      handoff_canonical_json: canonicalJsonStringify(fixture.handoff),
+      handoff_hash: hashCanonicalJson(fixture.handoff),
+      bound_matches_claim: true,
+    }], "termination-first pre-expiry publication differs");
+  }
+
+  async function terminationFirstImmutableBytes(
+    fixture: Awaited<ReturnType<typeof seedPreAttemptPublication>>,
+    requestId: string,
+  ): Promise<Readonly<{
+    delivery: string;
+    recoveryCase: string;
+    claim: string;
+    runtime: string;
+    owners: string;
+    ownerHead: string;
+  }>> {
+    const rows = await sql<Array<{
+      delivery: string | null;
+      recovery_case: string | null;
+      claim: string | null;
+      runtime: string | null;
+      owners: string;
+      owner_head: string | null;
+    }>>`
+      SELECT
+        (SELECT row_to_json(delivery_row)::text
+           FROM (SELECT * FROM recovery_dispatch_deliveries
+                  WHERE dispatch_id=${fixture.handoff.dispatchId}) delivery_row) AS delivery,
+        (SELECT row_to_json(case_row)::text
+           FROM (SELECT * FROM recovery_cases
+                  WHERE recovery_case_id=${fixture.handoff.recoveryCaseId}) case_row) AS recovery_case,
+        (SELECT row_to_json(claim_row)::text
+           FROM (SELECT * FROM claim_log WHERE id=${String(fixture.claimId)}::bigint) claim_row) AS claim,
+        (SELECT row_to_json(runtime_row)::text
+           FROM (SELECT * FROM runtime_sessions WHERE session_id=${fixture.sessionId}) runtime_row) AS runtime,
+        (SELECT COALESCE(json_agg(owner_row ORDER BY owner_row.category,owner_row.owner_key)::text,'[]')
+           FROM (SELECT * FROM internal_production_owner_reservations_v1
+                  WHERE (category='run' AND owner_key=${fixture.runId})
+                     OR (category='claim' AND owner_key=${String(fixture.claimId)})
+                     OR (category='runtime-session' AND owner_key=${fixture.sessionId})
+                     OR (category='termination' AND owner_key=${requestId})) owner_row) AS owners,
+        (SELECT head_version::text FROM internal_production_owner_admission_head_v1
+          WHERE singleton=TRUE) AS owner_head
+    `;
+    assert.equal(rows.length, 1);
+    const row = rows[0]!;
+    assert.ok(row.delivery && row.recovery_case && row.claim && row.runtime && row.owner_head,
+      "termination-first immutable byte snapshot is incomplete");
+    return Object.freeze({
+      delivery: row.delivery,
+      recoveryCase: row.recovery_case,
+      claim: row.claim,
+      runtime: row.runtime,
+      owners: row.owners,
+      ownerHead: row.owner_head,
+    });
+  }
+
   async function expiryOwnerCloses(
     fixture: Awaited<ReturnType<typeof seedPreAttemptPublication>>,
   ): Promise<readonly Task8ExpiryOwnerCloseWitnessV1[]> {
@@ -8057,6 +8160,7 @@ test("Task 8 executes the three honest sequential compound and expiry rows", asy
     observeBoundary?: (
       boundary: "after-compound" | "after-compound-replay",
     ) => Promise<void>,
+    alreadyClaimed = false,
   ): Promise<Readonly<{
     ownerHeadBeforeCompound: string;
     ownerHeadAfterCompound: string;
@@ -8104,8 +8208,10 @@ test("Task 8 executes the three honest sequential compound and expiry rows", asy
     );
     const terminations = createRunTerminationRepository(sql);
     const ownerInstanceId = `task8-${label}-termination-owner`;
-    const claimed = await terminations.claim({ requestId, ownerInstanceId });
-    assert.ok(claimed);
+    if (!alreadyClaimed) {
+      const claimed = await terminations.claim({ requestId, ownerInstanceId });
+      assert.ok(claimed);
+    }
     const runtime = await fixture.sessions.findById(fixture.sessionId);
     assert.ok(runtime);
     if (runtime.state === "drain_requested") {
@@ -8171,16 +8277,56 @@ test("Task 8 executes the three honest sequential compound and expiry rows", asy
       requestId: terminationFirstRequestId,
     });
     assert.equal(requested.status, "requested");
-    const beforeReport = await snapshot(terminationFirst.runId);
+    const terminationFirstTerminations = createRunTerminationRepository(sql);
+    const terminationFirstOwnerInstanceId = "task8-termination-first-termination-owner";
+    assert.ok(await terminationFirstTerminations.claim({
+      requestId: terminationFirstRequestId,
+      ownerInstanceId: terminationFirstOwnerInstanceId,
+    }));
+    assert.deepEqual([...await sql`
+      SELECT run.status AS run_status,termination.state AS termination_state,
+             termination.owner_instance_id,runtime.state AS runtime_state
+        FROM runs run
+        JOIN run_termination_requests termination ON termination.run_id=run.id
+        JOIN runtime_sessions runtime ON runtime.run_id=run.id
+       WHERE run.id=${terminationFirst.runId}
+    `], [{
+      run_status: "failing",
+      termination_state: "draining",
+      owner_instance_id: terminationFirstOwnerInstanceId,
+      runtime_state: "drain_requested",
+    }], "termination request/claim must own a nonactive run before delivery expiry");
+    await assertExactPreAttemptPublication(terminationFirst);
+    await expire(terminationFirst.handoff);
+    const terminationFirstExpiryProof = await sql<Array<{
+      expired: boolean;
+    }>>`
+      SELECT lease_expires_at <= clock_timestamp() AS expired
+        FROM recovery_dispatch_deliveries
+       WHERE dispatch_id=${terminationFirst.handoff.dispatchId}
+    `;
+    assert.deepEqual([...terminationFirstExpiryProof], [{ expired: true }],
+      "termination-first delivery must expire by database time before reconciliation");
+    const beforeReport = await terminationFirstImmutableBytes(
+      terminationFirst,
+      terminationFirstRequestId,
+    );
     const reportOnly = await terminationFirst.reconciler.reconcileActive({
       runId: terminationFirst.runId,
     });
+    assert.equal(reportOnly.counts.rolledBackPublications, 0, JSON.stringify(reportOnly));
     assert.ok(reportOnly.events.some((event) => (
       event.code === "V3_RECOVERY_LIFECYCLE_TERMINATION_PENDING"
       || event.code === "V3_RECOVERY_LIFECYCLE_RUN_NOT_ACTIVE"
     )));
-    assert.deepEqual(await snapshot(terminationFirst.runId), beforeReport);
-    await terminateAfterDrain(terminationFirst, "termination-first");
+    assert.deepEqual(
+      await terminationFirstImmutableBytes(terminationFirst, terminationFirstRequestId),
+      beforeReport,
+      "termination-first report-only reconciliation changed delivery/case/claim/runtime/owners/head bytes",
+    );
+    await assertExactPreAttemptPublication(terminationFirst);
+    await terminateAfterDrain(terminationFirst, "termination-first", undefined, true);
+    assert.equal((await snapshot(terminationFirst.runId)).run_status, "failed");
 
     const expiryFirst = await seedPreAttemptPublication("expiry-first");
     await expire(expiryFirst.handoff);

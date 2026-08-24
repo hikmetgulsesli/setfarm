@@ -363,6 +363,79 @@ function p3FunctionBody(source: string, marker: string): string {
   return source.slice(exact.getStart(sourceFile), exact.end);
 }
 
+type P3SqlLiteralOccurrenceV1 = Readonly<{
+  relativePath: string;
+  functionName: string | null;
+  literalStart: number;
+  text: string;
+}>;
+
+function p3FunctionBoundaryName(node: ts.Node): string | null {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (
+      ts.isFunctionDeclaration(current)
+      || ts.isMethodDeclaration(current)
+      || ts.isFunctionExpression(current)
+      || ts.isArrowFunction(current)
+    ) {
+      if (current.name) return current.name.getText();
+      if (ts.isVariableDeclaration(current.parent) && ts.isIdentifier(current.parent.name)) {
+        return current.parent.name.text;
+      }
+      if (ts.isPropertyAssignment(current.parent)) return current.parent.name.getText();
+      return null;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function p3ExecutableSqlLiteralOccurrences(
+  sources: P3ProductionSourcesV1,
+  expression: RegExp,
+): readonly P3SqlLiteralOccurrenceV1[] {
+  assert.equal(expression.global, true, "Task 8 SQL occurrence expression must be global");
+  const occurrences: P3SqlLiteralOccurrenceV1[] = [];
+  for (const [relativePath, source] of Object.entries(sources)) {
+    const sourceFile = ts.createSourceFile(
+      relativePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const visit = (node: ts.Node): void => {
+      let text: string | undefined;
+      if (ts.isStringLiteralLike(node)) text = node.text;
+      else if (ts.isTemplateExpression(node)) text = node.getText(sourceFile).slice(1, -1);
+      if (text !== undefined) {
+        const directUnsafeArgument = ts.isCallExpression(node.parent)
+          && node.parent.arguments.some((argument) => argument === node)
+          && ts.isPropertyAccessExpression(node.parent.expression)
+          && node.parent.expression.name.text === "unsafe";
+        const taggedSql = ts.isTaggedTemplateExpression(node.parent)
+          && node.parent.template === node;
+        if (directUnsafeArgument || taggedSql) {
+          const matcher = new RegExp(expression.source, expression.flags);
+          for (const match of text.matchAll(matcher)) {
+            occurrences.push(Object.freeze({
+              relativePath,
+              functionName: p3FunctionBoundaryName(node),
+              literalStart: node.getStart(sourceFile),
+              text,
+            }));
+          }
+        }
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return occurrences;
+}
+
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
@@ -417,8 +490,14 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const ordinary = sources["src/recovery/v3-downstream-evidence-publication.ts"]!;
   const worker = sources["src/recovery/v3-evidence-only-worker.ts"]!;
   const lifecycle = sources["src/recovery/v3-recovery-lifecycle-reconciler.ts"]!;
-  assert.equal(productionPaths.filter((relativePath) => sources[relativePath]!.includes("INSERT INTO execution_attempts"))
-    .join("\n"), "src/execution/attempt-repository.ts", "attempt birth owner differs");
+  const attemptBirths = p3ExecutableSqlLiteralOccurrences(
+    sources,
+    /\bINSERT\s+INTO\s+execution_attempts\b/gi,
+  );
+  assert.deepEqual(attemptBirths.map(({ relativePath, functionName }) => ({ relativePath, functionName })), [{
+    relativePath: "src/execution/attempt-repository.ts",
+    functionName: "reserveAttemptInTransaction",
+  }], "attempt birth inventory differs");
   assert.equal(productionPaths.reduce((total, relativePath) => total + countMatches(
     sources[relativePath]!, /SET state = 'attempt_reserved',\s*claim_id =/g,
   ), 0), 1, "recovery-delivery binder inventory differs");
@@ -430,6 +509,39 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 
   const negativeCheck = p3FunctionBody(evidenceOnly,
     "async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(");
+  const evidenceOnlyPublicationQueries = p3ExecutableSqlLiteralOccurrences(
+    { "src/recovery/v3-evidence-only-publication.ts": evidenceOnly },
+    /\binternal_production_v3_recovery_claim_publications_v1\b/g,
+  );
+  assert.deepEqual(
+    evidenceOnlyPublicationQueries.map(({ relativePath, functionName }) => ({ relativePath, functionName })),
+    [{
+      relativePath: "src/recovery/v3-evidence-only-publication.ts",
+      functionName: "assertNoModelPublicationForEvidenceOnlyClaimInTransaction",
+    }],
+    "evidence-only publication query inventory differs",
+  );
+  const evidenceOnlyRuntimeQueries = p3ExecutableSqlLiteralOccurrences(
+    { "src/recovery/v3-evidence-only-publication.ts": evidenceOnly },
+    /\bruntime_sessions\b/g,
+  );
+  assert.deepEqual(
+    evidenceOnlyRuntimeQueries.map(({ relativePath, functionName }) => ({ relativePath, functionName })),
+    [{
+      relativePath: "src/recovery/v3-evidence-only-publication.ts",
+      functionName: "assertNoModelPublicationForEvidenceOnlyClaimInTransaction",
+    }],
+    "evidence-only runtime query inventory differs",
+  );
+  assert.equal(evidenceOnlyRuntimeQueries[0]!.literalStart, evidenceOnlyPublicationQueries[0]!.literalStart,
+    "evidence-only dependencies must remain one code-owned aggregate query");
+  assert.equal(countMatches(evidenceOnlyPublicationQueries[0]!.text, /COUNT\(\*\)::integer/g), 2,
+    "evidence-only publication query must remain the aggregate negative dependency check");
+  assert.doesNotMatch(
+    evidenceOnlyPublicationQueries[0]!.text,
+    /SELECT\s+(?!COUNT\s*\()[^;(]*\bpublication\.|ORDER\s+BY|LIMIT\s+1|\blatest\b/i,
+    "evidence-only publication query must not add a positive or latest-row dependency",
+  );
   assert.equal(countMatches(negativeCheck, /FROM runtime_sessions runtime/g), 1);
   assert.equal(countMatches(negativeCheck, /FROM internal_production_v3_recovery_claim_publications_v1 publication/g), 1);
   assert.equal(countMatches(negativeCheck, /COUNT\(\*\)::integer/g), 2);
@@ -625,6 +737,18 @@ describe("Task 0 exact source manifest", () => {
         "ORDER BY publication.bound_at DESC LIMIT 1 AS publication_count`,",
       ),
     )), /must not match|does not match|ORDER BY|latest/i);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/recovery/v3-evidence-only-publication.ts",
+      (source) => `${source}\nasync function task8PositiveLatestPublicationLookup(transaction: { unsafe(query: string): unknown }) {\n  return transaction.unsafe(\`SELECT * FROM internal_production_v3_recovery_claim_publications_v1 ORDER BY bound_at DESC LIMIT 1\`);\n}\n`,
+    )), /evidence-only publication query inventory|positive|latest|second lookup/i);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/recovery/v3-evidence-only-publication.ts",
+      (source) => `${source}\nasync function task8PositiveLatestRuntimeLookup(transaction: { unsafe(query: string): unknown }) {\n  return transaction.unsafe(\`SELECT * FROM runtime_sessions ORDER BY created_at DESC LIMIT 1\`);\n}\n`,
+    )), /evidence-only runtime query inventory|positive|latest|second lookup/i);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/execution/attempt-repository.ts",
+      (source) => `${source}\nasync function task8SecondAttemptBirth(transaction: { unsafe(query: string): unknown }) {\n  return transaction.unsafe(\`INSERT INTO execution_attempts (attempt_id) VALUES ('ATT_task8_decoy')\`);\n}\n`,
+    )), /attempt birth inventory/);
     assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
       "src/recovery/v3-recovery-lifecycle-reconciler.ts",
       (source) => source.replace(
