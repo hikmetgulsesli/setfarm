@@ -282,6 +282,95 @@ function currentEntryMembers(store: string, basename: string): readonly string[]
     : [];
 }
 
+function legacyDatabaseCensusRow(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    catalogViolationCount: "0",
+    aprbChildViolationCount: "0",
+    ordinaryBatchViolationCount: "0",
+    activeHeaderViolationCount: "0",
+    ownerReservationsRelation: null,
+    ownerAdmissionHeadRelation: null,
+    producerSourceRelation: null,
+    producerActivationRelation: null,
+    producerActivationHeadRelation: null,
+    producerCurrentRelation: null,
+    activeRunCount: "0",
+    openClaimCount: "0",
+    executionAttemptCount: "0",
+    activeRuntimeSessionCount: "0",
+    activeCompletionOwnerCount: "0",
+    unsettledMandatoryEffectCount: "0",
+    artifactReservationCount: "0",
+    publicationBatchCount: "0",
+    artifactPublicationCount: "0",
+    terminationOwnerCount: "0",
+    findingOwnerCount: "0",
+    recoveryOwnerCount: "0",
+    operationalDeliveryCount: "0",
+    ...overrides,
+  };
+}
+
+function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[]): string {
+  const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
+  let source = readFileSync(observerSource, "utf8");
+  source = source.replace(
+    "async function observeLegacyDatabaseCensusV1()",
+    "export async function observeLegacyDatabaseCensusV1()",
+  );
+  source = source.replace(
+    'const postgresModule = await import("postgres");',
+    `const fixtureRows=JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]");
+    let queryCalls=0;
+    const fixtureSql=Object.assign(async (strings: readonly string[]) => {
+      queryCalls+=1;
+      const query=Array.from(strings).join("?");
+      if(queryCalls===1){
+        if(!query.includes("SET LOCAL statement_timeout = '5s'")) throw new Error("MISSING_STATEMENT_TIMEOUT");
+      }else if(queryCalls===2){
+        if(!query.includes("SET LOCAL lock_timeout = '1s'")) throw new Error("MISSING_LOCK_TIMEOUT");
+      }else if(queryCalls===3){
+        for(const literal of ["pg_catalog.pg_attribute","runtime_completion_effects","artifact_publication_batch_items","recovery_dispatch_deliveries"]){
+          if(!query.includes(literal)) throw new Error("MISSING_CATALOG_CONTRACT_"+literal);
+        }
+        for(const literal of [
+          "status IN ('running','resuming','cancelling','failing')",
+          "outcome IS NULL",
+          "disposition IN ('claimed','running')",
+          "state NOT IN ('released','quarantined')",
+          "state NOT IN ('accepted','rejected','quarantined')",
+          "mandatory IS TRUE AND state NOT IN ('applied','reconciled')",
+          "reservation.state='reserved' AND left(reservation.reservation_id,5)<>'APRB_'",
+          "WHERE state='active'",
+          "reservation.state='reserved' AND left(reservation.reservation_id,5)='APRB_'",
+          "state<>'terminalized'",
+          "status='open'",
+          "status IN ('open','repairing','evidencing')",
+          "state IN ('authorized','leased','attempt_reserved','running')",
+          "state IN ('pending','leased')",
+        ]) if(!query.includes(literal)) throw new Error("MISSING_AGGREGATE_PREDICATE_"+literal);
+      }else throw new Error("EXTRA_DATABASE_QUERY");
+      return fixtureRows;
+    }, {
+      begin: async (mode: unknown, callback: (tx: unknown) => Promise<unknown>) => {
+        if(mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
+        return callback(fixtureSql);
+      },
+      end: async () => {if(queryCalls!==3) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
+    });
+    const postgresModule={default:()=>fixtureSql};`,
+  );
+  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+  fixtureFile(
+    root,
+    "src/product-compiler/canonical-json.ts",
+    readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")),
+  );
+  fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+  process.env.P4_LEGACY_CENSUS_ROWS = JSON.stringify(rows);
+  return root;
+}
+
 async function loadDatabaseOnlyForIsolatedLifecycleTest<T>(
   rawDatabaseUrl: string | undefined,
   loadDatabase: () => Promise<T>,
@@ -298,6 +387,229 @@ async function loadDatabaseOnlyForIsolatedLifecycleTest<T>(
 }
 
 describe("OA17 zero-input current Setfarm source/build observation", () => {
+  it("P4 receipt owns startup prerequisite observations", async () => {
+    const receipt = await import(
+      `../../src/internal-production/baseline-post-handoff-receipt-v1.js?p4-prerequisites=${Date.now()}`
+    );
+    assert.equal(typeof receipt.observeInternalProductionServiceCensusV1, "function");
+    assert.equal(receipt.observeInternalProductionServiceCensusV1.length, 0);
+    assert.equal(typeof receipt.observeInternalProductionLegacyPreManifestZeroOwnerV1, "function");
+    assert.equal(receipt.observeInternalProductionLegacyPreManifestZeroOwnerV1.length, 0);
+    assert.equal(typeof receipt.resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1, "function");
+    assert.equal(receipt.resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1.length, 1);
+
+    const source = readFileSync(observerSource, "utf8");
+    assert.match(source, /legacy-pre-manifest-zero-owner-observation\/sha256\//);
+    assert.doesNotMatch(source, /^import .*baseline-spawner-startup-admission-v1/m);
+    assert.doesNotMatch(source, /newest|latest.*legacy-pre-manifest/i);
+    assert.doesNotMatch(source, /Object\.fromEntries\(COMPLETE_ZERO_CENSUS_KEYS_V1/);
+    for (const producer of [
+      "reserveInternalProductionOrdinaryServiceStartOwnerV1",
+      "reserveInternalProductionServiceRestartDispatchOwnerV1",
+      "reserveInternalProductionServiceRestartOperationOwnerV1",
+      "reserveGoldenLaunchPreparationOwnerV1",
+      "reserveGoldenPreparedLaunchOwnerV1",
+      "reserveGoldenLaunchOutboxOwnerV1",
+      "reserveGoldenStagedCaseOwnerV1",
+      "reserveGoldenFixtureAttemptOwnerV1",
+      "reserveGoldenExistingRepositoryFixtureAttemptOwnerV1",
+      "reserveGoldenDocsSessionOwnerV1",
+      "reserveGoldenDocsLeaseOwnerV1",
+      "reserveGoldenFleetStageOwnerV1",
+      "reserveGoldenFleetInflightOwnerV1",
+      "reserveGoldenFleetReviewOwnerV1",
+      "reserveGoldenMatrixInflightOwnerV1",
+      "reserveColdRehearsalOwnerV1",
+      "reserveGoldenCompilationLeaseOwnerV1",
+      "reserveGoldenExecutionLeaseOwnerV1",
+    ]) assert.ok(source.includes(producer), `missing phase-closed producer proof for ${producer}`);
+  });
+
+  it("P4 legacy census rejects a nonzero open claim instead of synthesizing zero", () => {
+    const rows = [legacyDatabaseCensusRow({ openClaimCount: "1" })];
+    const root = createLegacyDatabaseCensusFixture(rows);
+    try {
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      const result = spawnSync(process.execPath, [
+        "--import", tsxLoader, "--input-type=module", "-e",
+        `import(${JSON.stringify(moduleUrl)}).then((m)=>m.observeLegacyDatabaseCensusV1()).then(()=>{throw new Error("NONZERO_OPEN_CLAIM_ACCEPTED")})`,
+      ], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+          P4_LEGACY_CENSUS_ROWS: JSON.stringify(rows),
+        },
+      });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /openClaimCount|open claim/i);
+      assert.doesNotMatch(result.stderr, /NONZERO_OPEN_CLAIM_ACCEPTED/);
+    } finally {
+      delete process.env.P4_LEGACY_CENSUS_ROWS;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("P4 legacy database census rejects every live predicate and malformed aggregate", () => {
+    const root = createLegacyDatabaseCensusFixture([]);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (row: Record<string, unknown>) => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e",
+      `import(${JSON.stringify(moduleUrl)}).then((m)=>m.observeLegacyDatabaseCensusV1())`,
+    ], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+        P4_LEGACY_CENSUS_ROWS: JSON.stringify([row]),
+      },
+    });
+    try {
+      const liveKeys = [
+        "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
+        "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "artifactReservationCount",
+        "publicationBatchCount", "artifactPublicationCount", "terminationOwnerCount", "findingOwnerCount",
+        "recoveryOwnerCount", "operationalDeliveryCount",
+      ];
+      for (const key of liveKeys) {
+        const result = run(legacyDatabaseCensusRow({ [key]: "1" }));
+        assert.notEqual(result.status, 0, `${key} must refuse`);
+        assert.match(result.stderr, new RegExp(key));
+      }
+      for (const [key, value] of [
+        ["openClaimCount", "-1"],
+        ["openClaimCount", "01"],
+        ["openClaimCount", "9007199254740992"],
+        ["openClaimCount", null],
+        ["catalogViolationCount", "1"],
+        ["aprbChildViolationCount", "1"],
+        ["ordinaryBatchViolationCount", "1"],
+        ["activeHeaderViolationCount", "1"],
+        ["producerCurrentRelation", "internal_production_owner_producer_manifest_set_current_v1"],
+      ] as const) {
+        const result = run(legacyDatabaseCensusRow({ [key]: value }));
+        assert.notEqual(result.status, 0, `${key}=${String(value)} must refuse`);
+        assert.match(result.stderr, new RegExp(key));
+      }
+      const zero = run(legacyDatabaseCensusRow());
+      assert.equal(zero.status, 0, zero.stderr);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("P4 phase-closed census refuses every present or symlinked future authority path", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-phase-closed-"));
+    let source = readFileSync(observerSource, "utf8");
+    source = source
+      .replace("function requireAbsentPhasePathV1(", "export function requireAbsentPhasePathV1(")
+      .replace("function requireAbsentProducerLiteralV1(", "export function requireAbsentProducerLiteralV1(")
+      .replace("function assertPhaseSourceEqualV1(", "export function assertPhaseSourceEqualV1(");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = `${pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href}?phase=${Date.now()}`;
+    try {
+      const loaded = await import(moduleUrl) as Readonly<{
+        requireAbsentPhasePathV1: (target: string, label: string) => void;
+        requireAbsentProducerLiteralV1: (source: string, producer: string) => void;
+        assertPhaseSourceEqualV1: (expected: unknown, observed: unknown) => void;
+      }>;
+      const target = path.join(root, "future-authority");
+      assert.doesNotThrow(() => loaded.requireAbsentPhasePathV1(target, "future authority"));
+      fixtureFile(root, "future-authority", "present\n");
+      assert.throws(() => loaded.requireAbsentPhasePathV1(target, "future authority"), /present before its producer phase/);
+      unlinkSync(target);
+      symlinkSync(path.join(root, "missing-target"), target);
+      assert.throws(() => loaded.requireAbsentPhasePathV1(target, "future authority"), /present before its producer phase/);
+      assert.doesNotThrow(() => loaded.requireAbsentProducerLiteralV1("export const unrelated = true;", "reserveRecoverySourceRunOwnerV1"));
+      for (const spelling of [
+        "export function reserveRecoverySourceRunOwnerV1(){}",
+        "export const reserveRecoverySourceRunOwnerV1=()=>{}",
+        "// reserveRecoverySourceRunOwnerV1",
+      ]) assert.throws(() => loaded.requireAbsentProducerLiteralV1(spelling, "reserveRecoverySourceRunOwnerV1"), /future producer export is already active/);
+      const sourceIdentity = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+      assert.doesNotThrow(() => loaded.assertPhaseSourceEqualV1(sourceIdentity, { ...sourceIdentity }));
+      for (const mutation of [{ sha: "4".repeat(40) }, { treeHash: "5".repeat(40) }, { buildHash: "6".repeat(64) }]) {
+        assert.throws(() => loaded.assertPhaseSourceEqualV1(sourceIdentity, { ...sourceIdentity, ...mutation }), /phase-closed source/);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("P4 physical census parser rejects malformed and over-cap process inventories", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-physical-census-"));
+    let source = readFileSync(observerSource, "utf8");
+    source = source
+      .replace("function parsePhysicalProcessesV1(", "export function parsePhysicalProcessesV1(")
+      .replace("function parseLsofReferencesV1(", "export function parseLsofReferencesV1(")
+      .replace("function parseGitWorktreeListV1(", "export function parseGitWorktreeListV1(")
+      .replace("function parseProcessListenersV1(", "export function parseProcessListenersV1(")
+      .replace("function assertPhysicalInventoryPassStableV1(", "export function assertPhysicalInventoryPassStableV1(");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (text: string) => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e",
+      `import(${JSON.stringify(moduleUrl)}).then((m)=>process.stdout.write(JSON.stringify(m.parsePhysicalProcessesV1(Buffer.from(process.env.P4_PS)))))`,
+    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", P4_PS: text } });
+    try {
+      const row = "501 42 1 42 S Mon Aug 24 12:34:56 2026 /usr/bin/node fixture\n";
+      const valid = run(row);
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.equal(JSON.parse(valid.stdout)[0].pid, 42);
+      const malformed = run("not a process row\n");
+      assert.notEqual(malformed.status, 0);
+      assert.match(malformed.stderr, /process row is malformed/);
+      const overflow = run(row.repeat(4_097));
+      assert.notEqual(overflow.status, 0);
+      assert.match(overflow.stderr, /exceeds the row cap/);
+      const runLsof = (bytes: Buffer) => spawnSync(process.execPath, [
+        "--import", tsxLoader, "--input-type=module", "-e",
+        `import(${JSON.stringify(moduleUrl)}).then((m)=>process.stdout.write(JSON.stringify(m.parseLsofReferencesV1(Buffer.from(process.env.P4_LSOF,"base64"),"/managed"))))`,
+      ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", P4_LSOF: bytes.toString("base64") } });
+      const lsofValid = runLsof(Buffer.from("p42\0cnode\0f1\0n/managed/file\0\n"));
+      assert.equal(lsofValid.status, 0, lsofValid.stderr);
+      assert.deepEqual(JSON.parse(lsofValid.stdout), { pids: [42], deleted: [] });
+      for (const bytes of [
+        Buffer.from("pbad\0n/managed/file\0\n"),
+        Buffer.from("p42\0p42\0n/managed/file\0\n"),
+        Buffer.from("n/managed/file\0\n"),
+        Buffer.from("cnode\0f1\0\n"),
+      ]) {
+        const refused = runLsof(bytes);
+        assert.notEqual(refused.status, 0);
+      }
+      const runPrivate = (expression: string, environment: Record<string, string> = {}) => spawnSync(process.execPath, [
+        "--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m)=>${expression})`,
+      ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...environment } });
+      const gitValid = runPrivate("process.stdout.write(JSON.stringify(m.parseGitWorktreeListV1(Buffer.from(process.env.P4_BYTES,'base64'))))", { P4_BYTES: Buffer.from("worktree /primary\0HEAD a\0worktree /managed\0HEAD b\0").toString("base64") });
+      assert.equal(gitValid.status, 0, gitValid.stderr);
+      assert.deepEqual(JSON.parse(gitValid.stdout), ["/primary", "/managed"]);
+      for (const bytes of [Buffer.from("worktree /managed\0worktree /managed\0"), Buffer.from("worktree /managed\n")]) {
+        assert.notEqual(runPrivate("m.parseGitWorktreeListV1(Buffer.from(process.env.P4_BYTES,'base64'))", { P4_BYTES: bytes.toString("base64") }).status, 0);
+      }
+      const listeners = runPrivate("process.stdout.write(JSON.stringify(m.parseProcessListenersV1(Buffer.from(process.env.P4_BYTES,'base64'),42)))", { P4_BYTES: Buffer.from("p42\0cnode\0f1\0n127.0.0.1:4567\0\n").toString("base64") });
+      assert.equal(listeners.status, 0, listeners.stderr);
+      assert.deepEqual(JSON.parse(listeners.stdout), [{ pid: 42, protocol: "TCP", localAddress: "127.0.0.1", port: 4567 }]);
+      for (const bytes of [Buffer.from("p43\0n127.0.0.1:4567\0\n"), Buffer.from("p42\0nmalformed\0\n"), Buffer.from("p42\0n127.0.0.1:4567\0n127.0.0.1:4567\0\n")]) {
+        assert.notEqual(runPrivate("m.parseProcessListenersV1(Buffer.from(process.env.P4_BYTES,'base64'),42)", { P4_BYTES: bytes.toString("base64") }).status, 0);
+      }
+      assert.equal(runPrivate("m.assertPhysicalInventoryPassStableV1({worktrees:[],processes:[],listeners:[],stale:[]},{worktrees:[],processes:[],listeners:[],stale:[]})").status, 0);
+      assert.notEqual(runPrivate("m.assertPhysicalInventoryPassStableV1({worktrees:[],processes:[],listeners:[],stale:[]},{worktrees:[{root:'/changed',dirty:false}],processes:[],listeners:[],stale:[]})").status, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    const production = readFileSync(observerSource, "utf8");
+    for (const literal of [
+      "/usr/bin/git", "worktree", "--porcelain", "-z", "--porcelain=v2", "--untracked-files=all",
+      "/bin/ps", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command=", "/usr/sbin/lsof", "-F0pcRfn", "+D", "-iTCP", "-sTCP:LISTEN",
+    ]) assert.ok(production.includes(literal), `missing fixed physical literal ${literal}`);
+  });
   it("does not receive the isolated-runner administrator URL in a database child", () => {
     if (process.env.SETFARM_PG_URL === undefined) return;
     assert.equal(process.env.SETFARM_TEST_PG_ADMIN_URL, undefined);
@@ -1107,14 +1419,18 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "observePreparedInternalProductionCurrentEntryOperationV1",
       "prepareInternalProductionCurrentEntryOperationV1",
       "resolveInternalProductionCurrentEntryOperationV1",
+      "observeInternalProductionServiceCensusV1",
+      "observeInternalProductionLegacyPreManifestZeroOwnerV1",
+      "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1",
     ]);
     assert.match(source, /export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1\(\)/);
     assert.match(source, /export async function observePreparedInternalProductionCurrentEntryOperationV1\(\)/);
-    assert.doesNotMatch(source, /process\.(?:env|argv|cwd)\b/);
+    assert.doesNotMatch(source, /process\.(?:argv|cwd)\b/);
+    assert.deepEqual([...source.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((match) => match[1]), ["SETFARM_PG_URL"]);
     assert.doesNotMatch(source, /\b(?:fallback|packagedFallback|repositoryRoot|gitBinary|toolPath)\s*[:=]/i);
     assert.match(source, /spawnSync\("\/usr\/bin\/git"/);
     const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
-    assert.deepEqual(imports.filter((specifier) => specifier.startsWith(".")), ["../product-compiler/canonical-json.js"]);
+    assert.deepEqual(imports.filter((specifier) => specifier.startsWith(".")), ["../product-compiler/canonical-json.js", "./owner-admission-v1.js"]);
   });
 
   it("returns only the clean current source tuple and exact controller build hash", () => {

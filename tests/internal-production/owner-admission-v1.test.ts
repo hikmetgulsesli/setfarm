@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -1147,6 +1147,155 @@ test("P3 database helper clones the activated template and bounds empty and migr
   } finally {
     await migration31.cleanup();
     process.env.SETFARM_PG_URL = originalUrl;
+  }
+});
+
+test("P4 owner fixtures separate real ts startup from p3 js shadow", async () => {
+  const real = await import(`../../src/internal-production/baseline-spawner-startup-admission-v1.js?p4-owner-real=${Date.now()}`);
+  assert.equal(Object.keys(real).length, 11);
+  assert.equal(typeof real.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1, "function");
+  assert.equal(typeof real.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1, "function");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
+  assert.match(source, /RUN_PERSISTENCE_READINESS_DECLARED_EXTRA_EXPORTS_V1/);
+  assert.match(source, /new URL\("\.\/internal-production\/baseline-spawner-startup-admission-v1\.js", import\.meta\.url\)\.href/);
+});
+
+test("P4 sealed spawner gate authenticates replacement and exits before normal startup", async () => {
+  const productionSpawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  assert.doesNotMatch(productionSpawnerSource, /^export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1/m);
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-private-spawner-gate-"));
+  cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
+  symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
+  const fixtureSpawner = path.join(fixture, "src/spawner.ts");
+  writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
+  const spawner = await import(`${pathToFileURL(fixtureSpawner).href}?p4-sealed-gate=${Date.now()}`);
+  const source = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+  const operationHash = "4".repeat(64);
+  const startupTokenHash = "5".repeat(64);
+  const replacementHash = "6".repeat(64);
+  const processIdentityHash = "7".repeat(64);
+  const generationHash = "8".repeat(64);
+  const calls: string[] = [];
+  const status = Object.freeze({
+    state: "pre_manifest_bootstrap_sealed",
+    currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
+    startupToken: Object.freeze({ startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}`, startupTokenHash }),
+    dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}`, replacementProcessObservationHash: replacementHash }) }),
+  });
+  const dependencies = {
+    startupAdmission: {
+      observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
+      resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async () => {
+        calls.push("resolve-token");
+        return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
+      },
+      resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async () => {
+        calls.push("resolve-replacement");
+        return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
+      },
+    },
+    loadReceiptAuthority: async () => {
+      calls.push("load-receipt");
+      return {
+        observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => { calls.push("observe-source"); return source; },
+        observeInternalProductionServiceCensusV1: async () => { calls.push("observe-census"); return { spawner: { processIdentityHash, generationHash } }; },
+      };
+    },
+    waitForStop: async () => { calls.push("wait-stop"); },
+    cleanupSealedProcess: () => { calls.push("cleanup-lock-pid"); },
+  };
+  assert.equal(await spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), "sealed");
+  assert.deepEqual(calls, ["observe-status", "resolve-token", "load-receipt", "observe-source", "resolve-replacement", "observe-census", "wait-stop", "cleanup-lock-pid"]);
+
+  calls.length = 0;
+  dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1 = async () => ({
+    replacementSpawnerProcessIdentityHash: "9".repeat(64), actualSpawnerGenerationHash: generationHash,
+    actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash,
+  });
+  await assert.rejects(spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), /REPLACEMENT_IDENTITY_INVALID/);
+  assert.equal(calls.includes("wait-stop"), false);
+  assert.equal(calls.includes("cleanup-lock-pid"), false);
+
+  const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const main = spawnerSource.slice(spawnerSource.indexOf("async function main()"));
+  const gateIndex = main.indexOf("await enforceInternalProductionPreSchemaSpawnerStartupGateV1");
+  assert.ok(gateIndex >= 0);
+  for (const normalBoundary of ["assertAgentRuntimeAvailable()", "await pgMigrate()", "postgres(pgUrl"]) {
+    assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
+  }
+  rmSync(fixture, { recursive: true, force: true });
+});
+
+test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
+  const repository = path.resolve(import.meta.dirname, "../..");
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
+  const fixtureSource = path.join(fixture, "src");
+  const pidFile = path.join(fixture, "state/spawner.pid");
+  const lockFile = path.join(fixture, "state/spawner.lock");
+  const normalMarker = path.join(fixture, "normal-startup-called");
+  cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
+  symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
+  const operationHash = "a".repeat(64);
+  const tokenHash = "b".repeat(64);
+  const replacementHash = "c".repeat(64);
+  const source = { sha: "d".repeat(40), treeHash: "e".repeat(40), buildHash: "f".repeat(64) };
+  const processIdentityHash = "1".repeat(64);
+  const generationHash = "2".repeat(64);
+  writeFileSync(path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts"), `
+const operation={operationRef:${JSON.stringify(`setfarm://internal-production/current-entry-operation/sha256/${operationHash}`)},operationHash:${JSON.stringify(operationHash)}};
+const startupToken={startupTokenRef:${JSON.stringify(`setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${tokenHash}`)},startupTokenHash:${JSON.stringify(tokenHash)}};
+const replacementProcessObservation={replacementProcessObservationRef:${JSON.stringify(`setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}`)},replacementProcessObservationHash:${JSON.stringify(replacementHash)}};
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return {state:"pre_manifest_bootstrap_sealed",currentEntryOperation:operation,startupToken,dispatchPrefix:{replacementProcessObservation}}}
+export async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return {startupMode:"pre-manifest-bootstrap-sealed",currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,task0SpawnerSourceSha:${JSON.stringify(source.sha)},task0SpawnerTreeHash:${JSON.stringify(source.treeHash)},task0SpawnerBuildHash:${JSON.stringify(source.buildHash)}}}
+export async function resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1(){return {replacementSpawnerProcessIdentityHash:${JSON.stringify(processIdentityHash)},actualSpawnerGenerationHash:${JSON.stringify(generationHash)},actualSpawnerSourceSha:${JSON.stringify(source.sha)},actualSpawnerTreeHash:${JSON.stringify(source.treeHash)},actualSpawnerBuildHash:${JSON.stringify(source.buildHash)}}}
+`, "utf8");
+  writeFileSync(path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts"), `
+export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)}}
+export async function observeInternalProductionServiceCensusV1(){return {spawner:{processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}}}
+`, "utf8");
+  const spawnerPath = path.join(fixtureSource, "spawner.ts");
+  let spawnerBytes = readFileSync(spawnerPath, "utf8")
+    .replace('const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");', `const PID_FILE = ${JSON.stringify(pidFile)};`)
+    .replace('const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");', `const LOCK_FILE = ${JSON.stringify(lockFile)};`)
+    .replace("  assertAgentRuntimeAvailable();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"runtime\\n");\n  assertAgentRuntimeAvailable();`)
+    .replace("  await pgMigrate();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"migration\\n");\n  await pgMigrate();`)
+    .replace("  const listener = postgres(pgUrl, { max: 1 });", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"listener\\n");\n  const listener = postgres(pgUrl, { max: 1 });`)
+    .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
+  writeFileSync(spawnerPath, spawnerBytes);
+  writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+  const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
+    cwd: fixture,
+    env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`sealed spawner did not wait: ${stderr}`)), 10_000);
+      const inspect = () => {
+        if (!stdout.includes("Pre-manifest bootstrap sealed")) return;
+        clearTimeout(timeout);
+        resolve();
+      };
+      child.stdout.on("data", inspect);
+      child.once("exit", (code, signal) => { clearTimeout(timeout); reject(new Error(`sealed spawner exited early code=${code} signal=${signal}: ${stderr}`)); });
+    });
+    assert.equal(existsSync(pidFile), true);
+    assert.equal(existsSync(lockFile), true);
+    assert.equal(existsSync(normalMarker), false);
+    child.kill("SIGTERM");
+    const exit = await new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+    assert.deepEqual(exit, { code: 0, signal: null });
+    assert.equal(existsSync(pidFile), false);
+    assert.equal(existsSync(lockFile), false);
+    assert.equal(existsSync(normalMarker), false);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    rmSync(fixture, { recursive: true, force: true });
   }
 });
 

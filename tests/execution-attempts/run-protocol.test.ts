@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,6 +31,67 @@ const RELEASE_GO_ADMISSION = {
   releaseSha: RELEASE_SHA,
   canary: null,
 };
+
+it("P4 readiness loader permits only declared extras", async () => {
+  const dbSource = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
+  assert.doesNotMatch(dbSource, /^export function validateInternalProductionRunPersistenceReadinessModuleNamespaceV1/m);
+  const fixture = await mkdtemp(path.join(tmpdir(), "setfarm-p4-private-readiness-loader-"));
+  cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
+  symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
+  const fixtureDb = path.join(fixture, "src/db-pg.ts");
+  writeFileSync(fixtureDb, dbSource.replace("function validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(", "export function validateInternalProductionRunPersistenceReadinessModuleNamespaceV1("));
+  const { validateInternalProductionRunPersistenceReadinessModuleNamespaceV1 } = await import(`${pathToFileURL(fixtureDb).href}?private-loader=${Date.now()}`);
+  const calls: string[] = [];
+  const observe = async () => { calls.push("observe"); return Object.freeze({ pair: true }); };
+  const resolve = async (_pair: unknown) => { calls.push("resolve"); return Object.freeze({ ready: true }); };
+  const extra = () => { calls.push("extra"); };
+  const required = {
+    observeInternalProductionPreSchemaSpawnerRebindStatusV1: observe,
+    resolveInternalProductionTask0SpawnerAdmissionReadyV1: resolve,
+  };
+  const declaredExtras = [
+    "prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1",
+    "executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1",
+    "resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1",
+    "resolveInternalProductionPreSchemaSpawnerRebindStatusV1",
+    "resolveInternalProductionPreSchemaSpawnerStartupTokenV1",
+    "resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1",
+    "resolveInternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1",
+    "resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1",
+    "resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1",
+  ];
+  for (let mask = 0; mask < 1 << declaredExtras.length; mask += 1) {
+    const candidate: Record<string, unknown> = { ...required };
+    declaredExtras.forEach((name, index) => { if ((mask & (1 << index)) !== 0) candidate[name] = extra; });
+    const loaded = validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(candidate);
+    const pair = await loaded.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+    await loaded.resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair);
+  }
+  assert.equal(calls.filter((call) => call === "extra").length, 0);
+  assert.deepEqual(calls.slice(0, 2), ["observe", "resolve"]);
+
+  const refuses = (candidate: unknown) => assert.throws(
+    () => validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(candidate),
+    /RUN_PERSISTENCE_READINESS_MODULE_NAMESPACE_INVALID/,
+  );
+  refuses({ ...required, unknown: extra });
+  const { observeInternalProductionPreSchemaSpawnerRebindStatusV1: _missingObserve, ...withoutObserve } = required;
+  const { resolveInternalProductionTask0SpawnerAdmissionReadyV1: _missingResolve, ...withoutResolve } = required;
+  refuses(withoutObserve);
+  refuses(withoutResolve);
+  refuses({ ...required, observeInternalProductionPreSchemaSpawnerRebindStatusV1: "not-a-function" });
+  refuses({ ...required, resolveInternalProductionTask0SpawnerAdmissionReadyV1: "not-a-function" });
+  refuses({ ...required, observeInternalProductionPreSchemaSpawnerRebindStatusV1: async (_unexpected: unknown) => null });
+  refuses({ ...required, resolveInternalProductionTask0SpawnerAdmissionReadyV1: async () => null });
+  const accessor = { ...required };
+  Object.defineProperty(accessor, "prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1", { enumerable: true, get: () => extra });
+  refuses(accessor);
+  const hidden = { ...required };
+  Object.defineProperty(hidden, "prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1", { enumerable: false, value: extra });
+  refuses(hidden);
+  refuses(Object.assign({ ...required }, { [Symbol("foreign")]: true }));
+  await rm(fixture, { recursive: true, force: true });
+});
 
 describe("run-pinned product compiler protocol", () => {
   let database: TestDatabase;
@@ -110,7 +171,7 @@ describe("run-pinned product compiler protocol", () => {
     );
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\(\)/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\(status\.admissionReady\)/);
-    assert.match(dbSource, /Object\.keys\(module\)/);
+    assert.match(dbSource, /Reflect\.ownKeys\(loaded\)/);
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
     assert.match(dbSource, /6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17/);

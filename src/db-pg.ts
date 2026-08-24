@@ -654,6 +654,56 @@ type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[numb
 const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
   "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
 const RUN_PERSISTENCE_READINESS_MODULE_HREF_V1 = new URL("./internal-production/baseline-spawner-startup-admission-v1.js", import.meta.url).href;
+const RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1 = Object.freeze([
+  "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
+  "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
+] as const);
+const RUN_PERSISTENCE_READINESS_DECLARED_EXTRA_EXPORTS_V1 = Object.freeze([
+  "prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1",
+  "executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1",
+  "resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1",
+  "resolveInternalProductionPreSchemaSpawnerRebindStatusV1",
+  "resolveInternalProductionPreSchemaSpawnerStartupTokenV1",
+  "resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1",
+  "resolveInternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1",
+  "resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1",
+  "resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1",
+] as const);
+const RUN_PERSISTENCE_READINESS_ALLOWED_EXPORTS_V1 = new Set<string>([
+  ...RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1,
+  ...RUN_PERSISTENCE_READINESS_DECLARED_EXTRA_EXPORTS_V1,
+]);
+type RunPersistenceReadinessModuleV1 = Readonly<{
+  observeInternalProductionPreSchemaSpawnerRebindStatusV1: () => Promise<unknown>;
+  resolveInternalProductionTask0SpawnerAdmissionReadyV1: (pair: unknown) => Promise<unknown>;
+}>;
+
+function validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(
+  loaded: unknown,
+): RunPersistenceReadinessModuleV1 {
+  if (loaded === null || (typeof loaded !== "object" && typeof loaded !== "function")) {
+    throw new Error("RUN_PERSISTENCE_READINESS_MODULE_NAMESPACE_INVALID");
+  }
+  const namespace = loaded as Readonly<Record<string, unknown>>;
+  const ownKeys = Reflect.ownKeys(namespace);
+  const ownExports = ownKeys.filter((name): name is string => typeof name === "string");
+  const symbols = ownKeys.filter((name): name is symbol => typeof name === "symbol");
+  const module = namespace as unknown as RunPersistenceReadinessModuleV1;
+  if (
+    symbols.some((name) => name !== Symbol.toStringTag)
+    || RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1.some((name) => !ownExports.includes(name))
+    || ownExports.some((name) => !RUN_PERSISTENCE_READINESS_ALLOWED_EXPORTS_V1.has(name))
+    || ownExports.some((name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(namespace, name);
+      return !descriptor || !("value" in descriptor) || !descriptor.enumerable;
+    })
+    || typeof module.observeInternalProductionPreSchemaSpawnerRebindStatusV1 !== "function"
+    || module.observeInternalProductionPreSchemaSpawnerRebindStatusV1.length !== 0
+    || typeof module.resolveInternalProductionTask0SpawnerAdmissionReadyV1 !== "function"
+    || module.resolveInternalProductionTask0SpawnerAdmissionReadyV1.length !== 1
+  ) throw new Error("RUN_PERSISTENCE_READINESS_MODULE_NAMESPACE_INVALID");
+  return module;
+}
 const WORKFLOW_RUN_OWNER_BEGIN_PROVENANCE_SETTING_V1 =
   "setfarm.workflow_run_owner_begin_provenance_v1";
 const RUN_PERSISTENCE_MIGRATION_31_FENCE_V1 = Object.freeze({
@@ -1179,25 +1229,11 @@ async function requireWorkflowRunAdmissionReadyV1(
     || aNodes.length !== 1
   ) throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
   const aNode = aNodes[0]!;
-  type ReadinessModuleV1 = Readonly<{
-    observeInternalProductionPreSchemaSpawnerRebindStatusV1: () => Promise<unknown>;
-    resolveInternalProductionTask0SpawnerAdmissionReadyV1: (pair: unknown) => Promise<unknown>;
-  }>;
-  let module: ReadinessModuleV1;
+  let module: RunPersistenceReadinessModuleV1;
   let status: Record<string, unknown>;
   try {
-    const loaded = await import(RUN_PERSISTENCE_READINESS_MODULE_HREF_V1) as Readonly<Record<string, unknown>>;
-    module = loaded as unknown as ReadinessModuleV1;
-    if (
-      JSON.stringify(Object.keys(module)) !== JSON.stringify([
-        "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
-        "resolveInternalProductionTask0SpawnerAdmissionReadyV1",
-      ])
-      || typeof module.observeInternalProductionPreSchemaSpawnerRebindStatusV1 !== "function"
-      || module.observeInternalProductionPreSchemaSpawnerRebindStatusV1.length !== 0
-      || typeof module.resolveInternalProductionTask0SpawnerAdmissionReadyV1 !== "function"
-      || module.resolveInternalProductionTask0SpawnerAdmissionReadyV1.length !== 1
-    ) throw new Error();
+    const loaded = await import(RUN_PERSISTENCE_READINESS_MODULE_HREF_V1);
+    module = validateInternalProductionRunPersistenceReadinessModuleNamespaceV1(loaded);
     const observed = await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
     if (
       !isRecursivelyFrozenV1(observed)

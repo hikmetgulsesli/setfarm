@@ -9787,6 +9787,70 @@ async function pollForPendingWork() {
   } catch (err) { console.error(`[spawner] poll: ${String(err)}`); }
 }
 
+type PreSchemaSpawnerStartupGateDependenciesV1 = Readonly<{
+  startupAdmission: Readonly<{
+    observeInternalProductionPreSchemaSpawnerRebindStatusV1: () => Promise<Readonly<{
+      state: string;
+      currentEntryOperation: Readonly<{ operationRef: string; operationHash: string }> | null;
+      startupToken: Readonly<{ startupTokenRef: string; startupTokenHash: string }> | null;
+      dispatchPrefix: Readonly<{ replacementProcessObservation: Readonly<{ replacementProcessObservationRef: string; replacementProcessObservationHash: string }> | null }> | null;
+    }>>;
+    resolveInternalProductionPreSchemaSpawnerStartupTokenV1: (pair: Readonly<{ startupTokenRef: string; startupTokenHash: string }>) => Promise<Readonly<{
+      startupMode: string; currentEntryOperationRef: string; currentEntryOperationHash: string;
+      task0SpawnerSourceSha: string; task0SpawnerTreeHash: string; task0SpawnerBuildHash: string;
+    }>>;
+    resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: (pair: Readonly<{ replacementProcessObservationRef: string; replacementProcessObservationHash: string }>) => Promise<Readonly<{
+      replacementSpawnerProcessIdentityHash: string; actualSpawnerGenerationHash: string;
+      actualSpawnerSourceSha: string; actualSpawnerTreeHash: string; actualSpawnerBuildHash: string;
+    }>>;
+  }>;
+  loadReceiptAuthority: () => Promise<Readonly<{
+    observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => Readonly<{ sha: string; treeHash: string; buildHash: string }>;
+    observeInternalProductionServiceCensusV1: () => Promise<Readonly<{ spawner: Readonly<{ processIdentityHash: string; generationHash: string }> }>>;
+  }>>;
+  waitForStop: () => Promise<void>;
+  cleanupSealedProcess: () => void;
+}>;
+
+async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
+  dependencies: PreSchemaSpawnerStartupGateDependenciesV1,
+): Promise<"sealed" | "normal"> {
+  const preSchemaStatus = await dependencies.startupAdmission.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+  if (["startup_token_published", "dispatching", "pre_manifest_bootstrap_sealed"].includes(String(preSchemaStatus.state))) {
+    if (preSchemaStatus.startupToken === null || typeof preSchemaStatus.startupToken !== "object") {
+      throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_REQUIRED");
+    }
+    const startupToken = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerStartupTokenV1(
+      preSchemaStatus.startupToken,
+    );
+    const receiptAuthority = await dependencies.loadReceiptAuthority();
+    const executingSource = receiptAuthority.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+    const currentEntryOperation = preSchemaStatus.currentEntryOperation;
+    if (
+      startupToken.startupMode !== "pre-manifest-bootstrap-sealed"
+      || startupToken.currentEntryOperationRef !== currentEntryOperation?.operationRef
+      || startupToken.currentEntryOperationHash !== currentEntryOperation?.operationHash
+      || startupToken.task0SpawnerSourceSha !== executingSource.sha
+      || startupToken.task0SpawnerTreeHash !== executingSource.treeHash
+      || startupToken.task0SpawnerBuildHash !== executingSource.buildHash
+    ) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_INVALID");
+    const dispatchPrefix = preSchemaStatus.dispatchPrefix;
+    if (dispatchPrefix?.replacementProcessObservation !== null && dispatchPrefix?.replacementProcessObservation !== undefined) {
+      const replacement = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1(dispatchPrefix.replacementProcessObservation);
+      const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
+      if (replacement.replacementSpawnerProcessIdentityHash !== census.spawner.processIdentityHash || replacement.actualSpawnerGenerationHash !== census.spawner.generationHash || replacement.actualSpawnerSourceSha !== executingSource.sha || replacement.actualSpawnerTreeHash !== executingSource.treeHash || replacement.actualSpawnerBuildHash !== executingSource.buildHash) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_REPLACEMENT_IDENTITY_INVALID");
+    }
+    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");
+    await dependencies.waitForStop();
+    dependencies.cleanupSealedProcess();
+    return "sealed";
+  }
+  if (preSchemaStatus.state !== "absent") {
+    throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_ADMISSION_BLOCKED");
+  }
+  return "normal";
+}
+
 async function main() {
   process.on("unhandledRejection", (err) => {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
@@ -9795,6 +9859,21 @@ async function main() {
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
+  const startupAdmission = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+  const startupGate = await enforceInternalProductionPreSchemaSpawnerStartupGateV1({
+    startupAdmission,
+    loadReceiptAuthority: () => import("./internal-production/baseline-post-handoff-receipt-v1.js"),
+    waitForStop: () => new Promise<void>((resolve) => {
+      const stop = () => resolve();
+      process.once("SIGTERM", stop);
+      process.once("SIGINT", stop);
+    }),
+    cleanupSealedProcess: () => {
+      try { fs.unlinkSync(PID_FILE); } catch {}
+      releaseSpawnerSingletonLock();
+    },
+  });
+  if (startupGate === "sealed") return;
   assertAgentRuntimeAvailable();
   console.log(`[spawner] Starting (PID ${process.pid}, runtime=${AGENT_RUNTIME})`);
   await pgMigrate();

@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import type { InternalProductionCompleteZeroOwnerCensusV1 } from "./owner-admission-v1.js";
 
 const MAX_BUILD_TREE_DEPTH_V1 = 64;
 const MAX_BUILD_INPUT_ENTRIES_V1 = 10_000;
@@ -1752,4 +1753,904 @@ async function parseCurrentEntryOperationBody(
   const parsedPair = pbaPair(Object.freeze({ schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1", observationTransport: "source-cli", response: parsed }) as ProductBuildAuthorityObservationV1);
   if (!isPlainRecord(body.productBuildAuthorityV2DeliveryEvidence) || !hasExactKeys(body.productBuildAuthorityV2DeliveryEvidence, ["deliveryEvidenceRef", "deliveryEvidenceHash"]) || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceRef !== parsedPair.deliveryEvidenceRef || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceHash !== parsedPair.deliveryEvidenceHash || canonicalComparable(body.productBuildAuthorityV2Observation.response) !== canonicalComparable(parsed)) currentEntryFail("stored PBA pair/response is crossed");
   return recursivelyFreeze(body as unknown as InternalProductionCurrentEntryOperationV1);
+}
+
+export type InternalProductionServiceCensusSpawnerV1 = Readonly<{
+  pid: number;
+  processStartTimeEpochMs: number;
+  processIdentityHash: Sha256V1;
+  serviceIdentityHash: Sha256V1;
+  generationHash: Sha256V1;
+  loadedSourceSha: string;
+  loadedTreeHash: string;
+  loadedBuildHash: Sha256V1;
+  processOwnerCount: 1;
+  listener: null;
+}>;
+
+type InternalProductionListeningServiceCensusV1 = Readonly<{
+  pid: number;
+  processStartTimeEpochMs: number;
+  processIdentityHash: Sha256V1;
+  serviceIdentityHash: Sha256V1;
+  generationHash: Sha256V1;
+  loadedSourceSha: string | null;
+  loadedTreeHash: string | null;
+  loadedBuildHash: Sha256V1 | null;
+  processOwnerCount: 1;
+  listenerOwnerCount: 1;
+  listener: Readonly<{
+    host: "127.0.0.1";
+    port: 3333 | 3080 | 18789;
+    listenerIdentityHash: Sha256V1;
+  }>;
+}>;
+
+export type InternalProductionServiceCensusV1 = Readonly<{
+  schema: "setfarm.internal-production-service-census.v1";
+  spawner: InternalProductionServiceCensusSpawnerV1;
+  dashboard: InternalProductionListeningServiceCensusV1;
+  missionControl: InternalProductionListeningServiceCensusV1;
+  openClaw: InternalProductionListeningServiceCensusV1;
+  censusHash: Sha256V1;
+}>;
+
+export type InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 = Readonly<{
+  observationRef: CanonicalRefV1;
+  observationHash: Sha256V1;
+}>;
+
+export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly<{
+  schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1";
+  observationKind: "legacy-pre-manifest-existing-live-truth";
+  authorityV3Migration31AuditRef: CanonicalRefV1;
+  authorityV3Migration31AuditHash: Sha256V1;
+  cleanSetfarmSourceSha: string;
+  cleanSetfarmTreeHash: string;
+  cleanSetfarmBuildHash: Sha256V1;
+  observedSpawnerGenerationHash: Sha256V1;
+  census: InternalProductionCompleteZeroOwnerCensusV1;
+  allThirtySixScalarCountsZero: true;
+  ownerReservationSidecarState: "absent-before-migration-32";
+  ownerAdmissionHeadState: "absent-before-migration-32";
+  manifestActivationState: "absent-before-initial-a-activation";
+  observationRef: CanonicalRefV1;
+  observationHash: Sha256V1;
+}>;
+
+const LEGACY_ZERO_STORE_V1 = "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1";
+const LEGACY_ZERO_PREFIX_V1 = "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/";
+const COMPLETE_ZERO_CENSUS_KEYS_V1 = Object.freeze([
+  "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
+  "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "ordinaryStartingCount",
+  "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount",
+  "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount", "artifactReservationCount",
+  "publicationBatchCount", "artifactPublicationCount", "docsSessionCount", "docsLeaseCount",
+  "fleetStageCount", "fleetInflightCount", "fleetPendingReviewCount", "matrixInflightCount",
+  "launchOutboxCount", "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount",
+  "operationalDeliveryCount", "sourceRunOwnerCount", "coldRehearsalOwnerCount",
+  "compilationLeaseCount", "executionLeaseCount", "ownedProcessCount", "ownedListenerCount",
+  "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount",
+] as const satisfies readonly (keyof InternalProductionCompleteZeroOwnerCensusV1)[]);
+
+const PHYSICAL_COMMAND_CAP_V1 = 1_048_576;
+const PHYSICAL_ENTRY_CAP_V1 = 256;
+const PHYSICAL_PROCESS_CAP_V1 = 4_096;
+const PHYSICAL_ENV_V1 = Object.freeze({
+  PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  LANG: "C",
+  LC_ALL: "C",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_OPTIONAL_LOCKS: "0",
+  GIT_TERMINAL_PROMPT: "0",
+});
+const FIXED_WORKTREE_BASES_V1 = Object.freeze([
+  "/Users/setrox/ai/setrox/.worktrees",
+  "/Users/setrox/ai/setrox/setfarm/.worktrees",
+  "/Users/setrox/ai/setrox/mission-control/.worktrees",
+  "/Users/setrox/.openclaw/workspace/agent-scratch/story-worktrees",
+]);
+const WORKFLOW_BASE_V1 = "/Users/setrox/.openclaw/workspaces/workflows";
+const PROJECTS_BASE_V1 = "/Users/setrox/projects";
+const PHYSICAL_NAME_V1 = /^[A-Za-z0-9._-]+$/;
+
+type PhysicalProcessV1 = Readonly<{
+  uid: number; pid: number; ppid: number; pgid: number; stat: string;
+  lstart: string; command: string; cwd: string | null;
+}>;
+
+type PhysicalInventoryV1 = Readonly<{
+  worktrees: readonly Readonly<{ root: string; dirty: boolean }>[];
+  processes: readonly PhysicalProcessV1[];
+  listeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[];
+  stale: readonly number[];
+  ownedProcessCount: number; ownedListenerCount: number; ownedWorktreeCount: number;
+  dirtyWorktreeCount: number; staleChildCount: number;
+}>;
+
+function runPhysicalCommandV1(executable: string, args: readonly string[], accepted: readonly number[] = [0]): Readonly<{ status: number; stdout: Buffer }> {
+  const result = spawnSync(executable, [...args], {
+    env: PHYSICAL_ENV_V1,
+    shell: false,
+    encoding: "buffer",
+    timeout: 10_000,
+    maxBuffer: PHYSICAL_COMMAND_CAP_V1,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
+  const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? "");
+  if (result.error || result.signal || result.status === null || !accepted.includes(result.status) || stderr.length !== 0 || stdout.length > PHYSICAL_COMMAND_CAP_V1) {
+    currentEntryFail(`physical command failed: ${executable} ${args.join(" ")}`);
+  }
+  return Object.freeze({ status: result.status, stdout });
+}
+
+function requirePhysicalDirectoryV1(target: string, label: string): void {
+  let observed: BigIntStats;
+  try { observed = lstatSync(target, { bigint: true }); } catch { return currentEntryFail(`${label} is absent`); }
+  if (!observed.isDirectory() || observed.isSymbolicLink() || realpathSync(target) !== target) currentEntryFail(`${label} is not one real directory`);
+}
+
+function boundedPhysicalChildrenV1(root: string): readonly string[] {
+  requirePhysicalDirectoryV1(root, `physical base ${root}`);
+  const names = readdirSync(root).sort(compareBytes);
+  if (names.length > PHYSICAL_ENTRY_CAP_V1) currentEntryFail(`physical base ${root} exceeds the entry cap`);
+  const children: string[] = [];
+  for (const name of names) {
+    if (!PHYSICAL_NAME_V1.test(name)) currentEntryFail(`physical base ${root} contains a noncanonical child`);
+    const child = path.join(root, name);
+    const observed = lstatSync(child, { bigint: true });
+    if (observed.isSymbolicLink()) currentEntryFail(`physical base ${root} contains a symlink child`);
+    if (observed.isDirectory()) children.push(child);
+  }
+  return Object.freeze(children);
+}
+
+function physicalManagedBasesV1(): readonly string[] {
+  const roots = [...FIXED_WORKTREE_BASES_V1];
+  for (const workflow of boundedPhysicalChildrenV1(WORKFLOW_BASE_V1)) {
+    const agents = path.join(workflow, "agents");
+    for (const agent of boundedPhysicalChildrenV1(agents)) roots.push(path.join(agent, "story-worktrees"));
+  }
+  for (const project of boundedPhysicalChildrenV1(PROJECTS_BASE_V1)) roots.push(path.join(project, ".worktrees"));
+  if (roots.length > PHYSICAL_ENTRY_CAP_V1) currentEntryFail("managed worktree root inventory exceeds the cap");
+  for (const root of roots) requirePhysicalDirectoryV1(root, `managed worktree root ${root}`);
+  return Object.freeze(roots.sort(compareBytes));
+}
+
+function physicalImmediateProjectsV1(): readonly string[] {
+  return Object.freeze([...boundedPhysicalChildrenV1(PROJECTS_BASE_V1)].sort(compareBytes));
+}
+
+function parseGitWorktreeListV1(bytes: Buffer): readonly string[] {
+  const text = strictUtf8(bytes, "Git worktree list");
+  if (!text.endsWith("\0")) currentEntryFail("Git worktree list is truncated");
+  const worktrees: string[] = [];
+  for (const field of text.split("\0")) {
+    if (!field) continue;
+    if (field.startsWith("worktree ")) {
+      const root = field.slice("worktree ".length);
+      if (!path.isAbsolute(root) || root !== root.normalize("NFC")) currentEntryFail("Git worktree root is invalid");
+      worktrees.push(root);
+    }
+  }
+  if (new Set(worktrees).size !== worktrees.length) currentEntryFail("Git worktree list contains a duplicate");
+  return Object.freeze(worktrees);
+}
+
+function observeManagedWorktreesV1(): readonly Readonly<{ root: string; dirty: boolean }>[] {
+  const bases = physicalManagedBasesV1();
+  const physical = bases.flatMap((base) => boundedPhysicalChildrenV1(base));
+  if (physical.length > PHYSICAL_ENTRY_CAP_V1 || new Set(physical).size !== physical.length) currentEntryFail("managed worktree inventory is ambiguous");
+  const physicalSet = new Set(physical);
+  const seenListedNonPrimary = new Set<string>();
+  const result: Array<Readonly<{ root: string; dirty: boolean }>> = [];
+  for (const candidate of physical.sort(compareBytes)) {
+    const listed = parseGitWorktreeListV1(runPhysicalCommandV1("/usr/bin/git", ["-C", candidate, "worktree", "list", "--porcelain", "-z"]).stdout);
+    if (listed.length < 2 || listed[0] === candidate || !listed.slice(1).includes(candidate)) currentEntryFail(`Git does not authenticate managed non-primary worktree ${candidate}`);
+    for (const item of listed.slice(1)) seenListedNonPrimary.add(item);
+    const status = runPhysicalCommandV1("/usr/bin/git", ["-C", candidate, "status", "--porcelain=v2", "--untracked-files=all"]).stdout;
+    result.push(Object.freeze({ root: candidate, dirty: status.length !== 0 }));
+  }
+  if (seenListedNonPrimary.size !== physicalSet.size || [...seenListedNonPrimary].some((item) => !physicalSet.has(item))) currentEntryFail("Git/physical worktree inventories disagree");
+  return Object.freeze(result);
+}
+
+function parsePhysicalProcessesV1(bytes: Buffer): readonly PhysicalProcessV1[] {
+  const text = strictUtf8(bytes, "global process census");
+  if (text.includes("\r") || text.includes("\0") || !text.endsWith("\n")) currentEntryFail("global process census is malformed");
+  const lines = text.slice(0, -1).split("\n").filter(Boolean);
+  if (lines.length > PHYSICAL_PROCESS_CAP_V1) currentEntryFail("global process census exceeds the row cap");
+  const result: PhysicalProcessV1[] = [];
+  const pids = new Set<number>();
+  for (const line of lines) {
+    const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+[ 0-9][0-9]\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4})\s+(.+)$/.exec(line);
+    if (!match) currentEntryFail("global process row is malformed");
+    const [uid, pid, ppid, pgid] = match.slice(1, 5).map(Number);
+    if (![uid, pid, ppid, pgid].every(Number.isSafeInteger) || uid! < 0 || pid! < 1 || ppid! < 0 || pgid! < 0 || pids.has(pid!)) currentEntryFail("global process identity is invalid");
+    pids.add(pid!);
+    result.push(Object.freeze({ uid: uid!, pid: pid!, ppid: ppid!, pgid: pgid!, stat: match[5]!, lstart: match[6]!, command: match[7]!, cwd: null }));
+  }
+  return Object.freeze(result.sort((left, right) => left.pid - right.pid));
+}
+
+function lsofFieldsV1(bytes: Buffer, label: string): readonly string[] {
+  const text = strictUtf8(bytes, label);
+  if (text.includes("\r") || !text.endsWith("\0\n")) currentEntryFail(`${label} is truncated`);
+  return Object.freeze(text.split("\0").map((field) => field.replace(/^\n+/, "")).filter(Boolean));
+}
+
+function parseLsofReferencesV1(bytes: Buffer, root: string): Readonly<{ pids: readonly number[]; deleted: readonly number[] }> {
+  const pids = new Set<number>();
+  const deleted = new Set<number>();
+  let currentPid: number | null = null;
+  for (const field of lsofFieldsV1(bytes, `lsof reference ${root}`)) {
+    if (field[0] === "p") {
+      if (!/^[0-9]+$/.test(field.slice(1))) currentEntryFail("lsof reference process identity is malformed");
+      const pid = Number(field.slice(1));
+      if (!Number.isSafeInteger(pid) || pid < 1 || pids.has(pid)) currentEntryFail("lsof reference process identity is ambiguous");
+      currentPid = pid;
+      pids.add(pid);
+    } else if (field[0] === "n") {
+      if (currentPid === null || field.length < 2) currentEntryFail("lsof reference name has no process");
+      if (field.endsWith(" (deleted)")) deleted.add(currentPid);
+    }
+  }
+  if (pids.size === 0) currentEntryFail("lsof reference inventory has no process record");
+  return Object.freeze({ pids: Object.freeze([...pids].sort((a, b) => a - b)), deleted: Object.freeze([...deleted].sort((a, b) => a - b)) });
+}
+
+function lsofReferencedPidsV1(root: string): Readonly<{ pids: readonly number[]; deleted: readonly number[] }> {
+  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-F0", "+D", root], [0, 1]);
+  if (result.status === 1 && result.stdout.length !== 0) currentEntryFail("empty lsof reference inventory has output");
+  if (result.status === 1) return Object.freeze({ pids: Object.freeze([]), deleted: Object.freeze([]) });
+  return parseLsofReferencesV1(result.stdout, root);
+}
+
+function observeProcessCwdV1(pid: number, expectedPpid: number): string {
+  const fields = lsofFieldsV1(runPhysicalCommandV1("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "cwd", "-F0pcRfn"]).stdout, `process ${pid} cwd`);
+  const pids = fields.filter((field) => field[0] === "p").map((field) => Number(field.slice(1)));
+  const parents = fields.filter((field) => field[0] === "R").map((field) => Number(field.slice(1)));
+  const cwds = fields.filter((field) => field[0] === "n").map((field) => field.slice(1));
+  if (pids.length !== 1 || pids[0] !== pid || parents.length !== 1 || parents[0] !== expectedPpid || cwds.length !== 1 || !path.isAbsolute(cwds[0]!)) currentEntryFail(`process ${pid} cwd identity is ambiguous`);
+  return cwds[0]!;
+}
+
+function parseProcessListenersV1(bytes: Buffer, pid: number): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[] {
+  const fields = lsofFieldsV1(bytes, `process ${pid} listeners`);
+  const pids = fields.filter((field) => field[0] === "p").map((field) => Number(field.slice(1)));
+  if (pids.length !== 1 || pids[0] !== pid) currentEntryFail(`process ${pid} listener identity is ambiguous`);
+  const listeners = fields.filter((field) => field[0] === "n").map((field) => {
+    const match = /^(?:TCP\s+)?(.+):([0-9]+)$/.exec(field.slice(1));
+    if (!match) currentEntryFail(`process ${pid} listener endpoint is malformed`);
+    const port = Number(match[2]);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) currentEntryFail(`process ${pid} listener port is invalid`);
+    return Object.freeze({ pid, protocol: "TCP" as const, localAddress: match[1]!, port });
+  });
+  const keys = listeners.map((listener) => canonicalComparable(listener));
+  if (new Set(keys).size !== keys.length) currentEntryFail(`process ${pid} listener inventory contains a duplicate`);
+  return Object.freeze(listeners);
+}
+
+function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[] {
+  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);
+  if (result.status === 1 && result.stdout.length === 0) return Object.freeze([]);
+  return parseProcessListenersV1(result.stdout, pid);
+}
+
+function assertPhysicalInventoryPassStableV1(first: unknown, second: unknown): void {
+  if (canonicalComparable(first) !== canonicalComparable(second)) currentEntryFail("physical inventory changed across observation passes");
+}
+
+function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1, activeRunCount: number): PhysicalInventoryV1 {
+  if (process.platform !== "darwin") currentEntryFail("physical census requires Darwin");
+  const worktrees = observeManagedWorktreesV1();
+  const processes = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+  const persistent = [services.spawner, services.dashboard, services.missionControl, services.openClaw];
+  for (const service of persistent) {
+    const row = byPid.get(service.pid);
+    if (!row || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
+  }
+  const managedRoots = physicalManagedBasesV1();
+  const immediateProjects = physicalImmediateProjectsV1();
+  const referencePids = new Set<number>();
+  const deletedPids = new Set<number>();
+  for (const root of [...managedRoots, ...worktrees.map((entry) => entry.root), ...immediateProjects]) {
+    const refs = lsofReferencedPidsV1(root);
+    refs.pids.forEach((pid) => referencePids.add(pid));
+    refs.deleted.forEach((pid) => deletedPids.add(pid));
+  }
+  for (const pid of referencePids) if (!Number.isSafeInteger(pid) || pid < 1 || !byPid.has(pid)) currentEntryFail("lsof referenced process disappeared from the physical census");
+  const persistentPids = new Set(persistent.map((service) => service.pid));
+  const descendantPids = new Set<number>(persistentPids);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of processes) if (!descendantPids.has(row.pid) && descendantPids.has(row.ppid)) { descendantPids.add(row.pid); changed = true; }
+  }
+  const managedPrefixes = [...managedRoots, ...worktrees.map((entry) => entry.root)].map((root) => `${root}/`);
+  const projectPrefixes = immediateProjects.map((root) => `${root}/`);
+  const commandReferencesExactPath = (command: string, target: string, requireChild: boolean): boolean => {
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const suffix = requireChild ? "\\/[A-Za-z0-9._-]+(?:\\/|$|[^A-Za-z0-9._-])" : "(?:\\/|$|[^A-Za-z0-9._-])";
+    return new RegExp(`(?:^|[^A-Za-z0-9._/\\-])${escaped}${suffix}`).test(command);
+  };
+  const commandReferencesManagedStoryWorktree = (command: string): boolean => managedRoots.some((managedRoot) => {
+    if (!managedRoot.endsWith("/story-worktrees")) return false;
+    return commandReferencesExactPath(command, managedRoot, true);
+  });
+  const orphanPattern = /openclaw.*agent.*--session-id\s+spawner-/i;
+  const seeds = processes.filter((row) => !persistentPids.has(row.pid) && (
+    descendantPids.has(row.pid) || orphanPattern.test(row.command) || referencePids.has(row.pid)
+    || commandReferencesManagedStoryWorktree(row.command)
+  ));
+  const owned: PhysicalProcessV1[] = [];
+  const stale = new Set<number>();
+  for (const row of seeds) {
+    const cwd = observeProcessCwdV1(row.pid, row.ppid);
+    const cwdOwned = managedPrefixes.some((prefix) => cwd === prefix.slice(0, -1) || cwd.startsWith(prefix))
+      || projectPrefixes.some((prefix) => cwd === prefix.slice(0, -1) || cwd.startsWith(prefix));
+    const managedStoryCommand = commandReferencesManagedStoryWorktree(row.command);
+    const isOwned = descendantPids.has(row.pid) || orphanPattern.test(row.command) || referencePids.has(row.pid) || cwdOwned || managedStoryCommand;
+    if (!isOwned) continue;
+    const complete = Object.freeze({ ...row, cwd });
+    owned.push(complete);
+    const unresolvedStoryWorktree = managedStoryCommand
+      && !worktrees.some((worktree) => commandReferencesExactPath(row.command, worktree.root, false));
+    if ((orphanPattern.test(row.command) && activeRunCount === 0) || row.stat.includes("Z") || cwd.endsWith(" (deleted)") || deletedPids.has(row.pid) || unresolvedStoryWorktree) stale.add(row.pid);
+  }
+  const listenerPids = new Set([...persistentPids, ...owned.map((entry) => entry.pid)]);
+  const listeners = [...listenerPids].sort((a, b) => a - b).flatMap((pid) => observeProcessListenersV1(pid));
+  const expectedListeners = new Set([
+    `${services.dashboard.pid}|127.0.0.1|3333`,
+    `${services.missionControl.pid}|127.0.0.1|3080`,
+    `${services.openClaw.pid}|127.0.0.1|18789`,
+  ]);
+  const extraListeners = listeners.filter((listener) => !expectedListeners.has(`${listener.pid}|${listener.localAddress}|${listener.port}`));
+  const processesAgain = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  assertPhysicalInventoryPassStableV1(processes, processesAgain);
+  return recursivelyFreeze({
+    worktrees,
+    processes: owned.sort((left, right) => left.pid - right.pid),
+    listeners: extraListeners.sort((left, right) => left.pid - right.pid || left.port - right.port),
+    stale: [...stale].sort((a, b) => a - b),
+    ownedProcessCount: owned.length,
+    ownedListenerCount: extraListeners.length,
+    ownedWorktreeCount: worktrees.length,
+    dirtyWorktreeCount: worktrees.filter((entry) => entry.dirty).length,
+    staleChildCount: stale.size,
+  });
+}
+
+function boundedChildText(executable: string, args: readonly string[], label: string): string {
+  const result = spawnSync(executable, [...args], {
+    env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }),
+    shell: false,
+    encoding: "utf8",
+    timeout: 10_000,
+    maxBuffer: 1_048_576,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== "") {
+    currentEntryFail(`${label} observation failed`);
+  }
+  return result.stdout;
+}
+
+function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
+  const identityPath = path.resolve(fixedRepositoryRoot(), "../mission-control/dist-server/internal-production-build-identity.v1.json");
+  const value = strictCanonicalRecord(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes, "Mission Control build identity");
+  if (!hasExactKeys(value, ["schema", "sourceSha", "treeHash", "buildHash"]) || value.schema !== "mission-control.internal-production-build-identity.v1") {
+    currentEntryFail("Mission Control build identity is invalid");
+  }
+  return Object.freeze({
+    sha: requireGitHash(value.sourceSha, "Mission Control source SHA"),
+    treeHash: requireGitHash(value.treeHash, "Mission Control tree hash"),
+    buildHash: requireSha256(value.buildHash, "Mission Control build hash"),
+  });
+}
+
+const PHASE_CLOSED_FUTURE_PRODUCERS_V1 = Object.freeze([
+  ["src/internal-production/internal-production-service-restart-startup-v1.ts", "reserveInternalProductionOrdinaryServiceStartOwnerV1"],
+  ["src/internal-production/internal-production-service-restart-authority-v1.ts", "reserveInternalProductionServiceRestartDispatchOwnerV1"],
+  ["src/internal-production/internal-production-service-restart-authority-v1.ts", "reserveInternalProductionServiceRestartOperationOwnerV1"],
+  ["src/internal-production/golden-run-phase-store.ts", "reserveGoldenLaunchPreparationOwnerV1"],
+  ["src/internal-production/golden-run-phase-store.ts", "reserveGoldenPreparedLaunchOwnerV1"],
+  ["src/internal-production/golden-run-phase-store.ts", "reserveGoldenLaunchOutboxOwnerV1"],
+  ["src/internal-production/golden-matrix-runner.ts", "reserveGoldenStagedCaseOwnerV1"],
+  ["src/internal-production/golden-run-harness.ts", "reserveGoldenFixtureAttemptOwnerV1"],
+  ["src/internal-production/existing-repository-fixture-catalog.ts", "reserveGoldenExistingRepositoryFixtureAttemptOwnerV1"],
+  ["src/internal-production/golden-run-report.ts", "reserveGoldenDocsSessionOwnerV1"],
+  ["src/internal-production/golden-run-report.ts", "reserveGoldenDocsLeaseOwnerV1"],
+  ["src/internal-production/golden-fleet-scheduler.ts", "reserveGoldenFleetStageOwnerV1"],
+  ["src/internal-production/golden-fleet-status-store.ts", "reserveGoldenFleetInflightOwnerV1"],
+  ["src/internal-production/golden-fleet-scheduler.ts", "reserveGoldenFleetReviewOwnerV1"],
+  ["src/internal-production/golden-matrix-inflight-status-v1.ts", "reserveGoldenMatrixInflightOwnerV1"],
+  ["src/internal-production/cold-rehearsal-v1.ts", "reserveColdRehearsalOwnerV1"],
+  ["src/internal-production/golden-verifier-runtime.ts", "reserveGoldenCompilationLeaseOwnerV1"],
+  ["src/internal-production/golden-verifier-runtime.ts", "reserveGoldenExecutionLeaseOwnerV1"],
+] as const);
+
+function requireAbsentPhasePathV1(target: string, label: string): void {
+  try {
+    lstatSync(target);
+  } catch (error) {
+    if (isEnoent(error)) return;
+    currentEntryFail(`${label} absence is ambiguous`);
+  }
+  currentEntryFail(`${label} is present before its producer phase`);
+}
+
+function requireAbsentProducerLiteralV1(source: string, producer: string): void {
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(producer) || source.includes(producer)) {
+    currentEntryFail("future producer export is already active");
+  }
+}
+
+function assertPhaseSourceEqualV1(expected: unknown, observed: unknown): void {
+  if (canonicalComparable(expected) !== canonicalComparable(observed)) currentEntryFail("phase-closed source changed or crossed");
+}
+
+async function observePhaseClosedZeroV1(
+  expectedSource: InternalProductionCleanSetfarmSourceBuildV1,
+): Promise<Readonly<{
+  ordinaryStartingCount: 0; restartReservationCount: 0; serviceRestartOperationCount: 0;
+  launchPreparationCount: 0; preparedLaunchCount: 0; stagedCaseCount: 0; fixtureAttemptCount: 0;
+  docsSessionCount: 0; docsLeaseCount: 0; fleetStageCount: 0; fleetInflightCount: 0;
+  fleetPendingReviewCount: 0; matrixInflightCount: 0; launchOutboxCount: 0;
+  sourceRunOwnerCount: 0; coldRehearsalOwnerCount: 0; compilationLeaseCount: 0; executionLeaseCount: 0;
+}>> {
+  const codeRoot = fixedRepositoryRoot();
+  const before = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  assertPhaseSourceEqualV1(expectedSource, before);
+  for (const [locator, producer] of PHASE_CLOSED_FUTURE_PRODUCERS_V1) {
+    requireAbsentPhasePathV1(path.join(codeRoot, locator), `${producer} module`);
+  }
+  const ownBytes = strictUtf8(
+    readStableRegular(fileURLToPath(import.meta.url), CURRENT_ENTRY_MAX_BYTES, lstatSync(fileURLToPath(import.meta.url), { bigint: true }).dev, 1).bytes,
+    "phase-closed receipt source",
+  );
+  const sourceRunProducer = ["reserveRecovery", "SourceRunOwnerV1"].join("");
+  requireAbsentProducerLiteralV1(ownBytes, sourceRunProducer);
+  const runtime = await import("../runtime-config.js") as Readonly<{ runtimeConfig?: Readonly<{ setfarmDir?: unknown }> }>;
+  const setfarmDir = runtime.runtimeConfig?.setfarmDir;
+  if (typeof setfarmDir !== "string" || !path.isAbsolute(setfarmDir)) currentEntryFail("phase-closed Setfarm authority base is invalid");
+  const authorityRoot = path.join(setfarmDir, "internal-production");
+  requireAbsentPhasePathV1(authorityRoot, "future producer authority root");
+  for (const child of ["golden-results", "fixtures", "recovery", "golden-fleet"]) {
+    requireAbsentPhasePathV1(path.join(authorityRoot, child), `future producer authority child ${child}`);
+  }
+  const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  assertPhaseSourceEqualV1(before, after);
+  return recursivelyFreeze({
+    ordinaryStartingCount: 0, restartReservationCount: 0, serviceRestartOperationCount: 0,
+    launchPreparationCount: 0, preparedLaunchCount: 0, stagedCaseCount: 0, fixtureAttemptCount: 0,
+    docsSessionCount: 0, docsLeaseCount: 0, fleetStageCount: 0, fleetInflightCount: 0,
+    fleetPendingReviewCount: 0, matrixInflightCount: 0, launchOutboxCount: 0,
+    sourceRunOwnerCount: 0, coldRehearsalOwnerCount: 0, compilationLeaseCount: 0, executionLeaseCount: 0,
+  });
+}
+
+function observeServiceProcessV1(
+  label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
+  port: null | 3333 | 3080 | 18789,
+  source: Readonly<{ sha: string; treeHash: string; buildHash: string }> | null,
+): InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1 {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("service census UID is invalid");
+  const launchctl = boundedChildText("/bin/launchctl", ["print", `gui/${uid}/${label}`], `${label} launchctl`);
+  const pidMatches = [...launchctl.matchAll(/^\s*pid = ([0-9]+)\s*$/gm)];
+  if (pidMatches.length !== 1) currentEntryFail(`${label} PID is ambiguous`);
+  const pid = Number(pidMatches[0]![1]);
+  if (!Number.isSafeInteger(pid) || pid < 1) currentEntryFail(`${label} PID is invalid`);
+  const ps = boundedChildText("/bin/ps", ["-p", String(pid), "-o", "lstart="], `${label} process`);
+  if (!ps.endsWith("\n") || ps.trim().length === 0) currentEntryFail(`${label} process start is invalid`);
+  const processStartTimeEpochMs = Date.parse(ps.trim());
+  if (!Number.isSafeInteger(processStartTimeEpochMs) || processStartTimeEpochMs < 1) currentEntryFail(`${label} process start is invalid`);
+  const processIdentityHash = sha256(`${pid}\n${ps}`);
+  const command = boundedChildText("/bin/ps", ["-p", String(pid), "-o", "command="], `${label} command`);
+  if (!command.endsWith("\n") || command.slice(0, -1).includes("\n")) currentEntryFail(`${label} command is ambiguous`);
+  const allCommands = boundedChildText("/bin/ps", ["-axo", "command="], `${label} global process census`).split("\n");
+  const processOwnerCount = allCommands.filter((candidate) => candidate === command.slice(0, -1)).length;
+  if (processOwnerCount !== 1) currentEntryFail(`${label} process owner count is not exactly one`);
+  if (source !== null) {
+    const expectedRoot = label === "com.setrox.mission-control"
+      ? path.resolve(fixedRepositoryRoot(), "../mission-control")
+      : fixedRepositoryRoot();
+    const expectedPrefixes = label === "com.setrox.mission-control"
+      ? [`${expectedRoot}/dist-server/`, `${expectedRoot}/dist/`]
+      : [`${expectedRoot}/dist/`];
+    if (!expectedPrefixes.some((prefix) => command.includes(prefix))) currentEntryFail(`${label} loaded entrypoint is outside its authenticated build root`);
+  }
+  const serviceIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-service-identity.v1", label, command: command.slice(0, -1) });
+  const generationHash = hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source });
+  const common = { pid, processStartTimeEpochMs, processIdentityHash, serviceIdentityHash, generationHash };
+  if (port === null) {
+    if (!source) currentEntryFail("spawner source is absent");
+    return recursivelyFreeze({ ...common, loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: processOwnerCount as 1, listener: null });
+  }
+  const lsof = boundedChildText("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), `-iTCP@127.0.0.1:${port}`, "-sTCP:LISTEN", "-F0pcfn"], `${label} listener`);
+  const listenerPids = [...lsof.matchAll(/(?:^|\0\n?)p([0-9]+)\0/g)].map((match) => Number(match[1]));
+  const listenerNames = [...lsof.matchAll(/(?:^|\0\n?)n(?:TCP )?127\.0\.0\.1:([0-9]+)\0/g)].map((match) => Number(match[1]));
+  if (listenerPids.length !== 1 || listenerPids[0] !== pid || listenerNames.length !== 1 || listenerNames[0] !== port) currentEntryFail(`${label} listener owner count is not exactly one`);
+  return recursivelyFreeze({
+    ...common,
+    loadedSourceSha: source?.sha ?? null,
+    loadedTreeHash: source?.treeHash ?? null,
+    loadedBuildHash: source?.buildHash ?? null,
+    processOwnerCount: processOwnerCount as 1,
+    listenerOwnerCount: listenerPids.length as 1,
+    listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(lsof) },
+  });
+}
+
+export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {
+  const setfarm = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const source = Object.freeze({ sha: setfarm.sha, treeHash: setfarm.treeHash, buildHash: setfarm.buildHash });
+  const body = {
+    schema: "setfarm.internal-production-service-census.v1" as const,
+    spawner: observeServiceProcessV1("com.setrox.setfarm-spawner", null, source) as InternalProductionServiceCensusSpawnerV1,
+    dashboard: observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, source) as InternalProductionListeningServiceCensusV1,
+    missionControl: observeServiceProcessV1("com.setrox.mission-control", 3080, loadedMissionControlSourceV1()) as InternalProductionListeningServiceCensusV1,
+    openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
+  };
+  return recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
+}
+
+async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
+  activeRunCount: number; openClaimCount: number; executionAttemptCount: number;
+  activeRuntimeSessionCount: number; activeCompletionOwnerCount: number; unsettledMandatoryEffectCount: number;
+  artifactReservationCount: number; publicationBatchCount: number; artifactPublicationCount: number;
+  terminationOwnerCount: number; findingOwnerCount: number; recoveryOwnerCount: number; operationalDeliveryCount: number;
+}>> {
+  const postgresModule = await import("postgres");
+  const databaseUrl = process.env.SETFARM_PG_URL;
+  if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
+  const sql = postgresModule.default(databaseUrl, { max: 1, idle_timeout: 1, connect_timeout: 5 });
+  try {
+    return await sql.begin("isolation level repeatable read read only", async (tx) => {
+      const connection = tx as unknown as typeof sql;
+      await connection`SET LOCAL statement_timeout = '5s'`;
+      await connection`SET LOCAL lock_timeout = '1s'`;
+      const rows = await connection<Array<Record<string, unknown>>>`
+        WITH required_columns(table_name,column_name,type_name,required_not_null) AS (
+          VALUES
+            ('runs','status','text',TRUE),
+            ('claim_log','outcome','text',FALSE),
+            ('execution_attempts','disposition','text',TRUE),
+            ('runtime_sessions','state','text',TRUE),
+            ('runtime_completion_requests','state','text',TRUE),
+            ('runtime_completion_effects','mandatory','boolean',TRUE),
+            ('runtime_completion_effects','state','text',TRUE),
+            ('artifact_publication_reservations','reservation_id','text',TRUE),
+            ('artifact_publication_reservations','artifact_hash','text',TRUE),
+            ('artifact_publication_reservations','state','text',TRUE),
+            ('artifact_publication_reservations','owner_instance_id','text',FALSE),
+            ('artifact_publication_reservations','lease_token','text',FALSE),
+            ('artifact_publication_reservations','lease_expires_at','timestamp with time zone',FALSE),
+            ('artifact_publication_batches','batch_reservation_id','text',TRUE),
+            ('artifact_publication_batches','state','text',TRUE),
+            ('artifact_publication_batches','owner_instance_id','text',FALSE),
+            ('artifact_publication_batches','lease_token','text',FALSE),
+            ('artifact_publication_batches','lease_expires_at','timestamp with time zone',FALSE),
+            ('artifact_publication_batch_items','batch_reservation_id','text',TRUE),
+            ('artifact_publication_batch_items','artifact_hash','text',TRUE),
+            ('artifact_publication_batch_items','reservation_id','text',FALSE),
+            ('run_termination_requests','state','text',TRUE),
+            ('findings','status','text',TRUE),
+            ('recovery_cases','status','text',TRUE),
+            ('recovery_dispatch_deliveries','state','text',TRUE),
+            ('operational_event_deliveries','state','text',TRUE)
+        ), catalog_violations AS (
+          SELECT COUNT(*) AS count
+          FROM required_columns expected
+          LEFT JOIN pg_catalog.pg_class relation
+            ON relation.relname=expected.table_name AND relation.relnamespace='public'::regnamespace
+          LEFT JOIN pg_catalog.pg_attribute attribute
+            ON attribute.attrelid=relation.oid AND attribute.attname=expected.column_name
+              AND attribute.attnum>0 AND NOT attribute.attisdropped
+          LEFT JOIN pg_catalog.pg_type data_type ON data_type.oid=attribute.atttypid
+          WHERE relation.oid IS NULL OR attribute.attname IS NULL
+             OR pg_catalog.format_type(data_type.oid,attribute.atttypmod)<>expected.type_name
+             OR attribute.attnotnull<>expected.required_not_null
+        ), aprb_child_violations AS (
+          SELECT COUNT(*) AS count
+          FROM public.artifact_publication_reservations reservation
+          WHERE reservation.state='reserved' AND left(reservation.reservation_id,5)='APRB_'
+            AND (SELECT COUNT(*)
+                 FROM public.artifact_publication_batch_items item
+                 JOIN public.artifact_publication_batches batch
+                   ON batch.batch_reservation_id=item.batch_reservation_id AND batch.state='active'
+                 WHERE (item.reservation_id,item.artifact_hash)=(reservation.reservation_id,reservation.artifact_hash)
+                   AND reservation.owner_instance_id IS NOT DISTINCT FROM batch.owner_instance_id
+                   AND reservation.lease_token IS NOT DISTINCT FROM batch.lease_token
+                   AND reservation.lease_expires_at IS NOT DISTINCT FROM batch.lease_expires_at)<>1
+        ), ordinary_batch_violations AS (
+          SELECT COUNT(*) AS count
+          FROM public.artifact_publication_reservations reservation
+          JOIN public.artifact_publication_batch_items item
+            ON (item.reservation_id,item.artifact_hash)=(reservation.reservation_id,reservation.artifact_hash)
+          WHERE reservation.state='reserved' AND left(reservation.reservation_id,5)<>'APRB_'
+        ), active_header_violations AS (
+          SELECT COUNT(*) AS count
+          FROM public.artifact_publication_batches batch
+          WHERE batch.state='active' AND NOT EXISTS (
+            SELECT 1 FROM public.artifact_publication_batch_items item
+            JOIN public.artifact_publication_reservations reservation
+              ON (reservation.reservation_id,reservation.artifact_hash)=(item.reservation_id,item.artifact_hash)
+            WHERE item.batch_reservation_id=batch.batch_reservation_id
+              AND reservation.state='reserved' AND left(reservation.reservation_id,5)='APRB_'
+              AND reservation.owner_instance_id IS NOT DISTINCT FROM batch.owner_instance_id
+              AND reservation.lease_token IS NOT DISTINCT FROM batch.lease_token
+              AND reservation.lease_expires_at IS NOT DISTINCT FROM batch.lease_expires_at)
+        )
+        SELECT
+          (SELECT count FROM catalog_violations)::text AS "catalogViolationCount",
+          (SELECT count FROM aprb_child_violations)::text AS "aprbChildViolationCount",
+          (SELECT count FROM ordinary_batch_violations)::text AS "ordinaryBatchViolationCount",
+          (SELECT count FROM active_header_violations)::text AS "activeHeaderViolationCount",
+          to_regclass('public.internal_production_owner_reservations_v1')::text AS "ownerReservationsRelation",
+          to_regclass('public.internal_production_owner_admission_head_v1')::text AS "ownerAdmissionHeadRelation",
+          to_regclass('public.internal_production_owner_producer_source_build_authorities_v1')::text AS "producerSourceRelation",
+          to_regclass('public.internal_production_owner_producer_manifest_set_activations_v1')::text AS "producerActivationRelation",
+          to_regclass('public.internal_production_owner_producer_manifest_activation_heads_v1')::text AS "producerActivationHeadRelation",
+          to_regclass('public.internal_production_owner_producer_manifest_set_current_v1')::text AS "producerCurrentRelation",
+          (SELECT COUNT(*) FROM public.runs WHERE status IN ('running','resuming','cancelling','failing'))::text AS "activeRunCount",
+          (SELECT COUNT(*) FROM public.claim_log WHERE outcome IS NULL)::text AS "openClaimCount",
+          (SELECT COUNT(*) FROM public.execution_attempts WHERE disposition IN ('claimed','running'))::text AS "executionAttemptCount",
+          (SELECT COUNT(*) FROM public.runtime_sessions WHERE state NOT IN ('released','quarantined'))::text AS "activeRuntimeSessionCount",
+          (SELECT COUNT(*) FROM public.runtime_completion_requests WHERE state NOT IN ('accepted','rejected','quarantined'))::text AS "activeCompletionOwnerCount",
+          (SELECT COUNT(*) FROM public.runtime_completion_effects WHERE mandatory IS TRUE AND state NOT IN ('applied','reconciled'))::text AS "unsettledMandatoryEffectCount",
+          (SELECT COUNT(*) FROM public.artifact_publication_reservations reservation WHERE reservation.state='reserved' AND left(reservation.reservation_id,5)<>'APRB_')::text AS "artifactReservationCount",
+          (SELECT COUNT(*) FROM public.artifact_publication_batches WHERE state='active')::text AS "publicationBatchCount",
+          (SELECT COUNT(*) FROM public.artifact_publication_batch_items item
+             JOIN public.artifact_publication_reservations reservation
+               ON (reservation.reservation_id,reservation.artifact_hash)=(item.reservation_id,item.artifact_hash)
+             JOIN public.artifact_publication_batches batch
+               ON batch.batch_reservation_id=item.batch_reservation_id
+            WHERE reservation.state='reserved' AND left(reservation.reservation_id,5)='APRB_' AND batch.state='active')::text AS "artifactPublicationCount",
+          (SELECT COUNT(*) FROM public.run_termination_requests WHERE state<>'terminalized')::text AS "terminationOwnerCount",
+          (SELECT COUNT(*) FROM public.findings WHERE status='open')::text AS "findingOwnerCount",
+          ((SELECT COUNT(*) FROM public.recovery_cases WHERE status IN ('open','repairing','evidencing'))
+            +(SELECT COUNT(*) FROM public.recovery_dispatch_deliveries WHERE state IN ('authorized','leased','attempt_reserved','running')))::text AS "recoveryOwnerCount",
+          (SELECT COUNT(*) FROM public.operational_event_deliveries WHERE state IN ('pending','leased'))::text AS "operationalDeliveryCount"
+      `;
+      if (rows.length !== 1 || !isPlainRecord(rows[0])) currentEntryFail("legacy zero-owner database aggregate must return exactly one row");
+      const row = rows[0]!;
+      for (const relationKey of [
+        "ownerReservationsRelation", "ownerAdmissionHeadRelation", "producerSourceRelation",
+        "producerActivationRelation", "producerActivationHeadRelation", "producerCurrentRelation",
+      ]) if (row[relationKey] !== null) currentEntryFail(`legacy zero-owner database ${relationKey} is present`);
+      const parseCount = (key: string): number => {
+        const raw = row[key];
+        if (typeof raw !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(raw)) currentEntryFail(`${key} is not a canonical nonnegative integer`);
+        const count = Number(raw);
+        if (!Number.isSafeInteger(count)) currentEntryFail(`${key} exceeds the safe-integer boundary`);
+        return count;
+      };
+      for (const key of ["catalogViolationCount", "aprbChildViolationCount", "ordinaryBatchViolationCount", "activeHeaderViolationCount"]) {
+        if (parseCount(key) !== 0) currentEntryFail(`${key} is nonzero`);
+      }
+      const observed = Object.freeze({
+        activeRunCount: parseCount("activeRunCount"),
+        openClaimCount: parseCount("openClaimCount"),
+        executionAttemptCount: parseCount("executionAttemptCount"),
+        activeRuntimeSessionCount: parseCount("activeRuntimeSessionCount"),
+        activeCompletionOwnerCount: parseCount("activeCompletionOwnerCount"),
+        unsettledMandatoryEffectCount: parseCount("unsettledMandatoryEffectCount"),
+        artifactReservationCount: parseCount("artifactReservationCount"),
+        publicationBatchCount: parseCount("publicationBatchCount"),
+        artifactPublicationCount: parseCount("artifactPublicationCount"),
+        terminationOwnerCount: parseCount("terminationOwnerCount"),
+        findingOwnerCount: parseCount("findingOwnerCount"),
+        recoveryOwnerCount: parseCount("recoveryOwnerCount"),
+        operationalDeliveryCount: parseCount("operationalDeliveryCount"),
+      });
+      for (const [key, count] of Object.entries(observed)) if (count !== 0) currentEntryFail(`${key} is nonzero`);
+      return recursivelyFreeze(observed);
+    });
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
+}
+
+async function reobserveStoredMigration31AuditV1(audit: InternalProductionAuthorityV3Migration31AuditV1): Promise<void> {
+  const ports = await import("../db-pg.js") as Readonly<{
+    auditCurrentInternalProductionAuthorityV3Migration31V1?: () => Promise<Readonly<{ authorityV3ContractSpineThroughMigration31: Migration31AuditDataV1; currentAuthorityAudit: CurrentAuthorityAuditV1 }>>;
+  }>;
+  if (typeof ports.auditCurrentInternalProductionAuthorityV3Migration31V1 !== "function") currentEntryFail("legacy zero-owner current v31 audit port is unavailable");
+  const observed = await ports.auditCurrentInternalProductionAuthorityV3Migration31V1();
+  requireAuthorityV3Migration31Audit(observed.authorityV3ContractSpineThroughMigration31);
+  requireCurrentAuthorityAudit(observed.currentAuthorityAudit);
+  if (canonicalComparable(observed.authorityV3ContractSpineThroughMigration31) !== canonicalComparable(audit.authorityV3ContractSpineThroughMigration31) || canonicalComparable(observed.currentAuthorityAudit) !== canonicalComparable(audit.currentAuthorityAudit) || hashCanonicalJson(observed.currentAuthorityAudit) !== audit.currentAuthorityAuditHash) currentEntryFail("legacy zero-owner current v31 audit drifted");
+}
+
+function legacyZeroPathV1(hash: string): string {
+  return path.join(fixedRepositoryRoot(), LEGACY_ZERO_STORE_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
+  const codeRoot = fixedRepositoryRoot();
+  const relativeDirectory = path.relative(codeRoot, path.dirname(target));
+  if (!relativeDirectory || relativeDirectory.startsWith("..") || path.isAbsolute(relativeDirectory)) currentEntryFail("legacy zero-owner store escaped the repository");
+  const repository = directorySnapshot(codeRoot, "legacy zero-owner repository");
+  let directory = codeRoot;
+  for (const segment of relativeDirectory.split(path.sep)) {
+    directory = path.join(directory, segment);
+    try { mkdirSync(directory, { mode: 0o700 }); } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+    }
+    const observed = directorySnapshot(directory, `legacy zero-owner store ${segment}`, repository.device);
+    if (observed.identity.mode !== 0o700) currentEntryFail("legacy zero-owner store mode is invalid");
+  }
+  const basename = path.basename(target);
+  const adoptFinal = (expectedLinkCount = 1): boolean => {
+    try {
+      const observed = readStableRegular(target, CURRENT_ENTRY_MAX_BYTES, repository.device, expectedLinkCount);
+      if (observed.mode !== 0o600 || !observed.bytes.equals(bytes)) currentEntryFail("legacy zero-owner final collision is crossed");
+      return true;
+    } catch (error) {
+      if (isEnoent(error)) return false;
+      throw error;
+    }
+  };
+  if (adoptFinal()) return;
+  const familyPrefix = `.${basename}.`;
+  const family = readdirSync(directory).filter((name) => name.startsWith(familyPrefix));
+  if (family.length > 1) currentEntryFail("legacy zero-owner publication recovery is ambiguous");
+  let temp: string;
+  if (family.length === 1) {
+    temp = path.join(directory, family[0]!);
+    const observed = readStableRegular(temp, CURRENT_ENTRY_MAX_BYTES, repository.device, 1);
+    if (observed.mode !== 0o600 || !observed.bytes.equals(bytes)) currentEntryFail("legacy zero-owner recovery temp is crossed");
+  } else {
+    temp = path.join(directory, `${familyPrefix}${randomUUID()}.tmp`);
+    const descriptor = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try {
+      fchmodSync(descriptor, 0o600);
+      writeFileSync(descriptor, bytes);
+      fsyncSync(descriptor);
+    } finally { closeSync(descriptor); }
+  }
+  let linked = true;
+  try { linkSync(temp, target); } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+    linked = false;
+  }
+  fsyncCurrentEntryDirectory(directory);
+  if (!adoptFinal(linked ? 2 : 1)) currentEntryFail("legacy zero-owner final publication is absent");
+  const tempStats = lstatSync(temp, { bigint: true });
+  const finalStats = lstatSync(target, { bigint: true });
+  if (linked) {
+    if (tempStats.dev !== finalStats.dev || tempStats.ino !== finalStats.ino || tempStats.nlink !== 2n || finalStats.nlink !== 2n) currentEntryFail("legacy zero-owner publication inode proof failed");
+  } else if (tempStats.nlink !== 1n || finalStats.nlink !== 1n) currentEntryFail("legacy zero-owner contention proof failed");
+  unlinkSync(temp);
+  fsyncCurrentEntryDirectory(directory);
+  if (!adoptFinal()) currentEntryFail("legacy zero-owner final adoption failed");
+}
+
+async function parseLegacyZeroV1(value: Record<string, unknown>, pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+  if (!hasExactKeys(value, ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"])) currentEntryFail("legacy zero-owner fields are invalid");
+  const projection = { ...value };
+  delete projection.observationRef;
+  delete projection.observationHash;
+  const hash = requireSha256(value.observationHash, "legacy zero-owner hash");
+  if (hashCanonicalJson(projection) !== hash || value.observationRef !== `${LEGACY_ZERO_PREFIX_V1}${hash}` || pair.observationRef !== value.observationRef || pair.observationHash !== hash) currentEntryFail("legacy zero-owner pair/hash is invalid");
+  const census = value.census;
+  if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.observationKind !== "legacy-pre-manifest-existing-live-truth" || value.allThirtySixScalarCountsZero !== true || value.ownerReservationSidecarState !== "absent-before-migration-32" || value.ownerAdmissionHeadState !== "absent-before-migration-32" || value.manifestActivationState !== "absent-before-initial-a-activation" || !isPlainRecord(census) || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) currentEntryFail("legacy zero-owner body is invalid");
+  const auditPair = requirePair(
+    { authorityV3Migration31AuditRef: value.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: value.authorityV3Migration31AuditHash },
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+  ) as InternalProductionAuthorityV3Migration31AuditPairV1;
+  const audit = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  const cleanSource = requireSource({
+    branch: "main",
+    clean: true,
+    sha: value.cleanSetfarmSourceSha,
+    treeHash: value.cleanSetfarmTreeHash,
+    buildHash: value.cleanSetfarmBuildHash,
+    originMainSha: value.cleanSetfarmSourceSha,
+  });
+  if (canonicalComparable(audit.controllerSource) !== canonicalComparable(cleanSource)) currentEntryFail("legacy zero-owner audit/source is crossed");
+  requireSha256(value.observedSpawnerGenerationHash, "legacy zero-owner spawner generation");
+  return recursivelyFreeze(value as unknown as InternalProductionLegacyPreManifestZeroOwnerObservationV1);
+}
+
+export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  if (operation === null) currentEntryFail("legacy zero-owner observation requires the prepared current-entry operation");
+  const auditPair = requirePair(operation.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/") as InternalProductionAuthorityV3Migration31AuditPairV1;
+  const audit = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  const source = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  if (canonicalComparable(source) !== canonicalComparable(operation.controllerSource) || canonicalComparable(source) !== canonicalComparable(audit.controllerSource)) currentEntryFail("legacy zero-owner controller source is crossed");
+  await reobserveStoredMigration31AuditV1(audit);
+  const phaseA = await observePhaseClosedZeroV1(source);
+  const servicesA = await observeInternalProductionServiceCensusV1();
+  const physicalA = observePhysicalInventoryV1(servicesA, 0);
+  const database = await observeLegacyDatabaseCensusV1();
+  const servicesB = await observeInternalProductionServiceCensusV1();
+  const physicalB = observePhysicalInventoryV1(servicesB, database.activeRunCount);
+  const phaseB = await observePhaseClosedZeroV1(source);
+  const auditAgain = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  await reobserveStoredMigration31AuditV1(auditAgain);
+  if (
+    canonicalComparable(servicesA) !== canonicalComparable(servicesB)
+    || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
+    || canonicalComparable(audit) !== canonicalComparable(auditAgain)
+  ) currentEntryFail("legacy zero-owner observation changed across its database snapshot");
+  assertPhysicalInventoryPassStableV1(physicalA, physicalB);
+  const census = recursivelyFreeze({
+    activeRunCount: database.activeRunCount,
+    openClaimCount: database.openClaimCount,
+    executionAttemptCount: database.executionAttemptCount,
+    activeRuntimeSessionCount: database.activeRuntimeSessionCount,
+    activeCompletionOwnerCount: database.activeCompletionOwnerCount,
+    unsettledMandatoryEffectCount: database.unsettledMandatoryEffectCount,
+    ordinaryStartingCount: phaseA.ordinaryStartingCount,
+    restartReservationCount: phaseA.restartReservationCount,
+    serviceRestartOperationCount: phaseA.serviceRestartOperationCount,
+    launchPreparationCount: phaseA.launchPreparationCount,
+    preparedLaunchCount: phaseA.preparedLaunchCount,
+    stagedCaseCount: phaseA.stagedCaseCount,
+    fixtureAttemptCount: phaseA.fixtureAttemptCount,
+    artifactReservationCount: database.artifactReservationCount,
+    publicationBatchCount: database.publicationBatchCount,
+    artifactPublicationCount: database.artifactPublicationCount,
+    docsSessionCount: phaseA.docsSessionCount,
+    docsLeaseCount: phaseA.docsLeaseCount,
+    fleetStageCount: phaseA.fleetStageCount,
+    fleetInflightCount: phaseA.fleetInflightCount,
+    fleetPendingReviewCount: phaseA.fleetPendingReviewCount,
+    matrixInflightCount: phaseA.matrixInflightCount,
+    launchOutboxCount: phaseA.launchOutboxCount,
+    terminationOwnerCount: database.terminationOwnerCount,
+    findingOwnerCount: database.findingOwnerCount,
+    recoveryOwnerCount: database.recoveryOwnerCount,
+    operationalDeliveryCount: database.operationalDeliveryCount,
+    sourceRunOwnerCount: phaseA.sourceRunOwnerCount,
+    coldRehearsalOwnerCount: phaseA.coldRehearsalOwnerCount,
+    compilationLeaseCount: phaseA.compilationLeaseCount,
+    executionLeaseCount: phaseA.executionLeaseCount,
+    ownedProcessCount: physicalA.ownedProcessCount,
+    ownedListenerCount: physicalA.ownedListenerCount,
+    ownedWorktreeCount: physicalA.ownedWorktreeCount,
+    dirtyWorktreeCount: physicalA.dirtyWorktreeCount,
+    staleChildCount: physicalA.staleChildCount,
+  } satisfies InternalProductionCompleteZeroOwnerCensusV1);
+  for (const key of COMPLETE_ZERO_CENSUS_KEYS_V1) if (census[key] !== 0) currentEntryFail(`${key} is nonzero`);
+  const body = {
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" as const,
+    observationKind: "legacy-pre-manifest-existing-live-truth" as const,
+    authorityV3Migration31AuditRef: audit.authorityV3Migration31AuditRef,
+    authorityV3Migration31AuditHash: audit.authorityV3Migration31AuditHash,
+    cleanSetfarmSourceSha: audit.controllerSource.sha,
+    cleanSetfarmTreeHash: audit.controllerSource.treeHash,
+    cleanSetfarmBuildHash: audit.controllerSource.buildHash,
+    observedSpawnerGenerationHash: servicesA.spawner.generationHash,
+    census,
+    allThirtySixScalarCountsZero: true as const,
+    ownerReservationSidecarState: "absent-before-migration-32" as const,
+    ownerAdmissionHeadState: "absent-before-migration-32" as const,
+    manifestActivationState: "absent-before-initial-a-activation" as const,
+  };
+  const observationHash = hashCanonicalJson(body);
+  const value = recursivelyFreeze({ ...body, observationRef: `${LEGACY_ZERO_PREFIX_V1}${observationHash}`, observationHash });
+  const bytes = await canonicalRecordBytes(value);
+  const target = legacyZeroPathV1(observationHash);
+  publishLegacyZeroRecordV1(target, bytes);
+  return resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1({ observationRef: value.observationRef, observationHash });
+}
+
+export async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(
+  pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1,
+): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+  const expected = requirePair(pair, "observationRef", "observationHash", LEGACY_ZERO_PREFIX_V1) as InternalProductionLegacyPreManifestZeroOwnerObservationPairV1;
+  const target = legacyZeroPathV1(expected.observationHash);
+  const bytes = readStableRegular(target, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(target), { bigint: true }).dev, 1).bytes;
+  return await parseLegacyZeroV1(strictCanonicalRecord(bytes, "legacy zero-owner observation"), expected);
 }
