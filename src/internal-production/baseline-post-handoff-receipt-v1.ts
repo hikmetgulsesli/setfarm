@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats } from "node:fs";
+import { userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
@@ -1846,14 +1847,16 @@ const PHYSICAL_ENV_V1 = Object.freeze({
   GIT_OPTIONAL_LOCKS: "0",
   GIT_TERMINAL_PROMPT: "0",
 });
+const PHYSICAL_OWNER_HOME_V1 = userInfo().homedir;
+const PHYSICAL_WORKSPACE_BASE_V1 = path.join(PHYSICAL_OWNER_HOME_V1, "ai", "setrox");
 const FIXED_WORKTREE_BASES_V1 = Object.freeze([
-  "/Users/setrox/ai/setrox/.worktrees",
-  "/Users/setrox/ai/setrox/setfarm/.worktrees",
-  "/Users/setrox/ai/setrox/mission-control/.worktrees",
-  "/Users/setrox/.openclaw/workspace/agent-scratch/story-worktrees",
+  path.join(PHYSICAL_WORKSPACE_BASE_V1, ".worktrees"),
+  path.join(PHYSICAL_WORKSPACE_BASE_V1, "setfarm", ".worktrees"),
+  path.join(PHYSICAL_WORKSPACE_BASE_V1, "mission-control", ".worktrees"),
+  path.join(PHYSICAL_OWNER_HOME_V1, ".openclaw", "workspace", "agent-scratch", "story-worktrees"),
 ]);
-const WORKFLOW_BASE_V1 = "/Users/setrox/.openclaw/workspaces/workflows";
-const PROJECTS_BASE_V1 = "/Users/setrox/projects";
+const WORKFLOW_BASE_V1 = path.join(PHYSICAL_OWNER_HOME_V1, ".openclaw", "workspaces", "workflows");
+const PROJECTS_BASE_V1 = path.join(PHYSICAL_OWNER_HOME_V1, "projects");
 const PHYSICAL_NAME_V1 = /^[A-Za-z0-9._-]+$/;
 
 type PhysicalProcessV1 = Readonly<{
