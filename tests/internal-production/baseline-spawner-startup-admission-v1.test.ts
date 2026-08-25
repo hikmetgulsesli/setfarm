@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -280,7 +280,8 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
       /immutable record differs|mode|identity/,
       "a self-consistent wrong-mode final must not be adopted",
     );
-    chmodSync(wrongModeTarget, 0o2600);
+    chmodSync(wrongModeTarget, 0o4600);
+    assert.equal(statSync(wrongModeTarget).mode & 0o7777, 0o4600, "special-bit fixture must retain setuid");
     assert.throws(
       () => loaded.writeNoReplace(wrongModeTarget, wrongModeValue),
       /immutable record differs|mode|identity/,
