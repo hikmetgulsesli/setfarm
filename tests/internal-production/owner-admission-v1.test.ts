@@ -1994,6 +1994,10 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   const root = path.join(container, "setfarm");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   cpSync(path.join(activationFixtureSourceRoot, "src"), path.join(root, "src"), { recursive: true });
+  rmSync(path.join(
+    root,
+    "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+  ));
   for (const locator of ["package.json", "tsconfig.json", ".gitignore", "scripts/write-build-info.mjs", "scripts/build-generation-retention.mjs", "scripts/copy-step-assets.mjs", "scripts/stitch-to-jsx.mjs", "scripts/inject-version.js"]) {
     const source = path.join(activationFixtureSourceRoot, locator);
     if (readFileSync(source)) writeActivationFixtureFile(root, locator, readFileSync(source), locator.endsWith("copy-step-assets.mjs") ? 0o755 : 0o644);
