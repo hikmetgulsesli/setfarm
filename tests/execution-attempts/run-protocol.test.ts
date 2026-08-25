@@ -175,7 +175,7 @@ describe("run-pinned product compiler protocol", () => {
     );
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\(\)/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\(status\.admissionReady\)/);
-    assert.match(dbSource, /Reflect\.ownKeys\(loaded\)/);
+    assert.match(dbSource, /Reflect\.ownKeys\(namespace\)/);
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
     assert.match(dbSource, /6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17/);
