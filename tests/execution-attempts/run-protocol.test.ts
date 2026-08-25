@@ -166,7 +166,11 @@ describe("run-pinned product compiler protocol", () => {
       "utf8",
     );
     assert.equal(
-      dbSource.match(/new URL\("\.\/internal-production\/baseline-spawner-startup-admission-v1\.js", import\.meta\.url\)\.href/g)?.length,
+      dbSource.match(/const RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1 = "\.\/internal-production\/baseline-spawner-startup-admission-v1\.js";/g)?.length,
+      1,
+    );
+    assert.equal(
+      dbSource.match(/await import\(RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1\)/g)?.length,
       1,
     );
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\(\)/);
