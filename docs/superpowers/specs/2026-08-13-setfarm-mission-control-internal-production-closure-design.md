@@ -355,7 +355,129 @@ The exact P4 sub-File-Map is 29 existing members of the unchanged 109-path tuple
 
 Task 10 adds only the one causal P3 fixture member described above to rebaseline exact12 as exact13 and adds no executable to its six-file focused/postcommit matrix; all other RED/GREEN mutations remain inside the original twelve owners. Receipt tests independently make each live predicate 1–6, 14–16, and 24–27 nonzero, including the two counter-26 summands independently; exercise every accepted terminal state; require one repeatable-read/read-only exact-one-row safe-integer snapshot; prove ordinary versus APRB batch separation and all three batch-coherence refusals; and prove present empty relations never substitute for phase-closure evidence. They flip each phase-closed producer module, producer root, activation/head, and source/tree/build byte one at a time, and cover every bounded worktree/process/listener/dirty/stale positive plus persistent-service exclusion, PID replacement/disappearance, duplicate/symlink/escape, malformed output, and cap overflow. Startup tests prove prepare makes zero startup-family writes while a receipt observation may publish/adopt only its exact record; fixed ordinal reentry repairs only known locators; every crash boundary before/after each prefix, journal claim, physical dispatch, and settlement has the specified retry/adopt/blocked result; journal-without-settlement publishes exact nonterminal `HELPER_DISPATCH_SETTLEMENT_UNKNOWN` and never redispatches; and later exact settlement resumes. Retirement/helper tests cover live/dead/PID-reused/malformed lock owners, same-inode checked stale cleanup, one bounded reacquire, claim immediately before dispatch, dispatch count `0|1` only, response loss, helper loss, crossed identity, and settlement adoption. Owner/run-protocol tests reassert thirty-six ordered fields, separate persistent service census, all owner/run gates closed while blocked, and no run byte before sealed. The P3 helper regression proves both relative and absolute-file `.js` specifiers resolve the wrong real exact-eleven namespace once present, then uses fresh owner subprocesses to prove authentication failure installs no hook; authenticated fixed-relative exact-target imports are intercepted; absolute-file, query/hash, sibling, and unrelated imports delegate unchanged; repeated authentication/register behavior remains one installation; helper and db-pg observe the same cached exact-two namespace; and malformed or extra registration data/source cannot broaden the target. It proves the authenticated process-local exact-target hook makes helper and db-pg imports resolve the generated exact-two readiness shadow without a caller-selected locator or second fixture file. Independent review must inspect the literal SQL, source/root allowlists, Darwin command/parse caps, lock record/removal proof, no-recency store code, journal/spawn ordering, blocked status grammar, raw-hook resolve/load/delegation boundary, and mutation names; missing one-at-a-time RED, a blanket absence shortcut, unbounded OS enumeration, PID-only stale cleanup, redispatch after claim, promised sealed progress without settlement, or a relative/file/caller-selected fixture module locator is `NOT_CLEAR`.
 
-The exact P4 RED/GREEN matrix covers: (1) exact29/109 and plan/spec byte parity; (2) handle exposure only after exact applied-v31 row lock and rollback on absent, adopted, wrong-name, wrong-checksum, or wrong-state v31; (3) final zero reobservation and authorization consumption after the lock, with nonzero/drift/crossed-pair refusal before DDL; (4) clone, cross-process, illegal phase, repeated operation, and non-controller caller refusal; (5) private `Sql.begin` versus `TransactionSql.savepoint` dispatch with no exported SQL/callback/generic migration seam; (6) stage-result and receipt/current-audit invisibility before acknowledged outer commit; (7) callback throw, abort, process death, commit rejection, and backend loss with zero migration-32/schema/head residue and same-exact durable-consumption recovery; (8) one atomic successful migration journal/application-provenance/schema/head result; (9) ordinary and V3 publishers blocked on v31 and then failing at owner-head/admission throughout every incomplete postcommit prefix, including deterministic two-publisher interleavings; (10) guarded-32 acknowledged commit → migration-32 applied receipt/current audit → separately transacted ordinary-33 apply/exact-adopt and full verification → A activation → complete generic full verify → normal initialization → same-generation ready ordering, with crash recovery before/after the 32 receipt/audit, before/during/after the 33 transaction, after 33 before A, no duplicate DDL/journal, no second guarded transaction or restart, and no new P4 field/state/path; (11) loader acceptance of the real binding module's declared extra exports plus exact two-name/arity invocation, and rejection of missing, wrong-arity, nonfunction, or undeclared injection exports; (12) exact outer/inner readiness literals, frozen returned records, self/pair/generation/A-ancestor/activation/head relations, and tamper refusal; (13) default no-module, pending-32, pending/drifted-33, or every other incomplete startup state refusing a run byte; (14) digest/source/projector/DDL parity through 32 plus read-only compatibility verification of the source-known 33 successor without changing any migration-32 byte; (15) acyclic static/eager imports, only the explicitly inventoried invoked retirement-to-receipt/startup pair-resolution edge plus the audited receipt/source-authentication and fixed startup-readiness lazy edges, no other reverse dynamic dependency, and no import-time DB/process/store/`void` work; and (16) source-only delivery with no live database, current-entry, service, authority, canary, or run mutation. This ruling supersedes every earlier Sql-only nested-transaction assumption, whole-module two-key readiness assertion, smaller P4 map, or claim that a transaction lock spans migration-33 or any later activation/readiness effect.
+The D source-handoff prerequisite is a future invoked-only read boundary, not a Task 11 implementation or caller seam. D Task 2 creates exactly `src/internal-production/recovery-mission-control-source-handoff-v1.ts` and its same-basename test. That module alone exports:
+
+```ts
+export type InternalProductionRecoveryMissionControlSourceHandoffPairV1 = Readonly<{
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedPathModeBlobV1 = Readonly<{
+  path: string;
+  mode: "100644" | "100755";
+  blobHash: GitObjectHashV1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedSourceProjectionV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-reviewed-source-projection.v1";
+  orderedPathModeBlobs: readonly InternalProductionRecoveryMissionControlReviewedPathModeBlobV1[];
+}>;
+export type InternalProductionRecoveryMissionControlSourceHandoffV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-source-handoff.v1";
+  repository: "hikmetgulsesli/mission-control";
+  baseBranch: "main";
+  deliveryBranch: string;
+  pullRequestNumber: number;
+  pullRequestHeadSha: GitObjectHashV1;
+  mergeSha: GitObjectHashV1;
+  merged: true;
+  reviewedSourceProjection: InternalProductionRecoveryMissionControlReviewedSourceProjectionV1;
+  independentReviewReceiptRef: CanonicalRef;
+  independentReviewReceiptHash: Sha256V1;
+  requiredChecksReceiptRef: CanonicalRef;
+  requiredChecksReceiptHash: Sha256V1;
+  unresolvedCriticalHighMedium: 0;
+  productBuildAuthorityV2DeliveryEvidenceRef: CanonicalRef;
+  productBuildAuthorityV2DeliveryEvidenceHash: Sha256V1;
+  sourceSha: GitObjectHashV1;
+  treeHash: GitObjectHashV1;
+  buildHash: Sha256V1;
+  originMainSha: GitObjectHashV1;
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedCleanMainV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-reviewed-clean-main.v1";
+  repository: "hikmetgulsesli/mission-control";
+  baseBranch: "main";
+  reviewed: true;
+  missionControlSourceSha: GitObjectHashV1;
+  missionControlBuildHash: Sha256V1;
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export function resolveInternalProductionRecoveryMissionControlSourceHandoffV1(
+  input: InternalProductionRecoveryMissionControlSourceHandoffPairV1,
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffV1>;
+export function observeCurrentInternalProductionRecoveryMissionControlReviewedCleanMainV1(
+): Promise<InternalProductionRecoveryMissionControlReviewedCleanMainV1>;
+export function handoffMissionControlDeliveryCommandV1(
+  input: Readonly<{ guardRef: CanonicalRef; guardHash: Sha256V1 }>,
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffPairV1>;
+export function resolveMissionControlDeliveryCommandV1(
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffV1>;
+```
+
+`InternalProductionRecoveryMissionControlSourceHandoffV1` is D's complete strict terminal delivery receipt in exactly the declared key order. `deliveryBranch` is a 1–255-byte printable-ASCII non-`main` branch name with no leading/trailing slash, doubled slash, `..`, `@{`, backslash, control byte, or Git ref-invalid suffix; `pullRequestNumber` is a positive safe integer. `reviewedSourceProjection` has exactly its two declared keys; its `orderedPathModeBlobs` is the nonempty, at-most-256-entry, UTF-8-byte-lexically increasing sequence of unique regular source paths from the consumed Task 6 fixed delivery scope, and every entry has exactly the declared `path,mode,blobHash` order. A path is relative canonical POSIX text with no empty, dot, dot-dot, backslash, NUL, absolute, or `.git` component. The projection must equal the delivery owner's reviewed PR-head path/mode/blob projection byte-for-byte and must include the generic startup consumer/test plus `server/index.ts`; no unreviewed or out-of-scope path is admitted.
+
+The canonical identity is `missionControlHandoffHash = hashCanonicalJson(receipt without only missionControlHandoffRef and missionControlHandoffHash)`; no other member, including either nested clean-source evidence member or the reviewed projection, is omitted. `missionControlHandoffRef` is then exactly `setfarm://internal-production/recovery-mission-control-source-handoff/sha256/${missionControlHandoffHash}`. The content file is fixed at ``${resolveInternalProductionDataRootV1()}/recovery/mission-control-source-handoff-v1/receipts/sha256/${missionControlHandoffHash.slice(0,2)}/${missionControlHandoffHash}.json`` and the sole terminal pair locator is fixed at ``${resolveInternalProductionDataRootV1()}/recovery/mission-control-source-handoff-v1/terminal.pair.json``. The terminal file contains exactly the declared two-key pair in declaration order. Both use B's validated data root, real mode-`0700` descendants, canonical JSON plus one LF, unpredictable sibling temp, file fsync, atomic no-replace publication, parent fsync, and final `O_RDONLY|O_NOFOLLOW` reopen/fstat/hash verification of a one-link mode-`0600` regular file. There is no scan, recency selection, alternate filename, caller root/path, environment override, or fallback.
+
+At publication and at every current observation, the exact upstream clean-source authority is Setfarm's existing `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()` owned by `src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts`; that owner alone owns its code-selected Mission Control source-CLI locator. Its strict `response.evidence.currentSource` is exactly `{branch:"main",clean:true,sha,treeHash,buildHash,originMainSha}`. The full receipt records `response.deliveryEvidenceRef/response.deliveryEvidenceHash` as `productBuildAuthorityV2DeliveryEvidenceRef/productBuildAuthorityV2DeliveryEvidenceHash`, records the six current-source values in its four top-level identity fields plus the frozen `main/true` literals, and requires `sourceSha === originMainSha === mergeSha`. Pair-only `resolveInternalProductionRecoveryMissionControlSourceHandoffV1(input)` necessarily accepts only the exact historical two-key pair, reopens only its derived fixed content address, strict-parses the complete body, recomputes the one canonical hash/ref, and authenticates exact repository/base, PR branch/head/merge with `merged:true`, ordered reviewed projection, review/check pairs, zero unresolved findings, and the recorded clean-main evidence pair/source/tree/build; it performs no current-source mutation and exposes no writer.
+
+The zero-input `observeCurrentInternalProductionRecoveryMissionControlReviewedCleanMainV1()` opens only the fixed terminal pair locator, calls that pair-only resolver, then freshly invokes the exact upstream observer and requires its response pair to equal the receipt's recorded delivery-evidence pair and its `currentSource` to satisfy branch `main`, `clean:true`, `sha === originMainSha === receipt.sourceSha === receipt.mergeSha`, and exact `treeHash/buildHash` equality. Only then does it return the recursively frozen exact eight-key projection above. “No caller pair” applies to this current observer and to publication: neither accepts a pair. It does not erase the historical resolver's necessary exact pair input.
+
+The same D module exclusively owns both stores and one zero-input module-private `publishInternalProductionRecoveryMissionControlSourceHandoffFromDeliveryOwnerV1()` implementation. The already frozen registry handler `handoffMissionControlDeliveryCommandV1(...)` is also owned by this module: its exact strict input is only the authenticated one-use delivery-guard pair shown above, its existing CLI row remains only `handoff-mission-control-delivery`, and after the delivery owner completes the reviewed merge/clean-main build it invokes the private writer with no argument. The writer reopens the consumed fixed authorization and authenticated delivery-owner state, invokes the exact upstream clean-source observer, derives the complete receipt itself, publishes/reopens the content file, then no-replace publishes/reopens the terminal pair. The existing read-only `resolveMissionControlDeliveryCommandV1()` accepts no input and resolves only that fixed terminal pair/full receipt. No new registry verb or count exists. The public TypeScript surface is exactly the shown types, historical resolver, current observer, and two narrowly owned existing registry handlers; there is no general/public evidence writer, registration, callback, evidence injection, or caller-controlled writer seam. Task 2 delivers the dormant resolver/observer plus private store/writer and exact handler ownership; Task 6's delivery owner is the sole publication authority, and absence before that delivery fails read-only.
+
+Task 12's `baseline-post-handoff-receipt-v1.ts` solely owns zero-input `observeInternalProductionReviewedDSourceBuildGateV1()` and `observeInternalProductionServiceRestartCutoverReadinessCandidateV1()`. Their exact recursively frozen return shapes are:
+
+```ts
+export type InternalProductionReviewedDSourceBuildGateV1 = Readonly<{
+  schema: "setfarm.internal-production-reviewed-d-source-build-gate.v1";
+  reviewed: true;
+  setfarmSourceSha: GitObjectHashV1;
+  missionControlSourceSha: GitObjectHashV1;
+  setfarmBuildHash: Sha256V1;
+  missionControlBuildHash: Sha256V1;
+  recoveryProducerManifestActivationRef: CanonicalRef;
+  recoveryProducerManifestActivationHash: Sha256V1;
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export type InternalProductionServiceRestartCutoverReadinessCandidateV1 = Readonly<{
+  schema: "setfarm.internal-production-service-restart-startup-hooks-ready.v1";
+  setfarmSourceSha: GitObjectHashV1;
+  missionControlSourceSha: GitObjectHashV1;
+  setfarmBuildHash: Sha256V1;
+  missionControlBuildHash: Sha256V1;
+  migrationReceiptRef: CanonicalRef;
+  migrationReceiptHash: Sha256V1;
+  migrationSourceSha: GitObjectHashV1;
+  migrationImplementationBlobHash: GitObjectHashV1;
+  orderedStatementsHash: Sha256V1;
+  namedMigrationDigestEntryHash: Sha256V1;
+  migrationDigest: Sha256V1;
+  schemaProjectionHash: Sha256V1;
+  physicalRestartEpochRef: CanonicalRef;
+  physicalRestartEpochHash: Sha256V1;
+  physicalRestartEpochOrdinal: 1;
+  physicalRestartAuthorityOwner: "baseline-a";
+  dForwardIdentityRegistryHash: typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1;
+  dForwardImplementationIdentities: InternalProductionServiceRestartStartupHooksReadyV1["dForwardImplementationIdentities"];
+  spawnerHookImplementationId: "recovery-d-setfarm-spawner-startup-v1";
+  spawnerHookImplementationHash: Sha256V1;
+  dashboardHookImplementationId: "recovery-d-setfarm-dashboard-startup-v1";
+  dashboardHookImplementationHash: Sha256V1;
+  missionControlHookImplementationId: "recovery-d-mission-control-startup-v1";
+  missionControlHookImplementationHash: Sha256V1;
+  runtimeSourceProjectionHash: Sha256V1;
+  recoveryPrepareState: "disabled-by-baseline-epoch-one";
+}>;
+```
+
+The gate has exactly ten own enumerable string keys in the shown order. It is the strict combined Setfarm/Mission Control reviewed-source projection: the first observer freshly pair-resolves D's exact `A+B+C+D` producer-manifest activation receipt/head to derive current reviewed Setfarm source/build, invokes the D current Mission Control observer above to derive current reviewed Mission Control source/build, and returns those four identities with the activation and Mission Control handoff pairs. `recoveryProducerManifestActivationRef/recoveryProducerManifestActivationHash` are exactly the D terminal activation receipt's top-level `receiptRef/receiptHash`, never its nested successor head pair; resolving that receipt recursively authenticates its exact successor activation/head. There is no second Setfarm source-handoff port or receipt. The candidate has exactly twenty-seven own enumerable string keys in the shown order and is byte-identical to the readiness body before the derived `startupHooksReadyRef/startupHooksReadyHash` pair is appended. The second freshly reopens that exact gate and the same D activation receipt/head, plus the terminal migration-32 receipt, A epoch-one head, exact seven-entry D forward implementation registry, the three current startup-hook observations, runtime source projection, and D's still-disabled prepare state; every candidate source/build must equal the gate. Immediately before readiness publication and again immediately before the epoch visibility CAS, retirement freshly reopens the ten-key gate and the same activation receipt/head and requires byte equality plus exact equality with the candidate's four source/build members. Only A retirement may turn that unchanged exact candidate into `InternalProductionServiceRestartStartupHooksReadyV1` by deriving and appending its readiness pair; only A retirement may write readiness, retirement, activation, cutover, or epoch-two bytes.
+
+The only dependency chain is an invoked Task 11 retirement/sequence operation → Task 12 receipt-owned observers → a function-local dynamic import of D's exact observer. Task 11 never statically or dynamically imports a D module. The seven-entry forward registry remains entirely import-free; the separately audited receipt-owned D observer is the sole allowed lazy D edge. The D module or export being absent before D delivery, a missing fixed terminal locator, any unresolved/tampered/crossed receipt, unreviewed or unresolved finding, non-main/dirty/non-origin current Mission Control source, source/tree/build drift, missing D manifest activation, incomplete hook census, or enabled D prepare fails read-only before sequence intent, restart operation, reservation, outbox, helper, dispatch, readiness, cutover, or epoch mutation. There is no callback, registration, eager import, fallback, caller pair/path/root/environment/source/build/readiness body, or general/public caller-controlled writer seam. Task 11 therefore remains exact29/P4 source scope and can deliver its normal A restart machinery while `d-startup-hook-load` remains typed unavailable until Task 12 supplies the receipt bridge and D later supplies the reviewed terminal evidence.
+
+The exact P4 RED/GREEN matrix covers: (1) exact29/109 and plan/spec byte parity; (2) handle exposure only after exact applied-v31 row lock and rollback on absent, adopted, wrong-name, wrong-checksum, or wrong-state v31; (3) final zero reobservation and authorization consumption after the lock, with nonzero/drift/crossed-pair refusal before DDL; (4) clone, cross-process, illegal phase, repeated operation, and non-controller caller refusal; (5) private `Sql.begin` versus `TransactionSql.savepoint` dispatch with no exported SQL/callback/generic migration seam; (6) stage-result and receipt/current-audit invisibility before acknowledged outer commit; (7) callback throw, abort, process death, commit rejection, and backend loss with zero migration-32/schema/head residue and same-exact durable-consumption recovery; (8) one atomic successful migration journal/application-provenance/schema/head result; (9) ordinary and V3 publishers blocked on v31 and then failing at owner-head/admission throughout every incomplete postcommit prefix, including deterministic two-publisher interleavings; (10) guarded-32 acknowledged commit → migration-32 applied receipt/current audit → separately transacted ordinary-33 apply/exact-adopt and full verification → A activation → complete generic full verify → normal initialization → same-generation ready ordering, with crash recovery before/after the 32 receipt/audit, before/during/after the 33 transaction, after 33 before A, no duplicate DDL/journal, no second guarded transaction or restart, and no new P4 field/state/path; (11) loader acceptance of the real binding module's declared extra exports plus exact two-name/arity invocation, and rejection of missing, wrong-arity, nonfunction, or undeclared injection exports; (12) exact outer/inner readiness literals, frozen returned records, self/pair/generation/A-ancestor/activation/head relations, and tamper refusal; (13) default no-module, pending-32, pending/drifted-33, or every other incomplete startup state refusing a run byte; (14) digest/source/projector/DDL parity through 32 plus read-only compatibility verification of the source-known 33 successor without changing any migration-32 byte; (15) acyclic static/eager imports, only the explicitly inventoried invoked retirement-to-receipt/startup pair-resolution edge, Task 11-to-receipt D-gate call, receipt-to-D observer edge, and the audited receipt/source-authentication and fixed startup-readiness lazy edges, no other reverse dynamic dependency, and no import-time DB/process/store/`void` work; and (16) source-only delivery with no live database, current-entry, service, authority, canary, or run mutation. This ruling supersedes every earlier Sql-only nested-transaction assumption, whole-module two-key readiness assertion, absolute no-D-import wording that failed to distinguish the import-free forward registry from the one audited receipt-owned lazy observer, smaller P4 map, or claim that a transaction lock spans migration-33 or any later activation/readiness effect.
 The fixed Task 10 physical-path spellings above are canonical runtime results, not permitted host-specific source literals. `src/internal-production/baseline-post-handoff-receipt-v1.ts` resolves the effective-user home only through `node:os` `userInfo().homedir`, never `HOME`, another environment variable, argv, configuration, or caller input; code-owned `path.join` suffixes derive the workspace, OpenClaw, workflow, and projects roots, and on the canonical Mac mini those derived roots must equal the exact absolute paths stated above before census succeeds. This derivation changes no admitted root, depth, identity, physical predicate, File Map member, or public ABI and is required by the repository path contract.
 
 <!-- oa18-p4-migration32-transaction-readiness-rebaseline-v1:end -->

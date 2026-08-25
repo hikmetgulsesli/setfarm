@@ -163,6 +163,8 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 - Create `setfarm/src/internal-production/internal-production-service-restart-authority-v1.ts` — the sole reusable, path-free Setfarm/MC restart operation plus A-acquired seven-target family, immutable authorization operation, shared per-service start-slot CAS, `ordinary-starting` claim/publication/settlement, acyclic terminal core/compound close/occurrence/head/release/final-envelope chain, helper, child, PID, startup-marker, and resolver authority for the exact `recovery-active-run`, `source-release-barrier`, `cold-rehearsal`, and `documentation-handoff` namespaces; it identity-re-exports A's readiness/activation/cutover contracts and the exact `InternalProductionServiceRestartTerminalCoreV1`, `InternalProductionRecoveryRestartTargetSetCloseV1`, `resolveInternalProductionServiceRestartTerminalCoreV1`, and `resolveInternalProductionRecoveryRestartTargetSetCloseV1` symbols required by E, and contains the sole reviewed adapter that imports A's exact prepare and zero-input resume cutover mutations unaliased.
 - Create `setfarm/src/internal-production/recovery-owner-producer-manifest-activation-v1.ts` — the sole zero-input D manifest activation controller, strict content-addressed D activation receipt/resolver, and read-only fixed status over A's `A+B+C` predecessor and `A+B+C+D` successor.
 - Create `setfarm/tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts` — exact A11/B10/C6/D16 manifest parity, reviewed clean-source/build gate, strict predecessor and successor receipt/head CAS pairs, receipt/status, crash, response-loss, and activation-before-hook-load/before-cutover/before-producer tests.
+- Create `setfarm/src/internal-production/recovery-mission-control-source-handoff-v1.ts` — D's sole complete pair-resolved Mission Control source-handoff receipt plus fixed-locator, zero-input current reviewed-clean-main observer and zero-input private writer behind the existing exact delivery-handler boundary; it exports no general evidence writer, callback, registration, root, path, environment, or caller-evidence seam.
+- Create `setfarm/tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts` — exact terminal receipt/ref/pair, PR/review/check/path-mode-blob/clean-main source-tree-build authentication, current eight-key projection, tamper/current-drift/absence refusal, and import-inertness tests.
 - Create `setfarm/src/internal-production/internal-production-service-restart-startup-v1.ts` — the sole Setfarm startup claim/marker adapter used by both spawner and dashboard before ownership/listen and the sole two-phase ordinary owner/listener publication completion/recovery consumer.
 - Modify `setfarm/src/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.ts` — reviewed finite `d-ordinary-start` and `d-managed-restart` startup-admission successors; the managed branch consumes only D's freshly resolved successful setfarm-spawner operation/startup/terminal reservation/completion/occurrence/head authority for the four approved namespaces.
 - Create `setfarm/scripts/support/internal-production-service-restart-helper-v1.ts` — the only fixed helper executable; it claims one named durable operation before spawning, captures, owns, terminates, and reaps its exact `launchctl kickstart -kp` child, and accepts no caller command, label, path, PID, or environment authority.
@@ -186,6 +188,7 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 - Create `setfarm/tests/internal-production/recovery-process-fixture-receipt.test.ts` — receipt hashing, resolver, campaign/generation/checkpoint, scenario assertion, ownership, cleanup, and tamper tests.
 - Create `setfarm/tests/internal-production/recovery-attempt-store.test.ts` — retained history, selection, repair admission, cumulative three-stop, collision, and restart tests.
 - Create `setfarm/tests/internal-production/recovery-repair-review.test.ts` — reviewed PR/review/test/build authority and one-use process-repair consumption tests.
+- Create `setfarm/tests/internal-production/recovery-accepted-product-repair-review.test.ts` — accepted-product source-repair and infrastructure-remediation authority, successor-matrix, current-link CAS, one-use consumption, retained-history, and cumulative-root tests.
 - Create `setfarm/tests/internal-production/recovery-browser-continuity.test.ts` — pre-action readiness, ordered polling, disconnect/reconnect, same-run, console, and closure tests.
 - Create `setfarm/tests/internal-production/recovery-accepted-product-runtime.test.ts` — sealed contract/source/deployment binding, stop/start, persistence, duplicate listener, and cleanup tests.
 - Create `mission-control/server/services/internal-production-service-restart-startup-v1.ts` and `mission-control/server/services/internal-production-service-restart-startup-v1.test.ts`, and modify `mission-control/server/index.ts` — the Mission Control consumer of D's fixed generic startup-claim protocol, awaited before any database/background/listener ownership.
@@ -258,9 +261,11 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 - Create `setfarm/src/server/schemas/run-operational-model-v2.ts` — strict nested operational-model schema and canonical model hash.
 - Modify `setfarm/src/server/run-operational-model.ts` — produce hash-bound V2 models.
 - Modify `setfarm/src/contracts/mission-control-contract-artifacts.ts` — export the V2 schema and compatibility fixture.
-- Add `setfarm/contracts/generated/mission-control/run-operational-model.v2.schema.json` and `run-operational-model.v2.compatibility.json` through the producer generator.
+- Add `setfarm/contracts/generated/mission-control/run-operational-model.v2.schema.json` and `setfarm/contracts/generated/mission-control/run-operational-model.v2.compatibility.json` through the producer generator.
 - Modify `setfarm/tests/run-operational-model.test.ts` — nested authority and hash-drift regressions.
 - Modify `setfarm/tests/contracts/mission-control-contract-artifacts.test.ts` — require the V2 artifact pair.
+
+The prior D Setfarm File Map expands to exactly 67 distinct repository paths; adding the one source and one test above rebaselines it to exactly 69. Likewise, Task 2's exact file list advances only from 58 to 60; the other nine unique File Map members are Task 1's remaining recovery-evidence test, the consumed active-status contract, and the seven operational-model producer/artifact paths. The D Mission Control handoff observer source/test are ordinary D source-delivery paths but add zero owner producers, so the producer arithmetic remains exactly `A11+B10+C6+D16 = 43`. The source-boundary map and complete handoff tree compare all 69 literal paths, modes, and blobs; a count-only assertion, shorthand that loses the compatibility artifact's full prefix, omission/extra/reorder, or treating either new observer path as a seventeenth D producer fails closed.
 
 ### Mission Control canonical reconciliation
 
@@ -300,7 +305,9 @@ D imports C's exact `prepareGoldenExistingRepositoryTemplatesV1`; it does not re
 
 D's private finalization owns two immutable typed byte streams and their content hashes, not a tracked generation path or session basename. In the combined A–E delivery, E authenticates the generation inputs and exact six-entry tuple before asking B to begin; B alone derives/authenticates the generation-owned paths, basenames, absence, ordering, and registered content hashes. D supplies only freshly reopened finalization-owned bytes/content hashes through its two fixed owner selectors. This avoids a D→E phase dependency while ensuring no operational epoch can overwrite an older recovery packet.
 
-Ownership and delivery order are part of the scope, not an implementation suggestion. D Task 2 alone creates the shared Setfarm restart authority for all four namespaces (`recovery-active-run`, `source-release-barrier`, `cold-rehearsal`, and `documentation-handoff`), the exact D owner-producer manifest activation controller/test, the Setfarm startup adapter, sole helper script, its authority/startup/source-boundary tests, both exact B activation-controller successor branches, and the spawner/dashboard startup call sites. Its complete source claim and handoff tree projection must include `src/internal-production/recovery-owner-producer-manifest-activation-v1.ts` and `tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts` and prove exact `A+B+C` count 27 to `A+B+C+D` count 43 expected-predecessor activation. It imports/re-exports A's already merged readiness/activation/cutover identities but owns none of their schemas or stores. Those Setfarm files merge first, while A physical-restart epoch one remains authoritative and every D generic `prepare` remains typed unavailable. D Task 6 then allocates and delivers the sole serialized Mission Control branch/PR containing the generic startup consumer/test and `server/index.ts` ordering together with D's reconciliation changes. From both clean built merges, D first publishes and freshly resolves the exact reviewed 43-producer activation; failure blocks before `d-startup-hook-load` or any D producer. A's still-active sequence then loads all three reviewed D-capable startup hooks; ordinary-slot fencing may observe and settle those starts, but cannot enable a D generic restart. Only after all three current hook/source/build identities are observable and a fresh A cutover mutation guard resolves does D's reviewed adapter prepare A's cutover once and let a fresh process invoke its zero-input resume; A internally records readiness and atomically publishes its retirement/activation/cutover epoch-two chain. E may begin its source branch only after both D handoff receipts, the D manifest activation receipt, and the A-owned readiness/cutover/retirement/activation chain resolve against clean synchronized `main`; E owns no substitute helper, startup hook, MC branch, or those paths.
+Ownership and delivery order are part of the scope, not an implementation suggestion. D Task 2 alone creates the shared Setfarm restart authority for all four namespaces (`recovery-active-run`, `source-release-barrier`, `cold-rehearsal`, and `documentation-handoff`), the exact D owner-producer manifest activation controller/test, the exact Mission Control source-handoff observer/test, the Setfarm startup adapter, sole helper script, its authority/startup/source-boundary tests, both exact B activation-controller successor branches, and the spawner/dashboard startup call sites. Its exact-60 Task 2 claim and complete exact-69 Setfarm handoff tree projection must include `src/internal-production/recovery-owner-producer-manifest-activation-v1.ts`, `tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts`, `src/internal-production/recovery-mission-control-source-handoff-v1.ts`, and `tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts` and prove exact `A+B+C` count 27 to `A+B+C+D` count 43 expected-predecessor activation. `tests/internal-production/recovery-source-boundary.test.ts` and `tests/internal-production/internal-production-service-restart-source-boundary.test.ts` must prove the handoff module has no general/public caller-controlled writer seam, that only its existing exact delivery handler reaches the zero-input private writer, and that only A Task 12's receipt-owned observer may reach its zero-input current observer through the audited invoked lazy edge. D imports/re-exports A's already merged readiness/activation/cutover identities but owns none of their schemas or stores. Those Setfarm files merge first, while A physical-restart epoch one remains authoritative and every D generic `prepare` remains typed unavailable. D Task 6 then allocates and delivers the sole serialized Mission Control branch/PR containing the generic startup consumer/test and `server/index.ts` ordering together with D's reconciliation changes. From both clean built merges, D first publishes and freshly resolves the exact reviewed 43-producer activation; failure blocks before `d-startup-hook-load` or any D producer. A's still-active sequence then loads all three reviewed D-capable startup hooks; ordinary-slot fencing may observe and settle those starts, but cannot enable a D generic restart. Only after Task 12's code-owned combined gate authenticates that activation plus D's terminal current Mission Control handoff projection, all three current hook/source/build identities are observable, and a fresh A cutover mutation guard resolves does D's reviewed adapter prepare A's cutover once and let a fresh process invoke its zero-input resume; A internally records readiness and atomically publishes its retirement/activation/cutover epoch-two chain. E may begin its source branch only after both D handoff receipts, the D manifest activation receipt, and the A-owned readiness/cutover/retirement/activation chain resolve against clean synchronized `main`; E owns no substitute helper, startup hook, MC branch, or those paths.
+
+In Task 12's exact ten-key combined gate, `recoveryProducerManifestActivationRef/recoveryProducerManifestActivationHash` are D's terminal manifest-activation receipt's top-level `receiptRef/receiptHash`, not its nested successor head pair. Resolving that receipt must recursively authenticate the exact `A+B+C+D` successor activation/head before its Setfarm source/build projection is admitted.
 
 ---
 
@@ -1052,11 +1059,13 @@ After the focused checks pass, submit the exact immutable claim output with the 
 - Create: `setfarm/src/internal-production/recovery-action-port.ts`
 - Create: `setfarm/src/internal-production/internal-production-service-restart-authority-v1.ts`
 - Create: `setfarm/src/internal-production/recovery-owner-producer-manifest-activation-v1.ts`
+- Create: `setfarm/src/internal-production/recovery-mission-control-source-handoff-v1.ts`
 - Create: `setfarm/src/internal-production/internal-production-service-restart-startup-v1.ts`
 - Modify: `setfarm/src/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.ts`
 - Create: `setfarm/scripts/support/internal-production-service-restart-helper-v1.ts`
 - Create: `setfarm/tests/internal-production/internal-production-service-restart-authority-v1.test.ts`
 - Create: `setfarm/tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts`
+- Create: `setfarm/tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts`
 - Create: `setfarm/tests/internal-production/internal-production-service-restart-startup-v1.test.ts`
 - Modify: `setfarm/tests/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.test.ts`
 - Create: `setfarm/tests/internal-production/internal-production-service-restart-source-boundary.test.ts`
@@ -1098,7 +1107,79 @@ After the focused checks pass, submit the exact immutable claim output with the 
 
 **Interfaces:**
 
-Task 2 produces the sole `activateInternalProductionRecoveryOwnerProducerManifestSetV1()`, `resolveInternalProductionRecoveryOwnerProducerManifestActivationV1(...)`, and `observeInternalProductionRecoveryOwnerProducerManifestActivationStatusV1()` implementation/test pair. The source claim and handoff projection must contain both exact activation paths and prove `A+B+C` count `27` advances by the exact predecessor `{head,receipt}` pair to `A+B+C+D` count `43`, whose successor `{head,receipt}` pair is freshly reopened and byte-equal; omitting either path or either head pair makes the complete Task 2 claim invalid and prevents `d-startup-hook-load`, cutover, or any generic D producer.
+Task 2 produces the sole `activateInternalProductionRecoveryOwnerProducerManifestSetV1()`, `resolveInternalProductionRecoveryOwnerProducerManifestActivationV1(...)`, and `observeInternalProductionRecoveryOwnerProducerManifestActivationStatusV1()` implementation/test pair. It also produces D's sole complete Mission Control source-handoff resolver and current observer:
+
+```ts
+export type InternalProductionRecoveryMissionControlSourceHandoffPairV1 = Readonly<{
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedPathModeBlobV1 = Readonly<{
+  path: string;
+  mode: "100644" | "100755";
+  blobHash: GitObjectHashV1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedSourceProjectionV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-reviewed-source-projection.v1";
+  orderedPathModeBlobs: readonly InternalProductionRecoveryMissionControlReviewedPathModeBlobV1[];
+}>;
+export type InternalProductionRecoveryMissionControlSourceHandoffV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-source-handoff.v1";
+  repository: "hikmetgulsesli/mission-control";
+  baseBranch: "main";
+  deliveryBranch: string;
+  pullRequestNumber: number;
+  pullRequestHeadSha: GitObjectHashV1;
+  mergeSha: GitObjectHashV1;
+  merged: true;
+  reviewedSourceProjection: InternalProductionRecoveryMissionControlReviewedSourceProjectionV1;
+  independentReviewReceiptRef: CanonicalRef;
+  independentReviewReceiptHash: Sha256V1;
+  requiredChecksReceiptRef: CanonicalRef;
+  requiredChecksReceiptHash: Sha256V1;
+  unresolvedCriticalHighMedium: 0;
+  productBuildAuthorityV2DeliveryEvidenceRef: CanonicalRef;
+  productBuildAuthorityV2DeliveryEvidenceHash: Sha256V1;
+  sourceSha: GitObjectHashV1;
+  treeHash: GitObjectHashV1;
+  buildHash: Sha256V1;
+  originMainSha: GitObjectHashV1;
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export type InternalProductionRecoveryMissionControlReviewedCleanMainV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-mission-control-reviewed-clean-main.v1";
+  repository: "hikmetgulsesli/mission-control";
+  baseBranch: "main";
+  reviewed: true;
+  missionControlSourceSha: GitObjectHashV1;
+  missionControlBuildHash: Sha256V1;
+  missionControlHandoffRef: CanonicalRef;
+  missionControlHandoffHash: Sha256V1;
+}>;
+export function resolveInternalProductionRecoveryMissionControlSourceHandoffV1(
+  input: InternalProductionRecoveryMissionControlSourceHandoffPairV1,
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffV1>;
+export function observeCurrentInternalProductionRecoveryMissionControlReviewedCleanMainV1(
+): Promise<InternalProductionRecoveryMissionControlReviewedCleanMainV1>;
+export function handoffMissionControlDeliveryCommandV1(
+  input: Readonly<{ guardRef: CanonicalRef; guardHash: Sha256V1 }>,
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffPairV1>;
+export function resolveMissionControlDeliveryCommandV1(
+): Promise<InternalProductionRecoveryMissionControlSourceHandoffV1>;
+```
+
+The full receipt and nested source projection have exactly the declared key order. `deliveryBranch` is a 1–255-byte printable-ASCII non-`main` Git-valid branch with no leading/trailing slash, doubled slash, `..`, `@{`, backslash, control byte, or invalid suffix; `pullRequestNumber` is a positive safe integer. `orderedPathModeBlobs` is a nonempty, at-most-256-entry, UTF-8-byte-lexically increasing sequence of unique regular paths from the consumed fixed Task 6 delivery scope. Every entry has exactly `path,mode,blobHash`; paths are relative canonical POSIX text with no empty, dot, dot-dot, backslash, NUL, absolute, or `.git` component. It equals the reviewed PR-head path/mode/blob projection and includes the generic startup consumer/test plus `server/index.ts`.
+
+The complete receipt identity is exactly `missionControlHandoffHash = hashCanonicalJson(receipt without only missionControlHandoffRef and missionControlHandoffHash)`; no other member is omitted. Its ref domain is exactly `setfarm://internal-production/recovery-mission-control-source-handoff/sha256/<missionControlHandoffHash>`. Content lives only at ``${resolveInternalProductionDataRootV1()}/recovery/mission-control-source-handoff-v1/receipts/sha256/${missionControlHandoffHash.slice(0,2)}/${missionControlHandoffHash}.json`` and the sole terminal locator is ``${resolveInternalProductionDataRootV1()}/recovery/mission-control-source-handoff-v1/terminal.pair.json``, whose bytes are exactly the two-key pair in declaration order. Both use B's validated root, real mode-`0700` descendants, canonical JSON plus LF, unpredictable sibling temp, file fsync, no-replace publication, parent fsync, and final `O_RDONLY|O_NOFOLLOW` reopen/fstat/hash verification of a one-link mode-`0600` regular file. There is no scan, recency choice, alternate locator, caller root/path, environment override, or fallback.
+
+The exact upstream clean-source authority is the existing Setfarm `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()` from `src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts`; that module owns the code-selected Mission Control source-CLI locator. Its strict `response.evidence.currentSource` is exactly `{branch:"main",clean:true,sha,treeHash,buildHash,originMainSha}`. Publication records `response.deliveryEvidenceRef/response.deliveryEvidenceHash`, projects current source to the receipt's `sourceSha/treeHash/buildHash/originMainSha`, and requires `sourceSha === originMainSha === mergeSha`. The historical pair-only resolver necessarily accepts its exact declared pair, derives and opens only the content address, strict-parses the full body, recomputes its hash/ref, and authenticates repository/base, PR branch/head/merge and merged state, ordered reviewed projection, review/check pairs, zero unresolved findings, and recorded clean-main evidence pair/source/tree/build without performing a current observation or mutation.
+
+The zero-input current observer accepts no pair: it opens only the fixed terminal pair, invokes the historical pair resolver, freshly invokes the exact upstream observer, requires its response pair to equal the receipt's recorded evidence pair and its current source to satisfy branch `main`, clean true, `sha === originMainSha === receipt.sourceSha === receipt.mergeSha`, plus exact tree/build equality, then returns the recursively frozen exact eight-key projection. Thus “no caller pair” applies to the current observer and writer, not to the historical pair-only resolver's necessary exact pair input.
+
+This D module alone owns both stores and its zero-input module-private `publishInternalProductionRecoveryMissionControlSourceHandoffFromDeliveryOwnerV1()`. Its existing exact `handoffMissionControlDeliveryCommandV1(...)` registry handler accepts only the authenticated one-use `{guardRef,guardHash}` pair and, after the delivery owner completes the reviewed merge/clean-main build, invokes that private writer with no argument. The writer reopens the consumed fixed delivery authorization and authenticated owner state, invokes the exact upstream observer, derives/publishes/reopens the complete content receipt, and then no-replace publishes/reopens the terminal pair. The existing zero-input read-only `resolveMissionControlDeliveryCommandV1()` resolves only that terminal pair/full receipt. Registry grammar remains exactly the pre-existing `handoff-mission-control-delivery` and `resolve-mission-control-delivery` rows and forty-two-command count; no new verb exists. The public TypeScript surface remains exactly the shown types, pair-only resolver, zero-input current observer, and these two narrowly owned existing handlers; there is no general/public evidence writer or caller-controlled writer seam. Task 2 delivers the dormant resolver/observer plus private store/writer and exact handler ownership. Before Task 6 publication the terminal locator is absent and observation fails read-only; Task 6's delivery owner remains the sole producer.
+
+The exact-60 Task 2 source claim and exact-69 Setfarm handoff projection must contain both activation paths and both source-handoff paths and prove `A+B+C` count `27` advances by the exact predecessor `{head,receipt}` pair to `A+B+C+D` count `43`, whose successor `{head,receipt}` pair is freshly reopened and byte-equal. Omitting a path, pair, exact source-boundary assertion, or current-observer refusal makes the complete claim invalid and prevents `d-startup-hook-load`, cutover, or any generic D producer. The observer paths do not alter `D16` producer membership or the `[11,10,6,16]` count vector.
 
 The recorder has one authoritative entry point only: the earlier exact `createRecoveryEvidenceCliDependenciesV1({campaignHash})` production composition and `runRecoveryEvidenceCliV1(argv: readonly string[], dependencies: RecoveryEvidenceCliDependenciesV1)`. This task must not introduce an unversioned `RecoveryEvidenceDependencies`, `runRecoveryEvidenceCli`, alternate `goldenProjection`, direct `readRunCensus`, caller clock, repository, or execution-capable dependency surface.
 
@@ -3617,6 +3698,7 @@ node --import tsx --test \
   tests/internal-production/recovery-live-inflight-store-v1.test.ts \
   tests/internal-production/recovery-composition.test.ts \
   tests/internal-production/recovery-source-boundary.test.ts \
+  tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts \
   tests/internal-production/recovery-action-receipt.test.ts \
   tests/internal-production/recovery-process-fixture-receipt.test.ts \
   tests/internal-production/recovery-attempt-store.test.ts \
@@ -3678,6 +3760,7 @@ node --import tsx --test \
   tests/internal-production/recovery-live-inflight-store-v1.test.ts \
   tests/internal-production/recovery-composition.test.ts \
   tests/internal-production/recovery-source-boundary.test.ts \
+  tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts \
   tests/internal-production/recovery-action-port.test.ts \
   tests/internal-production/recovery-action-receipt.test.ts \
   tests/internal-production/internal-production-service-restart-authority-v1.test.ts \
@@ -3713,7 +3796,7 @@ Expected: all pass and `git diff --check` is clean.
 
 After the claim-bound checks pass, every Tasks 1–2 worker uses only its immutable claim's exact `setfarm step complete` command and output transport. Workers may inspect `git status --short --branch`, `git diff --check`, and `git diff --name-only` read-only to prove scope; they never create/switch branches, stage, commit, push, invoke `gh`, or synchronize `main`.
 
-Setfarm's completion owner must validate each claim's declared file scope and check receipts, including the two exact B activation-controller extension paths plus `src/internal-production/recovery-owner-producer-manifest-activation-v1.ts` and `tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts`, create the managed commits, push the one managed source branch, open/update the PR, enforce independent review, route all Critical/High/Medium findings through new scoped claims, rerun focused tests plus full `npm test`, contract/migration checks, and `npm run build` from clean managed worktrees, then merge and clean every claim/worktree. The source run is successful only when its durable handoff receipt binds the final Setfarm merge/tree, the complete ordered D file/mode/blob manifest including both B paths and both activation paths, exact `A+B+C` count 27 to `A+B+C+D` count 43 projection, reviewed PR identity/head, required checks, zero unresolved findings, and zero residual worktree/claim owner.
+Setfarm's completion owner must validate each claim's declared file scope and check receipts, including the two exact B activation-controller extension paths, both owner-producer activation paths, and both Mission Control source-handoff observer paths, create the managed commits, push the one managed source branch, open/update the PR, enforce independent review, route all Critical/High/Medium findings through new scoped claims, rerun focused tests plus full `npm test`, contract/migration checks, and `npm run build` from clean managed worktrees, then merge and clean every claim/worktree. The source run is successful only when its durable handoff receipt binds the final Setfarm merge/tree, the complete ordered exact-69 D file/mode/blob manifest including those six paths, exact `A+B+C` count 27 to `A+B+C+D` count 43 projection, reviewed PR identity/head, required checks, zero unresolved findings, and zero residual worktree/claim owner.
 
 Record that Setfarm-owned producer merge SHA from the handoff receipt. Do not prepare the Mission Control consumer branch or collect live recovery evidence until the owning orchestrator supplies a separate clean `main` checkout whose read-only `HEAD`, `origin/main`, and receipt SHA agree.
 
@@ -4201,13 +4284,14 @@ Expected: the read-only guard binds only Task 5's paths and predecessor commit r
 
 - Verify all Mission Control files changed by Tasks 3–5.
 - Verify only: `mission-control/server/services/internal-production-service-restart-startup-v1.ts`, `mission-control/server/services/internal-production-service-restart-startup-v1.test.ts`, and `mission-control/server/index.ts`, all created/modified first in Task 3.
+- Verify only: `setfarm/src/internal-production/recovery-mission-control-source-handoff-v1.ts` and `setfarm/tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts`, already reviewed and merged by Task 2; Task 6 invokes their fixed delivery-owner/resolver boundary but does not edit them.
 - Update only if Setfarm producer contracts changed:
   - `mission-control/contracts/vendor/setfarm/mission-control-contracts.v1.lock.json`
   - the fourteen declared files under `mission-control/contracts/vendor/setfarm/`: the ten current entries, A's retained operational-active schema/fixture pair, plus D's new operational-model V2 pair
 
 **Interfaces:**
 
-- Consumes: both reviewed source handoff receipts, A's exact current `A+B+C` `{head,receipt}` activation pair, A's still-active physical restart epoch one, A's migration-bound `d-startup-hook-load` sequence only after D's 43-producer successor activation resolves, and one fresh A `InternalProductionBaselineZeroOwnerMutationGuardV1` pair from A's exact `zero-owner --json` producer; D imports A's cutover mutation only inside its exact reviewed adapter and otherwise imports only A types/pair-only resolvers. D's zero-input `observeRecoveryCompleteZeroOwnerCensusV1()` remains read-only evidence and cannot cross this A cutover mutation boundary.
+- Consumes: both reviewed source handoff receipts, including the pair-resolved D Mission Control terminal receipt and its zero-input current reviewed-clean-main projection; A's exact current `A+B+C` `{head,receipt}` activation pair; A's still-active physical restart epoch one; A's migration-bound `d-startup-hook-load` sequence only after D's 43-producer successor activation resolves and Task 12's combined source/build gate authenticates the activation plus handoff evidence; and one fresh A `InternalProductionBaselineZeroOwnerMutationGuardV1` pair from A's exact `zero-owner --json` producer. D imports A's cutover mutation only inside its exact reviewed adapter and otherwise imports only A types/pair-only resolvers. D's zero-input `observeRecoveryCompleteZeroOwnerCensusV1()` remains read-only evidence and cannot cross this A cutover mutation boundary.
 - Produces: the exact A-owned `InternalProductionServiceRestartStartupHooksReadyV1` and `InternalProductionServiceRestartAuthorityCutoverV1` pairs plus their nested A retirement/activation/epoch-two authorities. D publishes no readiness, activation, or cutover bytes. No live scenario may start before this task's cutover resolves.
 
 - [ ] **Step 1: Synchronize the Setfarm contract pin**
@@ -4411,7 +4495,7 @@ npm --prefix "$SETFARM_ROOT" run --silent acceptance:recovery -- handoff-mission
   --json
 ```
 
-The authorization guard binds repository `hikmetgulsesli/mission-control`, base `main`, exact branch/head, the fixed title/body, path scope, all check receipts, and zero unresolved Critical/High/Medium findings. The handoff consumes the pair exactly once and grants no shell Git authority. The Mission Control delivery owner alone pushes, creates/updates the PR, requests independent review, resolves findings through fresh claims, marks ready, merges, synchronizes its canonical checkout, rebuilds, and returns a clean-main delivery receipt.
+The authorization guard binds repository `hikmetgulsesli/mission-control`, base `main`, exact branch/head, the fixed title/body, path scope, all check receipts, and zero unresolved Critical/High/Medium findings. The existing `handoff-mission-control-delivery` row routes only to the source-handoff module's exact `handoffMissionControlDeliveryCommandV1({guardRef,guardHash})`. That handler consumes the pair exactly once, grants no shell Git authority, and owns the whole delivery-owner continuation: the Mission Control delivery owner alone pushes, creates/updates the PR, requests independent review, resolves findings through fresh claims, marks ready, merges, synchronizes its canonical checkout, and rebuilds. After those facts are durable, the same handler invokes its co-located zero-input private writer; the writer reopens the consumed guard and authenticated delivery state, freshly invokes `observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1()`, and publishes/reopens D's sole terminal `InternalProductionRecoveryMissionControlSourceHandoffV1` through the fixed private content store and terminal locator. The handler returns only its exact handoff pair. The complete receipt has exactly the Task 2-declared body and binds repository/base, PR branch/head/merge with `merged:true`, ordered reviewed path/mode/blob projection, review/check receipt pairs, `unresolvedCriticalHighMedium:0`, the exact product-build delivery-evidence pair, current clean-main source/tree/build/origin-main, and its canonical `missionControlHandoffRef/missionControlHandoffHash` under the fixed D ref domain. No shell or caller constructs the receipt; the private writer accepts zero arguments and the handler accepts no caller receipt/evidence/path/root/source/build. The existing `resolve-mission-control-delivery` row routes only to the same module's zero-input `resolveMissionControlDeliveryCommandV1()` and reopens the fixed terminal/full receipt without writing. The registry remains exactly forty-two commands.
 
 ```bash
 set -euo pipefail
@@ -4453,6 +4537,16 @@ test "$D_SHELL_TEST_VALUE_023" = "$D_SHELL_TEST_VALUE_024"
 D_SHELL_TEST_VALUE_025="$(git rev-parse HEAD)"
 D_SHELL_TEST_VALUE_026="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.mergeSha')"
 test "$D_SHELL_TEST_VALUE_025" = "$D_SHELL_TEST_VALUE_026"
+D_MC_HANDOFF_REF="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.missionControlHandoffRef')"
+D_MC_HANDOFF_HASH="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.missionControlHandoffHash')"
+D_MC_HANDOFF_TREE="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.treeHash')"
+D_MC_HANDOFF_BUILD="$(printf '%s\n' "$D_MC_DELIVERY_RECEIPT" | jq -er '.buildHash')"
+test "$D_MC_HANDOFF_REF" = "setfarm://internal-production/recovery-mission-control-source-handoff/sha256/$D_MC_HANDOFF_HASH"
+test "${#D_MC_HANDOFF_HASH}" -eq 64
+test "${#D_MC_HANDOFF_BUILD}" -eq 64
+case "$D_MC_HANDOFF_HASH$D_MC_HANDOFF_BUILD" in *[!0-9a-f]*) exit 1 ;; esac
+case "${#D_MC_HANDOFF_TREE}" in 40|64) ;; *) exit 1 ;; esac
+case "$D_MC_HANDOFF_TREE" in *[!0-9a-f]*) exit 1 ;; esac
 D_SHELL_GUARD_OUTPUT="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$D_SHELL_GUARD_OUTPUT"
 require_authenticated_clean_main_setfarm_root_v1
@@ -4520,7 +4614,7 @@ export D_MC_SOURCE_MERGE_SHA
 
 This step proves only D's source merges; it creates no live epoch and imports no status. After E source merges, Task 7 records the new clean operational pair as `D_FINAL_SETFARM_SOURCE_SHA`/`D_FINAL_MC_SOURCE_SHA`, creates B's exact final-release epoch, and requires C's full Profile 1–7 matrix on it. A later source change invalidates that live barrier and requires a new epoch, fresh full C matrix, and all ten fresh D selections before E fleet resumes.
 
-The D Setfarm handoff receipt must enumerate the shared authority/startup/helper/tests, both Setfarm hook call sites, `src/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.ts`, `tests/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.test.ts`, `src/internal-production/recovery-owner-producer-manifest-activation-v1.ts`, and `tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts`; its tree projection proves both strict D union members/functions plus exact `A+B+C` count 27 to `A+B+C+D` count 43 activation are present. It proves `d-ordinary-start` imports/freshly resolves D settlement/publication and advances B's admission CAS only after owner/listener settlement, while `d-managed-restart` imports/freshly resolves the exact operation/startup/settled-reservation/completion/occurrence/namespace-head/service-slot-head chain and advances only after successful D terminal completion. The D Mission Control handoff receipt must enumerate the generic consumer/test plus `server/index.ts` and prove the startup claim precedes ownership. Neither source handoff claims A retirement, physical restart authority activation, or epoch two: those remain absent while source is merged/built. Step 6 first publishes D's distinct producer-manifest activation, then loads all three hooks, and only afterward publishes the A-owned physical readiness/cutover/retirement/activation chain. E's source owner rejects its branch allocation until both exact source receipts, merge SHAs, file scopes, reviews, checks, clean-main builds, D manifest activation receipt, and the readiness/cutover/retirement/activation authority resolve. No later E task reopens a Mission Control writer for this protocol.
+The D Setfarm handoff receipt must enumerate the shared authority/startup/helper/tests, both Setfarm hook call sites, `src/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.ts`, `tests/internal-production/setfarm-completion-owner-receipt-activation-controller-v1.test.ts`, `src/internal-production/recovery-owner-producer-manifest-activation-v1.ts`, `tests/internal-production/recovery-owner-producer-manifest-activation-v1.test.ts`, `src/internal-production/recovery-mission-control-source-handoff-v1.ts`, and `tests/internal-production/recovery-mission-control-source-handoff-v1.test.ts`; its exact-69 tree projection proves both strict D union members/functions plus exact `A+B+C` count 27 to `A+B+C+D` count 43 activation are present. It proves `d-ordinary-start` imports/freshly resolves D settlement/publication and advances B's admission CAS only after owner/listener settlement, while `d-managed-restart` imports/freshly resolves the exact operation/startup/settled-reservation/completion/occurrence/namespace-head/service-slot-head chain and advances only after successful D terminal completion. The D Mission Control handoff receipt must enumerate the generic consumer/test plus `server/index.ts`, prove the startup claim precedes ownership, and bind the exact repository/base, PR branch/head/merge, merged state, ordered reviewed path/mode/blob projection, review/check receipts, zero unresolved Critical/High/Medium findings, and current clean-main source/tree/build authority. Task 6's delivery owner publishes that terminal receipt at the fixed locator; Task 12's invoked observer then reopens it and requires the current code-owned clean-main observation to match its merge/tree/build exactly. Neither source handoff claims A retirement, physical restart authority activation, or epoch two: those remain absent while source is merged/built. Step 6 first publishes D's distinct producer-manifest activation, then loads all three hooks, and only afterward publishes the A-owned physical readiness/cutover/retirement/activation chain. E's source owner rejects its branch allocation until both exact source receipts, merge SHAs, file scopes, reviews, checks, clean-main builds, D manifest activation receipt, and the readiness/cutover/retirement/activation authority resolve. No later E task reopens a Mission Control writer for this protocol.
 
 - [ ] **Step 6: Activate D ownership, load all three D-capable hooks under A epoch one, then atomically cut over**
 
