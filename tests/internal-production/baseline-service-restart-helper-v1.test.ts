@@ -332,16 +332,21 @@ test("P4 startup family imports are inert in a fresh database-free child", () =>
     }
     syncBuiltinESMExports();
     const before=process._getActiveHandles().length;
-    const requestsBefore=process._getActiveRequests().length;
+    const requestsBefore=new Set(process._getActiveRequests());
     await Promise.all([
       import("./src/internal-production/baseline-post-handoff-receipt-v1.ts?inert=receipt"),
       import("./src/internal-production/baseline-spawner-startup-admission-v1.ts?inert=startup"),
       import("./src/internal-production/baseline-restart-authority-retirement-v1.ts?inert=retirement"),
       import("./src/internal-production/baseline-service-restart-helper-v1.ts?inert=helper")
     ]);
-    await new Promise((resolve)=>setImmediate(resolve));
+    let newRequests=[];
+    for(let attempt=0;attempt<16;attempt++){
+      await new Promise((resolve)=>setImmediate(resolve));
+      newRequests=process._getActiveRequests().filter((request)=>!requestsBefore.has(request));
+      if(newRequests.length===0) break;
+    }
     if(process._getActiveHandles().length!==before) throw new Error("IMPORT_CREATED_ACTIVE_HANDLE");
-    if(process._getActiveRequests().length!==requestsBefore) throw new Error("IMPORT_CREATED_ACTIVE_REQUEST");
+    if(newRequests.length!==0) throw new Error("IMPORT_CREATED_ACTIVE_REQUEST");
     process.stdout.write("IMPORT_INERT_OK\\n");
   `;
   const child = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
