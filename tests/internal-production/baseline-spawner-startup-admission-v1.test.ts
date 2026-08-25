@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -227,7 +227,7 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
 });
 
 test("P4 startup durable publication automaton repairs every fixed crash boundary", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-publication-boundaries-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-publication-boundaries-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     const compiler = path.join(fixture, "src/product-compiler");
@@ -240,7 +240,7 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
     writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), "export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){throw new Error('UNUSED')}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){throw new Error('UNUSED')}\nexport async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){throw new Error('UNUSED')}\n");
     const loaded = await import(`${pathToFileURL(path.join(internal, "baseline-spawner-startup-admission-v1.ts")).href}?publication-boundaries=${Date.now()}`) as Readonly<{ writeNoReplace: (file: string, value: unknown) => void }>;
     const directory = path.join(fixture, "durable-boundaries");
-    mkdirSync(directory, { recursive: true });
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     const boundaries = [
       "legacy-observation.json", "authorization-record.json", "00-pre-dispatch-legacy-zero.pair.json", "01-authorization.pair.json", "status-00-prepared.pair.json",
       "process-identity.json", "startup-token-record.json", "02-startup-token.pair.json", "status-01-startup-token-published.pair.json",
@@ -270,6 +270,84 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
     const crossedTemporary = path.join(directory, ".status-blocked-helper-dispatch-settlement-unknown.pair.json.123e4567-e89b-42d3-a456-426614174000.tmp");
     writeFileSync(crossedTemporary, `${canonical({ crossed: true })}\n`, { mode: 0o600 });
     assert.throws(() => loaded.writeNoReplace(crossedTarget, { crossed: false }), /immutable record differs/);
+
+    const wrongModeTarget = path.join(directory, "wrong-mode-final.json");
+    const wrongModeValue = { boundary: "wrong-mode-final" };
+    writeFileSync(wrongModeTarget, `${canonical(wrongModeValue)}\n`, { mode: 0o600 });
+    chmodSync(wrongModeTarget, 0o644);
+    assert.throws(
+      () => loaded.writeNoReplace(wrongModeTarget, wrongModeValue),
+      /immutable record differs|mode|identity/,
+      "a self-consistent wrong-mode final must not be adopted",
+    );
+    chmodSync(wrongModeTarget, 0o2600);
+    assert.throws(
+      () => loaded.writeNoReplace(wrongModeTarget, wrongModeValue),
+      /immutable record differs|mode|identity/,
+      "special permission bits must not pass an exact 0600 check",
+    );
+
+    const insecureParent = path.join(fixture, "data");
+    mkdirSync(insecureParent, { mode: 0o755 });
+    chmodSync(insecureParent, 0o755);
+    assert.throws(
+      () => loaded.writeNoReplace(path.join(insecureParent, "internal-production-baseline", "bad-mode", "record.json"), { boundary: "bad-mode-parent" }),
+      /directory|mode|ancestor/,
+      "an insecure authority-store ancestor must be rejected",
+    );
+    const external = path.join(fixture, "external-authority-store");
+    mkdirSync(external, { mode: 0o700 });
+    const linkedParent = path.join(fixture, "linked-authority-store");
+    symlinkSync(external, linkedParent);
+    assert.throws(
+      () => loaded.writeNoReplace(path.join(linkedParent, "record.json"), { boundary: "symlink-parent" }),
+      /directory|symbolic|ancestor/,
+      "a symlink authority-store ancestor must be rejected",
+    );
+
+    const directoryRaceSource = source.replace(
+      "const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(file));\n  try {\n    directoryGuard.assertStable();",
+      "const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(file));\n  try {\n    const directoryRaceHook = Reflect.get(globalThis, '__setfarmP4DirectoryRaceHook');\n    if (typeof directoryRaceHook === 'function') directoryRaceHook();\n    directoryGuard.assertStable();",
+    );
+    assert.notEqual(directoryRaceSource, source, "directory-race fixture must replace the exact post-authentication boundary");
+    const directoryRacePath = path.join(internal, "baseline-spawner-startup-admission-directory-race-v1.ts");
+    writeFileSync(directoryRacePath, directoryRaceSource);
+    const directoryRace = await import(`${pathToFileURL(directoryRacePath).href}?directory-race=${Date.now()}`) as Readonly<{ writeNoReplace: (file: string, value: unknown) => void }>;
+    const raceDirectory = path.join(fixture, "race-authority-store");
+    const heldRaceDirectory = `${raceDirectory}.held`;
+    const externalRaceDirectory = path.join(fixture, "external-race-authority-store");
+    mkdirSync(raceDirectory, { mode: 0o700 });
+    mkdirSync(externalRaceDirectory, { mode: 0o700 });
+    Reflect.set(globalThis, "__setfarmP4DirectoryRaceHook", () => {
+      renameSync(raceDirectory, heldRaceDirectory);
+      symlinkSync(externalRaceDirectory, raceDirectory);
+    });
+    try {
+      assert.throws(
+        () => directoryRace.writeNoReplace(path.join(raceDirectory, "record.json"), { boundary: "post-authentication-directory-swap" }),
+        /directory.*changed|symbolic|identity/i,
+      );
+      assert.throws(() => readFileSync(path.join(externalRaceDirectory, "record.json")), /ENOENT/, "a raced external directory must receive no bytes");
+    } finally {
+      Reflect.deleteProperty(globalThis, "__setfarmP4DirectoryRaceHook");
+    }
+
+    const swappingSource = source.replace(
+      "const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);\n    try {",
+      "const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);\n    unlinkSync(target); writeFileSync(target, bytes, { mode: 0o600 });\n    try {",
+    );
+    assert.notEqual(swappingSource, source, "path-swap fixture must replace the exact post-open boundary");
+    const swappingPath = path.join(internal, "baseline-spawner-startup-admission-path-swap-v1.ts");
+    writeFileSync(swappingPath, swappingSource);
+    const swapping = await import(`${pathToFileURL(swappingPath).href}?path-swap=${Date.now()}`) as Readonly<{ writeNoReplace: (file: string, value: unknown) => void }>;
+    const swappedTarget = path.join(directory, "path-swapped-final.json");
+    const swappedValue = { boundary: "path-swapped-final" };
+    writeFileSync(swappedTarget, `${canonical(swappedValue)}\n`, { mode: 0o600 });
+    assert.throws(
+      () => swapping.writeNoReplace(swappedTarget, swappedValue),
+      /immutable record differs|changed|identity/,
+      "a same-byte path replacement after descriptor open must be rejected",
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

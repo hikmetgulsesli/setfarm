@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,7 +28,7 @@ function installRetirementFixture(fixture: string, source: string): string {
   writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), "export async function resolveInternalProductionCurrentEntryOperationV1(value){return {...value,schema:'setfarm.internal-production-current-entry-operation.v1',purpose:'task6a-internal-production-current-entry-v1'}}\nexport async function observeInternalProductionServiceCensusV1(){return globalThis.__p4ServiceCensus}\n");
   writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), "export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(value){const uid=process.getuid?.();return {...value,schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.v1',actionId:'task6a-pre-schema-setfarm-spawner-rebind-v1',service:'setfarm-spawner',currentEntryOperationRef:globalThis.__p4CurrentEntryOperation.operationRef,currentEntryOperationHash:globalThis.__p4CurrentEntryOperation.operationHash,uid,launchdLabel:'com.setrox.setfarm-spawner',executable:'/bin/launchctl',argv:['kickstart','-k',`gui/${uid}/com.setrox.setfarm-spawner`],...(globalThis.__p4RestartOverrides??{})}}\n");
   const epochRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
-  mkdirSync(epochRoot, { recursive: true });
+  mkdirSync(epochRoot, { recursive: true, mode: 0o700 });
   const epochBody = {
     schema: "setfarm.internal-production-physical-service-restart-authority-epoch.v1",
     epochOrdinal: 1,
@@ -74,6 +74,113 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     await assert.rejects(isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(structuredClone(lease)), /foreign, cloned, or released/);
     await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
     await assert.rejects(isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /foreign, cloned, or released/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 retirement rejects insecure authority-store ancestors", async () => {
+  const captureAcquireFailure = async (fixture: string): Promise<unknown> => {
+    const modulePath = path.join(fixture, "src/internal-production/baseline-restart-authority-retirement-v1.ts");
+    const isolated = await import(`${pathToFileURL(modulePath).href}?ancestor=${Date.now()}-${Math.random()}`);
+    let lease: Awaited<ReturnType<typeof isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1>> | undefined;
+    try {
+      lease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+      return undefined;
+    } catch (error) {
+      return error;
+    } finally {
+      if (lease) await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    }
+  };
+
+  const wrongModeFixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-retirement-bad-mode-"));
+  try {
+    installRetirementFixture(wrongModeFixture, readFileSync(sourcePath, "utf8"));
+    chmodSync(path.join(wrongModeFixture, "data"), 0o755);
+    assert.match(String(await captureAcquireFailure(wrongModeFixture)), /directory|mode|ancestor/i);
+    chmodSync(path.join(wrongModeFixture, "data"), 0o1700);
+    assert.match(String(await captureAcquireFailure(wrongModeFixture)), /directory|mode|ancestor/i, "special permission bits must not pass an exact 0700 check");
+  } finally {
+    rmSync(wrongModeFixture, { recursive: true, force: true });
+  }
+
+  const symlinkFixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-retirement-symlink-"));
+  try {
+    installRetirementFixture(symlinkFixture, readFileSync(sourcePath, "utf8"));
+    const authorityBase = path.join(symlinkFixture, "data/internal-production-baseline");
+    const held = `${authorityBase}.held`;
+    renameSync(authorityBase, held);
+    symlinkSync(held, authorityBase);
+    assert.match(String(await captureAcquireFailure(symlinkFixture)), /directory|symbolic|ancestor/i);
+  } finally {
+    rmSync(symlinkFixture, { recursive: true, force: true });
+  }
+
+  const raceFixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-retirement-directory-race-"));
+  try {
+    const originalSource = readFileSync(sourcePath, "utf8");
+    const raceSource = originalSource.replace(
+      "  try {\n    rootGuard.assertStable();\n    if (abandonedAcquireV1)",
+      "  try {\n    const directoryRaceHook = Reflect.get(globalThis, '__setfarmP4RetirementDirectoryRaceHook');\n    if (typeof directoryRaceHook === 'function') directoryRaceHook();\n    rootGuard.assertStable();\n    if (abandonedAcquireV1)",
+    );
+    assert.notEqual(raceSource, originalSource, "retirement directory-race fixture must replace the exact post-authentication boundary");
+    installRetirementFixture(raceFixture, raceSource);
+    const raceRoot = path.join(raceFixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const heldRaceRoot = `${raceRoot}.held`;
+    const externalRaceRoot = path.join(raceFixture, "external-retirement-store");
+    mkdirSync(externalRaceRoot, { mode: 0o700 });
+    Reflect.set(globalThis, "__setfarmP4RetirementDirectoryRaceHook", () => {
+      renameSync(raceRoot, heldRaceRoot);
+      symlinkSync(externalRaceRoot, raceRoot);
+    });
+    try {
+      assert.match(String(await captureAcquireFailure(raceFixture)), /directory.*changed|symbolic|identity/i);
+      assert.throws(
+        () => readFileSync(path.join(externalRaceRoot, "physical-service-restart-authority.transition.lock")),
+        /ENOENT/,
+        "a raced external directory must receive no lock bytes",
+      );
+    } finally {
+      Reflect.deleteProperty(globalThis, "__setfarmP4RetirementDirectoryRaceHook");
+    }
+  } finally {
+    rmSync(raceFixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 retirement recovers an exact abandoned acquisition after a post-lock directory race", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-retirement-post-lock-race-"));
+  try {
+    const originalSource = readFileSync(sourcePath, "utf8");
+    const raceSource = originalSource.replace(
+      "const lease = Object.freeze({ schema: \"setfarm.internal-production-physical-service-restart-authority-transition-lease.v1\" as const });",
+      "const postLockRaceHook = Reflect.get(globalThis, '__setfarmP4RetirementPostLockRaceHook');\n  if (typeof postLockRaceHook === 'function') postLockRaceHook();\n  const lease = Object.freeze({ schema: \"setfarm.internal-production-physical-service-restart-authority-transition-lease.v1\" as const });",
+    );
+    assert.notEqual(raceSource, originalSource, "post-lock race fixture must replace the exact pre-registration boundary");
+    const modulePath = installRetirementFixture(fixture, raceSource);
+    const isolated = await import(`${pathToFileURL(modulePath).href}?post-lock-race=${Date.now()}`);
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const heldRoot = `${root}.held`;
+    const externalRoot = path.join(fixture, "external-post-lock-retirement-store");
+    const lock = path.join(root, "physical-service-restart-authority.transition.lock");
+    mkdirSync(externalRoot, { mode: 0o700 });
+    const descriptorsBefore = readdirSync("/dev/fd").length;
+    Reflect.set(globalThis, "__setfarmP4RetirementPostLockRaceHook", () => {
+      renameSync(root, heldRoot);
+      symlinkSync(externalRoot, root);
+    });
+    try {
+      await assert.rejects(isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(), /directory.*changed|symbolic|identity/i);
+    } finally {
+      Reflect.deleteProperty(globalThis, "__setfarmP4RetirementPostLockRaceHook");
+    }
+    unlinkSync(root);
+    renameSync(heldRoot, root);
+    const retryLease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(retryLease);
+    assert.equal(existsSync(lock), false, "retry release must leave no transition lock");
+    assert.equal(readdirSync("/dev/fd").length, descriptorsBefore, "abandoned acquisition must not leak a descriptor");
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -362,7 +469,7 @@ test("P4 retirement removes only its exact lock after acquire faults", async () 
     ["fsync", "    fsyncSync(descriptor);", "    fsyncSync(descriptor); throw new Error('P4_ACQUIRE_FSYNC_FAULT');"],
     ["parent-fsync", "    fsyncParent(lock);\n    const stats = fstatSync(descriptor, { bigint: true });", "    fsyncParent(lock); throw new Error('P4_ACQUIRE_PARENT_FSYNC_FAULT');\n    const stats = fstatSync(descriptor, { bigint: true });"],
     ["fstat", "    const stats = fstatSync(descriptor, { bigint: true });", "    throw new Error('P4_ACQUIRE_FSTAT_FAULT');\n    const stats = fstatSync(descriptor, { bigint: true });"],
-    ["second-epoch", "  try { assertEpochOneActive(); }\n  catch (error) {", "  try { throw new Error('P4_ACQUIRE_SECOND_EPOCH_FAULT'); }\n  catch (error) {"],
+    ["second-epoch", "    assertEpochOneActive();", "    throw new Error('P4_ACQUIRE_SECOND_EPOCH_FAULT');"],
   ] as const;
   for (const [name, needle, replacement] of injections) {
     assert.equal(original.includes(needle), true, `${name} injection target exists`);

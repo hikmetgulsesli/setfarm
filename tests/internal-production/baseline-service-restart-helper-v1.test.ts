@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 const tsxLoader = import.meta.resolve("tsx");
+const helperSourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-service-restart-helper-v1.ts");
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -291,6 +293,68 @@ printf '%s' "$count" > '${counter}'
     closeSync(forgedFrameCapability); closeSync(forgedLockCapability); closeSync(forgedJournalCapability);
     assert.notEqual(forgedCapability.status, 0, "arbitrary self-consistent fd4 must not authorize launchctl");
     assert.equal(readFileSync(counter, "utf8"), "1", "forged fd4 must cause zero physical dispatch");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 helper rejects insecure settlement-store ancestors", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-ancestor-")));
+  try {
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(internal, { recursive: true });
+    const source = readFileSync(helperSourcePath, "utf8").replace(
+      "function publishSettlement(settlementPath: string, value: unknown): void",
+      "export function publishSettlement(settlementPath: string, value: unknown): void",
+    );
+    const modulePath = path.join(internal, "baseline-service-restart-helper-v1.ts");
+    writeFileSync(modulePath, source);
+    const loaded = await import(`${pathToFileURL(modulePath).href}?ancestor=${Date.now()}`) as Readonly<{ publishSettlement: (file: string, value: unknown) => void }>;
+
+    const insecureParent = path.join(fixture, "data");
+    mkdirSync(insecureParent, { mode: 0o755 });
+    chmodSync(insecureParent, 0o755);
+    assert.throws(
+      () => loaded.publishSettlement(path.join(insecureParent, "internal-production-baseline", "helper", "settlement.json"), { state: "bad-mode" }),
+      /directory|mode|ancestor/,
+    );
+
+    chmodSync(insecureParent, 0o700);
+    const external = path.join(fixture, "external-helper-store");
+    mkdirSync(external, { mode: 0o700 });
+    const linkedParent = path.join(insecureParent, "internal-production-baseline");
+    symlinkSync(external, linkedParent);
+    assert.throws(
+      () => loaded.publishSettlement(path.join(linkedParent, "settlement.json"), { state: "symlink" }),
+      /directory|symbolic|ancestor/,
+    );
+
+    const raceSource = source.replace(
+      "const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(settlementPath));\n  try {\n    directoryGuard.assertStable();",
+      "const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(settlementPath));\n  try {\n    const directoryRaceHook = Reflect.get(globalThis, '__setfarmP4HelperDirectoryRaceHook');\n    if (typeof directoryRaceHook === 'function') directoryRaceHook();\n    directoryGuard.assertStable();",
+    );
+    assert.notEqual(raceSource, source, "helper directory-race fixture must replace the exact post-authentication boundary");
+    const raceModulePath = path.join(internal, "baseline-service-restart-helper-directory-race-v1.ts");
+    writeFileSync(raceModulePath, raceSource);
+    const raceModule = await import(`${pathToFileURL(raceModulePath).href}?directory-race=${Date.now()}`) as Readonly<{ publishSettlement: (file: string, value: unknown) => void }>;
+    const raceDirectory = path.join(fixture, "race-helper-store");
+    const heldRaceDirectory = `${raceDirectory}.held`;
+    const externalRaceDirectory = path.join(fixture, "external-race-helper-store");
+    mkdirSync(raceDirectory, { mode: 0o700 });
+    mkdirSync(externalRaceDirectory, { mode: 0o700 });
+    Reflect.set(globalThis, "__setfarmP4HelperDirectoryRaceHook", () => {
+      renameSync(raceDirectory, heldRaceDirectory);
+      symlinkSync(externalRaceDirectory, raceDirectory);
+    });
+    try {
+      assert.throws(
+        () => raceModule.publishSettlement(path.join(raceDirectory, "settlement.json"), { state: "post-authentication-directory-swap" }),
+        /directory.*changed|symbolic|identity/i,
+      );
+      assert.throws(() => readFileSync(path.join(externalRaceDirectory, "settlement.json")), /ENOENT/);
+    } finally {
+      Reflect.deleteProperty(globalThis, "__setfarmP4HelperDirectoryRaceHook");
+    }
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

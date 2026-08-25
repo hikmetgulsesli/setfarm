@@ -229,11 +229,98 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function root(): string {
+function repositoryRoot(): string {
   const current = path.dirname(fileURLToPath(import.meta.url));
   const source = path.dirname(current);
   if (!new Set(["src", "dist"]).has(path.basename(source))) fail("module root is invalid");
-  return path.join(path.dirname(source), STORE);
+  return path.dirname(source);
+}
+
+function root(): string {
+  return path.join(repositoryRoot(), STORE);
+}
+
+type PrivateDirectoryGuardV1 = Readonly<{
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+function authenticatePrivateDirectoryChainV1(anchor: string, target: string): PrivateDirectoryGuardV1 {
+  const relative = path.relative(anchor, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const descriptors: number[] = [];
+  const held: Array<ReturnType<typeof fstatSync>> = [];
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) fail("authority directory guard is closed");
+    for (const [index, current] of paths.entries()) {
+      const after = lstatSync(current, { bigint: true });
+      const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
+      const observed = held[index]!;
+      if (
+        !after.isDirectory() || after.isSymbolicLink() || !descriptorAfter.isDirectory()
+        || after.dev !== observed.dev || after.ino !== observed.ino || after.mode !== observed.mode
+        || descriptorAfter.dev !== observed.dev || descriptorAfter.ino !== observed.ino
+        || descriptorAfter.mode !== observed.mode
+      ) fail("authority directory changed while authenticated");
+    }
+  };
+  try {
+    for (const [index, current] of paths.entries()) {
+      const before = lstatSync(current, { bigint: true });
+      const descriptor = openSync(current, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      descriptors.push(descriptor);
+      const observed = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory()
+        || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode
+        || before.nlink !== observed.nlink || before.nlink < 1n
+        || (index > 0 && (observed.mode & 0o7777n) !== 0o700n)
+        || (index > 0 && observed.dev !== held[0]!.dev)
+      ) fail("authority directory identity is invalid");
+      held.push(observed);
+    }
+    assertStable();
+    return Object.freeze({
+      assertStable,
+      close: () => {
+        if (closed) fail("authority directory guard is already closed");
+        closed = true;
+        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+      },
+    });
+  } catch (error) {
+    closed = true;
+    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    throw error;
+  }
+}
+
+function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryGuardV1 {
+  const anchor = path.resolve(repositoryRoot());
+  const target = path.resolve(directory);
+  const relative = path.relative(anchor, target);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
+  let current = anchor;
+  for (const segment of relative.split(path.sep)) {
+    const parentGuard = authenticatePrivateDirectoryChainV1(anchor, current);
+    current = path.join(current, segment);
+    try {
+      parentGuard.assertStable();
+      try { mkdirSync(current, { mode: 0o700 }); }
+      catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      }
+      parentGuard.assertStable();
+    } finally {
+      parentGuard.close();
+    }
+    const createdGuard = authenticatePrivateDirectoryChainV1(anchor, current);
+    createdGuard.close();
+  }
+  return authenticatePrivateDirectoryChainV1(anchor, target);
 }
 
 function exactPair(value: unknown, refKey: string, hashKey: string, prefix: string): Readonly<Record<string, string>> {
@@ -279,16 +366,31 @@ function exactRecoveryTemporaryTargetV1(name: string, knownBasenames: ReadonlySe
 
 function writeNoReplace(file: string, value: unknown): void {
   const bytes = Buffer.from(`${canonical(value)}\n`, "utf8");
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(file));
+  try {
+    directoryGuard.assertStable();
   const directory = path.dirname(file);
   const basename = path.basename(file);
   const verify = (target: string, links: bigint): void => {
     const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
-      const before = lstatSync(target, { bigint: true });
+      const beforePath = lstatSync(target, { bigint: true });
+      const beforeHeld = fstatSync(descriptor, { bigint: true });
       const held = readFileSync(descriptor);
-      const after = lstatSync(target, { bigint: true });
-      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== links || before.dev !== after.dev || before.ino !== after.ino || !held.equals(bytes)) fail(`immutable record differs: ${basename}`);
+      const afterHeld = fstatSync(descriptor, { bigint: true });
+      const afterPath = lstatSync(target, { bigint: true });
+      if (
+        !beforePath.isFile() || beforePath.isSymbolicLink() || !beforeHeld.isFile()
+        || beforeHeld.nlink !== links || (beforeHeld.mode & 0o7777n) !== 0o600n
+        || beforePath.dev !== beforeHeld.dev || beforePath.ino !== beforeHeld.ino || beforePath.mode !== beforeHeld.mode
+        || beforePath.nlink !== beforeHeld.nlink || beforePath.size !== beforeHeld.size
+        || beforeHeld.dev !== afterHeld.dev || beforeHeld.ino !== afterHeld.ino || beforeHeld.mode !== afterHeld.mode
+        || beforeHeld.nlink !== afterHeld.nlink || beforeHeld.size !== afterHeld.size
+        || beforeHeld.mtimeNs !== afterHeld.mtimeNs || beforeHeld.ctimeNs !== afterHeld.ctimeNs
+        || afterPath.dev !== afterHeld.dev || afterPath.ino !== afterHeld.ino || afterPath.mode !== afterHeld.mode
+        || afterPath.nlink !== afterHeld.nlink || afterPath.size !== afterHeld.size
+        || BigInt(held.length) !== afterHeld.size || !held.equals(bytes)
+      ) fail(`immutable record differs: ${basename}`);
     } finally { closeSync(descriptor); }
   };
   const prefix = `.${basename}.`;
@@ -343,6 +445,10 @@ function writeNoReplace(file: string, value: unknown): void {
   const cleanupDescriptor = openSync(directory, constants.O_RDONLY | constants.O_NOFOLLOW);
   try { fsyncSync(cleanupDescriptor); } finally { closeSync(cleanupDescriptor); }
   verify(file, 1n);
+    directoryGuard.assertStable();
+  } finally {
+    try { directoryGuard.assertStable(); } finally { directoryGuard.close(); }
+  }
 }
 
 function readRecord(file: string): Record<string, unknown> {
@@ -350,7 +456,7 @@ function readRecord(file: string): Record<string, unknown> {
   let bytes: Buffer;
   try {
     const before = fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o777n) !== 0o600n || before.size < 1n || before.size > BigInt(MAX_RECORD_BYTES)) fail("record identity is invalid");
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.size < 1n || before.size > BigInt(MAX_RECORD_BYTES)) fail("record identity is invalid");
     bytes = readFileSync(descriptor);
     const after = fstatSync(descriptor, { bigint: true });
     const reopened = lstatSync(file, { bigint: true });

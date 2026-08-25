@@ -34,6 +34,7 @@ type LeaseStateV1 = {
 };
 
 const leases = new WeakMap<object, LeaseStateV1>();
+let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
 const HELPER_PREFIX = "setfarm://internal-production/pre-schema-spawner-rebind-helper-settlement/sha256/";
@@ -58,6 +59,86 @@ function repositoryRoot(): string {
   const source = path.dirname(current);
   if (!new Set(["src", "dist"]).has(path.basename(source))) fail("module root is invalid");
   return path.dirname(source);
+}
+
+type PrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
+
+function authenticatePrivateDirectoryChainV1(anchor: string, target: string): PrivateDirectoryGuardV1 {
+  const relative = path.relative(anchor, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const descriptors: number[] = [];
+  const held: Array<ReturnType<typeof fstatSync>> = [];
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) fail("authority directory guard is closed");
+    for (const [index, current] of paths.entries()) {
+      const after = lstatSync(current, { bigint: true });
+      const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
+      const observed = held[index]!;
+      if (
+        !after.isDirectory() || after.isSymbolicLink() || !descriptorAfter.isDirectory()
+        || after.dev !== observed.dev || after.ino !== observed.ino || after.mode !== observed.mode
+        || descriptorAfter.dev !== observed.dev || descriptorAfter.ino !== observed.ino
+        || descriptorAfter.mode !== observed.mode
+      ) fail("authority directory changed while authenticated");
+    }
+  };
+  try {
+    for (const [index, current] of paths.entries()) {
+      const before = lstatSync(current, { bigint: true });
+      const descriptor = openSync(current, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      descriptors.push(descriptor);
+      const observed = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory()
+        || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode
+        || before.nlink !== observed.nlink || before.nlink < 1n
+        || (index > 0 && (observed.mode & 0o7777n) !== 0o700n)
+        || (index > 0 && observed.dev !== held[0]!.dev)
+      ) fail("authority directory identity is invalid");
+      held.push(observed);
+    }
+    assertStable();
+    return Object.freeze({
+      assertStable,
+      close: () => {
+        if (closed) fail("authority directory guard is already closed");
+        closed = true;
+        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+      },
+    });
+  } catch (error) {
+    closed = true;
+    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    throw error;
+  }
+}
+
+function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryGuardV1 {
+  const anchor = path.resolve(repositoryRoot());
+  const target = path.resolve(directory);
+  const relative = path.relative(anchor, target);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
+  let current = anchor;
+  for (const segment of relative.split(path.sep)) {
+    const parentGuard = authenticatePrivateDirectoryChainV1(anchor, current);
+    current = path.join(current, segment);
+    try {
+      parentGuard.assertStable();
+      try { mkdirSync(current, { mode: 0o700 }); }
+      catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      }
+      parentGuard.assertStable();
+    } finally {
+      parentGuard.close();
+    }
+    const createdGuard = authenticatePrivateDirectoryChainV1(anchor, current);
+    createdGuard.close();
+  }
+  return authenticatePrivateDirectoryChainV1(anchor, target);
 }
 
 function rootPaths() {
@@ -86,7 +167,7 @@ function readStableRetirementBytes(file: string, label: string): Buffer {
   const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o777n) !== 0o600n || before.size < 1n || before.size > 1_048_576n) fail(`${label} identity is invalid`);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.size < 1n || before.size > 1_048_576n) fail(`${label} identity is invalid`);
     const bytes = readFileSync(descriptor);
     const after = fstatSync(descriptor, { bigint: true });
     const reopened = lstatSync(file, { bigint: true });
@@ -161,14 +242,14 @@ function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: 
     const again = fstatSync(reopened, { bigint: true });
     const bytes = readFileSync(reopened);
     if (
-      !held.isFile() || held.isSymbolicLink() || held.nlink !== 1n || (held.mode & 0o777n) !== 0o600n
-      || !atPath.isFile() || atPath.isSymbolicLink() || atPath.nlink !== 1n || (atPath.mode & 0o777n) !== 0o600n
-      || !again.isFile() || again.isSymbolicLink() || again.nlink !== 1n || (again.mode & 0o777n) !== 0o600n
+      !held.isFile() || held.isSymbolicLink() || held.nlink !== 1n || (held.mode & 0o7777n) !== 0o600n
+      || !atPath.isFile() || atPath.isSymbolicLink() || atPath.nlink !== 1n || (atPath.mode & 0o7777n) !== 0o600n
+      || !again.isFile() || again.isSymbolicLink() || again.nlink !== 1n || (again.mode & 0o7777n) !== 0o600n
       || atPath.dev !== held.dev || atPath.ino !== held.ino || again.dev !== held.dev || again.ino !== held.ino
       || (expectedBytes !== null && !bytes.equals(expectedBytes))
     ) fail("owned transition lock cleanup identity differs");
     const finalPathStats = lstatSync(lock, { bigint: true });
-    if (finalPathStats.dev !== held.dev || finalPathStats.ino !== held.ino || finalPathStats.nlink !== 1n || (finalPathStats.mode & 0o777n) !== 0o600n) fail("owned transition lock changed immediately before cleanup");
+    if (finalPathStats.dev !== held.dev || finalPathStats.ino !== held.ino || finalPathStats.nlink !== 1n || (finalPathStats.mode & 0o7777n) !== 0o600n) fail("owned transition lock changed immediately before cleanup");
     unlinkSync(lock);
     fsyncParent(lock);
   } finally { closeSync(reopened); }
@@ -201,7 +282,7 @@ function repairCompletedNoReplacePublication(file: string): void {
     const temporaryBytes = readFileSync(temporaryDescriptor);
     const linked = finalHeld.nlink === 2n && temporaryHeld.nlink === 2n && finalHeld.dev === temporaryHeld.dev && finalHeld.ino === temporaryHeld.ino;
     const collision = finalHeld.nlink === 1n && temporaryHeld.nlink === 1n && finalHeld.dev !== temporaryHeld.dev && finalBytes.equals(temporaryBytes);
-    if (!finalHeld.isFile() || !temporaryHeld.isFile() || (finalHeld.mode & 0o777n) !== 0o600n || (temporaryHeld.mode & 0o777n) !== 0o600n || finalStats.dev !== finalHeld.dev || finalStats.ino !== finalHeld.ino || (!linked && !collision) || !finalBytes.equals(temporaryBytes)) fail("durable retirement publication recovery is crossed");
+    if (!finalHeld.isFile() || !temporaryHeld.isFile() || (finalHeld.mode & 0o7777n) !== 0o600n || (temporaryHeld.mode & 0o7777n) !== 0o600n || finalStats.dev !== finalHeld.dev || finalStats.ino !== finalHeld.ino || (!linked && !collision) || !finalBytes.equals(temporaryBytes)) fail("durable retirement publication recovery is crossed");
     const finalPathStats = lstatSync(file, { bigint: true });
     const temporaryPathStats = lstatSync(temporary, { bigint: true });
     if (finalPathStats.dev !== finalHeld.dev || finalPathStats.ino !== finalHeld.ino || temporaryPathStats.dev !== temporaryHeld.dev || temporaryPathStats.ino !== temporaryHeld.ino) fail("durable retirement publication changed before recovery cleanup");
@@ -234,7 +315,7 @@ function recoverExpectedNoReplacePublication(file: string, expectedBytes: Buffer
     const before = fstatSync(temporaryDescriptor, { bigint: true });
     const bytes = readFileSync(temporaryDescriptor);
     const atPath = lstatSync(temporary, { bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || (before.mode & 0o777n) !== 0o600n || atPath.dev !== before.dev || atPath.ino !== before.ino || !bytes.equals(expectedBytes)) fail("expected durable publication recovery temporary differs");
+    if (!before.isFile() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || atPath.dev !== before.dev || atPath.ino !== before.ino || !bytes.equals(expectedBytes)) fail("expected durable publication recovery temporary differs");
     linkSync(temporary, file);
     fsyncParent(file);
     const finalDescriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -264,7 +345,7 @@ function openNewLock(lock: string): Readonly<{ descriptor: number; lockBytes: Bu
     fsyncSync(descriptor);
     fsyncParent(lock);
     const stats = fstatSync(descriptor, { bigint: true });
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o777n) !== 0o600n) fail("new transition lock identity is invalid");
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n) fail("new transition lock identity is invalid");
     return Object.freeze({ descriptor, lockBytes });
   } catch (error) {
     try { cleanupExactOwnedLock(lock, descriptor, exactBytesWritten ? lockBytes : null); }
@@ -335,7 +416,7 @@ function reclaimDeadLockOnce(lock: string): void {
   const descriptor = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const first = fstatSync(descriptor, { bigint: true });
-    if (!first.isFile() || first.isSymbolicLink() || first.nlink !== 1n || (first.mode & 0o777n) !== 0o600n) fail("existing transition lock identity is invalid");
+    if (!first.isFile() || first.isSymbolicLink() || first.nlink !== 1n || (first.mode & 0o7777n) !== 0o600n) fail("existing transition lock identity is invalid");
     const bytes = readFileSync(descriptor);
     if (bytes.length < 1 || bytes.length > 65_536) fail("transition lock record size is invalid");
     const record = parseLockRecord(bytes);
@@ -352,7 +433,7 @@ function reclaimDeadLockOnce(lock: string): void {
       const secondBytes = readFileSync(secondDescriptor);
       if (pathStats.dev !== first.dev || pathStats.ino !== first.ino || pathStats.nlink !== 1n || second.dev !== first.dev || second.ino !== first.ino || second.nlink !== 1n || !secondBytes.equals(bytes)) fail("transition lock changed before dead-owner cleanup");
       const finalPathStats = lstatSync(lock, { bigint: true });
-      if (finalPathStats.dev !== first.dev || finalPathStats.ino !== first.ino || finalPathStats.nlink !== 1n || (finalPathStats.mode & 0o777n) !== 0o600n) fail("transition lock changed immediately before dead-owner cleanup");
+      if (finalPathStats.dev !== first.dev || finalPathStats.ino !== first.ino || finalPathStats.nlink !== 1n || (finalPathStats.mode & 0o7777n) !== 0o600n) fail("transition lock changed immediately before dead-owner cleanup");
       unlinkSync(lock);
       fsyncParent(lock);
     } finally { closeSync(secondDescriptor); }
@@ -361,7 +442,9 @@ function reclaimDeadLockOnce(lock: string): void {
 
 function writeNoReplace(file: string, value: unknown): boolean {
   const bytes = Buffer.from(`${canonical(value)}\n`, "utf8");
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(file));
+  try {
+    directoryGuard.assertStable();
   const directory = path.dirname(file);
   const basename = path.basename(file);
   const prefix = `.${basename}.`;
@@ -373,7 +456,7 @@ function writeNoReplace(file: string, value: unknown): boolean {
     const descriptor = openSync(temporary, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stats = fstatSync(descriptor, { bigint: true });
-      if (!stats.isFile() || stats.nlink !== 1n || (stats.mode & 0o777n) !== 0o600n || !readFileSync(descriptor).equals(bytes)) fail("retirement publication recovery temporary differs");
+      if (!stats.isFile() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || !readFileSync(descriptor).equals(bytes)) fail("retirement publication recovery temporary differs");
     } finally { closeSync(descriptor); }
   } else {
     temporary = path.join(directory, `${prefix}${randomBytes(16).toString("hex")}.tmp`);
@@ -390,9 +473,13 @@ function writeNoReplace(file: string, value: unknown): boolean {
   const finalDescriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stats = fstatSync(finalDescriptor, { bigint: true });
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || !readFileSync(finalDescriptor).equals(bytes)) fail("immutable retirement record differs");
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || !readFileSync(finalDescriptor).equals(bytes)) fail("immutable retirement record differs");
   } finally { closeSync(finalDescriptor); }
+  directoryGuard.assertStable();
   return created;
+  } finally {
+    try { directoryGuard.assertStable(); } finally { directoryGuard.close(); }
+  }
 }
 
 function pair(value: unknown, refKey: string, hashKey: string): Readonly<Record<string, string>> {
@@ -435,38 +522,70 @@ function heldLease(lease: InternalProductionPhysicalServiceRestartAuthorityTrans
 export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
   assertEpochOneActive();
   const paths = rootPaths();
-  mkdirSync(paths.root, { recursive: true, mode: 0o700 });
-  let opened: Readonly<{ descriptor: number; lockBytes: Buffer }>;
+  const rootGuard = ensurePrivateAuthorityDirectoryV1(paths.root);
+  let rootGuardClosed = false;
+  let opened: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
   try {
-    opened = openNewLock(paths.lock);
+    rootGuard.assertStable();
+    if (abandonedAcquireV1) {
+      const abandoned = abandonedAcquireV1;
+      cleanupExactOwnedLock(paths.lock, abandoned.descriptor, abandoned.lockBytes);
+      closeSync(abandoned.descriptor);
+      abandonedAcquireV1 = null;
+      rootGuard.assertStable();
+    }
+    try {
+      opened = openNewLock(paths.lock);
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      reclaimDeadLockOnce(paths.lock);
+      opened = openNewLock(paths.lock);
+    }
+    assertEpochOneActive();
+    const lease = Object.freeze({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1" as const });
+    rootGuard.assertStable();
+    rootGuard.close();
+    rootGuardClosed = true;
+    leases.set(lease, { descriptor: opened.descriptor, lockBytes: opened.lockBytes, phase: "held", authorityOwner: "baseline-a" });
+    opened = null;
+    return lease;
   } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-    reclaimDeadLockOnce(paths.lock);
-    opened = openNewLock(paths.lock);
-  }
-  try { assertEpochOneActive(); }
-  catch (error) {
-    try { cleanupExactOwnedLock(paths.lock, opened.descriptor, opened.lockBytes); }
-    finally { closeSync(opened.descriptor); }
+    if (opened) {
+      try {
+        rootGuard.assertStable();
+        cleanupExactOwnedLock(paths.lock, opened.descriptor, opened.lockBytes);
+        closeSync(opened.descriptor);
+      } catch {
+        if (abandonedAcquireV1) fail("multiple abandoned transition-lock acquisitions are not permitted");
+        abandonedAcquireV1 = opened;
+      }
+      opened = null;
+    }
     throw error;
+  } finally {
+    if (!rootGuardClosed) rootGuard.close();
   }
-  const lease = Object.freeze({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1" as const });
-  leases.set(lease, { descriptor: opened.descriptor, lockBytes: opened.lockBytes, phase: "held", authorityOwner: "baseline-a" });
-  return lease;
 }
 
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
 ): Promise<void> {
   const state = heldLease(lease);
+  const paths = rootPaths();
+  const rootGuard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), paths.root);
   state.phase = "released";
-  const lock = rootPaths().lock;
   try {
+    rootGuard.assertStable();
     assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
-    cleanupExactOwnedLock(lock, state.descriptor, state.lockBytes);
+    cleanupExactOwnedLock(paths.lock, state.descriptor, state.lockBytes);
+    rootGuard.assertStable();
   } finally {
-    closeSync(state.descriptor);
-    leases.delete(lease);
+    try { rootGuard.assertStable(); }
+    finally {
+      rootGuard.close();
+      closeSync(state.descriptor);
+      leases.delete(lease);
+    }
   }
 }
 
@@ -487,7 +606,7 @@ function startupPrefixAlreadyPassedHelperV1(operationHash: string): boolean {
     const target = path.join(directory, basename);
     try {
       const observed = lstatSync(target, { bigint: true });
-      if (!observed.isFile() || observed.isSymbolicLink() || observed.nlink !== 1n || (observed.mode & 0o777n) !== 0o600n) fail("post-helper startup prefix identity is invalid");
+      if (!observed.isFile() || observed.isSymbolicLink() || observed.nlink !== 1n || (observed.mode & 0o7777n) !== 0o600n) fail("post-helper startup prefix identity is invalid");
       return true;
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
@@ -534,7 +653,9 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   const currentLockIdentity = descriptorIdentity(held.descriptor);
   const currentTransitionLock = parseLockRecord(held.lockBytes);
   const paths = rootPaths();
-  mkdirSync(paths.settlements, { recursive: true, mode: 0o700 });
+  const settlementsGuard = ensurePrivateAuthorityDirectoryV1(paths.settlements);
+  try {
+  settlementsGuard.assertStable();
   let journal: Readonly<Record<string, unknown>>;
   let dispatchRequired: boolean;
   repairCompletedNoReplacePublication(paths.journal);
@@ -613,7 +734,9 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   const helperSettlementRef = `${HELPER_PREFIX}${helperSettlementHash}`;
   const settlementPath = path.join(paths.settlements, helperSettlementHash.slice(0, 2), `${helperSettlementHash}.json`);
   if (dispatchRequired) {
-    mkdirSync(path.dirname(settlementPath), { recursive: true, mode: 0o700 });
+    const settlementDirectoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(settlementPath));
+    try {
+      settlementDirectoryGuard.assertStable();
     const capabilityPath = path.join(paths.root, `.helper-capability.${randomUUID()}.json`);
     const journalDescriptor = openSync(paths.journal, constants.O_RDONLY | constants.O_NOFOLLOW);
     const frame = { schema: "setfarm.internal-production-pre-schema-spawner-rebind-restart-authority.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1", currentEntryOperation, restartAuthority, journalHash, lockIdentity: currentLockIdentity, journalIdentity: descriptorIdentity(journalDescriptor) };
@@ -631,10 +754,18 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     closeSync(descriptor);
     closeSync(journalDescriptor);
     if (child.error || child.signal || child.status !== 0) fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
+      settlementDirectoryGuard.assertStable();
+    } finally {
+      try { settlementDirectoryGuard.assertStable(); } finally { settlementDirectoryGuard.close(); }
+    }
   }
   recoverExpectedNoReplacePublication(settlementPath, Buffer.from(`${canonical({ ...expectedBody, helperSettlementRef, helperSettlementHash })}\n`, "utf8"));
   let settled: Readonly<Record<string, unknown>>;
   try { settled = readSettlement(helperSettlementHash); } catch { return fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"); }
   if (canonical(settled) !== canonical({ ...expectedBody, helperSettlementRef, helperSettlementHash })) fail("helper settlement differs");
+  settlementsGuard.assertStable();
   return Object.freeze({ helperSettlementRef, helperSettlementHash });
+  } finally {
+    try { settlementsGuard.assertStable(); } finally { settlementsGuard.close(); }
+  }
 }
