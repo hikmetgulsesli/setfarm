@@ -437,6 +437,31 @@ function fixedRepositoryRoot(): string {
   return realpathSync(path.dirname(sourceOrDist));
 }
 
+function fixedWorkspaceAuthorityPathV1(...segments: string[]): string {
+  const relative = segments.join("/");
+  if (
+    segments.length === 0
+    || path.isAbsolute(relative)
+    || relative.includes("\\")
+    || path.posix.normalize(relative) !== relative
+    || !relative.startsWith("data/internal-production-baseline/")
+    || relative.split("/").some((segment) => segment.length === 0 || segment === "." || segment === ".." || !/^[A-Za-z0-9._-]+$/.test(segment))
+  ) fail("workspace authority locator is not code-owned");
+  const repository = fixedRepositoryRoot();
+  const workspace = path.dirname(repository);
+  const target = path.resolve(workspace, ...segments);
+  const workspaceRelative = path.relative(workspace, target);
+  const repositoryRelative = path.relative(repository, target);
+  if (
+    workspaceRelative === ""
+    || workspaceRelative === ".."
+    || workspaceRelative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(workspaceRelative)
+    || (repositoryRelative !== ".." && !repositoryRelative.startsWith(`..${path.sep}`))
+  ) fail("workspace authority locator escapes its sibling root");
+  return target;
+}
+
 function readStableRegular(
   filePath: string,
   maxBytes: number,
@@ -989,7 +1014,7 @@ const TASK12_P0_FOCUSED_COMMAND_V1 = Object.freeze([
 ] as const);
 
 function task12P0DeliveryPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "task12-p0-delivery-authorities", "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "task12-p0-delivery-authorities", "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 export async function resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1(
@@ -1131,6 +1156,12 @@ const CURRENT_ENTRY_FILES = Object.freeze({
   pendingBootstrapHandoffMigration: "pending-bootstrap-handoff-migration.json",
   operation: "current-entry-operation.json",
 });
+const CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1 = Object.freeze([
+  "operations",
+  "records",
+  "recovery-source-bootstrap-v1",
+  "task12-p0-delivery-authorities",
+] as const);
 
 function currentEntryFail(message: string): never {
   throw new Error(`INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:${message}`);
@@ -1485,9 +1516,15 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     directoryGuard.assertStable();
     const writerLockName = `.${path.basename(currentEntryWriterTarget)}.writer.lock`;
     const inventory = readdirSync(store.directory).filter((name) => name !== writerLockName && !name.startsWith(`${writerLockName}.tmp-`)).sort(compareBytes);
-    if (inventory.some((name) => !families.some((family) => family.pattern.test(name)))) currentEntryFail("current-entry store has an unknown or foreign dirent");
+    const authorityDirectories = new Set<string>(CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1);
+    for (const name of inventory.filter((entry) => authorityDirectories.has(entry))) {
+      const observed = directorySnapshot(path.join(store.directory, name), `current-entry authority directory ${name}`, store.device);
+      if (observed.identity.mode !== 0o700) currentEntryFail(`current-entry authority directory ${name} has wrong mode`);
+    }
+    const publisherInventory = inventory.filter((name) => !authorityDirectories.has(name));
+    if (publisherInventory.some((name) => !families.some((family) => family.pattern.test(name)))) currentEntryFail("current-entry store has an unknown or foreign dirent");
     const familyStates = families.map((family) => {
-      const entries = inventory.filter((name) => family.pattern.test(name)).map((name) => publisherEntry(store.directory, name, store.device));
+      const entries = publisherInventory.filter((name) => family.pattern.test(name)).map((name) => publisherEntry(store.directory, name, store.device));
       if (entries.length === 0) return Object.freeze({ family, entries, bytes: null, topology: null });
       const fixed = entries.find((entry) => entry.name === family.fixedName);
       const familyBytes = (fixed ?? entries[0]!).bytes;
@@ -1887,16 +1924,19 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
   const store = readCurrentEntryStore(true);
   if (store === null) return null;
   const storeBefore = directorySnapshot(store.directory, "prepared current-entry store", store.device);
-  const allowed = new Set<string>([...Object.values(CURRENT_ENTRY_FILES), "records", "operations"]);
+  const authorityDirectories = new Set<string>(CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1);
+  const allowed = new Set<string>([...Object.values(CURRENT_ENTRY_FILES), ...authorityDirectories]);
   const entries = readdirSync(store.directory).sort(compareBytes);
   if (entries.length > allowed.size || entries.some((entry) => !allowed.has(entry))) {
     currentEntryFail("prepared current-entry inventory is invalid");
   }
   const firstSnapshots = new Map<string, StableRegular>();
+  const directorySnapshots = new Map<string, DirectorySnapshot>();
   for (const entry of entries) {
-    if (entry === "records" || entry === "operations") {
+    if (authorityDirectories.has(entry)) {
       const directory = directorySnapshot(path.join(store.directory, entry), `prepared current-entry ${entry}`, store.device);
       if (directory.identity.mode !== 0o700) currentEntryFail(`prepared current-entry ${entry} mode is invalid`);
+      directorySnapshots.set(entry, directory);
       continue;
     }
     const observed = readTask12ReceiptStoreSnapshotV1(path.join(store.directory, entry));
@@ -1934,7 +1974,12 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
   assertDirectory(store.directory, storeBefore, "prepared current-entry store");
   if (canonicalComparable(entries) !== canonicalComparable(finalEntries)) currentEntryFail("prepared current-entry inventory changed while observed");
   for (const entry of entries) {
-    if (entry === "records" || entry === "operations") continue;
+    if (authorityDirectories.has(entry)) {
+      const first = directorySnapshots.get(entry);
+      if (!first) currentEntryFail(`prepared current-entry ${entry} directory snapshot is absent`);
+      assertDirectory(path.join(store.directory, entry), first, `prepared current-entry ${entry}`);
+      continue;
+    }
     const first = firstSnapshots.get(entry)!;
     const final = readTask12ReceiptStoreSnapshotV1(path.join(store.directory, entry));
     if (final.mode !== 0o600 || !sameRegularMetadata(first.stats, final.stats) || !first.bytes.equals(final.bytes)) {
@@ -2766,7 +2811,7 @@ async function reobserveStoredMigration31AuditV1(audit: InternalProductionAuthor
 }
 
 function legacyZeroPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), LEGACY_ZERO_STORE_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(LEGACY_ZERO_STORE_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 type Task12ReceiptDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
@@ -3262,7 +3307,7 @@ const COMPLETE_ZERO_STORE_V1 = "data/internal-production-baseline/complete-zero-
 const COMPLETE_ZERO_PREFIX_V1 = "setfarm://internal-production/complete-zero-owner-census-observation/sha256/";
 
 function completeZeroPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), COMPLETE_ZERO_STORE_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(COMPLETE_ZERO_STORE_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 export async function resolveInternalProductionCompleteZeroOwnerCensusObservationV1(
@@ -3340,15 +3385,15 @@ const ZERO_OWNER_GUARD_PREFIX_V1 = "setfarm://internal-production/baseline-zero-
 const CUTOVER_ZERO_OWNER_CONSUMPTION_PREFIX_V1 = "setfarm://internal-production/baseline-physical-service-restart-authority-cutover-zero-owner-guard-consumption/sha256/";
 
 function zeroOwnerGuardPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), ZERO_OWNER_GUARD_ROOT_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(ZERO_OWNER_GUARD_ROOT_V1, "records", "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function cutoverZeroOwnerConsumptionPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), ZERO_OWNER_GUARD_ROOT_V1, "consumptions/physical-service-restart-authority-cutover/sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(ZERO_OWNER_GUARD_ROOT_V1, "consumptions/physical-service-restart-authority-cutover/sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function zeroOwnerConsumedIndexPathV1(hash: string): string {
-  return path.join(fixedRepositoryRoot(), ZERO_OWNER_GUARD_ROOT_V1, "consumed-guards/sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(ZERO_OWNER_GUARD_ROOT_V1, "consumed-guards/sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 export async function resolveInternalProductionBaselineZeroOwnerMutationGuardV1(
@@ -3467,11 +3512,11 @@ const TASK12_FRESH_OBSERVATION_PREFIX_V1 = "setfarm://internal-production/curren
 const TASK12_PRE_MUTATION_PREFIX_V1 = "setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/";
 
 function task12RecordPathV1(kind: "statuses" | "entry-authorities" | "fresh-runtime-and-owner-observations" | "verifications", hash: string): string {
-  return path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function task12OperationDirectoryV1(operationHash: string): string {
-  return path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operationHash.slice(0, 2), operationHash);
 }
 
 const TASK12_MIGRATION_ROOT_V1 = "data/internal-production-baseline/pre-manifest-migration32-v1";
@@ -3495,15 +3540,15 @@ const BASELINE_RESTART_ACTIONS_V1 = Object.freeze({
 } as const);
 
 function baselineRestartPathV1(kind: "authorizations" | "operations" | "outboxes" | "authorities" | "runtime-projections", hash: string): string {
-  return path.join(fixedRepositoryRoot(), BASELINE_RESTART_ROOT_V1, kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(BASELINE_RESTART_ROOT_V1, kind, "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function baselineRestartOutboxLocatorV1(operationHash: string): string {
-  return path.join(fixedRepositoryRoot(), BASELINE_RESTART_ROOT_V1, "outbox-by-operation/sha256", operationHash.slice(0, 2), `${operationHash}.pair.json`);
+  return fixedWorkspaceAuthorityPathV1(BASELINE_RESTART_ROOT_V1, "outbox-by-operation/sha256", operationHash.slice(0, 2), `${operationHash}.pair.json`);
 }
 
 function baselineRestartAuthorityLocatorV1(authorizationHash: string): string {
-  return path.join(fixedRepositoryRoot(), BASELINE_RESTART_ROOT_V1, "authority-by-authorization/sha256", authorizationHash.slice(0, 2), `${authorizationHash}.pair.json`);
+  return fixedWorkspaceAuthorityPathV1(BASELINE_RESTART_ROOT_V1, "authority-by-authorization/sha256", authorizationHash.slice(0, 2), `${authorizationHash}.pair.json`);
 }
 
 function task12RuntimeProjectionV1(census: InternalProductionServiceCensusV1): Readonly<Record<string, unknown>> {
@@ -3537,11 +3582,11 @@ export async function reobserveInternalProductionBaselineServiceRestartPreparedR
 }
 
 function task12MigrationRecordPathV1(kind: "authorizations" | "consumptions" | "receipts" | "current-audits" | "statuses", hash: string): string {
-  return path.join(fixedRepositoryRoot(), TASK12_MIGRATION_ROOT_V1, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1(TASK12_MIGRATION_ROOT_V1, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function task12MigrationOperationDirectoryV1(operationHash: string): string {
-  return path.join(fixedRepositoryRoot(), TASK12_MIGRATION_ROOT_V1, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  return fixedWorkspaceAuthorityPathV1(TASK12_MIGRATION_ROOT_V1, "operations", "sha256", operationHash.slice(0, 2), operationHash);
 }
 
 async function publishTask12HashedRecordV1(
@@ -3680,7 +3725,7 @@ async function ensureTask12PreparedCurrentEntryStatusV1(
   const preMutationLoadedRuntimeServiceAuthorityHash = hashCanonicalJson(preMutationBody);
   const preMutationLoadedRuntimeServiceAuthorityRef = `${TASK12_PRE_MUTATION_PREFIX_V1}${preMutationLoadedRuntimeServiceAuthorityHash}`;
   const preMutation = recursivelyFreeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
-  const preMutationTarget = path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
+  const preMutationTarget = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
   publishLegacyZeroRecordV1(preMutationTarget, await canonicalRecordBytes(preMutation));
   publishLegacyZeroRecordV1(path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json"), await canonicalRecordBytes({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash }));
   const source = operation.controllerSource;
@@ -3745,7 +3790,7 @@ export async function observeInternalProductionCurrentEntryAuthorityStatusV1(
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
   const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
   if (!operation) return absentTask12StatusV1();
-  const locator = path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "01-current-status.pair.json");
+  const locator = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "01-current-status.pair.json");
   try {
     const bytes = readTask12ReceiptStoreBytesV1(locator);
     const pair = strictCanonicalRecord(bytes, "current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1;
@@ -3897,7 +3942,7 @@ async function resolveTask12PredecessorAuthorityPairV1(
   if (name === "preMutationLoadedRuntimeServiceAuthority") {
     const exact = requirePair(pair, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
     const hash = String(exact.preMutationLoadedRuntimeServiceAuthorityHash);
-    const target = path.join(fixedRepositoryRoot(), CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+    const target = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
     const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority");
     const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
     if (
@@ -4289,7 +4334,7 @@ const RECOVERY_SOURCE_BOOTSTRAP_PROMPT_MANIFEST_HASH_V1 = hashCanonicalJson({
 });
 
 function recoverySourceBootstrapRootV1(): string {
-  return path.join(fixedRepositoryRoot(), RECOVERY_SOURCE_BOOTSTRAP_ROOT_V1);
+  return fixedWorkspaceAuthorityPathV1(RECOVERY_SOURCE_BOOTSTRAP_ROOT_V1);
 }
 
 function recoverySourceBootstrapRecordPathV1(kind: string, hash: string): string {
@@ -4520,7 +4565,7 @@ export async function resolveInternalProductionRecoverySourceBootstrapRunReceipt
 
 function recoverySourceBootstrapPairClosePathV1(hash: string): string {
   requireSha256(hash, "recovery source bootstrap pair-close hash");
-  return path.join(fixedRepositoryRoot(), "data/internal-production-baseline/current-entry-v1/records/source-run-launch-target-reservation-pair-closes/sha256", hash.slice(0, 2), `${hash}.json`);
+  return fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1/records/source-run-launch-target-reservation-pair-closes/sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 async function publishRecoverySourceBootstrapPairCloseV1(
@@ -5196,7 +5241,7 @@ export async function restartInternalProductionBaselineServiceV1(
       const consumptionBody = { schema: "setfarm.internal-production-baseline-service-restart-zero-owner-guard-consumption.v1", purpose: "baseline-service-restart-v1", authorizationRef: input.authorizationRef, authorizationHash: input.authorizationHash, zeroOwnerGuardRef: authorization.zeroOwnerGuardRef, zeroOwnerGuardHash: authorization.zeroOwnerGuardHash, completeZeroOwnerCensusObservationRef: guard.completeZeroOwnerCensusObservationRef, completeZeroOwnerCensusObservationHash: guard.completeZeroOwnerCensusObservationHash, guardConsumed: true };
       const consumptionHash = hashCanonicalJson(consumptionBody); const consumptionRef = `setfarm://internal-production/baseline-service-restart-zero-owner-guard-consumption/sha256/${consumptionHash}`;
       const consumption = { ...consumptionBody, consumptionRef, consumptionHash };
-      const target = path.join(fixedRepositoryRoot(), ZERO_OWNER_GUARD_ROOT_V1, "consumptions/baseline-service-restart/sha256", consumptionHash.slice(0, 2), `${consumptionHash}.json`);
+      const target = fixedWorkspaceAuthorityPathV1(ZERO_OWNER_GUARD_ROOT_V1, "consumptions/baseline-service-restart/sha256", consumptionHash.slice(0, 2), `${consumptionHash}.json`);
       publishLegacyZeroRecordV1(target, await canonicalRecordBytes(consumption));
       publishLegacyZeroRecordV1(zeroOwnerConsumedIndexPathV1(String(authorization.zeroOwnerGuardHash)), await canonicalRecordBytes({ consumptionRef, consumptionHash }));
     }
