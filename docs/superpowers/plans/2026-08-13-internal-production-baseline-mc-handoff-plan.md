@@ -5971,6 +5971,366 @@ That D delivery expands the existing recovery plan's Setfarm File Map from exact
 
 Before D Task 2 may enable recovery-restart acquire, identical-fence adoption, compound close, close resolution, or release, a separate reviewed D authority adjudication must freeze, for each of the four namespace branches, the exact coordinator body schema, content store, ref/hash projection, sole producer, and pair-only resolver; it must separately freeze the recovery-active-run guard body schema, content store, ref/hash projection, sole producer, and pair-only resolver. The same adjudication must freeze the one and only invoked lazy Task 12 receipt/db-pg to D module edge that resolves those exact pairs and the already frozen authorization operation, with exact export names, signatures, arities, ownership, load timing, and no eager/static reverse dependency. No resolver name or body is reserved by this Task 12 amendment. Only after those reviewed symbols exist, D's `A+B+C+D` activation/source/build resolves, and the lazy chain recursively authenticates operation → coordinator → optional active target may a later amendment replace `BARRIER_AUTHORITY_UNAVAILABLE` with the already declared seven-target acquire/adopt/close semantics. D's exact66 tests must first prove missing/nonfunction/wrong-arity/eager/aliased/crossed resolvers, four-branch schema/ref/hash/store tamper, absent/extra active target, and operation/coordinator/guard mismatch all fail before the first owner-head or authority mutation.
 
+Task 6 scope amendment supersedes the earlier Task 4, Task 5, and Task 6 File Map and pre-merge-root statements only where this paragraph is more specific. Task 4 additionally modifies `mission-control/src/components/ProjectChecklist.tsx` and `mission-control/src/components/projects/DeleteProjectModal.tsx`: both mutation controls consume the same separated project authority and fail closed when the projected authority is unavailable or stale, so neither may infer mutation eligibility from catalog status, runtime reachability, receipt prose, or a prior render. Their existing focused rendering tests must prove unavailable/stale disables the control, a later fresh projection alone reenables it, and no locally synthesized fallback exists. Task 5 additionally modifies `mission-control/server/services/setfarm-contract-compatibility.ts` and `mission-control/server/services/setfarm-contract-compatibility.test.ts`: that module is the one shared semantic consumer of the exact twelve-artifact vendor lock, including the operational-active schema/compatibility pair, and its test proves exact inventory, schema/compatibility identity, duplicate/missing/extra/crossed artifact refusal, and no second locally authored operational predicate.
+
+Task 6 additionally modifies `mission-control/scripts/render-smoke.mjs` and creates `mission-control/tests/render-smoke-response.test.ts` as the bounded render-response root fix. The exact exported pure helper is `isExpectedTypedRenderResponse(response,expectedBaseUrl,renderedRoute)`; the response listener passes its currently iterated exact route, so no request path or caller-chosen run ID can stand in for render-route authority. The classifier first requires `response.request().method()==="GET"`, `response.url()` byte-for-byte equal to `expectedBaseUrl` plus the exact declared request path, the exact configured Mission Control origin, an empty query, an empty fragment, and a plain ordinary JSON object with the exact declared key order and values. Existing operational-snapshot absence remains only exact `404 {status:"unavailable",code:"SETFARM_OPERATIONAL_SNAPSHOT_NOT_FOUND",reason:"not_found"}` on the exact rendered run's `/api/setfarm/runs/<runId>/operational-snapshot` request. The legacy Product Build Authority allowance is narrower: only while rendering exact route `/setfarm/runs/ac8cea43-7686-4d27-8092-1e3dd9207ca4`, only for exact request `/api/setfarm/runs/ac8cea43-7686-4d27-8092-1e3dd9207ca4/product-build-authority`, and only exact status `409` plus exact ordered plain body `{status:"unavailable",code:"SETFARM_PRODUCT_BUILD_AUTHORITY_NOT_READY",reason:"not_ready",upstreamStatus:409,upstreamCode:"RUNTIME_PACKET_RUN_NOT_V3"}` is expected. The same-origin rule does not normalize, decode, or alias a pathname; another method, run ID, route, raw URL, origin, query, fragment, status, prototype, key order, extra/missing key, or value is fatal.
+
+The exact smoke invocation is `MC_RENDER_BASE_URL=http://127.0.0.1:13081 MC_RENDER_ROUTES="/,/setfarm,/setfarm/active,/projects,/setfarm/runs/ac8cea43-7686-4d27-8092-1e3dd9207ca4,/setfarm/runs/ad47fe65-4ec4-4fb5-89da-fff71eb4" npm run render:smoke`. After the isolated preview reports ready but before any page navigation, the harness performs one fixed same-origin GET to `/api/setfarm/runs/ad47fe65-4ec4-4fb5-89da-fff71eb4/product-build-authority` and requires exact status `200`, a plain body with `schema:"setfarm.product-build-authority.v2"`, `runId:"ad47fe65-4ec4-4fb5-89da-fff71eb4"`, `disposition:"sealed_packet"`, non-null plain `packetAuthority`, `refusal:null`, and lowercase SHA-256 `authorityHash`; absence, non-200, refused, malformed, or crossed identity aborts before route iteration. While the exact V3 run route renders, the response listener must independently observe at least one exact same-origin GET to that same Product Build Authority URL with the same strict `200` sealed identity; missing observation is fatal. Thus this run is a runtime precondition checked on every smoke execution, not an evergreen claim in a ledger, and its response cannot use the legacy allowance. Focused tests call the exported pure classifier and V3-required-response tracker without launching a browser and cover exact success plus crossed route/run, foreign origin, query, fragment, alias, reordered/extra/missing body, null/custom prototype, wrong method/status/code, absent V3 response, and V3-409 refusal. This root fix does not weaken the general failed-response gate and does not authorize screenshots or render artifacts as source.
+
+The isolated render authority is exact and non-fallback. `MC_RENDER_BASE_URL` must equal the literal `http://127.0.0.1:13081`; the harness rejects every other protocol, host, port, pathname, credential, query, or fragment. Before spawning, it performs a bounded exclusive bind probe on exact host `127.0.0.1` and port `13081`, closes that probe, and refuses a preoccupied or indeterminate listener instead of reusing it. It then always spawns `process.execPath` with the sole script argument `rootDir/dist-server/index.js`, `cwd:rootDir`, `shell:false`, and exact child overrides `MC_HOST=127.0.0.1` and `MC_PORT=13081`; `rootDir` is the physical authenticated reconciliation worktree root. A bounded `/usr/sbin/lsof -nP -a -p <childPid> -iTCP:13081 -sTCP:LISTEN -F0pcfn` identity check must succeed with empty stderr and exactly the spawned live child PID listening on `127.0.0.1:13081` before readiness, the V3 preflight, browser launch, or page navigation. A listener reachable before spawn, a failed probe, missing build entry, exited child, timeout, missing or foreign listener PID, cross-origin response, or identity drift is fatal; the harness never falls back to port `3080`, the canonical loaded service, or any other reachable listener. Every health, preflight, navigation, and response-classification URL uses only that exact origin. In one `finally`, the harness closes every page and browser, sends `SIGTERM` to the spawned child, waits a bounded interval for its terminal event, escalates once to `SIGKILL` if necessary, waits for termination, and verifies port `13081` is no longer occupied; no success result may print while the child or listener remains. The render-response focused/source tests cover a preoccupied port, child-not-started, child-exited, wrong-child PID/listener, cross-origin reuse, bounded timeout, ordinary termination, forced termination, and teardown after browser or response failure. No pre-merge command writes the canonical checkout's loaded `dist` or `dist-server`.
+
+All Task 6 pre-merge verification, build, render, diff capture, and secret scan steps run only from exact isolated reconciliation worktree `/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation`; the earlier `/Users/setrox/ai/setrox/mission-control` pre-merge root literals are superseded. Before every pre-merge command, the shell requires physical `pwd` and Git top-level equal that literal, branch exactly `fix/internal-production-baseline-reconciliation`, full tracked/untracked porcelain empty, `HEAD` equal `refs/remotes/origin/fix/internal-production-baseline-reconciliation`, `remote.origin.url` exactly `https://github.com/hikmetgulsesli/mission-control.git`, and the realpath of `git rev-parse --git-common-dir` equal the realpath of `/Users/setrox/ai/setrox/mission-control/.git`. It fails before tests, build, render, diff capture, scan, staging, or handoff on any mismatch. The canonical `/Users/setrox/ai/setrox/mission-control` checkout remains untouched during pre-merge verification so its loaded `dist` and `dist-server` cannot be overwritten by feature-branch bytes. Task 6 Step 8 is not superseded: only after reviewed merge does the delivery owner synchronize that canonical checkout to clean `main===origin/main`, build there, recheck empty porcelain, and create/reopen the first authoritative delivery-evidence pair with two fresh source-CLI processes.
+
+The exact replacement pre-merge fence is:
+
+```bash
+set -euo pipefail
+readonly A_MC_VERIFY_ROOT=/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_BRANCH=fix/internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_ORIGIN_URL=https://github.com/hikmetgulsesli/mission-control.git
+readonly A_MC_VERIFY_COMMON_DIR=/Users/setrox/ai/setrox/mission-control/.git
+readonly A_MC_ORIGIN_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-origin-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS"' EXIT
+require_authenticated_isolated_mc_reconciliation_worktree_v1() {
+  test "$(pwd -P)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --show-toplevel)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" branch --show-current)" = "$A_MC_VERIFY_BRANCH"
+  : >"$A_MC_ORIGIN_DIAGNOSTICS"
+  if A_MC_OBSERVED_ORIGIN_URL="$(git -C "$A_MC_VERIFY_ROOT" config --local --no-includes --get-all remote.origin.url 2>"$A_MC_ORIGIN_DIAGNOSTICS")"; then
+    A_MC_ORIGIN_STATUS=0
+  else
+    A_MC_ORIGIN_STATUS=$?
+  fi
+  test "$A_MC_ORIGIN_STATUS" -eq 0
+  test ! -s "$A_MC_ORIGIN_DIAGNOSTICS"
+  test "$A_MC_OBSERVED_ORIGIN_URL" = "$A_MC_VERIFY_ORIGIN_URL"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse HEAD)" = "$(git -C "$A_MC_VERIFY_ROOT" rev-parse "refs/remotes/origin/$A_MC_VERIFY_BRANCH")"
+  test "$(realpath "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --path-format=absolute --git-common-dir)")" = "$(realpath "$A_MC_VERIFY_COMMON_DIR")"
+  test -z "$(git -C "$A_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
+}
+cd "$A_MC_VERIFY_ROOT"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+```
+
+Every Step 1 through Step 4 pre-merge test, build, render, diff-capture, and scan command is immediately preceded and followed by `require_authenticated_isolated_mc_reconciliation_worktree_v1`; a sequence of multiple commands is not treated as one authenticated command. Task 6's source-boundary/transcript test parses this exact fence and proves that each command is bracketed.
+
+Task 4 Step 3 and Step 7 retain their existing test commands but `tests/project-execution-render.test.tsx` additionally executes the two mutation-control unavailable/stale/fresh cases. Task 4 Step 8's exact diff scope is replaced by its prior eleven paths plus `src/components/ProjectChecklist.tsx` and `src/components/projects/DeleteProjectModal.tsx`; its handoff reports all thirteen paths and the same authorized subject. Task 5 Step 4's focused command is replaced by:
+
+```bash
+set -euo pipefail
+npm run check:setfarm-contract
+node --import tsx --test \
+  server/services/product-build-authority-v2-delivery-evidence-v1.test.ts \
+  server/services/setfarm-contract-compatibility.test.ts \
+  tests/setfarm-contract-vendor.test.ts
+```
+
+Task 5 Steps 5 and 6 replace every old four-argument scope with exact `scripts/sync-setfarm-contract.mjs scripts/check-setfarm-contract.mjs contracts/vendor/setfarm server/services/setfarm-contract-compatibility.ts server/services/setfarm-contract-compatibility.test.ts tests/setfarm-contract-vendor.test.ts`; their expected handoff names both shared-consumer paths and the exact-twelve semantic evidence. No later text may exclude these Task 4 or Task 5 additions.
+
+Task 6 Step 1's entire earlier command block is replaced by the exact isolated-worktree fence above followed by these individually bracketed units:
+
+```bash
+set -euo pipefail
+readonly A_MC_VERIFY_ROOT=/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_BRANCH=fix/internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_ORIGIN_URL=https://github.com/hikmetgulsesli/mission-control.git
+readonly A_MC_VERIFY_COMMON_DIR=/Users/setrox/ai/setrox/mission-control/.git
+readonly A_MC_ORIGIN_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-origin-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS"' EXIT
+require_authenticated_isolated_mc_reconciliation_worktree_v1() {
+  test "$(pwd -P)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --show-toplevel)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" branch --show-current)" = "$A_MC_VERIFY_BRANCH"
+  : >"$A_MC_ORIGIN_DIAGNOSTICS"
+  if A_MC_OBSERVED_ORIGIN_URL="$(git -C "$A_MC_VERIFY_ROOT" config --local --no-includes --get-all remote.origin.url 2>"$A_MC_ORIGIN_DIAGNOSTICS")"; then
+    A_MC_ORIGIN_STATUS=0
+  else
+    A_MC_ORIGIN_STATUS=$?
+  fi
+  test "$A_MC_ORIGIN_STATUS" -eq 0
+  test ! -s "$A_MC_ORIGIN_DIAGNOSTICS"
+  test "$A_MC_OBSERVED_ORIGIN_URL" = "$A_MC_VERIFY_ORIGIN_URL"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse HEAD)" = "$(git -C "$A_MC_VERIFY_ROOT" rev-parse "refs/remotes/origin/$A_MC_VERIFY_BRANCH")"
+  test "$(realpath "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --path-format=absolute --git-common-dir)")" = "$(realpath "$A_MC_VERIFY_COMMON_DIR")"
+  test -z "$(git -C "$A_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
+}
+cd "$A_MC_VERIFY_ROOT"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm run check:version
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm run check:prompts
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm run check:paths
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm run check:setfarm-contract
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+node --import tsx --test \
+  server/routes/setfarm-operational.test.ts \
+  server/services/setfarm-product-build-authority.test.ts \
+  server/services/product-build-authority-v2-delivery-evidence-v1.test.ts \
+  server/services/setfarm-contract-compatibility.test.ts \
+  server/services/project-execution-state.test.ts \
+  server/routes/projects-projection.test.ts \
+  server/routes/overview.test.ts \
+  tests/product-build-authority-render.test.tsx \
+  tests/project-execution-render.test.tsx \
+  tests/active-run-selection.test.ts \
+  tests/project-health.test.ts \
+  tests/render-smoke-response.test.ts
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+```
+
+Task 6 Step 2's entire earlier command block is replaced by this standalone fence:
+
+```bash
+set -euo pipefail
+readonly A_MC_VERIFY_ROOT=/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_BRANCH=fix/internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_ORIGIN_URL=https://github.com/hikmetgulsesli/mission-control.git
+readonly A_MC_VERIFY_COMMON_DIR=/Users/setrox/ai/setrox/mission-control/.git
+readonly A_MC_ORIGIN_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-origin-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS"' EXIT
+require_authenticated_isolated_mc_reconciliation_worktree_v1() {
+  test "$(pwd -P)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --show-toplevel)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" branch --show-current)" = "$A_MC_VERIFY_BRANCH"
+  : >"$A_MC_ORIGIN_DIAGNOSTICS"
+  if A_MC_OBSERVED_ORIGIN_URL="$(git -C "$A_MC_VERIFY_ROOT" config --local --no-includes --get-all remote.origin.url 2>"$A_MC_ORIGIN_DIAGNOSTICS")"; then
+    A_MC_ORIGIN_STATUS=0
+  else
+    A_MC_ORIGIN_STATUS=$?
+  fi
+  test "$A_MC_ORIGIN_STATUS" -eq 0
+  test ! -s "$A_MC_ORIGIN_DIAGNOSTICS"
+  test "$A_MC_OBSERVED_ORIGIN_URL" = "$A_MC_VERIFY_ORIGIN_URL"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse HEAD)" = "$(git -C "$A_MC_VERIFY_ROOT" rev-parse "refs/remotes/origin/$A_MC_VERIFY_BRANCH")"
+  test "$(realpath "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --path-format=absolute --git-common-dir)")" = "$(realpath "$A_MC_VERIFY_COMMON_DIR")"
+  test -z "$(git -C "$A_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
+}
+cd "$A_MC_VERIFY_ROOT"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm test
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+npm run build
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+```
+
+Task 6 Step 3's entire earlier command block is replaced by this standalone fence:
+
+```bash
+set -euo pipefail
+readonly A_MC_VERIFY_ROOT=/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_BRANCH=fix/internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_ORIGIN_URL=https://github.com/hikmetgulsesli/mission-control.git
+readonly A_MC_VERIFY_COMMON_DIR=/Users/setrox/ai/setrox/mission-control/.git
+readonly A_MC_ORIGIN_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-origin-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS"' EXIT
+require_authenticated_isolated_mc_reconciliation_worktree_v1() {
+  test "$(pwd -P)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --show-toplevel)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" branch --show-current)" = "$A_MC_VERIFY_BRANCH"
+  : >"$A_MC_ORIGIN_DIAGNOSTICS"
+  if A_MC_OBSERVED_ORIGIN_URL="$(git -C "$A_MC_VERIFY_ROOT" config --local --no-includes --get-all remote.origin.url 2>"$A_MC_ORIGIN_DIAGNOSTICS")"; then
+    A_MC_ORIGIN_STATUS=0
+  else
+    A_MC_ORIGIN_STATUS=$?
+  fi
+  test "$A_MC_ORIGIN_STATUS" -eq 0
+  test ! -s "$A_MC_ORIGIN_DIAGNOSTICS"
+  test "$A_MC_OBSERVED_ORIGIN_URL" = "$A_MC_VERIFY_ORIGIN_URL"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse HEAD)" = "$(git -C "$A_MC_VERIFY_ROOT" rev-parse "refs/remotes/origin/$A_MC_VERIFY_BRANCH")"
+  test "$(realpath "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --path-format=absolute --git-common-dir)")" = "$(realpath "$A_MC_VERIFY_COMMON_DIR")"
+  test -z "$(git -C "$A_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
+}
+cd "$A_MC_VERIFY_ROOT"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+MC_RENDER_BASE_URL=http://127.0.0.1:13081 MC_RENDER_ROUTES="/,/setfarm,/setfarm/active,/projects,/setfarm/runs/ac8cea43-7686-4d27-8092-1e3dd9207ca4,/setfarm/runs/ad47fe65-4ec4-4fb5-89da-fff71eb4" npm run render:smoke
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+```
+
+Task 6 Step 4 uses its own standalone fence below, requires `git diff --check origin/main...HEAD`, then compares the unsigned-UTF-8 sorted `git diff --name-only origin/main...HEAD` output byte-for-byte to this exact 35-path allowlist before its status-zero/empty-stderr diff capture and status-1/empty-output secret scan:
+
+```text
+contracts/vendor/setfarm/mission-control-contracts.v1.lock.json
+contracts/vendor/setfarm/operational-active-run-status.v1.compatibility.json
+contracts/vendor/setfarm/operational-active-run-status.v1.schema.json
+package.json
+scripts/check-setfarm-contract.mjs
+scripts/render-smoke.mjs
+scripts/sync-setfarm-contract.mjs
+server/index.ts
+server/routes/overview.test.ts
+server/routes/overview.ts
+server/routes/projects-projection.test.ts
+server/routes/projects.ts
+server/routes/setfarm-operational.test.ts
+server/routes/setfarm-operational.ts
+server/services/product-build-authority-v2-delivery-evidence-v1.test.ts
+server/services/product-build-authority-v2-delivery-evidence-v1.ts
+server/services/project-execution-state.test.ts
+server/services/project-execution-state.ts
+server/services/setfarm-contract-compatibility.test.ts
+server/services/setfarm-contract-compatibility.ts
+server/shared/setfarm-operational-active-run-status-v1.ts
+server/utils/setfarm-db.ts
+src/components/ProjectChecklist.tsx
+src/components/projects/DeleteProjectModal.tsx
+src/components/projects/ProjectCard.tsx
+src/components/projects/ProjectDetailPanel.tsx
+src/lib/project-health.ts
+src/lib/types.ts
+src/pages/ActiveRun.tsx
+src/pages/Projects.tsx
+tests/active-run-selection.test.ts
+tests/project-execution-render.test.tsx
+tests/project-health.test.ts
+tests/render-smoke-response.test.ts
+tests/setfarm-contract-vendor.test.ts
+```
+
+The exact standalone Task 6 Step 4 replacement fence is:
+
+```bash
+set -euo pipefail
+readonly A_MC_VERIFY_ROOT=/Users/setrox/ai/setrox/.worktrees/mission-control-internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_BRANCH=fix/internal-production-baseline-reconciliation
+readonly A_MC_VERIFY_ORIGIN_URL=https://github.com/hikmetgulsesli/mission-control.git
+readonly A_MC_VERIFY_COMMON_DIR=/Users/setrox/ai/setrox/mission-control/.git
+readonly A_MC_ORIGIN_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-origin-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS"' EXIT
+require_authenticated_isolated_mc_reconciliation_worktree_v1() {
+  test "$(pwd -P)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --show-toplevel)" = "$A_MC_VERIFY_ROOT"
+  test "$(git -C "$A_MC_VERIFY_ROOT" branch --show-current)" = "$A_MC_VERIFY_BRANCH"
+  : >"$A_MC_ORIGIN_DIAGNOSTICS"
+  if A_MC_OBSERVED_ORIGIN_URL="$(git -C "$A_MC_VERIFY_ROOT" config --local --no-includes --get-all remote.origin.url 2>"$A_MC_ORIGIN_DIAGNOSTICS")"; then
+    A_MC_ORIGIN_STATUS=0
+  else
+    A_MC_ORIGIN_STATUS=$?
+  fi
+  test "$A_MC_ORIGIN_STATUS" -eq 0
+  test ! -s "$A_MC_ORIGIN_DIAGNOSTICS"
+  test "$A_MC_OBSERVED_ORIGIN_URL" = "$A_MC_VERIFY_ORIGIN_URL"
+  test "$(git -C "$A_MC_VERIFY_ROOT" rev-parse HEAD)" = "$(git -C "$A_MC_VERIFY_ROOT" rev-parse "refs/remotes/origin/$A_MC_VERIFY_BRANCH")"
+  test "$(realpath "$(git -C "$A_MC_VERIFY_ROOT" rev-parse --path-format=absolute --git-common-dir)")" = "$(realpath "$A_MC_VERIFY_COMMON_DIR")"
+  test -z "$(git -C "$A_MC_VERIFY_ROOT" status --porcelain=v1 --untracked-files=all)"
+}
+cd "$A_MC_VERIFY_ROOT"
+readonly A_MC_SCOPE_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-scope-diagnostics.XXXXXX")"
+readonly A_SOURCE_DIFF_CAPTURE="$(mktemp "${TMPDIR:-/tmp}/a-mc-source-diff.XXXXXX")"
+readonly A_SOURCE_DIFF_DIAGNOSTICS="$(mktemp "${TMPDIR:-/tmp}/a-mc-source-diff-diagnostics.XXXXXX")"
+trap 'rm -f -- "$A_MC_ORIGIN_DIAGNOSTICS" "$A_MC_SCOPE_DIAGNOSTICS" "$A_SOURCE_DIFF_CAPTURE" "$A_SOURCE_DIFF_DIAGNOSTICS"' EXIT
+
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+git -C "$A_MC_VERIFY_ROOT" diff --check origin/main...HEAD
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+A_MC_EXPECTED_DIFF_PATHS="$(cat <<'A_MC_EXPECTED_DIFF_PATHS_EOF'
+contracts/vendor/setfarm/mission-control-contracts.v1.lock.json
+contracts/vendor/setfarm/operational-active-run-status.v1.compatibility.json
+contracts/vendor/setfarm/operational-active-run-status.v1.schema.json
+package.json
+scripts/check-setfarm-contract.mjs
+scripts/render-smoke.mjs
+scripts/sync-setfarm-contract.mjs
+server/index.ts
+server/routes/overview.test.ts
+server/routes/overview.ts
+server/routes/projects-projection.test.ts
+server/routes/projects.ts
+server/routes/setfarm-operational.test.ts
+server/routes/setfarm-operational.ts
+server/services/product-build-authority-v2-delivery-evidence-v1.test.ts
+server/services/product-build-authority-v2-delivery-evidence-v1.ts
+server/services/project-execution-state.test.ts
+server/services/project-execution-state.ts
+server/services/setfarm-contract-compatibility.test.ts
+server/services/setfarm-contract-compatibility.ts
+server/shared/setfarm-operational-active-run-status-v1.ts
+server/utils/setfarm-db.ts
+src/components/ProjectChecklist.tsx
+src/components/projects/DeleteProjectModal.tsx
+src/components/projects/ProjectCard.tsx
+src/components/projects/ProjectDetailPanel.tsx
+src/lib/project-health.ts
+src/lib/types.ts
+src/pages/ActiveRun.tsx
+src/pages/Projects.tsx
+tests/active-run-selection.test.ts
+tests/project-execution-render.test.tsx
+tests/project-health.test.ts
+tests/render-smoke-response.test.ts
+tests/setfarm-contract-vendor.test.ts
+A_MC_EXPECTED_DIFF_PATHS_EOF
+)"
+: >"$A_MC_SCOPE_DIAGNOSTICS"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+if A_MC_ACTUAL_DIFF_PATHS="$(git -C "$A_MC_VERIFY_ROOT" diff --name-only origin/main...HEAD 2>"$A_MC_SCOPE_DIAGNOSTICS" | LC_ALL=C sort 2>>"$A_MC_SCOPE_DIAGNOSTICS")"; then
+  A_MC_SCOPE_STATUS=0
+else
+  A_MC_SCOPE_STATUS=$?
+fi
+test "$A_MC_SCOPE_STATUS" -eq 0
+test ! -s "$A_MC_SCOPE_DIAGNOSTICS"
+test "$A_MC_ACTUAL_DIFF_PATHS" = "$A_MC_EXPECTED_DIFF_PATHS"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+if git -C "$A_MC_VERIFY_ROOT" diff --no-ext-diff origin/main...HEAD >"$A_SOURCE_DIFF_CAPTURE" 2>"$A_SOURCE_DIFF_DIAGNOSTICS"; then
+  A_SOURCE_DIFF_STATUS=0
+else
+  A_SOURCE_DIFF_STATUS=$?
+fi
+test "$A_SOURCE_DIFF_STATUS" -eq 0
+test ! -s "$A_SOURCE_DIFF_DIAGNOSTICS"
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+if A_SOURCE_SECRET_SCAN_OUTPUT="$(rg --no-heading --color never -n -e 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' -e 'sk-[A-Za-z0-9_-]{20,}' -e 'gh[pousr]_[A-Za-z0-9]{20,}' -e 'postgres(?:ql)?://[^[:space:]]+:[^[:space:]@]+@' -- "$A_SOURCE_DIFF_CAPTURE" 2>&1)"; then
+  A_SOURCE_SECRET_SCAN_STATUS=0
+else
+  A_SOURCE_SECRET_SCAN_STATUS=$?
+fi
+case "$A_SOURCE_SECRET_SCAN_STATUS" in
+  1) test -z "$A_SOURCE_SECRET_SCAN_OUTPUT" ;;
+  0) printf 'Mission Control source secret scan matched forbidden bytes\n' >&2; exit 1 ;;
+  *) printf 'Mission Control source secret scan failed with status %s\n' "$A_SOURCE_SECRET_SCAN_STATUS" >&2; exit "$A_SOURCE_SECRET_SCAN_STATUS" ;;
+esac
+require_authenticated_isolated_mc_reconciliation_worktree_v1
+```
+
+This fence captures both Git and sort diagnostics, relies on `set -o pipefail` for either producer failure, compares the exact sorted bytes, and cannot pass an extra second origin URL because the local/no-includes origin output must equal one literal line.
+
+The Step 4 replacement uses `A_MC_VERIFY_ROOT` for every Git read, repeats the authenticated-worktree fence before and after diff capture and before and after the secret scan, and requires empty full tracked/untracked porcelain at both ends. Any missing, extra, duplicate, reordered-after-sort, dirty, diagnostic, or secret-match path blocks before Task 6 Step 5.
+
+The Task 6 focused/static gate includes `node --import tsx --test tests/render-smoke-response.test.ts` and the existing Task 4/5 owner tests; the full suite, build, and six-route render smoke follow only after that gate. The final pre-merge clean-scope gate permits only the exact 35-path list above and rejects every other tracked or untracked byte before diff capture. Its RED transcript covers wrong root, top-level, common directory, origin, branch, remote-head drift, tracked dirt, untracked dirt, missing/extra scope, legacy-allowance widening, absent V3 response, and an attempted build in the canonical checkout.
+
+Task 6 Step 5 replaces the earlier fixed PR body with this exact body while retaining repository, base, head, and title unchanged:
+
+```text
+## Summary
+
+- retain the delivered per-run Product Build Authority V2 sealed/refused projection unchanged and add its clean-main-only read-only delivery-evidence endpoint
+- separate project catalog, execution, runtime, and immutable receipt state, including fail-closed unavailable/stale mutation controls
+- remove the false Active Run terminal fallback
+- pin and verify the final exact-twelve Setfarm Mission Control contracts through the shared semantic consumer
+- keep render smoke fail-closed while recognizing only the exact legacy-run typed unavailability and independently requiring the durable V3 sealed run to return 2xx
+
+## Verification
+
+- `npm test`
+- `npm run build`
+- `npm run check:setfarm-contract`
+- render smoke for overview, pipeline, active run, projects, exact legacy run detail, and exact V3 sealed run detail
+
+## Authority boundary
+
+Mission Control does not promote project registry state, runtime reachability, receipt state, or agent prose into Setfarm execution authority.
+```
+
+The delivery packet names the six causally required scope refinements and their focused evidence; review must explicitly clear them before the PR becomes ready.
+
+Mission Control `package.json` remains the already mapped Task 1 build/CLI owner. Its `build` command removes prior `dist` and `dist-server`, performs the frozen checks and both compilations, copies the declared server JSON, and then ends with its inline `node --input-type=module -e` build-identity writer. That terminal inline program alone enumerates the freshly built `dist` and `dist-server` regular files excluding only `dist-server/internal-production-build-identity.v1.json`, hashes their sorted relative names, lengths, and bytes in the frozen content domain, obtains `HEAD` and `HEAD^{tree}` with fixed no-prompt Git execution, and atomically writes the terminal identity file through its same-directory temporary. There is no separate callable identity-writer script, public API, caller path/SHA/tree/build input, or additional File Map member. Build success requires that terminal writer to finish; the delivery observer later recomputes the identity and rejects stale, partial, dirty, branch, source, tree, or content drift.
+
 <!-- oa18-p4-migration32-transaction-readiness-rebaseline-v1:end -->
 
 Close's public input is exactly `{reservationRef,reservationHash,terminalAuthorityRef,terminalAuthorityHash}`. The code-owned composed controller uses repository `resolveReservation(sql,pair)` to obtain the category, selects only the corresponding non-exported resolver from `src/db-pg.ts`, authenticates the terminal pair inside that same repository transaction, and passes the resulting non-caller-constructible terminal authority to `closeInTransactionV1`. The repository re-locks the row/head, checks the exact bound owner/category/key/pair, CAS-publishes one close, and `resolveClose(sql,pair)` reopens it through the same port. Top-level production pair-only resolvers use this composition; the pure core never opens a connection. A lost close response adopts only the identical close; a structural terminal body/clone, crossed category, different terminal pair, stale head, or partial transition fails without mutation. No public close accepts a category, terminal object, resolver registry, repository, or factory. This is PostgreSQL atomicity only: filesystem, process, listener, dispatch, and service effects begin only after the bound transaction is durable and remain governed by their own outbox/receipt protocol. Reservation activation begins in Task 6A only after migrations 32 and 33 are applied/current, A-manifest activation and complete through-33 verification/initialization succeed, and normal admission is ready.
