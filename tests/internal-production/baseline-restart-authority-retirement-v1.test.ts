@@ -140,7 +140,10 @@ function installRetirementFixture(fixture: string, source: string): string {
   mkdirSync(internal, { recursive: true });
   const fixtureModulePath = path.join(internal, "baseline-restart-authority-retirement-v1.ts");
   const censusReturn = "return orderedFrozenV1({ ...body, censusHash: sha256(canonical(body)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1;";
-  const instrumentedSource = source.replace(censusReturn, `if ((globalThis as Record<string, unknown>).__p4HelperCensusDriftAfterConsumption && (globalThis as Record<string, unknown>).__p4GuardConsumption) { const drifted = { ...body, retainedHelperJournalSettlementSetHash: "f".repeat(64) }; return orderedFrozenV1({ ...drifted, censusHash: sha256(canonical(drifted)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1; } ${censusReturn}`);
+  const instrumentedSource = source
+    .replace(censusReturn, `if ((globalThis as Record<string, unknown>).__p4HelperCensusDriftAfterConsumption && (globalThis as Record<string, unknown>).__p4GuardConsumption) { const drifted = { ...body, retainedHelperJournalSettlementSetHash: "f".repeat(64) }; return orderedFrozenV1({ ...drifted, censusHash: sha256(canonical(drifted)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1; } ${censusReturn}`)
+    .replace("directoryGuard.assertStable();\n    pinned.assertStable();\n    renameSync(temporary, target);", "directoryGuard.assertStable();\n    ((globalThis as Record<string, unknown>).__p4RegistryCasSwap as undefined | (() => void))?.();\n    pinned.assertStable();\n    renameSync(temporary, target);")
+    .replace("guard.assertStable();\n    pinned.assertStable();\n    renameSync(temporary, target);", "guard.assertStable();\n    ((globalThis as Record<string, unknown>).__p4EpochCasSwap as undefined | (() => void))?.();\n    pinned.assertStable();\n    renameSync(temporary, target);");
   assert.notEqual(instrumentedSource, source, "fixture installs only the exact helper-census drift hook");
   writeFileSync(fixtureModulePath, instrumentedSource);
   writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `
@@ -154,7 +157,7 @@ export async function observeInternalProductionServiceCensusV1(){return globalTh
 export async function resolveInternalProductionBaselineServiceRestartOperationV1(input){const value=globalThis.__p4BaselineOperation;if(!value||value.operationRef!==input.operationRef||value.operationHash!==input.operationHash)throw new Error("crossed fixture baseline operation");return value}
 export async function observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1(input){const value=globalThis.__p4BaselineOutbox;if(!value||value.operationRef!==input.operationRef||value.operationHash!==input.operationHash)throw new Error("crossed fixture baseline outbox");return value}
 export async function observeInternalProductionReviewedDSourceBuildGateV1(){if(!globalThis.__p4CutoverGate)throw new Error("complete code-owned cutover readiness gate is unavailable");return globalThis.__p4CutoverGate}
-export async function observeInternalProductionServiceRestartCutoverReadinessCandidateV1(){if(!globalThis.__p4CutoverReadiness)throw new Error("complete code-owned cutover readiness observer is unavailable");if(globalThis.__p4ReadinessDriftAfterConsumption&&globalThis.__p4GuardConsumption)return Object.freeze({...globalThis.__p4CutoverReadiness,runtimeSourceProjectionHash:${JSON.stringify("f".repeat(64))}});return globalThis.__p4CutoverReadiness}
+export async function observeInternalProductionServiceRestartCutoverReadinessCandidateV1(){globalThis.__p4ReadinessObservations=(globalThis.__p4ReadinessObservations??0)+1;if(!globalThis.__p4CutoverReadiness)throw new Error("complete code-owned cutover readiness observer is unavailable");if((globalThis.__p4ReadinessDriftUnderLease&&globalThis.__p4ReadinessObservations>=2)||(globalThis.__p4ReadinessDriftAfterConsumption&&globalThis.__p4GuardConsumption))return Object.freeze({...globalThis.__p4CutoverReadiness,runtimeSourceProjectionHash:${JSON.stringify("f".repeat(64))}});return globalThis.__p4CutoverReadiness}
 export async function observeCompleteInternalProductionZeroOwnerCensusV1(){if(!globalThis.__p4CompleteZero)throw new Error("complete zero unavailable");return globalThis.__p4CompleteZero}
 export async function resolveInternalProductionCompleteZeroOwnerCensusObservationV1(input){const value=globalThis.__p4CompleteZero;if(!value||value.observationRef!==input.observationRef||value.observationHash!==input.observationHash)throw new Error("crossed complete zero pair");return value}
 export async function resolveInternalProductionBaselineZeroOwnerMutationGuardV1(input){const value=globalThis.__p4CutoverGuard;if(!value||value.zeroOwnerGuardRef!==input.zeroOwnerGuardRef||value.zeroOwnerGuardHash!==input.zeroOwnerGuardHash)throw new Error("crossed guard pair");return value}
@@ -733,8 +736,20 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
     const wrongCountHash = sha256(canonical(wrongCountBody));
     (globalThis as Record<string, unknown>).__p4BaselineOutbox = recursivelyFreeze({ ...wrongCountBody, outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${wrongCountHash}`, outboxHash: wrongCountHash });
     await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation }), /outbox.*crossed/);
+    const crossedAuthorizationRef = `setfarm://foreign/baseline-service-restart-authorization/sha256/${authorizationHash}`;
+    const crossedOperationBody = { ...operationBody, authorizationRef: crossedAuthorizationRef };
+    const crossedOperationHash = sha256(canonical(crossedOperationBody));
+    const crossedOperationRef = `setfarm://internal-production/baseline-service-restart-operation/sha256/${crossedOperationHash}`;
+    const crossedRestartOperation = { operationRef: crossedOperationRef, operationHash: crossedOperationHash };
+    const crossedOperation = recursivelyFreeze({ ...crossedOperationBody, operationRef: crossedOperationRef, operationHash: crossedOperationHash });
+    const crossedOutboxBody = { ...outboxBody, authorizationRef: crossedAuthorizationRef, operationRef: crossedOperationRef, operationHash: crossedOperationHash };
+    const crossedOutboxHash = sha256(canonical(crossedOutboxBody));
+    (globalThis as Record<string, unknown>).__p4BaselineOperation = crossedOperation;
+    (globalThis as Record<string, unknown>).__p4BaselineOutbox = recursivelyFreeze({ ...crossedOutboxBody, outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${crossedOutboxHash}`, outboxHash: crossedOutboxHash });
+    await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: crossedRestartOperation }), /operation is crossed/, "a self-consistent foreign authorization namespace cannot enter the live registry");
     assert.equal(existsSync(registryRoot), false, "Task12 operation/outbox refusal precedes registry mutation");
     assert.equal(existsSync(journalPath), false, "Task12 operation/outbox refusal precedes journal mutation");
+    (globalThis as Record<string, unknown>).__p4BaselineOperation = operation;
     (globalThis as Record<string, unknown>).__p4BaselineOutbox = recursivelyFreeze({ ...outboxBody, outboxRef, outboxHash });
     const lockPath = path.join(root, "physical-service-restart-authority.transition.lock");
     const transitionLock = JSON.parse(readFileSync(lockPath, "utf8"));
@@ -787,6 +802,11 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
     const secondSettlementDirectory = path.join(root, "baseline-helper-settlements/sha256", secondSettlementHash.slice(0, 2));
     mkdirSync(secondSettlementDirectory, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(secondSettlementDirectory, `${secondSettlementHash}.json`), `${canonical({ ...secondSettlementBody, helperSettlementRef: secondSettlementRef, helperSettlementHash: secondSettlementHash })}\n`, { mode: 0o600 });
+    const registryCurrentPath = path.join(registryRoot, "current-head.pair.json");
+    const registryPredecessorBackup = `${registryCurrentPath}.predecessor-backup`;
+    (globalThis as Record<string, unknown>).__p4RegistryCasSwap = () => { renameSync(registryCurrentPath, registryPredecessorBackup); writeFileSync(registryCurrentPath, "foreign-registry-head\n", { mode: 0o600 }); };
+    await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: secondRestartOperation }), /pinned predecessor changed/, "registry CAS refuses a foreign inode swapped after predecessor authentication");
+    unlinkSync(registryCurrentPath); renameSync(registryPredecessorBackup, registryCurrentPath); Reflect.deleteProperty(globalThis, "__p4RegistryCasSwap");
     assert.deepEqual(await isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: secondRestartOperation }), { helperSettlementRef: secondSettlementRef, helperSettlementHash: secondSettlementHash });
     const completedCensus = await isolated.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
     assert.deepEqual([completedCensus.registeredBaselineHelperJournalCount, completedCensus.terminalBaselineHelperJournalCount, completedCensus.liveBaselineHelperJournalCount, completedCensus.ambiguousBaselineHelperJournalCount], [2, 2, 0, 1]);
@@ -811,6 +831,11 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
     mkdirSync(crossedRegistrationDirectory, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(crossedRegistrationDirectory, `${crossedRegistrationHash}.json`), `${canonical({ ...crossedRegistrationCore, registrationRef: crossedRegistrationRef, registrationHash: crossedRegistrationHash })}\n`, { mode: 0o600 });
     await assert.rejects(isolated.resolveInternalProductionBaselineServiceRestartHelperRegistryRegistrationV1({ registrationRef: crossedRegistrationRef, registrationHash: crossedRegistrationHash }), /repeats a prior tuple member/);
+    const foreignAuthorizationCore = { ...crossedRegistrationCore, authorizationRef: `setfarm://foreign/baseline-service-restart-authorization/sha256/${"6".repeat(64)}`, operationRef: `setfarm://internal-production/baseline-service-restart-operation/sha256/${"8".repeat(64)}`, operationHash: "8".repeat(64), outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${"9".repeat(64)}`, outboxHash: "9".repeat(64) };
+    const foreignAuthorizationHash = sha256(canonical(foreignAuthorizationCore)); const foreignAuthorizationRef = `setfarm://internal-production/baseline-service-restart-helper-registry-registration/sha256/${foreignAuthorizationHash}`;
+    const foreignAuthorizationDirectory = path.join(registrationStore, foreignAuthorizationHash.slice(0, 2)); mkdirSync(foreignAuthorizationDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(foreignAuthorizationDirectory, `${foreignAuthorizationHash}.json`), `${canonical({ ...foreignAuthorizationCore, registrationRef: foreignAuthorizationRef, registrationHash: foreignAuthorizationHash })}\n`, { mode: 0o600 });
+    await assert.rejects(isolated.resolveInternalProductionBaselineServiceRestartHelperRegistryRegistrationV1({ registrationRef: foreignAuthorizationRef, registrationHash: foreignAuthorizationHash }), /registration is crossed/, "historical registry resolution rejects a self-consistent foreign authorization namespace");
     const gapRegistrationCore = { ...crossedRegistrationCore, registryOrdinal: completedHead.registryOrdinal + 2, authorizationRef: `setfarm://internal-production/baseline-service-restart-authorization/sha256/${"8".repeat(64)}`, authorizationHash: "8".repeat(64), operationRef: `setfarm://internal-production/baseline-service-restart-operation/sha256/${"9".repeat(64)}`, operationHash: "9".repeat(64), outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${"a".repeat(64)}`, outboxHash: "a".repeat(64) };
     const gapRegistrationHash = sha256(canonical(gapRegistrationCore));
     const gapRegistrationRef = `setfarm://internal-production/baseline-service-restart-helper-registry-registration/sha256/${gapRegistrationHash}`;
@@ -927,6 +952,12 @@ test("P4 restart authority cutover is one-way", async () => {
     const guard = (globalThis as Record<string, unknown>).__p4CutoverGuard as Readonly<Record<string, string>>;
     const zeroOwnerGuardHash = guard.zeroOwnerGuardHash!;
     const zeroOwnerGuardRef = guard.zeroOwnerGuardRef!;
+    (globalThis as Record<string, unknown>).__p4ReadinessObservations = 0;
+    (globalThis as Record<string, unknown>).__p4ReadinessDriftUnderLease = true;
+    await assert.rejects(isolated.prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1({ zeroOwnerGuardRef, zeroOwnerGuardHash }), /readiness changed before pending mutation/, "readiness must be byte-identical when freshly reobserved under the transition lease");
+    assert.equal(existsSync(path.join(retirementRoot, "cutover-to-recovery-d-v1/cutover-pending-input.json")), false, "under-lease readiness drift leaves zero pending bytes");
+    Reflect.deleteProperty(globalThis, "__p4ReadinessDriftUnderLease");
+    (globalThis as Record<string, unknown>).__p4ReadinessObservations = 0;
     const sequenceRoot = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1");
     const readiness = (globalThis as Record<string, unknown>).__p4CutoverReadiness as Readonly<Record<string, unknown>>;
     const forgedIntentKind = "d-startup-hook-load";
@@ -1000,6 +1031,12 @@ test("P4 restart authority cutover is one-way", async () => {
     assert.equal((globalThis as Record<string, unknown>).__p4GuardConsumeCalls, 1, "post-consumption fence drift must preserve the sole guard CAS");
     assert.equal(JSON.parse(readFileSync(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/epoch-head.json"), "utf8")).epochOrdinal, 1, "fence drift must leave A epoch one visible");
     Reflect.deleteProperty(globalThis, "__p4FenceDriftAfterConsumption");
+    const epochHeadPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/epoch-head.json");
+    const epochPredecessorBackup = `${epochHeadPath}.predecessor-backup`;
+    (globalThis as Record<string, unknown>).__p4EpochCasSwap = () => { renameSync(epochHeadPath, epochPredecessorBackup); writeFileSync(epochHeadPath, "foreign-epoch-head\n", { mode: 0o600 }); };
+    await assert.rejects(isolated.resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1(), /pinned predecessor changed/, "epoch visibility CAS refuses a foreign inode swapped after predecessor authentication");
+    unlinkSync(epochHeadPath); renameSync(epochPredecessorBackup, epochHeadPath); Reflect.deleteProperty(globalThis, "__p4EpochCasSwap");
+    assert.equal(JSON.parse(readFileSync(epochHeadPath, "utf8")).epochOrdinal, 1, "epoch path-swap refusal preserves the exact predecessor after fixture restoration");
     const completed = await isolated.resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1();
     assert.deepEqual(await isolated.resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1(), completed);
     const terminalStatus = await isolated.observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1();
@@ -1032,6 +1069,9 @@ test("P4 restart authority cutover is one-way", async () => {
     delete (globalThis as Record<string, unknown>).__p4FenceRelease;
     delete (globalThis as Record<string, unknown>).__p4FenceDriftAfterConsumption;
     delete (globalThis as Record<string, unknown>).__p4ReadinessDriftAfterConsumption;
+    delete (globalThis as Record<string, unknown>).__p4ReadinessDriftUnderLease;
+    delete (globalThis as Record<string, unknown>).__p4ReadinessObservations;
+    delete (globalThis as Record<string, unknown>).__p4EpochCasSwap;
     delete (globalThis as Record<string, unknown>).__p4HelperCensusDriftAfterConsumption;
     delete (globalThis as Record<string, unknown>).__p4BaselineOperation;
     delete (globalThis as Record<string, unknown>).__p4BaselineOutbox;

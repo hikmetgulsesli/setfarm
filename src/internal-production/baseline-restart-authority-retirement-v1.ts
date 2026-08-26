@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -320,6 +321,30 @@ function readStableRetirementBytes(file: string, label: string): Buffer {
   } finally {
     try { guard.assertStable(); } finally { guard.close(); }
   }
+}
+
+function pinStableCasPredecessorV1(file: string, label: string): Readonly<{ bytes: Buffer; assertStable: () => void; close: () => void }> {
+  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let closed = false;
+  try {
+    const identity = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(file, { bigint: true });
+    if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1n || (identity.mode & 0o7777n) !== 0o600n || identity.size < 1n || identity.size > 1_048_576n || identity.dev !== atPath.dev || identity.ino !== atPath.ino) fail(`${label} pinned identity is invalid`);
+    const bytes = Buffer.alloc(Number(identity.size));
+    let offset = 0;
+    while (offset < bytes.length) { const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset); if (count < 1) fail(`${label} pinned bytes are truncated`); offset += count; }
+    const assertStable = (): void => {
+      if (closed) fail(`${label} pinned descriptor is closed`);
+      const current = fstatSync(descriptor, { bigint: true });
+      const currentPath = lstatSync(file, { bigint: true });
+      if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || (current.mode & 0o7777n) !== 0o600n || current.dev !== identity.dev || current.ino !== identity.ino || current.mode !== identity.mode || current.size !== identity.size || current.mtimeNs !== identity.mtimeNs || current.ctimeNs !== identity.ctimeNs || currentPath.dev !== identity.dev || currentPath.ino !== identity.ino || currentPath.mode !== identity.mode || currentPath.nlink !== 1n || currentPath.size !== identity.size || currentPath.mtimeNs !== identity.mtimeNs || currentPath.ctimeNs !== identity.ctimeNs) fail(`${label} pinned predecessor changed`);
+      const recheck = Buffer.alloc(bytes.length); let position = 0;
+      while (position < recheck.length) { const count = readSync(descriptor, recheck, position, recheck.length - position, position); if (count < 1) fail(`${label} pinned predecessor is truncated`); position += count; }
+      if (!recheck.equals(bytes)) fail(`${label} pinned predecessor bytes changed`);
+    };
+    assertStable();
+    return Object.freeze({ bytes, assertStable, close: (): void => { if (!closed) { closed = true; closeSync(descriptor); } } });
+  } catch (error) { if (!closed) closeSync(descriptor); throw error; }
 }
 
 function descriptorIdentity(descriptor: number): Readonly<{ devDecimal: string; inoDecimal: string }> {
@@ -1007,7 +1032,7 @@ function validateNormalOperationV1(value: unknown, expected: Readonly<Record<str
   const operation = exactFrozenObserverRecordV1(value, ["schema", "service", "actionId", "authorizationRef", "authorizationHash", "operationRef", "operationHash"], "baseline restart operation");
   const service = operation.service as keyof typeof BASELINE_SERVICE_ACTIONS_V1;
   const core = { schema: operation.schema, service: operation.service, actionId: operation.actionId, authorizationRef: operation.authorizationRef, authorizationHash: operation.authorizationHash };
-  if (operation.schema !== "setfarm.internal-production-baseline-service-restart-operation.v1" || !(service in BASELINE_SERVICE_ACTIONS_V1) || operation.actionId !== BASELINE_SERVICE_ACTIONS_V1[service] || typeof operation.authorizationRef !== "string" || !PAIR_REF.test(operation.authorizationRef) || typeof operation.authorizationHash !== "string" || !SHA256.test(operation.authorizationHash) || !operation.authorizationRef.endsWith(operation.authorizationHash) || operation.operationHash !== sha256(canonical(core)) || operation.operationRef !== `${NORMAL_OPERATION_PREFIX}${operation.operationHash}` || operation.operationRef !== expected.operationRef || operation.operationHash !== expected.operationHash) fail("baseline restart operation is crossed");
+  if (operation.schema !== "setfarm.internal-production-baseline-service-restart-operation.v1" || !(service in BASELINE_SERVICE_ACTIONS_V1) || operation.actionId !== BASELINE_SERVICE_ACTIONS_V1[service] || typeof operation.authorizationHash !== "string" || !SHA256.test(operation.authorizationHash) || operation.authorizationRef !== `${NORMAL_AUTHORIZATION_PREFIX}${operation.authorizationHash}` || operation.operationHash !== sha256(canonical(core)) || operation.operationRef !== `${NORMAL_OPERATION_PREFIX}${operation.operationHash}` || operation.operationRef !== expected.operationRef || operation.operationHash !== expected.operationHash) fail("baseline restart operation is crossed");
   return operation;
 }
 
@@ -1068,7 +1093,7 @@ function resolveRegistrationDirectV1(input: Readonly<Record<string, string>>): I
   const record = exactCanonicalRecord(value, ["schema", "registryOrdinal", "predecessorHeadRef", "predecessorHeadHash", "service", "actionId", "authorizationRef", "authorizationHash", "operationRef", "operationHash", "outboxRef", "outboxHash", "registrationRef", "registrationHash"], "baseline helper registry registration");
   const core = { schema: record.schema, registryOrdinal: record.registryOrdinal, predecessorHeadRef: record.predecessorHeadRef, predecessorHeadHash: record.predecessorHeadHash, service: record.service, actionId: record.actionId, authorizationRef: record.authorizationRef, authorizationHash: record.authorizationHash, operationRef: record.operationRef, operationHash: record.operationHash, outboxRef: record.outboxRef, outboxHash: record.outboxHash };
   const service = record.service as keyof typeof BASELINE_SERVICE_ACTIONS_V1;
-  if (record.schema !== "setfarm.internal-production-baseline-service-restart-helper-registry-registration.v1" || !Number.isSafeInteger(record.registryOrdinal) || (record.registryOrdinal as number) < 1 || !(service in BASELINE_SERVICE_ACTIONS_V1) || record.actionId !== BASELINE_SERVICE_ACTIONS_V1[service] || typeof record.authorizationHash !== "string" || !SHA256.test(record.authorizationHash) || typeof record.authorizationRef !== "string" || !record.authorizationRef.endsWith(record.authorizationHash) || typeof record.operationHash !== "string" || !SHA256.test(record.operationHash) || record.operationRef !== `${NORMAL_OPERATION_PREFIX}${record.operationHash}` || typeof record.outboxHash !== "string" || !SHA256.test(record.outboxHash) || record.outboxRef !== `${NORMAL_OUTBOX_PREFIX}${record.outboxHash}` || record.registrationHash !== sha256(canonical(core)) || record.registrationRef !== `${REGISTRATION_PREFIX}${record.registrationHash}` || record.registrationRef !== input.registrationRef || record.registrationHash !== input.registrationHash || ((record.registryOrdinal === 1) !== (record.predecessorHeadRef === null && record.predecessorHeadHash === null)) || (record.predecessorHeadRef !== null && (typeof record.predecessorHeadHash !== "string" || record.predecessorHeadRef !== `${REGISTRY_HEAD_PREFIX}${record.predecessorHeadHash}`))) fail("baseline helper registry registration is crossed");
+  if (record.schema !== "setfarm.internal-production-baseline-service-restart-helper-registry-registration.v1" || !Number.isSafeInteger(record.registryOrdinal) || (record.registryOrdinal as number) < 1 || !(service in BASELINE_SERVICE_ACTIONS_V1) || record.actionId !== BASELINE_SERVICE_ACTIONS_V1[service] || typeof record.authorizationHash !== "string" || !SHA256.test(record.authorizationHash) || record.authorizationRef !== `${NORMAL_AUTHORIZATION_PREFIX}${record.authorizationHash}` || typeof record.operationHash !== "string" || !SHA256.test(record.operationHash) || record.operationRef !== `${NORMAL_OPERATION_PREFIX}${record.operationHash}` || typeof record.outboxHash !== "string" || !SHA256.test(record.outboxHash) || record.outboxRef !== `${NORMAL_OUTBOX_PREFIX}${record.outboxHash}` || record.registrationHash !== sha256(canonical(core)) || record.registrationRef !== `${REGISTRATION_PREFIX}${record.registrationHash}` || record.registrationRef !== input.registrationRef || record.registrationHash !== input.registrationHash || ((record.registryOrdinal === 1) !== (record.predecessorHeadRef === null && record.predecessorHeadHash === null)) || (record.predecessorHeadRef !== null && (typeof record.predecessorHeadHash !== "string" || record.predecessorHeadRef !== `${REGISTRY_HEAD_PREFIX}${record.predecessorHeadHash}`))) fail("baseline helper registry registration is crossed");
   return orderedFrozenV1({ schema: record.schema, registryOrdinal: record.registryOrdinal, predecessorHeadRef: record.predecessorHeadRef, predecessorHeadHash: record.predecessorHeadHash, service: record.service, actionId: record.actionId, authorizationRef: record.authorizationRef, authorizationHash: record.authorizationHash, operationRef: record.operationRef, operationHash: record.operationHash, outboxRef: record.outboxRef, outboxHash: record.outboxHash, registrationRef: record.registrationRef, registrationHash: record.registrationHash } as unknown as InternalProductionBaselineServiceRestartHelperRegistryRegistrationV1);
 }
 
@@ -1206,20 +1231,24 @@ function replaceRegistryHeadV1(expected: InternalProductionBaselineServiceRestar
   }
   const alreadyVisible = readCurrentRegistryHeadPairV1();
   if (alreadyVisible && canonical(alreadyVisible) === canonical(nextPair)) return;
-  const before = readStableRetirementBytes(target, "baseline helper registry predecessor locator");
-  if (before.toString("utf8") !== `${canonical({ headRef: expected.headRef, headHash: expected.headHash })}\n`) fail("baseline helper registry predecessor locator changed");
   const directoryGuard = ensurePrivateAuthorityDirectoryV1(path.dirname(target));
+  let pinned: ReturnType<typeof pinStableCasPredecessorV1> | null = null;
   const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(16).toString("hex")}.tmp`);
   const bytes = Buffer.from(`${canonical(nextPair)}\n`, "utf8");
   try {
+    pinned = pinStableCasPredecessorV1(target, "baseline helper registry predecessor locator");
+    if (pinned.bytes.toString("utf8") !== `${canonical({ headRef: expected.headRef, headHash: expected.headHash })}\n`) fail("baseline helper registry predecessor locator changed");
     const descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeFileSync(descriptor, bytes); fsyncSync(descriptor); } finally { closeSync(descriptor); }
     directoryGuard.assertStable();
-    if (!readStableRetirementBytes(target, "baseline helper registry predecessor locator recheck").equals(before)) fail("baseline helper registry predecessor locator raced");
+    pinned.assertStable();
+    directoryGuard.assertStable();
+    pinned.assertStable();
     renameSync(temporary, target);
     fsyncParent(target);
     if (!readStableRetirementBytes(target, "baseline helper registry successor locator").equals(bytes)) fail("baseline helper registry successor locator differs");
   } finally {
+    pinned?.close();
     try { unlinkSync(temporary); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
     try { directoryGuard.assertStable(); } finally { directoryGuard.close(); }
   }
@@ -1977,20 +2006,27 @@ function replaceEpochHeadV1(value: Readonly<Record<string, unknown>>): void {
   const guard = ensurePrivateAuthorityDirectoryV1(path.dirname(target));
   const temporary = path.join(path.dirname(target), `.epoch-head.json.${randomBytes(16).toString("hex")}.tmp`);
   const bytes = Buffer.from(`${canonical(value)}\n`, "utf8");
+  let pinned: ReturnType<typeof pinStableCasPredecessorV1> | null = null;
   try {
     const predecessor = assertEpochOneActive();
     if (value.predecessorEpochRef !== predecessor.epochRef || value.predecessorEpochHash !== predecessor.epochHash) fail("replacement restart epoch predecessor is stale");
     guard.assertStable();
+    pinned = pinStableCasPredecessorV1(target, "restart epoch CAS predecessor");
+    if (!pinned.bytes.equals(Buffer.from(`${canonical(predecessor)}\n`, "utf8"))) fail("restart epoch pinned predecessor differs");
     const descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeFileSync(descriptor, bytes); fsyncSync(descriptor); } finally { closeSync(descriptor); }
     guard.assertStable();
     const current = assertEpochOneActive();
     if (current.epochRef !== predecessor.epochRef || current.epochHash !== predecessor.epochHash) fail("restart epoch changed before visibility CAS");
+    pinned.assertStable();
+    guard.assertStable();
+    pinned.assertStable();
     renameSync(temporary, target);
     fsyncParent(target);
     if (!readStableRetirementBytes(target, "replacement restart epoch").equals(bytes)) fail("replacement restart epoch differs");
     guard.assertStable();
   } finally {
+    pinned?.close();
     try { unlinkSync(temporary); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
     try { guard.assertStable(); } finally { guard.close(); }
   }
@@ -2038,6 +2074,8 @@ export async function prepareInternalProductionPhysicalServiceRestartAuthorityCu
   const lease = await acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
   try {
     const epoch = assertEpochOneActive();
+    const lockedReadiness = await observeCompleteCodeOwnedCutoverReadinessV1();
+    if (canonical(lockedReadiness) !== canonical(readiness)) fail("cutover readiness changed before pending mutation");
     const helperCensus = await observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
     if (helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0 || helperCensus.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash) fail("cutover guard helper journal census is stale or nonterminal");
     await observeEmptyBaselineNormalAuthoritySetV1();

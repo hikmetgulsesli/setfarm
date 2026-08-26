@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -92,6 +93,15 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
 
 test("P4 restart sequence resumes every durable prefix", async () => {
   const source = readFileSync(sourcePath, "utf8");
+  const compositePublicationAnchor = "if (!storedAuthority) publish(operationLocatorPath(intentKind, ordinal), authorityPair);";
+  const crashableSource = source.replace(compositePublicationAnchor, `${compositePublicationAnchor}\n      if ((globalThis as Record<string, unknown>).__p4CrashAfterComposite && !(globalThis as Record<string, unknown>).__p4CompositeCrashed) { (globalThis as Record<string, unknown>).__p4CompositeCrashed = true; throw new Error("P4_AFTER_COMPOSITE_CRASH"); }`);
+  assert.notEqual(crashableSource, source, "composite crash fixture instruments the exact post-publication boundary");
+  const lockPublicationAnchor = "writeFileSync(descriptor, bytes); fsyncSync(descriptor); directoryGuard.assertStable();";
+  const liveWaitAnchor = "if (publication === \"in-progress\") { await new Promise<void>((resolve) => setTimeout(resolve, 5)); continue; }";
+  const instrumentedSource = crashableSource
+    .replace(lockPublicationAnchor, `${lockPublicationAnchor}\n      if ((globalThis as Record<string, unknown>).__p4LockPublishBarrier && !(globalThis as Record<string, unknown>).__p4LockPublisherPaused) { (globalThis as Record<string, unknown>).__p4LockPublisherPaused = true; await new Promise<void>((resolve) => setTimeout(resolve, 75)); }`)
+    .replace(liveWaitAnchor, `if (publication === "in-progress") { (globalThis as Record<string, unknown>).__p4LiveLockWaits = Number((globalThis as Record<string, unknown>).__p4LiveLockWaits ?? 0) + 1; await new Promise<void>((resolve) => setTimeout(resolve, 5)); continue; }`);
+  assert.notEqual(instrumentedSource, crashableSource, "lock fixture instruments the exact temp-fsync/pre-link and live-wait boundaries");
   assert.doesNotMatch(source, /^import .*baseline-restart-authority-retirement-v1/m, "sequence must not create an eager retirement-module cycle");
   assert.match(source, /await import\("\.\/baseline-restart-authority-retirement-v1\.js"\)/, "transition authority is loaded only at the function-local intent-birth boundary");
   assert.doesNotMatch(source, /invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1/, "sequence never bypasses Task12's composite restart authority");
@@ -106,7 +116,7 @@ test("P4 restart sequence resumes every durable prefix", async () => {
       const internal = path.join(fixture, "src/internal-production");
       mkdirSync(internal, { recursive: true });
       const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
-      writeFileSync(modulePath, source);
+      writeFileSync(modulePath, instrumentedSource);
       const v31Hash = "1".repeat(64);
       const pendingHash = "2".repeat(64);
       const zeroHash = "3".repeat(64);
@@ -151,14 +161,14 @@ export async function prepareInternalProductionBaselineServiceRestartV1(input){c
 export async function resolveInternalProductionBaselineServiceRestartAuthorizationV1(input){const value=authorizations.get(input.authorizationHash);if(!value||value.authorizationRef!==input.authorizationRef)throw new Error("crossed fixture authorization pair");return value}
 export async function restartInternalProductionBaselineServiceV1(input){const authorization=authorizations.get(input.authorizationHash);if(!authorization||authorization.authorizationRef!==input.authorizationRef)throw new Error("crossed fixture authorization");if(unknownSettlements.has(input.authorizationHash)){if(!globalThis.__p4SettleUnknown)throw new Error("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");unknownSettlements.delete(input.authorizationHash)}else{globalThis.__p4SequenceCalls=(globalThis.__p4SequenceCalls??0)+1;globalThis.__p4SequenceActions=[...(globalThis.__p4SequenceActions??[]),actions[authorization.service]];if(globalThis.__p4SequenceFailAt===globalThis.__p4SequenceCalls&&!globalThis.__p4SequenceFailed){globalThis.__p4SequenceFailed=true;unknownSettlements.add(input.authorizationHash);throw new Error("HELPER_DISPATCH_SETTLEMENT_UNKNOWN")}}const before=globalThis.__p4RuntimeProjection??initialProjection();const changedKey=authorization.service==="mission-control"?"missionControlServiceIdentityHash":authorization.service==="setfarm-dashboard"?"dashboardServiceIdentityHash":"spawnerServiceIdentityHash";const afterBody={...before,[changedKey]:sha256(authorization.service+String(globalThis.__p4SequenceCalls))};delete afterBody.projectionHash;const after=Object.freeze({...afterBody,projectionHash:sha256(canonical(afterBody))});globalThis.__p4RuntimeProjection=after;const body={schema:"setfarm.internal-production-baseline-service-restart-authority.v1",service:authorization.service,actionId:actions[authorization.service],operationId:sha256(authorization.authorizationHash),migrationReceiptRef:migrationReceipt.migrationReceiptRef,migrationReceiptHash:migrationReceipt.migrationReceiptHash,migrationSchemaProjectionHash:migrationReceipt.schemaProjectionHash,before,after,postRuntimeSourceProjectionHash:after.projectionHash,restart:{disposition:"performed",reservationHash:${JSON.stringify("1".repeat(64))},operationHash:${JSON.stringify("2".repeat(64))},outboxHash:${JSON.stringify("3".repeat(64))},helperClaimHash:${JSON.stringify("4".repeat(64))},helperProcessIdentityHash:${JSON.stringify("5".repeat(64))},startupMarkerHash:${JSON.stringify("6".repeat(64))},completionSettlementHash:${JSON.stringify("7".repeat(64))},beforeGenerationHash:${JSON.stringify("8".repeat(64))},afterGenerationHash:${JSON.stringify("9".repeat(64))},beforeServiceAuthorityHash:${JSON.stringify("a".repeat(64))},afterServiceAuthorityHash:${JSON.stringify("b".repeat(64))},dispatchReceiptHash:${JSON.stringify("c".repeat(64))}},guardKind:"complete-zero-owner",zeroOwnerGuardRef:${JSON.stringify(refFor("complete-zero-owner-observation", "d".repeat(64)))},zeroOwnerGuardHash:${JSON.stringify("d".repeat(64))},cleanup:{guardConsumed:true,restartSettled:true,observedGlobalZero:true,completeZeroOwnerCensusHash:${JSON.stringify(zeroHash)}}};const receiptHash=sha256(canonical(body));const receiptRef=\`setfarm://internal-production/baseline/service-restarts/\${receiptHash}\`;const authority=Object.freeze({...body,receiptRef,receiptHash});authorities.set(receiptHash,authority);return Object.freeze({receiptRef,receiptHash})}
 export async function resolveInternalProductionBaselineServiceRestartAuthorityV1(input){const value=authorities.get(input.receiptHash);if(!value||value.receiptRef!==input.receiptRef)throw new Error("crossed fixture service restart authority");return value}
-`.replace("export async function prepareInternalProductionBaselineServiceRestartV1(input){", "export async function prepareInternalProductionBaselineServiceRestartV1(input){globalThis.__p4PrepareCalls=(globalThis.__p4PrepareCalls??0)+1;if(globalThis.__p4SequenceLeaseHeld)throw new Error('nested transition lease');").replace("export async function restartInternalProductionBaselineServiceV1(input){", "export async function restartInternalProductionBaselineServiceV1(input){if(globalThis.__p4SequenceLeaseHeld)throw new Error('nested transition lease');"));
+`.replace("export async function prepareInternalProductionBaselineServiceRestartV1(input){", "export async function prepareInternalProductionBaselineServiceRestartV1(input){globalThis.__p4PrepareCalls=(globalThis.__p4PrepareCalls??0)+1;if(globalThis.__p4RaceBarrier)await new Promise((resolve)=>setTimeout(resolve,75));if(globalThis.__p4SequenceLeaseHeld)throw new Error('nested transition lease');").replace("export async function restartInternalProductionBaselineServiceV1(input){", "export async function restartInternalProductionBaselineServiceV1(input){if(globalThis.__p4SequenceLeaseHeld)throw new Error('nested transition lease');"));
       writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), `
 import {createHash} from "node:crypto";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import path from "node:path";
 const canonical=(value)=>value===null||typeof value!=="object"?JSON.stringify(value):Array.isArray(value)?\`[\${value.map(canonical).join(",")}]\`:\`{\${Object.keys(value).sort().map((key)=>\`\${JSON.stringify(key)}:\${canonical(value[key])}\`).join(",")}}\`;
 const sha256=(value)=>createHash("sha256").update(value).digest("hex");
-export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){if(globalThis.__p4SequenceLeaseHeld)throw new Error("nested transition lease");globalThis.__p4SequenceLeaseHeld=true;globalThis.__p4SequenceLeaseAcquires=(globalThis.__p4SequenceLeaseAcquires??0)+1;return Object.freeze({schema:"fixture-lease"})}
+export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){while(globalThis.__p4SequenceLeaseHeld)await new Promise((resolve)=>setTimeout(resolve,5));globalThis.__p4SequenceLeaseHeld=true;globalThis.__p4SequenceLeaseAcquires=(globalThis.__p4SequenceLeaseAcquires??0)+1;return Object.freeze({schema:"fixture-lease"})}
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(_lease){if(!globalThis.__p4SequenceLeaseHeld)throw new Error("lease not held");globalThis.__p4SequenceLeaseHeld=false;globalThis.__p4SequenceLeaseReleases=(globalThis.__p4SequenceLeaseReleases??0)+1;if(globalThis.__p4ReleaseFail){globalThis.__p4ReleaseFail=false;throw new Error("P4_SEQUENCE_RELEASE_FAILURE")}}
 export async function observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1(){return Object.freeze({state:globalThis.__p4CutoverState??"baseline-a-active",operation:null,cutover:null})}
 export async function invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(_lease,input){
@@ -193,6 +203,20 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
         const missingPortModule = await import(`${pathToFileURL(missingSequencePath).href}?missing-normal=${Date.now()}`);
         await assert.rejects(missingPortModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind: "live-rebind" }), /normal baseline restart composite authority is unavailable:restart/);
         assert.equal(existsSync(path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1")), false, "missing future Task12 port must refuse before the first sequence byte");
+
+        const childIntentHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-intent.v1", intentKind }));
+        const childIntentDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1/intents", childIntentHash);
+        mkdirSync(childIntentDirectory, { recursive: true, mode: 0o700 });
+        const childLock = path.join(childIntentDirectory, "00-ordinal-transition.lock");
+        const childTemporary = path.join(childIntentDirectory, `.00-ordinal-transition.lock.${"b".repeat(32)}.tmp`);
+        const childStaleBody = { schema: "setfarm.internal-production-baseline-restart-sequence-ordinal-transition-lock.v1", intentKind, ordinal: 0, pid: 99_999, processIdentityHash: "e".repeat(64), nonce: "f".repeat(64) };
+        writeFileSync(childTemporary, `${canonical(childStaleBody)}\n`, { mode: 0o600 }); linkSync(childTemporary, childLock);
+        const childScript = `globalThis.__p4SequenceCalls=0;globalThis.__p4PrepareCalls=0;globalThis.__p4SequenceFailAt=1;globalThis.__p4SequenceFailed=false;const module=await import(${JSON.stringify(`${pathToFileURL(modulePath).href}?fresh-lock-process=${Date.now()}`)});try{await module.resumeInternalProductionBaselineRestartSequenceV1({intentKind:${JSON.stringify(intentKind)}});throw new Error("expected settlement uncertainty")}catch(error){if(!(error instanceof Error)||!error.message.includes("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"))throw error}`;
+        const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "--eval", childScript], { cwd: fixture, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, encoding: "utf8", timeout: 20_000, maxBuffer: 1_048_576, shell: false });
+        assert.equal(child.status, 0, `fresh process must recover the exact post-link lock crash: ${child.stderr}`);
+        assert.equal(existsSync(childLock), false, "fresh-process recovery releases its replacement ordinal lock");
+        assert.equal(existsSync(childTemporary), false, "fresh-process recovery removes the exact linked crash temporary");
+        rmSync(path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1"), { recursive: true, force: true });
       }
       const fixtureModule = await import(`${pathToFileURL(modulePath).href}?prefix=${failAt}-${Date.now()}`);
       (globalThis as Record<string, unknown>).__p4CutoverState = "pending-input";
@@ -215,8 +239,62 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
         await assert.rejects(fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /reviewed D.*not loaded/i, "D startup-hook load must refuse a loaded Mission Control source different from the reviewed handoff");
         assert.equal((globalThis as Record<string, unknown>).__p4SequenceCalls, 0, "reviewed-D source drift must precede restart authorization/dispatch");
         Reflect.deleteProperty(globalThis, "__p4RuntimeProjection");
+
+        const liveLockModulePath = path.join(internal, "baseline-service-restart-sequence-live-temp-v1.ts");
+        const shortWaitSource = crashableSource.replace("attempt < 1_000", "attempt < 3");
+        assert.notEqual(shortWaitSource, crashableSource, "live-temp fixture only bounds the copied lock wait");
+        writeFileSync(liveLockModulePath, shortWaitSource);
+        const liveIntentHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-intent.v1", intentKind }));
+        const liveIntentDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1/intents", liveIntentHash);
+        const liveTemporary = path.join(liveIntentDirectory, `.00-ordinal-transition.lock.${"d".repeat(32)}.tmp`);
+        const sleeper = spawn(process.execPath, ["--eval", "setTimeout(()=>{},20000)"], { stdio: "ignore" });
+        try {
+          const ps = spawnSync("/bin/ps", ["-p", String(sleeper.pid), "-o", "lstart=,command="], { env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, encoding: "utf8", shell: false });
+          assert.equal(ps.status, 0, ps.stderr);
+          const liveIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-lock-process-identity.v1", pid: sleeper.pid, psIdentity: ps.stdout.trim() }));
+          const liveBody = { schema: "setfarm.internal-production-baseline-restart-sequence-ordinal-transition-lock.v1", intentKind, ordinal: 0, pid: sleeper.pid, processIdentityHash: liveIdentityHash, nonce: "9".repeat(64) };
+          writeFileSync(liveTemporary, `${canonical(liveBody)}\n`, { mode: 0o600 });
+          const liveLockModule = await import(`${pathToFileURL(liveLockModulePath).href}?live-temp=${Date.now()}`);
+          await assert.rejects(liveLockModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /ordinal transition lock is unavailable/, "a live publisher's temp-only lock is never promoted or reclaimed by another resumer");
+          assert.equal(existsSync(path.join(liveIntentDirectory, "00-ordinal-transition.lock")), false, "live temp-only publication remains pre-visibility");
+          assert.equal(existsSync(liveTemporary), true, "live publisher retains sole ownership of its temporary inode");
+          assert.equal((globalThis as Record<string, unknown>).__p4PrepareCalls, 0, "live temp-only refusal precedes Task12 prepare");
+        } finally {
+          sleeper.kill("SIGTERM");
+          await new Promise<void>((resolve) => sleeper.once("exit", () => resolve()));
+          rmSync(liveTemporary, { force: true });
+        }
       }
-      await assert.rejects(fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+      const ordinalIntentHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-intent.v1", intentKind }));
+      const ordinalDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1/intents", ordinalIntentHash);
+      mkdirSync(ordinalDirectory, { recursive: true, mode: 0o700 });
+      const staleLock = path.join(ordinalDirectory, "00-ordinal-transition.lock");
+      const staleTemporary = path.join(ordinalDirectory, `.00-ordinal-transition.lock.${"c".repeat(32)}.tmp`);
+      const staleBody = { schema: "setfarm.internal-production-baseline-restart-sequence-ordinal-transition-lock.v1", intentKind, ordinal: 0, pid: 99_999, processIdentityHash: "e".repeat(64), nonce: "f".repeat(64) };
+      const staleBytes = `${canonical(staleBody)}\n`;
+      if (failAt === 1) {
+        writeFileSync(staleTemporary, staleBytes, { mode: 0o600 }); linkSync(staleTemporary, staleLock);
+        assert.equal(existsSync(staleLock), true, "post-link/pre-unlink crash leaves the fixed lock visible");
+        assert.equal(existsSync(staleTemporary), true, "post-link/pre-unlink crash retains the second hard link");
+      } else if (failAt === 2) {
+        writeFileSync(staleTemporary, staleBytes, { mode: 0o600 });
+        assert.equal(existsSync(staleLock), false, "temp-only crash precedes fixed lock visibility");
+      } else {
+        writeFileSync(staleLock, staleBytes, { mode: 0o600 });
+        writeFileSync(staleTemporary, `${canonical({ ...staleBody, nonce: "a".repeat(64) })}\n`, { mode: 0o600 });
+        assert.notEqual(readFileSync(staleLock).toString("utf8"), readFileSync(staleTemporary).toString("utf8"), "EEXIST crash fixture retains a distinct losing inode/body");
+      }
+      if (failAt === 1) {
+        (globalThis as Record<string, unknown>).__p4RaceBarrier = true;
+        (globalThis as Record<string, unknown>).__p4LockPublishBarrier = true;
+        const raced = await Promise.allSettled([fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind })]);
+        assert.equal(raced.every((result) => result.status === "rejected" && result.reason instanceof Error && /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/.test(result.reason.message)), true, raced.map((result) => result.status === "rejected" ? String(result.reason) : "fulfilled").join(" | "));
+        assert.equal((globalThis as Record<string, unknown>).__p4PrepareCalls, 1, "two ordinal resumptions prepare exactly one authorization");
+        assert.equal((globalThis as Record<string, unknown>).__p4SequenceCalls, 1, "two ordinal resumptions physically invoke the restart exactly once");
+        assert.equal(Number((globalThis as Record<string, unknown>).__p4LiveLockWaits) >= 1, true, "the losing resumer observes the winner's live temp-only publication and waits without promoting it");
+        Reflect.deleteProperty(globalThis, "__p4RaceBarrier");
+        Reflect.deleteProperty(globalThis, "__p4LockPublishBarrier");
+      } else await assert.rejects(fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
       assert.equal(Number((globalThis as Record<string, unknown>).__p4SequenceLeaseAcquires), Number((globalThis as Record<string, unknown>).__p4SequenceLeaseReleases), "every sequence lock attempt completes release before Task12 work");
       assert.equal((globalThis as Record<string, unknown>).__p4SequenceLeaseHeld, false, "Task12 restart work runs only after the sequence lease is released");
       const intentHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-intent.v1", intentKind }));
@@ -233,7 +311,17 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
       await assert.rejects(fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/, "durable journal without settlement must remain blocked");
       assert.equal((globalThis as Record<string, unknown>).__p4SequenceCalls, dispatchCountAtUnknown, "unknown settlement replay must not physically redispatch");
       (globalThis as Record<string, unknown>).__p4SettleUnknown = true;
-      const pair = await fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind });
+      let completingModule = fixtureModule;
+      if (failAt === 1) {
+        (globalThis as Record<string, unknown>).__p4CrashAfterComposite = true;
+        await assert.rejects(fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), /P4_AFTER_COMPOSITE_CRASH/, "a crash after the durable composite locator precedes advance publication");
+        const compositeLocator = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1/intents", intentHash, "00-service-operation.pair.json");
+        const advanceLocator = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-sequence-v1/intents", intentHash, "00-service-advance.pair.json");
+        assert.equal(existsSync(compositeLocator), true, "the composite pair is durable at the crash boundary");
+        assert.equal(existsSync(advanceLocator), false, "the advance is absent at the crash boundary");
+        completingModule = await import(`${pathToFileURL(modulePath).href}?post-composite-reentry=${Date.now()}`);
+      }
+      const pair = await completingModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind });
       const receipt = await fixtureModule.resolveInternalProductionBaselineRestartSequenceReceiptV1(pair);
       assert.equal(Number((globalThis as Record<string, unknown>).__p4CompleteZeroResolutions) >= 1, true, "receipt resolution must reopen the exact final complete-zero observation");
       assert.equal(Number((globalThis as Record<string, unknown>).__p4TerminalObservations) >= 4, true, "status, mutation, and receipt resolution must freshly reopen terminal migration authority");
@@ -246,12 +334,14 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
       ]);
       assert.equal(Object.isFrozen(receipt), true);
       assert.equal((globalThis as Record<string, unknown>).__p4SequenceCalls, 3, "settlement adoption reaches completion with exactly one physical dispatch per ordinal");
+      if (failAt === 1) assert.equal(((globalThis as Record<string, unknown>).__p4SequenceActions as string[]).filter((action) => action === "a-restart-service-setfarm-spawner-v1").length, 1, "durable composite recovery never repeats the first physical restart");
       const callsAfterCompletion = (globalThis as Record<string, unknown>).__p4SequenceCalls;
       assert.deepEqual(await fixtureModule.resumeInternalProductionBaselineRestartSequenceV1({ intentKind }), pair);
       assert.equal((globalThis as Record<string, unknown>).__p4SequenceCalls, callsAfterCompletion, "completed replay must not dispatch");
     } finally {
       delete (globalThis as Record<string, unknown>).__p4SequenceCalls;
       delete (globalThis as Record<string, unknown>).__p4PrepareCalls;
+      delete (globalThis as Record<string, unknown>).__p4RaceBarrier;
       delete (globalThis as Record<string, unknown>).__p4SequenceActions;
       delete (globalThis as Record<string, unknown>).__p4SequenceFailAt;
       delete (globalThis as Record<string, unknown>).__p4SequenceFailed;
@@ -266,6 +356,11 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
       delete (globalThis as Record<string, unknown>).__p4SequenceLeaseAcquires;
       delete (globalThis as Record<string, unknown>).__p4SequenceLeaseReleases;
       delete (globalThis as Record<string, unknown>).__p4ReleaseFail;
+      delete (globalThis as Record<string, unknown>).__p4CrashAfterComposite;
+      delete (globalThis as Record<string, unknown>).__p4CompositeCrashed;
+      delete (globalThis as Record<string, unknown>).__p4LockPublishBarrier;
+      delete (globalThis as Record<string, unknown>).__p4LockPublisherPaused;
+      delete (globalThis as Record<string, unknown>).__p4LiveLockWaits;
       rmSync(fixture, { recursive: true, force: true });
     }
   }

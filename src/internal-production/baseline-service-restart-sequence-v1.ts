@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readSync,
   readFileSync,
   readdirSync,
   unlinkSync,
@@ -331,6 +332,144 @@ function authorizationLocatorPath(intentKind: InternalProductionBaselineRestartS
   return path.join(intentDirectory(intentKind), `${String(ordinal).padStart(2, "0")}-service-authorization.pair.json`);
 }
 
+function operationLocatorPath(intentKind: InternalProductionBaselineRestartSequenceIntentKindV1, ordinal: number): string {
+  return path.join(intentDirectory(intentKind), `${String(ordinal).padStart(2, "0")}-service-operation.pair.json`);
+}
+
+type SequenceOrdinalLeaseV1 = Readonly<{ descriptor: number; file: string; dev: bigint; ino: bigint; bytes: Buffer; directoryGuard: DirectoryGuardV1 }>;
+
+function observeSequenceLockProcessIdentityV1(pid: number): string | null {
+  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=,command="], { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), encoding: "buffer", maxBuffer: 65_536, timeout: 2_000, windowsHide: true, shell: false });
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0); const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.alloc(0);
+  if (result.status === 1 && stdout.length === 0 && stderr.length === 0) return null;
+  if (result.status !== 0 || result.signal !== null || stderr.length !== 0 || stdout.length < 1 || stdout.length > 65_536 || stdout.includes(0) || stdout.includes(13)) fail("sequence ordinal lock process identity observation failed");
+  const rows = stdout.toString("utf8").split("\n").map((row) => row.trim()).filter(Boolean);
+  if (rows.length !== 1) fail("sequence ordinal lock process identity is ambiguous");
+  return sha256(canonical({ schema: "setfarm.internal-production-baseline-restart-sequence-lock-process-identity.v1", pid, psIdentity: rows[0] }));
+}
+
+function validateSequenceOrdinalLockBytesV1(bytes: Buffer, intentKind: InternalProductionBaselineRestartSequenceIntentKindV1, ordinal: number, label: string): Readonly<Record<string, unknown>> {
+  let parsed: unknown; try { parsed = JSON.parse(bytes.toString("utf8")); } catch { return fail(`${label} is not JSON`); }
+  const lock = exactRecord(parsed, ["intentKind", "nonce", "ordinal", "pid", "processIdentityHash", "schema"], label);
+  if (`${canonical(lock)}\n` !== bytes.toString("utf8") || lock.schema !== "setfarm.internal-production-baseline-restart-sequence-ordinal-transition-lock.v1" || lock.intentKind !== intentKind || lock.ordinal !== ordinal || !Number.isSafeInteger(lock.pid) || (lock.pid as number) < 1 || typeof lock.processIdentityHash !== "string" || !SHA256.test(lock.processIdentityHash) || typeof lock.nonce !== "string" || !SHA256.test(lock.nonce)) fail(`${label} is crossed`);
+  return lock;
+}
+
+function sequenceOrdinalLockOwnerIsLiveV1(lock: Readonly<Record<string, unknown>>): boolean {
+  return observeSequenceLockProcessIdentityV1(lock.pid as number) === lock.processIdentityHash;
+}
+
+function normalizeSequenceOrdinalLockPublicationV1(file: string, intentKind: InternalProductionBaselineRestartSequenceIntentKindV1, ordinal: number, directoryGuard: DirectoryGuardV1): "absent" | "in-progress" | "published" {
+  directoryGuard.assertStable();
+  const directory = path.dirname(file); const basename = path.basename(file); const escaped = basename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const candidates = readdirSync(directory).filter((name) => name.startsWith(`.${basename}.`));
+  if (candidates.length > 1 || candidates.some((name) => !new RegExp(`^\\.${escaped}\\.[a-f0-9]{32}\\.tmp$`).test(name))) fail("sequence ordinal lock recovery inventory is invalid");
+  const temporary = candidates.length === 1 ? path.join(directory, candidates[0]!) : null;
+  let finalPresent = true; try { lstatSync(file); } catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") finalPresent = false; else throw error; }
+  if (!finalPresent && !temporary) return "absent";
+  if (!finalPresent && temporary) {
+    const descriptor = openSync(temporary, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stats = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(temporary, { bigint: true }); const bytes = readFileSync(descriptor);
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || stats.dev !== atPath.dev || stats.ino !== atPath.ino || stats.size !== BigInt(bytes.length) || bytes.length < 1 || bytes.length > 65_536) fail("sequence ordinal lock temporary identity is invalid");
+      const lock = validateSequenceOrdinalLockBytesV1(bytes, intentKind, ordinal, "sequence ordinal lock temporary");
+      if (sequenceOrdinalLockOwnerIsLiveV1(lock)) return "in-progress";
+      directoryGuard.assertStable(); linkSync(temporary, file); fsyncParent(file);
+    } finally { closeSync(descriptor); }
+    finalPresent = true;
+  }
+  if (temporary) {
+    const finalDescriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const temporaryDescriptor = openSync(temporary, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const finalStats = fstatSync(finalDescriptor, { bigint: true }); const temporaryStats = fstatSync(temporaryDescriptor, { bigint: true });
+      const finalBytes = readFileSync(finalDescriptor); const temporaryBytes = readFileSync(temporaryDescriptor);
+      const finalLock = validateSequenceOrdinalLockBytesV1(finalBytes, intentKind, ordinal, "sequence ordinal lock final");
+      const temporaryLock = validateSequenceOrdinalLockBytesV1(temporaryBytes, intentKind, ordinal, "sequence ordinal lock recovery temporary");
+      const linked = finalStats.dev === temporaryStats.dev && finalStats.ino === temporaryStats.ino && finalStats.nlink === 2n && temporaryStats.nlink === 2n && finalBytes.equals(temporaryBytes);
+      const collision = finalStats.dev === temporaryStats.dev && finalStats.ino !== temporaryStats.ino && finalStats.nlink === 1n && temporaryStats.nlink === 1n;
+      if (!finalStats.isFile() || !temporaryStats.isFile() || (finalStats.mode & 0o7777n) !== 0o600n || (temporaryStats.mode & 0o7777n) !== 0o600n || (!linked && !collision)) fail("sequence ordinal lock recovery publication is crossed");
+      if ((linked && sequenceOrdinalLockOwnerIsLiveV1(finalLock)) || (collision && sequenceOrdinalLockOwnerIsLiveV1(temporaryLock))) return "in-progress";
+      const finalPath = lstatSync(file, { bigint: true }); const temporaryPath = lstatSync(temporary, { bigint: true });
+      if (finalPath.dev !== finalStats.dev || finalPath.ino !== finalStats.ino || temporaryPath.dev !== temporaryStats.dev || temporaryPath.ino !== temporaryStats.ino) fail("sequence ordinal lock recovery publication changed");
+      directoryGuard.assertStable(); unlinkSync(temporary); fsyncParent(file); directoryGuard.assertStable();
+    } finally { closeSync(temporaryDescriptor); closeSync(finalDescriptor); }
+  }
+  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stats = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(file, { bigint: true }); const bytes = readFileSync(descriptor);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || stats.dev !== atPath.dev || stats.ino !== atPath.ino || stats.size !== BigInt(bytes.length)) fail("sequence ordinal lock normalized publication is invalid");
+    validateSequenceOrdinalLockBytesV1(bytes, intentKind, ordinal, "sequence ordinal lock normalized publication");
+  } finally { closeSync(descriptor); }
+  return "published";
+}
+
+function reclaimDeadSequenceOrdinalLeaseV1(file: string, intentKind: InternalProductionBaselineRestartSequenceIntentKindV1, ordinal: number, directoryGuard: DirectoryGuardV1): boolean {
+  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const before = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(file, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.dev !== atPath.dev || before.ino !== atPath.ino || before.size < 1n || before.size > 65_536n) fail("sequence ordinal stale lock identity is invalid");
+    const bytes = Buffer.alloc(Number(before.size)); let offset = 0; while (offset < bytes.length) { const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset); if (count < 1) fail("sequence ordinal stale lock is truncated"); offset += count; }
+    const lock = validateSequenceOrdinalLockBytesV1(bytes, intentKind, ordinal, "sequence ordinal stale lock");
+    if (observeSequenceLockProcessIdentityV1(lock.pid as number) === lock.processIdentityHash) return false;
+    directoryGuard.assertStable();
+    const after = fstatSync(descriptor, { bigint: true }); const pathAfter = lstatSync(file, { bigint: true });
+    if (after.dev !== before.dev || after.ino !== before.ino || after.mode !== before.mode || after.nlink !== 1n || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs || pathAfter.dev !== before.dev || pathAfter.ino !== before.ino || pathAfter.nlink !== 1n || !readFileSync(file).equals(bytes)) fail("sequence ordinal stale lock changed before reclaim");
+    unlinkSync(file); fsyncParent(file); directoryGuard.assertStable(); return true;
+  } finally { closeSync(descriptor); }
+}
+
+async function acquireSequenceOrdinalLeaseV1(intentKind: InternalProductionBaselineRestartSequenceIntentKindV1, ordinal: number): Promise<SequenceOrdinalLeaseV1> {
+  const directory = intentDirectory(intentKind);
+  const directoryGuard = ensureDirectory(directory);
+  const file = path.join(directory, `${String(ordinal).padStart(2, "0")}-ordinal-transition.lock`);
+  try { for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const publication = normalizeSequenceOrdinalLockPublicationV1(file, intentKind, ordinal, directoryGuard);
+    if (publication === "in-progress") { await new Promise<void>((resolve) => setTimeout(resolve, 5)); continue; }
+    if (publication === "published") {
+      if (reclaimDeadSequenceOrdinalLeaseV1(file, intentKind, ordinal, directoryGuard)) continue;
+      await new Promise<void>((resolve) => setTimeout(resolve, 5)); continue;
+    }
+    const nonce = randomBytes(32).toString("hex");
+    const processIdentityHash = observeSequenceLockProcessIdentityV1(process.pid) ?? fail("current sequence ordinal lock process is absent");
+    const body = { schema: "setfarm.internal-production-baseline-restart-sequence-ordinal-transition-lock.v1", intentKind, ordinal, pid: process.pid, processIdentityHash, nonce };
+    const bytes = Buffer.from(`${canonical(body)}\n`, "utf8");
+    const temporary = path.join(directory, `.${path.basename(file)}.${randomBytes(16).toString("hex")}.tmp`);
+    const descriptor = openSync(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    let linked = false;
+    let descriptorOpen = true;
+    try {
+      writeFileSync(descriptor, bytes); fsyncSync(descriptor); directoryGuard.assertStable();
+      try { linkSync(temporary, file); linked = true; }
+      catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+        closeSync(descriptor); descriptorOpen = false; unlinkSync(temporary); fsyncParent(temporary);
+        continue;
+      }
+      fsyncParent(file); unlinkSync(temporary); fsyncParent(temporary); directoryGuard.assertStable();
+      const stats = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(file, { bigint: true });
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || stats.dev !== atPath.dev || stats.ino !== atPath.ino || stats.size !== BigInt(bytes.length)) fail("sequence ordinal transition lock identity is invalid");
+      return Object.freeze({ descriptor, file, dev: stats.dev, ino: stats.ino, bytes, directoryGuard });
+    } catch (error) {
+      if (!descriptorOpen) throw error;
+      const held = fstatSync(descriptor, { bigint: true });
+      if (linked) { try { const atPath = lstatSync(file, { bigint: true }); if (atPath.dev === held.dev && atPath.ino === held.ino) { unlinkSync(file); fsyncParent(file); } } catch (cleanupError) { if (!(cleanupError instanceof Error) || !("code" in cleanupError) || cleanupError.code !== "ENOENT") throw cleanupError; } }
+      try { const atTemporary = lstatSync(temporary, { bigint: true }); if (atTemporary.dev === held.dev && atTemporary.ino === held.ino) { unlinkSync(temporary); fsyncParent(temporary); } } catch (cleanupError) { if (!(cleanupError instanceof Error) || !("code" in cleanupError) || cleanupError.code !== "ENOENT") throw cleanupError; }
+      closeSync(descriptor); descriptorOpen = false; throw error;
+    }
+  } return fail("sequence ordinal transition lock is unavailable"); }
+  catch (error) { directoryGuard.close(); throw error; }
+}
+
+function releaseSequenceOrdinalLeaseV1(lease: SequenceOrdinalLeaseV1): void {
+  try {
+    const stats = fstatSync(lease.descriptor, { bigint: true }); const atPath = lstatSync(lease.file, { bigint: true });
+    const observed = Buffer.alloc(lease.bytes.length); let offset = 0; while (offset < observed.length) { const count = readSync(lease.descriptor, observed, offset, observed.length - offset, offset); if (count < 1) fail("sequence ordinal transition lock bytes are truncated"); offset += count; }
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || (stats.mode & 0o7777n) !== 0o600n || stats.dev !== lease.dev || stats.ino !== lease.ino || atPath.dev !== lease.dev || atPath.ino !== lease.ino || !observed.equals(lease.bytes)) fail("sequence ordinal transition lock changed before release");
+    lease.directoryGuard.assertStable(); unlinkSync(lease.file); fsyncParent(lease.file); lease.directoryGuard.assertStable();
+  } finally { closeSync(lease.descriptor); lease.directoryGuard.close(); }
+}
+
 function receiptLocatorPath(intentKind: InternalProductionBaselineRestartSequenceIntentKindV1): string {
   return path.join(intentDirectory(intentKind), "03-sequence-receipt.pair.json");
 }
@@ -618,6 +757,8 @@ async function resolveAdvance(intentKind: InternalProductionBaselineRestartSeque
   const persistedAuthorizationPair = optionalRead(authorizationLocatorPath(intentKind, ordinal), `authorization locator ${ordinal}`);
   if (!persistedAuthorizationPair || canonical(storedPair(persistedAuthorizationPair, "authorizationRef", "authorizationHash", NORMAL_AUTHORIZATION_PREFIX)) !== canonical(authorizationPair)) fail("advance authorization locator is crossed");
   const authorityPair = pair({ receiptRef: advance.authorityRef, receiptHash: advance.authorityHash }, "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX) as Readonly<{ receiptRef: string; receiptHash: string }>;
+  const persistedAuthorityPair = optionalRead(operationLocatorPath(intentKind, ordinal), `composite authority locator ${ordinal}`);
+  if (!persistedAuthorityPair || canonical(storedPair(persistedAuthorityPair, "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX)) !== canonical(authorityPair)) fail("advance composite authority locator is crossed");
   const ports = await normalRestartPortsV1();
   const authorization = validateAuthorizationV1(await ports.resolveAuthorization(authorizationPair), authorizationPair, SERVICES[ordinal]!.service, { migrationReceiptRef: advance.migrationReceiptRef as string, migrationReceiptHash: advance.migrationReceiptHash as string }, advance.beforeRuntimeSourceProjectionHash as string);
   const authority = validateNormalRestartAuthorityV1(await ports.resolveAuthority(authorityPair), authorityPair, SERVICES[ordinal]!, { migrationReceiptRef: advance.migrationReceiptRef as string, migrationReceiptHash: advance.migrationReceiptHash as string });
@@ -753,22 +894,33 @@ export async function resumeInternalProductionBaselineRestartSequenceV1(
         authorityPairs.push(recursivelyFreeze({ service: fixed.service, actionId: fixed.actionId, authorityRef: adopted.authorityRef as string, authorityHash: adopted.authorityHash as string }));
         continue;
       }
+      const ordinalLease = await acquireSequenceOrdinalLeaseV1(intentKind, ordinal);
+      try {
+      const lockedAdopted = await resolveAdvance(intentKind, ordinal);
+      if (lockedAdopted) {
+        advances.push(lockedAdopted);
+        authorityPairs.push(recursivelyFreeze({ service: fixed.service, actionId: fixed.actionId, authorityRef: lockedAdopted.authorityRef as string, authorityHash: lockedAdopted.authorityHash as string }));
+        continue;
+      }
       if (advances.length !== ordinal) fail("sequence durable prefix is not contiguous");
-      const currentProjection = await observeRuntimeProjectionV1();
       const expectedBeforeHash = ordinal === 0 ? initialRuntimeSourceProjectionHash : advances[ordinal - 1]!.afterRuntimeSourceProjectionHash;
-      if (currentProjection.projectionHash !== expectedBeforeHash) fail("sequence runtime projection changed before authorization");
       let authorizationPair: Readonly<{ authorizationRef: string; authorizationHash: string }>;
       const storedAuthorization = optionalRead(authorizationLocatorPath(intentKind, ordinal), `authorization locator ${ordinal}`);
+      const storedAuthority = optionalRead(operationLocatorPath(intentKind, ordinal), `composite authority locator ${ordinal}`);
+      const currentProjection = await observeRuntimeProjectionV1();
       if (storedAuthorization) authorizationPair = storedPair(storedAuthorization, "authorizationRef", "authorizationHash", NORMAL_AUTHORIZATION_PREFIX) as Readonly<{ authorizationRef: string; authorizationHash: string }>;
       else {
+        if (storedAuthority) fail("sequence composite authority exists without authorization");
+        if (currentProjection.projectionHash !== expectedBeforeHash) fail("sequence runtime projection changed before authorization");
         authorizationPair = pair(await ports.prepare({ service: fixed.service }), "authorizationRef", "authorizationHash", NORMAL_AUTHORIZATION_PREFIX) as Readonly<{ authorizationRef: string; authorizationHash: string }>;
         validateAuthorizationV1(await ports.resolveAuthorization(authorizationPair), authorizationPair, fixed.service, migrationPair, currentProjection.projectionHash);
         publish(authorizationLocatorPath(intentKind, ordinal), authorizationPair);
       }
-      validateAuthorizationV1(await ports.resolveAuthorization(authorizationPair), authorizationPair, fixed.service, migrationPair, currentProjection.projectionHash);
       let authorityPair: Readonly<{ receiptRef: string; receiptHash: string }>;
       try {
-        authorityPair = pair(await ports.restart(authorizationPair), "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX) as Readonly<{ receiptRef: string; receiptHash: string }>;
+        authorityPair = storedAuthority
+          ? storedPair(storedAuthority, "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX) as Readonly<{ receiptRef: string; receiptHash: string }>
+          : pair(await ports.restart(authorizationPair), "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX) as Readonly<{ receiptRef: string; receiptHash: string }>;
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("HELPER_DISPATCH_SETTLEMENT_UNKNOWN")) throw error;
         const blockedBody = { schema: "setfarm.internal-production-baseline-restart-sequence-blocked.v1", intentKind, sequenceIntentHash, ordinal, authorizationRef: authorizationPair.authorizationRef, authorizationHash: authorizationPair.authorizationHash, reason: "HELPER_DISPATCH_SETTLEMENT_UNKNOWN" };
@@ -780,9 +932,13 @@ export async function resumeInternalProductionBaselineRestartSequenceV1(
       }
       const authority = validateNormalRestartAuthorityV1(await ports.resolveAuthority(authorityPair), authorityPair, fixed, migrationPair);
       const before = authority.before as RuntimeProjectionV1; const after = authority.after as RuntimeProjectionV1; const cleanup = authority.cleanup as Readonly<Record<string, unknown>>;
-      if (before.projectionHash !== currentProjection.projectionHash) fail("normal restart before projection is crossed with sequence head");
-      const observedAfter = await observeRuntimeProjectionV1();
+      if (before.projectionHash !== expectedBeforeHash) fail("normal restart before projection is crossed with sequence predecessor");
+      validateAuthorizationV1(await ports.resolveAuthorization(authorizationPair), authorizationPair, fixed.service, migrationPair, before.projectionHash);
+      if (!storedAuthority) publish(operationLocatorPath(intentKind, ordinal), authorityPair);
+      const observedAfter = storedAuthority ? currentProjection : await observeRuntimeProjectionV1();
       if (observedAfter.projectionHash !== after.projectionHash) fail("normal restart after projection is not current");
+      const predecessorAtCas = ordinal === 0 ? null : await resolveAdvance(intentKind, ordinal - 1);
+      if ((ordinal === 0 && predecessorAtCas !== null) || (ordinal > 0 && (!predecessorAtCas || predecessorAtCas.advanceHash !== advances[ordinal - 1]!.advanceHash))) fail("sequence advance predecessor changed before CAS");
       const advanceBody = { schema: "setfarm.internal-production-baseline-service-restart-advance.v1", intentKind, sequenceIntentHash, ordinal, service: fixed.service, actionId: fixed.actionId, migrationReceiptRef, migrationReceiptHash, initialRuntimeSourceProjectionHash, authorizationRef: authorizationPair.authorizationRef, authorizationHash: authorizationPair.authorizationHash, authorityRef: authorityPair.receiptRef, authorityHash: authorityPair.receiptHash, priorAdvanceHash: ordinal === 0 ? null : advances[ordinal - 1]!.advanceHash, beforeRuntimeSourceProjectionHash: before.projectionHash, afterRuntimeSourceProjectionHash: after.projectionHash, completeZeroOwnerCensusHash: cleanup.completeZeroOwnerCensusHash };
       const advanceHash = sha256(canonical(advanceBody));
       const advanceRef = `setfarm://internal-production/baseline-service-restart-advance/sha256/${advanceHash}`;
@@ -791,6 +947,7 @@ export async function resumeInternalProductionBaselineRestartSequenceV1(
       publish(locatorPath(intentKind, ordinal), { advanceRef, advanceHash });
       advances.push(advance);
       authorityPairs.push(recursivelyFreeze({ service: fixed.service, actionId: fixed.actionId, authorityRef: authorityPair.receiptRef, authorityHash: authorityPair.receiptHash }));
+      } finally { releaseSequenceOrdinalLeaseV1(ordinalLease); }
   }
   const finalProjection = await observeRuntimeProjectionV1();
   if (finalProjection.projectionHash !== advances[2]!.afterRuntimeSourceProjectionHash) fail("sequence final runtime projection is crossed");
