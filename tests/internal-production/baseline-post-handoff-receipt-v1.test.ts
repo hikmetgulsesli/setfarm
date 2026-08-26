@@ -537,11 +537,20 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.equal(receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1.length, 0);
     assert.equal(typeof receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1, "function");
     assert.equal(receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1.length, 1);
-    await assert.rejects(
-      receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1(),
-      /INTERNAL_PRODUCTION|DELIVERY_CONSTANTS_UNFILLED|clean|build|dirty/i,
-      "the dirty feature worktree is not allowed to impersonate the clean delivered main fixture",
-    );
+    const featureRoot = createFixture();
+    try {
+      git(featureRoot, ["switch", "-q", "-c", "fixture-task12-delivery-feature"]);
+      const rejected = runFixtureExpression(featureRoot, `(async()=>{try{await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1()}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_FEATURE_BRANCH_REJECTION')})()`);
+      assert.equal(rejected.status, 0, rejected.stderr);
+      assert.match(rejected.stdout, /branch|main|synchronized|source/i);
+      assert.equal(
+        existsSync(path.join(featureRoot, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities")),
+        false,
+        "a feature branch is rejected before delivery authority publication",
+      );
+    } finally {
+      removeFixture(featureRoot);
+    }
 
     const source = readFileSync(observerSource, "utf8");
     assert.match(source, /setfarm\.internal-production-baseline-task12-p0-delivery-authority\.v1/);
