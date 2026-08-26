@@ -2544,6 +2544,29 @@ function materializeActivationFixtureBuildOutputs(root: string): void {
   }
 }
 
+function activationFixtureReceiptWithOperationPublisherV1(source: string): string {
+  const start = source.indexOf("export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {");
+  const end = source.indexOf("\n\nexport async function resolveInternalProductionCurrentEntryOperationV1", start);
+  assert.ok(start >= 0 && end > start, "activation fixture operation publisher boundary must remain exact");
+  let continuationReplacements = 0;
+  const fixturePublisher = source.slice(start, end)
+    .replace(
+      "prepareInternalProductionCurrentEntryOperationV1",
+      "prepareActivationFixtureCurrentEntryOperationV1",
+    )
+    .replace(
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      () => {
+        continuationReplacements += 1;
+        return "\n    return resolved;";
+      },
+    );
+  assert.equal(continuationReplacements, 2, "activation fixture publisher must stop at both status-continuation boundaries");
+  assert.match(fixturePublisher, /export async function prepareActivationFixtureCurrentEntryOperationV1/);
+  assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
+  return `${source}\n${fixturePublisher}\n`;
+}
+
 function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; vendorCommit: string }> {
   const container = mkdtempSync(path.join(tmpdir(), "setfarm-activation-pg-"));
   const root = path.join(container, "setfarm");
@@ -2573,7 +2596,13 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   const vendorCommit = fixtureGit(root, ["rev-parse", "HEAD"]);
   const observation = completePbaObservation(vendorCommit);
   writeActivationFixtureFile(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", `const observation=${JSON.stringify(observation)}; export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(){return structuredClone(observation)} export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value){return value}\n`);
-  fixtureGit(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts"]);
+  const receiptLocator = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+  writeActivationFixtureFile(
+    root,
+    receiptLocator,
+    activationFixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8")),
+  );
+  fixtureGit(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", receiptLocator]);
   fixtureGit(root, ["commit", "-qm", "fixture controller source"]);
   fixtureGit(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   for (const entry of fixtureGit(root, ["ls-files", "-s", "-z"]).split("\0").filter(Boolean)) {
@@ -3096,7 +3125,13 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
 
     const receiptUrl = pathToFileURL(path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
     const fixtureReceipt = await import(`${receiptUrl}?prepare=${Date.now()}`);
-    const operation = await fixtureReceipt.prepareInternalProductionCurrentEntryOperationV1();
+    assert.equal(typeof fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1, "function");
+    assert.equal(fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1.length, 0);
+    const operation = await fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1();
+    assert.deepEqual(await fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1(), operation);
+    assert.deepEqual(await fixtureReceipt.observePreparedInternalProductionCurrentEntryOperationV1(), operation);
+    assert.equal(fixtureGit(fixture.root, ["status", "--porcelain=v2", "--untracked-files=all"]), "");
+    assert.equal(existsSync(path.join(fixture.root, "data")), false);
     assert.notEqual(fixture.vendorCommit, operation.controllerSource.sha);
 
     const fact = (name: string) => hashCanonicalJson({ schema: "setfarm.activation-fixture-fact.v1", name });
@@ -7154,8 +7189,8 @@ const EXPECTED_A_TUPLES = [
   ["src/recovery/v3-downstream-evidence-publication.ts", "putFindingSet", "a-finding-v3-downstream-evidence-v1", "finding", "finding-set-hash-v1", "findingOwnerCount"],
   ["src/recovery/v3-evidence-only-publication.ts", "putFindingSetInTransaction", "a-finding-v3-evidence-only-v1", "finding", "finding-set-hash-v1", "findingOwnerCount"],
   ["src/execution/operational-outbox-repository.ts", "createOperationalOutboxRepository.publish", "a-operational-delivery-v1", "operational-delivery", "operational-event-key-consumer-v1", "operationalDeliveryCount"],
-  ["src/internal-production/baseline-post-handoff-receipt-v1.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
-  ["src/internal-production/baseline-post-handoff-receipt-v1.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
+  ["src/db-pg.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
+  ["src/db-pg.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
 ] as const;
 
 test("freezes the exact 35-category registry and complete 36-counter census mapping", () => {
