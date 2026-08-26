@@ -2285,7 +2285,7 @@ async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(
     );
     if (reservation.category !== "run" || bound.category !== "run" || bound.ownerKey !== reservation.ownerKey || !sameJsonValueV1(bound.canonicalOwnerIdentity, expectedIdentity)) throw new Error();
     if (reservation.producerImplementationId === "a-runtime-run-v1") {
-      if (bound.producerImplementationId !== "a-runtime-run-v1" || row.state !== "bound") throw new Error();
+      if (bound.producerImplementationId !== "a-runtime-run-v1") throw new Error();
     } else if (reservation.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       if (bound.producerImplementationId !== "a-recovery-source-bootstrap-run-v1" || row.state !== "closed") throw new Error();
       const runRows = await sql<Array<{ id: string; context: string; status: string }>>`
@@ -4558,7 +4558,7 @@ export async function resolveBoundInternalProductionWorkflowRunOwnerV1(input: Re
     const resolved = await resolveStoredWorkflowRunOwnerByPairInTransactionV1(
       sql,
       input,
-      ["bound", "closed"],
+      ["bound"],
     );
     if (resolved.bound.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       const runs = await sql<Array<{ status: string }>>`SELECT status FROM runs WHERE id=${resolved.bound.ownerKey} FOR SHARE`;
@@ -4580,7 +4580,7 @@ export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Re
        WHERE producer_implementation_id=ANY(${["a-runtime-run-v1", "a-recovery-source-bootstrap-run-v1"]})
          AND category='run'
          AND owner_key=${input.runId}
-         AND state=ANY(${["bound", "closed"]})
+         AND state='bound'
     `;
     if (pairs.length !== 1) {
       throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
@@ -4588,7 +4588,7 @@ export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Re
     const resolved = await resolveStoredWorkflowRunOwnerByPairInTransactionV1(sql, {
       runOwnerReservationRef: pairs[0]!.reservation_ref,
       runOwnerReservationHash: pairs[0]!.reservation_hash,
-    }, ["bound", "closed"]);
+    }, ["bound"]);
     if (resolved.bound.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       const runs = await sql<Array<{ status: string }>>`SELECT status FROM runs WHERE id=${input.runId} FOR SHARE`;
       if (runs.length !== 1 || runs[0]!.status !== "running") throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
