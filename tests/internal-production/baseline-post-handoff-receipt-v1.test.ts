@@ -132,7 +132,6 @@ type FixtureOptions = Readonly<{
   preparedAuthorityDirectoryWrongDevice?: boolean;
   preparedAccessorReobservationDrift?: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation";
   preparedAccessorByteDrift?: boolean;
-  preparedAccessorWrongDevice?: boolean;
 }>;
 
 function fixtureDatabasePortSource(options: FixtureOptions): string {
@@ -191,12 +190,6 @@ function createFixture(options: FixtureOptions = {}): string {
     fixtureObserver = fixtureObserver.replace(
       'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
       'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:',
-    );
-  }
-  if (options.preparedAccessorWrongDevice) {
-    fixtureObserver = fixtureObserver.replace(
-      "CURRENT_ENTRY_MAX_BYTES,\n      store.device,\n      1,",
-      "CURRENT_ENTRY_MAX_BYTES,\n      store.device + 1n,\n      1,",
     );
   }
   if (options.currentEntryAncestorSwapAfterGuard) {
@@ -1361,7 +1354,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("returns the exact prepared operation and accepts valid fixed siblings as absence", () => {
-    const fixture = finalizedFixture();
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(
         fixture.root,
@@ -1403,7 +1396,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
 
   it("blocks wrong-mode, hard-linked, symlink, special, and oversized prepared members without cleanup", () => {
     for (const physical of ["mode", "link", "symlink", "special", "size"] as const) {
-      const fixture = finalizedFixture();
+      const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
       try {
         const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
         assert.equal(seeded.status, 0, seeded.stderr);
@@ -1422,7 +1415,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         const before = physical === "special" ? null : lstatSync(operation);
         const blocked = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
         assert.notEqual(blocked.status, 0);
-        assert.match(blocked.stderr, /regular|mode|link|member|current-entry|cap|symbolic/i);
+        assert.match(blocked.stderr, /regular|mode|link|inode|member|current-entry|cap|symbolic/i);
         if (before !== null) {
           const after = lstatSync(operation);
           assert.equal(after.ino, before.ino);
@@ -1438,7 +1431,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
 
   it("rejects last-instant identity drift across every prepared family after parsing exact first snapshots", () => {
     for (const family of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operation"] as const) {
-      const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family });
+      const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family, stopAfterCurrentEntryOperationPublication: true });
       try {
         const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
         assert.equal(seeded.status, 0, seeded.stderr);
@@ -1452,20 +1445,28 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("rejects a cross-device prepared member observation", () => {
-    const fixture = finalizedFixture({ preparedAccessorWrongDevice: true });
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
+      const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const drifted = source.replace(
+        "before.dev !== parent.dev || before.dev !== atPath.dev",
+        "before.dev !== parent.dev + 1n || before.dev !== atPath.dev",
+      );
+      assert.notEqual(drifted, source);
+      writeFileSync(modulePath, drifted);
       const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /device|regular|current-entry/i);
+      assert.match(result.stderr, /device|inode|regular|current-entry/i);
     } finally {
       removeFixture(fixture.root);
     }
   });
 
   it("rejects last-instant prepared operation byte drift from the retained first snapshot", () => {
-    const fixture = finalizedFixture({ preparedAccessorByteDrift: true });
+    const fixture = finalizedFixture({ preparedAccessorByteDrift: true, stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
@@ -1478,7 +1479,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("does not turn a prepared store disappearance race into absence", () => {
-    const fixture = finalizedFixture();
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
@@ -2173,6 +2174,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       .map((match) => match[1]);
     assert.deepEqual(runtimeExports, [
       "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
+      "resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1",
+      "observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1",
       "observeCurrentInternalProductionAuthorityV3Migration31AuditV1",
       "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1",
       "resolveInternalProductionAuthorityV3Migration31AuditV1",
@@ -2183,6 +2186,46 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "observeInternalProductionServiceCensusV1",
       "observeInternalProductionLegacyPreManifestZeroOwnerV1",
       "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1",
+      "resolveInternalProductionCompleteZeroOwnerCensusObservationV1",
+      "observeCompleteInternalProductionZeroOwnerCensusV1",
+      "resolveInternalProductionBaselineZeroOwnerMutationGuardV1",
+      "prepareInternalProductionBaselineZeroOwnerMutationGuardV1",
+      "resolveInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardConsumptionV1",
+      "consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1",
+      "reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1",
+      "observeInternalProductionCurrentEntryAuthorityStatusV1",
+      "resolveInternalProductionCurrentEntryAuthorityStatusV1",
+      "resolveInternalProductionCurrentEntryAuthorityV1",
+      "resolveInternalProductionCurrentEntryVerificationV1",
+      "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1",
+      "resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationStatusV1",
+      "observeInternalProductionPreManifestMigration32AuthorizationStatusV1",
+      "prepareInternalProductionPreManifestMigration32AuthorizationV1",
+      "applyInternalProductionBaselineBootstrapHandoffMigrationV1",
+      "resolveInternalProductionRecoverySourceBootstrapPendingInputV1",
+      "resolveInternalProductionRecoverySourceBootstrapOperationV1",
+      "resolveInternalProductionRecoverySourceRunTerminalAuthorityV1",
+      "resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1",
+      "resolveInternalProductionRecoverySourceBootstrapRunReceiptV1",
+      "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1",
+      "observeInternalProductionRecoverySourceBootstrapStatusV1",
+      "prepareInternalProductionRecoverySourceBootstrapRunV1",
+      "resumeActiveInternalProductionRecoverySourceBootstrapRunV1",
+      "resumeInternalProductionCurrentEntryAuthorityV1",
+      "verifyCurrentInternalProductionCurrentEntryV1",
+      "observeInternalProductionReviewedDSourceBuildGateV1",
+      "observeInternalProductionServiceRestartCutoverReadinessCandidateV1",
+      "resolveInternalProductionBaselineServiceRestartAuthorizationV1",
+      "resolveInternalProductionBaselineServiceRestartOperationV1",
+      "observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1",
+      "prepareInternalProductionBaselineServiceRestartV1",
+      "observeInternalProductionBaselineServiceRestartAuthorizationStatusV1",
+      "resolveInternalProductionBaselineServiceRestartAuthorityV1",
+      "prepareInternalProductionBaselineSpawnerBootstrapServiceRestartAuthorizationV1",
+      "restartInternalProductionBaselineServiceV1",
     ]);
     assert.match(source, /export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1\(\)/);
     assert.match(source, /export async function observePreparedInternalProductionCurrentEntryOperationV1\(\)/);

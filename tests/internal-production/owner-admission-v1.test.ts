@@ -1401,6 +1401,8 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   assert.match(helper, /await verifyContractSpineMigrations\(db\.getSql\(\)\)/);
   assert.doesNotMatch(helper, /migration.?33|033_v3_recovery/i);
   const activation = helperSource.slice(activationStart, activationEnd);
+  assert.match(helperSource, /prepareP3FixtureCurrentEntryOperationV1/);
+  assert.doesNotMatch(activation, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|launchctl|lsof/);
   const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
   const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");
   const activateIndex = activation.indexOf("await fixtureDb.activateInternalProductionOwnerProducerManifestSetV1");
@@ -1421,6 +1423,29 @@ test("P3 setup owns the generic successor apply and full verification slot befor
     ]);
   } finally {
     await sql.end({ timeout: 5 });
+  }
+});
+
+test("P4 unmarked P3 database authority is rejected before an administrator connection", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "setfarm-p3-unmarked-"));
+  try {
+    const helperUrl = pathToFileURL(path.join(process.cwd(), "tests/execution-attempts/test-database.ts")).href;
+    const program = `import(${JSON.stringify(`${helperUrl}?unmarked=${Date.now()}`)}).then(async(m)=>{try{const db=await m.createIsolatedTestDatabase();await db.cleanup?.();process.stdout.write('UNEXPECTED_SUCCESS')}catch(error){process.stdout.write(String(error))}})`;
+    const result = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", program], {
+      cwd,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: process.env.HOME ?? tmpdir(),
+        SETFARM_PG_URL: "postgresql://127.0.0.1:5432/setfarm_p3_0123456789abcdef01234567_primary",
+        SETFARM_TEST_PG_ADMIN_URL: "postgresql://127.0.0.1:1/postgres",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /P3_PROJECTION_MARKER_REQUIRED/);
+    assert.doesNotMatch(result.stdout, /ISOLATED_POSTGRES_UNAVAILABLE|UNEXPECTED_SUCCESS/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
 
