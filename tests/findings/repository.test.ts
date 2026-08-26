@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { createFindingSetV1, type FindingSetV1 } from "../../src/findings/finding-set.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
@@ -210,6 +211,188 @@ describe("finding, evidence, and recovery repository", () => {
       database.sql`DELETE FROM evidence_bundles WHERE evidence_bundle_hash = ${evidenceFirst.bundleHash}`,
       /ARTIFACT_IDENTITY_IMMUTABLE/,
     );
+  });
+
+  it("publishes one complete ordered finding set under one immediately closed owner", async () => {
+    const findings = expandedFindingSet("US-FINDING-OWNER");
+    const results = await Promise.all([
+      repository.putFindingSet(findings),
+      repository.putFindingSet(findings),
+    ]);
+    assert.deepEqual(results.map((result) => result.status).sort(), ["duplicate", "inserted"]);
+    const rows = await database.sql.unsafe<Array<{
+      state: string;
+      producer_implementation_id: string;
+      owner_key: string;
+      close_count: number;
+      child_ids: string[];
+    }>>(
+      `SELECT owner.state,owner.producer_implementation_id,owner.owner_key,
+              CASE WHEN owner.close_ref IS NULL THEN 0 ELSE 1 END::integer AS close_count,
+              ARRAY(SELECT child.finding_id
+                      FROM findings child
+                     WHERE child.finding_set_hash=$1
+                     ORDER BY array_position($2::text[],child.finding_id),child.finding_id) AS child_ids
+         FROM internal_production_owner_reservations_v1 owner
+        WHERE owner.category='finding' AND owner.owner_key=$1`,
+      [findings.findingSetHash, findings.findings.map((finding) => finding.findingId)],
+    );
+    assert.deepEqual(rows.map((row) => ({ ...row })), [{
+      state: "closed",
+      producer_implementation_id: "a-finding-recovery-repository-v1",
+      owner_key: findings.findingSetHash,
+      close_count: 1,
+      child_ids: findings.findings.map((finding) => finding.findingId),
+    }]);
+  });
+
+  it("rejects a preexisting parent with a missing ordered child set instead of repairing it", async () => {
+    const findings = expandedFindingSet("US-FINDING-PARTIAL");
+    await database.sql.unsafe(
+      `INSERT INTO finding_sets (
+         finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+         source_sha,source_tree_hash,finding_ids,payload
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::jsonb,$10::text::jsonb)`,
+      [
+        findings.findingSetHash,
+        findings.findingSetId,
+        findings.runId,
+        findings.storyId,
+        findings.packetHash,
+        findings.sliceHash,
+        findings.sourceRevision.sha,
+        findings.sourceRevision.treeHash,
+        JSON.stringify(findings.findings.map((finding) => finding.findingId)),
+        JSON.stringify(findings),
+      ],
+    );
+    await database.sql.unsafe(
+      `INSERT INTO findings (
+         finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb)`,
+      [
+        findings.findingSetHash,
+        findings.findings[0]!.findingId,
+        findings.findings[0]!.origin,
+        findings.findings[0]!.classification,
+        findings.findings[0]!.invariantRef,
+        findings.findings[0]!.status,
+        hashCanonicalJson(findings.findings[0]!.sourceLocators),
+        JSON.stringify(findings.findings[0]),
+      ],
+    );
+    await assert.rejects(repository.putFindingSet(findings), /FINDING_OWNER_ADOPTION_INVALID/);
+    const rows = await database.sql.unsafe<Array<{ owner_count: number; child_count: number }>>(
+      `SELECT (SELECT count(*)::integer FROM internal_production_owner_reservations_v1
+                WHERE category='finding' AND owner_key=$1) AS owner_count,
+              (SELECT count(*)::integer FROM findings WHERE finding_set_hash=$1) AS child_count`,
+      [findings.findingSetHash],
+    );
+    assert.deepEqual({ ...rows[0]! }, { owner_count: 0, child_count: 1 });
+  });
+
+  it("rejects extra children and reordered parent identity without creating an owner", async () => {
+    for (const corruption of ["extra-child", "reordered-parent"] as const) {
+      const findingSet = expandedFindingSet(`US-FINDING-${corruption.toUpperCase()}`);
+      const expectedIds = findingSet.findings.map((finding) => finding.findingId);
+      await database.sql.unsafe(
+        `INSERT INTO finding_sets (
+           finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+           source_sha,source_tree_hash,finding_ids,payload
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::jsonb,$10::text::jsonb)`,
+        [
+          findingSet.findingSetHash,
+          findingSet.findingSetId,
+          findingSet.runId,
+          findingSet.storyId,
+          findingSet.packetHash,
+          findingSet.sliceHash,
+          findingSet.sourceRevision.sha,
+          findingSet.sourceRevision.treeHash,
+          JSON.stringify(corruption === "reordered-parent" ? [...expectedIds].reverse() : expectedIds),
+          JSON.stringify(findingSet),
+        ],
+      );
+      for (const finding of findingSet.findings) {
+        await database.sql.unsafe(
+          `INSERT INTO findings (
+             finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb)`,
+          [
+            findingSet.findingSetHash,
+            finding.findingId,
+            finding.origin,
+            finding.classification,
+            finding.invariantRef,
+            finding.status,
+            hashCanonicalJson(finding.sourceLocators),
+            JSON.stringify(finding),
+          ],
+        );
+      }
+      if (corruption === "extra-child") {
+        await database.sql.unsafe(
+          `INSERT INTO findings (
+             finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+           ) VALUES ($1,$2,'runtime','structured','INV_EXTRA','open',$3,$4::text::jsonb)`,
+          [
+            findingSet.findingSetHash,
+            `FIND_${"e".repeat(64)}`,
+            HASH_A,
+            JSON.stringify({ corruption: "extra-child" }),
+          ],
+        );
+      }
+      await assert.rejects(repository.putFindingSet(findingSet), /FINDING_OWNER_ADOPTION_INVALID/);
+      const rows = await database.sql.unsafe<Array<{ owner_count: number; child_count: number }>>(
+        `SELECT (SELECT count(*)::integer FROM internal_production_owner_reservations_v1
+                  WHERE category='finding' AND owner_key=$1) AS owner_count,
+                (SELECT count(*)::integer FROM findings WHERE finding_set_hash=$1) AS child_count`,
+        [findingSet.findingSetHash],
+      );
+      assert.deepEqual({ ...rows[0]! }, {
+        owner_count: 0,
+        child_count: findingSet.findings.length + (corruption === "extra-child" ? 1 : 0),
+      });
+    }
+  });
+
+  it("rolls parent children and owner bytes back when the finding close is rejected", async () => {
+    const findings = expandedFindingSet("US-FINDING-CLOSE-ROLLBACK");
+    await database.sql.unsafe(`
+      CREATE FUNCTION test_reject_finding_owner_close_v1() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.category='finding' AND NEW.owner_key='${findings.findingSetHash}' AND NEW.state='closed' THEN
+          RAISE EXCEPTION 'TEST_REJECT_FINDING_OWNER_CLOSE';
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await database.sql.unsafe(`
+      CREATE TRIGGER test_reject_finding_owner_close_v1
+      BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+      FOR EACH ROW EXECUTE FUNCTION test_reject_finding_owner_close_v1()
+    `);
+    try {
+      await assert.rejects(repository.putFindingSet(findings), /TEST_REJECT_FINDING_OWNER_CLOSE/);
+    } finally {
+      await database.sql.unsafe(
+        "DROP TRIGGER test_reject_finding_owner_close_v1 ON internal_production_owner_reservations_v1",
+      );
+      await database.sql.unsafe("DROP FUNCTION test_reject_finding_owner_close_v1()")
+    }
+    const rows = await database.sql.unsafe<Array<{
+      parent_count: number;
+      child_count: number;
+      owner_count: number;
+    }>>(
+      `SELECT (SELECT count(*)::integer FROM finding_sets WHERE finding_set_hash=$1) AS parent_count,
+              (SELECT count(*)::integer FROM findings WHERE finding_set_hash=$1) AS child_count,
+              (SELECT count(*)::integer FROM internal_production_owner_reservations_v1
+                WHERE category='finding' AND owner_key=$1) AS owner_count`,
+      [findings.findingSetHash],
+    );
+    assert.deepEqual({ ...rows[0]! }, { parent_count: 0, child_count: 0, owner_count: 0 });
   });
 
   it("authorizes one model retry for the same logical finding and unchanged source", async () => {

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
+import type postgres from "postgres";
 
 import {
   applyContractSpineMigrations,
@@ -19,13 +25,92 @@ import {
   rollbackRecoveryTerminalLeaseIdentityToV19,
 } from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
-import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
+import {
+  closeClaimAndBoundAttempt,
+} from "../../src/execution/claim-attempt-transition.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
+import {
+  transitionRunToTerminal,
+  transitionRunToTerminalInTransaction,
+} from "../../src/execution/run-terminal-transition.js";
+import {
+  createRuntimeCompletionRepository,
+  markRuntimeCompletionOwnerCommittedInTransaction,
+  requestRuntimeCompletion,
+} from "../../src/execution/runtime-completion.js";
+import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import {
+  createRunTerminationRepository,
+  requestRunTermination,
+} from "../../src/execution/run-termination.js";
+import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
+import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
+import {
+  lockV3TerminalRecoveryChainInTransaction,
+  settleV3TerminalRecoveryChainInTransaction,
+} from "../../src/recovery/v3-terminal-recovery-chain.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import {
+  createIsolatedMigration31TestDatabase,
+  createIsolatedTestDatabase,
+} from "./test-database.js";
+
+const RUNTIME_DRAIN_EVIDENCE = {
+  schema: "setfarm.runtime-drain-evidence.v1" as const,
+  observedAt: "2026-07-13T12:00:00.000Z",
+  localProcessAbsent: true,
+  openClawTaskAbsent: true,
+  workspaceProcessAbsent: true,
+  stableObservations: 2,
+  evidenceRefs: ["setfarm://test/run-terminal-completion-drain"],
+};
+
+async function seedBoundDrainedTermination(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  input: Readonly<{
+    runId: string;
+    requestId: string;
+    targetStatus: "failed" | "cancelled";
+    diagnostic: string;
+  }>,
+): Promise<void> {
+  const requested = await requestRunTermination(database.sql, {
+    runId: input.runId,
+    targetStatus: input.targetStatus,
+    requestedBy: "task6-terminal-fixture",
+    diagnostic: input.diagnostic,
+    requestId: input.requestId,
+  });
+  assert.equal(requested.status, "requested");
+  const terminations = createRunTerminationRepository(database.sql);
+  const claimed = await terminations.claim({
+    requestId: input.requestId,
+    ownerInstanceId: "task6-terminal-owner",
+  });
+  assert.equal(claimed?.state, "draining");
+  const drained = await terminations.markDrained({
+    requestId: input.requestId,
+    ownerInstanceId: "task6-terminal-owner",
+    evidence: { task6Fixture: true },
+  });
+  assert.equal(drained.state, "drained");
+}
 
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -77,17 +162,85 @@ async function seedActiveStory(database: Awaited<ReturnType<typeof createIsolate
     VALUES
       (${storyDbId}, ${runId}, 1, 'US-002', 'Story', 'running', 'feature-dev_developer', 1)
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-    VALUES (${runId}, 'implement', 'US-002', 'feature-dev_developer', NOW())
-    RETURNING id::integer AS id
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      birth,
+      {
+        runId,
+        workflowStepId: "implement",
+        storyId: "US-002",
+        claimAgentId: "feature-dev_developer",
+        claimedAt: new Date(),
+      },
+    );
+  }) as number;
+  return { stepDbId, storyDbId, claimId };
+}
+
+async function publishMigration31FindingSet(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  findingSet: ReturnType<typeof createFindingSetV1>,
+): Promise<void> {
+  const ownerLedger = await database.sql<Array<{ owner_table: string | null }>>`
+    SELECT to_regclass('public.internal_production_owner_reservations_v1')::text AS owner_table
   `;
-  return { stepDbId, storyDbId, claimId: claims[0]!.id };
+  assert.equal(ownerLedger[0]?.owner_table, null);
+  await database.sql.begin(async (transaction) => {
+    await transaction.unsafe(
+      `INSERT INTO finding_sets (
+         finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
+         source_sha, source_tree_hash, finding_ids, payload
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)`,
+      [
+        findingSet.findingSetHash,
+        findingSet.findingSetId,
+        findingSet.runId,
+        findingSet.storyId,
+        findingSet.packetHash,
+        findingSet.sliceHash,
+        findingSet.sourceRevision.sha,
+        findingSet.sourceRevision.treeHash,
+        JSON.stringify(findingSet.findings.map((finding) => finding.findingId)),
+        JSON.stringify(findingSet),
+      ],
+    );
+    for (const finding of findingSet.findings) {
+      await transaction.unsafe(
+        `INSERT INTO findings (
+           finding_set_hash, finding_id, origin, classification, invariant_ref,
+           status, source_fingerprint, payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
+        [
+          findingSet.findingSetHash,
+          finding.findingId,
+          finding.origin,
+          finding.classification,
+          finding.invariantRef,
+          finding.status,
+          hashCanonicalJson(finding.sourceLocators),
+          JSON.stringify(finding),
+        ],
+      );
+    }
+  });
 }
 
 async function seedActiveRecovery(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
-  input: Readonly<{ runId: string; runStatus: "failed" | "completed" }>,
+  input: Readonly<{
+    runId: string;
+    runStatus: "failed" | "completed";
+    findingPublication?: "current" | "migration31";
+  }>,
 ) {
   const releaseSha = "d".repeat(40);
   const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
@@ -132,7 +285,11 @@ async function seedActiveRecovery(
     }],
   });
   const findings = createFindingRecoveryRepository(database.sql);
-  await findings.putFindingSet(findingSet);
+  if (input.findingPublication === "migration31") {
+    await publishMigration31FindingSet(database, findingSet);
+  } else {
+    await findings.putFindingSet(findingSet);
+  }
   const opened = await findings.openRecoveryCase({
     runId: input.runId,
     storyId,
@@ -173,6 +330,1502 @@ async function seedActiveRecovery(
 }
 
 describe("canonical run terminal owner", () => {
+  it("P4 recovery source bootstrap actual terminal skips the second owner close only after deep proof", async () => {
+    const source = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/run-terminal-transition.ts",
+    ), "utf8");
+    const mutation = source.indexOf("UPDATE runs");
+    const proof = source.indexOf("resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(", mutation);
+    const ordinary = source.indexOf("resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(", proof);
+    assert.ok(mutation >= 0 && proof > mutation && ordinary > proof);
+    assert.match(source.slice(proof, ordinary + 500), /recoverySourceBootstrapTerminal === null/);
+    assert.match(source, /if \(terminalPair !== null\) \{/);
+    const dbSource = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/db-pg.ts"), "utf8");
+    assert.doesNotMatch(dbSource, /observeInternalProductionRecoverySourceBootstrapStatusV1/, "db-pg terminal proof cannot discover authority through the mutable zero-input status");
+    assert.match(dbSource, /resolveInternalProductionRecoverySourceBootstrapRunReceiptV1/, "db-pg uses only the final pair-only run-receipt authority edge");
+  });
+
+  it("P4 recovery source bootstrap actual terminal executes exact31 closed-pair release and five-resolver proof", async () => {
+    const production = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+    const transitionProduction = await readFile(new URL("../../src/execution/run-terminal-transition.ts", import.meta.url), "utf8");
+    const storedStart = production.indexOf("async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(");
+    const storedEnd = production.indexOf("async function resolveLockedWorkflowRunOwnerByRunIdV1(", storedStart);
+    const terminalStart = production.indexOf("export async function resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(");
+    const terminalEnd = production.indexOf("export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(", terminalStart);
+    const transitionStart = transitionProduction.indexOf("export async function transitionRunToTerminalInTransaction(");
+    const transitionEnd = transitionProduction.indexOf("export async function transitionRunToTerminal(", transitionStart + 1);
+    assert.ok(storedStart >= 0 && storedEnd > storedStart && terminalStart > storedEnd && terminalEnd > terminalStart && transitionStart >= 0 && transitionEnd > transitionStart);
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-source-bootstrap-terminal-"));
+    try {
+      const sourceDir = path.join(fixture, "src");
+      const internalDir = path.join(sourceDir, "internal-production");
+      mkdirSync(internalDir, { recursive: true });
+      writeFileSync(path.join(internalDir, "baseline-post-handoff-receipt-v1.ts"), `
+const g=globalThis;
+const crossed=(name,value)=>g.__p4TerminalCross===name?{...value,operationHash:"f".repeat(64)}:value;
+export async function resolveInternalProductionRecoverySourceBootstrapPendingInputV1(pair){g.__p4TerminalCalls.push("pending");return g.__p4TerminalCross==="pending"?{...pair,pendingInputHash:"f".repeat(64)}:{...pair}}
+export async function resolveInternalProductionRecoverySourceRunTerminalAuthorityV1(_pair){g.__p4TerminalCalls.push("source");return crossed("source",g.__p4SourceTerminal)}
+export async function resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1(_pair){g.__p4TerminalCalls.push("run");return crossed("run",g.__p4RunTerminal)}
+export async function resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1(_pair){g.__p4TerminalCalls.push("pair-close");return g.__p4TerminalCross==="pair-close"?{...g.__p4PairClose,targetReservationPairCloseHash:"f".repeat(64)}:g.__p4PairClose}
+export async function resolveInternalProductionRecoverySourceBootstrapRunReceiptV1(pair){g.__p4TerminalCalls.push("receipt");const value={...g.__p4ReceiptBody,...pair};return g.__p4TerminalCross==="receipt"?{...value,runId:"crossed"}:value}
+`, "utf8");
+      const modulePath = path.join(sourceDir, "db-kernel.ts");
+      writeFileSync(modulePath, `
+import {createHash} from "node:crypto";
+type InternalProductionPgTransactionSql=any; type OwnerReservationRowV1=any; type InternalProductionBoundOwnerReservationV1<T=any>=any; type OwnerAdmissionAuthorityRowV1=any; type WorkflowRunTerminalRowV1=any;
+const g=globalThis as any;
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
+const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
+const strictCanonicalText=(v:string)=>JSON.parse(v);
+const validateOwnerAdmissionPairV1=(input:any,refKey:string,hashKey:string)=>({[refKey]:input[refKey],[hashKey]:input[hashKey]});
+const resolveOwnerReservationInTransactionV1=async(_sql:any,pair:any)=>pair.reservationRef===g.__p4RunReservation.reservationRef?g.__p4RunReservation:g.__p4SourceReservation;
+const validateBoundOwnerReservationRowV1=async()=>g.__p4Bound;
+const createInternalProductionWorkflowRunCanonicalOwnerIdentityV1=(runId:string)=>({ownerRef:"setfarm://run/"+runId,ownerHash:hashCanonicalJson({runId}),ownerKey:runId});
+const validateInternalProductionOwnerReservationCloseV1=(v:any)=>v;
+const createInternalProductionSourceRunLaunchTargetReservationPairCloseV1=(v:any)=>{const targetReservationPairCloseHash=hashCanonicalJson(v);return Object.freeze({...v,targetReservationPairCloseRef:"setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/"+targetReservationPairCloseHash,targetReservationPairCloseHash})};
+const resolveGlobalOwnerAdmissionFenceReleaseInTransactionV1=async()=>g.__p4Release;
+const createWorkflowRunTerminalAuthorityFromLockedRowsV1=(run:any,bound:any)=>({schema:"terminal",runId:run.id,status:run.status,reservationRef:bound.reservationRef,reservationHash:bound.reservationHash});
+const deriveInternalProductionTerminalOwnerAuthorityPairV1=(authority:any)=>{const terminalAuthorityHash=hashCanonicalJson(authority);return {terminalAuthorityRef:"setfarm://internal-production/terminal-owner-authorities/sha256/"+terminalAuthorityHash,terminalAuthorityHash}};
+const validateInternalProductionTerminalOwnerAuthorityPairV1=()=>undefined;
+${production.slice(storedStart, storedEnd)}
+${production.slice(terminalStart, terminalEnd)}
+const readDatabaseWallClock=async()=>new Date("2026-08-26T12:00:00.000Z");
+const normalizeTask5TerminalCompletionContractInTransactionV1=async()=>undefined;
+const metaObject=(value:any)=>value&&typeof value==="object"&&!Array.isArray(value)?{...value}:{};
+const canonicalJsonStringify=canonical;
+const createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1=()=>{throw new Error("completion owner unexpected")};
+const lockV3TerminalRecoveryChainInTransaction=async()=>{throw new Error("v3 unexpected")};
+const settleV3TerminalRecoveryChainInTransaction=async()=>{throw new Error("v3 unexpected")};
+const assertRuntimeCompletionManifestInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const authenticateTask5ClosedMandatoryEffectReplayInTransactionV1=async()=>{throw new Error("effect unexpected")};
+const releaseRuntimeSessionForTerminalRunInTransactionV1=async()=>{throw new Error("runtime unexpected")};
+const terminalizeRuntimeCompletionForRunInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const terminalizeRunTerminationRequestInTransactionV1=async()=>{throw new Error("termination unexpected")};
+const resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("claim unexpected")};
+const resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("attempt unexpected")};
+const resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("runtime unexpected")};
+const resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("termination unexpected")};
+const resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1=async()=>{g.__p4OrdinaryTerminalResolverCalls+=1;throw new Error("ordinary resolver forbidden")};
+const closeInternalProductionOwnerReservationV1=async()=>{g.__p4OwnerCloseCalls+=1;throw new Error("second owner close forbidden")};
+const resolveInternalProductionOwnerReservationCloseInTransactionV1=async()=>{g.__p4OwnerCloseReopenCalls+=1;throw new Error("owner close reopen forbidden")};
+const enqueueOperationalOutboxEventInTransaction=async(_sql:any,input:any)=>{g.__p4OutboxCalls.push(input)};
+${transitionProduction.slice(transitionStart, transitionEnd)}
+export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservationPairCloseV1;
+`, "utf8");
+      const kernel = await import(`${pathToFileURL(modulePath).href}?p4=${Date.now()}`) as any;
+      const sha = (member: string) => member.repeat(64);
+      const runId = "RUN_P4_RECOVERY_SOURCE_BOOTSTRAP_0001";
+      const runReservation = { reservationRef: "setfarm://tests/p4/run-reservation", reservationHash: sha("1"), category: "run", producerImplementationId: "a-recovery-source-bootstrap-run-v1", ownerKey: runId };
+      const sourceReservation = { reservationRef: "setfarm://tests/p4/source-reservation", reservationHash: sha("2"), category: "source-run", producerImplementationId: "a-recovery-source-run-v1", ownerKey: "source" };
+      const bound = { reservationRef: runReservation.reservationRef, reservationHash: runReservation.reservationHash, category: "run", producerImplementationId: runReservation.producerImplementationId, ownerKey: runId, canonicalOwnerIdentity: { ownerRef: `setfarm://run/${runId}`, ownerHash: hashCanonicalJson({ runId }), ownerKey: runId } };
+      const fenceRef = "setfarm://tests/p4/fence";
+      const fenceHash = sha("3");
+      const sourceTerminal = { operationRef: "setfarm://tests/p4/operation", operationHash: sha("4"), runId, operationRunBindingHash: sha("5"), reciprocalRunOperationBindingHash: sha("6"), terminalOwnerRef: "setfarm://tests/p4/source-terminal", terminalOwnerHash: sha("7"), terminalSourceRunRef: "setfarm://tests/p4/source-terminal", terminalSourceRunHash: sha("7") };
+      const runTerminal = { operationRef: sourceTerminal.operationRef, operationHash: sourceTerminal.operationHash, runId, operationRunBindingHash: sourceTerminal.operationRunBindingHash, reciprocalRunOperationBindingHash: sourceTerminal.reciprocalRunOperationBindingHash, terminalOwnerRef: "setfarm://tests/p4/run-terminal", terminalOwnerHash: sha("8"), terminalRunLaunchRef: "setfarm://tests/p4/run-terminal", terminalRunLaunchHash: sha("8") };
+      const sourceClose = { reservationRef: sourceReservation.reservationRef, reservationHash: sourceReservation.reservationHash, terminalOwnerRef: sourceTerminal.terminalSourceRunRef, terminalOwnerHash: sourceTerminal.terminalSourceRunHash, ownerAdmissionHeadPredecessorHash: sha("9"), ownerAdmissionHeadSuccessorHash: sha("a"), preservedFenceRef: fenceRef, preservedFenceHash: fenceHash };
+      const runClose = { reservationRef: runReservation.reservationRef, reservationHash: runReservation.reservationHash, terminalOwnerRef: runTerminal.terminalRunLaunchRef, terminalOwnerHash: runTerminal.terminalRunLaunchHash, ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadSuccessorHash, ownerAdmissionHeadSuccessorHash: sha("b"), preservedFenceRef: fenceRef, preservedFenceHash: fenceHash };
+      const context = {
+        schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1", task: "task", purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", protocol: "v3", promptManifestHash: sha("c"),
+        baseSourceSha: "1".repeat(40), baseSourceTreeHash: "2".repeat(40), buildHash: sha("d"), activationPreflightHash: sha("e"), releaseAdmissionHash: sha("f"),
+        pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: sha("1"), startIntentRef: "setfarm://tests/p4/intent", startIntentHash: sha("2"), startOutboxRef: "setfarm://tests/p4/outbox", startOutboxHash: sha("3"),
+        operationRef: sourceTerminal.operationRef, operationHash: sourceTerminal.operationHash, targetSourceRunReservationRef: sourceReservation.reservationRef, targetSourceRunReservationHash: sourceReservation.reservationHash,
+        targetRunReservationRef: runReservation.reservationRef, targetRunReservationHash: runReservation.reservationHash, targetRunLaunchCompositeHash: sha("4"), sourceRunOwnerRef: "setfarm://tests/p4/source-owner", sourceRunOwnerHash: sha("5"),
+        runOwnerRef: bound.canonicalOwnerIdentity.ownerRef, runOwnerHash: bound.canonicalOwnerIdentity.ownerHash, operationRunBindingHash: sourceTerminal.operationRunBindingHash, reciprocalRunOperationBindingHash: sourceTerminal.reciprocalRunOperationBindingHash,
+      };
+      const pairClose = kernel.p4PairClose({ fenceRef, fenceHash, targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash, sourceRunReservationRef: sourceReservation.reservationRef, sourceRunReservationHash: sourceReservation.reservationHash, runReservationRef: runReservation.reservationRef, runReservationHash: runReservation.reservationHash, terminalSourceRunRef: sourceTerminal.terminalSourceRunRef, terminalSourceRunHash: sourceTerminal.terminalSourceRunHash, terminalRunLaunchRef: runTerminal.terminalRunLaunchRef, terminalRunLaunchHash: runTerminal.terminalRunLaunchHash, ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadPredecessorHash, ownerAdmissionHeadSuccessorHash: runClose.ownerAdmissionHeadSuccessorHash, preservedFenceRef: fenceRef, preservedFenceHash: fenceHash });
+      const release = { releaseRef: "setfarm://tests/p4/release", releaseHash: sha("6"), fenceRef, fenceHash, releaseAuthority: { purpose: "recovery-d-source-delivery-v1", targetFamilyKind: "source-run-launch", targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef, targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash } };
+      const receiptBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-run-receipt.v1", purpose: "recovery-d-source-delivery-v1", pendingInputRef: context.pendingInputRef, pendingInputHash: context.pendingInputHash, operationRef: context.operationRef, operationHash: context.operationHash, targetSourceRunReservationRef: context.targetSourceRunReservationRef, targetSourceRunReservationHash: context.targetSourceRunReservationHash, targetRunReservationRef: context.targetRunReservationRef, targetRunReservationHash: context.targetRunReservationHash, targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash, ownerAdmissionFenceRef: fenceRef, ownerAdmissionFenceHash: fenceHash, startIntentRef: context.startIntentRef, startIntentHash: context.startIntentHash, startOutboxRef: context.startOutboxRef, startOutboxHash: context.startOutboxHash, runId, operationRunBindingHash: context.operationRunBindingHash, reciprocalRunOperationBindingHash: context.reciprocalRunOperationBindingHash, terminalOwnerRef: sourceTerminal.terminalOwnerRef, terminalOwnerHash: sourceTerminal.terminalOwnerHash, terminalSourceRunRef: sourceTerminal.terminalSourceRunRef, terminalSourceRunHash: sourceTerminal.terminalSourceRunHash, terminalRunLaunchRef: runTerminal.terminalRunLaunchRef, terminalRunLaunchHash: runTerminal.terminalRunLaunchHash, targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef, targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash, fenceReleaseRef: release.releaseRef, fenceReleaseHash: release.releaseHash };
+      const runRow = { ...runReservation, state: "closed", close_kind: "fence-target", close_payload: runClose };
+      const sourceRow = { ...sourceReservation, state: "closed", close_kind: "fence-target", close_payload: sourceClose };
+      Object.assign(globalThis as any, { __p4RunReservation: runReservation, __p4SourceReservation: sourceReservation, __p4Bound: bound, __p4SourceTerminal: sourceTerminal, __p4RunTerminal: runTerminal, __p4PairClose: pairClose, __p4Release: release, __p4ReceiptBody: receiptBody, __p4TerminalCross: null, __p4TerminalCalls: [] });
+      const sql = Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const query = strings.join("?");
+        if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
+        if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
+        if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: "completed" }];
+        if (query.includes("authority_kind='release'")) return [{ authority_ref: release.releaseRef, authority_hash: release.releaseHash }];
+        if (query.includes("SELECT id,status FROM runs")) return [{ id: runId, status: "completed" }];
+        throw new Error(`UNEXPECTED_SQL:${query}`);
+      }, { unsafe: async () => { throw new Error("unsafe forbidden"); } });
+      const terminal = await kernel.resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(sql, { runId });
+      assert.equal(terminal.producerImplementationId, "a-recovery-source-bootstrap-run-v1");
+      assert.deepEqual((globalThis as any).__p4TerminalCalls, ["pending", "source", "run", "pair-close", "receipt"]);
+      for (const crossed of ["pending", "source", "run", "pair-close", "receipt"]) {
+        (globalThis as any).__p4TerminalCross = crossed;
+        (globalThis as any).__p4TerminalCalls = [];
+        await assert.rejects(kernel.resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(sql, { runId }), /WORKFLOW_RUN_OWNER_CORRUPTION/);
+        assert.ok((globalThis as any).__p4TerminalCalls.includes(crossed), `${crossed} resolver was executed before rollback`);
+      }
+
+      const durable = { status: "running" };
+      const createTransaction = () => {
+        const staged = { status: durable.status };
+        const tagged = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const query = strings.join("?");
+          if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
+          if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
+          if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: staged.status }];
+          if (query.includes("authority_kind='release'")) return [{ authority_ref: release.releaseRef, authority_hash: release.releaseHash }];
+          if (query.includes("SELECT id,status FROM runs")) return [{ id: runId, status: staged.status }];
+          throw new Error(`UNEXPECTED_TAGGED_SQL:${query}`);
+        };
+        const unsafe = async (query: string, values: unknown[] = []) => {
+          if (query.includes("FROM runs WHERE id = $1 FOR UPDATE")) return [{ id: runId, status: staged.status, protocol: "legacy", packet_hash: null, accepted_candidate_hash: null, meta: {} }];
+          if (query.includes("FROM run_termination_requests")) return [];
+          if (query.includes("FROM runtime_sessions")) return [];
+          if (query.includes("FROM execution_attempts")) return [];
+          if (query.includes("FROM claim_log")) return [];
+          if (query.includes("FROM runtime_completion_requests")) return [];
+          if (query.includes("FROM runtime_completion_effects")) return [];
+          if (query.includes("FROM internal_production_owner_reservations_v1")) return [];
+          if (query.includes("SELECT") && query.includes("COUNT(*)::integer FROM steps")) return [{ steps: 0, stories: 0 }];
+          if (query.includes("UPDATE runs") && query.includes("RETURNING id,status")) {
+            staged.status = String(values[1]);
+            return [{ id: runId, status: staged.status }];
+          }
+          throw new Error(`UNEXPECTED_UNSAFE_SQL:${query}`);
+        };
+        return {
+          sql: Object.assign(tagged, { unsafe }),
+          commit: () => { durable.status = staged.status; },
+          staged,
+        };
+      };
+      const executeTransition = async () => {
+        const transaction = createTransaction();
+        const result = await kernel.transitionRunToTerminalInTransaction(transaction.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "p4 special terminal",
+        });
+        transaction.commit();
+        return result;
+      };
+      Object.assign(globalThis as any, {
+        __p4TerminalCross: null,
+        __p4TerminalCalls: [],
+        __p4OrdinaryTerminalResolverCalls: 0,
+        __p4OwnerCloseCalls: 0,
+        __p4OwnerCloseReopenCalls: 0,
+        __p4OutboxCalls: [],
+      });
+      const transition = await executeTransition();
+      assert.equal(transition.status, "completed");
+      assert.equal(durable.status, "completed");
+      assert.deepEqual((globalThis as any).__p4TerminalCalls, ["pending", "source", "run", "pair-close", "receipt"]);
+      assert.equal((globalThis as any).__p4OrdinaryTerminalResolverCalls, 0);
+      assert.equal((globalThis as any).__p4OwnerCloseCalls, 0, "the already-closed special target is never closed a second time");
+      assert.equal((globalThis as any).__p4OwnerCloseReopenCalls, 0);
+      assert.equal((globalThis as any).__p4OutboxCalls.length, 1);
+
+      for (const crossed of ["pending", "source", "run", "pair-close", "receipt"]) {
+        durable.status = "running";
+        Object.assign(globalThis as any, {
+          __p4TerminalCross: crossed,
+          __p4TerminalCalls: [],
+          __p4OrdinaryTerminalResolverCalls: 0,
+          __p4OwnerCloseCalls: 0,
+          __p4OwnerCloseReopenCalls: 0,
+          __p4OutboxCalls: [],
+        });
+        await assert.rejects(executeTransition(), /WORKFLOW_RUN_OWNER_CORRUPTION/);
+        assert.equal(durable.status, "running", `${crossed} proof failure rolls back the preceding run terminal UPDATE`);
+        assert.equal((globalThis as any).__p4OwnerCloseCalls, 0);
+        assert.equal((globalThis as any).__p4OutboxCalls.length, 0);
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps attempt birth, recovery pair publication, m33 use, and terminal closes in the exact Task 4 inventory", async () => {
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const productionPaths = [
+      "../../src/execution/attempt-repository.ts",
+      "../../src/execution/attempt-reconciler.ts",
+      "../../src/execution/claim-attempt-transition.ts",
+      "../../src/execution/pre-dispatch-withdrawal-authority.ts",
+      "../../src/execution/run-terminal-transition.ts",
+      "../../src/recovery/v3-downstream-evidence-publication.ts",
+      "../../src/recovery/v3-evidence-only-publication.ts",
+      "../../src/recovery/v3-evidence-only-worker.ts",
+      "../../src/recovery/v3-recovery-lifecycle-reconciler.ts",
+    ] as const;
+    const sources = await Promise.all(productionPaths.map(async (relativePath) => ({
+      relativePath,
+      source: await readFile(path.resolve(testDirectory, relativePath), "utf8"),
+    })));
+    const writerInventory = [
+      ["../../src/execution/attempt-repository.ts", "async complete(input:"],
+      ["../../src/execution/attempt-reconciler.ts", "async function completeTerminalAttemptForRecovery("],
+      ["../../src/execution/claim-attempt-transition.ts", "export async function closeClaimAndBoundAttemptInTransaction("],
+      ["../../src/execution/claim-attempt-transition.ts", "export async function completeStoryClaimAndBoundAttempt("],
+      ["../../src/execution/pre-dispatch-withdrawal-authority.ts", "export async function withdrawPreDispatchClaimInTransaction("],
+      ["../../src/execution/run-terminal-transition.ts", "export async function transitionRunToTerminalInTransaction("],
+      ["../../src/recovery/v3-downstream-evidence-publication.ts", "async complete(input:"],
+      ["../../src/recovery/v3-evidence-only-publication.ts", "async completeAttempt(input:"],
+      ["../../src/recovery/v3-evidence-only-worker.ts", "async function quarantineDelivery("],
+      ["../../src/recovery/v3-recovery-lifecycle-reconciler.ts", "async function blockExpiredEvidenceAttempt("],
+      ["../../src/recovery/v3-recovery-lifecycle-reconciler.ts", "async function blockExpiredModelAttempt("],
+    ] as const;
+    const terminalDispositionUpdate = /UPDATE execution_attempts[\s\S]{0,250}?SET disposition = (?:\$\d+|'(?:produced_delta|already_satisfied|verified|no_progress|failed|inconclusive)')/g;
+    const resolverSite = /await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1\(/g;
+    const assertExactInventory = (candidateSources: ReadonlyArray<Readonly<{
+      relativePath: string;
+      source: string;
+    }>>): void => {
+      assert.equal(
+        candidateSources.reduce((total, item) => total + (item.source.match(resolverSite)?.length ?? 0), 0),
+        11,
+        "the declared Task 4 inventory is the total resolver-site authority",
+      );
+      assert.equal(
+        candidateSources.reduce((total, item) => total + (item.source.match(terminalDispositionUpdate)?.length ?? 0), 0),
+        11,
+        "the declared Task 4 inventory is the total terminal disposition UPDATE authority",
+      );
+    };
+    assertExactInventory(sources);
+    for (const [relativePath, writerMarker] of writerInventory) {
+      const source = sources.find((item) => item.relativePath === relativePath)?.source;
+      assert.ok(source, relativePath);
+      const writerStart = source.indexOf(writerMarker);
+      assert.notEqual(writerStart, -1, `${relativePath}:${writerMarker}`);
+      const nextWriter = source.indexOf("\nasync function ", writerStart + writerMarker.length);
+      const nextExport = source.indexOf("\nexport async function ", writerStart + writerMarker.length);
+      const boundaries = [nextWriter, nextExport].filter((value) => value > writerStart);
+      const writerEnd = boundaries.length > 0 ? Math.min(...boundaries) : source.length;
+      const body = source.slice(writerStart, writerEnd);
+      assert.match(
+        body,
+        /await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1\(/,
+        `${relativePath}:${writerMarker} must resolve its own terminal attempt owner`,
+      );
+      assert.match(
+        body,
+        /await closeInternalProductionOwnerReservationV1\(/,
+        `${relativePath}:${writerMarker} must close its own terminal attempt owner`,
+      );
+    }
+    const undeclaredUpdateOnly = sources.map((item, index) => index === 0 ? {
+      ...item,
+      source: `${item.source}\nasync function undeclaredUpdateOnly(transaction: PgTransactionSql) {\n  await transaction.unsafe(\`UPDATE execution_attempts SET disposition = 'already_satisfied' WHERE attempt_id = 'ATT_undeclared'\`);\n}\n`,
+    } : item);
+    assert.throws(
+      () => assertExactInventory(undeclaredUpdateOnly),
+      /total terminal disposition UPDATE authority/,
+    );
+    const undeclaredResolverOnly = sources.map((item, index) => index === 0 ? {
+      ...item,
+      source: `${item.source}\nasync function undeclaredResolverOnly(transaction: PgTransactionSql) {\n  await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(transaction, { attemptId: 'ATT_undeclared' });\n}\n`,
+    } : item);
+    assert.throws(
+      () => assertExactInventory(undeclaredResolverOnly),
+      /total resolver-site authority/,
+    );
+    const count = (source: string, expression: RegExp): number => source.match(expression)?.length ?? 0;
+    assert.deepEqual(
+      sources.filter((item) => item.source.includes("INSERT INTO execution_attempts"))
+        .map((item) => item.relativePath),
+      ["../../src/execution/attempt-repository.ts"],
+    );
+    assert.deepEqual(
+      sources.filter((item) => /SET state = 'attempt_reserved',\s+claim_id =/m.test(item.source))
+        .map((item) => item.relativePath),
+      ["../../src/execution/attempt-repository.ts"],
+    );
+    assert.deepEqual(
+      sources.filter((item) => item.source.includes("internal_production_v3_recovery_claim_publications_v1"))
+        .map((item) => item.relativePath),
+      [
+        "../../src/execution/attempt-repository.ts",
+        "../../src/recovery/v3-evidence-only-publication.ts",
+        "../../src/recovery/v3-recovery-lifecycle-reconciler.ts",
+      ],
+    );
+    const ordinary = sources.find((item) => item.relativePath.endsWith("v3-downstream-evidence-publication.ts"))!.source;
+    assert.equal(ordinary.includes("recovery_dispatch_deliveries"), false);
+    assert.equal(ordinary.includes("internal_production_v3_recovery_claim_publications_v1"), false);
+    assert.equal(ordinary.includes("recoveryDispatchId:"), false);
+    const evidenceOnly = sources.find((item) => item.relativePath.endsWith("v3-evidence-only-publication.ts"))!.source;
+    assert.equal(count(evidenceOnly, /internal_production_v3_recovery_claim_publications_v1/g), 1);
+    assert.match(evidenceOnly, /runtime_count[\s\S]*publication_count[\s\S]*reserveAttemptInTransaction/);
+    const lifecycle = sources.find((item) => item.relativePath.endsWith("v3-recovery-lifecycle-reconciler.ts"))!.source;
+    const expiryWriter = lifecycle.slice(
+      lifecycle.indexOf("async function rollbackUnreservedPublication"),
+      lifecycle.indexOf("async function advanceDeliveryRunning"),
+    );
+    assert.match(expiryWriter, /state = 'blocked'/);
+    assert.equal(expiryWriter.includes("resetExpiredLease("), false);
+    assert.match(expiryWriter, /claim_id IS NULL[\s\S]*attempt_id IS NULL|attempt_id IS NULL[\s\S]*claim_id IS NULL/);
+  });
+
+  it("terminal transition closes the authenticated run owner in the same transaction", async () => {
+    const source = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/run-terminal-transition.ts",
+    ), "utf8");
+    assert.equal(transitionRunToTerminal.length, 2);
+    assert.equal(transitionRunToTerminalInTransaction.length, 2);
+    assert.equal(/createInternalProduction(?:WorkflowRun)?TerminalOwnerAuthority/.test(source), false);
+    const runLock = source.indexOf("FROM runs WHERE id = $1 FOR UPDATE");
+    const terminationLock = source.indexOf("FROM run_termination_requests", runLock);
+    const runtimeLock = source.indexOf("FROM runtime_sessions", terminationLock);
+    const attemptLock = source.indexOf("FROM execution_attempts", runtimeLock);
+    const recoveryLock = source.indexOf("lockV3TerminalRecoveryChainInTransaction", attemptLock);
+    const claimLock = source.indexOf("FROM claim_log", recoveryLock);
+    const completionLock = source.indexOf("FROM runtime_completion_requests", claimLock);
+    const effectLock = source.indexOf("FROM runtime_completion_effects effect", completionLock);
+    const effectPreflight = source.indexOf(
+      "authenticateTask5ClosedMandatoryEffectReplayInTransactionV1(sql, mandatoryEffect)",
+      effectLock,
+    );
+    const effectPreflightFact = source.indexOf(
+      "authenticatedMandatoryEffectFacts.add(mandatoryEffectFact(effect))",
+      effectPreflight,
+    );
+    assert.ok(
+      runLock >= 0
+      && terminationLock > runLock
+      && runtimeLock > terminationLock
+      && attemptLock > runtimeLock
+      && recoveryLock > attemptLock
+      && claimLock > recoveryLock
+      && completionLock > claimLock
+      && effectLock > completionLock,
+      "compound terminalization must preserve the frozen lock chain",
+    );
+    const claimUpdate = source.indexOf("UPDATE claim_log");
+    const attemptUpdate = source.indexOf("UPDATE execution_attempts", claimUpdate);
+    const runtimeUpdate = source.indexOf(
+      "releaseRuntimeSessionForTerminalRunInTransactionV1(",
+      attemptUpdate,
+    );
+    const completionUpdate = source.indexOf(
+      "terminalizeRuntimeCompletionForRunInTransactionV1(",
+      runtimeUpdate,
+    );
+    const effectUpdate = source.indexOf("Mandatory-effect is an explicit Task-6 mutation no-op", completionUpdate);
+    const terminationUpdate = source.indexOf(
+      "terminalizeRunTerminationRequestInTransactionV1(",
+      effectUpdate,
+    );
+    const runUpdate = source.indexOf("UPDATE runs\n          SET status = $2", terminationUpdate);
+    const claimResolver = source.indexOf(
+      "resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(",
+      runUpdate,
+    );
+    const attemptResolver = source.indexOf(
+      "resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(",
+      claimResolver,
+    );
+    const runtimeResolver = source.indexOf(
+      "resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(",
+      attemptResolver,
+    );
+    const completionResolver = source.indexOf(
+      "resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(",
+      runtimeResolver,
+    );
+    const effectPreflightFactConsumption = source.indexOf(
+      "authenticatedMandatoryEffectFacts.delete(mandatoryEffectFact(effect))",
+      completionResolver,
+    );
+    const terminationResolver = source.indexOf(
+      "resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1(",
+      completionResolver,
+    );
+    const runResolver = source.indexOf(
+      "resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(",
+      terminationResolver,
+    );
+    const firstClose = source.indexOf("closeInternalProductionOwnerReservationV1(", runResolver);
+    assert.ok(
+      effectPreflight > effectLock
+      && effectPreflightFact > effectPreflight
+      && claimUpdate > effectPreflight
+      && attemptUpdate > claimUpdate
+      && runtimeUpdate > attemptUpdate
+      && completionUpdate > runtimeUpdate
+      && effectUpdate > completionUpdate
+      && terminationUpdate > effectUpdate
+      && runUpdate > terminationUpdate
+      && claimResolver > runUpdate
+      && attemptResolver > claimResolver
+      && runtimeResolver > attemptResolver
+      && completionResolver > runtimeResolver
+      && effectPreflightFactConsumption > completionResolver
+      && terminationResolver > effectPreflightFactConsumption
+      && runResolver > terminationResolver
+      && firstClose > runResolver,
+      "Task 6 must finish mutate-all and resolve-all in fixed category order before the first close",
+    );
+    assert.equal(source.match(/async function normalizeTask5TerminalCompletionContractInTransactionV1\(/g)?.length, 1);
+    assert.equal(source.match(/await normalizeTask5TerminalCompletionContractInTransactionV1\(/g)?.length, 1);
+    assert.equal(source.includes("export async function normalizeTask5TerminalCompletionContractInTransactionV1"), false);
+    assert.equal(source.match(/async function authenticateTask5ClosedMandatoryEffectReplayInTransactionV1\(/g)?.length, 1);
+    assert.equal(source.match(/await authenticateTask5ClosedMandatoryEffectReplayInTransactionV1\(sql, mandatoryEffect\)/g)?.length, 1);
+    assert.equal(source.includes("export async function authenticateTask5ClosedMandatoryEffectReplayInTransactionV1"), false);
+    const reconciledMutationGate = source.slice(
+      source.indexOf("const reconciledMutations ="),
+      source.indexOf("if (!alreadyTerminal)", source.indexOf("const reconciledMutations =")),
+    );
+    for (const exactCounter of [
+      "closedClaims",
+      "closedAttempts",
+      "recoverySettlement.closedDeliveries",
+      "recoverySettlement.closedRecoveryCases",
+      "changedSteps",
+      "changedStories",
+      "completionMutations.length",
+      "releasedRuntimeIds.length",
+    ]) {
+      assert.ok(
+        reconciledMutationGate.includes(exactCounter),
+        `historical reconciliation event gate must include ${exactCounter}`,
+      );
+    }
+    const completionRepositorySource = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/runtime-completion.ts",
+    ), "utf8");
+    const completionTerminalHelper = completionRepositorySource.slice(
+      completionRepositorySource.indexOf("export async function terminalizeRuntimeCompletionForRunInTransactionV1("),
+      completionRepositorySource.indexOf("/** Canonical run terminalization rejects", completionRepositorySource.indexOf(
+        "export async function terminalizeRuntimeCompletionForRunInTransactionV1(",
+      )),
+    );
+    assert.equal(completionTerminalHelper.includes("expectedState"), false);
+    assert.equal(completionTerminalHelper.includes("expectedApplyPhase"), false);
+    assert.equal(completionTerminalHelper.includes("resolution:"), false);
+    assert.equal(completionTerminalHelper.includes("result?:"), false);
+    assert.match(completionTerminalHelper, /terminalRunStatus: "completed" \| "failed" \| "cancelled"/);
+    assert.equal(completionTerminalHelper.includes('terminalRunStatus === "cancelled"'), false);
+    assert.equal(
+      /completion\.state === "processing"[\s\S]{0,300}input\.status === "cancelled"/.test(source),
+      false,
+    );
+    const phase0Call = source.indexOf("await normalizeTask5TerminalCompletionContractInTransactionV1(");
+    assert.ok(phase0Call >= 0 && phase0Call < claimUpdate, "Task 5 normalization must finish before Task 6 mutation phases");
+    const effectRepository = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/runtime-completion-effect-repository.ts",
+    ), "utf8");
+    assert.equal(effectRepository.includes("terminalizeMandatoryEffectForRunInTransactionV1"), false);
+    const db = await import("../../src/db-pg.js");
+    assert.equal("createInternalProductionWorkflowRunTerminalOwnerAuthorityV1" in db, false);
+  });
+
+  it("rejects an already-terminal replay while any termination request remains open", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-replay-open-termination";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      const requestId = "RTR_terminal-replay-open01";
+      await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "task6-open-replay",
+        diagnostic: "open termination must block terminal replay",
+        requestId,
+      });
+      await database.sql`UPDATE runs SET status='failed' WHERE id=${runId}`;
+
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "historical terminal replay",
+        }),
+        /RUN_TERMINAL_REPLAY_TERMINATION_OPEN/,
+      );
+      const state = await database.sql<Array<{ request_state: string; owner_state: string }>>`
+        SELECT request.state AS request_state,owner.state AS owner_state
+          FROM run_termination_requests request
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='termination' AND owner.owner_key=request.request_id
+         WHERE request.request_id=${requestId}
+      `;
+      assert.deepEqual(state.map((row) => ({ ...row })), [{
+        request_state: "requested",
+        owner_state: "bound",
+      }]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a completed transition when any terminalized termination inventory exists", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-completed-terminalized-termination";
+      const requestId = "RTR_completed-terminalized-inventory";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId,
+        targetStatus: "failed",
+        diagnostic: "terminalized inventory must not disappear from completed classification",
+      });
+      await database.sql.begin(async (transaction) => {
+        await transaction.unsafe(
+          `UPDATE run_termination_requests
+              SET state='terminalized',terminalized_at=NOW(),updated_at=NOW()
+            WHERE request_id=$1`,
+          [requestId],
+        );
+        await transaction.unsafe(
+          "UPDATE runs SET status='running',updated_at=NOW() WHERE id=$1",
+          [runId],
+        );
+      });
+      const before = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        owner_state: string;
+        terminal_event_count: number;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               owner.state AS owner_state,
+               (SELECT COUNT(*)::integer FROM operational_outbox event
+                 WHERE event.aggregate_type='run' AND event.aggregate_id=${runId}
+                   AND event.event_type='run.terminal') AS terminal_event_count
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='termination' AND owner.owner_key=request.request_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "completed must reject incompatible termination inventory",
+        }),
+        /RUN_TERMINAL_TERMINATION_INVENTORY_INVALID/,
+      );
+      const after = (await database.sql<Array<typeof before>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               owner.state AS owner_state,
+               (SELECT COUNT(*)::integer FROM operational_outbox event
+                 WHERE event.aggregate_type='run' AND event.aggregate_id=${runId}
+                   AND event.event_type='run.terminal') AS terminal_event_count
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='termination' AND owner.owner_key=request.request_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...after }, { ...before });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("publishes a historical reconciliation event for step and story residue only", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-historical-step-residue";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      await database.sql`
+        INSERT INTO steps
+          (id,run_id,step_id,agent_id,step_index,input_template,expects,status,current_story_id)
+        VALUES
+          ('run-terminal-historical-step',${runId},'implement','feature-dev_developer',1,'','','running',
+           'run-terminal-historical-story')
+      `;
+      await database.sql`
+        INSERT INTO stories
+          (id,run_id,story_index,story_id,title,status,claimed_by,claim_generation)
+        VALUES
+          ('run-terminal-historical-story',${runId},1,'US-001','Historical residue','running',
+           'feature-dev_developer',1)
+      `;
+      await database.sql`UPDATE runs SET status='failed',updated_at=NOW() WHERE id=${runId}`;
+      const reconciled = await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "reconcile only historical step and story residue",
+      });
+      assert.equal(reconciled.changedSteps, 1);
+      assert.equal(reconciled.changedStories, 1);
+      const events = await database.sql<Array<{
+        reason_code: string;
+        changed_steps: number;
+        changed_stories: number;
+      }>>`
+        SELECT payload->>'reasonCode' AS reason_code,
+               (payload->>'changedSteps')::integer AS changed_steps,
+               (payload->>'changedStories')::integer AS changed_stories
+          FROM operational_outbox
+         WHERE aggregate_type='run' AND aggregate_id=${runId}
+           AND event_type='run.terminal'
+      `;
+      assert.deepEqual(events.map((row) => ({ ...row })), [{
+        reason_code: "historical_terminal_residue_reconciled",
+        changed_steps: 1,
+        changed_stories: 1,
+      }]);
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "exact historical replay",
+      });
+      assert.equal((await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count FROM operational_outbox
+         WHERE aggregate_type='run' AND aggregate_id=${runId}
+           AND event_type='run.terminal'
+      `)[0]!.count, 1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("authenticates an applied Task 5 effect while atomically accepting its completion", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const blocker = postgresClient(database.url, { max: 1 });
+    try {
+      const runId = "run-terminal-completion-effect";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      const seeded = await seedActiveStory(database, runId);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-completion-effect",
+        fenceToken: () => "8".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId: seeded.claimId,
+        runId,
+        storyId: "US-002",
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${seeded.claimId}`],
+      }));
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_run-terminal-completion-effect",
+        runId,
+        stepDbId: seeded.stepDbId,
+        workflowStepId: "implement",
+        storyDbId: seeded.storyDbId,
+        storyId: "US-002",
+        claimId: seeded.claimId,
+        attemptId: attempt.attempt.attemptId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markStarting({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markRunning({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+        sessionKey: "terminal-completion-session",
+      });
+      const envelope: ClaimEnvelopeV1 = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "shadow",
+        issuedAt: "2026-07-13T12:00:00.000Z",
+        stepId: seeded.stepDbId,
+        workflowStepId: "implement",
+        runId,
+        storyId: "US-002",
+        storyDbId: seeded.storyDbId,
+        claimId: seeded.claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        claimGeneration: 1,
+        attempt: {
+          attemptId: attempt.attempt.attemptId,
+          generation: attempt.attempt.generation,
+          fenceToken: attempt.attempt.fenceToken,
+        },
+      };
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope,
+        output: "STATUS: done\nSUMMARY: terminal transition applies the effect",
+        requestId: "RCR_run-terminal-completion-effect",
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      await sessions.markDrained({
+        sessionId: session.sessionId,
+        ownerInstanceId: "terminal-completion-manager",
+        evidence: RUNTIME_DRAIN_EVIDENCE,
+      });
+      const processing = await completions.markProcessing({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      assert.ok(processing.leaseExpiresAt);
+      const terminalResult = {
+        runStatus: "failed",
+        advanced: false,
+        runCompleted: false,
+        runFailed: true,
+      };
+      await runWithRuntimeCompletionOwner({
+        requestId: processing.requestId,
+        ownerInstanceId: processing.ownerInstanceId!,
+        leaseExpiresAt: processing.leaseExpiresAt!,
+        ownerAttemptCount: processing.ownerAttemptCount,
+      }, () => database.sql.begin((transaction) => markRuntimeCompletionOwnerCommittedInTransaction(
+        transaction,
+        {
+          claimId: seeded.claimId,
+          claimOutcome: "failed",
+          plan: createSingleEffectCompletionPlanDescriptorV1({
+            kind: "terminal_transition",
+            continuation: { type: "terminal_finalize" },
+            effectPayload: { runStatus: "failed" },
+          }),
+        },
+      )));
+      const effects = createRuntimeCompletionEffectRepository(database.sql);
+      const leasedEffect = await effects.claimNext({
+        requestId: processing.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+      });
+      assert.ok(leasedEffect?.leaseToken);
+      await effects.settle({
+        requestId: processing.requestId,
+        effectKey: leasedEffect!.effectKey,
+        ownerInstanceId: "terminal-completion-manager",
+        leaseToken: leasedEffect!.leaseToken!,
+        resolution: "applied",
+        result: terminalResult,
+        evidence: { schema: "setfarm.test-task6-terminal-effect.v1" },
+      });
+      await completions.markEffectsCommitted({
+        requestId: processing.requestId,
+        ownerInstanceId: "terminal-completion-manager",
+        ownerAttemptCount: processing.ownerAttemptCount,
+        result: terminalResult,
+      });
+      const terminationRequestId = "RTR_run-terminal-completion-effect";
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId: terminationRequestId,
+        targetStatus: "failed",
+        diagnostic: "terminal completion effect",
+      });
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task6_completion_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.category='completion-owner' AND OLD.state='bound' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_TASK6_COMPLETION_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task6_completion_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_task6_completion_close_v1()
+      `);
+      const terminate = (terminalSql: postgres.Sql = database.sql) => runWithRuntimeCompletionOwner({
+        requestId: processing.requestId,
+        ownerInstanceId: processing.ownerInstanceId!,
+        leaseExpiresAt: processing.leaseExpiresAt!,
+        ownerAttemptCount: processing.ownerAttemptCount,
+      }, () => transitionRunToTerminal(terminalSql, {
+        runId,
+        status: "failed",
+        diagnostic: "completion decided terminal failure",
+        drainedTerminationRequestId: terminationRequestId,
+      }));
+
+      await database.sql.unsafe(`CREATE TABLE task6_mutation_failure_point_v1 (table_name text PRIMARY KEY)`);
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task6_category_mutation_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF EXISTS (SELECT 1 FROM task6_mutation_failure_point_v1 point
+                      WHERE point.table_name=TG_TABLE_NAME) THEN
+            RAISE EXCEPTION 'TEST_TASK6_MUTATION_REJECTED:%',TG_TABLE_NAME;
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      for (const [triggerName, tableName, columnName] of [
+        ["task6_claim_mutation_v1", "claim_log", "outcome"],
+        ["task6_attempt_mutation_v1", "execution_attempts", "disposition"],
+        ["task6_runtime_mutation_v1", "runtime_sessions", "state"],
+        ["task6_completion_mutation_v1", "runtime_completion_requests", "state"],
+        ["task6_termination_mutation_v1", "run_termination_requests", "state"],
+        ["task6_run_mutation_v1", "runs", "status"],
+      ] as const) {
+        await database.sql.unsafe(
+          `CREATE TRIGGER ${triggerName}
+           BEFORE UPDATE OF ${columnName} ON ${tableName}
+           FOR EACH ROW EXECUTE FUNCTION reject_task6_category_mutation_v1()`,
+        );
+      }
+      for (const tableName of [
+        "claim_log",
+        "execution_attempts",
+        "runtime_sessions",
+        "runtime_completion_requests",
+        "run_termination_requests",
+        "runs",
+      ]) {
+        await database.sql`INSERT INTO task6_mutation_failure_point_v1 (table_name) VALUES (${tableName})`;
+        await assert.rejects(terminate(), /TEST_TASK6_MUTATION_REJECTED/);
+        await database.sql`DELETE FROM task6_mutation_failure_point_v1`;
+        const prefix = (await database.sql<Array<{
+          run_status: string;
+          completion_state: string;
+          termination_state: string;
+        }>>`
+          SELECT run_row.status AS run_status,completion.state AS completion_state,
+                 termination.state AS termination_state
+            FROM runs run_row
+            JOIN runtime_completion_requests completion ON completion.run_id=run_row.id
+            JOIN run_termination_requests termination ON termination.run_id=run_row.id
+           WHERE run_row.id=${runId}
+        `)[0]!;
+        assert.deepEqual({ ...prefix }, {
+          run_status: "failing",
+          completion_state: "processing",
+          termination_state: "drained",
+        });
+      }
+      for (const [triggerName, tableName] of [
+        ["task6_claim_mutation_v1", "claim_log"],
+        ["task6_attempt_mutation_v1", "execution_attempts"],
+        ["task6_runtime_mutation_v1", "runtime_sessions"],
+        ["task6_completion_mutation_v1", "runtime_completion_requests"],
+        ["task6_termination_mutation_v1", "run_termination_requests"],
+        ["task6_run_mutation_v1", "runs"],
+      ] as const) {
+        await database.sql.unsafe(`DROP TRIGGER ${triggerName} ON ${tableName}`);
+      }
+
+      const compoundVisibilitySnapshot = async () => ({ ...(await database.sql<Array<{
+        run_status: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        runtime_state: string;
+        completion_state: string;
+        termination_state: string;
+        owner_rows: unknown;
+        head_row: unknown;
+        terminal_event_count: number;
+      }>>`
+        SELECT run_row.status AS run_status,claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,runtime.state AS runtime_state,
+               completion.state AS completion_state,termination.state AS termination_state,
+               (SELECT jsonb_agg(to_jsonb(owner) ORDER BY owner.category,owner.owner_key)
+                  FROM internal_production_owner_reservations_v1 owner) AS owner_rows,
+               (SELECT to_jsonb(head) FROM internal_production_owner_admission_head_v1 head
+                 WHERE head.singleton) AS head_row,
+               (SELECT COUNT(*)::integer FROM operational_outbox event
+                 WHERE event.aggregate_type='run' AND event.aggregate_id=${runId}
+                   AND event.event_type='run.terminal') AS terminal_event_count
+          FROM runs run_row
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_sessions runtime ON runtime.run_id=run_row.id
+          JOIN runtime_completion_requests completion ON completion.run_id=run_row.id
+          JOIN run_termination_requests termination ON termination.run_id=run_row.id
+         WHERE run_row.id=${runId}
+      `)[0]! });
+      const preCompoundVisibility = await compoundVisibilitySnapshot();
+      const latchKey = 6_260_406;
+      await database.sql.unsafe("CREATE SEQUENCE task6_after_cas_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task6_after_cas_latch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task6_after_cas_latch_v1');
+          PERFORM pg_advisory_xact_lock(${latchKey});
+          RETURN NEW;
+        END $$
+      `);
+      const waitForAfterCasLatch = async () => {
+        for (let attemptIndex = 0; attemptIndex < 200; attemptIndex += 1) {
+          const state = await database.sql<Array<{ is_called: boolean }>>`
+            SELECT is_called FROM task6_after_cas_latch_v1
+          `;
+          if (state[0]?.is_called) return;
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error("TEST_TASK6_AFTER_CAS_LATCH_TIMEOUT");
+      };
+      const exerciseAfterCasLatch = async (
+        triggerName: string,
+        tableName: string,
+        columnName: string,
+      ) => {
+        await database.sql.unsafe(
+          `CREATE TRIGGER ${triggerName}
+             AFTER UPDATE OF ${columnName} ON ${tableName}
+             FOR EACH ROW EXECUTE FUNCTION task6_after_cas_latch_v1()`,
+        );
+        let releaseBlocker!: () => void;
+        let blockerAcquired!: () => void;
+        const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const acquired = new Promise<void>((resolve) => { blockerAcquired = resolve; });
+        const blocking = Promise.resolve(blocker.begin(async (transaction) => {
+          await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [latchKey]);
+          blockerAcquired();
+          await release;
+        }));
+        await acquired;
+        const transition = assert.rejects(terminate(), /TEST_TASK6_COMPLETION_CLOSE_REJECTED/);
+        await waitForAfterCasLatch();
+        assert.deepEqual(await compoundVisibilitySnapshot(), preCompoundVisibility);
+        releaseBlocker();
+        await blocking;
+        await transition;
+        await database.sql.unsafe(`DROP TRIGGER ${triggerName} ON ${tableName}`);
+        await database.sql.unsafe("SELECT setval('task6_after_cas_latch_v1',1,false)");
+      };
+      for (const [triggerName, tableName, columnName] of [
+        ["task6_after_claim_cas_v1", "claim_log", "outcome"],
+        ["task6_after_attempt_cas_v1", "execution_attempts", "disposition"],
+        ["task6_after_runtime_cas_v1", "runtime_sessions", "state"],
+        ["task6_after_completion_cas_v1", "runtime_completion_requests", "state"],
+        ["task6_after_termination_cas_v1", "run_termination_requests", "state"],
+        ["task6_after_run_cas_v1", "runs", "status"],
+      ] as const) {
+        await exerciseAfterCasLatch(triggerName, tableName, columnName);
+      }
+      await database.sql.unsafe("DROP FUNCTION task6_after_cas_latch_v1()");
+      await database.sql.unsafe("DROP SEQUENCE task6_after_cas_latch_v1");
+
+      const originalEffect = (await database.sql<Array<{
+        ordinal: number;
+        effect_type: string;
+        input_hash: string;
+        payload: unknown;
+      }>>`
+        SELECT ordinal,effect_type,input_hash,payload
+          FROM runtime_completion_effects
+         WHERE request_id=${processing.requestId}
+      `)[0]!;
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task6_first_mutation_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.outcome IS NULL AND NEW.outcome IS NOT NULL THEN
+            RAISE EXCEPTION 'TEST_TASK6_FIRST_MUTATION_REACHED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task6_first_mutation_v1
+        BEFORE UPDATE OF outcome ON claim_log
+        FOR EACH ROW EXECUTE FUNCTION reject_task6_first_mutation_v1()
+      `);
+      const manifestDrifts = [
+        {
+          mutate: () => database.sql`
+            UPDATE runtime_completion_effects SET ordinal=ordinal+7
+             WHERE request_id=${processing.requestId}
+          `,
+        },
+        {
+          mutate: () => database.sql`
+            UPDATE runtime_completion_effects SET effect_type='terminal_transition_tampered'
+             WHERE request_id=${processing.requestId}
+          `,
+        },
+        {
+          mutate: () => database.sql`
+            UPDATE runtime_completion_effects SET input_hash=${"0".repeat(64)}
+             WHERE request_id=${processing.requestId}
+          `,
+        },
+        {
+          mutate: () => database.sql`
+            UPDATE runtime_completion_effects
+               SET payload=jsonb_set(payload,'{effect}',jsonb_build_object('runStatus','cancelled'))
+             WHERE request_id=${processing.requestId}
+          `,
+        },
+      ];
+      for (const drift of manifestDrifts) {
+        await database.sql.unsafe(`
+          ALTER TABLE runtime_completion_effects
+          DISABLE TRIGGER trg_runtime_completion_effect_manifest_guard_v1
+        `);
+        await drift.mutate();
+        await database.sql.unsafe(`
+          ALTER TABLE runtime_completion_effects
+          ENABLE TRIGGER trg_runtime_completion_effect_manifest_guard_v1
+        `);
+        await assert.rejects(
+          terminate(),
+          /RUNTIME_COMPLETION_MANIFEST_(EFFECT_ORDER_INVALID|EFFECT_BINDING_INVALID)/,
+        );
+        await database.sql.unsafe(`
+          ALTER TABLE runtime_completion_effects
+          DISABLE TRIGGER trg_runtime_completion_effect_manifest_guard_v1
+        `);
+        await database.sql.unsafe(
+          `UPDATE runtime_completion_effects
+              SET ordinal=$2,effect_type=$3,input_hash=$4,payload=$5::text::jsonb
+            WHERE request_id=$1`,
+          [
+            processing.requestId,
+            originalEffect.ordinal,
+            originalEffect.effect_type,
+            originalEffect.input_hash,
+            JSON.stringify(originalEffect.payload),
+          ],
+        );
+        await database.sql.unsafe(`
+          ALTER TABLE runtime_completion_effects
+          ENABLE TRIGGER trg_runtime_completion_effect_manifest_guard_v1
+        `);
+      }
+      for (const [effectState, extraSet] of [
+        ["pending", "lease_token=NULL,lease_expires_at=NULL,applied_at=NULL"],
+        [
+          "leased",
+          "lease_token='task6-open-lease',lease_expires_at=NOW()+INTERVAL '1 hour',applied_at=NULL",
+        ],
+        [
+          "quarantined",
+          "lease_token=NULL,lease_expires_at=NULL,applied_at=NULL,result=jsonb_build_object('diagnostic','task6 open quarantine')",
+        ],
+      ] as const) {
+        await assert.rejects(
+          runWithRuntimeCompletionOwner({
+            requestId: processing.requestId,
+            ownerInstanceId: processing.ownerInstanceId!,
+            leaseExpiresAt: processing.leaseExpiresAt!,
+            ownerAttemptCount: processing.ownerAttemptCount,
+          }, () => database.sql.begin(async (transaction) => {
+            await transaction.unsafe(
+              `UPDATE runtime_completion_effects
+                  SET state=$2,${extraSet},updated_at=NOW()
+                WHERE request_id=$1`,
+              [processing.requestId, effectState],
+            );
+            return transitionRunToTerminalInTransaction(transaction, {
+              runId,
+              status: "failed",
+              diagnostic: `mandatory effect ${effectState} must block`,
+              drainedTerminationRequestId: terminationRequestId,
+            });
+          })),
+          /(RUNTIME_COMPLETION_MANDATORY_EFFECTS_PENDING|RUN_TERMINAL_EFFECT_(OPEN|QUARANTINED_OPEN))/,
+        );
+      }
+      for (const corruptSidecar of [
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `DELETE FROM internal_production_owner_reservations_v1
+            WHERE category='mandatory-effect'
+              AND owner_key::jsonb->>'requestId'=$1`,
+          [processing.requestId],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET state='bound',close_kind=NULL,terminal_owner_ref=NULL,
+                  terminal_owner_hash=NULL,close_head_predecessor_hash=NULL,
+                  close_head_successor_hash=NULL,preserved_fence_ref=NULL,
+                  preserved_fence_hash=NULL,close_ref=NULL,close_hash=NULL,
+                  close_payload=NULL
+            WHERE category='mandatory-effect'
+              AND owner_key::jsonb->>'requestId'=$1`,
+          [processing.requestId],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1 run_owner
+              SET reservation_payload=jsonb_set(
+                    jsonb_set(
+                      jsonb_set(
+                        run_owner.reservation_payload,
+                        '{producerImplementationId}',
+                        to_jsonb('a-mandatory-effect-v1'::text)
+                      ),
+                      '{ownerKey}',effect_owner.reservation_payload->'ownerKey'
+                    ),
+                    '{ownerKeyHash}',effect_owner.reservation_payload->'ownerKeyHash'
+                  )
+             FROM internal_production_owner_reservations_v1 effect_owner
+            WHERE run_owner.category='run' AND run_owner.owner_key=$1
+              AND effect_owner.category='mandatory-effect'
+              AND effect_owner.owner_key::jsonb->>'requestId'=$2`,
+          [runId, processing.requestId],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET close_hash=$2
+            WHERE category='mandatory-effect'
+              AND owner_key::jsonb->>'requestId'=$1`,
+          [processing.requestId, "0".repeat(64)],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET producer_implementation_id='a-runtime-run-v1',
+                  reservation_payload=jsonb_set(
+                    reservation_payload,'{producerImplementationId}',
+                    to_jsonb('a-runtime-run-v1'::text)
+                  ),
+                  binding_payload=jsonb_set(
+                    binding_payload,'{producerImplementationId}',
+                    to_jsonb('a-runtime-run-v1'::text)
+                  )
+            WHERE category='mandatory-effect'
+              AND owner_key::jsonb->>'requestId'=$1`,
+          [processing.requestId],
+        ),
+      ]) {
+        await assert.rejects(
+          runWithRuntimeCompletionOwner({
+            requestId: processing.requestId,
+            ownerInstanceId: processing.ownerInstanceId!,
+            leaseExpiresAt: processing.leaseExpiresAt!,
+            ownerAttemptCount: processing.ownerAttemptCount,
+          }, () => database.sql.begin(async (transaction) => {
+            await corruptSidecar(transaction);
+            return transitionRunToTerminalInTransaction(transaction, {
+              runId,
+              status: "failed",
+              diagnostic: "mandatory effect sidecar corruption",
+              drainedTerminationRequestId: terminationRequestId,
+            });
+          })),
+          /(RUN_TERMINAL_MANDATORY_EFFECT_(REPLAY|CLOSE)_INVALID|INTERNAL_PRODUCTION_OWNER_RESERVATION_CLOSE_UNAVAILABLE)/,
+        );
+      }
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task6_first_mutation_v1 ON claim_log
+      `);
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(
+            `UPDATE internal_production_owner_reservations_v1
+                SET canonical_owner_identity=jsonb_set(
+                      canonical_owner_identity,'{ownerKey}',to_jsonb('task6-corrupt-run-owner'::text)
+                    ),
+                    binding_payload=jsonb_set(
+                      binding_payload,'{canonicalOwnerIdentity,ownerKey}',
+                      to_jsonb('task6-corrupt-run-owner'::text)
+                    )
+              WHERE category='run' AND owner_key=$1`,
+            [runId],
+          );
+          return transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "failed",
+            diagnostic: "final resolver corruption must roll back every mutation",
+            drainedTerminationRequestId: terminationRequestId,
+          });
+        }),
+        /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_CORRUPTION/,
+      );
+
+      await assert.rejects(terminate(), /TEST_TASK6_COMPLETION_CLOSE_REJECTED/);
+      const rolledBack = (await database.sql<Array<{
+        run_status: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        completion_phase: string;
+        completion_owner_state: string;
+        effect_count: number;
+      }>>`
+        SELECT run_row.status AS run_status,claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               completion.apply_phase AS completion_phase,
+               completion_owner.state AS completion_owner_state,
+               (SELECT COUNT(*)::integer FROM runtime_completion_effects effect
+                 WHERE effect.request_id=completion.request_id) AS effect_count
+          FROM runs run_row
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_completion_requests completion ON completion.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.category='completion-owner'
+           AND completion_owner.owner_key=completion.request_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...rolledBack }, {
+        run_status: "failing",
+        claim_outcome: null,
+        attempt_disposition: "running",
+        completion_phase: "effects_committed",
+        completion_owner_state: "bound",
+        effect_count: 1,
+      });
+
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task6_completion_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+
+      const backendLossSql = new Proxy(database.sql, {
+        get(target, property, receiver) {
+          if (property !== "begin") return Reflect.get(target, property, receiver);
+          return (callback: (transaction: postgres.TransactionSql) => Promise<unknown>) => (
+            database.sql.begin(async (transaction) => {
+              await callback(transaction);
+              throw new Error("TEST_TASK6_BACKEND_LOST_BEFORE_COMMIT");
+            })
+          );
+        },
+      });
+      await assert.rejects(
+        terminate(backendLossSql),
+        /TEST_TASK6_BACKEND_LOST_BEFORE_COMMIT/,
+      );
+      assert.deepEqual(await compoundVisibilitySnapshot(), preCompoundVisibility);
+
+      let releasePreAck!: () => void;
+      let preAckReached!: () => void;
+      const holdPreAck = new Promise<void>((resolve) => { releasePreAck = resolve; });
+      const preAckReady = new Promise<void>((resolve) => { preAckReached = resolve; });
+      const preAckTransition = assert.rejects(
+        runWithRuntimeCompletionOwner({
+          requestId: processing.requestId,
+          ownerInstanceId: processing.ownerInstanceId!,
+          leaseExpiresAt: processing.leaseExpiresAt!,
+          ownerAttemptCount: processing.ownerAttemptCount,
+        }, () => database.sql.begin(async (transaction) => {
+          await transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "failed",
+            diagnostic: "pre-ack compound visibility",
+            drainedTerminationRequestId: terminationRequestId,
+          });
+          preAckReached();
+          await holdPreAck;
+          throw new Error("TEST_TASK6_PRE_ACK_ROLLBACK");
+        })),
+        /TEST_TASK6_PRE_ACK_ROLLBACK/,
+      );
+      await preAckReady;
+      assert.deepEqual(await compoundVisibilitySnapshot(), preCompoundVisibility);
+      releasePreAck();
+      await preAckTransition;
+
+      await database.sql.unsafe("CREATE SEQUENCE task6_after_close_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task6_after_close_latch_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task6_after_close_latch_v1');
+          PERFORM pg_advisory_xact_lock(${latchKey});
+          RETURN NEW;
+        END $$
+      `);
+      const waitForAfterCloseLatch = async () => {
+        for (let attemptIndex = 0; attemptIndex < 200; attemptIndex += 1) {
+          const state = await database.sql<Array<{ is_called: boolean }>>`
+            SELECT is_called FROM task6_after_close_latch_v1
+          `;
+          if (state[0]?.is_called) return;
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error("TEST_TASK6_AFTER_CLOSE_LATCH_TIMEOUT");
+      };
+      for (const category of [
+        "claim",
+        "execution-attempt",
+        "runtime-session",
+        "completion-owner",
+        "termination",
+        "run",
+      ] as const) {
+        const triggerName = `task6_after_${category.replaceAll("-", "_")}_close_v1`;
+        await database.sql.unsafe(
+          `CREATE TRIGGER ${triggerName}
+             AFTER UPDATE OF state ON internal_production_owner_reservations_v1
+             FOR EACH ROW
+             WHEN (OLD.state='bound' AND NEW.state='closed' AND NEW.category='${category}')
+             EXECUTE FUNCTION task6_after_close_latch_v1()`,
+        );
+        let releaseBlocker!: () => void;
+        let blockerAcquired!: () => void;
+        const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const acquired = new Promise<void>((resolve) => { blockerAcquired = resolve; });
+        const blocking = Promise.resolve(blocker.begin(async (transaction) => {
+          await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [latchKey]);
+          blockerAcquired();
+          await release;
+        }));
+        await acquired;
+        const closeTransition = assert.rejects(
+          runWithRuntimeCompletionOwner({
+            requestId: processing.requestId,
+            ownerInstanceId: processing.ownerInstanceId!,
+            leaseExpiresAt: processing.leaseExpiresAt!,
+            ownerAttemptCount: processing.ownerAttemptCount,
+          }, () => database.sql.begin(async (transaction) => {
+            await transitionRunToTerminalInTransaction(transaction, {
+              runId,
+              status: "failed",
+              diagnostic: `after ${category} close visibility`,
+              drainedTerminationRequestId: terminationRequestId,
+            });
+            throw new Error("TEST_TASK6_AFTER_CLOSE_ROLLBACK");
+          })),
+          /TEST_TASK6_AFTER_CLOSE_ROLLBACK/,
+        );
+        await waitForAfterCloseLatch();
+        assert.deepEqual(await compoundVisibilitySnapshot(), preCompoundVisibility);
+        releaseBlocker();
+        await blocking;
+        await closeTransition;
+        await database.sql.unsafe(
+          `DROP TRIGGER ${triggerName} ON internal_production_owner_reservations_v1`,
+        );
+        await database.sql.unsafe("SELECT setval('task6_after_close_latch_v1',1,false)");
+      }
+      await database.sql.unsafe("DROP FUNCTION task6_after_close_latch_v1()");
+      await database.sql.unsafe("DROP SEQUENCE task6_after_close_latch_v1");
+
+      await database.sql.unsafe(`CREATE TABLE task6_close_failure_point_v1 (category text PRIMARY KEY)`);
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_task6_category_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF OLD.state='bound' AND NEW.state='closed'
+             AND EXISTS (SELECT 1 FROM task6_close_failure_point_v1 point
+                          WHERE point.category=NEW.category) THEN
+            RAISE EXCEPTION 'TEST_TASK6_CLOSE_REJECTED:%',NEW.category;
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_task6_category_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_task6_category_close_v1()
+      `);
+      for (const category of [
+        "claim",
+        "execution-attempt",
+        "runtime-session",
+        "completion-owner",
+        "termination",
+        "run",
+      ]) {
+        await database.sql`INSERT INTO task6_close_failure_point_v1 (category) VALUES (${category})`;
+        await assert.rejects(terminate(), /TEST_TASK6_CLOSE_REJECTED/);
+        await database.sql`DELETE FROM task6_close_failure_point_v1`;
+      }
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_task6_category_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      const terminal = await terminate();
+      assert.equal(terminal.status, "failed");
+      const committed = (await database.sql<Array<{
+        run_status: string;
+        claim_outcome: string;
+        attempt_disposition: string;
+        completion_state: string;
+        completion_phase: string;
+        completion_owner_state: string;
+        effect_state: string;
+        effect_owner_state: string;
+        effect_owner_updated_at: string;
+      }>>`
+        SELECT run_row.status AS run_status,claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               completion.state AS completion_state,
+               completion.apply_phase AS completion_phase,
+               completion_owner.state AS completion_owner_state,
+               effect.state AS effect_state,effect_owner.state AS effect_owner_state,
+               effect_owner.updated_at::text AS effect_owner_updated_at
+          FROM runs run_row
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_completion_requests completion ON completion.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 completion_owner
+            ON completion_owner.category='completion-owner'
+           AND completion_owner.owner_key=completion.request_id
+          JOIN runtime_completion_effects effect ON effect.request_id=completion.request_id
+          JOIN internal_production_owner_reservations_v1 effect_owner
+            ON effect_owner.category='mandatory-effect'
+           AND effect_owner.owner_key::jsonb->>'requestId'=effect.request_id
+           AND effect_owner.owner_key::jsonb->>'effectKey'=effect.effect_key
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...committed }, {
+        run_status: "failed",
+        claim_outcome: "failed",
+        attempt_disposition: "failed",
+        completion_state: "accepted",
+        completion_phase: "effects_committed",
+        completion_owner_state: "closed",
+        effect_state: "applied",
+        effect_owner_state: "closed",
+        effect_owner_updated_at: committed.effect_owner_updated_at,
+      });
+      const replay = await terminate();
+      assert.equal(replay.status, "failed");
+      const afterReplay = (await database.sql<Array<{ effect_owner_updated_at: string }>>`
+        SELECT owner.updated_at::text AS effect_owner_updated_at
+          FROM internal_production_owner_reservations_v1 owner
+         WHERE owner.category='mandatory-effect'
+      `)[0]!;
+      assert.equal(afterReplay.effect_owner_updated_at, committed.effect_owner_updated_at);
+    } finally {
+      await blocker.end({ timeout: 1 });
+      await database.cleanup();
+    }
+  });
+
   it("refuses to erase active shadow owners without a drained failure request", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -235,6 +1888,453 @@ describe("canonical run terminal owner", () => {
     }
   });
 
+  it("rejects a terminal run CAS whose trigger rewrites the returned run identity", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-rewritten-cas";
+      const rewrittenRunId = `${runId}-rewritten`;
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: runId },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+        });
+      });
+      const { stepDbId, storyDbId, claimId } = await seedActiveStory(database, runId);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-rewritten-cas",
+        fenceToken: () => "6".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const sessionId = "RTS_run-terminal-rewritten-cas";
+      await sessions.reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-002",
+        claimId,
+        attemptId: attempt.attempt.attemptId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "feature-dev_developer",
+        runtimeKind: "local_process",
+        ownerInstanceId: "run-terminal-rewritten-cas-owner",
+      });
+      await database.sql`
+        UPDATE runtime_sessions
+           SET state='drained',drained_at=NOW(),updated_at=NOW()
+         WHERE session_id=${sessionId}
+      `;
+      const terminationRequestId = "RTR_run-terminal-rewritten-cas";
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId: terminationRequestId,
+        targetStatus: "failed",
+        diagnostic: "rewritten terminal CAS fixture",
+      });
+
+      const snapshot = async () => ({ ...(await database.sql<Array<{
+        run_rows: unknown;
+        step_rows: unknown;
+        story_rows: unknown;
+        claim_rows: unknown;
+        attempt_rows: unknown;
+        runtime_rows: unknown;
+        termination_rows: unknown;
+        owner_rows: unknown;
+        authority_rows: unknown;
+        head_row: unknown;
+        outbox_rows: unknown;
+      }>>`
+        SELECT
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM runs row WHERE row.id IN (${runId},${rewrittenRunId})) AS run_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM steps row WHERE row.run_id=${runId}) AS step_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM stories row WHERE row.run_id=${runId}) AS story_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.id)
+             FROM claim_log row WHERE row.run_id=${runId}) AS claim_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.attempt_id)
+             FROM execution_attempts row WHERE row.run_id=${runId}) AS attempt_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.session_id)
+             FROM runtime_sessions row WHERE row.run_id=${runId}) AS runtime_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.request_id)
+             FROM run_termination_requests row WHERE row.run_id=${runId}) AS termination_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.category,row.owner_key)
+             FROM internal_production_owner_reservations_v1 row) AS owner_rows,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.authority_ref)
+             FROM internal_production_owner_admission_authorities_v1 row) AS authority_rows,
+          (SELECT to_jsonb(row) FROM internal_production_owner_admission_head_v1 row
+             WHERE row.singleton) AS head_row,
+          (SELECT jsonb_agg(to_jsonb(row) ORDER BY row.outbox_id)
+             FROM operational_outbox row
+            WHERE row.aggregate_type='run' AND row.aggregate_id IN (${runId},${rewrittenRunId})) AS outbox_rows
+      `)[0]! });
+      const before = await snapshot();
+
+      await database.sql.unsafe("CREATE SEQUENCE task6_rewritten_run_cas_fired_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task6_rewrite_terminal_run_id_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task6_rewritten_run_cas_fired_v1');
+          NEW.id := NEW.id || '-rewritten';
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task6_rewrite_terminal_run_id_v1
+        BEFORE UPDATE OF status ON runs
+        FOR EACH ROW
+        WHEN (OLD.id='${runId}' AND NEW.status='failed')
+        EXECUTE FUNCTION task6_rewrite_terminal_run_id_v1()
+      `);
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(`
+            DO $$ DECLARE item record; BEGIN
+              FOR item IN
+                SELECT conrelid::regclass AS table_name,conname
+                  FROM pg_constraint
+                 WHERE contype='f' AND confrelid='runs'::regclass
+              LOOP
+                EXECUTE format(
+                  'ALTER TABLE %s ALTER CONSTRAINT %I DEFERRABLE INITIALLY DEFERRED',
+                  item.table_name,
+                  item.conname
+                );
+              END LOOP;
+            END $$
+          `);
+          await transaction.unsafe("SET CONSTRAINTS ALL DEFERRED");
+          await transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "failed",
+            diagnostic: "rewritten terminal CAS must fail closed",
+            drainedTerminationRequestId: terminationRequestId,
+          });
+          throw new Error("TEST_TASK6_REWRITTEN_RUN_CAS_ACCEPTED");
+        }),
+        (error: unknown) => {
+          assert.equal(error instanceof Error ? error.message : String(error), "RUN_TERMINAL_RUN_CAS_LOST");
+          return true;
+        },
+      );
+      const triggerState = (await database.sql<Array<{ is_called: boolean }>>`
+        SELECT is_called FROM task6_rewritten_run_cas_fired_v1
+      `)[0]!;
+      assert.equal(triggerState.is_called, true);
+      assert.deepEqual(await snapshot(), before);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("terminalizes a drained failure and rolls every owner mutation back when attempt close rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-drained-owner-close";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: runId },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId),
+        });
+      });
+      const { stepDbId, storyDbId, claimId } = await seedActiveStory(database, runId);
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-drained-owner-close",
+        fenceToken: () => "9".repeat(64),
+      });
+      const reserved = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      assert.equal(reserved.status, "reserved");
+      const sessionId = "RTS_run-terminal-drained-owner-close";
+      const sessions = createRuntimeSessionRepository(database.sql);
+      await sessions.reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-002",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "feature-dev_developer",
+        runtimeKind: "local_process",
+        ownerInstanceId: "run-terminal-drained-owner",
+      });
+      await sessions.bindAttempt({
+        sessionId,
+        attemptId: reserved.attempt.attemptId,
+        ownerInstanceId: "run-terminal-drained-owner",
+      });
+      await database.sql`
+        UPDATE runtime_sessions
+           SET state='drained', drained_at=NOW(), updated_at=NOW()
+         WHERE session_id=${sessionId}
+      `;
+      const requestId = "RTR_run-terminal-drained-owner-close";
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId,
+        targetStatus: "failed",
+        diagnostic: "exact drained failure owner",
+      });
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_run_terminal_attempt_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='execution-attempt' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_RUN_TERMINAL_ATTEMPT_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_run_terminal_attempt_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_run_terminal_attempt_close_v1()
+      `);
+      const terminate = (terminalSql: postgres.Sql = database.sql) => transitionRunToTerminal(terminalSql, {
+        runId,
+        status: "failed",
+        diagnostic: "drained failure terminalization",
+        drainedTerminationRequestId: requestId,
+      });
+      await assert.rejects(terminate(), /TEST_RUN_TERMINAL_ATTEMPT_CLOSE_REJECTED/);
+      const rolledBack = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               claim.outcome AS claim_outcome,attempt.disposition AS attempt_disposition,
+               claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...rolledBack }, {
+        run_status: "failing",
+        request_state: "drained",
+        claim_outcome: null,
+        attempt_disposition: "claimed",
+        claim_owner_state: "bound",
+        attempt_owner_state: "bound",
+      });
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_run_terminal_attempt_close_v1
+        ON internal_production_owner_reservations_v1
+      `);
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_run_terminal_commit_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          RAISE EXCEPTION 'TEST_RUN_TERMINAL_COMMIT_REJECTED';
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE CONSTRAINT TRIGGER reject_run_terminal_commit_v1
+        AFTER UPDATE OF status ON runs
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW
+        WHEN (NEW.status IN ('completed','failed','cancelled'))
+        EXECUTE FUNCTION reject_run_terminal_commit_v1()
+      `);
+      await assert.rejects(terminate(), /TEST_RUN_TERMINAL_COMMIT_REJECTED/);
+      await database.sql.unsafe(`
+        DROP TRIGGER reject_run_terminal_commit_v1 ON runs
+      `);
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transitionRunToTerminalInTransaction(transaction, {
+            runId,
+            status: "failed",
+            diagnostic: "compound callback rollback",
+            drainedTerminationRequestId: requestId,
+          });
+          throw new Error("TEST_RUN_TERMINAL_CALLBACK_REJECTED");
+        }),
+        /TEST_RUN_TERMINAL_CALLBACK_REJECTED/,
+      );
+      const afterCallbackRollback = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               claim.outcome AS claim_outcome,attempt.disposition AS attempt_disposition,
+               claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...afterCallbackRollback }, { ...rolledBack });
+      const ackLossSql = new Proxy(database.sql, {
+        get(target, property, receiver) {
+          if (property !== "begin") return Reflect.get(target, property, receiver);
+          return async (callback: (transaction: postgres.TransactionSql) => Promise<unknown>) => {
+            await database.sql.begin(callback);
+            throw new Error("TEST_RUN_TERMINAL_ACK_LOST");
+          };
+        },
+      });
+      const [lostAck, competingTerminalizer, compositeCloser, withdrawer, attemptHeartbeat] = await Promise.allSettled([
+        terminate(ackLossSql),
+        terminate(),
+        closeClaimAndBoundAttempt(database.sql, {
+          claimId,
+          runId,
+          stepId: "implement",
+          storyId: "US-002",
+          agentId: "feature-dev_developer",
+          outcome: "failed",
+          diagnostic: "three-way Task 4 composite contender",
+          attemptDisposition: "failed",
+        }),
+        database.sql.begin((transaction) => withdrawPreDispatchClaimInTransaction(transaction, {
+          identity: {
+            claimId,
+            runId,
+            workflowStepId: "implement",
+            storyId: "US-002",
+            claimAgentId: "feature-dev_developer",
+          },
+          outcome: "infra_retry",
+          diagnostic: "three-way pre-dispatch withdrawal contender",
+        })),
+        repository.heartbeat({
+          attemptId: reserved.attempt.attemptId,
+          generation: reserved.attempt.generation,
+          fenceToken: reserved.attempt.fenceToken,
+        }),
+      ]);
+      assert.equal(lostAck.status, "rejected");
+      assert.match(String(lostAck.status === "rejected" ? lostAck.reason : ""), /TEST_RUN_TERMINAL_ACK_LOST/);
+      assert.equal(competingTerminalizer.status, "fulfilled");
+      if (competingTerminalizer.status === "fulfilled") {
+        assert.equal(competingTerminalizer.value.status, "failed");
+      }
+      if (compositeCloser.status === "fulfilled") {
+        assert.equal(compositeCloser.value.status, "cas_lost");
+      } else {
+        assert.match(String(compositeCloser.reason), /CLAIM_MUTATION_(DURABLE_OWNER_ACTIVE|RUN_NOT_ACTIVE)/);
+      }
+      assert.equal(withdrawer.status, "rejected");
+      if (withdrawer.status === "rejected") {
+        assert.match(String(withdrawer.reason), /CLAIM_MUTATION_(DURABLE_OWNER_ACTIVE|CLAIM_TERMINAL|RUN_NOT_ACTIVE)/);
+      }
+      if (attemptHeartbeat.status === "fulfilled") {
+        assert.equal(attemptHeartbeat.value.status, "stale_fence");
+      } else {
+        assert.match(String(attemptHeartbeat.reason), /ATTEMPT_(DATABASE_TIME_UNAVAILABLE|RUN_NOT_ACTIVE_COMPILER_OWNER)/);
+      }
+      const terminal = (await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        claim_outcome: string;
+        attempt_disposition: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,request.state AS request_state,
+               claim.outcome AS claim_outcome,attempt.disposition AS attempt_disposition,
+               claim_owner.state AS claim_owner_state,attempt_owner.state AS attempt_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN claim_log claim ON claim.run_id=run_row.id
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+         WHERE run_row.id=${runId}
+      `)[0]!;
+      assert.deepEqual({ ...terminal }, {
+        run_status: "failed",
+        request_state: "terminalized",
+        claim_outcome: "failed",
+        attempt_disposition: "failed",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
+      });
+      const replayCensus = () => database.sql<Array<{
+        head_version: string;
+        reservation_count: number;
+        close_count: number;
+        event_count: number;
+      }>>`
+        SELECT head.head_version::text AS head_version,
+               (SELECT COUNT(*)::integer
+                  FROM internal_production_owner_reservations_v1
+                 WHERE state='closed') AS reservation_count,
+               (SELECT COUNT(*)::integer
+                  FROM internal_production_owner_admission_authorities_v1
+                 WHERE authority_kind='close') AS close_count,
+               (SELECT COUNT(*)::integer
+                  FROM operational_outbox
+                 WHERE aggregate_type='run' AND aggregate_id=${runId}
+                   AND event_type='run.terminal') AS event_count
+          FROM internal_production_owner_admission_head_v1 head
+         WHERE head.singleton
+      `;
+      const beforeReplay = (await replayCensus())[0]!;
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "unknown termination replay identity",
+          drainedTerminationRequestId: "RTR_run-terminal-missing-replay1",
+        }),
+        /RUN_TERMINAL_REPLAY_TERMINATION_INVALID/,
+      );
+      const replay = await terminate();
+      assert.equal(replay.status, "failed");
+      assert.deepEqual({ ...(await replayCensus())[0] }, { ...beforeReplay });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("refuses successful completion while any claim or attempt owner is active", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -272,7 +2372,7 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("reconciles a leaked active fence on an already-cancelled shadow run", async () => {
+  it("fails closed on a pre-owner-admission cancelled run without erasing its fence", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-cancel-reconcile";
@@ -291,16 +2391,17 @@ describe("canonical run terminal owner", () => {
       await database.sql`UPDATE claim_log SET outcome = 'infra_retry' WHERE id = ${claimId}`;
       await database.sql`UPDATE runs SET status = 'cancelled' WHERE id = ${runId}`;
 
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "cancelled",
-        diagnostic: "Workflow cancelled by user",
-      });
-      assert.equal(result.closedClaims, 0);
-      assert.equal(result.closedAttempts, 1);
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "cancelled",
+          diagnostic: "Workflow cancelled by user",
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
       const attempt = await repository.findById("ATT_run-terminal-leak1");
-      assert.equal(attempt?.disposition, "inconclusive");
-      assert.ok(attempt?.evidenceRefs.includes("setfarm://run-terminal/cancelled"));
+      assert.equal(attempt?.disposition, "claimed");
+      assert.equal(attempt?.evidenceRefs.includes("setfarm://run-terminal/cancelled"), false);
     } finally {
       await database.cleanup();
     }
@@ -450,7 +2551,7 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("atomically closes an explicitly unclaimed legacy bootstrap when cron publication fails", async () => {
+  it("rolls back a pre-owner-admission bootstrap terminal update", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-legacy-bootstrap";
@@ -468,28 +2569,21 @@ describe("canonical run terminal owner", () => {
           ('run-terminal-legacy-bootstrap-step', ${runId}, 'plan', 'feature-dev_planner', 0, '', '', 'pending')
       `;
 
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "cron setup failed before claims",
-        unclaimedBootstrapFailure: true,
-      });
-      assert.deepEqual(result, {
-        status: "failed",
-        previousStatus: "running",
-        closedClaims: 0,
-        closedAttempts: 0,
-        closedRecoveryDeliveries: 0,
-        closedRecoveryCases: 0,
-        changedSteps: 1,
-        changedStories: 0,
-      });
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "cron setup failed before claims",
+          unclaimedBootstrapFailure: true,
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
       const state = await database.sql<Array<{ run_status: string; step_status: string }>>`
         SELECT r.status AS run_status, s.status AS step_status
           FROM runs r JOIN steps s ON s.run_id = r.id
          WHERE r.id = ${runId}
       `;
-      assert.deepEqual({ ...state[0] }, { run_status: "failed", step_status: "failed" });
+      assert.deepEqual({ ...state[0] }, { run_status: "running", step_status: "pending" });
     } finally {
       await database.cleanup();
     }
@@ -541,87 +2635,29 @@ describe("canonical run terminal owner", () => {
     }
   });
 
-  it("atomically closes active recovery residue on an already-failed v3 run", async () => {
+  it("preserves active recovery residue on a pre-owner-admission terminal run", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-terminal-v3-recovery-residue";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
-      const result = await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "reconcile historical terminal recovery owner",
-      });
-      assert.equal(result.closedRecoveryDeliveries, 1);
-      assert.equal(result.closedRecoveryCases, 1);
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "failed",
+          diagnostic: "reconcile historical terminal recovery owner",
+        }),
+        /^Error: INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE$/,
+      );
 
       const delivery = await createRecoveryDeliveryRepository(database.sql)
         .findDelivery(fixture.dispatchId);
-      assert.equal(delivery?.schema, "setfarm.recovery-dispatch-delivery.v2");
-      assert.equal(delivery?.state, "blocked");
-      assert.equal(delivery?.ownerInstanceId, undefined);
-      assert.equal(delivery?.leaseToken, undefined);
-      assert.equal(delivery?.terminalResult.schema, "setfarm.run-terminal-recovery-chain.v1");
-      const rows = await database.sql<Array<{
-        case_status: string;
-        case_terminal: unknown;
-        event_deliveries: number;
-        event_cases: number;
-      }>>`
-        SELECT recovery_case.status AS case_status,
-               recovery_case.terminal AS case_terminal,
-               (outbox.payload->>'closedRecoveryDeliveries')::integer AS event_deliveries,
-               (outbox.payload->>'closedRecoveryCases')::integer AS event_cases
-          FROM recovery_cases recovery_case
-          JOIN operational_outbox outbox
-            ON outbox.aggregate_id = recovery_case.run_id
-           AND outbox.event_type = 'run.terminal'
-         WHERE recovery_case.recovery_case_id = ${fixture.recoveryCaseId}
-      `;
-      assert.equal(rows[0]?.case_status, "blocked");
-      assert.deepEqual(rows[0]?.case_terminal, {
-        owner: "implement",
-        outcome: "blocked",
-        reasonCode: "evidence_inconclusive",
-        evidenceBundleHashes: [],
-      });
-      assert.equal(rows[0]?.event_deliveries, 1);
-      assert.equal(rows[0]?.event_cases, 1);
-
-      const settled = await database.sql<Array<{
-        updated_at: Date;
-        terminal_events: number;
-      }>>`
-        SELECT run.updated_at,
-               (SELECT COUNT(*)::integer FROM operational_outbox event
-                 WHERE event.aggregate_id = run.id
-                   AND event.event_type = 'run.terminal') AS terminal_events
-          FROM runs run
-         WHERE run.id = ${runId}
-      `;
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "same settled state observed through different prose",
-      });
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "another operator description must remain a no-op",
-      });
-      const replayed = await database.sql<Array<{
-        updated_at: Date;
-        terminal_events: number;
-      }>>`
-        SELECT run.updated_at,
-               (SELECT COUNT(*)::integer FROM operational_outbox event
-                 WHERE event.aggregate_id = run.id
-                   AND event.event_type = 'run.terminal') AS terminal_events
-          FROM runs run
-         WHERE run.id = ${runId}
-      `;
-      assert.equal(replayed[0]!.updated_at.toISOString(), settled[0]!.updated_at.toISOString());
-      assert.equal(settled[0]!.terminal_events, 1);
-      assert.equal(replayed[0]!.terminal_events, 1);
+      assert.equal(delivery?.schema, "setfarm.recovery-dispatch-delivery.v1");
+      assert.equal(delivery?.state, "authorized");
+      assert.equal(
+        (await createFindingRecoveryRepository(database.sql)
+          .findRecoveryCase(fixture.recoveryCaseId))?.status,
+        "repairing",
+      );
     } finally {
       await database.cleanup();
     }
@@ -655,10 +2691,14 @@ describe("canonical run terminal owner", () => {
   });
 
   it("downgrades migration 20 terminal rows to the exact v19 reader contract", async () => {
-    const database = await createIsolatedTestDatabase();
+    const database = await createIsolatedMigration31TestDatabase();
     try {
       const runId = "run-terminal-v19-binary-rollback";
-      const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
+      const fixture = await seedActiveRecovery(database, {
+        runId,
+        runStatus: "failed",
+        findingPublication: "migration31",
+      });
       const targetReleaseSha = "7".repeat(40);
       await rollbackCurrentToV21(database);
       await rollbackOperationalFailureCauseSealToV20(database.sql, {
@@ -668,10 +2708,16 @@ describe("canonical run terminal owner", () => {
         rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, { targetReleaseSha }),
         /Migration 20 rollback requires zero active owners/,
       );
-      await transitionRunToTerminal(database.sql, {
-        runId,
-        status: "failed",
-        diagnostic: "create a lease-free v2 terminal row before binary rollback",
+      await database.sql.begin(async (transaction) => {
+        const snapshot = await lockV3TerminalRecoveryChainInTransaction(transaction, runId);
+        const clock = await transaction.unsafe<Array<{ now: Date }>>("SELECT clock_timestamp() AS now");
+        await settleV3TerminalRecoveryChainInTransaction(transaction, {
+          runId,
+          status: "failed",
+          diagnostic: "create a lease-free v2 terminal row before binary rollback",
+          transitionTime: clock[0]!.now,
+          snapshot,
+        });
       });
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,

@@ -8,7 +8,6 @@ import {
   type TerminalAttemptReconcilerDependencies,
 } from "../../src/execution/attempt-reconciler.js";
 import type { ExecutionAttemptV1 } from "../../src/execution/schemas/execution-attempt-v1.js";
-import { applyContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
 import { exactProductReservation, HASH_B } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -57,6 +56,233 @@ function dependencies(
 }
 
 describe("terminal claim attempt reconciler", () => {
+  it("exact-adopts response loss, rejects a missing sidecar, and rolls insert/reread/bind failures back to the prior head", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-attempt-birth-adoption";
+      await database.insertRun(runId);
+      const claim = async (storyId: string) => Number((await database.sql<Array<{ id: string }>>`
+        INSERT INTO claim_log (run_id,step_id,story_id,agent_id)
+        VALUES (${runId},'implement',${storyId},'feature-dev_developer')
+        RETURNING id::text
+      `)[0]!.id);
+      const claimId = await claim("US-adopt");
+      const input = exactProductReservation({
+        claimId,
+        runId,
+        storyId: "US-adopt",
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      });
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_exact-adoption-0001",
+        fenceToken: () => "7".repeat(64),
+      });
+      const first = await repository.reserve(input);
+      assert.equal(first.status, "reserved");
+      const headAfterFirst = Number((await database.sql<Array<{ head_version: number }>>`
+        SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `)[0]!.head_version);
+      const replay = await createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_must-not-be-allocated",
+        fenceToken: () => "8".repeat(64),
+      }).reserve(input);
+      assert.equal(replay.status, "duplicate");
+      assert.equal(replay.attempt.attemptId, first.attempt.attemptId);
+      assert.equal(Number((await database.sql<Array<{ head_version: number }>>`
+        SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `)[0]!.head_version), headAfterFirst);
+
+      await database.sql`DROP INDEX idx_execution_attempts_active_fence`;
+      await database.sql`DROP INDEX idx_execution_attempts_dedupe`;
+      await database.sql`DROP INDEX idx_execution_attempts_claim_id_unique`;
+      try {
+        await database.sql.unsafe(
+          `INSERT INTO execution_attempts (
+             attempt_id,claim_id,run_id,step_id,story_id,generation,fence_token,
+             attempt_class,packet_hash,compilation_report_hash,slice_hash,
+             source_before_sha,source_before_tree_hash,source_after_sha,source_after_tree_hash,
+             finding_set_hash,recovery_case_revision_id,recovery_dispatch_id,dedupe_key,
+             role,agent_id,branch,worktree,lease_acquired_at,lease_expires_at,heartbeat_at,
+             disposition,output_hash,evidence_refs,created_at,updated_at
+           ) SELECT $2,claim_id,run_id,step_id,story_id,generation,fence_token,
+                    attempt_class,packet_hash,compilation_report_hash,slice_hash,
+                    source_before_sha,source_before_tree_hash,source_after_sha,source_after_tree_hash,
+                    finding_set_hash,recovery_case_revision_id,recovery_dispatch_id,dedupe_key,
+                    role,agent_id,branch,worktree,lease_acquired_at,lease_expires_at,heartbeat_at,
+                    disposition,output_hash,evidence_refs,created_at,updated_at
+               FROM execution_attempts WHERE attempt_id=$1`,
+          [first.attempt.attemptId, "ATT_structural-clone-0001"],
+        );
+        await assert.rejects(repository.reserve(input), /ATTEMPT_DEDUPE_IDENTITY_AMBIGUOUS/);
+      } finally {
+        await database.sql`DELETE FROM execution_attempts WHERE attempt_id='ATT_structural-clone-0001'`;
+        await database.sql`CREATE UNIQUE INDEX idx_execution_attempts_active_fence ON execution_attempts(run_id,step_id,story_id) WHERE disposition IN ('claimed','running')`;
+        await database.sql`CREATE UNIQUE INDEX idx_execution_attempts_dedupe ON execution_attempts(dedupe_key) WHERE dedupe_key IS NOT NULL`;
+        await database.sql`CREATE UNIQUE INDEX idx_execution_attempts_claim_id_unique ON execution_attempts(claim_id) WHERE claim_id IS NOT NULL`;
+      }
+
+      await database.sql`ALTER TABLE internal_production_owner_reservations_v1 DROP CONSTRAINT internal_production_owner_reservation_key_unique`;
+      await database.sql`ALTER TABLE internal_production_owner_reservations_v1 DISABLE TRIGGER USER`;
+      try {
+        await database.sql.unsafe(
+          `INSERT INTO internal_production_owner_reservations_v1
+           SELECT 'IRES_extra-sidecar-test',repeat('0',64),category,owner_key,owner_key_hash,
+                  producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+                  reservation_payload,reservation_head_predecessor_hash,state,
+                  canonical_owner_identity,binding_hash,binding_payload,close_kind,
+                  terminal_owner_ref,terminal_owner_hash,close_head_predecessor_hash,
+                  close_head_successor_hash,preserved_fence_ref,preserved_fence_hash,
+                  close_ref,close_hash,close_payload,head_version,created_at,updated_at
+             FROM internal_production_owner_reservations_v1
+            WHERE category='execution-attempt' AND owner_key=$1`,
+          [first.attempt.attemptId],
+        );
+        await assert.rejects(repository.reserve(input), /EXECUTION_ATTEMPT_ADOPTION_INVALID/);
+      } finally {
+        await database.sql`DELETE FROM internal_production_owner_reservations_v1 WHERE reservation_ref='IRES_extra-sidecar-test'`;
+        await database.sql`ALTER TABLE internal_production_owner_reservations_v1 ENABLE TRIGGER USER`;
+        await database.sql`ALTER TABLE internal_production_owner_reservations_v1 ADD CONSTRAINT internal_production_owner_reservation_key_unique UNIQUE (category,owner_key_hash)`;
+      }
+
+      const pristineHead = (await database.sql<Array<{ head_hash: string }>>`
+        SELECT head_hash FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `)[0]!;
+      await database.sql`UPDATE internal_production_owner_admission_head_v1 SET head_hash=${"0".repeat(64)} WHERE singleton=TRUE`;
+      const staleStoryId = "US-stale-head";
+      const staleClaimId = await claim(staleStoryId);
+      await assert.rejects(
+        createAttemptRepository(database.sql, {
+          attemptId: () => "ATT_stale-head-refusal",
+          fenceToken: () => "6".repeat(64),
+        }).reserve(exactProductReservation({
+          claimId: staleClaimId,
+          runId,
+          storyId: staleStoryId,
+          agentId: "feature-dev_developer",
+          evidenceRefs: [`setfarm://claim-log/${staleClaimId}`],
+        })),
+      );
+      await database.sql`
+        UPDATE internal_production_owner_admission_head_v1
+           SET head_hash=${pristineHead.head_hash}
+         WHERE singleton=TRUE
+      `;
+
+      const failureCases = [
+        { label: "insert", triggerTable: "execution_attempts", timing: "BEFORE INSERT", body: "RAISE EXCEPTION 'TEST_ATTEMPT_INSERT_REJECT';" },
+        { label: "reread", triggerTable: "execution_attempts", timing: "BEFORE INSERT", body: "NEW.compilation_report_hash := repeat('0',64); RETURN NEW;" },
+        { label: "bind", triggerTable: "internal_production_owner_reservations_v1", timing: "BEFORE UPDATE", body: "IF NEW.category='execution-attempt' AND NEW.state='bound' THEN RAISE EXCEPTION 'TEST_ATTEMPT_BIND_REJECT'; END IF;" },
+      ] as const;
+      for (const [index, failure] of failureCases.entries()) {
+        const storyId = `US-${failure.label}`;
+        const nextClaimId = await claim(storyId);
+        const attemptId = `ATT_birth-${failure.label}-rollback`;
+        const functionName = `test_attempt_birth_${failure.label}_${Date.now()}_${index}`;
+        const triggerName = `trg_attempt_birth_${failure.label}_${Date.now()}_${index}`;
+        const headBefore = Number((await database.sql<Array<{ head_version: number }>>`
+          SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+        `)[0]!.head_version);
+        try {
+          await database.sql.unsafe(
+            `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$ BEGIN ${failure.body} RETURN NEW; END; $$ LANGUAGE plpgsql`,
+          );
+          await database.sql.unsafe(
+            `CREATE TRIGGER ${triggerName} ${failure.timing} ON ${failure.triggerTable}
+             FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+          );
+          await assert.rejects(
+            createAttemptRepository(database.sql, {
+              attemptId: () => attemptId,
+              fenceToken: () => "9".repeat(64),
+            }).reserve(exactProductReservation({
+              claimId: nextClaimId,
+              runId,
+              storyId,
+              agentId: "feature-dev_developer",
+              evidenceRefs: [`setfarm://claim-log/${nextClaimId}`],
+            })),
+            failure.label === "reread"
+              ? /EXECUTION_ATTEMPT_ADOPTION_INVALID/
+              : new RegExp(`TEST_ATTEMPT_${failure.label.toUpperCase()}_REJECT`),
+          );
+        } finally {
+          await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON ${failure.triggerTable}`);
+          await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+        }
+        const residue = (await database.sql<Array<{ attempts: number; sidecars: number; head_version: string }>>`
+          SELECT (SELECT count(*)::integer FROM execution_attempts WHERE attempt_id=${attemptId}) AS attempts,
+                 (SELECT count(*)::integer FROM internal_production_owner_reservations_v1
+                   WHERE category='execution-attempt' AND owner_key=${attemptId}) AS sidecars,
+                 head_version
+            FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+        `)[0]!;
+        assert.deepEqual({ ...residue }, { attempts: 0, sidecars: 0, head_version: String(headBefore) }, failure.label);
+      }
+      const completeStoryId = "US-repository-complete";
+      const completeClaimId = await claim(completeStoryId);
+      const completeRepository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_repository-complete-close",
+        fenceToken: () => "5".repeat(64),
+      });
+      const completeBirth = await completeRepository.reserve(exactProductReservation({
+        claimId: completeClaimId,
+        runId,
+        storyId: completeStoryId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${completeClaimId}`],
+      }));
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_repository_attempt_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='execution-attempt' AND NEW.owner_key='ATT_repository-complete-close'
+             AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_REPOSITORY_ATTEMPT_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_repository_attempt_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_repository_attempt_close_v1()
+      `);
+      await assert.rejects(completeRepository.complete({
+        attemptId: completeBirth.attempt.attemptId,
+        generation: completeBirth.attempt.generation,
+        fenceToken: completeBirth.attempt.fenceToken,
+        disposition: "failed",
+        evidenceRefs: ["setfarm://test/repository-complete-close-rollback"],
+      }), /TEST_REPOSITORY_ATTEMPT_CLOSE_REJECTED/);
+      assert.equal((await completeRepository.findById(completeBirth.attempt.attemptId))?.disposition, "claimed");
+      await database.sql`DROP TRIGGER reject_repository_attempt_close_v1 ON internal_production_owner_reservations_v1`;
+      await database.sql`DROP FUNCTION reject_repository_attempt_close_v1()`;
+      assert.equal((await completeRepository.complete({
+        attemptId: completeBirth.attempt.attemptId,
+        generation: completeBirth.attempt.generation,
+        fenceToken: completeBirth.attempt.fenceToken,
+        disposition: "failed",
+        evidenceRefs: ["setfarm://test/repository-complete-close-rollback"],
+      })).status, "completed");
+      assert.equal((await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE category='execution-attempt' AND owner_key=${completeBirth.attempt.attemptId}
+      `)[0]?.state, "closed");
+      await database.sql`ALTER TABLE internal_production_owner_reservations_v1 DISABLE TRIGGER USER`;
+      try {
+        await database.sql`
+          DELETE FROM internal_production_owner_reservations_v1
+           WHERE category='execution-attempt' AND owner_key=${first.attempt.attemptId}
+        `;
+      } finally {
+        await database.sql`ALTER TABLE internal_production_owner_reservations_v1 ENABLE TRIGGER USER`;
+      }
+      await assert.rejects(repository.reserve(input), /EXECUTION_ATTEMPT_ADOPTION_INVALID/);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("terminalizes an infra retry as inconclusive with exact claim evidence", async () => {
     let completion: Parameters<TerminalAttemptReconcilerDependencies["complete"]>[0] | undefined;
     const result = await reconcileTerminalClaimAttempts({ limit: 10 }, dependencies({
@@ -115,9 +341,8 @@ describe("terminal claim attempt reconciler", () => {
   });
 
   it("reconciles a real terminal claim exactly once under the repository fence", async () => {
-    const database = await createIsolatedTestDatabase({ migrate: false });
+    const database = await createIsolatedTestDatabase();
     try {
-      await applyContractSpineMigrations(database.sql, { releaseSha: "d".repeat(40) });
       await database.sql`
         INSERT INTO runs (
           id, run_number, workflow_id, task, status, protocol,
@@ -147,6 +372,19 @@ describe("terminal claim attempt reconciler", () => {
         agentId: "feature-dev_developer",
         evidenceRefs: [`setfarm://claim-log/${claimId}`],
       }), { now: new Date("2026-07-13T00:00:00.000Z") });
+      const bornOwner = await database.sql<Array<{
+        state: string;
+        owner_key: string;
+      }>>`
+        SELECT state, owner_key
+          FROM internal_production_owner_reservations_v1
+         WHERE category = 'execution-attempt'
+           AND owner_key = 'ATT_reconcile-pg-000001'
+      `;
+      assert.deepEqual(bornOwner.map((row) => ({ ...row })), [{
+        state: "bound",
+        owner_key: "ATT_reconcile-pg-000001",
+      }]);
       await database.sql`
         UPDATE claim_log
            SET outcome = 'infra_retry', abandoned_at = NOW() - INTERVAL '1 minute',
@@ -156,6 +394,30 @@ describe("terminal claim attempt reconciler", () => {
       await database.sql`UPDATE runs SET status = 'cancelled' WHERE id = 'run-reconcile-pg'`;
 
       const reconciler = createPostgresTerminalAttemptReconciler(database.sql, { graceMs: 0 });
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_reconciler_attempt_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='execution-attempt' AND NEW.owner_key='ATT_reconcile-pg-000001'
+             AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_RECONCILER_ATTEMPT_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_reconciler_attempt_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_reconciler_attempt_close_v1()
+      `);
+      const rejected = await reconciler.reconcileClaim({ claimId, runtimeQuiesced: true });
+      assert.deepEqual(rejected, { scanned: 1, reconciled: 0, raced: 0, failed: 1 });
+      assert.equal((await repository.findById("ATT_reconcile-pg-000001"))?.disposition, "claimed");
+      assert.equal((await database.sql<Array<{ state: string }>>`
+        SELECT state FROM internal_production_owner_reservations_v1
+         WHERE category='execution-attempt' AND owner_key='ATT_reconcile-pg-000001'
+      `)[0]?.state, "bound");
+      await database.sql`DROP TRIGGER reject_reconciler_attempt_close_v1 ON internal_production_owner_reservations_v1`;
+      await database.sql`DROP FUNCTION reject_reconciler_attempt_close_v1()`;
       const first = await reconciler.reconcileClaim({ claimId, runtimeQuiesced: true });
       const second = await reconciler.reconcile({ limit: 10 });
       assert.deepEqual(first, { scanned: 1, reconciled: 1, raced: 0, failed: 0 });
@@ -167,6 +429,13 @@ describe("terminal claim attempt reconciler", () => {
         stored?.evidenceRefs.includes("setfarm://attempt-reconciler/claim-terminal/infra_retry"),
         JSON.stringify(stored?.evidenceRefs),
       );
+      const terminalOwner = await database.sql<Array<{ state: string }>>`
+        SELECT state
+          FROM internal_production_owner_reservations_v1
+         WHERE category = 'execution-attempt'
+           AND owner_key = 'ATT_reconcile-pg-000001'
+      `;
+      assert.deepEqual(terminalOwner.map((row) => ({ ...row })), [{ state: "closed" }]);
     } finally {
       await database.cleanup();
     }
@@ -288,10 +557,9 @@ describe("terminal claim attempt reconciler", () => {
   });
 
   it("rejects malformed relational bindings and ignores v3 compatibility candidates", async () => {
-    const database = await createIsolatedTestDatabase({ migrate: false });
+    const database = await createIsolatedTestDatabase();
     try {
       const releaseSha = "d".repeat(40);
-      await applyContractSpineMigrations(database.sql, { releaseSha });
       const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
       await database.sql`
         INSERT INTO runs (

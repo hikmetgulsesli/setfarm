@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
+import postgres from "postgres";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
@@ -15,7 +16,19 @@ import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
-import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import { createV3RecoveryLifecycleReconciler } from "../../src/recovery/v3-recovery-lifecycle-reconciler.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishLoopClaimRuntime,
+  publishSingleClaimRuntime,
+} from "../../src/execution/claim-runtime-publication.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import {
@@ -27,11 +40,13 @@ import {
   releaseDrainedRuntimeSessionInTransaction,
   releaseDrainedRuntimeSessionsInTransaction,
   releaseReservedRuntimeSessionInTransaction,
+  releaseRuntimeSessionForTerminalRunInTransactionV1,
 } from "../../src/execution/runtime-session-repository.js";
 import {
   createRunTerminationRepository,
   requestRunTermination,
 } from "../../src/execution/run-termination.js";
+import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
@@ -73,6 +88,70 @@ const COMPILER_ADMISSION_DRAIN_EVIDENCE = {
   evidenceRefs: ["setfarm://test/runtime-session-repository-compiler-admission"],
 };
 
+async function runtimeOwnerState(
+  database: TestDatabase,
+  sessionId: string,
+): Promise<string | undefined> {
+  const rows = await database.sql<Array<{ state: string }>>`
+    SELECT owner.state
+      FROM internal_production_owner_reservations_v1 owner
+     WHERE owner.category = 'runtime-session'
+       AND owner.owner_key = ${sessionId}
+  `;
+  return rows[0]?.state;
+}
+
+async function bindTestRunOwner(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  runId: string,
+): Promise<void> {
+  await database.sql.begin(async (transaction) => {
+    const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+    const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+    );
+    await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    });
+  });
+}
+
+async function insertOwnedClaim(
+  database: TestDatabase,
+  input: Readonly<{
+    producerImplementationId: "a-claim-single-runtime-v1" | "a-claim-loop-runtime-v1";
+    runId: string;
+    workflowStepId: string;
+    storyId: string | null;
+    claimAgentId: string;
+  }>,
+): Promise<number> {
+  return database.sql.begin(async (transaction) => {
+    const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+      "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+    );
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      input.producerImplementationId,
+      idRows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      birth,
+      {
+        runId: input.runId,
+        workflowStepId: input.workflowStepId,
+        storyId: input.storyId,
+        claimAgentId: input.claimAgentId,
+        claimedAt: new Date(),
+      },
+    );
+  });
+}
+
 async function prepareCompilerAdmissionCompletion(
   database: TestDatabase,
   input: Readonly<{
@@ -89,12 +168,13 @@ async function prepareCompilerAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await insertOwnedClaim(database, {
+    producerImplementationId: "a-claim-single-runtime-v1",
+    runId: input.runId,
+    workflowStepId: input.workflowStepId,
+    storyId: null,
+    claimAgentId,
+  });
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${token}`,
@@ -234,6 +314,7 @@ async function seedRecoveryStoryAdmissionAuthority(
       'v3', 1, ${releaseSha}, ${HASH_A}, ${"e".repeat(64)}, ${releaseAdmissionHash}
     )
   `;
+  await bindTestRunOwner(database, runId);
   await database.sql`
     INSERT INTO steps (
       id, run_id, step_id, agent_id, step_index, input_template, expects,
@@ -456,17 +537,19 @@ async function seedStory(database: Awaited<ReturnType<typeof createIsolatedTestD
     VALUES
       (${storyDbId}, ${runId}, 1, 'US-001', 'Story', 'running', 'feature-dev_developer', 1)
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'implement', 'US-001', 'feature-dev_developer')
-    RETURNING id::integer AS id
-  `;
-  return { stepDbId, storyDbId, claimId: claims[0]!.id };
+  const claimId = await insertOwnedClaim(database, {
+    producerImplementationId: "a-claim-loop-runtime-v1",
+    runId,
+    workflowStepId: "implement",
+    storyId: "US-001",
+    claimAgentId: "feature-dev_developer",
+  });
+  return { stepDbId, storyDbId, claimId };
 }
 
-async function seedAttemptBoundRecoveryRuntime(
+async function seedPreAttemptRecoveryRuntime(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
-  input: Readonly<{ runId: string; runtimeOwnerInstanceId?: string }>,
+  input: Readonly<{ runId: string; leaseMs?: number; sessionId?: string }>,
 ) {
   const admission = await seedRecoveryStoryAdmissionAuthority(database, input.runId);
   const {
@@ -543,10 +626,10 @@ async function seedAttemptBoundRecoveryRuntime(
     runId: input.runId,
     storyId,
     ownerInstanceId: "spawner-recovery",
-    leaseMs: 60_000,
+    leaseMs: input.leaseMs ?? 60_000,
   });
 
-  const runtimeOwnerInstanceId = input.runtimeOwnerInstanceId ?? "spawner-recovery";
+  const runtimeOwnerInstanceId = handoff.lease.ownerInstanceId;
   const publication = await publishLoopClaimRuntime(database.sql, {
     runId: input.runId,
     stepDbId,
@@ -557,7 +640,7 @@ async function seedAttemptBoundRecoveryRuntime(
     parallelLimit: 1,
     runtimeIntent: {
       schema: "setfarm.runtime-claim-intent.v1",
-      sessionId: "RTS_recovery-runtime-0001",
+      sessionId: input.sessionId ?? "RTS_recovery-runtime-0001",
       runtimeAgentId: "prism",
       runtimeKind: "openclaw_session",
       ownerInstanceId: runtimeOwnerInstanceId,
@@ -567,6 +650,28 @@ async function seedAttemptBoundRecoveryRuntime(
   });
   assert.equal(publication?.claimAuthority?.mode, "recovery");
   assert.ok(publication?.runtime);
+  const sessions = createRuntimeSessionRepository(database.sql);
+  const session = await sessions.findById(publication.runtime.sessionId);
+  assert.ok(session);
+  return {
+    sessions,
+    session,
+    publication,
+    findingSet,
+    deliveries,
+    handoff,
+    storyId,
+    storyDbId,
+    stepDbId,
+  };
+}
+
+async function seedAttemptBoundRecoveryRuntime(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  input: Readonly<{ runId: string; runtimeOwnerInstanceId?: string }>,
+) {
+  const preAttempt = await seedPreAttemptRecoveryRuntime(database, input);
+  const { publication, findingSet, handoff, storyId } = preAttempt;
   const claimId = publication.claimId;
   const attempt = await createAttemptRepository(database.sql, {
     attemptId: () => "ATT_recovery-runtime-0001",
@@ -590,12 +695,21 @@ async function seedAttemptBoundRecoveryRuntime(
     evidenceRefs: [`setfarm://claim-log/${claimId}`],
   }));
   assert.equal(attempt.status, "reserved");
-  const sessions = createRuntimeSessionRepository(database.sql);
+  const { sessions } = preAttempt;
   await sessions.bindAttempt({
     sessionId: publication.runtime.sessionId,
     attemptId: attempt.attempt.attemptId,
     ownerInstanceId: publication.runtime.ownerInstanceId,
   });
+  if (
+    input.runtimeOwnerInstanceId
+    && input.runtimeOwnerInstanceId !== publication.runtime.ownerInstanceId
+  ) {
+    await database.sql`
+      UPDATE runtime_sessions SET owner_instance_id=${input.runtimeOwnerInstanceId}
+       WHERE session_id=${publication.runtime.sessionId}
+    `;
+  }
   const session = await sessions.findById(publication.runtime.sessionId);
   assert.ok(session);
   const recoveryFence = {
@@ -608,10 +722,268 @@ async function seedAttemptBoundRecoveryRuntime(
       fenceToken: attempt.attempt.fenceToken,
     },
   };
-  return { sessions, session, attempt, deliveries, handoff, recoveryFence };
+  return {
+    ...preAttempt,
+    session,
+    attempt,
+    recoveryFence,
+  };
 }
 
 describe("durable runtime session ownership", () => {
+  it("serializes pre-attempt expiry with compound failure in both constructible lock orders", async () => {
+    for (const ordering of ["expiry-first", "termination-first"] as const) {
+      const database = await createIsolatedTestDatabase();
+      try {
+        const runId = `run-pre-attempt-${ordering}`;
+        const fixture = await seedPreAttemptRecoveryRuntime(database, {
+          runId,
+          leaseMs: 10_000,
+          sessionId: `RTS_pre-attempt-${ordering}`,
+        });
+        const publicationBefore = await database.sql<Array<{
+          handoff_canonical_json: string;
+          handoff_hash: string;
+        }>>`
+          SELECT handoff_canonical_json,handoff_hash
+            FROM internal_production_v3_recovery_claim_publications_v1
+           WHERE claim_id=${fixture.publication.claimId}
+        `;
+        const state = async () => (await database.sql<Array<{
+          run_status: string;
+          claim_outcome: string | null;
+          runtime_state: string;
+          runtime_attempt_id: string | null;
+          claim_owner_state: string;
+          runtime_owner_state: string;
+          delivery_state: string;
+          case_status: string;
+        }>>`
+          SELECT run.status AS run_status,claim.outcome AS claim_outcome,
+                 runtime.state AS runtime_state,runtime.attempt_id AS runtime_attempt_id,
+                 claim_owner.state AS claim_owner_state,
+                 runtime_owner.state AS runtime_owner_state,
+                 delivery.state AS delivery_state,recovery_case.status AS case_status
+            FROM runs run
+            JOIN claim_log claim ON claim.run_id=run.id
+            JOIN runtime_sessions runtime ON runtime.claim_id=claim.id
+            JOIN internal_production_owner_reservations_v1 claim_owner
+              ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+            JOIN internal_production_owner_reservations_v1 runtime_owner
+              ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
+            JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=${fixture.handoff.dispatchId}
+            JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id=delivery.recovery_case_id
+           WHERE run.id=${runId}
+        `)[0]!;
+        const pristine = { ...await state() };
+
+        if (ordering === "expiry-first") {
+          await assert.rejects(
+            transitionRunToTerminal(database.sql, {
+              runId,
+              status: "failed",
+              diagnostic: "compound cannot invent pre-attempt drain proof",
+            }),
+            /RUN_TERMINAL_FAIL_DRAIN_PROOF_REQUIRED/,
+          );
+          assert.deepEqual({ ...await state() }, pristine);
+          await database.sql.unsafe(
+            `SELECT pg_sleep(GREATEST(
+               EXTRACT(EPOCH FROM (
+                 (SELECT lease_expires_at FROM recovery_dispatch_deliveries WHERE dispatch_id=$1)
+                 - clock_timestamp()
+               )) + 0.05,
+               0
+             ))`,
+            [fixture.handoff.dispatchId],
+          );
+          const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive({ runId });
+          assert.equal(report.counts.rolledBackPublications, 1, JSON.stringify(report.events));
+          assert.deepEqual({ ...await state() }, {
+            run_status: "running",
+            claim_outcome: "infra_retry",
+            runtime_state: "released",
+            runtime_attempt_id: null,
+            claim_owner_state: "closed",
+            runtime_owner_state: "closed",
+            delivery_state: "blocked",
+            case_status: "blocked",
+          });
+          const headBeforeReplay = (await database.sql<Array<{ head_version: string }>>`
+            SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+          `)[0]!.head_version;
+          const replay = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive({ runId });
+          assert.equal(replay.counts.scanned, 0);
+          assert.equal((await database.sql<Array<{ head_version: string }>>`
+            SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+          `)[0]!.head_version, headBeforeReplay);
+        } else {
+          const requested = await requestRunTermination(database.sql, {
+            runId,
+            targetStatus: "failed",
+            requestedBy: "task6-pre-attempt-race",
+            diagnostic: "termination fences pre-attempt expiry",
+            requestId: "RTR_pre-attempt-termination-first",
+          });
+          assert.equal(requested.status, "requested");
+          const beforeReport = { ...await state() };
+          const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive({ runId });
+          assert.ok(
+            report.events.some((event) => (
+              event.code === "V3_RECOVERY_LIFECYCLE_TERMINATION_PENDING"
+              || event.code === "V3_RECOVERY_LIFECYCLE_RUN_NOT_ACTIVE"
+            )),
+            JSON.stringify(report.events),
+          );
+          assert.deepEqual({ ...await state() }, beforeReport);
+        }
+
+        assert.deepEqual(await database.sql<Array<{
+          handoff_canonical_json: string;
+          handoff_hash: string;
+        }>>`
+          SELECT handoff_canonical_json,handoff_hash
+            FROM internal_production_v3_recovery_claim_publications_v1
+           WHERE claim_id=${fixture.publication.claimId}
+        `, publicationBefore, "expiry/termination ordering cannot rewrite the immutable publication");
+
+        const requested = await requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "task6-pre-attempt-race",
+          diagnostic: ordering === "termination-first"
+            ? "termination fences pre-attempt expiry"
+            : "later exact compound adoption",
+          requestId: ordering === "expiry-first"
+            ? "RTR_pre-attempt-expiry-first"
+            : "RTR_pre-attempt-termination-first",
+        });
+        assert.ok(requested.status === "requested" || requested.status === "existing");
+        if (requested.status === "already_terminal") throw new Error("termination request missing");
+        const terminations = createRunTerminationRepository(database.sql);
+        const claimed = await terminations.claim({
+          requestId: requested.request.requestId,
+          ownerInstanceId: `task6-${ordering}`,
+        });
+        assert.ok(claimed?.ownerInstanceId);
+        const runtime = await fixture.sessions.findById(fixture.session.sessionId);
+        assert.ok(runtime);
+        if (runtime.state === "drain_requested") {
+          await fixture.sessions.markDrained({
+            sessionId: runtime.sessionId,
+            ownerInstanceId: runtime.ownerInstanceId,
+            evidence: DRAIN_EVIDENCE,
+          });
+        }
+        await terminations.markDrained({
+          requestId: requested.request.requestId,
+          ownerInstanceId: claimed!.ownerInstanceId!,
+          evidence: { proofRef: `setfarm://test/pre-attempt/${ordering}` },
+        });
+        const terminal = await terminations.terminalize({ requestId: requested.request.requestId });
+        assert.equal(terminal.status, "failed");
+        assert.equal((await terminations.terminalize({ requestId: requested.request.requestId })).status, "failed");
+      } finally {
+        await database.cleanup();
+      }
+    }
+  });
+
+  it("adopts a committed reservation with its original birth timestamps and token", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-reserve-response-loss";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const input = {
+        sessionId: "RTS_runtime-reserve-response-loss",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session" as const,
+        ownerInstanceId: "spawner-response-loss",
+        sessionKey: "stable-original-session-token",
+      };
+      const committed = await sessions.reserve(input);
+      const replay = await sessions.reserve(input);
+      assert.deepEqual(replay, committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("orders committed session adoption before an exact quarantine close", async () => {
+    const database = await createIsolatedTestDatabase();
+    const blocker = postgres(database.url, { max: 1 });
+    try {
+      const runId = "run-runtime-adoption-close-order";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const input = {
+        sessionId: "RTS_runtime-adoption-close-order",
+        runId, stepDbId, workflowStepId: "implement", storyDbId, storyId: "US-001",
+        claimId, claimAgentId: "feature-dev_developer", runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session" as const, ownerInstanceId: "spawner-order",
+        sessionKey: "stable-session-order-token",
+      };
+      const committed = await sessions.reserve(input);
+      await database.sql.unsafe("CREATE SEQUENCE runtime_adoption_close_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION runtime_adoption_close_latch_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.session_id='RTS_runtime-adoption-close-order' THEN
+            PERFORM nextval('runtime_adoption_close_latch_v1');
+            PERFORM pg_advisory_xact_lock(730032);
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER runtime_adoption_close_latch_v1 BEFORE INSERT ON runtime_sessions
+        FOR EACH ROW EXECUTE FUNCTION runtime_adoption_close_latch_v1()
+      `);
+      let release!: () => void;
+      const mayRelease = new Promise<void>((resolve) => { release = resolve; });
+      let locked!: () => void;
+      const blockerReady = new Promise<void>((resolve) => { locked = resolve; });
+      const held = blocker.begin(async (sql) => {
+        await sql.unsafe("SELECT pg_advisory_xact_lock(730032)");
+        locked();
+        await mayRelease;
+      });
+      await blockerReady;
+      const replay = sessions.reserve(input);
+      for (;;) {
+        const latch = await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM runtime_adoption_close_latch_v1
+        `;
+        if (latch[0]?.is_called) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const quarantine = sessions.quarantine({
+        sessionId: committed.sessionId,
+        expectedOwnerInstanceId: committed.ownerInstanceId,
+        expectedStateVersion: committed.stateVersion,
+        diagnostic: "adoption versus quarantine close",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      release();
+      await held;
+      assert.deepEqual(await replay, committed);
+      const closed = await quarantine;
+      assert.equal(closed.state, "quarantined");
+      assert.equal(await runtimeOwnerState(database, committed.sessionId), "closed");
+    } finally {
+      await blocker.end({ timeout: 5 });
+      await database.cleanup();
+    }
+  });
+
   it("tracks reserve, attempt binding, start, drain, and release behind exact owners", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -740,6 +1112,7 @@ describe("durable runtime session ownership", () => {
         now: new Date("2099-01-01T00:00:04.000Z"),
       });
       assert.equal(firstDrained.state, "drained");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "bound");
       assert.ok(new Date(firstDrained.updatedAt).getUTCFullYear() < 2099);
       const reusedDrainProof = await sessions.markDrained({
         sessionId: session.sessionId,
@@ -779,6 +1152,7 @@ describe("durable runtime session ownership", () => {
           now: new Date("2099-01-01T00:00:05.000Z"),
         },
       ))).state, "released");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "closed");
       assert.equal(await database.sql.begin((transaction) => releaseDrainedRuntimeSessionsInTransaction(
         transaction,
         { runId },
@@ -816,6 +1190,221 @@ describe("durable runtime session ownership", () => {
         sessions.reserve({ ...base, sessionId: "RTS_runtime-session-good2" }),
         /duplicate key value|unique constraint/i,
       );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("releases and closes every exact locked drained owner in the bulk path", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-bulk-release";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_runtime-bulk-release1",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-bulk",
+      });
+      await sessions.markStarting({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+      });
+      await sessions.requestDrain({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+        diagnostic: "bulk release fixture drain",
+      });
+      await sessions.markDrained({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+        evidence: DRAIN_EVIDENCE,
+      });
+      await database.sql`UPDATE claim_log SET outcome='infra_retry' WHERE id=${claimId}`;
+      assert.equal(await database.sql.begin((transaction) => releaseDrainedRuntimeSessionsInTransaction(
+        transaction,
+        { runId },
+      )), 1);
+      assert.equal((await sessions.findById(session.sessionId))?.state, "released");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "closed");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps a compound-terminal runtime owner bound until the later close-all phase", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-compound-phase-barrier";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_runtime-compound-barrier1",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-compound-barrier",
+      });
+      await sessions.markStarting({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+      });
+      await sessions.requestDrain({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+        diagnostic: "compound barrier drain",
+      });
+      await sessions.markDrained({
+        sessionId: session.sessionId,
+        ownerInstanceId: session.ownerInstanceId,
+        evidence: DRAIN_EVIDENCE,
+      });
+
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await releaseRuntimeSessionForTerminalRunInTransactionV1(transaction, {
+            sessionId: session.sessionId,
+            runId,
+            transitionTime: new Date("2026-08-23T00:00:00.000Z"),
+          });
+          const inside = await transaction.unsafe<Array<{ runtime_state: string; owner_state: string }>>(
+            `SELECT runtime.state AS runtime_state,owner.state AS owner_state
+               FROM runtime_sessions runtime
+               JOIN internal_production_owner_reservations_v1 owner
+                 ON owner.category='runtime-session' AND owner.owner_key=runtime.session_id
+              WHERE runtime.session_id=$1`,
+            [session.sessionId],
+          );
+          assert.deepEqual({ ...inside[0] }, { runtime_state: "released", owner_state: "bound" });
+          throw new Error("TEST_TASK6_AFTER_RUNTIME_MUTATION");
+        }),
+        /TEST_TASK6_AFTER_RUNTIME_MUTATION/,
+      );
+      assert.equal((await sessions.findById(session.sessionId))?.state, "drained");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "bound");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("orders and serializes concurrent bulk release across multiple owners", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-bulk-release-multiple";
+      await database.insertRun(runId);
+      const publications = [];
+      for (const [ordinal, workflowStepId] of [[1, "plan"], [2, "stories"]] as const) {
+        const stepDbId = `${runId}-${workflowStepId}-step`;
+        await database.sql`
+          INSERT INTO steps (id,run_id,step_id,agent_id,step_index,input_template,expects,status)
+          VALUES (${stepDbId},${runId},${workflowStepId},'feature-dev_planner',${ordinal},'','','pending')
+        `;
+        const publication = await publishSingleClaimRuntime(database.sql, {
+          runId, stepDbId, workflowStepId, claimAgentId: "feature-dev_planner",
+          runtimeIntent: {
+            schema: "setfarm.runtime-claim-intent.v1",
+            sessionId: `RTS_bulk-multiple-${workflowStepId}`,
+            runtimeAgentId: "prism", runtimeKind: "openclaw_session",
+            ownerInstanceId: "spawner-bulk-multiple",
+            sessionKey: `token-${workflowStepId}`,
+          },
+        });
+        assert.ok(publication?.runtime);
+        publications.push(publication!);
+      }
+      const sessions = createRuntimeSessionRepository(database.sql);
+      for (const publication of publications) {
+        await sessions.markStarting({
+          sessionId: publication.runtime!.sessionId,
+          ownerInstanceId: publication.runtime!.ownerInstanceId,
+        });
+        await sessions.requestDrain({
+          sessionId: publication.runtime!.sessionId,
+          ownerInstanceId: publication.runtime!.ownerInstanceId,
+          diagnostic: "multi-owner bulk drain",
+        });
+        await sessions.markDrained({
+          sessionId: publication.runtime!.sessionId,
+          ownerInstanceId: publication.runtime!.ownerInstanceId,
+          evidence: DRAIN_EVIDENCE,
+        });
+        await database.sql`UPDATE claim_log SET outcome='infra_retry' WHERE id=${publication.claimId}`;
+      }
+      const released = await Promise.all([
+        database.sql.begin((sql) => releaseDrainedRuntimeSessionsInTransaction(sql, { runId })),
+        database.sql.begin((sql) => releaseDrainedRuntimeSessionsInTransaction(sql, { runId })),
+      ]);
+      assert.deepEqual([...released].sort((a, b) => a - b), [0, 2]);
+      const rows = await database.sql<Array<{ session_id: string; state: string; owner_state: string }>>`
+        SELECT rs.session_id,rs.state,r.state AS owner_state FROM runtime_sessions rs
+          JOIN internal_production_owner_reservations_v1 r
+            ON r.category='runtime-session' AND r.owner_key=rs.session_id
+         WHERE rs.run_id=${runId} ORDER BY rs.session_id
+      `;
+      assert.deepEqual(rows.map((row) => ({ ...row })), [
+        { session_id: "RTS_bulk-multiple-plan", state: "released", owner_state: "closed" },
+        { session_id: "RTS_bulk-multiple-stories", state: "released", owner_state: "closed" },
+      ]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("serializes concurrent reserved release and quarantine to one closed owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-release-quarantine-race";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_release-quarantine-race1",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-race",
+      });
+      await database.sql`UPDATE claim_log SET outcome='infra_retry' WHERE id=${claimId}`;
+      const [release, quarantine] = await Promise.allSettled([
+        database.sql.begin((transaction) => releaseReservedRuntimeSessionInTransaction(
+          transaction,
+          {
+            sessionId: session.sessionId,
+            claimId,
+            ownerInstanceId: session.ownerInstanceId,
+            diagnostic: "concurrent no-spawn release",
+          },
+        )),
+        sessions.quarantine({
+          sessionId: session.sessionId,
+          expectedOwnerInstanceId: session.ownerInstanceId,
+          expectedStateVersion: session.stateVersion,
+          diagnostic: "concurrent uncertainty quarantine",
+        }),
+      ]);
+      assert.equal(quarantine.status, "fulfilled");
+      assert.ok(release.status === "fulfilled" || release.reason instanceof Error);
+      assert.ok(["released", "quarantined"].includes((await sessions.findById(session.sessionId))!.state));
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "closed");
     } finally {
       await database.cleanup();
     }
@@ -941,6 +1530,7 @@ describe("durable runtime session ownership", () => {
       });
       assert.equal(quarantined.state, "quarantined");
       assert.equal(quarantined.stateVersion, adopted.stateVersion + 1);
+      assert.equal(await runtimeOwnerState(database, reserved.sessionId), "closed");
       const replay = await sessions.quarantine({
         sessionId: adopted.sessionId,
         expectedOwnerInstanceId: staleObservation.ownerInstanceId,
@@ -1241,6 +1831,36 @@ describe("durable runtime session ownership", () => {
         /RUNTIME_SESSION_RESERVED_RELEASE_CLAIM_ACTIVE/,
       );
       await database.sql`UPDATE claim_log SET outcome = 'infra_retry' WHERE id = ${claimId}`;
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_runtime_owner_close_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.category='runtime-session' AND NEW.state='closed' THEN
+            RAISE EXCEPTION 'TEST_RUNTIME_OWNER_CLOSE_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER reject_runtime_owner_close_v1
+        BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION reject_runtime_owner_close_v1()
+      `);
+      await assert.rejects(
+        database.sql.begin((transaction) => releaseReservedRuntimeSessionInTransaction(
+          transaction,
+          {
+            sessionId: session.sessionId,
+            claimId,
+            ownerInstanceId: "spawner-a",
+            diagnostic: "rejected close rolls release back",
+          },
+        )),
+        /TEST_RUNTIME_OWNER_CLOSE_REJECTED/,
+      );
+      assert.equal((await sessions.findById(session.sessionId))?.state, "reserved");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "bound");
+      await database.sql.unsafe("DROP TRIGGER reject_runtime_owner_close_v1 ON internal_production_owner_reservations_v1");
+      await database.sql.unsafe("DROP FUNCTION reject_runtime_owner_close_v1()");
       const released = await database.sql.begin((transaction) => releaseReservedRuntimeSessionInTransaction(
         transaction,
         {
@@ -1252,6 +1872,7 @@ describe("durable runtime session ownership", () => {
       ));
       assert.equal(released.state, "released");
       assert.equal(released.drainEvidence.sourceState, "reserved");
+      assert.equal(await runtimeOwnerState(database, session.sessionId), "closed");
       const replay = await sessions.quarantine({
         sessionId: session.sessionId,
         expectedOwnerInstanceId: session.ownerInstanceId,

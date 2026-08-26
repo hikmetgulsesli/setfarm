@@ -51,7 +51,10 @@ function effectFixture(): RuntimeCompletionEffect {
   };
 }
 
-function fakeRepository(initial = effectFixture()) {
+function fakeRepository(
+  initial = effectFixture(),
+  options: Readonly<{ crossedSettlement?: boolean }> = {},
+) {
   let effect = { ...initial } as RuntimeCompletionEffect;
   let leaseGeneration = 0;
   const calls = { releases: 0, quarantines: 0, settles: 0 };
@@ -110,6 +113,9 @@ function fakeRepository(initial = effectFixture()) {
     }) {
       await repository.assertLease(input);
       calls.settles += 1;
+      if (options.crossedSettlement) {
+        return { ...effect, effectKey: "crossed/effect" };
+      }
       effect = {
         ...effect,
         state: input.resolution,
@@ -178,6 +184,31 @@ describe("runtime completion effect runner", () => {
     );
     assert.equal(applyCalls, 0);
     assert.equal(fake.calls.releases, 2);
+    assert.equal(fake.calls.quarantines, 1);
+    assert.equal(fake.current().state, "quarantined");
+  });
+
+  it("rejects a crossed settlement acknowledgement before reporting ledger success", async () => {
+    const fake = fakeRepository(effectFixture(), { crossedSettlement: true });
+    await assert.rejects(
+      runRuntimeCompletionEffectLedger({
+        requestId: fake.current().requestId,
+        ownerInstanceId: "owner-a",
+        repository: fake.repository,
+        maxAttempts: 1,
+        heartbeatIntervalMs: 100,
+        handler: {
+          reconcile: async () => undefined,
+          apply: async () => ({
+            resolution: "applied",
+            result: { advanced: true },
+            evidence: { source: "handler" },
+          }),
+        },
+      }),
+      /RUNTIME_COMPLETION_EFFECT_SETTLEMENT_MISMATCH/,
+    );
+    assert.equal(fake.calls.settles, 1);
     assert.equal(fake.calls.quarantines, 1);
     assert.equal(fake.current().state, "quarantined");
   });

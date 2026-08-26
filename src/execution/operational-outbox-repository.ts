@@ -4,7 +4,13 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   CanonicalOperationalEventV1Schema,
   createCanonicalOperationalEventV1,
@@ -57,6 +63,7 @@ type DeliveryIdentityRow = Readonly<{
   consumer: string;
   input_hash: string;
   idempotency_key: string;
+  state: string;
 }>;
 
 export type OperationalOutboxState = z.infer<typeof OutboxStateSchema>;
@@ -499,9 +506,17 @@ export function createOperationalOutboxRepository(sql: Sql) {
           transaction,
           "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
         );
-        if (
-          !current
-          || current.state !== "leased"
+        if (!current) throw new Error("OPERATIONAL_OUTBOX_PUBLISH_FENCE_LOST");
+        const replaying = current.state === "published";
+        if (replaying) {
+          if (
+            current.owner_instance_id !== null
+            || current.lease_token !== null
+            || current.lease_expires_at !== null
+            || current.published_at === null
+          ) throw new Error("OPERATIONAL_OUTBOX_PUBLISH_FENCE_LOST");
+        } else if (
+          current.state !== "leased"
           || current.owner_instance_id !== ownerInstanceId
           || current.lease_token !== leaseToken
           || !current.lease_expires_at
@@ -520,7 +535,9 @@ export function createOperationalOutboxRepository(sql: Sql) {
             current.created_at,
             "OPERATIONAL_EVENT_SOURCE_TIMESTAMP_INVALID",
           ),
-          committedAt: now.toISOString(),
+          committedAt: replaying
+            ? timestamp(current.published_at!, "OPERATIONAL_OUTBOX_PUBLISHED_TIMESTAMP_INVALID")
+            : now.toISOString(),
         });
         await transaction.unsafe(
           `INSERT INTO operational_events (
@@ -543,42 +560,96 @@ export function createOperationalOutboxRepository(sql: Sql) {
           ],
         );
         const canonicalRows = await transaction.unsafe<CanonicalEventRow[]>(
-          "SELECT * FROM operational_events WHERE event_key = $1",
+          "SELECT * FROM operational_events WHERE event_key = $1 FOR UPDATE",
           [event.eventKey],
         );
         const storedEvent = canonicalRows[0] ? mapCanonicalEvent(canonicalRows[0]) : undefined;
         if (
-          !storedEvent
-          || storedEvent.eventHash !== event.eventHash
-          || storedEvent.outboxId !== event.outboxId
-          || storedEvent.committedAt !== event.committedAt
+          canonicalRows.length !== 1
+          || !storedEvent
+          || canonicalJsonStringify(storedEvent) !== canonicalJsonStringify(event)
         ) throw new Error("OPERATIONAL_EVENT_IDENTITY_CONFLICT");
 
         for (const consumer of deliveryConsumers()) {
+          const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1({
+            eventKey: event.eventKey,
+            consumer,
+          });
           const deliveryId = operationalEventDeliveryId(event.eventKey, consumer);
-          await transaction.unsafe(
-            `INSERT INTO operational_event_deliveries (
-               event_key, consumer, delivery_id, input_hash, idempotency_key,
-               state, created_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $1, 'pending', $5, $5)
-             ON CONFLICT (event_key, consumer) DO NOTHING`,
-            [event.eventKey, consumer, deliveryId, event.eventHash, now],
-          );
-          const deliveryRows = await transaction.unsafe<DeliveryIdentityRow[]>(
-            `SELECT delivery_id, event_key, consumer, input_hash, idempotency_key
+          const beforeDeliveries = await transaction.unsafe<DeliveryIdentityRow[]>(
+            `SELECT delivery_id,event_key,consumer,input_hash,idempotency_key,state
                FROM operational_event_deliveries
-              WHERE event_key = $1 AND consumer = $2`,
+              WHERE event_key=$1 AND consumer=$2
+              FOR UPDATE`,
+            [event.eventKey, consumer],
+          );
+          const beforeOwners = await transaction.unsafe<Array<{
+            producer_implementation_id: string;
+            state: string;
+          }>>(
+            `SELECT producer_implementation_id,state
+               FROM internal_production_owner_reservations_v1
+              WHERE category='operational-delivery' AND owner_key=$1`,
+            [identity.ownerKey],
+          );
+          const exactDelivery = (delivery: DeliveryIdentityRow | undefined) => Boolean(delivery
+            && delivery.delivery_id === deliveryId
+            && delivery.event_key === event.eventKey
+            && delivery.consumer === consumer
+            && delivery.input_hash === event.eventHash
+            && delivery.idempotency_key === event.eventKey
+            && ["pending", "leased", "delivered", "skipped", "quarantined"].includes(delivery.state));
+          const adopting = beforeDeliveries.length !== 0 || beforeOwners.length !== 0;
+          if (adopting && (
+            beforeDeliveries.length !== 1
+            || !exactDelivery(beforeDeliveries[0])
+            || beforeOwners.length !== 1
+            || beforeOwners[0]?.producer_implementation_id !== "a-operational-delivery-v1"
+            || !["bound", "closed"].includes(beforeOwners[0]?.state ?? "")
+          )) throw new Error("OPERATIONAL_EVENT_DELIVERY_OWNER_ADOPTION_INVALID");
+          const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+            transaction as PgTransactionSql,
+            {
+              producerImplementationId: "a-operational-delivery-v1",
+              ownerKey: identity.ownerKey,
+            },
+          );
+          if (!adopting) {
+            await transaction.unsafe(
+              `INSERT INTO operational_event_deliveries (
+                 event_key,consumer,delivery_id,input_hash,idempotency_key,state,created_at,updated_at
+               ) VALUES ($1,$2,$3,$4,$1,'pending',$5,$5)`,
+              [event.eventKey, consumer, deliveryId, event.eventHash, now],
+            );
+          }
+          const deliveryRows = await transaction.unsafe<DeliveryIdentityRow[]>(
+            `SELECT delivery_id,event_key,consumer,input_hash,idempotency_key,state
+               FROM operational_event_deliveries
+              WHERE event_key = $1 AND consumer = $2
+              FOR UPDATE`,
             [event.eventKey, consumer],
           );
           const delivery = deliveryRows[0];
           if (
-            !delivery
-            || delivery.delivery_id !== deliveryId
-            || delivery.input_hash !== event.eventHash
-            || delivery.idempotency_key !== event.eventKey
+            deliveryRows.length !== 1
+            || !exactDelivery(delivery)
           ) throw new Error("OPERATIONAL_EVENT_DELIVERY_IDENTITY_CONFLICT");
+          const bound = await bindInternalProductionOwnerReservationV1(
+            transaction as PgTransactionSql,
+            {
+              reservationRef: reservation.reservationRef,
+              reservationHash: reservation.reservationHash,
+              canonicalOwnerIdentity: identity,
+            },
+          );
+          if (
+            bound.ownerKey !== identity.ownerKey
+            || bound.reservationRef !== reservation.reservationRef
+            || bound.reservationHash !== reservation.reservationHash
+          ) throw new Error("OPERATIONAL_EVENT_DELIVERY_OWNER_BINDING_INVALID");
         }
 
+        if (replaying) return mapEvent(current);
         const rows = await transaction.unsafe<OutboxRow[]>(
           `UPDATE operational_outbox
               SET state = 'published', owner_instance_id = NULL, lease_token = NULL,

@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { computeContractSpineMigrationChecksumV1 } from "../../src/db/contract-spine-migration-checksum.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract-spine-migration-digests.generated.js";
 import {
+  CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST,
   assertContractSpineSemanticMigrationSourceIntegrity,
   computeContractSpineSemanticMigrationDigests,
   createContractSpineMigrationSourceReader,
@@ -31,6 +32,228 @@ function replaceExactlyOnce(source: string, before: string, after: string): stri
 }
 
 describe("contract-spine semantic migration source digests", () => {
+  it("binds guarded migration 32 without changing any historical digest", () => {
+    const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST as Readonly<
+      Record<number, Readonly<{
+        regions: readonly Readonly<{ file: string; region: string }>[];
+        dependencyFiles: readonly string[];
+      }>>
+    >;
+    const checkedIn = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS as Readonly<
+      Record<number, string>
+    >;
+
+    assert.deepEqual(manifest[32], {
+      regions: [
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-identity-and-statements",
+        },
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-activation-catalog-authority",
+        },
+        {
+          file: "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+          region: "migration-v32-schema-projector",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-guarded-class",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-registration",
+        },
+        {
+          file: "src/db/contract-spine-migrations.ts",
+          region: "migration-v32-guarded-dispatch",
+        },
+      ],
+      dependencyFiles: ["src/product-compiler/canonical-json.ts"],
+    });
+    assert.match(checkedIn[32] ?? "", /^[a-f0-9]{64}$/);
+
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader) as Readonly<
+      Record<number, string>
+    >;
+    const statementsMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "phase = 'failed_released'\n         AND terminal_receipt_ref IS NULL",
+        "phase = 'failed_release_mutation'\n         AND terminal_receipt_ref IS NULL",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(statementsMutation[32], baseline[32]);
+    for (const historical of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const) {
+      assert.equal(statementsMutation[historical], baseline[historical]);
+    }
+
+    const activationInputMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "source_build_authority_hash CHAR(64) NOT NULL,",
+        "source_build_authority_hash CHAR(63) NOT NULL,",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(activationInputMutation[32], baseline[32]);
+    assert.equal(activationInputMutation[31], baseline[31]);
+
+    const projectorMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "bootstrapHandoffOperationIdUnique: true as const",
+        "bootstrapHandoffOperationIdUnique: false as const",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(projectorMutation[32], baseline[32]);
+    assert.equal(projectorMutation[31], baseline[31]);
+
+    const catalogAuthorityMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "create or replace function public.ip_op_reject_immutable_v1() returns trigger",
+          "create or replace function public.ip_op_reject_immutable_mutated_v1() returns trigger",
+        ),
+      ),
+    ) as Readonly<Record<number, string>>;
+    assert.notEqual(catalogAuthorityMutation[32], baseline[32]);
+    assert.equal(catalogAuthorityMutation[31], baseline[31]);
+
+    const dispatchMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "guardedPending.push(migration.name)",
+        "guardedPending.unshift(migration.name)",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(dispatchMutation[32], baseline[32]);
+    assert.equal(dispatchMutation[31], baseline[31]);
+
+    const canonicalJsonMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/product-compiler/canonical-json.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "return createHash(\"sha256\").update(canonicalJsonBytes(value)).digest(\"hex\");",
+        "return createHash(\"sha512\").update(canonicalJsonBytes(value)).digest(\"hex\");",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(canonicalJsonMutation[32], baseline[32]);
+
+    const unrelatedMigrationMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/operational-failure-cause-authority-v3-migration.ts",
+        (source) => `${source}\n// migration-31-only source mutation\n`,
+      ),
+    ) as Readonly<Record<number, string>>;
+    assert.notEqual(unrelatedMigrationMutation[31], baseline[31]);
+    assert.equal(unrelatedMigrationMutation[32], baseline[32]);
+
+    assert.throws(
+      () => assertContractSpineSemanticMigrationSourceIntegrity(replacingReader(
+        "src/db/bootstrap-main-claim-handoff-v1-migration.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "const OWNER_ADMISSION_HEAD_TABLE = \"internal_production_owner_admission_head_v1\";",
+          "const OWNER_ADMISSION_HEAD_TABLE = \"internal_production_owner_admission_head_v1_mutated\";",
+        ),
+      )),
+      /CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGEST_STALE:v32/,
+    );
+  });
+
+  it("binds ordinary migration 33 without changing migration 32 authority", () => {
+    const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST as Readonly<
+      Record<number, Readonly<{
+        regions: readonly Readonly<{ file: string; region: string }>[];
+        dependencyFiles: readonly string[];
+      }>>
+    >;
+    const checkedIn = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS as Readonly<
+      Record<number, string>
+    >;
+    assert.deepEqual(manifest[33], {
+      regions: [
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-identity-and-statements" },
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-schema-projector" },
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-registration" },
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-blocked-successor-planner" },
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-savepoint-facade" },
+        { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-automatic-successor-wrapper" },
+      ],
+      dependencyFiles: [
+        "src/findings/finding-set.ts",
+        "src/product-compiler/canonical-json.ts",
+        "src/product-compiler/schemas/common-v1.ts",
+        "src/recovery/recovery-case.ts",
+        "src/recovery/recovery-delivery.ts",
+        "src/recovery/v3-recovery-claim-authority.ts",
+      ],
+    });
+    assert.match(checkedIn[33] ?? "", /^[a-f0-9]{64}$/);
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader) as Readonly<
+      Record<number, string>
+    >;
+    assert.equal(baseline[32], checkedIn[32]);
+    assert.equal(baseline[33], checkedIn[33]);
+    const mutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        '"ip_v3_recovery_publication_immutable_v1"',
+        '"ip_v3_recovery_publication_immutable_mutated_v1"',
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(mutation[33], baseline[33]);
+    assert.equal(mutation[32], baseline[32]);
+    for (const [before, after] of [
+      ["const completeMigrations: readonly Migration[]", "const completeMigrations: ReadonlyArray<Migration>"],
+      [
+        '"SELECT version, name, checksum, state FROM public.setfarm_schema_migrations ORDER BY version"',
+        '"SELECT version, name, checksum, state FROM public.setfarm_schema_migrations ORDER BY version DESC"',
+      ],
+      [
+        'state = "blocked_by_guarded_predecessor";',
+        'state = "pending";',
+      ],
+      [
+        "async function applyContractSpineMigrationsThroughV32Core(",
+        "async function applyContractSpineMigrationsThroughV32CoreMutated(",
+      ],
+      [
+        "transaction.savepoint(callback)",
+        "transaction.begin(callback)",
+      ],
+      [
+        "export async function applyContractSpineMigrations(\n",
+        "export async function applyContractSpineMigrationsMutated(\n",
+      ],
+    ] as const) {
+      const semanticMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+        "src/db/contract-spine-migrations.ts",
+        (source) => replaceExactlyOnce(source, before, after),
+      )) as Readonly<Record<number, string>>;
+      assert.notEqual(semanticMutation[33], baseline[33]);
+      assert.equal(semanticMutation[32], baseline[32]);
+    }
+    const parserMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/recovery/v3-recovery-claim-authority.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "ownerInstanceId: BoundedIdentitySchema,\n    leaseToken: z.string().min(16).max(500),\n    expiresAt: TimestampSchema,",
+        "ownerInstanceId: BoundedIdentitySchema,\n    leaseToken: z.string().min(16).max(501),\n    expiresAt: TimestampSchema,",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(parserMutation[33], baseline[33]);
+    assert.equal(parserMutation[32], baseline[32]);
+  });
+
   it("matches the checked-in generated digest manifest", () => {
     assert.deepEqual(
       assertContractSpineSemanticMigrationSourceIntegrity(sourceReader),

@@ -3,9 +3,17 @@ import { z } from "zod";
 
 import { computeEvidenceBundleHash, EvidenceBundleV2Schema, type EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { SourceRevisionV1Schema } from "../execution/schemas/execution-attempt-v1.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionFindingCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
 import {
   ExpectedDeltaV1Schema,
   RecoveryCaseV1Schema,
@@ -30,6 +38,29 @@ type FindingSetRow = {
   finding_set_hash: string;
   payload: unknown;
 };
+
+type ExactFindingSetRow = Readonly<{
+  finding_set_hash: string;
+  finding_set_id: string;
+  run_id: string;
+  story_id: string;
+  packet_hash: string;
+  slice_hash: string;
+  source_sha: string;
+  source_tree_hash: string;
+  finding_ids: unknown;
+  payload: unknown;
+}>;
+
+type ExactFindingRow = Readonly<{
+  finding_id: string;
+  origin: string;
+  classification: string;
+  invariant_ref: string;
+  status: string;
+  source_fingerprint: string;
+  payload: unknown;
+}>;
 
 type EvidenceBundleRow = {
   evidence_bundle_hash: string;
@@ -241,6 +272,187 @@ function canonicalEqual(left: unknown, right: unknown): boolean {
   return hashCanonicalJson(left) === hashCanonicalJson(right);
 }
 
+function exactFindingSetRowMatches(row: ExactFindingSetRow, value: FindingSetV1): boolean {
+  return row.finding_set_hash === value.findingSetHash
+    && row.finding_set_id === value.findingSetId
+    && row.run_id === value.runId
+    && row.story_id === value.storyId
+    && row.packet_hash === value.packetHash
+    && row.slice_hash === value.sliceHash
+    && row.source_sha === value.sourceRevision.sha
+    && row.source_tree_hash === value.sourceRevision.treeHash
+    && canonicalJsonStringify(row.finding_ids)
+      === canonicalJsonStringify(value.findings.map((finding) => finding.findingId))
+    && canonicalJsonStringify(FindingSetV1Schema.parse(row.payload))
+      === canonicalJsonStringify(value);
+}
+
+function exactFindingRowsMatch(rows: readonly ExactFindingRow[], value: FindingSetV1): boolean {
+  return rows.length === value.findings.length
+    && rows.every((row, index) => {
+      const finding = value.findings[index];
+      return finding !== undefined
+        && row.finding_id === finding.findingId
+        && row.origin === finding.origin
+        && row.classification === finding.classification
+        && row.invariant_ref === finding.invariantRef
+        && row.status === finding.status
+        && row.source_fingerprint === hashCanonicalJson(finding.sourceLocators)
+        && canonicalJsonStringify(row.payload) === canonicalJsonStringify(finding);
+    });
+}
+
+async function publishFindingSetWithOwnerInTransactionV1(
+  transaction: TransactionSql,
+  findingSet: FindingSetV1,
+): Promise<"inserted" | "duplicate"> {
+  const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({
+    findingSetHash: findingSet.findingSetHash,
+  });
+  await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    findingSet.findingSetHash,
+  ]);
+  const beforeParents = await transaction.unsafe<ExactFindingSetRow[]>(
+    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    [findingSet.findingSetHash],
+  );
+  const expectedIds = findingSet.findings.map((finding) => finding.findingId);
+  const beforeChildren = await transaction.unsafe<ExactFindingRow[]>(
+    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings
+      WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id
+      FOR UPDATE`,
+    [findingSet.findingSetHash, expectedIds],
+  );
+  const beforeOwners = await transaction.unsafe<Array<{
+    producer_implementation_id: string;
+    state: string;
+  }>>(
+    `SELECT producer_implementation_id,state
+       FROM internal_production_owner_reservations_v1
+      WHERE category='finding' AND owner_key=$1`,
+    [findingSet.findingSetHash],
+  );
+  const adopting = beforeParents.length !== 0 || beforeChildren.length !== 0 || beforeOwners.length !== 0;
+  const allowedProducer = [
+    "a-finding-recovery-repository-v1",
+    "a-finding-v3-downstream-evidence-v1",
+    "a-finding-v3-evidence-only-v1",
+  ].includes(beforeOwners[0]?.producer_implementation_id ?? "");
+  if (adopting && (
+    beforeParents.length !== 1
+    || !beforeParents[0]
+    || !exactFindingSetRowMatches(beforeParents[0], findingSet)
+    || !exactFindingRowsMatch(beforeChildren, findingSet)
+    || beforeOwners.length !== 1
+    || !allowedProducer
+    || !["bound", "closed"].includes(beforeOwners[0]?.state ?? "")
+  )) throw new Error("FINDING_OWNER_ADOPTION_INVALID");
+
+  if (
+    adopting
+    && beforeOwners[0]?.producer_implementation_id !== "a-finding-recovery-repository-v1"
+  ) {
+    if (beforeOwners[0]?.state !== "closed") throw new Error("FINDING_OWNER_ADOPTION_INVALID");
+    const terminalClose = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+      transaction as PgTransactionSql,
+      { findingSetHash: findingSet.findingSetHash },
+    );
+    await closeInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      terminalClose,
+    );
+    return "duplicate";
+  }
+
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    {
+      producerImplementationId: "a-finding-recovery-repository-v1",
+      ownerKey: identity.ownerKey,
+    },
+  );
+  if (!adopting) {
+    await transaction.unsafe(
+      `INSERT INTO finding_sets (
+         finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
+         source_sha, source_tree_hash, finding_ids, payload
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)`,
+      [
+        findingSet.findingSetHash,
+        findingSet.findingSetId,
+        findingSet.runId,
+        findingSet.storyId,
+        findingSet.packetHash,
+        findingSet.sliceHash,
+        findingSet.sourceRevision.sha,
+        findingSet.sourceRevision.treeHash,
+        JSON.stringify(expectedIds),
+        JSON.stringify(findingSet),
+      ],
+    );
+    for (const finding of findingSet.findings) {
+      await transaction.unsafe(
+        `INSERT INTO findings (
+           finding_set_hash, finding_id, origin, classification, invariant_ref,
+           status, source_fingerprint, payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
+        [
+          findingSet.findingSetHash,
+          finding.findingId,
+          finding.origin,
+          finding.classification,
+          finding.invariantRef,
+          finding.status,
+          hashCanonicalJson(finding.sourceLocators),
+          JSON.stringify(finding),
+        ],
+      );
+    }
+  }
+  const parents = await transaction.unsafe<ExactFindingSetRow[]>(
+    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    [findingSet.findingSetHash],
+  );
+  const children = await transaction.unsafe<ExactFindingRow[]>(
+    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings
+      WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id
+      FOR UPDATE`,
+    [findingSet.findingSetHash, expectedIds],
+  );
+  if (
+    parents.length !== 1
+    || !parents[0]
+    || !exactFindingSetRowMatches(parents[0], findingSet)
+    || !exactFindingRowsMatch(children, findingSet)
+  ) throw new Error("FINDING_OWNER_REREAD_INVALID");
+  const bound = await bindInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    },
+  );
+  if (
+    bound.ownerKey !== findingSet.findingSetHash
+    || bound.reservationRef !== reservation.reservationRef
+    || bound.reservationHash !== reservation.reservationHash
+  ) throw new Error("FINDING_OWNER_BINDING_INVALID");
+  const terminalClose = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+    transaction as PgTransactionSql,
+    { findingSetHash: findingSet.findingSetHash },
+  );
+  await closeInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    terminalClose,
+  );
+  return adopting ? "duplicate" : "inserted";
+}
+
 function isTerminal(status: RecoveryCaseV1["status"]): boolean {
   return status === "resolved" || status === "blocked" || status === "superseded";
 }
@@ -302,56 +514,8 @@ export function createFindingRecoveryRepository(sql: Sql) {
     async putFindingSet(input: unknown): Promise<PutImmutableResult<FindingSetV1>> {
       const findingSet = FindingSetV1Schema.parse(input);
       return sql.begin(async (transaction) => {
-        await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-          findingSet.findingSetHash,
-        ]);
-        const existing = await one<FindingSetRow>(
-          transaction,
-          "SELECT finding_set_hash, payload FROM finding_sets WHERE finding_set_hash = $1",
-          [findingSet.findingSetHash],
-        );
-        if (existing) {
-          const value = FindingSetV1Schema.parse(existing.payload);
-          if (!canonicalEqual(value, findingSet)) throw new Error("FINDING_SET_HASH_COLLISION");
-          return { status: "duplicate" as const, value };
-        }
-        await transaction.unsafe(
-          `INSERT INTO finding_sets (
-             finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
-             source_sha, source_tree_hash, finding_ids, payload
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)`,
-          [
-            findingSet.findingSetHash,
-            findingSet.findingSetId,
-            findingSet.runId,
-            findingSet.storyId,
-            findingSet.packetHash,
-            findingSet.sliceHash,
-            findingSet.sourceRevision.sha,
-            findingSet.sourceRevision.treeHash,
-            JSON.stringify(findingSet.findings.map((finding) => finding.findingId)),
-            JSON.stringify(findingSet),
-          ],
-        );
-        for (const finding of findingSet.findings) {
-          await transaction.unsafe(
-            `INSERT INTO findings (
-               finding_set_hash, finding_id, origin, classification, invariant_ref,
-               status, source_fingerprint, payload
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
-            [
-              findingSet.findingSetHash,
-              finding.findingId,
-              finding.origin,
-              finding.classification,
-              finding.invariantRef,
-              finding.status,
-              hashCanonicalJson(finding.sourceLocators),
-              JSON.stringify(finding),
-            ],
-          );
-        }
-        return { status: "inserted" as const, value: findingSet };
+        const status = await publishFindingSetWithOwnerInTransactionV1(transaction, findingSet);
+        return { status, value: findingSet };
       }) as Promise<PutImmutableResult<FindingSetV1>>;
     },
 

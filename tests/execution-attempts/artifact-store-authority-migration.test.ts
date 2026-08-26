@@ -6,6 +6,7 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditArtifactStoreAuthorityLedgerData as auditArtifactStoreAuthorityLedgerDataV24,
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
@@ -177,7 +178,10 @@ describe("artifact store authority migration 24", () => {
       releaseSha: sourceRelease,
     });
     assert.equal(applied.applied.includes("024_artifact_store_authority_ledger"), true);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     assert.deepEqual(await auditArtifactStoreAuthorityLedgerData(database.sql), {
       schema: "setfarm.artifact-store-authority-ledger-audit.v1",
       scope: "database-ledger-only",
@@ -595,8 +599,11 @@ describe("artifact store authority migration 24", () => {
         ON public.unrelated_authority_trigger_host
         FOR EACH STATEMENT EXECUTE FUNCTION public.unrelated_authority_trigger()
     `);
-    assert.equal((await planContractSpineMigrations(database.sql)).status, "current");
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal((await planContractSpineMigrations(database.sql)).status, "pending");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
 
     await database.sql.unsafe(`
       DROP TRIGGER trg_artifact_store_authorities_transition
@@ -1071,8 +1078,11 @@ describe("artifact store authority migration 24", () => {
     });
     try {
       await poisonedSql.unsafe("SET search_path TO evil, pg_catalog, public");
-      assert.equal((await planContractSpineMigrations(poisonedSql)).status, "current");
-      assert.equal((await verifyContractSpineMigrations(poisonedSql)).status, "verified");
+      assert.equal((await planContractSpineMigrations(poisonedSql)).status, "pending");
+      assert.equal(
+        (await auditAuthorityV3ContractSpineThroughMigration31V1(poisonedSql)).status,
+        "verified",
+      );
 
       await database.sql.unsafe("DROP SCHEMA public CASCADE");
       await database.sql.unsafe("CREATE SCHEMA public");
@@ -1266,6 +1276,9 @@ describe("artifact store authority migration 24", () => {
        WHERE version = 24
     `;
     assert.equal(journal[0]?.count, 1);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
   });
 });

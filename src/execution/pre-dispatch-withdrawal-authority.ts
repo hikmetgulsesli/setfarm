@@ -1,6 +1,12 @@
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import {
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
 import { acquireClaimMutationAuthorityInTransaction } from "./claim-mutation-authority.js";
 import { releaseReservedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
 
@@ -72,21 +78,32 @@ export async function withdrawPreDispatchClaimInTransaction(
       },
     };
   }
+  if (attempt && !exactAttempt) throw new Error("PRE_DISPATCH_ATTEMPT_IDENTITY_MISMATCH");
   const blockedByDifferentAttempt = Boolean(input.preserveExactAttempt && attempt);
   const foreignDeliveries = input.preserveExactAttempt && input.identity.storyId
-    ? await transaction.unsafe<Array<{ dispatch_id: string; claim_id: string | number | null }>>(
-      `SELECT dispatch_id, claim_id
-         FROM recovery_dispatch_deliveries
-        WHERE run_id = $1 AND story_id = $2
-          AND state IN ('authorized', 'leased', 'attempt_reserved', 'running')
-        ORDER BY authorized_at, dispatch_id
+    ? await transaction.unsafe<Array<{
+      dispatch_id: string;
+      attempt_id: string | null;
+      claim_id: string | number | null;
+    }>>(
+      `SELECT delivery.dispatch_id, delivery.attempt_id, delivery.claim_id
+         FROM recovery_dispatch_deliveries delivery
+        WHERE delivery.run_id = $1 AND delivery.story_id = $2
+          AND delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
+        ORDER BY delivery.authorized_at, delivery.dispatch_id
         LIMIT 1
-        FOR UPDATE`,
+        FOR UPDATE OF delivery`,
       [input.identity.runId, input.identity.storyId],
     )
     : [];
+  if (foreignDeliveries.some((delivery) => (
+    (delivery.attempt_id === null) !== (delivery.claim_id === null)
+  ))) {
+    throw new Error("PRE_DISPATCH_DELIVERY_CLAIM_ATTEMPT_PAIR_INVALID");
+  }
   const foreignOwnerRetained = foreignDeliveries.some((delivery) => (
-    Number(delivery.claim_id) !== input.identity.claimId
+    delivery.claim_id === null
+    || Number(delivery.claim_id) !== input.identity.claimId
   ));
 
   const runtimeRows = await transaction.unsafe<Array<{
@@ -127,11 +144,41 @@ export async function withdrawPreDispatchClaimInTransaction(
     [input.identity.claimId, input.outcome, input.diagnostic.slice(0, 1_000), wallClock],
   );
   if (claims.length !== 1) throw new Error("PRE_DISPATCH_CLAIM_CAS_LOST");
-  await transaction.unsafe(
+  const terminalAttempts = attempt
+    ? await transaction.unsafe<Array<{ attempt_id: string }>>(
     `UPDATE execution_attempts
         SET disposition = 'inconclusive', updated_at = $2
-      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
-    [input.identity.claimId, wallClock],
+      WHERE attempt_id = $1
+        AND claim_id = $3
+        AND generation = $4
+        AND fence_token = $5
+        AND disposition IN ('claimed', 'running')
+      RETURNING attempt_id`,
+    [attempt.attempt_id, wallClock, input.identity.claimId, attempt.generation, attempt.fence_token],
+  )
+    : [];
+  if (attempt && terminalAttempts.length !== 1) {
+    throw new Error("PRE_DISPATCH_ATTEMPT_CAS_LOST");
+  }
+  const attemptClose = attempt
+    ? await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+        transaction as PgTransactionSql,
+        { attemptId: attempt.attempt_id },
+      )
+    : undefined;
+  const claimClose = await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(
+    transaction as PgTransactionSql,
+    { claimIdText: claims[0]!.id },
+  );
+  if (attemptClose) {
+    await closeInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      attemptClose,
+    );
+  }
+  await closeInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    claimClose,
   );
   if (runtime) {
     if (runtime.state === "reserved") {

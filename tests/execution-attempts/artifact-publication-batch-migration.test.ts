@@ -4,6 +4,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditArtifactPublicationBatchLedgerData,
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
@@ -191,7 +192,10 @@ describe("artifact publication batch migration 23", () => {
     const targetRelease = "b".repeat(40);
     const applied = await applyContractSpineMigrations(database.sql, { releaseSha: sourceRelease });
     assert.equal(applied.applied.includes("023_artifact_publication_batch_ledger"), true);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     const relations = await database.sql<Array<{ relation: string | null }>>`
       SELECT to_regclass('public.artifact_publication_batches')::text AS relation
       UNION ALL
@@ -228,7 +232,10 @@ describe("artifact publication batch migration 23", () => {
       releaseSha: "c".repeat(40),
     });
     assert.equal(reapplied.applied.includes("023_artifact_publication_batch_ledger"), true);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
   });
 
   it("matches the fixed TypeScript and PostgreSQL full-field UTF-8 identity vector", async () => {
@@ -1101,7 +1108,10 @@ describe("artifact publication batch migration 23", () => {
       ALTER TABLE artifact_publication_batches
       ENABLE TRIGGER trg_artifact_publication_batches_complete
     `);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
@@ -1151,7 +1161,10 @@ describe("artifact publication batch migration 23", () => {
       ALTER TABLE artifact_publication_reservations
       ENABLE TRIGGER trg_artifact_publication_batch_child_membership
     `);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
@@ -1236,7 +1249,10 @@ describe("artifact publication batch migration 23", () => {
       "ALTER TABLE artifact_publication_reservations ENABLE TRIGGER trg_artifact_publication_reservations_identity_immutable",
       "ALTER TABLE artifact_publication_reservations ENABLE TRIGGER trg_artifact_publication_batch_child_membership",
     ]) await database.sql.unsafe(statement);
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),

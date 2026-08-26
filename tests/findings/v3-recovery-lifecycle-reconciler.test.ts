@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
-import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
+import {
+  completeSingleStepClaimAndState,
+  completeStoryClaimAndBoundAttempt,
+} from "../../src/execution/claim-attempt-transition.js";
 import { ensureCompilerClaimFence } from "../../src/execution/compiler-claim-fence.js";
-import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishLoopClaimRuntime,
+} from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../src/execution/compiler-english-admission-ledger-v1.js";
 import {
   createCompilerStoryEnglishAdmissionClaimProofV1,
@@ -34,7 +43,7 @@ import {
   compileCompilerStoryEnglishAdmissionV1,
   compilerStoryEnglishAdmissionStateV1,
 } from "../../src/product-compiler/compiler-story-english-admission-v1.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { renderProductSpecV2Compatibility } from "../../src/product-compiler/renderers/product-spec-v2-compatibility.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
@@ -67,6 +76,47 @@ const STORY_ADMISSION_DRAIN_EVIDENCE = {
   evidenceRefs: ["setfarm://test/v3-recovery-lifecycle-story-admission-drain"],
 };
 
+function assertTask7RecoveryAuthoritySourceBoundary(
+  workerSource: string,
+  reconcilerSource: string,
+): void {
+  const combined = `${workerSource}\n${reconcilerSource}`;
+  for (const prohibited of [
+    "createInternalProductionFindingCanonicalOwnerIdentityV1",
+    "FINDING_OWNER_PRODUCER_IMPLEMENTATION",
+    "reserveInternalProductionExecutionAttemptV1",
+  ]) {
+    assert.equal(
+      combined.includes(prohibited),
+      false,
+      `${prohibited} must remain owned by the canonical publication boundary`,
+    );
+  }
+  assert.doesNotMatch(
+    combined,
+    /ORDER\s+BY\s+(?:finding_set\.)?(?:created_at|updated_at)\s+DESC/i,
+    "worker and reconciler must never infer authority from the latest finding set",
+  );
+  assert.doesNotMatch(
+    combined,
+    /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:finding_sets|findings)\b/i,
+    "worker and reconciler must not mutate canonical finding rows",
+  );
+  assert.match(workerSource, /coordinateTerminalEvidenceOnlyAttempt\(coordinator, attempt,/);
+
+  const lockBoundary = reconcilerSource.match(
+    /async function lockAttemptBoundAuthorityChain\([\s\S]*?return Object\.freeze\(\{ runtimes, attempts, deliveries \}\);\n\}/,
+  )?.[0];
+  assert.ok(lockBoundary, "attempt-bound reconciliation must retain one code-owned lock boundary");
+  const runtimeLock = lockBoundary.indexOf("lockRuntimes(sql, candidate)");
+  const attemptLock = lockBoundary.indexOf("lockRelevantAttempts(sql, candidate)");
+  const deliveryLock = lockBoundary.indexOf("lockActiveDeliveries(sql, candidate)");
+  assert.ok(
+    runtimeLock >= 0 && runtimeLock < attemptLock && attemptLock < deliveryLock,
+    "Task 4 A-prime lock order must remain runtime -> attempt -> delivery",
+  );
+}
+
 function finding(runId: string, storyId: string) {
   return createFindingSetV1({
     runId,
@@ -86,7 +136,10 @@ function finding(runId: string, storyId: string) {
   });
 }
 
-function recoveryDraft(findingSet: ReturnType<typeof finding>): RecoveryCaseDraftV1 {
+function recoveryDraft(
+  findingSet: ReturnType<typeof finding>,
+  owner: "implement" | "supervisor" = "implement",
+): RecoveryCaseDraftV1 {
   return {
     runId: findingSet.runId,
     storyId: findingSet.storyId,
@@ -95,7 +148,7 @@ function recoveryDraft(findingSet: ReturnType<typeof finding>): RecoveryCaseDraf
     packetHash: findingSet.packetHash,
     sliceHash: findingSet.sliceHash,
     sourceRevision: findingSet.sourceRevision,
-    owner: "implement",
+    owner,
     expectedDelta: {
       kind: "source_change",
       invariantRefs: ["INV_SAVE_RELOAD"],
@@ -129,12 +182,23 @@ async function prepareCompilerAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+      "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+    );
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      idRows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId,
+      claimedAt: new Date(),
+    });
+  });
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${token}`,
@@ -473,6 +537,42 @@ async function seedCanonicalStoryAdmission(
 }
 
 describe("v3 recovery lifecycle reconciler", () => {
+  it("retains terminal-only evidence coordination, finding isolation, and the Task 4 A-prime lock order", async () => {
+    const [workerSource, reconcilerSource] = await Promise.all([
+      readFile(new URL("../../src/recovery/v3-evidence-only-worker.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../src/recovery/v3-recovery-lifecycle-reconciler.ts", import.meta.url), "utf8"),
+    ]);
+    assert.doesNotThrow(() => assertTask7RecoveryAuthoritySourceBoundary(workerSource, reconcilerSource));
+
+    const mutations: ReadonlyArray<readonly [string, string]> = [
+      [`${workerSource}\ncreateInternalProductionFindingCanonicalOwnerIdentityV1`, reconcilerSource],
+      [`${workerSource}\nreserveInternalProductionExecutionAttemptV1`, reconcilerSource],
+      [`${workerSource}\nSELECT * FROM finding_sets ORDER BY created_at DESC`, reconcilerSource],
+      [`${workerSource}\nUPDATE finding_sets SET status = 'closed'`, reconcilerSource],
+      [`${workerSource}\nUPDATE findings SET status = 'closed'`, reconcilerSource],
+      [
+        workerSource.replace(
+          "coordinateTerminalEvidenceOnlyAttempt(coordinator, attempt,",
+          "coordinator.coordinate(",
+        ),
+        reconcilerSource,
+      ],
+      [
+        workerSource,
+        reconcilerSource.replaceAll(
+          "const runtimes = await lockRuntimes(sql, candidate);\n  const attempts = await lockRelevantAttempts(sql, candidate);\n  const deliveries = await lockActiveDeliveries(sql, candidate);",
+          "const deliveries = await lockActiveDeliveries(sql, candidate);\n  const attempts = await lockRelevantAttempts(sql, candidate);\n  const runtimes = await lockRuntimes(sql, candidate);",
+        ),
+      ],
+    ];
+    for (const [mutatedWorker, mutatedReconciler] of mutations) {
+      assert.throws(() => assertTask7RecoveryAuthoritySourceBoundary(
+        mutatedWorker,
+        mutatedReconciler,
+      ));
+    }
+  });
+
   let database: TestDatabase;
   let sequence = 0;
 
@@ -482,7 +582,10 @@ describe("v3 recovery lifecycle reconciler", () => {
 
   after(async () => database.cleanup());
 
-  async function setup() {
+  async function setup(input: Readonly<{
+    owner?: "implement" | "supervisor";
+    dispatchClass?: "product_implementation" | "supervisor_repair";
+  }> = {}) {
     sequence += 1;
     const runId = `run-v3-lifecycle-${sequence}`;
     const stepDbId = `step-v3-lifecycle-${sequence}`;
@@ -503,7 +606,7 @@ describe("v3 recovery lifecycle reconciler", () => {
     const findingSet = finding(runId, storyId);
     const findings = createFindingRecoveryRepository(database.sql);
     await findings.putFindingSet(findingSet);
-    const opened = await findings.openRecoveryCase(recoveryDraft(findingSet), { now: base });
+    const opened = await findings.openRecoveryCase(recoveryDraft(findingSet, input.owner), { now: base });
     const deliveries = createRecoveryDeliveryRepository(database.sql);
     const revision = await deliveries.findCurrentRevision(opened.recoveryCase.recoveryCaseId);
     assert.ok(revision);
@@ -511,7 +614,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       recoveryCaseId: opened.recoveryCase.recoveryCaseId,
       revisionId: revision.revisionId,
       expectedStateVersion: opened.recoveryCase.stateVersion,
-      dispatchClass: "product_implementation",
+      dispatchClass: input.dispatchClass ?? "product_implementation",
     }, { now: new Date(base.getTime() + 1_000) });
     assert.equal(authorized.status, "authorized");
     if (authorized.status !== "authorized") throw new Error("expected recovery delivery authorization");
@@ -570,25 +673,20 @@ describe("v3 recovery lifecycle reconciler", () => {
     return publication;
   }
 
-  async function reserveModelAttempt(
+  function modelReservationInput(
     fixture: Awaited<ReturnType<typeof setup>>,
     handoff: Awaited<ReturnType<typeof lease>>,
-    input: Readonly<{ sessionId: string; now: Date; start?: boolean }>,
+    claimId: number,
   ) {
-    const publication = await publish(fixture, handoff, {
-      sessionId: input.sessionId,
-      now: input.now,
-    });
-    assert.ok(publication);
-    const reservation = await createAttemptRepository(database.sql).reserve({
-      claimId: publication!.claimId,
+    return {
+      claimId,
       runId: fixture.runId,
       stepId: "implement",
       storyId: fixture.storyId,
-      attemptClass: "product_implementation",
+      attemptClass: handoff.dispatchClass,
       packetHash: handoff.directive.packetHash,
       compilationReportHash: "f".repeat(64),
-      sliceHash: "9".repeat(64),
+      sliceHash: handoff.directive.contractSliceHash,
       sourceBefore: handoff.directive.sourceRevision,
       findingSetHash: handoff.directive.findingSetHash,
       recoveryCaseRevisionId: handoff.revisionId,
@@ -599,10 +697,75 @@ describe("v3 recovery lifecycle reconciler", () => {
       },
       role: "developer",
       agentId: "recovery-agent",
-      evidenceRefs: [`setfarm://claim-log/${publication!.claimId}`],
-    }, { now: new Date(input.now.getTime() + 100), leaseMs: 60_000 });
+      evidenceRefs: [`setfarm://claim-log/${claimId}`],
+    };
+  }
+
+  async function reserveModelAttempt(
+    fixture: Awaited<ReturnType<typeof setup>>,
+    handoff: Awaited<ReturnType<typeof lease>>,
+    input: Readonly<{ sessionId: string; now: Date; start?: boolean; replay?: boolean }>,
+  ) {
+    const publication = await publish(fixture, handoff, {
+      sessionId: input.sessionId,
+      now: input.now,
+    });
+    assert.ok(publication);
+    const reservationInput = modelReservationInput(fixture, handoff, publication!.claimId);
+    const attempts = createAttemptRepository(database.sql);
+    const reservation = await attempts.reserve(
+      reservationInput,
+      { now: new Date(input.now.getTime() + 100), leaseMs: 60_000 },
+    );
     assert.equal(reservation.status, "reserved");
     if (reservation.status !== "reserved") throw new Error("expected model attempt reservation");
+    const deliveryPair = await database.sql<Array<{
+      claim_id: string;
+      attempt_id: string;
+      execution_slice_hash: string;
+      state: string;
+      attempt_count: number;
+    }>>`
+      SELECT claim_id::text,attempt_id,execution_slice_hash,state,attempt_count
+        FROM recovery_dispatch_deliveries
+       WHERE dispatch_id=${handoff.dispatchId}
+    `;
+    assert.deepEqual({ ...deliveryPair[0]! }, {
+      claim_id: String(publication!.claimId),
+      attempt_id: reservation.attempt.attemptId,
+      execution_slice_hash: handoff.directive.contractSliceHash,
+      state: "attempt_reserved",
+      attempt_count: 1,
+    });
+    if (input.replay) {
+      const headBefore = await database.sql<Array<{ head_version: number }>>`
+        SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `;
+      const replay = await attempts.reserve(
+        reservationInput,
+        { now: new Date(input.now.getTime() + 150), leaseMs: 60_000 },
+      );
+      assert.equal(replay.status, "duplicate");
+      assert.equal(replay.attempt.attemptId, reservation.attempt.attemptId);
+      const replayState = await database.sql<Array<{
+        head_version: number;
+        attempt_count: number;
+        claim_id: string;
+        attempt_id: string;
+      }>>`
+        SELECT head.head_version,delivery.attempt_count,
+               delivery.claim_id::text,delivery.attempt_id
+          FROM internal_production_owner_admission_head_v1 head
+          JOIN recovery_dispatch_deliveries delivery ON TRUE
+         WHERE head.singleton=TRUE AND delivery.dispatch_id=${handoff.dispatchId}
+      `;
+      assert.deepEqual({ ...replayState[0]! }, {
+        head_version: headBefore[0]!.head_version,
+        attempt_count: 1,
+        claim_id: String(publication!.claimId),
+        attempt_id: reservation.attempt.attemptId,
+      });
+    }
     await createRuntimeSessionRepository(database.sql).bindAttempt({
       sessionId: input.sessionId,
       attemptId: reservation.attempt.attemptId,
@@ -765,6 +928,36 @@ describe("v3 recovery lifecycle reconciler", () => {
     return { release, done };
   }
 
+  async function waitForBlockedRunLock(runId: string, minimum: number): Promise<void> {
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const rows = await database.sql<Array<{ blocked: number }>>`
+        SELECT count(*)::integer AS blocked
+          FROM pg_stat_activity
+         WHERE datname=current_database()
+           AND pid<>pg_backend_pid()
+           AND wait_event_type='Lock'
+           AND query ILIKE '%FROM runs WHERE id%'
+      `;
+      if ((rows[0]?.blocked ?? 0) >= minimum) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`TEST_BARRIER_RUN_LOCK_WAITERS_MISSING:${runId}:${minimum}`);
+  }
+
+  async function holdRunRow(runId: string) {
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredGate = new Promise<void>((resolve) => { entered = resolve; });
+    const releaseGate = new Promise<void>((resolve) => { release = resolve; });
+    const done = database.sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT id FROM runs WHERE id=$1 FOR UPDATE", [runId]);
+      entered();
+      await releaseGate;
+    });
+    await enteredGate;
+    return { release, done };
+  }
+
   async function makeModelOwner(label: string, start = true) {
     const fixture = await setup();
     const leaseAt = new Date(Date.now() - 1_000);
@@ -815,6 +1008,727 @@ describe("v3 recovery lifecycle reconciler", () => {
     };
   }
 
+  it("rejects a caller-selected model slice before attempt birth and preserves the null delivery pair", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "model-slice-authority-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const publication = await publish(fixture, handoff, {
+      sessionId: `RTS_${"s".repeat(20)}-${sequence}`,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    await assert.rejects(
+      createAttemptRepository(database.sql).reserve({
+        ...modelReservationInput(fixture, handoff, publication!.claimId),
+        sliceHash: "9".repeat(64),
+      }),
+      /RECOVERY_DELIVERY_SLICE_AUTHORITY_MISMATCH/,
+    );
+    const state = await database.sql<Array<{
+      claim_id: string | null;
+      attempt_id: string | null;
+      execution_slice_hash: string | null;
+      attempt_count: number;
+      attempt_rows: number;
+    }>>`
+      SELECT delivery.claim_id::text,delivery.attempt_id,delivery.execution_slice_hash,
+             delivery.attempt_count,
+             (SELECT count(*)::integer FROM execution_attempts attempt
+               WHERE attempt.recovery_dispatch_id=delivery.dispatch_id) AS attempt_rows
+        FROM recovery_dispatch_deliveries delivery
+       WHERE delivery.dispatch_id=${handoff.dispatchId}
+    `;
+    assert.deepEqual({ ...state[0]! }, {
+      claim_id: null,
+      attempt_id: null,
+      execution_slice_hash: null,
+      attempt_count: 0,
+      attempt_rows: 0,
+    });
+  });
+
+  it("rejects crossed and tampered immutable m33 scalars without attempt, pair, or owner-head residue", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "model-publication-tamper-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const publication = await publish(fixture, handoff, {
+      sessionId: `RTS_${"t".repeat(20)}-${sequence}`,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    const original = (await database.sql<Array<{
+      step_db_id: string;
+      story_db_id: string;
+      story_index: number;
+      bound_at: Date;
+      head_version: number;
+    }>>`
+      SELECT publication.step_db_id,publication.story_db_id,publication.story_index,
+             publication.bound_at,head.head_version
+        FROM internal_production_v3_recovery_claim_publications_v1 publication
+        JOIN internal_production_owner_admission_head_v1 head ON head.singleton=TRUE
+       WHERE publication.claim_id=${publication!.claimId}
+    `)[0]!;
+    const mutations: ReadonlyArray<Readonly<{ column: string; value: unknown }>> = [
+      { column: "step_db_id", value: fixture.storyDbId },
+      { column: "story_db_id", value: fixture.stepDbId },
+      { column: "story_index", value: original.story_index + 1 },
+      { column: "bound_at", value: new Date(original.bound_at.getTime() + 1) },
+    ];
+    await database.sql`ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ALL`;
+    try {
+      for (const mutation of mutations) {
+        await database.sql.unsafe(
+          `UPDATE internal_production_v3_recovery_claim_publications_v1 SET ${mutation.column}=$2 WHERE claim_id=$1`,
+          [publication!.claimId, mutation.value],
+        );
+        await assert.rejects(
+          createAttemptRepository(database.sql).reserve(
+            modelReservationInput(fixture, handoff, publication!.claimId),
+          ),
+          /RECOVERY_ATTEMPT_CLAIM_PUBLICATION_(?:NOT_FOUND|MISMATCH)/,
+          mutation.column,
+        );
+        await database.sql.unsafe(
+          `UPDATE internal_production_v3_recovery_claim_publications_v1
+              SET step_db_id=$2,story_db_id=$3,story_index=$4,bound_at=$5
+            WHERE claim_id=$1`,
+          [
+            publication!.claimId,
+            original.step_db_id,
+            original.story_db_id,
+            original.story_index,
+            original.bound_at,
+          ],
+        );
+      }
+    } finally {
+      await database.sql`ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ALL`;
+    }
+    const unchanged = (await database.sql<Array<{
+      head_version: number;
+      attempts: number;
+      claim_id: string | null;
+      attempt_id: string | null;
+      execution_slice_hash: string | null;
+      attempt_count: number;
+    }>>`
+      SELECT head.head_version,
+             (SELECT count(*)::integer FROM execution_attempts attempt
+               WHERE attempt.recovery_dispatch_id=${handoff.dispatchId}) AS attempts,
+             delivery.claim_id::text,delivery.attempt_id,delivery.execution_slice_hash,
+             delivery.attempt_count
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN recovery_dispatch_deliveries delivery ON TRUE
+       WHERE head.singleton=TRUE AND delivery.dispatch_id=${handoff.dispatchId}
+    `)[0]!;
+    assert.deepEqual({ ...unchanged }, {
+      head_version: original.head_version,
+      attempts: 0,
+      claim_id: null,
+      attempt_id: null,
+      execution_slice_hash: null,
+      attempt_count: 0,
+    });
+  });
+
+  it("requires the exact fresh runtime clock and authorized dispatch chain before model attempt birth", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "model-fresh-birth-chain-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"u".repeat(20)}-${sequence}`;
+    const publication = await publish(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    const original = (await database.sql<Array<{
+      runtime_state: string;
+      runtime_attempt_id: string | null;
+      runtime_heartbeat_exact: boolean;
+      bound_matches_claim: boolean;
+      bound_matches_story: boolean;
+      bound_not_after_runtime_creation: boolean;
+      delivery_authorization_exact: boolean;
+      delivery_lease_exact: boolean;
+      case_owner: string;
+      revision_owner: string;
+      dispatch_class: string;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+      bound_at_text: string;
+      claim_claimed_at_text: string;
+      story_claimed_at_text: string;
+      head_version: number;
+    }>>`
+      SELECT runtime.state AS runtime_state,runtime.attempt_id AS runtime_attempt_id,
+             runtime.heartbeat_at=runtime.created_at AS runtime_heartbeat_exact,
+             publication.bound_at=claim.claimed_at AS bound_matches_claim,
+             publication.bound_at=story.claimed_at AS bound_matches_story,
+             publication.bound_at<=runtime.created_at AS bound_not_after_runtime_creation,
+             delivery.authorized_at=dispatch.authorized_at AS delivery_authorization_exact,
+             delivery.lease_expires_at=(
+               publication.handoff_canonical_json::jsonb#>>'{lease,expiresAt}'
+             )::timestamptz AS delivery_lease_exact,
+             recovery_case.owner AS case_owner,revision.owner AS revision_owner,
+             dispatch.dispatch_class,publication.handoff_canonical_json,
+             publication.handoff_hash,publication.bound_at::text AS bound_at_text,
+             claim.claimed_at::text AS claim_claimed_at_text,
+             story.claimed_at::text AS story_claimed_at_text,head.head_version
+        FROM runtime_sessions runtime
+        JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=${handoff.dispatchId}
+        JOIN recovery_revision_dispatches dispatch ON dispatch.dispatch_id=delivery.dispatch_id
+        JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id=delivery.recovery_case_id
+        JOIN recovery_case_revisions revision ON revision.revision_id=delivery.revision_id
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication
+          ON publication.runtime_session_id=runtime.session_id
+        JOIN claim_log claim ON claim.id=publication.claim_id
+        JOIN stories story ON story.id=publication.story_db_id
+        JOIN internal_production_owner_admission_head_v1 head ON head.singleton=TRUE
+       WHERE runtime.session_id=${sessionId}
+    `)[0]!;
+    assert.equal(original.runtime_state, "reserved");
+    assert.equal(original.runtime_attempt_id, null);
+    assert.equal(original.runtime_heartbeat_exact, true);
+    assert.equal(original.bound_matches_claim, true);
+    assert.equal(original.bound_matches_story, true);
+    assert.equal(original.bound_not_after_runtime_creation, true);
+    assert.equal(original.delivery_authorization_exact, true);
+    assert.equal(original.delivery_lease_exact, true);
+
+    const snapshot = async () => (await database.sql<Array<{
+      attempts: number;
+      claim_id: string | null;
+      attempt_id: string | null;
+      execution_slice_hash: string | null;
+      attempt_count: number;
+      head_version: number;
+    }>>`
+      SELECT (SELECT count(*)::integer FROM execution_attempts
+               WHERE recovery_dispatch_id=${handoff.dispatchId}) AS attempts,
+             delivery.claim_id::text,delivery.attempt_id,delivery.execution_slice_hash,
+             delivery.attempt_count,head.head_version
+        FROM recovery_dispatch_deliveries delivery
+        JOIN internal_production_owner_admission_head_v1 head ON head.singleton=TRUE
+       WHERE delivery.dispatch_id=${handoff.dispatchId}
+    `)[0]!;
+    const pristine = { ...await snapshot() };
+    const reserve = () => createAttemptRepository(database.sql).reserve(
+      modelReservationInput(fixture, handoff, publication!.claimId),
+    );
+    const cases: ReadonlyArray<Readonly<{
+      name: string;
+      mutate: () => Promise<unknown>;
+      restore: () => Promise<unknown>;
+    }>> = [
+      {
+        name: "runtime heartbeat",
+        mutate: () => database.sql`UPDATE runtime_sessions SET heartbeat_at=heartbeat_at+interval '1 microsecond' WHERE session_id=${sessionId}`,
+        restore: () => database.sql`UPDATE runtime_sessions SET heartbeat_at=heartbeat_at-interval '1 microsecond' WHERE session_id=${sessionId}`,
+      },
+      {
+        name: "runtime creation clock",
+        mutate: () => database.sql`UPDATE runtime_sessions SET created_at=created_at+interval '1 microsecond' WHERE session_id=${sessionId}`,
+        restore: () => database.sql`UPDATE runtime_sessions SET created_at=created_at-interval '1 microsecond' WHERE session_id=${sessionId}`,
+      },
+      {
+        name: "fresh runtime attempt id",
+        mutate: () => database.sql`UPDATE runtime_sessions SET attempt_id=${`ATT_${"0".repeat(20)}`} WHERE session_id=${sessionId}`,
+        restore: () => database.sql`UPDATE runtime_sessions SET attempt_id=NULL WHERE session_id=${sessionId}`,
+      },
+      {
+        name: "delivery authorized_at",
+        mutate: () => database.sql`UPDATE recovery_dispatch_deliveries SET authorized_at=authorized_at+interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+        restore: () => database.sql`UPDATE recovery_dispatch_deliveries SET authorized_at=authorized_at-interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+      },
+      {
+        name: "dispatch authorized_at",
+        mutate: () => database.sql`UPDATE recovery_revision_dispatches SET authorized_at=authorized_at+interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+        restore: () => database.sql`UPDATE recovery_revision_dispatches SET authorized_at=authorized_at-interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+      },
+      {
+        name: "delivery lease expiry",
+        mutate: () => database.sql`UPDATE recovery_dispatch_deliveries SET lease_expires_at=lease_expires_at+interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+        restore: () => database.sql`UPDATE recovery_dispatch_deliveries SET lease_expires_at=lease_expires_at-interval '1 microsecond' WHERE dispatch_id=${handoff.dispatchId}`,
+      },
+      {
+        name: "m33 bound clock",
+        mutate: () => database.sql`UPDATE internal_production_v3_recovery_claim_publications_v1 SET bound_at=bound_at+interval '1 microsecond' WHERE claim_id=${publication!.claimId}`,
+        restore: () => database.sql`UPDATE internal_production_v3_recovery_claim_publications_v1 SET bound_at=bound_at-interval '1 microsecond' WHERE claim_id=${publication!.claimId}`,
+      },
+      {
+        name: "claim clock",
+        mutate: () => database.sql`UPDATE claim_log SET claimed_at=claimed_at+interval '1 microsecond' WHERE id=${publication!.claimId}`,
+        restore: () => database.sql`UPDATE claim_log SET claimed_at=claimed_at-interval '1 microsecond' WHERE id=${publication!.claimId}`,
+      },
+      {
+        name: "story claim clock",
+        mutate: () => database.sql`UPDATE stories SET claimed_at=claimed_at+interval '1 microsecond' WHERE id=${fixture.storyDbId}`,
+        restore: () => database.sql`UPDATE stories SET claimed_at=claimed_at-interval '1 microsecond' WHERE id=${fixture.storyDbId}`,
+      },
+      {
+        name: "m33 bound after runtime creation",
+        mutate: async () => {
+          await database.sql`
+            UPDATE internal_production_v3_recovery_claim_publications_v1 publication
+               SET bound_at=(SELECT created_at+interval '1 microsecond'
+                               FROM runtime_sessions WHERE session_id=${sessionId})
+             WHERE claim_id=${publication!.claimId}
+          `;
+          await database.sql`
+            UPDATE claim_log
+               SET claimed_at=(SELECT bound_at FROM internal_production_v3_recovery_claim_publications_v1
+                                WHERE claim_id=${publication!.claimId})
+             WHERE id=${publication!.claimId}
+          `;
+          await database.sql`
+            UPDATE stories
+               SET claimed_at=(SELECT bound_at FROM internal_production_v3_recovery_claim_publications_v1
+                                WHERE claim_id=${publication!.claimId})
+             WHERE id=${fixture.storyDbId}
+          `;
+        },
+        restore: async () => {
+          await database.sql`UPDATE stories SET claimed_at=${original.story_claimed_at_text}::timestamptz WHERE id=${fixture.storyDbId}`;
+          await database.sql`UPDATE claim_log SET claimed_at=${original.claim_claimed_at_text}::timestamptz WHERE id=${publication!.claimId}`;
+          await database.sql`UPDATE internal_production_v3_recovery_claim_publications_v1 SET bound_at=${original.bound_at_text}::timestamptz WHERE claim_id=${publication!.claimId}`;
+        },
+      },
+      {
+        name: "canonical supervisor owner under product dispatch",
+        mutate: async () => {
+          const crossedHandoff = {
+            ...(JSON.parse(original.handoff_canonical_json) as Record<string, unknown>),
+            recoveryOwner: "supervisor",
+          };
+          const crossedCanonical = canonicalJsonStringify(crossedHandoff);
+          await database.sql`UPDATE recovery_cases SET owner='supervisor' WHERE recovery_case_id=${handoff.recoveryCaseId}`;
+          await database.sql`UPDATE recovery_case_revisions SET owner='supervisor' WHERE revision_id=${handoff.revisionId}`;
+          await database.sql`
+            UPDATE internal_production_v3_recovery_claim_publications_v1
+               SET handoff_canonical_json=${crossedCanonical},
+                   handoff_hash=${hashCanonicalJson(crossedHandoff)}
+             WHERE claim_id=${publication!.claimId}
+          `;
+        },
+        restore: async () => {
+          await database.sql`
+            UPDATE internal_production_v3_recovery_claim_publications_v1
+               SET handoff_canonical_json=${original.handoff_canonical_json},
+                   handoff_hash=${original.handoff_hash}
+             WHERE claim_id=${publication!.claimId}
+          `;
+          await database.sql`UPDATE recovery_cases SET owner=${original.case_owner} WHERE recovery_case_id=${handoff.recoveryCaseId}`;
+          await database.sql`UPDATE recovery_case_revisions SET owner=${original.revision_owner} WHERE revision_id=${handoff.revisionId}`;
+        },
+      },
+      {
+        name: "starting fresh runtime",
+        mutate: () => database.sql`UPDATE runtime_sessions SET state='starting' WHERE session_id=${sessionId}`,
+        restore: () => database.sql`UPDATE runtime_sessions SET state=${original.runtime_state} WHERE session_id=${sessionId}`,
+      },
+    ];
+    await database.sql`ALTER TABLE runtime_sessions DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE recovery_dispatch_deliveries DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE recovery_revision_dispatches DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE recovery_cases DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE recovery_case_revisions DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE claim_log DISABLE TRIGGER ALL`;
+    await database.sql`ALTER TABLE stories DISABLE TRIGGER ALL`;
+    try {
+      for (const mutation of cases) {
+        await mutation.mutate();
+        try {
+          await assert.rejects(reserve, /RECOVERY_ATTEMPT_CLAIM_PUBLICATION_MISMATCH/, mutation.name);
+        } finally {
+          await mutation.restore();
+        }
+        assert.deepEqual({ ...await snapshot() }, pristine, `${mutation.name} left birth residue`);
+      }
+    } finally {
+      await database.sql`ALTER TABLE stories ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE claim_log ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE recovery_case_revisions ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE recovery_cases ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE recovery_revision_dispatches ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE recovery_dispatch_deliveries ENABLE TRIGGER ALL`;
+      await database.sql`ALTER TABLE runtime_sessions ENABLE TRIGGER ALL`;
+    }
+  });
+
+  it("allows supervisor repair only for the supervisor owner and starting only as an exact complete replay", async () => {
+    const supervisorFixture = await setup({
+      owner: "supervisor",
+      dispatchClass: "supervisor_repair",
+    });
+    const supervisorLeaseAt = new Date(Date.now() - 1_000);
+    const supervisorHandoff = await lease(supervisorFixture, {
+      ownerInstanceId: "supervisor-model-birth-owner",
+      leaseMs: 120_000,
+      now: supervisorLeaseAt,
+    });
+    const supervisorPublication = await publish(supervisorFixture, supervisorHandoff, {
+      sessionId: `RTS_${"v".repeat(20)}-${sequence}`,
+      now: new Date(supervisorLeaseAt.getTime() + 100),
+    });
+    assert.ok(supervisorPublication);
+    const supervisorReservation = await createAttemptRepository(database.sql).reserve(
+      modelReservationInput(supervisorFixture, supervisorHandoff, supervisorPublication!.claimId),
+    );
+    assert.equal(supervisorReservation.status, "reserved");
+    assert.equal(supervisorReservation.attempt.attemptClass, "supervisor_repair");
+
+    const replayFixture = await setup();
+    const replayLeaseAt = new Date(Date.now() - 1_000);
+    const replayHandoff = await lease(replayFixture, {
+      ownerInstanceId: "starting-complete-replay-owner",
+      leaseMs: 120_000,
+      now: replayLeaseAt,
+    });
+    const sessionId = `RTS_${"w".repeat(20)}-${sequence}`;
+    const replayPublication = await publish(replayFixture, replayHandoff, {
+      sessionId,
+      now: new Date(replayLeaseAt.getTime() + 100),
+    });
+    assert.ok(replayPublication);
+    const input = modelReservationInput(replayFixture, replayHandoff, replayPublication!.claimId);
+    const attempts = createAttemptRepository(database.sql);
+    const first = await attempts.reserve(input);
+    assert.equal(first.status, "reserved");
+    const sessions = createRuntimeSessionRepository(database.sql);
+    await sessions.bindAttempt({
+      sessionId,
+      attemptId: first.attempt.attemptId,
+      ownerInstanceId: replayHandoff.lease.ownerInstanceId,
+    });
+    await sessions.markStarting({
+      sessionId,
+      ownerInstanceId: replayHandoff.lease.ownerInstanceId,
+      recoveryFence: {
+        revisionId: replayHandoff.revisionId,
+        dispatchId: replayHandoff.dispatchId,
+        leaseToken: replayHandoff.lease.leaseToken,
+        attempt: {
+          attemptId: first.attempt.attemptId,
+          generation: first.attempt.generation,
+          fenceToken: first.attempt.fenceToken,
+        },
+      },
+    });
+    const replaySnapshot = async () => (await database.sql<Array<{
+      head_version: number;
+      attempt_count: number;
+      delivery_state: string;
+      delivery_claim_id: string;
+      delivery_attempt_id: string;
+      delivery_slice_hash: string;
+      runtime_state: string;
+      runtime_attempt_id: string;
+    }>>`
+      SELECT head.head_version,delivery.attempt_count,
+             delivery.state AS delivery_state,delivery.claim_id::text AS delivery_claim_id,
+             delivery.attempt_id AS delivery_attempt_id,
+             delivery.execution_slice_hash AS delivery_slice_hash,
+             runtime.state AS runtime_state,runtime.attempt_id AS runtime_attempt_id
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=${replayHandoff.dispatchId}
+        JOIN runtime_sessions runtime ON runtime.session_id=${sessionId}
+       WHERE head.singleton=TRUE
+    `)[0]!;
+    const pristineReplay = { ...await replaySnapshot() };
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at=lease_expires_at+interval '1 microsecond'
+       WHERE dispatch_id=${replayHandoff.dispatchId}
+    `;
+    try {
+      const leaseIdentity = await database.sql<Array<{ exact: boolean }>>`
+        SELECT delivery.lease_expires_at=(
+                 publication.handoff_canonical_json::jsonb#>>'{lease,expiresAt}'
+               )::timestamptz AS exact
+          FROM recovery_dispatch_deliveries delivery
+          JOIN internal_production_v3_recovery_claim_publications_v1 publication
+            ON publication.dispatch_id=delivery.dispatch_id
+         WHERE delivery.dispatch_id=${replayHandoff.dispatchId}
+      `;
+      assert.equal(leaseIdentity[0]?.exact, false);
+      await assert.rejects(
+        attempts.reserve(input),
+        /RECOVERY_ATTEMPT_CLAIM_PUBLICATION_MISMATCH/,
+      );
+      assert.deepEqual({ ...await replaySnapshot() }, pristineReplay);
+    } finally {
+      await database.sql`
+        UPDATE recovery_dispatch_deliveries
+           SET lease_expires_at=lease_expires_at-interval '1 microsecond'
+         WHERE dispatch_id=${replayHandoff.dispatchId}
+      `;
+    }
+    const replay = await attempts.reserve(input);
+    assert.equal(replay.status, "duplicate");
+    assert.equal(replay.attempt.attemptId, first.attempt.attemptId);
+  });
+
+  it("completes a real model-recovery story through the envelope claim and closes both exact owners", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "model-story-completion-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"c".repeat(20)}-${sequence}`;
+    const bound = await reserveModelAttempt(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+      start: true,
+    });
+    const sourceAfter = handoff.directive.sourceRevision;
+    const attempts = createAttemptRepository(database.sql);
+    assert.equal((await attempts.recordCandidateSource({
+      attemptId: bound.attempt.attemptId,
+      generation: bound.attempt.generation,
+      fenceToken: bound.attempt.fenceToken,
+      sourceAfter,
+    })).status, "candidate");
+    const envelope: ClaimEnvelopeV1 = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "v3",
+        issuedAt: new Date().toISOString(),
+        stepId: fixture.stepDbId,
+        workflowStepId: "implement",
+        runId: fixture.runId,
+        storyId: fixture.storyId,
+        storyDbId: fixture.storyDbId,
+        claimId: bound.publication.claimId,
+        claimAgentId: "recovery-agent",
+        runtimeAgentId: "recovery-runtime-agent",
+        claimGeneration: bound.publication.claimGeneration,
+        attempt: {
+          attemptId: bound.attempt.attemptId,
+          generation: bound.attempt.generation,
+          fenceToken: bound.attempt.fenceToken,
+        },
+    };
+    const requestId = `RCR_${createHash("sha256").update(sessionId).digest("hex").slice(0, 24)}`;
+    const completionOutput = "{}";
+    const completionOutputHash = createHash("sha256").update(completionOutput, "utf8").digest("hex");
+    const submissionEvidence = {
+      schema: "setfarm.runtime-completion-submission-evidence.v1",
+      compiler: "setfarm.v3-implementation-output-compilation.v1",
+      sourceSchema: "setfarm.v3-implementation-agent-proposal.v1",
+      sourceProposalHash: completionOutputHash,
+      canonicalOutputHash: completionOutputHash,
+      ignoredFieldPaths: [],
+    };
+    const completionLease = new Date(Date.now() + 60_000);
+    await database.sql`
+      INSERT INTO runtime_completion_requests (
+        request_id,runtime_session_id,claim_id,run_id,step_db_id,workflow_step_id,
+        story_db_id,story_id,attempt_id,claim_envelope,output,output_hash,
+        source_proposal,submission_evidence,
+        apply_phase,state,requested_by,owner_instance_id,lease_expires_at,
+        owner_attempt_count,requested_at,drained_at,processing_at,result
+      ) VALUES (
+        ${requestId},${sessionId},${bound.publication.claimId},${fixture.runId},${fixture.stepDbId},'implement',
+        ${fixture.storyDbId},${fixture.storyId},${bound.attempt.attemptId},${database.sql.json(envelope)},
+        ${completionOutput},${completionOutputHash},${completionOutput},${database.sql.json(submissionEvidence)},
+        'executing','processing','recovery-runtime-agent',
+        ${handoff.lease.ownerInstanceId},${completionLease},1,clock_timestamp(),clock_timestamp(),clock_timestamp(),'{}'::jsonb
+      )
+    `;
+    const sessions = createRuntimeSessionRepository(database.sql);
+    await sessions.requestDrain({
+      sessionId,
+      ownerInstanceId: handoff.lease.ownerInstanceId,
+      diagnostic: "real recovery completion regression",
+    });
+    await sessions.markDrained({
+      sessionId,
+      ownerInstanceId: handoff.lease.ownerInstanceId,
+      evidence: STORY_ADMISSION_DRAIN_EVIDENCE,
+    });
+    const result = await runWithRuntimeCompletionOwner({
+      requestId,
+      ownerInstanceId: handoff.lease.ownerInstanceId,
+      leaseExpiresAt: completionLease.toISOString(),
+      ownerAttemptCount: 1,
+    }, () => completeStoryClaimAndBoundAttempt(database.sql, {
+      envelope,
+      sourceAfter,
+      outputHash: completionOutputHash,
+      attemptDisposition: "verified",
+      evidenceRefs: ["setfarm://test/model-recovery-story-completion"],
+      storyStatus: "done",
+      storyOutput: "STATUS: done",
+      stepStatus: "running",
+      stepOutput: "STATUS: done",
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "story_completion",
+        continuation: { type: "story_loop_continue" },
+        subject: { storyDbId: fixture.storyDbId, storyId: fixture.storyId },
+        effectPayload: { stepId: "implement", storyId: fixture.storyId },
+      }),
+    }));
+    assert.equal(result.status, "completed");
+    const owners = await database.sql<Array<{ category: string; state: string }>>`
+      SELECT category,state
+        FROM internal_production_owner_reservations_v1
+       WHERE (category='claim' AND owner_key=${String(bound.publication.claimId)})
+          OR (category='execution-attempt' AND owner_key=${bound.attempt.attemptId})
+       ORDER BY category
+    `;
+    assert.deepEqual(owners.map((row) => ({ ...row })), [
+      { category: "claim", state: "closed" },
+      { category: "execution-attempt", state: "closed" },
+    ]);
+  });
+
+  it("linearizes attempt birth and pre-birth expiry in both run-lock orders and uses waiter-side database time", async () => {
+    const birthFirstFixture = await setup();
+    const birthFirstAt = new Date(Date.now() - 1_000);
+    const birthFirstHandoff = await lease(birthFirstFixture, {
+      ownerInstanceId: "birth-first-owner",
+      leaseMs: 120_000,
+      now: birthFirstAt,
+    });
+    const birthFirstPublication = await publish(birthFirstFixture, birthFirstHandoff, {
+      sessionId: `RTS_${"b".repeat(20)}-${sequence}`,
+      now: new Date(birthFirstAt.getTime() + 100),
+    });
+    assert.ok(birthFirstPublication);
+    const birthFirstLatch = await holdRunRow(birthFirstFixture.runId);
+    const winningBirth = createAttemptRepository(database.sql).reserve(
+      modelReservationInput(birthFirstFixture, birthFirstHandoff, birthFirstPublication!.claimId),
+    );
+    await waitForBlockedRunLock(birthFirstFixture.runId, 1);
+    const losingExpiry = createV3RecoveryLifecycleReconciler(database.sql).reconcileActive({
+      runId: birthFirstFixture.runId,
+    });
+    await waitForBlockedRunLock(birthFirstFixture.runId, 2);
+    birthFirstLatch.release();
+    await birthFirstLatch.done;
+    assert.equal((await winningBirth).status, "reserved");
+    const afterBirth = await losingExpiry;
+    assert.equal(afterBirth.counts.rolledBackPublications, 0);
+    assert.equal((await birthFirstFixture.deliveries.findDelivery(birthFirstHandoff.dispatchId))?.state, "attempt_reserved");
+
+    const expiryFirstFixture = await setup();
+    const expiryFirstAt = new Date();
+    const expiryFirstHandoff = await lease(expiryFirstFixture, {
+      ownerInstanceId: "expiry-first-owner",
+      leaseMs: 30_000,
+      now: expiryFirstAt,
+    });
+    const expiryFirstPublication = await publish(expiryFirstFixture, expiryFirstHandoff, {
+      sessionId: `RTS_${"e".repeat(20)}-${sequence}`,
+      now: new Date(Date.now() + 100),
+    });
+    assert.ok(expiryFirstPublication);
+    const authenticPreBirth = (await database.sql<Array<{
+      runtime_state: string;
+      story_status: string;
+      step_status: string;
+      delivery_before_claim: boolean;
+      claim_before_runtime: boolean;
+      runtime_heartbeat_exact: boolean;
+      runtime_before_expiry: boolean;
+    }>>`
+      SELECT runtime.state AS runtime_state,story.status AS story_status,step.status AS step_status,
+             delivery.updated_at <= claim.claimed_at AS delivery_before_claim,
+             claim.claimed_at <= runtime.created_at AS claim_before_runtime,
+             runtime.created_at = runtime.heartbeat_at AS runtime_heartbeat_exact,
+             runtime.created_at <= delivery.lease_expires_at AS runtime_before_expiry
+        FROM internal_production_v3_recovery_claim_publications_v1 publication
+        JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=publication.dispatch_id
+        JOIN claim_log claim ON claim.id=publication.claim_id
+        JOIN runtime_sessions runtime ON runtime.session_id=publication.runtime_session_id
+        JOIN steps step ON step.id=publication.step_db_id
+        JOIN stories story ON story.id=publication.story_db_id
+       WHERE publication.claim_id=${expiryFirstPublication!.claimId}
+    `)[0]!;
+    assert.deepEqual({ ...authenticPreBirth }, {
+      runtime_state: "reserved",
+      story_status: "running",
+      step_status: "running",
+      delivery_before_claim: true,
+      claim_before_runtime: true,
+      runtime_heartbeat_exact: true,
+      runtime_before_expiry: true,
+    });
+    await database.sql.unsafe(
+      `SELECT pg_sleep(GREATEST(EXTRACT(EPOCH FROM (
+         (SELECT lease_expires_at FROM recovery_dispatch_deliveries WHERE dispatch_id=$1)
+         - clock_timestamp())) + 0.05, 0))`,
+      [expiryFirstHandoff.dispatchId],
+    );
+    const expiryFirstLatch = await holdRunRow(expiryFirstFixture.runId);
+    const winningExpiry = createV3RecoveryLifecycleReconciler(database.sql).reconcileActive({
+      runId: expiryFirstFixture.runId,
+    });
+    await waitForBlockedRunLock(expiryFirstFixture.runId, 1);
+    const losingBirth = createAttemptRepository(database.sql).reserve(
+      modelReservationInput(expiryFirstFixture, expiryFirstHandoff, expiryFirstPublication!.claimId),
+    );
+    await waitForBlockedRunLock(expiryFirstFixture.runId, 2);
+    expiryFirstLatch.release();
+    await expiryFirstLatch.done;
+    const [expiryResult, birthResult] = await Promise.allSettled([winningExpiry, losingBirth]);
+    assert.equal(expiryResult.status, "fulfilled");
+    assert.equal(expiryResult.status === "fulfilled" ? expiryResult.value.counts.rolledBackPublications : 0, 1);
+    assert.equal(birthResult.status, "rejected");
+    assert.equal((await expiryFirstFixture.deliveries.findDelivery(expiryFirstHandoff.dispatchId))?.state, "blocked");
+
+    const waiterFixture = await setup();
+    const waiterAt = new Date();
+    const waiterHandoff = await lease(waiterFixture, {
+      ownerInstanceId: "database-time-waiter-owner",
+      leaseMs: 30_000,
+      now: waiterAt,
+    });
+    const waiterPublication = await publish(waiterFixture, waiterHandoff, {
+      sessionId: `RTS_${"w".repeat(20)}-${sequence}`,
+      now: new Date(waiterAt.getTime() + 100),
+    });
+    assert.ok(waiterPublication);
+    const waiterLatch = await holdRunRow(waiterFixture.runId);
+    const waitingBirth = createAttemptRepository(database.sql).reserve(
+      modelReservationInput(waiterFixture, waiterHandoff, waiterPublication!.claimId),
+    );
+    await waitForBlockedRunLock(waiterFixture.runId, 1);
+    await database.sql.unsafe(
+      `SELECT pg_sleep(GREATEST(EXTRACT(EPOCH FROM (
+         (SELECT lease_expires_at FROM recovery_dispatch_deliveries WHERE dispatch_id=$1)
+         - clock_timestamp())) + 0.05, 0))`,
+      [waiterHandoff.dispatchId],
+    );
+    waiterLatch.release();
+    await waiterLatch.done;
+    await assert.rejects(waitingBirth, /RECOVERY_DELIVERY_LEASE_INVALID/);
+    const waiterState = await database.sql<Array<{ attempts: number; claim_id: string | null; attempt_id: string | null }>>`
+      SELECT (SELECT count(*)::integer FROM execution_attempts attempt
+               WHERE attempt.recovery_dispatch_id=delivery.dispatch_id) AS attempts,
+             delivery.claim_id::text,delivery.attempt_id
+        FROM recovery_dispatch_deliveries delivery
+       WHERE delivery.dispatch_id=${waiterHandoff.dispatchId}
+    `;
+    assert.deepEqual({ ...waiterState[0]! }, { attempts: 0, claim_id: null, attempt_id: null });
+  });
+
   it("heartbeats runtime, attempt and delivery atomically and rejects a second owner", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);
@@ -827,6 +1741,7 @@ describe("v3 recovery lifecycle reconciler", () => {
     const bound = await reserveModelAttempt(fixture, handoff, {
       sessionId,
       now: new Date(leaseAt.getTime() + 100),
+      replay: true,
     });
     const heartbeatAt = new Date(leaseAt.getTime() + 1_000);
     const leases = createV3RecoveryOwnerLeaseRepository(database.sql);
@@ -1241,12 +2156,27 @@ describe("v3 recovery lifecycle reconciler", () => {
         `UPDATE steps SET status = 'running', current_story_id = $2 WHERE id = $1`,
         [fixture.stepDbId, fixture.storyDbId],
       );
-      const claims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${fixture.runId}, 'implement', ${fixture.storyId}, 'duplicate-agent', clock_timestamp())
-        RETURNING id::integer AS id
-      `;
-      const claimId = claims[0]!.id;
+      const claimId = await database.sql.begin(async (transaction) => {
+        const identities = await transaction.unsafe<Array<{ id: unknown }>>(
+          "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+        );
+        const birth = await prepareInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          "a-claim-loop-runtime-v1",
+          identities,
+        );
+        return insertAndBindInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          birth,
+          {
+            runId: fixture.runId,
+            workflowStepId: "implement",
+            storyId: fixture.storyId,
+            claimAgentId: "duplicate-agent",
+            claimedAt: new Date(),
+          },
+        );
+      });
       const runtimeSessionId = `RTS_${deliveryState.padEnd(20, "x")}-${sequence}`;
       await createRuntimeSessionRepository(database.sql).reserve({
         sessionId: runtimeSessionId,
@@ -1540,6 +2470,37 @@ describe("v3 recovery lifecycle reconciler", () => {
     });
 
     const terminalAt = new Date(reconcileAt.getTime() + 2_000);
+    const closeFunction = `test_reject_expired_model_close_${sequence}`;
+    const closeTrigger = `trg_reject_expired_model_close_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${closeFunction}() RETURNS trigger AS $$ BEGIN
+           IF NEW.category='execution-attempt' AND NEW.owner_key='${bound.attempt.attemptId}'
+              AND NEW.state='closed' THEN RAISE EXCEPTION 'TEST_EXPIRED_MODEL_CLOSE_REJECTED'; END IF;
+           RETURN NEW;
+         END $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${closeTrigger} BEFORE UPDATE OF state ON internal_production_owner_reservations_v1
+         FOR EACH ROW EXECUTE FUNCTION ${closeFunction}()`,
+      );
+      await assert.rejects(
+        reconciler.reconcileActive({ runId: fixture.runId }, { now: terminalAt }),
+        /TEST_EXPIRED_MODEL_CLOSE_REJECTED/,
+      );
+      const rolledBack = await database.sql<Array<{ disposition: string; outcome: string | null; owner_state: string }>>`
+        SELECT attempt.disposition,claim.outcome,owner.state AS owner_state
+          FROM execution_attempts attempt
+          JOIN claim_log claim ON claim.id=attempt.claim_id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='execution-attempt' AND owner.owner_key=attempt.attempt_id
+         WHERE attempt.attempt_id=${bound.attempt.attemptId}
+      `;
+      assert.deepEqual({ ...rolledBack[0]! }, { disposition: "claimed", outcome: null, owner_state: "bound" });
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${closeTrigger} ON internal_production_owner_reservations_v1`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${closeFunction}()`);
+    }
     const terminalReports = await Promise.all([
       reconciler.reconcileActive({ runId: fixture.runId }, { now: terminalAt }),
       reconciler.reconcileActive({ runId: fixture.runId }, { now: terminalAt }),
@@ -1561,6 +2522,9 @@ describe("v3 recovery lifecycle reconciler", () => {
       story_claimed_by: string | null;
       step_status: string;
       current_story_id: string | null;
+      claim_owner_state: string;
+      runtime_owner_state: string;
+      attempt_owner_state: string;
     }>>(
       `SELECT attempt.disposition AS attempt_disposition,
               claim.outcome AS claim_outcome,
@@ -1570,7 +2534,10 @@ describe("v3 recovery lifecycle reconciler", () => {
               story.status AS story_status,
               story.claimed_by AS story_claimed_by,
               step.status AS step_status,
-              step.current_story_id
+              step.current_story_id,
+              claim_owner.state AS claim_owner_state,
+              runtime_owner.state AS runtime_owner_state,
+              attempt_owner.state AS attempt_owner_state
          FROM execution_attempts attempt
          JOIN claim_log claim ON claim.id = attempt.claim_id
          JOIN runtime_sessions runtime ON runtime.attempt_id = attempt.attempt_id
@@ -1578,6 +2545,12 @@ describe("v3 recovery lifecycle reconciler", () => {
          JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id = delivery.recovery_case_id
          JOIN stories story ON story.run_id = attempt.run_id AND story.story_id = attempt.story_id
          JOIN steps step ON step.id = runtime.step_db_id
+         JOIN internal_production_owner_reservations_v1 claim_owner
+           ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+         JOIN internal_production_owner_reservations_v1 runtime_owner
+           ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
+         JOIN internal_production_owner_reservations_v1 attempt_owner
+           ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
         WHERE attempt.attempt_id = $1`,
       [bound.attempt.attemptId],
     );
@@ -1591,6 +2564,9 @@ describe("v3 recovery lifecycle reconciler", () => {
       story_claimed_by: null,
       step_status: "running",
       current_story_id: null,
+      claim_owner_state: "closed",
+      runtime_owner_state: "closed",
+      attempt_owner_state: "closed",
     });
     const replay = await reconciler.reconcileActive(
       { runId: fixture.runId },
@@ -1796,12 +2772,107 @@ describe("v3 recovery lifecycle reconciler", () => {
     assert.deepEqual({ ...evidence[0]! }, { count: 1, keys: 1 });
   });
 
-  it("rolls back only the exact expired reserved publication before attempt reservation", async () => {
+  it("preserves Task 3 claim/runtime/m33 and the null delivery prefix when model pair publication rolls back", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(fixture.base.getTime() + 2_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "model-pair-rollback-owner",
+      leaseMs: 60_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"k".repeat(20)}-${sequence}`;
+    const publication = await publish(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    const before = await database.sql<Array<{
+      head_version: number;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+    }>>`
+      SELECT head.head_version,publication.handoff_canonical_json,publication.handoff_hash
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication ON TRUE
+       WHERE head.singleton=TRUE AND publication.claim_id=${publication!.claimId}
+    `;
+    const functionName = `test_reject_model_pair_${sequence}`;
+    const triggerName = `trg_reject_model_pair_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.dispatch_id='${handoff.dispatchId}' AND NEW.state='attempt_reserved' THEN
+             RAISE EXCEPTION 'TEST_MODEL_PAIR_CAS_REJECTED';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${triggerName}
+         BEFORE UPDATE ON recovery_dispatch_deliveries
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      await assert.rejects(
+        createAttemptRepository(database.sql).reserve(
+          modelReservationInput(fixture, handoff, publication!.claimId),
+          { now: new Date(leaseAt.getTime() + 200), leaseMs: 60_000 },
+        ),
+        /TEST_MODEL_PAIR_CAS_REJECTED/,
+      );
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON recovery_dispatch_deliveries`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+    const after = await database.sql<Array<{
+      head_version: number;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+      claim_outcome: string | null;
+      runtime_state: string;
+      attempts: number;
+      delivery_state: string;
+      delivery_claim_id: string | null;
+      delivery_attempt_id: string | null;
+      execution_slice_hash: string | null;
+      attempt_count: number;
+    }>>`
+      SELECT head.head_version,publication.handoff_canonical_json,publication.handoff_hash,
+             claim.outcome AS claim_outcome,runtime.state AS runtime_state,
+             (SELECT COUNT(*)::integer FROM execution_attempts attempt
+               WHERE attempt.recovery_dispatch_id=${handoff.dispatchId}) AS attempts,
+             delivery.state AS delivery_state,delivery.claim_id::text AS delivery_claim_id,
+             delivery.attempt_id AS delivery_attempt_id,delivery.execution_slice_hash,
+             delivery.attempt_count
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication ON publication.claim_id=${publication!.claimId}
+        JOIN claim_log claim ON claim.id=publication.claim_id
+        JOIN runtime_sessions runtime ON runtime.session_id=publication.runtime_session_id
+        JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=publication.dispatch_id
+       WHERE head.singleton=TRUE
+    `;
+    assert.deepEqual({ ...after[0]! }, {
+      head_version: before[0]!.head_version,
+      handoff_canonical_json: before[0]!.handoff_canonical_json,
+      handoff_hash: before[0]!.handoff_hash,
+      claim_outcome: null,
+      runtime_state: "reserved",
+      attempts: 0,
+      delivery_state: "leased",
+      delivery_claim_id: null,
+      delivery_attempt_id: null,
+      execution_slice_hash: null,
+      attempt_count: 0,
+    });
+  });
+
+  it("terminally blocks an expired reserved publication before attempt birth without mutating m33", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);
     const handoff = await lease(fixture, {
       ownerInstanceId: "publication-owner",
-      leaseMs: 60_000,
+      leaseMs: 10_000,
       now: leaseAt,
     });
     const sessionId = `RTS_${"p".repeat(20)}-${sequence}`;
@@ -1810,23 +2881,166 @@ describe("v3 recovery lifecycle reconciler", () => {
       now: new Date(leaseAt.getTime() + 100),
     });
     assert.ok(publication);
-    await expireUnreservedPublication(handoff.dispatchId);
+    const immutableBefore = await database.sql<Array<{
+      claim_id: string;
+      runtime_session_id: string;
+      dispatch_id: string;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+    }>>`
+      SELECT claim_id::text,runtime_session_id,dispatch_id,
+             handoff_canonical_json,handoff_hash
+        FROM internal_production_v3_recovery_claim_publications_v1
+       WHERE claim_id=${publication!.claimId}
+    `;
+    assert.equal(immutableBefore.length, 1);
+    await database.sql.unsafe(
+      `SELECT pg_sleep(GREATEST(
+         EXTRACT(EPOCH FROM (
+           (SELECT lease_expires_at FROM recovery_dispatch_deliveries WHERE dispatch_id=$1)
+           - clock_timestamp()
+         )) + 0.05,
+         0
+       ))`,
+      [handoff.dispatchId],
+    );
 
-    const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
+    const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
+    const expirySnapshot = async () => (await database.sql<Array<{
+      head_version: number;
+      claim_outcome: string | null;
+      runtime_state: string;
+      runtime_attempt_id: string | null;
+      claim_owner_state: string;
+      runtime_owner_state: string;
+      story_status: string;
+      story_claimed_by: string | null;
+      story_claimed_at: string | null;
+      step_status: string;
+      step_current_story_id: string | null;
+      delivery_state: string;
+      delivery_claim_id: string | null;
+      delivery_attempt_id: string | null;
+      delivery_slice_hash: string | null;
+      delivery_attempt_count: number;
+      delivery_diagnostic: string | null;
+      case_status: string;
+    }>>`
+      SELECT head.head_version,claim.outcome AS claim_outcome,
+             runtime.state AS runtime_state,runtime.attempt_id AS runtime_attempt_id,
+             claim_owner.state AS claim_owner_state,
+             runtime_owner.state AS runtime_owner_state,
+             story.status AS story_status,story.claimed_by AS story_claimed_by,
+             story.claimed_at::text AS story_claimed_at,
+             step.status AS step_status,step.current_story_id AS step_current_story_id,
+             delivery.state AS delivery_state,delivery.claim_id::text AS delivery_claim_id,
+             delivery.attempt_id AS delivery_attempt_id,
+             delivery.execution_slice_hash AS delivery_slice_hash,
+             delivery.attempt_count AS delivery_attempt_count,
+             delivery.diagnostic AS delivery_diagnostic,
+             recovery_case.status AS case_status
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication
+          ON publication.claim_id=${publication!.claimId}
+        JOIN claim_log claim ON claim.id=publication.claim_id
+        JOIN runtime_sessions runtime ON runtime.session_id=publication.runtime_session_id
+        JOIN internal_production_owner_reservations_v1 claim_owner
+          ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+        JOIN internal_production_owner_reservations_v1 runtime_owner
+          ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
+        JOIN stories story ON story.id=publication.story_db_id
+        JOIN steps step ON step.id=publication.step_db_id
+        JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id=publication.dispatch_id
+        JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id=publication.recovery_case_id
+       WHERE head.singleton=TRUE
+    `)[0]!;
+    const pristineExpiry = { ...await expirySnapshot() };
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at=lease_expires_at+interval '1 microsecond'
+       WHERE dispatch_id=${handoff.dispatchId}
+    `;
+    const driftedLeaseIdentity = await database.sql<Array<{ exact: boolean }>>`
+      SELECT delivery.lease_expires_at=(
+               publication.handoff_canonical_json::jsonb#>>'{lease,expiresAt}'
+             )::timestamptz AS exact
+        FROM recovery_dispatch_deliveries delivery
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication
+          ON publication.dispatch_id=delivery.dispatch_id
+       WHERE delivery.dispatch_id=${handoff.dispatchId}
+    `;
+    assert.equal(driftedLeaseIdentity[0]?.exact, false);
+    const driftedReport = await reconciler.reconcileActive(
       { runId: fixture.runId },
       { now: new Date(leaseAt.getTime() + 2_000) },
     );
-    assert.equal(report.counts.rolledBackPublications, 1);
-    assert.equal(report.events[0]?.code, "V3_RECOVERY_LIFECYCLE_PUBLICATION_ROLLED_BACK");
+    assert.equal(driftedReport.counts.rolledBackPublications, 0);
+    assert.equal(driftedReport.counts.quarantined, 1);
+    assert.equal(
+      driftedReport.events[0]?.code,
+      "V3_RECOVERY_LIFECYCLE_PUBLICATION_AUTHORITY_MISMATCH",
+    );
+    assert.deepEqual({ ...await expirySnapshot() }, pristineExpiry);
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at=lease_expires_at-interval '1 microsecond'
+       WHERE dispatch_id=${handoff.dispatchId}
+    `;
+    const restoredLeaseIdentity = await database.sql<Array<{ exact: boolean }>>`
+      SELECT delivery.lease_expires_at=(
+               publication.handoff_canonical_json::jsonb#>>'{lease,expiresAt}'
+             )::timestamptz AS exact
+        FROM recovery_dispatch_deliveries delivery
+        JOIN internal_production_v3_recovery_claim_publications_v1 publication
+          ON publication.dispatch_id=delivery.dispatch_id
+       WHERE delivery.dispatch_id=${handoff.dispatchId}
+    `;
+    assert.equal(restoredLeaseIdentity[0]?.exact, true);
+    const reports = await Promise.all([
+      reconciler.reconcileActive(
+        { runId: fixture.runId },
+        { now: new Date(leaseAt.getTime() + 2_000) },
+      ),
+      reconciler.reconcileActive(
+        { runId: fixture.runId },
+        { now: new Date(leaseAt.getTime() + 2_000) },
+      ),
+    ]);
+    assert.equal(
+      reports.reduce((sum, item) => sum + item.counts.rolledBackPublications, 0),
+      1,
+    );
+    const report = reports.find((item) => item.counts.rolledBackPublications === 1)!;
+    assert.equal(report.events[0]?.code, "V3_RECOVERY_LIFECYCLE_PUBLICATION_BLOCKED");
 
     const claims = await database.sql<Array<{ outcome: string | null }>>`
       SELECT outcome FROM claim_log WHERE id = ${publication!.claimId}
     `;
     assert.equal(claims[0]?.outcome, "infra_retry");
-    const runtimes = await database.sql<Array<{ state: string; attempt_id: string | null }>>`
-      SELECT state, attempt_id FROM runtime_sessions WHERE session_id = ${sessionId}
+    const runtimes = await database.sql<Array<{
+      state: string;
+      attempt_id: string | null;
+      claim_owner_state: string;
+      runtime_owner_state: string;
+    }>>`
+      SELECT runtime.state,runtime.attempt_id,
+             claim_owner.state AS claim_owner_state,
+             runtime_owner.state AS runtime_owner_state
+        FROM runtime_sessions runtime
+        JOIN internal_production_owner_reservations_v1 claim_owner
+          ON claim_owner.category='claim'
+         AND claim_owner.owner_key=runtime.claim_id::text
+        JOIN internal_production_owner_reservations_v1 runtime_owner
+          ON runtime_owner.category='runtime-session'
+         AND runtime_owner.owner_key=runtime.session_id
+       WHERE runtime.session_id = ${sessionId}
     `;
-    assert.deepEqual({ ...runtimes[0]! }, { state: "released", attempt_id: null });
+    assert.deepEqual({ ...runtimes[0]! }, {
+      state: "released",
+      attempt_id: null,
+      claim_owner_state: "closed",
+      runtime_owner_state: "closed",
+    });
     const stories = await database.sql<Array<{ status: string; claimed_by: string | null; claimed_at: Date | null }>>`
       SELECT status, claimed_by, claimed_at FROM stories WHERE id = ${fixture.storyDbId}
     `;
@@ -1838,8 +3052,89 @@ describe("v3 recovery lifecycle reconciler", () => {
     `;
     assert.deepEqual({ ...steps[0]! }, { status: "running", current_story_id: null });
     const delivery = await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId);
-    assert.equal(delivery?.state, "authorized");
+    assert.equal(delivery?.state, "blocked");
     assert.equal(delivery?.attemptId, undefined);
+    assert.equal(delivery?.claimId, undefined);
+    assert.match(delivery?.diagnostic ?? "", /expired before attempt/i);
+    const cases = await database.sql<Array<{ status: string }>>`
+      SELECT status FROM recovery_cases WHERE recovery_case_id=${handoff.recoveryCaseId}
+    `;
+    assert.equal(cases[0]?.status, "blocked");
+    const immutableAfter = await database.sql<Array<{
+      claim_id: string;
+      runtime_session_id: string;
+      dispatch_id: string;
+      handoff_canonical_json: string;
+      handoff_hash: string;
+    }>>`
+      SELECT claim_id::text,runtime_session_id,dispatch_id,
+             handoff_canonical_json,handoff_hash
+        FROM internal_production_v3_recovery_claim_publications_v1
+       WHERE claim_id=${publication!.claimId}
+    `;
+    assert.deepEqual(immutableAfter.map((row) => ({ ...row })), immutableBefore.map((row) => ({ ...row })));
+    const headAfterBlock = await database.sql<Array<{ head_version: number }>>`
+      SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+    `;
+    const responseLossReplay = await reconciler.reconcileActive({ runId: fixture.runId });
+    assert.equal(responseLossReplay.counts.scanned, 0);
+    const headAfterReplay = await database.sql<Array<{ head_version: number }>>`
+      SELECT head_version FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+    `;
+    assert.equal(headAfterReplay[0]!.head_version, headAfterBlock[0]!.head_version);
+
+    const successorFindingSet = createFindingSetV1({
+      runId: fixture.runId,
+      storyId: fixture.storyId,
+      packetHash: PACKET_HASH,
+      sliceHash: SLICE_HASH,
+      sourceRevision: { sha: SOURCE_SHA, treeHash: SOURCE_TREE },
+      findings: [{
+        origin: "runtime",
+        classification: "structured",
+        invariantRef: "INV_SAVE_RELOAD",
+        sourceLocators: [{ path: "src/App.tsx", contentHash: "f".repeat(64) }],
+        observedEvidenceRefs: ["e".repeat(64)],
+        expectedPredicateRef: "EVID_SAVE_RELOAD",
+        status: "open",
+      }],
+    });
+    const findings = createFindingRecoveryRepository(database.sql);
+    await findings.putFindingSet(successorFindingSet);
+    const successorCase = await findings.openRecoveryCase(
+      recoveryDraft(successorFindingSet),
+      { now: new Date(leaseAt.getTime() + 3_000) },
+    );
+    const successorRevision = await fixture.deliveries.findCurrentRevision(
+      successorCase.recoveryCase.recoveryCaseId,
+    );
+    assert.ok(successorRevision);
+    const successorAuthorized = await fixture.deliveries.authorizeCurrentRevision({
+      recoveryCaseId: successorCase.recoveryCase.recoveryCaseId,
+      revisionId: successorRevision.revisionId,
+      expectedStateVersion: successorCase.recoveryCase.stateVersion,
+      dispatchClass: "product_implementation",
+    }, { now: new Date(leaseAt.getTime() + 3_100) });
+    assert.equal(successorAuthorized.status, "authorized");
+    if (successorAuthorized.status !== "authorized") throw new Error("expected independent successor authorization");
+    const successorFixture = {
+      ...fixture,
+      findingSet: successorFindingSet,
+      revision: successorRevision,
+      dispatch: successorAuthorized.dispatch,
+      delivery: successorAuthorized.delivery,
+    };
+    const successorHandoff = await lease(successorFixture, {
+      ownerInstanceId: "successor-publication-owner",
+      leaseMs: 60_000,
+      now: new Date(leaseAt.getTime() + 3_200),
+    });
+    const successor = await reserveModelAttempt(successorFixture, successorHandoff, {
+      sessionId: `RTS_${"s".repeat(20)}-${sequence}`,
+      now: new Date(leaseAt.getTime() + 3_300),
+      start: false,
+    });
+    assert.equal(successor.attempt.recoveryDispatchId, successorAuthorized.dispatch.dispatchId);
   });
 
   it("fails closed when a reserved publication heartbeat drifts from its creation proof", async () => {
@@ -1918,7 +3213,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       attemptClass: "product_implementation",
       packetHash: handoff.directive.packetHash,
       compilationReportHash: "f".repeat(64),
-      sliceHash: "9".repeat(64),
+      sliceHash: handoff.directive.contractSliceHash,
       sourceBefore: handoff.directive.sourceRevision,
       findingSetHash: handoff.directive.findingSetHash,
       recoveryCaseRevisionId: handoff.revisionId,
@@ -1946,15 +3241,14 @@ describe("v3 recovery lifecycle reconciler", () => {
     await database.sql`
       UPDATE runtime_sessions
          SET state = 'running',
-             created_at = (
-               SELECT claim.claimed_at + interval '1 second'
-                 FROM claim_log claim
-                WHERE claim.id = runtime_sessions.claim_id
-             ),
-             started_at = ${new Date(leaseAt.getTime() + 400)},
-             heartbeat_at = ${new Date(leaseAt.getTime() + 400)},
-             updated_at = ${new Date(leaseAt.getTime() + 400)}
-       WHERE session_id = ${sessionId} AND state = 'reserved'
+             created_at = claim.claimed_at + interval '1 second',
+             started_at = claim.claimed_at + interval '1500 milliseconds',
+             heartbeat_at = claim.claimed_at + interval '1500 milliseconds',
+             updated_at = claim.claimed_at + interval '1500 milliseconds'
+        FROM claim_log claim
+       WHERE session_id = ${sessionId}
+         AND state = 'reserved'
+         AND claim.id = runtime_sessions.claim_id
     `;
     await database.sql`
       UPDATE recovery_dispatch_deliveries delivery

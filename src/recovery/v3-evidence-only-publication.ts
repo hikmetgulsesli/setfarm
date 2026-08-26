@@ -3,6 +3,15 @@ import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  closeInternalProductionOwnerReservationV1,
+  resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1,
+  type PgTransactionSql,
+} from "../db-pg.js";
+import { createInternalProductionFindingCanonicalOwnerIdentityV1 } from "../internal-production/owner-admission-v1.js";
+import {
   reserveAttemptInTransaction,
   type AttemptReservationResult,
 } from "../execution/attempt-repository.js";
@@ -22,6 +31,29 @@ import { lockV3RecoveryRunMutationAuthorityInTransaction } from "./v3-recovery-r
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
+
+type FindingPublicationParentRow = Readonly<{
+  finding_set_hash: string;
+  finding_set_id: string;
+  run_id: string;
+  story_id: string;
+  packet_hash: string;
+  slice_hash: string;
+  source_sha: string;
+  source_tree_hash: string;
+  finding_ids: unknown;
+  payload: unknown;
+}>;
+
+type FindingPublicationChildRow = Readonly<{
+  finding_id: string;
+  origin: string;
+  classification: string;
+  invariant_ref: string;
+  status: string;
+  source_fingerprint: string;
+  payload: unknown;
+}>;
 
 const BoundedIdentitySchema = z.string().min(1).max(500);
 const RefKeySchema = z.string().min(1).max(160).regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/);
@@ -214,60 +246,126 @@ async function putFindingSetInTransaction(
   transaction: TransactionSql,
   findingSet: FindingSetV1,
 ): Promise<void> {
+  const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({
+    findingSetHash: findingSet.findingSetHash,
+  });
   await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
     findingSet.findingSetHash,
   ]);
-  const inserted = await transaction.unsafe<Array<{ finding_set_hash: string }>>(
-    `INSERT INTO finding_sets (
-       finding_set_hash, finding_set_id, run_id, story_id, packet_hash, slice_hash,
-       source_sha, source_tree_hash, finding_ids, payload
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb)
-     ON CONFLICT (finding_set_hash) DO NOTHING
-     RETURNING finding_set_hash`,
-    [
-      findingSet.findingSetHash,
-      findingSet.findingSetId,
-      findingSet.runId,
-      findingSet.storyId,
-      findingSet.packetHash,
-      findingSet.sliceHash,
-      findingSet.sourceRevision.sha,
-      findingSet.sourceRevision.treeHash,
-      JSON.stringify(findingSet.findings.map((finding) => finding.findingId)),
-      JSON.stringify(findingSet),
-    ],
+  const expectedIds = findingSet.findings.map((finding) => finding.findingId);
+  const readParent = () => transaction.unsafe<FindingPublicationParentRow[]>(
+    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    [findingSet.findingSetHash],
   );
-  if (inserted.length === 0) {
-    const rows = await transaction.unsafe<Array<{ payload: unknown }>>(
-      "SELECT payload FROM finding_sets WHERE finding_set_hash = $1 FOR KEY SHARE",
-      [findingSet.findingSetHash],
-    );
-    if (
-      rows.length !== 1
-      || canonicalJsonStringify(FindingSetV1Schema.parse(rows[0]!.payload)) !== canonicalJsonStringify(findingSet)
-    ) {
-      fail("V3_EVIDENCE_ONLY_FINDING_HASH_COLLISION", "existing finding set differs from the canonical payload");
+  const readChildren = () => transaction.unsafe<FindingPublicationChildRow[]>(
+    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id FOR UPDATE`,
+    [findingSet.findingSetHash, expectedIds],
+  );
+  const parentMatches = (row: FindingPublicationParentRow | undefined) => Boolean(row
+    && row.finding_set_hash === findingSet.findingSetHash
+    && row.finding_set_id === findingSet.findingSetId
+    && row.run_id === findingSet.runId
+    && row.story_id === findingSet.storyId
+    && row.packet_hash === findingSet.packetHash
+    && row.slice_hash === findingSet.sliceHash
+    && row.source_sha === findingSet.sourceRevision.sha
+    && row.source_tree_hash === findingSet.sourceRevision.treeHash
+    && canonicalJsonStringify(row.finding_ids) === canonicalJsonStringify(expectedIds)
+    && canonicalJsonStringify(FindingSetV1Schema.parse(row.payload)) === canonicalJsonStringify(findingSet));
+  const childrenMatch = (rows: readonly FindingPublicationChildRow[]) => rows.length === findingSet.findings.length
+    && rows.every((row, index) => {
+      const finding = findingSet.findings[index];
+      return finding !== undefined
+        && row.finding_id === finding.findingId
+        && row.origin === finding.origin
+        && row.classification === finding.classification
+        && row.invariant_ref === finding.invariantRef
+        && row.status === finding.status
+        && row.source_fingerprint === hashCanonicalJson(finding.sourceLocators)
+        && canonicalJsonStringify(row.payload) === canonicalJsonStringify(finding);
+    });
+  const beforeParent = await readParent();
+  const beforeChildren = await readChildren();
+  const beforeOwners = await transaction.unsafe<Array<{ producer_implementation_id: string; state: string }>>(
+    `SELECT producer_implementation_id,state FROM internal_production_owner_reservations_v1
+      WHERE category='finding' AND owner_key=$1`,
+    [findingSet.findingSetHash],
+  );
+  const adopting = beforeParent.length !== 0 || beforeChildren.length !== 0 || beforeOwners.length !== 0;
+  const allowedProducer = [
+    "a-finding-recovery-repository-v1",
+    "a-finding-v3-downstream-evidence-v1",
+    "a-finding-v3-evidence-only-v1",
+  ].includes(beforeOwners[0]?.producer_implementation_id ?? "");
+  if (adopting && (
+    beforeParent.length !== 1
+    || !parentMatches(beforeParent[0])
+    || !childrenMatch(beforeChildren)
+    || beforeOwners.length !== 1
+    || !allowedProducer
+    || !["bound", "closed"].includes(beforeOwners[0]?.state ?? "")
+  )) fail("V3_EVIDENCE_ONLY_FINDING_OWNER_ADOPTION_INVALID", "stored finding publication is incomplete or crossed");
+  if (
+    adopting
+    && beforeOwners[0]?.producer_implementation_id !== "a-finding-v3-evidence-only-v1"
+  ) {
+    if (beforeOwners[0]?.state !== "closed") {
+      fail("V3_EVIDENCE_ONLY_FINDING_OWNER_ADOPTION_INVALID", "cross-producer finding owner is not terminal");
     }
+    const closeInput = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+      transaction as PgTransactionSql,
+      { findingSetHash: findingSet.findingSetHash },
+    );
+    await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
     return;
   }
-  for (const finding of findingSet.findings) {
+  const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+    transaction as PgTransactionSql,
+    { producerImplementationId: "a-finding-v3-evidence-only-v1", ownerKey: identity.ownerKey },
+  );
+  if (!adopting) {
     await transaction.unsafe(
-      `INSERT INTO findings (
-         finding_set_hash, finding_id, origin, classification, invariant_ref,
-         status, source_fingerprint, payload
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb)`,
+      `INSERT INTO finding_sets (
+         finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+         source_sha,source_tree_hash,finding_ids,payload
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::jsonb,$10::text::jsonb)`,
       [
-        findingSet.findingSetHash,
-        finding.findingId,
-        finding.origin,
-        finding.classification,
-        finding.invariantRef,
-        finding.status,
-        hashCanonicalJson(finding.sourceLocators),
-        JSON.stringify(finding),
+        findingSet.findingSetHash, findingSet.findingSetId, findingSet.runId,
+        findingSet.storyId, findingSet.packetHash, findingSet.sliceHash,
+        findingSet.sourceRevision.sha, findingSet.sourceRevision.treeHash,
+        JSON.stringify(expectedIds), JSON.stringify(findingSet),
       ],
     );
+    for (const finding of findingSet.findings) {
+      await transaction.unsafe(
+        `INSERT INTO findings (
+           finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb)`,
+        [
+          findingSet.findingSetHash, finding.findingId, finding.origin, finding.classification,
+          finding.invariantRef, finding.status, hashCanonicalJson(finding.sourceLocators),
+          JSON.stringify(finding),
+        ],
+      );
+    }
   }
+  const parent = await readParent();
+  const children = await readChildren();
+  if (parent.length !== 1 || !parentMatches(parent[0]) || !childrenMatch(children)) {
+    fail("V3_EVIDENCE_ONLY_FINDING_OWNER_REREAD_INVALID", "stored finding publication is not byte exact");
+  }
+  await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+    canonicalOwnerIdentity: identity,
+  });
+  const closeInput = await resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(
+    transaction as PgTransactionSql,
+    { findingSetHash: findingSet.findingSetHash },
+  );
+  await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, closeInput);
 }
 
 async function lockStory(
@@ -382,7 +480,7 @@ async function loadExactPublication(
         AND finding_set.source_sha = revision.source_sha
         AND finding_set.source_tree_hash = revision.source_tree_hash
         AND finding_set.finding_ids = revision.finding_ids
-      FOR UPDATE OF delivery, recovery_case, step_row, story_row`,
+      FOR UPDATE OF delivery, recovery_case, revision, dispatch, step_row, story_row`,
     [
       lease.dispatchId,
       lease.revisionId,
@@ -506,7 +604,7 @@ function assertBoundEvidenceAttempt(
     !attempt.claimId
     || !Number.isSafeInteger(claim)
     || claim !== attempt.claimId
-    || Number(row.delivery_claim_id) !== claim
+    || Number(row.delivery_claim_id) !== attempt.claimId
     || row.delivery_attempt_id !== attempt.attemptId
     || row.delivery_execution_slice_hash !== attempt.sliceHash
     || row.delivery_attempt_count !== 1
@@ -635,6 +733,43 @@ async function assertIndexedArtifacts(
   }
 }
 
+async function assertNoModelPublicationForEvidenceOnlyClaimInTransaction(
+  transaction: TransactionSql,
+  input: Readonly<{
+    claimId: number;
+    runId: string;
+    storyId: string;
+    dispatchId: string;
+  }>,
+): Promise<void> {
+  const rows = await transaction.unsafe<Array<{
+    runtime_count: number;
+    publication_count: number;
+  }>>(
+    `SELECT
+       (SELECT COUNT(*)::integer
+          FROM runtime_sessions runtime
+         WHERE runtime.claim_id = $1::bigint
+           AND runtime.run_id = $2
+           AND runtime.story_id = $3) AS runtime_count,
+       (SELECT COUNT(*)::integer
+          FROM internal_production_v3_recovery_claim_publications_v1 publication
+         WHERE publication.claim_id = $1::bigint
+            OR publication.dispatch_id = $4) AS publication_count`,
+    [input.claimId, input.runId, input.storyId, input.dispatchId],
+  );
+  if (
+    rows.length !== 1
+    || rows[0]!.runtime_count !== 0
+    || rows[0]!.publication_count !== 0
+  ) {
+    fail(
+      "V3_EVIDENCE_ONLY_PUBLICATION_MODEL_AUTHORITY_FORBIDDEN",
+      "evidence-only claim/dispatch identity must have no runtime session or migration-33 publication",
+    );
+  }
+}
+
 export function createV3EvidenceOnlyPublication(sql: Sql) {
   return Object.freeze({
     async reserve(
@@ -683,18 +818,6 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (openClaims.length > 0) {
           fail("V3_EVIDENCE_ONLY_PUBLICATION_OPEN_CLAIM_CONFLICT", "failed story already has an operational claim owner");
         }
-        const runtimes = await transaction.unsafe<Array<{ session_id: string }>>(
-          `SELECT session_id
-             FROM runtime_sessions
-            WHERE run_id = $1
-              AND story_id = $2
-              AND state <> 'released'
-            LIMIT 1 FOR UPDATE`,
-          [lease.runId, lease.storyId],
-        );
-        if (runtimes.length > 0) {
-          fail("V3_EVIDENCE_ONLY_PUBLICATION_RUNTIME_FORBIDDEN", "evidence-only publication never owns a model runtime session");
-        }
         await assertIndexedArtifacts(transaction, lease, prepared);
         const now = await readDatabaseWallClock(
           transaction,
@@ -702,16 +825,32 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         );
         assertExactLease(row, lease, now);
 
-        const claimRows = await transaction.unsafe<Array<{ id: string }>>(
-          `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-           VALUES ($1, 'implement', $2, $3, $4)
-           RETURNING id::text`,
-          [lease.runId, lease.storyId, prepared.agentId, now],
+        const claimIdRows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+          SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+        `;
+        const claimBirthPorts = await import("../execution/claim-runtime-publication.js");
+        const claimBirth = await claimBirthPorts.prepareInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          "a-claim-v3-evidence-only-v1",
+          claimIdRows,
         );
-        const claimId = Number(claimRows[0]?.id);
-        if (!Number.isSafeInteger(claimId) || claimId <= 0) {
-          fail("V3_EVIDENCE_ONLY_PUBLICATION_CLAIM_INVALID", "operational claim identity was not durably allocated");
-        }
+        const claimId = await claimBirthPorts.insertAndBindInternalProductionClaimBirthV1(
+          transaction as PgTransactionSql,
+          claimBirth,
+          {
+            runId: lease.runId,
+            workflowStepId: "implement",
+            storyId: lease.storyId,
+            claimAgentId: prepared.agentId,
+            claimedAt: now,
+          },
+        );
+        await assertNoModelPublicationForEvidenceOnlyClaimInTransaction(transaction, {
+          claimId,
+          runId: lease.runId,
+          storyId: lease.storyId,
+          dispatchId: lease.dispatchId,
+        });
         const reserved: AttemptReservationResult = await reserveAttemptInTransaction(transaction, {
           claimId,
           runId: lease.runId,
@@ -734,7 +873,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           ...(prepared.branch ? { branch: prepared.branch } : {}),
           worktree: prepared.worktree,
           evidenceRefs: [
-            `setfarm://claim-log/${claimId}`,
+            `setfarm://claim-log/${claimBirth.claimIdText}`,
             ...prepared.evidenceRefs,
           ],
         }, {
@@ -937,6 +1076,14 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (completed.length !== 1) {
           fail("V3_EVIDENCE_ONLY_TERMINAL_ATTEMPT_CAS_LOST", "attempt changed before atomic evidence terminalization");
         }
+        const terminalClose = await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(
+          transaction as PgTransactionSql,
+          { attemptId: completed[0]!.attempt_id },
+        );
+        await closeInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          terminalClose,
+        );
       });
     },
 
@@ -1025,7 +1172,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           !row
           || !Number.isSafeInteger(exactClaimId)
           || exactClaimId !== input.attempt.claimId
-          || Number(row.delivery_claim_id) !== exactClaimId
+          || Number(row.delivery_claim_id) !== input.attempt.claimId
           || row.delivery_attempt_id !== input.attempt.attemptId
           || millis(row.delivery_lease_expires_at) <= now.getTime()
           || !["running", "resuming"].includes(row.run_status)
@@ -1058,6 +1205,9 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         if (closed.length !== 1) {
           fail("V3_EVIDENCE_ONLY_CLAIM_COMPLETION_CAS_LOST", "terminal claim changed before exact close");
         }
+        const claimClosePorts = await import("../db-pg.js");
+        const terminalClose = await claimClosePorts.resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { claimIdText: closed[0]!.id });
+        await claimClosePorts.closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminalClose);
       });
     },
   });

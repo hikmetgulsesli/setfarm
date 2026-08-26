@@ -5,12 +5,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import postgres from "postgres";
 
-import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
 import {
+  closeExactSingleStepClaimInTransaction,
+  completeSingleStepClaimAndState,
+} from "../../src/execution/claim-attempt-transition.js";
+import { planContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
   publishLoopClaimRuntime,
   publishSingleClaimRuntime,
 } from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../src/execution/compiler-english-admission-ledger-v1.js";
 import {
   createCompilerStoryEnglishAdmissionClaimProofV1,
@@ -32,6 +40,8 @@ import {
 } from "../../src/execution/runtime-session-repository.js";
 import { insertV3StoryClaimRuntimeBindingV1 } from "../../src/execution/v3-story-claim-runtime-binding-v1.js";
 import { parseV3SupervisorRetryDirectiveStoryOutputV1 } from "../../src/execution/v3-supervisor-retry-directive.js";
+import { createV3PreparationBlockRepository } from "../../src/execution/v3-preparation-block-repository.js";
+import { createV3PreparationClaimAuthorityV1 } from "../../src/execution/v3-preparation-claim-authority.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
@@ -45,7 +55,10 @@ import {
   compileCompilerStoryEnglishAdmissionV1,
   compilerStoryEnglishAdmissionStateV1,
 } from "../../src/product-compiler/compiler-story-english-admission-v1.js";
-import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../../src/product-compiler/canonical-json.js";
 import { renderProductSpecV2Compatibility } from "../../src/product-compiler/renderers/product-spec-v2-compatibility.js";
 import {
   ProductSpecV2Schema,
@@ -53,7 +66,10 @@ import {
   type ProductSpecV2,
 } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
-import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
+import {
+  createRecoveryDeliveryRepository,
+  recoveryDeliveryDecisionRef,
+} from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import {
   V3RecoveryClaimAuthorityError,
@@ -247,12 +263,23 @@ async function prepareStoryAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+      "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+    );
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      idRows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId,
+      claimedAt: new Date(),
+    });
+  });
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${token}`,
@@ -265,6 +292,14 @@ async function prepareStoryAdmissionCompletion(
     runtimeKind: "openclaw_session",
     ownerInstanceId,
   });
+  const ownerRows = await database.sql<Array<{ claim_state: string; session_state: string }>>`
+    SELECT claim_owner.state AS claim_state,session_owner.state AS session_state
+      FROM internal_production_owner_reservations_v1 claim_owner
+      JOIN internal_production_owner_reservations_v1 session_owner
+        ON session_owner.category='runtime-session' AND session_owner.owner_key=${session.sessionId}
+     WHERE claim_owner.category='claim' AND claim_owner.owner_key=${String(claimId)}
+  `;
+  assert.deepEqual({ ...ownerRows[0] }, { claim_state: "bound", session_state: "bound" });
   await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId });
   await sessions.markRunning({
     sessionId: session.sessionId,
@@ -900,6 +935,310 @@ function recoveryPublicationInput(
 }
 
 describe("atomic claim and durable runtime publication", () => {
+  it("replays a committed single publication from its stable runtime session", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-publication-response-loss";
+      const stepDbId = await seedSingle(database, runId);
+      const input = {
+        runId,
+        stepDbId,
+        workflowStepId: "plan",
+        claimAgentId: "feature-dev_planner",
+        runtimeIntent: runtimeIntent("RTS_single-publication-response-loss"),
+      } as const;
+      const committed = await publishSingleClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const replay = await publishSingleClaimRuntime(database.sql, input);
+      assert.deepEqual(replay, committed);
+      const counts = await database.sql<Array<{ claims: number; sessions: number }>>`
+        SELECT (SELECT COUNT(*)::integer FROM claim_log WHERE run_id=${runId}) AS claims,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id=${runId}) AS sessions
+      `;
+      assert.deepEqual({ ...counts[0] }, { claims: 1, sessions: 1 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("replays a committed loop publication from its stable runtime session", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-loop-publication-response-loss";
+      const { stepDbId, storyDbId } = await seedLoop(database, runId);
+      const input = {
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimAgentId: "feature-dev_developer",
+        parallelLimit: 1,
+        runtimeIntent: runtimeIntent("RTS_loop-publication-response-loss"),
+      } as const;
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const replay = await publishLoopClaimRuntime(database.sql, input);
+      assert.deepEqual(replay, committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("orders committed claim adoption before an exact terminal close", async () => {
+    const database = await createIsolatedTestDatabase();
+    const blocker = postgres(database.url, { max: 1 });
+    try {
+      const runId = "run-claim-adoption-close-order";
+      const stepDbId = await seedSingle(database, runId);
+      const input = {
+        runId, stepDbId, workflowStepId: "plan", claimAgentId: "feature-dev_planner",
+        runtimeIntent: runtimeIntent("RTS_claim-adoption-close-order"),
+      } as const;
+      const committed = await publishSingleClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      await database.sql.unsafe("CREATE SEQUENCE claim_adoption_close_latch_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION claim_adoption_close_latch_v1() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.id=${committed!.claimId} THEN
+            PERFORM nextval('claim_adoption_close_latch_v1');
+            PERFORM pg_advisory_xact_lock(730031);
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER claim_adoption_close_latch_v1 BEFORE INSERT ON claim_log
+        FOR EACH ROW EXECUTE FUNCTION claim_adoption_close_latch_v1()
+      `);
+      let release!: () => void;
+      const mayRelease = new Promise<void>((resolve) => { release = resolve; });
+      let locked!: () => void;
+      const blockerReady = new Promise<void>((resolve) => { locked = resolve; });
+      const held = blocker.begin(async (sql) => {
+        await sql.unsafe("SELECT pg_advisory_xact_lock(730031)");
+        locked();
+        await mayRelease;
+      });
+      await blockerReady;
+      const replay = publishSingleClaimRuntime(database.sql, input);
+      for (;;) {
+        const latch = await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM claim_adoption_close_latch_v1
+        `;
+        if (latch[0]?.is_called) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const close = database.sql.begin((sql) => closeExactSingleStepClaimInTransaction(sql, {
+        envelope: {
+          schema: "setfarm.claim-envelope.v1", protocol: "shadow",
+          issuedAt: new Date().toISOString(), stepId: stepDbId,
+          workflowStepId: "plan", runId, claimId: committed!.claimId,
+          claimAgentId: "feature-dev_planner", runtimeAgentId: "prism",
+        },
+        outcome: "infra_retry",
+        diagnostic: "adoption versus terminal close",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      release();
+      await held;
+      assert.deepEqual(await replay, committed);
+      await close;
+      const terminal = await database.sql<Array<{ outcome: string | null; owner_state: string }>>`
+        SELECT cl.outcome,r.state AS owner_state FROM claim_log cl
+          JOIN internal_production_owner_reservations_v1 r
+            ON r.category='claim' AND r.owner_key=cl.id::text
+         WHERE cl.id=${committed!.claimId}
+      `;
+      assert.deepEqual({ ...terminal[0] }, { outcome: "infra_retry", owner_state: "closed" });
+    } finally {
+      await blocker.end({ timeout: 5 });
+      await database.cleanup();
+    }
+  });
+
+  it("rejects every noncanonical preallocated claim id before owner birth", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      for (const rows of [
+        [],
+        [{ id: "1" }, { id: "2" }],
+        [{ id: 1 }],
+        [{ id: 1.5 }],
+        [{ id: "0" }],
+        [{ id: "01" }],
+        [{ id: "+1" }],
+        [{ id: "1.0" }],
+      ] as Array<Array<{ id: unknown }>>) {
+        await assert.rejects(
+          database.sql.begin((transaction) => prepareInternalProductionClaimBirthV1(
+            transaction as PgTransactionSql,
+            "a-claim-single-runtime-v1",
+            rows,
+          )),
+          /INTERNAL_PRODUCTION_CLAIM_ID_BIGINT_TEXT_INVALID/,
+        );
+      }
+      const sidecars = await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count
+          FROM internal_production_owner_reservations_v1
+         WHERE category='claim'
+      `;
+      assert.equal(sidecars[0]!.count, 0);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back reservation and claim when the explicit preallocated INSERT is not identical", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      await database.insertRun("run-claim-insert-mismatch");
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          const idRows = await transaction.unsafe<Array<{ id: unknown }>>(
+            "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+          );
+          const birth = await prepareInternalProductionClaimBirthV1(
+            transaction as PgTransactionSql,
+            "a-claim-single-runtime-v1",
+            idRows,
+          );
+          await transaction.unsafe(
+            `INSERT INTO claim_log (id,run_id,step_id,story_id,agent_id,claimed_at)
+             VALUES ($1::bigint,'run-claim-insert-mismatch','wrong-step',NULL,'wrong-agent',NOW())`,
+            [birth.claimIdText],
+          );
+          return insertAndBindInternalProductionClaimBirthV1(
+            transaction as PgTransactionSql,
+            birth,
+            {
+              runId: "run-claim-insert-mismatch",
+              workflowStepId: "implement",
+              storyId: null,
+              claimAgentId: "feature-dev_developer",
+              claimedAt: new Date(),
+            },
+          );
+        }),
+        /INTERNAL_PRODUCTION_CLAIM_INSERT_IDENTITY_INVALID/,
+      );
+      const state = await database.sql<Array<{ claims: number; owners: number }>>`
+        SELECT
+          (SELECT COUNT(*)::integer FROM claim_log WHERE run_id='run-claim-insert-mismatch') AS claims,
+          (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 WHERE category='claim') AS owners
+      `;
+      assert.deepEqual({ ...state[0] }, { claims: 0, owners: 0 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("publishes no owner when a deferred claim commit constraint rejects", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-claim-deferred-commit-reject";
+      const stepDbId = await seedSingle(database, runId);
+      await database.sql.unsafe(`
+        CREATE FUNCTION reject_deferred_claim_commit_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.run_id='run-claim-deferred-commit-reject' THEN
+            RAISE EXCEPTION 'TEST_DEFERRED_CLAIM_COMMIT_REJECTED';
+          END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE CONSTRAINT TRIGGER reject_deferred_claim_commit_v1
+        AFTER INSERT ON claim_log DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW EXECUTE FUNCTION reject_deferred_claim_commit_v1()
+      `);
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          runId,
+          stepDbId,
+          workflowStepId: "plan",
+          claimAgentId: "feature-dev_planner",
+          runtimeIntent: runtimeIntent("RTS_deferred-commit-reject1"),
+        }),
+        /TEST_DEFERRED_CLAIM_COMMIT_REJECTED/,
+      );
+      const state = (await database.sql<Array<{
+        step_status: string;
+        claims: number;
+        sessions: number;
+        owners: number;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id=${runId}) AS claims,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id=${runId}) AS sessions,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE category IN ('claim','runtime-session')) AS owners
+          FROM steps step WHERE step.id=${stepDbId}
+      `)[0]!;
+      assert.deepEqual({ ...state }, {
+        step_status: "pending",
+        claims: 0,
+        sessions: 0,
+        owners: 0,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back a preallocated owner when the locked step mutation is suppressed", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-claim-step-cas-suppressed";
+      const stepDbId = await seedSingle(database, runId);
+      await database.sql.unsafe(`
+        CREATE FUNCTION suppress_claim_step_update_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.id='run-claim-step-cas-suppressed-step' THEN RETURN NULL; END IF;
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER suppress_claim_step_update_v1
+        BEFORE UPDATE ON steps FOR EACH ROW EXECUTE FUNCTION suppress_claim_step_update_v1()
+      `);
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          runId,
+          stepDbId,
+          workflowStepId: "plan",
+          claimAgentId: "feature-dev_planner",
+          runtimeIntent: runtimeIntent("RTS_step-cas-suppressed1"),
+        }),
+        /SINGLE_STEP_CLAIM_CAS_LOST/,
+      );
+      const state = (await database.sql<Array<{
+        step_status: string;
+        claims: number;
+        sessions: number;
+        owners: number;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id=${runId}) AS claims,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id=${runId}) AS sessions,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE category IN ('claim','runtime-session')) AS owners
+          FROM steps step WHERE step.id=${stepDbId}
+      `)[0]!;
+      assert.deepEqual({ ...state }, {
+        step_status: "pending",
+        claims: 0,
+        sessions: 0,
+        owners: 0,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+
   it("publishes a single claim, running step, and reserved runtime in one commit", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -920,16 +1259,26 @@ describe("atomic claim and durable runtime publication", () => {
         claim_id: number;
         session_claim_id: number;
         session_state: string;
+        claim_owner_state: string;
+        runtime_owner_state: string;
       }>>`
         SELECT s.status AS step_status,
                COUNT(DISTINCT cl.id)::integer AS claim_count,
                COUNT(DISTINCT rs.session_id)::integer AS session_count,
                MIN(cl.id)::integer AS claim_id,
                MIN(rs.claim_id)::integer AS session_claim_id,
-               MIN(rs.state) AS session_state
+               MIN(rs.state) AS session_state,
+               MIN(cl_owner.state) AS claim_owner_state,
+               MIN(rs_owner.state) AS runtime_owner_state
           FROM steps s
           JOIN claim_log cl ON cl.run_id = s.run_id AND cl.step_id = s.step_id
           JOIN runtime_sessions rs ON rs.claim_id = cl.id
+          JOIN internal_production_owner_reservations_v1 cl_owner
+            ON cl_owner.category = 'claim'
+           AND cl_owner.owner_key = cl.id::text
+          JOIN internal_production_owner_reservations_v1 rs_owner
+            ON rs_owner.category = 'runtime-session'
+           AND rs_owner.owner_key = rs.session_id
          WHERE s.id = ${stepDbId}
          GROUP BY s.status
       `;
@@ -940,6 +1289,8 @@ describe("atomic claim and durable runtime publication", () => {
         claim_id: result!.claimId,
         session_claim_id: result!.claimId,
         session_state: "reserved",
+        claim_owner_state: "bound",
+        runtime_owner_state: "bound",
       });
     } finally {
       await database.cleanup();
@@ -1132,7 +1483,7 @@ describe("atomic claim and durable runtime publication", () => {
             outputAuthorityVersion: "product_build_v1",
           },
         }),
-        /duplicate key value|unique constraint/i,
+        /INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID|duplicate key value|unique constraint/i,
       );
       const rows = await database.sql<Array<{
         step_status: string;
@@ -1183,7 +1534,7 @@ describe("atomic claim and durable runtime publication", () => {
           claimAgentId: "feature-dev_planner",
           runtimeIntent: runtimeIntent(duplicateSessionId),
         }),
-        /duplicate key value|unique constraint/i,
+        /INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID|duplicate key value|unique constraint/i,
       );
       const state = await database.sql<Array<{ status: string; claims: number }>>`
         SELECT s.status, COUNT(cl.id)::integer AS claims
@@ -1321,14 +1672,27 @@ describe("atomic claim and durable runtime publication", () => {
         }),
       ]);
       assert.equal([left, right].filter(Boolean).length, 1);
-      const rows = await database.sql<Array<{ claims: number; sessions: number; generation: number; story_status: string }>>`
+      const rows = await database.sql<Array<{
+        claims: number;
+        sessions: number;
+        generation: number;
+        story_status: string;
+        claim_owner_state: string;
+        runtime_owner_state: string;
+      }>>`
         SELECT COUNT(DISTINCT cl.id)::integer AS claims,
                COUNT(DISTINCT rs.session_id)::integer AS sessions,
                MAX(st.claim_generation)::integer AS generation,
-               MIN(st.status) AS story_status
+               MIN(st.status) AS story_status,
+               MIN(cl_owner.state) AS claim_owner_state,
+               MIN(rs_owner.state) AS runtime_owner_state
           FROM stories st
           LEFT JOIN claim_log cl ON cl.run_id = st.run_id AND cl.story_id = st.story_id
           LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
+          LEFT JOIN internal_production_owner_reservations_v1 cl_owner
+            ON cl_owner.category = 'claim' AND cl_owner.owner_key = cl.id::text
+          LEFT JOIN internal_production_owner_reservations_v1 rs_owner
+            ON rs_owner.category = 'runtime-session' AND rs_owner.owner_key = rs.session_id
          WHERE st.id = ${storyDbId}
       `;
       assert.deepEqual({ ...rows[0] }, {
@@ -1336,11 +1700,84 @@ describe("atomic claim and durable runtime publication", () => {
         sessions: 1,
         generation: 1,
         story_status: "running",
+        claim_owner_state: "bound",
+        runtime_owner_state: "bound",
       });
     } finally {
       await database.cleanup();
     }
   });
+
+  for (const [label, claimIdText] of [
+    ["safe-integer successor", "9007199254740992"],
+    ["PostgreSQL BIGINT maximum", "9223372036854775807"],
+  ] as const) {
+    it(`rejects the ${label} before owner or category mutation while preserving only its sequence gap`, async () => {
+      const database = await createIsolatedTestDatabase();
+      try {
+        const runId = `run-claim-id-cap-${label.replaceAll(" ", "-")}`;
+        const stepDbId = await seedSingle(database, runId);
+        const before = (await database.sql<Array<{ head_hash: string; head_version: string }>>`
+          SELECT head_hash, head_version::text
+            FROM internal_production_owner_admission_head_v1
+           WHERE singleton = TRUE
+        `)[0]!;
+        await database.sql`
+          SELECT setval(
+            pg_get_serial_sequence('claim_log','id'),
+            ${claimIdText}::bigint,
+            false
+          )
+        `;
+
+        await assert.rejects(
+          publishSingleClaimRuntime(database.sql, {
+            runId,
+            stepDbId,
+            workflowStepId: "plan",
+            claimAgentId: "feature-dev_planner",
+            runtimeIntent: runtimeIntent(`RTS_claim-id-cap-${label.replaceAll(" ", "-")}`),
+          }),
+          /INTERNAL_PRODUCTION_CLAIM_ID_BIGINT_TEXT_INVALID/u,
+        );
+
+        const state = (await database.sql<Array<{
+          step_status: string;
+          claims: number;
+          owner_rows: number;
+          head_hash: string;
+          head_version: string;
+          sequence_value: string;
+          sequence_called: boolean;
+        }>>`
+          SELECT step.status AS step_status,
+                 (SELECT COUNT(*)::integer FROM claim_log) AS claims,
+                 (SELECT COUNT(*)::integer
+                    FROM internal_production_owner_reservations_v1
+                   WHERE category IN ('claim', 'runtime-session')) AS owner_rows,
+                 head.head_hash,
+                 head.head_version::text,
+                 sequence.last_value::text AS sequence_value,
+                 sequence.is_called AS sequence_called
+            FROM steps step
+            CROSS JOIN internal_production_owner_admission_head_v1 head
+            CROSS JOIN claim_log_id_seq sequence
+           WHERE step.id = ${stepDbId} AND head.singleton = TRUE
+        `)[0]!;
+        assert.deepEqual({ ...state }, {
+          step_status: "pending",
+          claims: 0,
+          owner_rows: 0,
+          head_hash: before.head_hash,
+          head_version: before.head_version,
+          sequence_value: claimIdText,
+          sequence_called: true,
+        });
+      } finally {
+        await database.cleanup();
+      }
+    });
+  }
 
   it("serializes sibling implementation behind the exact canonical story quality gate", async () => {
     const database = await createIsolatedTestDatabase();
@@ -1807,6 +2244,7 @@ describe("atomic claim and durable runtime publication", () => {
     try {
       runtimeDb = await import("../../src/db-pg.js");
       runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+      await runtimeDb.pgQuery("SELECT 1");
       const { completeStep, reconcileRuntimeCompletionEffects } = await import("../../src/installer/step-ops.js");
       const runId = "run-v3-supervise-story-retry-fence";
       const fixture = await seedV3LoopWithStoryAdmission(database, runId);
@@ -1954,6 +2392,7 @@ describe("atomic claim and durable runtime publication", () => {
       try {
         runtimeDb = await import("../../src/db-pg.js");
         runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+        await runtimeDb.pgQuery("SELECT 1");
         const { completeStep } = await import("../../src/installer/step-ops.js");
         const runId = `run-v3-supervise-story-${rejection.name}`;
         const fixture = await seedV3LoopWithStoryAdmission(database, runId);
@@ -2021,6 +2460,7 @@ describe("atomic claim and durable runtime publication", () => {
     try {
       runtimeDb = await import("../../src/db-pg.js");
       runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+      await runtimeDb.pgQuery("SELECT 1");
       const { completeStep } = await import("../../src/installer/step-ops.js");
       const runId = "run-v3-supervise-final-skip";
       const fixture = await seedV3LoopWithStoryAdmission(database, runId);
@@ -2076,6 +2516,7 @@ describe("atomic claim and durable runtime publication", () => {
     try {
       runtimeDb = await import("../../src/db-pg.js");
       runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
+      await runtimeDb.pgQuery("SELECT 1");
       const { completeStep } = await import("../../src/installer/step-ops.js");
       const runId = "run-v3-supervise-final-success";
       const fixture = await seedV3LoopWithStoryAdmission(database, runId);
@@ -2302,6 +2743,10 @@ describe("atomic claim and durable runtime publication", () => {
       }, { now: new Date("2026-07-13T10:00:00.500Z") });
       assert.equal(handoff.status, "lease_reissued");
 
+      const beforePublication = await database.sql<Array<{ observed_at: Date }>>`
+        SELECT clock_timestamp() AS observed_at
+      `;
+
       const publication = await publishLoopClaimRuntime(database.sql, {
         ...recoveryPublicationInput(
           runId,
@@ -2313,6 +2758,9 @@ describe("atomic claim and durable runtime publication", () => {
       });
       assert.ok(publication);
       assert.deepEqual(publication!.claimAuthority, { mode: "recovery", handoff });
+      const afterPublication = await database.sql<Array<{ observed_at: Date }>>`
+        SELECT clock_timestamp() AS observed_at
+      `;
       const state = await database.sql<Array<{
         story_status: string;
         claim_generation: number;
@@ -2361,6 +2809,574 @@ describe("atomic claim and durable runtime publication", () => {
         attempt_id: null,
         delivery_claim_id: null,
       });
+      const persisted = await database.sql<Array<{
+        claim_id: string;
+        runtime_session_id: string;
+        run_id: string;
+        step_db_id: string;
+        workflow_step_id: string;
+        story_db_id: string;
+        story_id: string;
+        story_index: number;
+        recovery_case_id: string;
+        revision_id: string;
+        dispatch_id: string;
+        status: string;
+        handoff_canonical_json: string;
+        handoff_hash: string;
+        bound_at: Date;
+      }>>`
+        SELECT claim_id::text AS claim_id, runtime_session_id, run_id, step_db_id,
+               workflow_step_id, story_db_id, story_id, story_index,
+               recovery_case_id, revision_id, dispatch_id, status,
+               handoff_canonical_json, handoff_hash, bound_at
+          FROM internal_production_v3_recovery_claim_publications_v1
+      `;
+      assert.deepEqual({ ...persisted[0], bound_at: persisted[0]?.bound_at instanceof Date }, {
+        claim_id: String(publication!.claimId),
+        runtime_session_id: publication!.runtime!.sessionId,
+        run_id: runId,
+        step_db_id: fixture.stepDbId,
+        workflow_step_id: "implement",
+        story_db_id: fixture.storyDbId,
+        story_id: "US-001",
+        story_index: 0,
+        recovery_case_id: handoff.recoveryCaseId,
+        revision_id: handoff.revisionId,
+        dispatch_id: handoff.dispatchId,
+        status: "lease_reissued",
+        handoff_canonical_json: canonicalJsonStringify(handoff),
+        handoff_hash: hashCanonicalJson(handoff),
+        bound_at: true,
+      });
+      assert.ok(persisted[0]!.bound_at >= beforePublication[0]!.observed_at);
+      assert.ok(persisted[0]!.bound_at <= afterPublication[0]!.observed_at);
+      for (const mutation of [
+        database.sql`UPDATE internal_production_v3_recovery_claim_publications_v1 SET status = 'lease_acquired'`,
+        database.sql`DELETE FROM internal_production_v3_recovery_claim_publications_v1`,
+        database.sql`TRUNCATE internal_production_v3_recovery_claim_publications_v1`,
+      ]) {
+        await assert.rejects(mutation, /V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE/);
+      }
+      assert.equal(
+        (await database.sql<Array<{ count: number }>>`
+          SELECT COUNT(*)::integer AS count
+            FROM internal_production_v3_recovery_claim_publications_v1
+        `)[0]?.count,
+        1,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("adopts exact stored recovery authority after the outer commit acknowledgement is lost", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-post-commit-response-loss";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-post-commit-response-loss",
+        handoff,
+      );
+      const headBefore = (await database.sql<Array<{ head_hash: string; head_version: string }>>`
+        SELECT head_hash,head_version::text
+          FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `)[0]!;
+      const responseLossSql = new Proxy(database.sql as any, {
+        get(target, property) {
+          if (property === "begin") {
+            return async (callback: (sql: unknown) => Promise<unknown>) => {
+              await database.sql.begin((transaction) => callback(transaction));
+              throw new Error("TEST_RECOVERY_PUBLICATION_COMMIT_ACK_LOST");
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      await assert.rejects(
+        publishLoopClaimRuntime(responseLossSql, input),
+        /TEST_RECOVERY_PUBLICATION_COMMIT_ACK_LOST/,
+      );
+      const headAfterCommit = (await database.sql<Array<{ head_hash: string; head_version: string }>>`
+        SELECT head_hash,head_version::text
+          FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+      `)[0]!;
+      assert.notDeepEqual(headAfterCommit, headBefore);
+
+      const replay = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(replay);
+      assert.deepEqual(replay!.claimAuthority, { mode: "recovery", handoff });
+      const state = (await database.sql<Array<{
+        claims: number;
+        sessions: number;
+        publications: number;
+        owner_rows: number;
+        head_hash: string;
+        head_version: string;
+        stored_handoff: string;
+      }>>`
+        SELECT
+          (SELECT COUNT(*)::integer FROM claim_log
+            WHERE run_id=${runId} AND agent_id='recovery-implement-agent') AS claims,
+          (SELECT COUNT(*)::integer FROM runtime_sessions
+            WHERE run_id=${runId} AND runtime_agent_id='recovery-runtime-agent') AS sessions,
+          (SELECT COUNT(*)::integer
+             FROM internal_production_v3_recovery_claim_publications_v1
+            WHERE run_id=${runId}) AS publications,
+          (SELECT COUNT(*)::integer
+             FROM internal_production_owner_reservations_v1 owner
+            WHERE (owner.category='claim' AND owner.owner_key=${String(replay!.claimId)})
+               OR (owner.category='runtime-session' AND owner.owner_key=${replay!.runtime!.sessionId})) AS owner_rows,
+          head.head_hash,head.head_version::text,
+          publication.handoff_canonical_json AS stored_handoff
+          FROM internal_production_owner_admission_head_v1 head
+          JOIN internal_production_v3_recovery_claim_publications_v1 publication
+            ON publication.claim_id=${replay!.claimId}
+         WHERE head.singleton=TRUE
+      `)[0]!;
+      assert.deepEqual({
+        claims: state.claims,
+        sessions: state.sessions,
+        publications: state.publications,
+        owner_rows: state.owner_rows,
+      }, { claims: 1, sessions: 1, publications: 1, owner_rows: 2 });
+      assert.equal(state.stored_handoff, canonicalJsonStringify(handoff));
+      assert.deepEqual(
+        { head_hash: state.head_hash, head_version: state.head_version },
+        headAfterCommit,
+        "response-loss retry must not advance owner-admission head",
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a canonical stored recovery handoff that fails the strict V3 schema", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-stored-handoff-schema-drift";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-stored-handoff-schema-drift",
+        handoff,
+      );
+      const publication = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(publication);
+      const { dispatchId: _removedDispatchId, ...missingDispatchId } = handoff;
+      const malformedRows: ReadonlyArray<Readonly<{
+        canonicalJson: string;
+        handoffHash: string;
+        status: string;
+      }>> = [
+        {
+          canonicalJson: canonicalJsonStringify({
+            ...handoff,
+            lease: { ...handoff.lease, ownerInstanceId: "" },
+          }),
+          handoffHash: hashCanonicalJson({
+            ...handoff,
+            lease: { ...handoff.lease, ownerInstanceId: "" },
+          }),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: canonicalJsonStringify({
+            ...handoff,
+            lease: { ...handoff.lease, ownerInstanceId: "x".repeat(10_000) },
+          }),
+          handoffHash: hashCanonicalJson({
+            ...handoff,
+            lease: { ...handoff.lease, ownerInstanceId: "x".repeat(10_000) },
+          }),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: canonicalJsonStringify(missingDispatchId),
+          handoffHash: hashCanonicalJson(missingDispatchId),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: canonicalJsonStringify({ ...handoff, unexpected: true }),
+          handoffHash: hashCanonicalJson({ ...handoff, unexpected: true }),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: ` ${canonicalJsonStringify(handoff)}`,
+          handoffHash: hashCanonicalJson(handoff),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: canonicalJsonStringify(handoff),
+          handoffHash: "0".repeat(64),
+          status: handoff.status,
+        },
+        {
+          canonicalJson: canonicalJsonStringify(handoff),
+          handoffHash: hashCanonicalJson(handoff),
+          status: handoff.status === "lease_acquired" ? "lease_reissued" : "lease_acquired",
+        },
+      ];
+      for (const malformed of malformedRows) {
+        await database.sql.unsafe(
+          "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER USER",
+        );
+        await database.sql.unsafe(
+          `UPDATE internal_production_v3_recovery_claim_publications_v1
+              SET handoff_canonical_json=$1,handoff_hash=$2,status=$3`,
+          [malformed.canonicalJson, malformed.handoffHash, malformed.status],
+        );
+        await database.sql.unsafe(
+          "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER USER",
+        );
+        await assert.rejects(
+          publishLoopClaimRuntime(database.sql, input),
+          /V3_RECOVERY_PUBLICATION/,
+        );
+        await database.sql.unsafe(
+          "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER USER",
+        );
+        await database.sql.unsafe(
+          `UPDATE internal_production_v3_recovery_claim_publications_v1
+              SET handoff_canonical_json=$1,handoff_hash=$2,status=$3`,
+          [canonicalJsonStringify(handoff), hashCanonicalJson(handoff), handoff.status],
+        );
+        await database.sql.unsafe(
+          "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER USER",
+        );
+        assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), publication);
+      }
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a stored recovery publication cross-bound to another exact claim-session pair", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const firstRunId = "run-v3-stored-recovery-cross-claim-first";
+      const firstFixture = await seedRecoveryLoop(database, firstRunId);
+      const firstHandoff = await acquireRecoveryHandoff(database, { runId: firstRunId });
+      const first = await publishLoopClaimRuntime(database.sql, recoveryPublicationInput(
+        firstRunId,
+        firstFixture,
+        "RTS_v3-stored-recovery-cross-claim-first",
+        firstHandoff,
+      ));
+      assert.ok(first?.runtime);
+
+      const secondRunId = "run-v3-stored-recovery-cross-claim-second";
+      const secondFixture = await seedRecoveryLoop(database, secondRunId);
+      const secondHandoff = await acquireRecoveryHandoff(database, { runId: secondRunId });
+      const second = await publishLoopClaimRuntime(database.sql, recoveryPublicationInput(
+        secondRunId,
+        secondFixture,
+        "RTS_v3-stored-recovery-cross-claim-second",
+        secondHandoff,
+      ));
+      assert.ok(second?.runtime);
+
+      await database.sql.unsafe(
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ALL",
+      );
+      await database.sql`
+        DELETE FROM internal_production_v3_recovery_claim_publications_v1
+         WHERE claim_id=${second!.claimId}
+      `;
+      await database.sql`
+        UPDATE internal_production_v3_recovery_claim_publications_v1
+           SET claim_id=${second!.claimId},runtime_session_id=${second!.runtime!.sessionId}
+         WHERE claim_id=${first!.claimId}
+      `;
+      await database.sql.unsafe(
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ALL",
+      );
+      const plan = await planContractSpineMigrations(database.sql);
+      assert.equal(
+        plan.migrations.find((migration) => migration.version === 33)?.state,
+        "adoption_mismatch",
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a same-session recovery replay whose caller handoff differs from durable authority", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-replay-authority-mismatch";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-replay-authority-mismatch",
+        handoff,
+      );
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
+      const forged = V3RecoveryClaimHandoffV1Schema.parse({
+        ...handoff,
+        lease: { ...handoff.lease, leaseToken: "f".repeat(64) },
+      });
+      await assert.rejects(
+        publishLoopClaimRuntime(database.sql, { ...input, recoveryHandoff: forged }),
+        (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+          && error.code === "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+      );
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a committed recovery dispatch replay through a different claim-session identity", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-replay-cross-session";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-replay-cross-session-original",
+        handoff,
+      );
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const crossSession = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-replay-cross-session-forged",
+        handoff,
+      );
+      await assert.rejects(
+        publishLoopClaimRuntime(database.sql, crossSession),
+        (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+          && error.code === "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+      );
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a same-session recovery replay that changes only the originally published status", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-replay-status-mismatch";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-replay-status-mismatch",
+        handoff,
+      );
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const changedStatus = V3RecoveryClaimHandoffV1Schema.parse({
+        ...handoff,
+        status: handoff.status === "lease_acquired" ? "lease_reissued" : "lease_acquired",
+      });
+      await assert.rejects(
+        publishLoopClaimRuntime(database.sql, { ...input, recoveryHandoff: changedStatus }),
+        /V3_RECOVERY_PUBLICATION/,
+      );
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects an unrelated later recovery delivery on stable claim-session replay", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-replay-later-delivery";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const originalHandoff = await acquireRecoveryHandoff(database, { runId });
+      const input = recoveryPublicationInput(
+        runId,
+        fixture,
+        "RTS_v3-recovery-replay-later-delivery",
+        originalHandoff,
+      );
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const completed = await fixture.deliveries.completeDelivery({
+        dispatchId: originalHandoff.dispatchId,
+        revisionId: originalHandoff.revisionId,
+        state: "blocked",
+        terminalResult: { reasonCode: "replacement_delivery_fixture" },
+      });
+      assert.equal(completed?.state, "blocked");
+      await database.sql`
+        UPDATE stories SET status = 'failed' WHERE id = ${fixture.storyDbId}
+      `;
+      const caseRows = await database.sql<Array<{ state_version: number }>>`
+        SELECT state_version
+          FROM recovery_cases
+         WHERE recovery_case_id = ${fixture.recoveryCase.recoveryCaseId}
+      `;
+      const advanced = await fixture.deliveries.advanceRevision({
+        recoveryCaseId: fixture.recoveryCase.recoveryCaseId,
+        expectedStateVersion: caseRows[0]!.state_version,
+        parentRevisionId: fixture.revision.revisionId,
+        findingSetHash: fixture.revision.findingSetHash,
+        owner: "supervisor",
+        expectedDelta: fixture.revision.expectedDelta,
+        allowedPaths: fixture.revision.allowedPaths,
+        evidencePlan: fixture.revision.evidencePlan,
+        ...(fixture.revision.evidencePlanArtifactHash
+          ? { evidencePlanArtifactHash: fixture.revision.evidencePlanArtifactHash }
+          : {}),
+        decisionRef: recoveryDeliveryDecisionRef({ reason: "later delivery fixture" }),
+      });
+      assert.equal(advanced.status, "advanced");
+      if (advanced.status !== "advanced") throw new Error("expected later recovery revision");
+      const authorized = await fixture.deliveries.authorizeCurrentRevision({
+        recoveryCaseId: fixture.recoveryCase.recoveryCaseId,
+        revisionId: advanced.revision.revisionId,
+        expectedStateVersion: advanced.stateVersion,
+        dispatchClass: "supervisor_repair",
+      });
+      assert.equal(authorized.status, "authorized");
+      const laterHandoff = await acquireRecoveryHandoff(database, {
+        runId,
+        ownerInstanceId: "later-recovery-worker",
+      });
+      assert.notEqual(laterHandoff.dispatchId, originalHandoff.dispatchId);
+
+      await assert.rejects(
+        publishLoopClaimRuntime(database.sql, { ...input, recoveryHandoff: laterHandoff }),
+        /V3_RECOVERY_PUBLICATION/,
+      );
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("serializes two recovery publishers so one exact claim-session binding wins", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-recovery-two-publisher-conflict";
+      const fixture = await seedRecoveryLoop(database, runId);
+      const handoff = await acquireRecoveryHandoff(database, { runId });
+      const [left, right] = await Promise.allSettled([
+        publishLoopClaimRuntime(database.sql, recoveryPublicationInput(
+          runId,
+          fixture,
+          "RTS_v3-recovery-two-publisher-left",
+          handoff,
+        )),
+        publishLoopClaimRuntime(database.sql, recoveryPublicationInput(
+          runId,
+          fixture,
+          "RTS_v3-recovery-two-publisher-right",
+          handoff,
+        )),
+      ]);
+      const fulfilled = [left, right].filter(
+        (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof publishLoopClaimRuntime>>> => result.status === "fulfilled",
+      );
+      const rejected = [left, right].filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      assert.equal(fulfilled.length, 1);
+      assert.ok(fulfilled[0]!.value);
+      assert.equal(rejected.length, 1);
+      assert.ok(rejected[0]!.reason instanceof V3RecoveryClaimAuthorityError);
+      assert.equal(
+        (rejected[0]!.reason as V3RecoveryClaimAuthorityError).code,
+        "V3_RECOVERY_PUBLICATION_IDENTITY_MISMATCH",
+      );
+      const counts = await database.sql<Array<{
+        claims: number;
+        sessions: number;
+        publications: number;
+      }>>`
+        SELECT
+          (SELECT COUNT(*)::integer FROM claim_log
+            WHERE run_id=${runId} AND agent_id='recovery-implement-agent') AS claims,
+          (SELECT COUNT(*)::integer FROM runtime_sessions
+            WHERE run_id=${runId} AND runtime_agent_id='recovery-runtime-agent') AS sessions,
+          (SELECT COUNT(*)::integer FROM internal_production_v3_recovery_claim_publications_v1 WHERE run_id=${runId}) AS publications
+      `;
+      assert.deepEqual({ ...counts[0] }, { claims: 1, sessions: 1, publications: 1 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a same-session preparation replay whose caller authority differs from claimed state", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-v3-preparation-replay-authority-mismatch";
+      const fixture = await seedV3LoopWithStoryAdmission(database, runId);
+      await database.sql.unsafe(
+        `INSERT INTO semantic_artifacts (
+           artifact_hash, artifact_type, byte_length, producer_metadata
+         ) VALUES ($1, 'setfarm.product-build-packet.v1', 1, $2::text::jsonb)`,
+        [PACKET_HASH, JSON.stringify({
+          pass: "claim-runtime-preparation-replay-test",
+          codeSha: "3".repeat(40),
+          toolVersions: { setfarm: "test" },
+        })],
+      );
+      await database.sql.unsafe(
+        `INSERT INTO product_packets (run_id, packet_hash, compiler_metadata)
+         VALUES ($1, $2, $3::text::jsonb)`,
+        [runId, PACKET_HASH, JSON.stringify({ version: "3.0.0", codeSha: "3".repeat(40) })],
+      );
+      const prepared = await createV3PreparationBlockRepository(database.sql).resolveReady({
+        runId,
+        stepId: "implement",
+        storyId: "US-001",
+        packetHash: PACKET_HASH,
+        sourceSha: "8".repeat(40),
+        sourceTreeHash: "9".repeat(40),
+        dependencyState: [],
+        projectedDependencyIds: [],
+      });
+      assert.ok(prepared.authority);
+      const input = {
+        runId,
+        stepDbId: fixture.stepDbId,
+        workflowStepId: "implement",
+        storyDbId: fixture.storyDbId,
+        storyId: "US-001",
+        claimAgentId: "feature-dev_developer",
+        parallelLimit: 1,
+        runtimeIntent: runtimeIntent("RTS_v3-preparation-replay-authority-mismatch"),
+        preparationAuthority: prepared.authority!,
+        storyAdmissionProof: fixture.storyAdmissionProof,
+      } as const;
+      const committed = await publishLoopClaimRuntime(database.sql, input);
+      assert.ok(committed);
+      const mismatched = createV3PreparationClaimAuthorityV1({
+        stateVersion: prepared.authority!.stateVersion,
+        runId,
+        stepId: "implement",
+        storyId: "US-001",
+        packetHash: PACKET_HASH,
+        baseRevision: { sha: "a".repeat(40), treeHash: "b".repeat(40) },
+        projectedDependencyIds: [],
+        dependencyAttempts: [],
+      });
+      await assert.rejects(
+        publishLoopClaimRuntime(database.sql, { ...input, preparationAuthority: mismatched }),
+        /V3_PREPARATION_PUBLICATION_AUTHORITY_STALE/,
+      );
+      assert.deepEqual(await publishLoopClaimRuntime(database.sql, input), committed);
     } finally {
       await database.cleanup();
     }
@@ -2547,7 +3563,7 @@ describe("atomic claim and durable runtime publication", () => {
           duplicateSessionId,
           handoff,
         )),
-        /duplicate key value|unique constraint/i,
+        /INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID|duplicate key value|unique constraint/i,
       );
       const state = await database.sql<Array<{
         story_status: string;

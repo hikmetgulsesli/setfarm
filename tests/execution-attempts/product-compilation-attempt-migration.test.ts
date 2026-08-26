@@ -4,6 +4,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
@@ -15,7 +16,6 @@ import {
   rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackOperationalFailureCauseAuthorityV3ToV30,
   rollbackV3StoryClaimRuntimeBindingToV28,
-  verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
@@ -56,7 +56,7 @@ describe("product compilation attempt migration 22", () => {
     const targetRelease = "b".repeat(40);
     const applied = await applyContractSpineMigrations(database.sql, { releaseSha: sourceRelease });
     assert.equal(applied.applied.includes("022_product_compilation_attempt_ledger"), true);
-    const verified = await verifyContractSpineMigrations(database.sql);
+    const verified = await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql);
     assert.equal(verified.status, "verified");
 
     await rollbackCurrentHeadToV26(database.sql);

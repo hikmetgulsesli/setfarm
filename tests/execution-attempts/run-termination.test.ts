@@ -1,13 +1,29 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type postgres from "postgres";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
+import {
+  createRuntimeCompletionRepository,
+  requestRuntimeCompletion,
+} from "../../src/execution/runtime-completion.js";
 import {
   createRuntimeSessionRepository,
 } from "../../src/execution/runtime-session-repository.js";
 import {
   createRunTerminationRepository,
   requestRunTermination,
+  requestRunTerminationInTransaction,
 } from "../../src/execution/run-termination.js";
 import {
   operationalFailureCauseHashV1,
@@ -18,6 +34,7 @@ import { buildRunOperationalSnapshot } from "../../src/server/run-operational-sn
 import {
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
+import { createInternalProductionTerminationCanonicalOwnerIdentityV1 } from "../../src/internal-production/owner-admission-v1.js";
 import { exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -44,6 +61,24 @@ const SETUP_BUILD_BINDING_CAUSE: OperationalFailureCauseV1 = {
   failureCode: "V3_OBSERVABLE_SELECTOR_INVALID",
 };
 
+async function bindRunOwner(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  runId: string,
+): Promise<void> {
+  await database.sql.begin(async (transaction) => {
+    const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+    const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+    );
+    await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    });
+  });
+}
+
 async function seedOwnedRuntime(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
   runId: string,
@@ -52,6 +87,7 @@ async function seedOwnedRuntime(
   const stepDbId = `${runId}-step`;
   const storyDbId = `${runId}-story`;
   await database.insertRun(runId);
+  await bindRunOwner(database, runId);
   await database.sql`
     INSERT INTO steps
       (id, run_id, step_id, agent_id, step_index, input_template, expects, status, current_story_id)
@@ -64,12 +100,27 @@ async function seedOwnedRuntime(
     VALUES
       (${storyDbId}, ${runId}, 1, 'US-001', 'Story', 'running', 'feature-dev_developer', 1)
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'implement', 'US-001', 'feature-dev_developer')
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      birth,
+      {
+        runId,
+        workflowStepId: "implement",
+        storyId: "US-001",
+        claimAgentId: "feature-dev_developer",
+        claimedAt: new Date(),
+      },
+    );
+  }) as number;
   const attempts = createAttemptRepository(database.sql, {
     attemptId: () => `ATT_${runId}-attempt`,
     fenceToken: () => "f".repeat(64),
@@ -108,6 +159,540 @@ async function seedOwnedRuntime(
 }
 
 describe("durable two-phase run termination", () => {
+  it("binds the sole termination owner at request birth and exactly adopts ACK-loss replay", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-owner-birth";
+      const requestId = "RTR_termination-owner-birth01";
+      const seeded = await seedOwnedRuntime(database, runId);
+      const completionRequestId = "RCR_termination-owner-birth01";
+      const completion = await requestRuntimeCompletion(database.sql, {
+        envelope: {
+          schema: "setfarm.claim-envelope.v1",
+          protocol: "shadow",
+          issuedAt: "2026-07-13T12:00:00.000Z",
+          stepId: seeded.stepDbId,
+          workflowStepId: "implement",
+          runId,
+          storyId: "US-001",
+          storyDbId: seeded.storyDbId,
+          claimId: seeded.claimId,
+          claimAgentId: "feature-dev_developer",
+          runtimeAgentId: "prism",
+          claimGeneration: 1,
+          attempt: {
+            attemptId: seeded.attempt.attempt.attemptId,
+            generation: seeded.attempt.attempt.generation,
+            fenceToken: seeded.attempt.attempt.fenceToken,
+          },
+        },
+        output: "STATUS: done\nCHANGES: termination ACK replay boundary",
+        requestId: completionRequestId,
+      });
+      assert.equal(completion.status, "requested");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: completionRequestId,
+        ownerInstanceId: "task6-ack-boundary",
+      });
+      const input = {
+        runId,
+        targetStatus: "failed" as const,
+        requestedBy: "task6-owner-birth",
+        diagnostic: "bind the termination request owner",
+        evidence: { source: "task6-red" },
+        requestId,
+      };
+
+      const headBeforeBirth = BigInt((await database.sql<Array<{ head_version: string }>>`
+        SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!.head_version);
+      const ackLossSql = new Proxy(database.sql, {
+        get(target, property, receiver) {
+          if (property !== "begin") return Reflect.get(target, property, receiver);
+          return async (callback: (transaction: postgres.TransactionSql) => Promise<unknown>) => {
+            await database.sql.begin(callback);
+            throw new Error("TEST_RUN_TERMINATION_ACK_LOST");
+          };
+        },
+      });
+      await assert.rejects(
+        requestRunTermination(ackLossSql, input),
+        /TEST_RUN_TERMINATION_ACK_LOST/,
+      );
+      const afterBirth = await database.sql<Array<{
+        state: string;
+        owner_key: string;
+        close_ref: string | null;
+        owner_count: number;
+      }>>`
+        SELECT owner.state,owner.owner_key,owner.close_ref,
+               COUNT(*) OVER ()::integer AS owner_count
+          FROM internal_production_owner_reservations_v1 owner
+         WHERE owner.category='termination'
+           AND owner.producer_implementation_id='a-termination-v1'
+           AND owner.owner_key=${requestId}
+      `;
+      assert.deepEqual(afterBirth.map((row) => ({ ...row })), [{
+        state: "bound",
+        owner_key: requestId,
+        close_ref: null,
+        owner_count: 1,
+      }]);
+      const headAfterBirth = (await database.sql<Array<{ head_version: string }>>`
+        SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!.head_version;
+      assert.ok(BigInt(headAfterBirth) > headBeforeBirth);
+
+      const preempted = await completions.preemptForRunTermination({
+        requestId: completionRequestId,
+        diagnostic: "completion boundary moved after termination ACK",
+      });
+      assert.equal(preempted.status, "preempted");
+      const headBeforeReplay = (await database.sql<Array<{ head_version: string }>>`
+        SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!.head_version;
+
+      const replay = await requestRunTermination(database.sql, input);
+      assert.equal(replay.status, "existing");
+      const afterReplay = await database.sql<Array<{
+        owner_count: number;
+        binding_count: number;
+        head_version: string;
+      }>>`
+        SELECT COUNT(*)::integer AS owner_count,
+               COUNT(*) FILTER (WHERE state='bound')::integer AS binding_count,
+               (SELECT head_version::text
+                  FROM internal_production_owner_admission_head_v1
+                 WHERE singleton) AS head_version
+          FROM internal_production_owner_reservations_v1
+         WHERE category='termination'
+           AND producer_implementation_id='a-termination-v1'
+           AND owner_key=${requestId}
+      `;
+      assert.deepEqual({ ...afterReplay[0] }, {
+        owner_count: 1,
+        binding_count: 1,
+        head_version: headBeforeReplay,
+      });
+      for (const corruptBoundOwner of [
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET canonical_owner_identity=jsonb_set(
+                    canonical_owner_identity,'{ownerKey}',to_jsonb('task6-forged-termination'::text)
+                  )
+            WHERE category='termination' AND owner_key=$1`,
+          [requestId],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET binding_payload=jsonb_set(
+                    binding_payload,'{reservationRef}',to_jsonb('setfarm://forged/reservation'::text)
+                  )
+            WHERE category='termination' AND owner_key=$1`,
+          [requestId],
+        ),
+        (transaction: postgres.TransactionSql) => transaction.unsafe(
+          `UPDATE internal_production_owner_reservations_v1
+              SET binding_payload=jsonb_set(
+                    binding_payload,'{reservationHash}',to_jsonb($2::text)
+                  )
+            WHERE category='termination' AND owner_key=$1`,
+          [requestId, "0".repeat(64)],
+        ),
+      ]) {
+        await assert.rejects(
+          database.sql.begin(async (transaction) => {
+            await corruptBoundOwner(transaction);
+            return requestRunTerminationInTransaction(transaction, input);
+          }),
+          /INTERNAL_PRODUCTION_(?:TERMINATION_OWNER_ADOPTION_INVALID|OWNER_[A-Z_]*CORRUPTION)/,
+        );
+      }
+      assert.deepEqual({ ...(await database.sql<Array<{
+        owner_count: number;
+        binding_count: number;
+        head_version: string;
+      }>>`
+        SELECT COUNT(*)::integer AS owner_count,
+               COUNT(*) FILTER (WHERE state='bound')::integer AS binding_count,
+               (SELECT head_version::text
+                  FROM internal_production_owner_admission_head_v1
+                 WHERE singleton) AS head_version
+          FROM internal_production_owner_reservations_v1
+        WHERE category='termination'
+           AND producer_implementation_id='a-termination-v1'
+           AND owner_key=${requestId}
+      `)[0] }, { ...afterReplay[0] });
+
+      const crossedRunId = "run-termination-deferred-crossed";
+      const crossed = await seedOwnedRuntime(database, crossedRunId);
+      const crossedCompletionRequestId = "RCR_termination-deferred-crossed1";
+      const crossedCompletion = await requestRuntimeCompletion(database.sql, {
+        envelope: {
+          schema: "setfarm.claim-envelope.v1",
+          protocol: "shadow",
+          issuedAt: "2026-07-13T12:00:00.000Z",
+          stepId: crossed.stepDbId,
+          workflowStepId: "implement",
+          runId: crossedRunId,
+          storyId: "US-001",
+          storyDbId: crossed.storyDbId,
+          claimId: crossed.claimId,
+          claimAgentId: "feature-dev_developer",
+          runtimeAgentId: "prism",
+          claimGeneration: 1,
+          attempt: {
+            attemptId: crossed.attempt.attempt.attemptId,
+            generation: crossed.attempt.attempt.generation,
+            fenceToken: crossed.attempt.attempt.fenceToken,
+          },
+        },
+        output: "STATUS: done\nCHANGES: crossed deferred completion boundary",
+        requestId: crossedCompletionRequestId,
+      });
+      assert.equal(crossedCompletion.status, "requested");
+      await createRuntimeCompletionRepository(database.sql).claim({
+        requestId: crossedCompletionRequestId,
+        ownerInstanceId: "task6-crossed-boundary",
+      });
+      const headBeforeDeferredBoundaryTamper = (await database.sql<Array<{ head_version: string }>>`
+        SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!.head_version;
+      for (const forgedBoundary of [
+        "RCR_termination-deferred-absent1",
+        crossedCompletionRequestId,
+      ]) {
+        await assert.rejects(
+          database.sql.begin(async (transaction) => {
+            await transaction.unsafe(
+              `UPDATE run_termination_requests
+                  SET evidence=jsonb_set(
+                        evidence,'{deferredForCompletionRequestId}',to_jsonb($2::text)
+                      ),updated_at=NOW()
+                WHERE request_id=$1`,
+              [requestId, forgedBoundary],
+            );
+            return requestRunTerminationInTransaction(transaction, input);
+          }),
+          /RUN_TERMINATION_DEFERRED_BOUNDARY_INVALID/,
+        );
+      }
+      assert.equal(
+        (await database.sql<Array<{ head_version: string }>>`
+          SELECT head_version::text FROM internal_production_owner_admission_head_v1 WHERE singleton
+        `)[0]!.head_version,
+        headBeforeDeferredBoundaryTamper,
+      );
+      assert.equal(
+        (await database.sql<Array<{ deferred_boundary: string }>>`
+          SELECT evidence->>'deferredForCompletionRequestId' AS deferred_boundary
+            FROM run_termination_requests WHERE request_id=${requestId}
+        `)[0]!.deferred_boundary,
+        completionRequestId,
+      );
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          for (const state of ["requested", "draining", "drained", "quarantined", "terminalized"]) {
+            await transaction.unsafe(
+              `UPDATE run_termination_requests
+                  SET state=$2,
+                      drained_at=CASE WHEN $2 IN ('drained','terminalized')
+                        THEN COALESCE(drained_at,NOW()) ELSE NULL END,
+                      terminalized_at=CASE WHEN $2='terminalized' THEN NOW() ELSE NULL END,
+                      updated_at=NOW()
+                WHERE request_id=$1`,
+              [requestId, state],
+            );
+            const inventory = (await transaction.unsafe<Array<{
+              request_state: string;
+              owner_state: string;
+              run_status: string;
+            }>>(
+              `SELECT request.state AS request_state,owner.state AS owner_state,run_row.status AS run_status
+                 FROM run_termination_requests request
+                 JOIN runs run_row ON run_row.id=request.run_id
+                 JOIN internal_production_owner_reservations_v1 owner
+                   ON owner.category='termination' AND owner.owner_key=request.request_id
+                WHERE request.request_id=$1`,
+              [requestId],
+            ))[0]!;
+            assert.deepEqual({ ...inventory }, {
+              request_state: state,
+              owner_state: "bound",
+              run_status: "running",
+            });
+          }
+          throw new Error("TEST_TERMINATION_DIRECT_STATE_BYPASS_ROLLBACK");
+        }),
+        /TEST_TERMINATION_DIRECT_STATE_BYPASS_ROLLBACK/,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects a termination sidecar that exists without its request row", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-partial-sidecar";
+      const requestId = "RTR_termination-partial-sidecar1";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionTerminationCanonicalOwnerIdentityV1({ requestId });
+        await beginOrAdoptInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          producerImplementationId: "a-termination-v1",
+          ownerKey: identity.ownerKey,
+        });
+      });
+
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "task6-partial-sidecar",
+          diagnostic: "partial sidecar must not be repaired",
+          requestId,
+        }),
+        /INTERNAL_PRODUCTION_TERMINATION_OWNER_PARTIAL_BIRTH/,
+      );
+      const census = (await database.sql<Array<{
+        request_count: number;
+        owner_state: string;
+      }>>`
+        SELECT (SELECT COUNT(*)::integer FROM run_termination_requests
+                 WHERE request_id=${requestId}) AS request_count,
+               owner.state AS owner_state
+          FROM internal_production_owner_reservations_v1 owner
+         WHERE owner.reservation_payload->>'producerImplementationId'='a-termination-v1'
+           AND owner.reservation_payload->>'ownerKey'=${requestId}
+      `)[0]!;
+      assert.deepEqual({ ...census }, { request_count: 0, owner_state: "pending" });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects ambiguous active completion boundaries before termination birth", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-ambiguous-completion";
+      await database.insertRun(runId);
+      const before = (await database.sql<Array<{
+        request_count: number;
+        termination_owner_count: number;
+        head_version: string;
+      }>>`
+        SELECT (SELECT COUNT(*)::integer FROM run_termination_requests
+                 WHERE run_id=${runId}) AS request_count,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE category='termination') AS termination_owner_count,
+               head_version::text AS head_version
+          FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!;
+      await assert.rejects(
+        database.sql.begin((transaction) => {
+          const ambiguousCompletionTransaction = new Proxy(transaction, {
+            get(target, property, receiver) {
+              if (property !== "unsafe") return Reflect.get(target, property, receiver);
+              return (query: string, parameters?: unknown[]) => {
+                if (
+                  query.includes("SELECT request_id FROM runtime_completion_requests")
+                  && query.includes("state IN ('draining', 'processing')")
+                ) {
+                  return Promise.resolve([
+                    { request_id: "RCR_ambiguous-active-completion1" },
+                    { request_id: "RCR_ambiguous-active-completion2" },
+                  ]);
+                }
+                return Reflect.apply(target.unsafe, target, [query, parameters]);
+              };
+            },
+          }) as postgres.TransactionSql;
+          return requestRunTerminationInTransaction(ambiguousCompletionTransaction, {
+            runId,
+            targetStatus: "failed",
+            requestedBy: "task6-ambiguous-completion",
+            diagnostic: "ambiguous active completion must fail closed",
+            requestId: "RTR_ambiguous-active-completion1",
+          });
+        }),
+        /RUN_TERMINATION_ACTIVE_COMPLETION_AMBIGUOUS/,
+      );
+      const after = (await database.sql<Array<typeof before>>`
+        SELECT (SELECT COUNT(*)::integer FROM run_termination_requests
+                 WHERE run_id=${runId}) AS request_count,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE category='termination') AS termination_owner_count,
+               head_version::text AS head_version
+          FROM internal_production_owner_admission_head_v1 WHERE singleton
+      `)[0]!;
+      assert.deepEqual({ ...after }, { ...before });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("refuses termination birth before reservation or request mutation when readiness or head is corrupt", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-prebirth-refusal";
+      await database.insertRun(runId);
+      await database.sql.unsafe("CREATE SEQUENCE task6_termination_prebirth_probe_v1");
+      await database.sql.unsafe(`
+        CREATE FUNCTION task6_termination_prebirth_probe_v1() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM nextval('task6_termination_prebirth_probe_v1');
+          RETURN NEW;
+        END $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task6_termination_reservation_probe_v1
+        BEFORE INSERT ON internal_production_owner_reservations_v1
+        FOR EACH ROW EXECUTE FUNCTION task6_termination_prebirth_probe_v1()
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER task6_termination_request_probe_v1
+        BEFORE INSERT ON run_termination_requests
+        FOR EACH ROW EXECUTE FUNCTION task6_termination_prebirth_probe_v1()
+      `);
+      const assertProbeUntouched = async () => {
+        const probe = (await database.sql<Array<{ is_called: boolean }>>`
+          SELECT is_called FROM task6_termination_prebirth_probe_v1
+        `)[0]!;
+        assert.equal(probe.is_called, false);
+      };
+      const input = {
+        runId,
+        targetStatus: "failed" as const,
+        requestedBy: "task6-prebirth-refusal",
+        diagnostic: "readiness and head must precede termination birth",
+        requestId: "RTR_termination-prebirth-refuse1",
+      };
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_producer_manifest_set_current_v1 DISABLE TRIGGER ALL",
+          );
+          await transaction.unsafe(
+            "UPDATE internal_production_owner_producer_manifest_set_current_v1 SET activation_hash=$1 WHERE singleton_key=TRUE",
+            ["0".repeat(64)],
+          );
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_producer_manifest_set_current_v1 ENABLE TRIGGER ALL",
+          );
+          return requestRunTerminationInTransaction(transaction, input);
+        }),
+        /INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_(?:(?:CURRENT_)?CORRUPTION|UNAVAILABLE)/,
+      );
+      await assertProbeUntouched();
+      await assert.rejects(
+        database.sql.begin(async (transaction) => {
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_admission_head_v1 DISABLE TRIGGER ALL",
+          );
+          await transaction.unsafe(
+            "UPDATE internal_production_owner_admission_head_v1 SET head_hash=$1 WHERE singleton=TRUE",
+            ["1".repeat(64)],
+          );
+          await transaction.unsafe(
+            "ALTER TABLE internal_production_owner_admission_head_v1 ENABLE TRIGGER ALL",
+          );
+          return requestRunTerminationInTransaction(transaction, input);
+        }),
+        /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+      );
+      await assertProbeUntouched();
+      const census = (await database.sql<Array<{ requests: number; owners: number }>>`
+        SELECT (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id=${runId}) AS requests,
+               (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1
+                 WHERE category='termination' AND owner_key=${input.requestId}) AS owners
+      `)[0]!;
+      assert.deepEqual({ ...census }, { requests: 0, owners: 0 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects crossed termination request identity or immutable body on replay", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-owner-crossing";
+      await database.insertRun(runId);
+      const original = {
+        runId,
+        targetStatus: "failed" as const,
+        requestedBy: "task6-owner-crossing",
+        diagnostic: "immutable termination request",
+        evidence: { source: "task6", generation: 1 },
+        requestId: "RTR_termination-owner-crossing1",
+      };
+      await requestRunTermination(database.sql, original);
+
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          ...original,
+          requestId: "RTR_termination-owner-crossing2",
+        }),
+        /RUN_TERMINATION_REQUEST_ID_CONFLICT/,
+      );
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          ...original,
+          diagnostic: "changed immutable request body",
+        }),
+        /RUN_TERMINATION_REQUEST_BODY_CONFLICT/,
+      );
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          ...original,
+          evidence: { source: "task6", generation: 2 },
+        }),
+        /RUN_TERMINATION_REQUEST_BODY_CONFLICT/,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects an unbound direct-SQL termination request instead of adopting it", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-direct-sql-bypass";
+      const requestId = "RTR_termination-direct-bypass1";
+      await database.insertRun(runId);
+      await database.sql`
+        INSERT INTO run_termination_requests (
+          request_id,run_id,target_status,state,requested_by,requested_at,
+          diagnostic,evidence
+        ) VALUES (
+          ${requestId},${runId},'failed','requested','task6-direct-sql',NOW(),
+          'unbound direct insert','{}'::jsonb
+        )
+      `;
+
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "task6-direct-sql",
+          diagnostic: "unbound direct insert",
+          evidence: {},
+          requestId,
+        }),
+        /INTERNAL_PRODUCTION_TERMINATION_OWNER_ADOPTION_INVALID/,
+      );
+      const owners = await database.sql<Array<{ count: number }>>`
+        SELECT COUNT(*)::integer AS count
+          FROM internal_production_owner_reservations_v1
+         WHERE category='termination' AND owner_key=${requestId}
+      `;
+      assert.equal(owners[0]!.count, 0);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("persists and projects the exact DESIGN semantic-closure cause", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -233,8 +818,10 @@ describe("durable two-phase run termination", () => {
         runId,
         targetStatus: "failed",
         requestedBy: "setfarm.step-fail.single",
-        diagnostic: "same semantic failure, different occurrence prose",
+        diagnostic: "generated TSX did not parse",
+        evidence: { sourceRef: "setfarm://test/converter-output" },
         failureCause: { ...SETUP_BUILD_CAUSE },
+        requestId: "RTR_cause-seal-request01",
       });
       assert.equal(duplicate.status, "existing");
       if (duplicate.status !== "existing") throw new Error("test duplicate missing");
@@ -341,6 +928,7 @@ describe("durable two-phase run termination", () => {
     try {
       const runId = "run-termination-cause-lifecycle";
       await database.insertRun(runId);
+      await bindRunOwner(database, runId);
       const requested = await requestRunTermination(database.sql, {
         runId,
         targetStatus: "failed",
@@ -442,7 +1030,8 @@ describe("durable two-phase run termination", () => {
         runId,
         targetStatus: "cancelled",
         requestedBy: "cli-user",
-        diagnostic: "duplicate click",
+        diagnostic: "Workflow cancelled by user",
+        requestId: "RTR_two-phase-cancel01",
       });
       assert.equal(duplicate.status, "existing");
       if (duplicate.status === "existing") assert.equal(duplicate.request.requestId, requested.request.requestId);
@@ -461,6 +1050,17 @@ describe("durable two-phase run termination", () => {
         }),
         /RUN_TERMINATION_RUNTIME_NOT_DRAINED/,
       );
+      const [heartbeat] = await Promise.all([
+        terminations.heartbeat({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "spawner-a",
+        }),
+        assert.rejects(
+          terminations.terminalize({ requestId: requested.request.requestId }),
+          /RUN_TERMINATION_REQUEST_NOT_DRAINED/,
+        ),
+      ]);
+      assert.equal(heartbeat, true);
       await seeded.sessions.markDrained({ sessionId: seeded.sessionId, evidence: DRAIN_EVIDENCE });
       assert.equal((await terminations.markDrained({
         requestId: requested.request.requestId,
@@ -498,6 +1098,18 @@ describe("durable two-phase run termination", () => {
         outbox_termination_request_id: requested.request.requestId,
       });
       assert.equal((await terminations.terminalize({ requestId: requested.request.requestId })).previousStatus, "cancelled");
+      assert.equal(await terminations.heartbeat({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "spawner-a",
+      }), false);
+      await assert.rejects(
+        terminations.quarantine({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "spawner-a",
+          diagnostic: "late quarantine must not reopen terminal ownership",
+        }),
+        /RUN_TERMINATION_QUARANTINE_FAILED/,
+      );
     } finally {
       await database.cleanup();
     }

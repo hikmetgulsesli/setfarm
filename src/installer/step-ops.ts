@@ -82,6 +82,7 @@ import {
 } from "../execution/schemas/runtime-completion-plan-v1.js";
 import {
   closeExactSingleStepClaimInTransaction,
+  closeInternalProductionClaimOwnerAfterTerminalMutationV1,
   closeUniqueSingleStepClaimForRecoveryInTransaction,
   completeSingleStepClaimAndState,
   completeStoryClaimAndBoundAttempt,
@@ -2569,26 +2570,52 @@ async function closeRoutedQualityClaimInTransaction(
     return;
   }
 
-  // Only old legacy workers are allowed to resolve a claim without a claim
-  // capability. Automation that runs after a shadow claim was already closed
-  // simply updates no rows here; it can never broad-close another owner.
-  await sql.unsafe(
-    `UPDATE claim_log AS cl
-        SET outcome = 'completed',
-            duration_ms = LEAST(
-              CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT),
-              2147483647
-            )::INTEGER,
-            diagnostic = $1
-       FROM runs r
-      WHERE r.id = cl.run_id
-        AND r.protocol = 'legacy'
-        AND cl.run_id = $2
-        AND cl.step_id = $3
-        AND cl.story_id IS NULL
-        AND cl.outcome IS NULL`,
-    [diagnostic.slice(0, 1_000), step.run_id, step.step_id],
+  await closeLegacyClaimOwnersInTransaction(sql, {
+    runId: step.run_id,
+    workflowStepId: step.step_id,
+    storyId: null,
+    diagnostic,
+  });
+}
+
+export async function closeLegacyClaimOwnersInTransaction(
+  sql: postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    workflowStepId: string;
+    storyId: string | null;
+    diagnostic: string;
+  }>,
+): Promise<void> {
+  const owners = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT cl.id::text AS id
+       FROM claim_log cl
+       JOIN runs r ON r.id = cl.run_id
+      WHERE r.protocol = 'legacy'
+        AND cl.run_id = $1
+        AND cl.step_id = $2
+        AND cl.story_id IS NOT DISTINCT FROM $3::text
+        AND cl.outcome IS NULL
+      ORDER BY cl.id
+      FOR UPDATE OF cl`,
+    [input.runId, input.workflowStepId, input.storyId],
   );
+  for (const owner of owners) {
+    const closed = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE claim_log
+          SET outcome = 'completed',
+              duration_ms = LEAST(
+                CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT),
+                2147483647
+              )::INTEGER,
+              diagnostic = $2
+        WHERE id = $1::bigint AND outcome IS NULL
+        RETURNING id::text AS id`,
+      [owner.id, input.diagnostic.slice(0, 1_000)],
+    );
+    if (closed.length !== 1) throw new Error("LEGACY_CLAIM_TERMINAL_CAS_LOST");
+    await closeInternalProductionClaimOwnerAfterTerminalMutationV1(sql, closed[0]!.id);
+  }
 }
 
 async function markRoutedQualityOwnerCommittedInTransaction(
@@ -5397,7 +5424,7 @@ async function claimSingleStep(
       return { found: false };
     }
     type PreviousStageFailureRow = {
-      claim_id: number;
+      claim_id: string;
       diagnostic: string | null;
       output: string;
       output_hash: string;
@@ -5405,7 +5432,7 @@ async function claimSingleStep(
       max_retries: number;
     };
     const previousRows = await pgQuery<PreviousStageFailureRow>(
-      `SELECT cl.id::integer AS claim_id,
+      `SELECT cl.id::text AS claim_id,
               cl.diagnostic,
               completion.output,
               completion.output_hash,
@@ -5425,8 +5452,17 @@ async function claimSingleStep(
       [step.id, step.run_id, step.step_id],
     );
     const previous = previousRows[previousRows.length - 1];
+    const previousClaimIds = previousRows.map((row) => {
+      const previousClaimId = Number(row.claim_id);
+      return Number.isSafeInteger(previousClaimId)
+        && previousClaimId > 0
+        && String(previousClaimId) === row.claim_id
+        ? previousClaimId
+        : null;
+    });
     const retryHistoryInvalid = previousRows.length !== step.retry_count
       || previousRows.length > 100
+      || previousClaimIds.some((claimId) => claimId === null)
       || previousRows.some((row) => !row.instruction || !row.output || !row.diagnostic);
     if (retryHistoryInvalid || !previous?.instruction || !previous.output || !previous.diagnostic) {
       const diagnostic = "V3_STAGE_RETRY_SOURCE_UNAVAILABLE: bounded stage retry requires the exact prior instruction, output, and validator failure; blind model redispatch is forbidden";
@@ -5458,7 +5494,7 @@ async function claimSingleStep(
         workflowStepId: step.step_id,
         retryOrdinal: index + 1,
         maxRetries: row.max_retries,
-        previousClaimId: row.claim_id,
+        previousClaimId: previousClaimIds[index]!,
         previousInstructionContent: row.instruction!,
         previousOutputContent: row.output,
         diagnostic: row.diagnostic!,
@@ -9777,7 +9813,12 @@ ${prd}`;
               const expectedContextJson = completionOwnedContextJson;
               const nextContextJson = JSON.stringify(context);
               await pgBegin(async (sql) => {
-                await sql`UPDATE claim_log SET outcome = 'completed', duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = ${`Implement phase ${currentPhase} completed`} WHERE run_id = ${step.run_id} AND step_id = ${step.step_id} AND story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`;
+                await closeLegacyClaimOwnersInTransaction(sql, {
+                  runId: step.run_id,
+                  workflowStepId: step.step_id,
+                  storyId: storyRow?.story_id || "",
+                  diagnostic: `Implement phase ${currentPhase} completed`,
+                });
                 const updatedContext = await sql.unsafe<Array<{ id: string }>>(
                   `UPDATE runs
                       SET context = $1, updated_at = $2
@@ -11148,7 +11189,22 @@ ${prd}`;
     } else {
       // Compatibility path for pre-envelope legacy runtimes. Compiler runs
       // never reach this branch because completeStep rejects them above.
-      await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5, merge_status = COALESCE($7, merge_status) WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id, storyMergeStatus]);
+      await pgBegin(async (sql) => {
+        const completedAt = now();
+        const updated = await sql.unsafe<Array<{ id: string }>>(
+          `UPDATE stories SET status=$1,output=$2,pr_url=$3,story_branch=$4,
+                  updated_at=$5,merge_status=COALESCE($7,merge_status)
+            WHERE id=$6 AND run_id=$8 AND status='running' RETURNING id`,
+          [storyStatus, output, storyPrUrl, storyBranchName, completedAt, step.current_story_id, storyMergeStatus, step.run_id],
+        );
+        if (updated.length !== 1) throw new Error("LEGACY_STORY_COMPLETION_CAS_LOST");
+        await closeLegacyClaimOwnersInTransaction(sql, {
+          runId: step.run_id,
+          workflowStepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          diagnostic: "Legacy story claim completed",
+        });
+      });
     }
     if (exactCompletionEnvelope && options.deferContinuationToEffectLedger) {
       // The owner transaction above is the first durable product-state commit.
@@ -11159,16 +11215,6 @@ ${prd}`;
     }
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
-
-    if (!exactCompletionEnvelope) {
-      // v1.5.50 compatibility: old legacy workers do not carry a claim id.
-      try {
-        await pgRun(
-          "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id = $3 AND outcome IS NULL",
-          [step.run_id, step.step_id, storyRow?.story_id || ""],
-        );
-      } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
-    }
 
     // B2: Record step_metrics for SLA tracking
     try {
@@ -11599,8 +11645,21 @@ ${prd}`;
     }
     _updateChanges = 1;
   } else {
-    const _ur = await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')", [output, now(), stepId]);
-    _updateChanges = _ur.changes;
+    _updateChanges = await pgBegin(async (sql) => {
+      const updated = await sql.unsafe<Array<{ id: string }>>(
+        "UPDATE steps SET status='done',output=$1,updated_at=$2 WHERE id=$3 AND status IN ('running','pending') RETURNING id",
+        [output, now(), stepId],
+      );
+      if (updated.length === 0) return 0;
+      if (updated.length !== 1) throw new Error("LEGACY_SINGLE_COMPLETION_CARDINALITY_INVALID");
+      await closeLegacyClaimOwnersInTransaction(sql, {
+        runId: step.run_id,
+        workflowStepId: step.step_id,
+        storyId: null,
+        diagnostic: "Legacy single-step claim completed",
+      });
+      return 1;
+    });
   }
   if (_updateChanges === 0) {
     // Already completed by another session — skip to prevent double pipeline advancement
@@ -11644,13 +11703,6 @@ ${prd}`;
 
   if (!immutableAcceptedCandidate) {
     await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}`, context);
-  }
-
-  // v1.5.50: Resolve claim_log outcome for single step
-  if (!completionAuthority?.envelope) {
-    try {
-      await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL", [step.run_id, step.step_id]);
-    } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
   }
 
     // B2: Record step_metrics for single step
@@ -13105,11 +13157,22 @@ async function handleSuperviseEachCompletion(
     }
     }
   } else {
-    const changed = await pgRun(
-      "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')",
-      [output, now(), superviseStep.id],
-    );
-    if (changed.changes === 0) return { advanced: false, runCompleted: false };
+    const changed = await pgBegin(async (sql) => {
+      const updated = await sql.unsafe<Array<{ id: string }>>(
+        "UPDATE steps SET status='waiting',output=$1,current_story_id=NULL,updated_at=$2 WHERE id=$3 AND status IN ('running','pending') RETURNING id",
+        [output, now(), superviseStep.id],
+      );
+      if (updated.length === 0) return 0;
+      if (updated.length !== 1) throw new Error("LEGACY_SUPERVISE_COMPLETION_CARDINALITY_INVALID");
+      await closeLegacyClaimOwnersInTransaction(sql, {
+        runId: superviseStep.run_id,
+        workflowStepId: superviseStep.step_id,
+        storyId: null,
+        diagnostic: "Legacy supervise_each claim completed",
+      });
+      return 1;
+    });
+    if (changed === 0) return { advanced: false, runCompleted: false };
   }
   await recordStepTransition(
     superviseStep.id,
@@ -13119,15 +13182,6 @@ async function handleSuperviseEachCompletion(
     undefined,
     "handleSuperviseEachCompletion",
   );
-  if (!claimEnvelope && !ownerAlreadyCommitted) {
-    try {
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
-        [superviseStep.run_id, superviseStep.step_id],
-      );
-    } catch (e) { logger.warn(`[claim-log] Failed to resolve supervise_each completion: ${String(e)}`, { runId: superviseStep.run_id }); }
-  }
-
   if (!story) {
     if (boundFinalProduct) {
       delete context["previous_failure"];
@@ -13712,19 +13766,24 @@ async function handleVerifyEachCompletion(
       return { advanced: false, runCompleted: false };
     }
   } else {
-    const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
-    if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
+    const changed = await pgBegin(async (sql) => {
+      const updated = await sql.unsafe<Array<{ id: string }>>(
+        "UPDATE steps SET status='waiting',output=$1,updated_at=$2 WHERE id=$3 AND status='running' RETURNING id",
+        [output, now(), verifyStep.id],
+      );
+      if (updated.length === 0) return 0;
+      if (updated.length !== 1) throw new Error("LEGACY_VERIFY_COMPLETION_CARDINALITY_INVALID");
+      await closeLegacyClaimOwnersInTransaction(sql, {
+        runId: verifyStep.run_id,
+        workflowStepId: verifyStep.step_id,
+        storyId: null,
+        diagnostic: "Legacy verify_each claim completed",
+      });
+      return 1;
+    });
+    if (changed === 0) return { advanced: false, runCompleted: false };
   }
   await recordStepTransition(verifyStep.id, verifyStep.run_id, "running", "waiting", undefined, "handleVerifyEachCompletion");
-  if (!claimEnvelope && !ownerAlreadyCommitted) {
-    try {
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
-        [verifyStep.run_id, verifyStep.step_id],
-      );
-    } catch (e) { logger.warn(`[claim-log] Failed to resolve verify_each completion: ${String(e)}`, { runId: verifyStep.run_id }); }
-  }
-
   if (status === "retry" && verifiedStoryId && isPlatformMetadataOnlyVerifyRetry(output)) {
     const row = await pgGet<{ pr_url: string | null }>(
       "SELECT pr_url FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",

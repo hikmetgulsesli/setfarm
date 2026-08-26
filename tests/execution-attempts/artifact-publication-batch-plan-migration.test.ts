@@ -7,6 +7,7 @@ import {
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
@@ -210,7 +211,10 @@ describe("artifact publication batch recovery plan migration 26", () => {
       applied.applied.includes("026_artifact_publication_batch_plan_ledger"),
       true,
     );
-    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    assert.equal(
+      (await auditAuthorityV3ContractSpineThroughMigration31V1(database.sql)).status,
+      "verified",
+    );
     await rollbackEmptyCurrentHeadsToV26(database);
     assert.equal(
       (await auditCurrentArtifactPublicationAuthorityLedgerData(database.sql)).status,
