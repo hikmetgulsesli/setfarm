@@ -57,7 +57,7 @@ printf '%s' "$count" > '${counter}'
     chmodSync(fakeLaunchctl, 0o700);
     const helperPath = path.join(internal, "baseline-service-restart-helper-v1.ts");
     writeFileSync(helperPath, source
-      .replace('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
+      .replaceAll('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
       .replace('if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {', 'if (true) {'));
     const operationHash = "a".repeat(64);
     const restartHash = "b".repeat(64);
@@ -168,7 +168,7 @@ printf '%s' "$count" > '${counter}'
     writeFileSync(swappedJournalHelperPath, source
       .replace("closeSync, constants,", "closeSync, constants, renameSync,")
       .replace("  const finalJournalCapability = authenticateCanonicalJournalCapability(5);", "  const p4JournalPath = path.join(repositoryRoot(), \"data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json\"); renameSync(p4JournalPath, `${p4JournalPath}.old`); writeFileSync(p4JournalPath, \"foreign-journal\\n\", { mode: 0o600 });\n  const finalJournalCapability = authenticateCanonicalJournalCapability(5);")
-      .replace('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
+      .replaceAll('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
       .replace('if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {', 'if (true) {'));
     const journalSwapFrameFd = openSync(framePath, "r");
     const journalSwapLockFd = openSync(lockPath, "r");
@@ -187,7 +187,7 @@ printf '%s' "$count" > '${counter}'
     writeFileSync(swappedHelperPath, source
       .replace("closeSync, constants,", "closeSync, constants, renameSync,")
       .replace("  const finalJournalCapability = authenticateCanonicalJournalCapability(5);", "  const p4LockPath = path.join(repositoryRoot(), \"data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock\"); renameSync(p4LockPath, `${p4LockPath}.old`); writeFileSync(p4LockPath, \"foreign-lock\\n\", { mode: 0o600 });\n  const finalJournalCapability = authenticateCanonicalJournalCapability(5);")
-      .replace('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
+      .replaceAll('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
       .replace('if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {', 'if (true) {'));
     const swapFrameFd = openSync(framePath, "r");
     const swapLockFd = openSync(lockPath, "r");
@@ -298,6 +298,94 @@ printf '%s' "$count" > '${counter}'
   }
 });
 
+test("P4 restart helper dispatches at most once", async () => {
+  const source = readFileSync(helperSourcePath, "utf8");
+  assert.match(source, /"baseline-service-restart"/);
+  assert.match(source, /a-restart-service-setfarm-spawner-v1/);
+  assert.match(source, /a-restart-service-setfarm-dashboard-v1/);
+  assert.match(source, /a-restart-service-mission-control-v1/);
+  assert.match(source, /journal\.maximumDispatchCount !== 1/);
+  assert.doesNotMatch(source, /^export /m);
+
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-baseline-helper-"));
+  try {
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(internal, { recursive: true });
+    const counter = path.join(fixture, "dispatch-count.txt");
+    const fakeLaunchctl = path.join(fixture, "fake-launchctl.sh");
+    writeFileSync(fakeLaunchctl, `#!/bin/sh
+count=0
+[ ! -f '${counter}' ] || count=$(cat '${counter}')
+count=$((count + 1))
+printf '%s' "$count" > '${counter}'
+`, { mode: 0o700 });
+    const helperPath = path.join(internal, "baseline-service-restart-helper-v1.ts");
+    writeFileSync(helperPath, source
+      .replaceAll('"/bin/launchctl"', JSON.stringify(fakeLaunchctl))
+      .replace('if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {', 'if (true) {'));
+
+    const authorizationHash = "4".repeat(64);
+    const authorizationRef = `setfarm://internal-production/baseline-service-restart-authorization/sha256/${authorizationHash}`;
+    const operationBody = { schema: "setfarm.internal-production-baseline-service-restart-operation.v1", service: "setfarm-spawner", actionId: "a-restart-service-setfarm-spawner-v1", authorizationRef, authorizationHash };
+    const operationHash = sha256(canonical(operationBody));
+    const operationRef = `setfarm://internal-production/baseline-service-restart-operation/sha256/${operationHash}`;
+    const restartOperation = { operationRef, operationHash };
+    const operationDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-v1/operations/sha256", operationHash.slice(0, 2));
+    mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(operationDirectory, `${operationHash}.json`), `${canonical({ ...operationBody, operationRef, operationHash })}\n`, { mode: 0o600 });
+    const outboxBody = { schema: "setfarm.internal-production-baseline-service-restart-launch-outbox.v1", service: operationBody.service, actionId: operationBody.actionId, authorizationRef, authorizationHash, operationRef, operationHash, maximumDispatchCount: 1 };
+    const outboxHash = sha256(canonical(outboxBody));
+    const outboxRef = `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${outboxHash}`;
+    const outboxDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-v1/outboxes/sha256", outboxHash.slice(0, 2));
+    mkdirSync(outboxDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(outboxDirectory, `${outboxHash}.json`), `${canonical({ ...outboxBody, outboxRef, outboxHash })}\n`, { mode: 0o600 });
+    const locatorDirectory = path.join(fixture, "data/internal-production-baseline/baseline-service-restart-v1/outbox-by-operation/sha256", operationHash.slice(0, 2));
+    mkdirSync(locatorDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(locatorDirectory, `${operationHash}.pair.json`), `${canonical({ operationRef, operationHash, outboxRef, outboxHash })}\n`, { mode: 0o600 });
+
+    const retirementRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const lockPath = path.join(retirementRoot, "physical-service-restart-authority.transition.lock");
+    const journalDirectory = path.join(retirementRoot, "baseline-helper-journals/sha256", operationHash.slice(0, 2));
+    mkdirSync(journalDirectory, { recursive: true, mode: 0o700 });
+    const observed = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart=,command="], { encoding: "utf8" });
+    assert.equal(observed.status, 0, observed.stderr);
+    const row = observed.stdout.slice(0, -1);
+    const lstart = row.slice(0, 24);
+    const command = row.slice(24).trimStart();
+    const processStartTimeEpochMs = Date.parse(lstart);
+    const processIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: process.pid, processStartTimeEpochMs, lstart, command }));
+    const transitionLock = { schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: process.pid, processStartTimeEpochMs, processIdentityHash, leaseNonce: "8".repeat(64) };
+    writeFileSync(lockPath, `${canonical(transitionLock)}\n`, { mode: 0o600 });
+    const lockFd = openSync(lockPath, "r");
+    const lockIdentity = identity(lockFd);
+    const journalBody = { schema: "setfarm.internal-production-service-restart-helper-journal.v1", family: "baseline-service-restart", operationSchema: "setfarm.internal-production-baseline-service-restart-operation.v1", action: "a-restart-service-setfarm-spawner-v1", restartOperation, transitionLock, lockIdentity, maximumDispatchCount: 1 };
+    const journalHash = sha256(canonical(journalBody));
+    const journalPath = path.join(journalDirectory, `${operationHash}.json`);
+    writeFileSync(journalPath, `${canonical({ ...journalBody, journalHash })}\n`, { mode: 0o600 });
+    const journalFd = openSync(journalPath, "r");
+    const frame = { schema: "setfarm.internal-production-baseline-service-restart-helper-capability.v1", restartOperation, journalHash, lockIdentity, journalIdentity: identity(journalFd) };
+    const framePath = path.join(fixture, "frame.json");
+    writeFileSync(framePath, canonical(frame));
+    const run = () => {
+      const frameFd = openSync(framePath, "r");
+      const nextLockFd = openSync(lockPath, "r");
+      const nextJournalFd = openSync(journalPath, "r");
+      const child = spawnSync(process.execPath, ["--import", tsxLoader, helperPath], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe", frameFd, nextLockFd, nextJournalFd], encoding: "utf8", timeout: 10_000 });
+      closeSync(frameFd); closeSync(nextLockFd); closeSync(nextJournalFd);
+      return child;
+    };
+    closeSync(lockFd); closeSync(journalFd);
+    const first = run();
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(readFileSync(counter, "utf8"), "1");
+    const replay = run();
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.equal(readFileSync(counter, "utf8"), "1", "settled replay must not dispatch again");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("P4 helper rejects insecure settlement-store ancestors", async () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-ancestor-")));
   try {
@@ -373,7 +461,8 @@ test("P4 startup family imports are inert in a fresh database-free child", () =>
       import("./src/internal-production/baseline-post-handoff-receipt-v1.ts?prewarm=receipt"),
       import("./src/internal-production/baseline-spawner-startup-admission-v1.ts?prewarm=startup"),
       import("./src/internal-production/baseline-restart-authority-retirement-v1.ts?prewarm=retirement"),
-      import("./src/internal-production/baseline-service-restart-helper-v1.ts?prewarm=helper")
+      import("./src/internal-production/baseline-service-restart-helper-v1.ts?prewarm=helper"),
+      import("./src/internal-production/baseline-service-restart-sequence-v1.ts?prewarm=sequence")
     ]);
     const forbidden=(name)=>{throw new Error("IMPORT_SIDE_EFFECT_"+name)};
     const originalOpenSync=fs.openSync;
@@ -401,7 +490,8 @@ test("P4 startup family imports are inert in a fresh database-free child", () =>
       import("./src/internal-production/baseline-post-handoff-receipt-v1.ts?inert=receipt"),
       import("./src/internal-production/baseline-spawner-startup-admission-v1.ts?inert=startup"),
       import("./src/internal-production/baseline-restart-authority-retirement-v1.ts?inert=retirement"),
-      import("./src/internal-production/baseline-service-restart-helper-v1.ts?inert=helper")
+      import("./src/internal-production/baseline-service-restart-helper-v1.ts?inert=helper"),
+      import("./src/internal-production/baseline-service-restart-sequence-v1.ts?inert=sequence")
     ]);
     let newRequests=[];
     for(let attempt=0;attempt<16;attempt++){

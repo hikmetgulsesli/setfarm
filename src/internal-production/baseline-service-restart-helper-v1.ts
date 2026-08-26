@@ -242,21 +242,153 @@ function authenticateCanonicalTransitionLock(fd: number): Readonly<{
   } finally { closeSync(reopened); }
 }
 
-function authenticateCanonicalJournalCapability(fd: number): Readonly<{ identity: Readonly<{ devDecimal: string; inoDecimal: string }>; bytes: Buffer }> {
-  const journalPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
+function authenticateCanonicalJournalCapability(fd: number, journalPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json")): Readonly<{ identity: Readonly<{ devDecimal: string; inoDecimal: string }>; bytes: Buffer }> {
+  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(journalPath));
   const held = fstatSync(fd, { bigint: true });
   const atPath = lstatSync(journalPath, { bigint: true });
   const reopened = openSync(journalPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
+    guard.assertStable();
     const again = fstatSync(reopened, { bigint: true });
     const bytes = readFileSync(reopened);
     if (!held.isFile() || held.isSymbolicLink() || held.nlink !== 1n || (held.mode & 0o7777n) !== 0o600n || !atPath.isFile() || atPath.isSymbolicLink() || atPath.nlink !== 1n || (atPath.mode & 0o7777n) !== 0o600n || !again.isFile() || again.isSymbolicLink() || again.nlink !== 1n || (again.mode & 0o7777n) !== 0o600n || atPath.dev !== held.dev || atPath.ino !== held.ino || again.dev !== held.dev || again.ino !== held.ino || bytes.length < 1 || bytes.length > MAX_FRAME_BYTES) fail("canonical journal descriptor/path identity is crossed");
+    guard.assertStable();
     return Object.freeze({ identity: Object.freeze({ devDecimal: held.dev.toString(10), inoDecimal: held.ino.toString(10) }), bytes });
-  } finally { closeSync(reopened); }
+  } finally {
+    closeSync(reopened);
+    try { guard.assertStable(); } finally { guard.close(); }
+  }
 }
 
 function helperSettlementPath(hash: string): string {
   return path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+const BASELINE_ACTIONS = Object.freeze({
+  "setfarm-spawner": Object.freeze({ actionId: "a-restart-service-setfarm-spawner-v1", label: "com.setrox.setfarm-spawner" }),
+  "setfarm-dashboard": Object.freeze({ actionId: "a-restart-service-setfarm-dashboard-v1", label: "com.setrox.setfarm-dashboard" }),
+  "mission-control": Object.freeze({ actionId: "a-restart-service-mission-control-v1", label: "com.setrox.mission-control" }),
+} as const);
+
+function readStableBaselineAuthorityBytes(file: string, label: string): Buffer {
+  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(file));
+  try {
+    guard.assertStable();
+    const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = fstatSync(descriptor, { bigint: true });
+      const atPath = lstatSync(file, { bigint: true });
+      const bytes = readFileSync(descriptor);
+      const after = fstatSync(descriptor, { bigint: true });
+      const finalPath = lstatSync(file, { bigint: true });
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.dev !== atPath.dev || before.ino !== atPath.ino || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || finalPath.dev !== before.dev || finalPath.ino !== before.ino || finalPath.nlink !== 1n || BigInt(bytes.length) !== before.size || bytes.length < 1 || bytes.length > MAX_FRAME_BYTES) fail(`${label} identity is invalid`);
+      guard.assertStable();
+      return bytes;
+    } finally { closeSync(descriptor); }
+  } finally {
+    try { guard.assertStable(); } finally { guard.close(); }
+  }
+}
+
+function readBaselineRestartOperation(pair: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const operation = exactPair(pair, "operationRef", "operationHash");
+  const operationHash = operation.operationHash as string;
+  const authorityRoot = path.join(repositoryRoot(), "data/internal-production-baseline/baseline-service-restart-v1");
+  const operationPath = path.join(authorityRoot, "operations/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
+  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(operationPath));
+  try {
+    guard.assertStable();
+    const descriptor = openSync(operationPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+    const before = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(operationPath, { bigint: true });
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.dev !== atPath.dev || before.ino !== atPath.ino || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(bytes.length) !== before.size || bytes.length < 1 || bytes.length > MAX_FRAME_BYTES) fail("baseline restart operation identity is invalid");
+    let value: unknown;
+    try { value = JSON.parse(bytes.toString("utf8")); } catch { fail("baseline restart operation is not JSON"); }
+    const body = exactRecord(value, ["schema", "service", "actionId", "authorizationRef", "authorizationHash", "operationRef", "operationHash"]);
+    const projection = { ...body };
+    delete projection.operationRef;
+    delete projection.operationHash;
+    const service = body.service as keyof typeof BASELINE_ACTIONS;
+    const expected = BASELINE_ACTIONS[service];
+    if (`${canonical(body)}\n` !== bytes.toString("utf8") || body.schema !== "setfarm.internal-production-baseline-service-restart-operation.v1" || !expected || body.actionId !== expected.actionId || typeof body.authorizationRef !== "string" || !REF.test(body.authorizationRef) || typeof body.authorizationHash !== "string" || !SHA256.test(body.authorizationHash) || !body.authorizationRef.endsWith(body.authorizationHash as string) || sha256(canonical(projection)) !== operationHash || body.operationHash !== operationHash || body.operationRef !== `setfarm://internal-production/baseline-service-restart-operation/sha256/${operationHash}`) fail("baseline restart operation is crossed");
+      const locatorPath = path.join(authorityRoot, "outbox-by-operation/sha256", operationHash.slice(0, 2), `${operationHash}.pair.json`);
+      let locator: Record<string, unknown>;
+      {
+        const locatorBytes = readStableBaselineAuthorityBytes(locatorPath, "baseline restart outbox locator");
+        let locatorValue: unknown;
+        try { locatorValue = JSON.parse(locatorBytes.toString("utf8")); } catch { fail("baseline restart outbox locator is not JSON"); }
+        locator = exactRecord(locatorValue, ["operationRef", "operationHash", "outboxRef", "outboxHash"]);
+        if (`${canonical(locator)}\n` !== locatorBytes.toString("utf8") || locator.operationRef !== body.operationRef || locator.operationHash !== body.operationHash || typeof locator.outboxHash !== "string" || !SHA256.test(locator.outboxHash) || locator.outboxRef !== `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${locator.outboxHash}`) fail("baseline restart outbox locator is crossed");
+      }
+      const outboxPath = path.join(authorityRoot, "outboxes/sha256", (locator.outboxHash as string).slice(0, 2), `${locator.outboxHash}.json`);
+      {
+        const outboxBytes = readStableBaselineAuthorityBytes(outboxPath, "baseline restart outbox");
+        let outboxValue: unknown;
+        try { outboxValue = JSON.parse(outboxBytes.toString("utf8")); } catch { fail("baseline restart outbox is not JSON"); }
+        const outbox = exactRecord(outboxValue, ["schema", "service", "actionId", "authorizationRef", "authorizationHash", "operationRef", "operationHash", "maximumDispatchCount", "outboxRef", "outboxHash"]);
+        const outboxProjection = { ...outbox }; delete outboxProjection.outboxRef; delete outboxProjection.outboxHash;
+        if (`${canonical(outbox)}\n` !== outboxBytes.toString("utf8") || outbox.schema !== "setfarm.internal-production-baseline-service-restart-launch-outbox.v1" || outbox.service !== body.service || outbox.actionId !== body.actionId || outbox.authorizationRef !== body.authorizationRef || outbox.authorizationHash !== body.authorizationHash || outbox.operationRef !== body.operationRef || outbox.operationHash !== body.operationHash || outbox.maximumDispatchCount !== 1 || outbox.outboxHash !== sha256(canonical(outboxProjection)) || outbox.outboxRef !== locator.outboxRef || outbox.outboxHash !== locator.outboxHash) fail("baseline restart outbox is crossed");
+      }
+      guard.assertStable();
+      return Object.freeze(body);
+    } finally { closeSync(descriptor); }
+  } finally {
+    try { guard.assertStable(); } finally { guard.close(); }
+  }
+}
+
+function baselineSettlementPath(hash: string): string {
+  return path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function executeBaselineRestart(frameValue: unknown): void {
+  const frame = exactRecord(frameValue, ["journalHash", "journalIdentity", "lockIdentity", "restartOperation", "schema"]);
+  if (frame.schema !== "setfarm.internal-production-baseline-service-restart-helper-capability.v1") fail("baseline capability discriminator is invalid");
+  const restartOperation = exactPair(frame.restartOperation, "operationRef", "operationHash");
+  if (typeof frame.journalHash !== "string" || !SHA256.test(frame.journalHash)) fail("baseline journal hash is invalid");
+  const lockIdentity = exactRecord(frame.lockIdentity, ["devDecimal", "inoDecimal"]);
+  const journalIdentity = exactRecord(frame.journalIdentity, ["devDecimal", "inoDecimal"]);
+  const operation = readBaselineRestartOperation(restartOperation);
+  const operationHash = restartOperation.operationHash as string;
+  const journalPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-journals/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
+  const journalCapability = authenticateCanonicalJournalCapability(5, journalPath);
+  const lockCapability = authenticateCanonicalTransitionLock(4);
+  if (canonical(lockIdentity) !== canonical(lockCapability.identity) || canonical(journalIdentity) !== canonical(journalCapability.identity)) fail("baseline inherited capability descriptors are crossed");
+  let journalValue: unknown;
+  const journalText = journalCapability.bytes.toString("utf8");
+  try { journalValue = JSON.parse(journalText); } catch { fail("baseline journal is not JSON"); }
+  const journal = exactRecord(journalValue, ["action", "family", "journalHash", "lockIdentity", "maximumDispatchCount", "operationSchema", "restartOperation", "schema", "transitionLock"]);
+  const journalProjection = { ...journal };
+  delete journalProjection.journalHash;
+  if (`${canonical(journal)}\n` !== journalText || journal.schema !== "setfarm.internal-production-service-restart-helper-journal.v1" || journal.family !== "baseline-service-restart" || journal.operationSchema !== "setfarm.internal-production-baseline-service-restart-operation.v1" || journal.action !== operation.actionId || canonical(journal.restartOperation) !== canonical(restartOperation) || canonical(journal.transitionLock) !== canonical(lockCapability.transitionLock) || canonical(journal.lockIdentity) !== canonical(lockIdentity) || journal.maximumDispatchCount !== 1 || sha256(canonical(journalProjection)) !== frame.journalHash || journal.journalHash !== frame.journalHash) fail("baseline journal capability is invalid");
+  const body = {
+    schema: "setfarm.internal-production-baseline-service-restart-helper-settlement.v1",
+    action: operation.actionId,
+    restartOperation,
+    journalHash: frame.journalHash,
+    transitionLock: lockCapability.transitionLock,
+    lockIdentity,
+    dispatchCount: 1,
+    disposition: "completed",
+  };
+  const helperSettlementHash = sha256(canonical(body));
+  const settlement = { ...body, helperSettlementRef: `setfarm://internal-production/baseline-service-restart-helper-settlement/sha256/${helperSettlementHash}`, helperSettlementHash };
+  const settlementPath = baselineSettlementPath(helperSettlementHash);
+  if (settlementAlreadyExists(settlementPath, settlement)) return;
+  const finalJournalCapability = authenticateCanonicalJournalCapability(5, journalPath);
+  const finalLockCapability = authenticateCanonicalTransitionLock(4);
+  if (canonical(lockIdentity) !== canonical(finalLockCapability.identity) || canonical(lockCapability.transitionLock) !== canonical(finalLockCapability.transitionLock) || canonical(journalIdentity) !== canonical(finalJournalCapability.identity) || !finalJournalCapability.bytes.equals(journalCapability.bytes)) fail("baseline inherited capabilities changed before dispatch");
+  const service = operation.service as keyof typeof BASELINE_ACTIONS;
+  const fixed = BASELINE_ACTIONS[service];
+  const result = spawnSync("/bin/launchctl", ["kickstart", "-k", `gui/${process.getuid?.()}/${fixed.label}`], {
+    env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), shell: false,
+    stdio: ["ignore", "ignore", "pipe"], timeout: 30_000, encoding: "utf8",
+  });
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== "") fail("fixed baseline launchctl dispatch failed");
+  publishSettlement(settlementPath, settlement);
 }
 
 async function main(): Promise<void> {
@@ -265,6 +397,10 @@ async function main(): Promise<void> {
   if (frameBytes.length < 1 || frameBytes.length > MAX_FRAME_BYTES) fail("capability frame size is invalid");
   let value: unknown;
   try { value = JSON.parse(frameBytes.toString("utf8")); } catch { fail("capability frame is not JSON"); }
+  if (value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).schema === "setfarm.internal-production-baseline-service-restart-helper-capability.v1") {
+    executeBaselineRestart(value);
+    return;
+  }
   const frame = exactRecord(value, ["schema", "action", "currentEntryOperation", "restartAuthority", "journalHash", "lockIdentity", "journalIdentity"]);
   if (frame.schema !== "setfarm.internal-production-pre-schema-spawner-rebind-restart-authority.v1" || frame.action !== "task6a-pre-schema-setfarm-spawner-rebind-v1") fail("capability discriminator is invalid");
   const operation = exactPair(frame.currentEntryOperation, "operationRef", "operationHash");
