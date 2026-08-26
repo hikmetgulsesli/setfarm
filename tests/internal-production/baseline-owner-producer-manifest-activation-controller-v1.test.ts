@@ -111,6 +111,19 @@ test("source boundary keeps activation PostgreSQL imports lazy", async () => {
   assert.doesNotMatch(source, /ensureSchemaReady|pgBegin/);
 });
 
+test("P4 current-entry resumes 32 audit 33 A verify init ready", async () => {
+  const db = await import("../../src/db-pg.js");
+  for (const name of [
+    "applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1",
+    "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1",
+    "initializeInternalProductionCurrentEntryDatabaseV1",
+  ] as const) {
+    const value = Reflect.get(db, name);
+    assert.equal(typeof value, "function", name);
+    assert.equal((value as Function).length, 0, name);
+  }
+});
+
 test("controller alone calls the one-key A database port and never the public generic activator", async () => {
   const source = await readFile(new URL("../../src/internal-production/baseline-owner-producer-manifest-activation-controller-v1.ts", import.meta.url), "utf8");
   assert.match(source, /activateInternalProductionBaselineOwnerProducerManifestAFromControllerV1\(\{ sourceBuildAuthority: \{ plan: "A", sourceBuildAuthorityRef: source\.sourceBuildAuthorityRef, sourceBuildAuthorityHash: source\.sourceBuildAuthorityHash \} \}\)/);

@@ -1,13 +1,23 @@
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionRecoverySourceBootstrapRunInTransactionV1,
   bindInternalProductionOwnerReservationV1,
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1,
   lockInternalProductionWorkflowRunInsertionFenceV1,
   pgBegin,
+  resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1,
   type PgTransactionSql,
 } from "../db-pg.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { resolveBundledWorkflowDir } from "../installer/paths.js";
+import { loadWorkflowSpec } from "../installer/workflow-spec.js";
+import type { WorkflowSpec } from "../installer/types.js";
+import {
+  resolveInternalProductionRecoverySourceBootstrapOperationV1,
+  type InternalProductionRecoverySourceBootstrapOperationV1,
+} from "../internal-production/baseline-post-handoff-receipt-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { RunProtocolIdentity } from "./run-protocol.js";
 import {
   V3ReleaseAdmissionV1Schema,
@@ -567,4 +577,292 @@ export async function persistWorkflowRun(
   const committed = tentative;
   if (!committed) throw new Error("RUN_PERSISTENCE_COMMIT_RESULT_UNAVAILABLE");
   return committed;
+}
+
+const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 =
+  "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
+
+export type PersistInternalProductionRecoverySourceBootstrapRunResultV1 = Readonly<{
+  run: PersistedWorkflowRunV1;
+  runOwnerReservationRef: string;
+  runOwnerReservationHash: string;
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}>;
+
+type RecoverySourceBootstrapRunCandidateV1 = Readonly<{
+  operation: InternalProductionRecoverySourceBootstrapOperationV1;
+  workflow: WorkflowSpec;
+  runId: string;
+  protocol: RunProtocolIdentity;
+  context: string;
+  steps: readonly PersistedWorkflowStep[];
+}>;
+
+function recoverySourceBootstrapRunCandidateV1(
+  operation: InternalProductionRecoverySourceBootstrapOperationV1,
+  protocolAuthority: Awaited<ReturnType<typeof resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1>>,
+  workflow: WorkflowSpec,
+): RecoverySourceBootstrapRunCandidateV1 {
+  if (
+    workflow.id !== "feature-dev"
+    || !Array.isArray(workflow.steps)
+    || workflow.steps.length === 0
+    || (workflow.context !== undefined && Reflect.ownKeys(workflow.context).length !== 0)
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_WORKFLOW_INVALID");
+  const stepIds = workflow.steps.map((step) => step.id);
+  if (new Set(stepIds).size !== stepIds.length || stepIds.some((stepId) => typeof stepId !== "string" || stepId.length === 0)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_WORKFLOW_INVALID");
+  }
+  if (
+    operation.protocol !== protocolAuthority.protocol
+    || operation.baseSourceSha !== protocolAuthority.compilerReleaseSha
+    || operation.baseSourceTreeHash !== protocolAuthority.baseSourceTreeHash
+    || operation.buildHash !== protocolAuthority.buildHash
+    || operation.activationPreflightHash !== protocolAuthority.activationPreflightHash
+    || operation.releaseAdmissionHash !== protocolAuthority.releaseAdmissionHash
+    || protocolAuthority.protocolVersion !== 1
+    || protocolAuthority.releaseAdmissionKind !== "release_go"
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_PROTOCOL_AUTHORITY_CROSSED");
+  const runId = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+    pendingInputRef: operation.pendingInputRef,
+    pendingInputHash: operation.pendingInputHash,
+  });
+  const protocol = Object.freeze({
+    mode: "v3" as const,
+    version: 1 as const,
+    compilerReleaseSha: operation.baseSourceSha,
+    activationPreflightHash: operation.activationPreflightHash,
+    releaseAdmissionHash: operation.releaseAdmissionHash,
+    releaseAdmissionKind: "release_go" as const,
+    canaryAdmission: null,
+  });
+  const operationRunBindingHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-operation-run-binding.v1",
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    sourceRunReservationRef: operation.targetSourceRunReservationRef,
+    sourceRunReservationHash: operation.targetSourceRunReservationHash,
+    sourceRunOwnerRef: operation.operationRef,
+    sourceRunOwnerHash: operation.operationHash,
+    runReservationRef: operation.targetRunReservationRef,
+    runReservationHash: operation.targetRunReservationHash,
+    runId,
+    runOwnerRef: `setfarm://runs/${encodeURIComponent(runId)}`,
+    runOwnerHash: hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId }),
+  });
+  const runOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}`;
+  const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId });
+  const reciprocalRunOperationBindingHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
+    runId,
+    runOwnerRef,
+    runOwnerHash,
+    runReservationRef: operation.targetRunReservationRef,
+    runReservationHash: operation.targetRunReservationHash,
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+    sourceRunOwnerRef: operation.operationRef,
+    sourceRunOwnerHash: operation.operationHash,
+    sourceRunReservationRef: operation.targetSourceRunReservationRef,
+    sourceRunReservationHash: operation.targetSourceRunReservationHash,
+    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    operationRunBindingHash,
+  });
+  const context = canonicalJsonStringify({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
+    task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
+    purpose: operation.purpose,
+    repository: operation.repository,
+    workflow: operation.workflow,
+    protocol: operation.protocol,
+    promptManifestHash: operation.promptManifestHash,
+    baseSourceSha: operation.baseSourceSha,
+    baseSourceTreeHash: operation.baseSourceTreeHash,
+    buildHash: operation.buildHash,
+    activationPreflightHash: operation.activationPreflightHash,
+    releaseAdmissionHash: operation.releaseAdmissionHash,
+    pendingInputRef: operation.pendingInputRef,
+    pendingInputHash: operation.pendingInputHash,
+    startIntentRef: operation.startIntentRef,
+    startIntentHash: operation.startIntentHash,
+    startOutboxRef: operation.startOutboxRef,
+    startOutboxHash: operation.startOutboxHash,
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+    targetSourceRunReservationRef: operation.targetSourceRunReservationRef,
+    targetSourceRunReservationHash: operation.targetSourceRunReservationHash,
+    targetRunReservationRef: operation.targetRunReservationRef,
+    targetRunReservationHash: operation.targetRunReservationHash,
+    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    sourceRunOwnerRef: operation.operationRef,
+    sourceRunOwnerHash: operation.operationHash,
+    runOwnerRef,
+    runOwnerHash,
+    operationRunBindingHash,
+    reciprocalRunOperationBindingHash,
+  });
+  const steps = Object.freeze(workflow.steps.map((step, stepIndex) => Object.freeze({
+    id: hashCanonicalJson({
+      schema: "setfarm.internal-production-recovery-source-bootstrap-step-id.v1",
+      runId,
+      stepId: step.id,
+      stepIndex,
+    }),
+    stepId: step.id,
+    agentId: `feature-dev_${step.agent}`,
+    stepIndex,
+    inputTemplate: step.input,
+    expects: step.expects,
+    status: stepIndex === 0 ? "pending" : "waiting",
+    maxRetries: step.max_retries ?? step.on_fail?.max_retries ?? 2,
+    type: step.type ?? "single",
+    loopConfig: step.loop === undefined ? null : canonicalJsonStringify(step.loop),
+  })));
+  return Object.freeze({ operation, workflow, runId, protocol, context, steps });
+}
+
+async function persistRecoverySourceBootstrapRunInTransactionV1(
+  sql: PgTransactionSql,
+  candidate: RecoverySourceBootstrapRunCandidateV1,
+): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
+  const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(sql, {
+    operationRef: candidate.operation.operationRef,
+    operationHash: candidate.operation.operationHash,
+  });
+  if (
+    authority.runId !== candidate.runId
+    || authority.operationRef !== candidate.operation.operationRef
+    || authority.operationHash !== candidate.operation.operationHash
+    || authority.activationPreflightHash !== candidate.operation.activationPreflightHash
+    || authority.releaseAdmissionHash !== candidate.operation.releaseAdmissionHash
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_INSERTION_AUTHORITY_CROSSED");
+  const existingRows = await sql.unsafe<PersistedWorkflowRunRowV1[]>(
+    `SELECT id,run_number,workflow_id,task,status,context,notify_url,protocol,
+            protocol_version,compiler_release_sha,activation_preflight_hash,
+            release_admission_hash,created_at,updated_at
+       FROM runs
+      WHERE id = $1
+      FOR UPDATE`,
+    [candidate.runId],
+  );
+  if (existingRows.length > 1) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
+  let row = existingRows[0] ?? null;
+  let persistedAt: Date;
+  let runNumber: number;
+  if (row === null) {
+    const numberRows = await sql.unsafe<Array<{ next: number | string }>>(
+      "SELECT nextval('runs_run_number_seq'::regclass) AS next",
+    );
+    runNumber = Number(numberRows[0]?.next);
+    if (!Number.isSafeInteger(runNumber) || runNumber < 1) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_NUMBER_INVALID");
+    persistedAt = await readDatabaseWallClock(sql, "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_TIME_UNAVAILABLE");
+    await sql.unsafe(
+      `INSERT INTO runs
+         (id,run_number,workflow_id,task,status,context,notify_url,protocol,
+          protocol_version,compiler_release_sha,activation_preflight_hash,
+          release_admission_hash,created_at,updated_at)
+       VALUES ($1,$2,'feature-dev',$3,'running',$4,NULL,'v3',1,$5,$6,$7,$8,$8)`,
+      [candidate.runId, runNumber, RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1, candidate.context,
+        candidate.operation.baseSourceSha, candidate.operation.activationPreflightHash,
+        candidate.operation.releaseAdmissionHash, persistedAt],
+    );
+    for (const step of candidate.steps) {
+      await sql.unsafe(
+        `INSERT INTO steps
+           (id,run_id,step_id,agent_id,step_index,input_template,expects,status,
+            max_retries,type,loop_config,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+        [step.id, candidate.runId, step.stepId, step.agentId, step.stepIndex,
+          step.inputTemplate, step.expects, step.status, step.maxRetries, step.type,
+          step.loopConfig, persistedAt],
+      );
+    }
+  } else {
+    persistedAt = new Date(row.created_at);
+    runNumber = row.run_number;
+    if (!Number.isFinite(persistedAt.getTime())) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
+  }
+  const bound = await bindInternalProductionRecoverySourceBootstrapRunInTransactionV1(sql, {
+    operationRef: candidate.operation.operationRef,
+    operationHash: candidate.operation.operationHash,
+    runId: candidate.runId,
+    operationRunBindingHash: authority.operationRunBindingHash,
+    reciprocalRunOperationBindingHash: authority.reciprocalRunOperationBindingHash,
+  });
+  const reopened = await sql.unsafe<PersistedWorkflowRunRowV1[]>(
+    `SELECT id,run_number,workflow_id,task,status,context,notify_url,protocol,
+            protocol_version,compiler_release_sha,activation_preflight_hash,
+            release_admission_hash,created_at,updated_at
+       FROM runs WHERE id=$1 FOR UPDATE`,
+    [candidate.runId],
+  );
+  row = reopened[0] ?? null;
+  if (
+    reopened.length !== 1 || !row
+    || row.id !== candidate.runId
+    || row.run_number !== runNumber
+    || row.workflow_id !== "feature-dev"
+    || row.task !== RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1
+    || row.status !== "running"
+    || row.context !== candidate.context
+    || row.notify_url !== null
+    || row.protocol !== "v3"
+    || row.protocol_version !== 1
+    || row.compiler_release_sha !== candidate.operation.baseSourceSha
+    || row.activation_preflight_hash !== candidate.operation.activationPreflightHash
+    || row.release_admission_hash !== candidate.operation.releaseAdmissionHash
+    || new Date(row.created_at).toISOString() !== persistedAt.toISOString()
+    || new Date(row.updated_at).toISOString() !== persistedAt.toISOString()
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
+  const storedSteps = await sql.unsafe<Array<{
+    id: string; run_id: string; step_id: string; agent_id: string; step_index: number;
+    input_template: string; expects: string; status: string; max_retries: number;
+    type: string; loop_config: string | null; created_at: Date | string; updated_at: Date | string;
+  }>>(
+    `SELECT id,run_id,step_id,agent_id,step_index,input_template,expects,status,
+            max_retries,type,loop_config,created_at,updated_at
+       FROM steps WHERE run_id=$1 ORDER BY step_index,id FOR UPDATE`,
+    [candidate.runId],
+  );
+  if (storedSteps.length !== candidate.steps.length || storedSteps.some((stored, index) => {
+    const step = candidate.steps[index];
+    return !step || stored.id !== step.id || stored.run_id !== candidate.runId
+      || stored.step_id !== step.stepId || stored.agent_id !== step.agentId
+      || stored.step_index !== step.stepIndex || stored.input_template !== step.inputTemplate
+      || stored.expects !== step.expects || stored.status !== step.status
+      || stored.max_retries !== step.maxRetries || stored.type !== step.type
+      || stored.loop_config !== step.loopConfig
+      || new Date(stored.created_at).toISOString() !== persistedAt.toISOString()
+      || new Date(stored.updated_at).toISOString() !== persistedAt.toISOString();
+  })) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_STEPS_INVALID");
+  const mapped = persistedWorkflowRunResultV1(row, {
+    runOwnerReservationRef: bound.runOwnerReservationRef,
+    runOwnerReservationHash: bound.runOwnerReservationHash,
+  });
+  return Object.freeze({
+    run: mapped.run,
+    runOwnerReservationRef: mapped.runOwnerReservationRef,
+    runOwnerReservationHash: mapped.runOwnerReservationHash,
+    operationRunBindingHash: authority.operationRunBindingHash,
+    reciprocalRunOperationBindingHash: authority.reciprocalRunOperationBindingHash,
+  });
+}
+
+export async function persistInternalProductionRecoverySourceBootstrapRunV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
+  const operation = await resolveInternalProductionRecoverySourceBootstrapOperationV1(input);
+  const protocolAuthority = await resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1();
+  const workflow = await loadWorkflowSpec(resolveBundledWorkflowDir("feature-dev"));
+  const candidate = recoverySourceBootstrapRunCandidateV1(operation, protocolAuthority, workflow);
+  let tentative: PersistInternalProductionRecoverySourceBootstrapRunResultV1 | undefined;
+  await pgBegin(async (sql) => {
+    tentative = await persistRecoverySourceBootstrapRunInTransactionV1(sql, candidate);
+    return undefined;
+  });
+  if (!tentative) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_COMMIT_RESULT_UNAVAILABLE");
+  return tentative;
 }

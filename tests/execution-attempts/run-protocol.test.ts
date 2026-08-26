@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +15,7 @@ import {
 import {
   type PersistWorkflowRunInputV1,
 } from "../../src/execution/run-persistence.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "a".repeat(40);
@@ -91,6 +92,111 @@ it("P4 readiness loader permits only declared extras", async () => {
   refuses(hidden);
   refuses(Object.assign({ ...required }, { [Symbol("foreign")]: true }));
   await rm(fixture, { recursive: true, force: true });
+});
+
+it("P4 recovery source bootstrap protocol ports reject caller authority before database access", async () => {
+  const database = await import("../../src/db-pg.js");
+  const protocol = Reflect.get(database, "resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1");
+  const lock = Reflect.get(database, "lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1");
+  const bind = Reflect.get(database, "bindInternalProductionRecoverySourceBootstrapRunInTransactionV1");
+  assert.equal(typeof protocol, "function");
+  assert.equal((protocol as Function).length, 0);
+  assert.equal(typeof lock, "function");
+  assert.equal((lock as Function).length, 2);
+  assert.equal(typeof bind, "function");
+  assert.equal((bind as Function).length, 2);
+  await assert.rejects(
+    () => (protocol as (input: unknown) => Promise<unknown>)({ callerAuthority: true }),
+    /RECOVERY_SOURCE_BOOTSTRAP_PROTOCOL_INPUT_FORBIDDEN/,
+  );
+  await assert.rejects(
+    () => (lock as (sql: unknown, input: unknown) => Promise<unknown>)({ unsafe: () => assert.fail("database accessed") }, { operationRef: "caller-only" }),
+    /RECOVERY_SOURCE_BOOTSTRAP_RUN_INSERTION_INPUT_INVALID/,
+  );
+  await assert.rejects(
+    () => (bind as (sql: unknown, input: unknown) => Promise<unknown>)({ unsafe: () => assert.fail("database accessed") }, { operationRef: "caller-only" }),
+    /RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_INPUT_INVALID/,
+  );
+});
+
+it("P4 recovery source bootstrap uses dedicated persistence and dispatch ports", async () => {
+  const persistence = await import("../../src/execution/run-persistence.js");
+  const installer = await import("../../src/installer/run.js");
+  const persistSpecial = Reflect.get(persistence, "persistInternalProductionRecoverySourceBootstrapRunV1");
+  const dispatchSpecial = Reflect.get(installer, "dispatchInternalProductionRecoverySourceBootstrapRunV1");
+  assert.equal(typeof persistSpecial, "function");
+  assert.equal((persistSpecial as Function).length, 1);
+  assert.equal(typeof dispatchSpecial, "function");
+  assert.equal((dispatchSpecial as Function).length, 1);
+  const persistenceSource = readFileSync(
+    new URL("../../src/execution/run-persistence.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(persistenceSource, /lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1/);
+  assert.match(persistenceSource, /bindInternalProductionRecoverySourceBootstrapRunInTransactionV1/);
+  assert.match(persistenceSource, /resolveBundledWorkflowDir\("feature-dev"\)/);
+  assert.match(persistenceSource, /RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1/);
+});
+
+it("P4 recovery source bootstrap persistence executes lock-first exact31 bind and commit withholding", async () => {
+  const production = readFileSync(new URL("../../src/execution/run-persistence.ts", import.meta.url), "utf8");
+  const start = production.indexOf("const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1");
+  const end = production.indexOf("export async function persistInternalProductionRecoverySourceBootstrapRunV1", start);
+  const publicEnd = production.indexOf("\n}", end) + 2;
+  assert.ok(start >= 0 && end > start && publicEnd > end);
+  const fixture = await mkdtemp(path.join(tmpdir(), "setfarm-p4-source-bootstrap-persistence-"));
+  try {
+    const execution = path.join(fixture, "src/execution");
+    await mkdir(execution, { recursive: true });
+    const modulePath = path.join(execution, "run-persistence-kernel.ts");
+    await writeFile(modulePath, `
+import {createHash} from "node:crypto";
+type PgTransactionSql=any; type WorkflowSpec=any; type RunProtocolIdentity=any; type PersistedWorkflowStep=any; type PersistedWorkflowRunRowV1=any;
+const g=globalThis as any;
+const canonicalJsonStringify=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonicalJsonStringify).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonicalJsonStringify(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonicalJsonStringify(v)).digest("hex");
+const resolveInternalProductionRecoverySourceBootstrapOperationV1=async()=>g.__p4PersistOperation;
+const resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1=async()=>g.__p4PersistProtocol;
+const resolveBundledWorkflowDir=()=>"feature-dev";
+const loadWorkflowSpec=async()=>g.__p4PersistWorkflow;
+const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=async(_sql:any)=>{g.__p4PersistLedger.push("lock");return g.__p4PersistAuthority};
+const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==31)throw new Error("EXACT31_CONTEXT_REQUIRED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
+const readDatabaseWallClock=async()=>{g.__p4PersistLedger.push("clock");return new Date("2026-08-26T12:00:00.000Z")};
+const persistedWorkflowRunResultV1=(row:any,pair:any)=>({run:{id:row.id,runNumber:row.run_number,workflowId:row.workflow_id,task:row.task,status:"running",context:row.context,notifyUrl:row.notify_url,protocol:row.protocol,protocolVersion:row.protocol_version,compilerReleaseSha:row.compiler_release_sha,activationPreflightHash:row.activation_preflight_hash,releaseAdmissionHash:row.release_admission_hash,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()},...pair});
+const pgBegin=async(cb:any)=>{const prior=structuredClone(g.__p4PersistState);const tx=structuredClone(prior);g.__p4PersistTx=tx;const sql:any={unsafe:async(q:string,p:any[]=[])=>{if(q.includes("FROM runs")&&q.includes("FOR UPDATE")){g.__p4PersistLedger.push("select-run");return tx.runs[p[0]]?[tx.runs[p[0]]]:[]}if(q.includes("nextval")){g.__p4PersistLedger.push("nextval");return [{next:41}]}if(q.includes("INSERT INTO runs")){g.__p4PersistLedger.push("insert-run");tx.runs[p[0]]={id:p[0],run_number:p[1],workflow_id:"feature-dev",task:p[2],status:"running",context:p[3],notify_url:null,protocol:"v3",protocol_version:1,compiler_release_sha:p[4],activation_preflight_hash:p[5],release_admission_hash:p[6],created_at:p[7],updated_at:p[7]};return []}if(q.includes("INSERT INTO steps")){g.__p4PersistLedger.push("insert-step");tx.steps.push({id:p[0],run_id:p[1],step_id:p[2],agent_id:p[3],step_index:p[4],input_template:p[5],expects:p[6],status:p[7],max_retries:p[8],type:p[9],loop_config:p[10],created_at:p[11],updated_at:p[11]});return []}if(q.includes("FROM steps")){g.__p4PersistLedger.push("select-steps");return tx.steps}throw new Error("UNEXPECTED_SQL:"+q)}};const value=await cb(sql);if(g.__p4PersistRejectCommit)throw new Error("INJECT_COMMIT_ACK_LOSS");g.__p4PersistState=tx;g.__p4PersistLedger.push("commit");return value};
+${production.slice(start, publicEnd)}
+export function p4State(){return structuredClone(g.__p4PersistState)}
+`, "utf8");
+    const kernel = await import(`${pathToFileURL(modulePath).href}?p4=${Date.now()}`) as any;
+    const sha = (member: string) => member.repeat(64);
+    const operation = { protocol: "v3", baseSourceSha: "1".repeat(40), baseSourceTreeHash: "2".repeat(40), buildHash: sha("1"), activationPreflightHash: sha("2"), releaseAdmissionHash: sha("3"), purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", promptManifestHash: sha("4"), pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: sha("5"), startIntentRef: "setfarm://tests/p4/intent", startIntentHash: sha("6"), startOutboxRef: "setfarm://tests/p4/outbox", startOutboxHash: sha("7"), operationRef: "setfarm://tests/p4/operation", operationHash: sha("8"), targetSourceRunReservationRef: "setfarm://tests/p4/source-reservation", targetSourceRunReservationHash: sha("9"), targetRunReservationRef: "setfarm://tests/p4/run-reservation", targetRunReservationHash: sha("a"), targetRunLaunchCompositeHash: sha("b") };
+    const runId = hashCanonicalJson({ schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1", pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash });
+    const protocol = { protocol: "v3", compilerReleaseSha: operation.baseSourceSha, baseSourceTreeHash: operation.baseSourceTreeHash, buildHash: operation.buildHash, activationPreflightHash: operation.activationPreflightHash, releaseAdmissionHash: operation.releaseAdmissionHash, protocolVersion: 1, releaseAdmissionKind: "release_go" };
+    const workflow = { id: "feature-dev", context: {}, steps: [{ id: "plan", agent: "planner", input: "plan", expects: "plan" }, { id: "build", agent: "developer", input: "build", expects: "code", max_retries: 1 }] };
+    const operationRunBindingHash = sha("c");
+    const reciprocalRunOperationBindingHash = sha("d");
+    const authority = { runId, operationRef: operation.operationRef, operationHash: operation.operationHash, activationPreflightHash: operation.activationPreflightHash, releaseAdmissionHash: operation.releaseAdmissionHash, operationRunBindingHash, reciprocalRunOperationBindingHash };
+    Object.assign(globalThis as any, { __p4PersistOperation: operation, __p4PersistProtocol: protocol, __p4PersistWorkflow: workflow, __p4PersistAuthority: authority, __p4PersistState: { runs: {}, steps: [] }, __p4PersistLedger: [], __p4PersistRejectCommit: false });
+    const persisted = await kernel.persistInternalProductionRecoverySourceBootstrapRunV1({ operationRef: operation.operationRef, operationHash: operation.operationHash });
+    assert.equal(persisted.run.id, runId);
+    const ledger = (globalThis as any).__p4PersistLedger as string[];
+    assert.deepEqual(ledger, ["lock", "select-run", "nextval", "clock", "insert-run", "insert-step", "insert-step", "bind", "select-run", "select-steps", "commit"]);
+    assert.equal(Object.keys(JSON.parse(persisted.run.context)).length, 31);
+    const committed = kernel.p4State();
+    (globalThis as any).__p4PersistState = { runs: {}, steps: [] };
+    (globalThis as any).__p4PersistLedger = [];
+    (globalThis as any).__p4PersistRejectCommit = true;
+    await assert.rejects(kernel.persistInternalProductionRecoverySourceBootstrapRunV1({ operationRef: operation.operationRef, operationHash: operation.operationHash }), /INJECT_COMMIT_ACK_LOSS/);
+    assert.deepEqual(kernel.p4State(), { runs: {}, steps: [] }, "tentative run and steps stay private until commit acknowledgement");
+    (globalThis as any).__p4PersistRejectCommit = false;
+    (globalThis as any).__p4PersistState = committed;
+    (globalThis as any).__p4PersistLedger = [];
+    const adopted = await kernel.persistInternalProductionRecoverySourceBootstrapRunV1({ operationRef: operation.operationRef, operationHash: operation.operationHash });
+    assert.equal(adopted.run.id, runId);
+    assert.doesNotMatch((globalThis as any).__p4PersistLedger.join(","), /nextval|clock|insert-/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
 });
 
 describe("run-pinned product compiler protocol", () => {

@@ -8,6 +8,7 @@ import {
   resolveInternalProductionMandatoryEffectTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionOwnerReservationCloseInTransactionV1,
   resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1,
+  resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1,
   resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1,
 } from "../db-pg.js";
@@ -926,10 +927,16 @@ export async function transitionRunToTerminalInTransaction(
       requestId: terminationRequestId,
     }));
   }
-  const terminalPair = await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+  const recoverySourceBootstrapTerminal = await resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
     ownerSql,
     { runId: input.runId },
   );
+  const terminalPair = recoverySourceBootstrapTerminal === null
+    ? await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
+        ownerSql,
+        { runId: input.runId },
+      )
+    : null;
 
   // Close all in the identical category order; P2 is mapped explicitly last.
   for (const closeInput of [
@@ -949,20 +956,22 @@ export async function transitionRunToTerminalInTransaction(
       || reopened.reservationHash !== closeInput.reservationHash
     ) throw new Error("RUN_TERMINAL_P3_OWNER_CLOSE_IDENTITY_INVALID");
   }
-  const runClose = await closeInternalProductionOwnerReservationV1(ownerSql, {
-    reservationRef: terminalPair.runOwnerReservationRef,
-    reservationHash: terminalPair.runOwnerReservationHash,
-    terminalAuthorityRef: terminalPair.terminalAuthorityRef,
-    terminalAuthorityHash: terminalPair.terminalAuthorityHash,
-  });
-  const reopenedRunClose = await resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerSql, {
-    closeRef: runClose.closeRef,
-    closeHash: runClose.closeHash,
-  });
-  if (
-    reopenedRunClose.reservationRef !== terminalPair.runOwnerReservationRef
-    || reopenedRunClose.reservationHash !== terminalPair.runOwnerReservationHash
-  ) throw new Error("RUN_TERMINAL_OWNER_CLOSE_IDENTITY_INVALID");
+  if (terminalPair !== null) {
+    const runClose = await closeInternalProductionOwnerReservationV1(ownerSql, {
+      reservationRef: terminalPair.runOwnerReservationRef,
+      reservationHash: terminalPair.runOwnerReservationHash,
+      terminalAuthorityRef: terminalPair.terminalAuthorityRef,
+      terminalAuthorityHash: terminalPair.terminalAuthorityHash,
+    });
+    const reopenedRunClose = await resolveInternalProductionOwnerReservationCloseInTransactionV1(ownerSql, {
+      closeRef: runClose.closeRef,
+      closeHash: runClose.closeHash,
+    });
+    if (
+      reopenedRunClose.reservationRef !== terminalPair.runOwnerReservationRef
+      || reopenedRunClose.reservationHash !== terminalPair.runOwnerReservationHash
+    ) throw new Error("RUN_TERMINAL_OWNER_CLOSE_IDENTITY_INVALID");
+  }
 
   const terminalEventPayload = {
     schema: "setfarm.run-terminal-event.v2",

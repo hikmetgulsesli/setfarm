@@ -1,4 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, openSync, closeSync, fsyncSync, fstatSync, lstatSync, readFileSync, readSync, readdirSync, writeFileSync, linkSync, unlinkSync, constants } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type postgres from "postgres";
 import { z } from "zod";
@@ -32,8 +37,11 @@ import {
   beginOrAdoptInternalProductionOwnerReservationV1,
   bindInternalProductionOwnerReservationV1,
   closeInternalProductionOwnerReservationV1,
+  lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1,
+  lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1,
   resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionOwnerReservationCloseInTransactionV1,
+  pgBegin,
   type PgTransactionSql,
 } from "../db-pg.js";
 import {
@@ -65,6 +73,551 @@ const RuntimeCompletionApplyPhaseSchema = z.enum([
 
 const MAX_RUNTIME_COMPLETION_PLAN_BYTES_V1 = 4_000_000;
 const MAX_RUNTIME_COMPLETION_EFFECT_PAYLOAD_BYTES_V1 = 4_000_000;
+
+export type InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-receipt.v1";
+  kind: "authenticated-completion-owner-bootstrap-target";
+  requestIdHash: string;
+  claimIdHash: string;
+  runIdentityHash: string;
+  ownerGenerationHash: string;
+  ownerFenced: true;
+  ownerDrained: true;
+  unrelatedOwnerCount: 0;
+  unrelatedOwnerCensusHash: string;
+  targetGuardHash: string;
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+}>;
+
+export type InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1 = Readonly<{
+  kind: "authenticated-completion-owner-bootstrap-target";
+  requestIdHash: string;
+  claimIdHash: string;
+  runIdentityHash: string;
+  ownerGenerationHash: string;
+  ownerFenced: true;
+  ownerDrained: true;
+  unrelatedOwnerCount: 0;
+  unrelatedOwnerCensusHash: string;
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  targetGuardHash: string;
+}>;
+
+export type InternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-consumption.v1";
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  targetGuardHash: string;
+  operationRef: string;
+  operationHash: string;
+  requestIdHash: string;
+  claimIdHash: string;
+  runIdentityHash: string;
+  ownerGenerationHash: string;
+  targetGuardConsumed: true;
+  consumptionRef: string;
+  consumptionHash: string;
+}>;
+
+export type InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 = Readonly<{
+  kind: "authenticated-baseline-completion-owner-bootstrap-clean-build-verification";
+  bootstrapMergeSha: string;
+  bootstrapTreeHash: string;
+  p0FileSetHash: string;
+  buildInfoHash: string;
+  focusedVerificationHash: string;
+  baselineHistoricalReceiptRef: string;
+  baselineHistoricalReceiptHash: string;
+  bootstrapHandoffMigrationReceiptRef: string;
+  bootstrapHandoffMigrationReceiptHash: string;
+  requestIdHash: string;
+  claimIdHash: string;
+  runIdentityHash: string;
+  ownerGenerationHash: string;
+  verificationHash: string;
+  capability: unknown;
+}>;
+
+type InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-eligibility.v1";
+  kind: "authenticated-baseline-completion-owner-bootstrap-clean-build-verification";
+  deliveryAuthorityRef: string;
+  deliveryAuthorityHash: string;
+  bootstrapMergeSha: string;
+  bootstrapTreeHash: string;
+  p0FileSetHash: string;
+  buildInfoHash: string;
+  focusedVerificationHash: string;
+  baselineHistoricalReceiptRef: string;
+  baselineHistoricalReceiptHash: string;
+  bootstrapHandoffMigrationReceiptRef: string;
+  bootstrapHandoffMigrationReceiptHash: string;
+  requestIdHash: string;
+  claimIdHash: string;
+  runIdentityHash: string;
+  ownerGenerationHash: string;
+  eligibilityRef: string;
+  eligibilityHash: string;
+}>;
+
+type CompletionBootstrapCleanBuildCapabilityStateV1 = Readonly<{
+  requestId: string;
+  ownerInstanceId: string;
+  ownerAttemptCount: number;
+  eligibilityRef: string;
+  eligibilityHash: string;
+}>;
+
+export type InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-lifecycle-observation.v1";
+  state: "guard_consumed" | "owner_recovered" | "owner_released" | "completed";
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  operationRef: string;
+  operationHash: string;
+  targetGuardConsumptionRef: string;
+  targetGuardConsumptionHash: string;
+  startupAdmissionRef: string;
+  startupAdmissionHash: string;
+  startupClaimHash: string;
+  restartAuthorityRef: string;
+  restartAuthorityHash: string;
+  recoveredOwnerGenerationHash: string | null;
+  targetOwnerReleaseReceiptHash: string | null;
+  sequenceRef: string | null;
+  sequenceHash: string | null;
+  observationHash: string;
+}>;
+
+type BootstrapGuardStateV1 = Readonly<{
+  receipt: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1;
+  requestId: string;
+  ownerInstanceId: string;
+  ownerAttemptCount: number;
+}>;
+
+const completionBootstrapGuardsV1 = new WeakMap<object, BootstrapGuardStateV1>();
+const completionBootstrapCleanBuildCapabilitiesV1 = new WeakMap<object, CompletionBootstrapCleanBuildCapabilityStateV1>();
+type CompletionBootstrapSelectedRecoveryCandidateV1 = Readonly<{
+  requestId: string;
+  ownerInstanceId: string;
+  ownerAttemptCount: number;
+  leaseExpiresAt: string;
+}>;
+const completionBootstrapSelectedRecoveryCandidatesV1 = new WeakMap<object, CompletionBootstrapSelectedRecoveryCandidateV1>();
+let completionBootstrapPendingSelectedRecoveryTokenV1: object | null = null;
+const completionBootstrapSelectedRecoveryContextV1 = new AsyncLocalStorage<CompletionBootstrapSelectedRecoveryCandidateV1>();
+
+const COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1 = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const COMPLETION_BOOTSTRAP_ROOT_V1 = path.join(
+  COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1,
+  "data/internal-production-baseline/completion-owner-bootstrap-target-guard-v1",
+);
+const COMPLETION_BOOTSTRAP_MAX_BYTES_V1 = 1_048_576;
+const SHA256_V1 = /^[a-f0-9]{64}$/;
+const COMPLETION_BOOTSTRAP_ELIGIBILITY_PREFIX_V1 = "setfarm://internal-production/baseline-completion-owner-bootstrap-eligibility/sha256/";
+
+function completionBootstrapFailV1(message: string): never {
+  throw new Error(`INTERNAL_PRODUCTION_COMPLETION_OWNER_BOOTSTRAP_INVALID:${message}`);
+}
+
+function recursivelyFreezeCompletionBootstrapV1<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const member of Object.values(value as Record<string, unknown>)) recursivelyFreezeCompletionBootstrapV1(member);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function completionBootstrapBytesV1(value: unknown): Buffer {
+  const bytes = Buffer.from(`${canonicalJsonStringify(value)}\n`, "utf8");
+  if (bytes.length < 1 || bytes.length > COMPLETION_BOOTSTRAP_MAX_BYTES_V1) completionBootstrapFailV1("record size");
+  return bytes;
+}
+
+function completionBootstrapHasExactStoredKeysV1(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).join(",") === [...keys].sort().join(",");
+}
+
+type CompletionBootstrapPrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
+
+function authenticateCompletionBootstrapPrivateDirectoryChainV1(target: string): CompletionBootstrapPrivateDirectoryGuardV1 {
+  const anchor = path.resolve(COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1);
+  const resolvedTarget = path.resolve(target);
+  const relative = path.relative(anchor, resolvedTarget);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) completionBootstrapFailV1("directory escaped repository");
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const descriptors: number[] = [];
+  const held: Array<ReturnType<typeof fstatSync>> = [];
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) completionBootstrapFailV1("directory guard closed");
+    for (const [index, current] of paths.entries()) {
+      const after = lstatSync(current, { bigint: true });
+      const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
+      const observed = held[index]!;
+      if (
+        !after.isDirectory() || after.isSymbolicLink() || !descriptorAfter.isDirectory()
+        || after.dev !== observed.dev || after.ino !== observed.ino || after.mode !== observed.mode
+        || descriptorAfter.dev !== observed.dev || descriptorAfter.ino !== observed.ino
+        || descriptorAfter.mode !== observed.mode
+      ) completionBootstrapFailV1("directory changed while authenticated");
+    }
+  };
+  try {
+    for (const [index, current] of paths.entries()) {
+      const before = lstatSync(current, { bigint: true });
+      const descriptor = openSync(current, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      descriptors.push(descriptor);
+      const observed = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory()
+        || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode
+        || before.nlink !== observed.nlink || before.nlink < 1n
+        || (index > 0 && (observed.mode & 0o7777n) !== 0o700n)
+        || (index > 0 && observed.dev !== held[0]!.dev)
+      ) completionBootstrapFailV1("private directory identity");
+      held.push(observed);
+    }
+    assertStable();
+    return Object.freeze({
+      assertStable,
+      close: () => {
+        if (closed) completionBootstrapFailV1("directory guard already closed");
+        closed = true;
+        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+      },
+    });
+  } catch (error) {
+    closed = true;
+    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    throw error;
+  }
+}
+
+function completionBootstrapEnsurePrivateDirectoryV1(directory: string): CompletionBootstrapPrivateDirectoryGuardV1 {
+  const anchor = path.resolve(COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1);
+  const target = path.resolve(directory);
+  const relative = path.relative(anchor, target);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) completionBootstrapFailV1("directory escaped repository");
+  let current = anchor;
+  for (const member of relative.split(path.sep)) {
+    if (!member || member === "." || member === "..") completionBootstrapFailV1("directory member");
+    const parentGuard = authenticateCompletionBootstrapPrivateDirectoryChainV1(current);
+    current = path.join(current, member);
+    try {
+      parentGuard.assertStable();
+      try { mkdirSync(current, { mode: 0o700 }); }
+      catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      }
+      parentGuard.assertStable();
+    } finally { parentGuard.close(); }
+    const createdGuard = authenticateCompletionBootstrapPrivateDirectoryChainV1(current);
+    createdGuard.close();
+  }
+  return authenticateCompletionBootstrapPrivateDirectoryChainV1(target);
+}
+
+function completionBootstrapReadBytesV1(target: string): Buffer {
+  const parent = path.dirname(target);
+  const parentGuard = authenticateCompletionBootstrapPrivateDirectoryChainV1(parent);
+  const parentStats = lstatSync(parent, { bigint: true });
+  try {
+    parentGuard.assertStable();
+    if (!parentStats.isDirectory() || parentStats.isSymbolicLink() || Number(parentStats.mode & 0o7777n) !== 0o700) completionBootstrapFailV1("record parent identity");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = fstatSync(descriptor, { bigint: true });
+      const atPath = lstatSync(target, { bigint: true });
+      if (!before.isFile() || before.dev !== parentStats.dev || before.dev !== atPath.dev || before.ino !== atPath.ino || before.nlink !== 1n || atPath.nlink !== 1n || Number(before.mode & 0o7777n) !== 0o600 || before.size < 1n || before.size > BigInt(COMPLETION_BOOTSTRAP_MAX_BYTES_V1)) completionBootstrapFailV1("record inode identity");
+      const bytes = readFileSync(descriptor);
+      const after = fstatSync(descriptor, { bigint: true });
+      const reopened = lstatSync(target, { bigint: true });
+      if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode || before.nlink !== after.nlink || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.dev !== reopened.dev || after.ino !== reopened.ino || after.nlink !== reopened.nlink || BigInt(bytes.length) !== after.size) completionBootstrapFailV1("record changed during read");
+      parentGuard.assertStable();
+      return bytes;
+    } finally { closeSync(descriptor); }
+  } finally { parentGuard.close(); }
+}
+
+function completionBootstrapRecoverNoReplacePublicationV1(target: string, bytes: Buffer): void {
+  const directory = path.dirname(target);
+  const prefix = `${path.basename(target)}.tmp-`;
+  const candidates = readdirSync(directory).filter((entry) => entry.startsWith(prefix));
+  if (candidates.length > 8) completionBootstrapFailV1("temporary candidate cap");
+  if (candidates.length === 0) return;
+  const namePattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
+  const pinned: Array<{ temp: string; descriptor: number; identity: ReturnType<typeof fstatSync>; observed: Buffer }> = [];
+  try {
+    for (const entry of candidates) {
+      if (!namePattern.test(entry)) completionBootstrapFailV1("temporary candidate name");
+      const temp = path.join(directory, entry);
+      const descriptor = openSync(temp, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const identity = fstatSync(descriptor, { bigint: true });
+      const atTemp = lstatSync(temp, { bigint: true });
+      const observed = readFileSync(descriptor);
+      if (!identity.isFile() || identity.dev !== atTemp.dev || identity.ino !== atTemp.ino || (identity.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(identity.nlink) || identity.size !== BigInt(observed.length) || !observed.equals(bytes)) completionBootstrapFailV1("temporary candidate invalid");
+      pinned.push({ temp, descriptor, identity, observed });
+    }
+    let targetStats: ReturnType<typeof lstatSync> | null = null;
+    try { targetStats = lstatSync(target, { bigint: true }); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    if (targetStats === null) {
+      const prelinks = pinned.filter(({ identity }) => identity.nlink === 1n);
+      if (prelinks.length < 1) completionBootstrapFailV1("temporary link state");
+      linkSync(prelinks[0]!.temp, target);
+      targetStats = lstatSync(target, { bigint: true });
+    }
+    const targetIsLinkedTemp = pinned.some(({ identity, observed }) => targetStats!.dev === identity.dev && targetStats!.ino === identity.ino && observed.equals(bytes));
+    const targetIsIndependent = targetStats.nlink === 1n && completionBootstrapReadBytesV1(target).equals(bytes);
+    if (!targetStats.isFile() || targetStats.isSymbolicLink() || (!targetIsLinkedTemp && !targetIsIndependent)) completionBootstrapFailV1("linked temporary identity");
+    for (const item of pinned) {
+      const now = fstatSync(item.descriptor, { bigint: true });
+      const atPath = lstatSync(item.temp, { bigint: true });
+      const observed = Buffer.alloc(Number(now.size));
+      if (readSync(item.descriptor, observed, 0, observed.length, 0) !== observed.length || now.dev !== item.identity.dev || now.ino !== item.identity.ino || atPath.dev !== item.identity.dev || atPath.ino !== item.identity.ino || !observed.equals(item.observed) || !observed.equals(bytes)) completionBootstrapFailV1("temporary candidate changed");
+      const linked = targetStats.dev === now.dev && targetStats.ino === now.ino && now.nlink === 2n;
+      const stale = targetIsIndependent && (targetStats.dev !== now.dev || targetStats.ino !== now.ino) && now.nlink === 1n;
+      if (!linked && !stale) completionBootstrapFailV1("linked temporary identity");
+    }
+    for (const item of pinned) unlinkSync(item.temp);
+  } finally { for (const item of pinned) closeSync(item.descriptor); }
+  const directoryDescriptor = openSync(directory, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+  try { fsyncSync(directoryDescriptor); } finally { closeSync(directoryDescriptor); }
+  if (!completionBootstrapReadBytesV1(target).equals(bytes)) completionBootstrapFailV1("recovered record identity");
+}
+
+function completionBootstrapWriteNoReplaceV1(target: string, value: unknown): void {
+  const bytes = completionBootstrapBytesV1(value);
+  const directoryGuard = completionBootstrapEnsurePrivateDirectoryV1(path.dirname(target));
+  let mutationLock: Readonly<{ close: () => void }> | null = null;
+  try {
+    directoryGuard.assertStable();
+    mutationLock = completionBootstrapAcquireLocatorMutationLockV1(target);
+    directoryGuard.assertStable();
+    completionBootstrapRecoverNoReplacePublicationV1(target, bytes);
+    const basename = path.basename(target);
+    const tempPrefix = `${basename}.tmp-`;
+    const candidates = readdirSync(path.dirname(target)).filter((entry) => entry.startsWith(tempPrefix));
+    if (candidates.length >= 8) completionBootstrapFailV1("temporary candidate cap");
+    const temp = `${target}.tmp-${process.pid}-${randomUUID()}`;
+    const fd = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+    try {
+      writeFileSync(fd, bytes); fsyncSync(fd);
+      const identity = fstatSync(fd, { bigint: true });
+      try { linkSync(temp, target); } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+        if (!completionBootstrapReadBytesV1(target).equals(bytes)) completionBootstrapFailV1("no-replace collision");
+      }
+      const atTemp = lstatSync(temp, { bigint: true });
+      const observed = Buffer.alloc(Number(identity.size));
+      if (readSync(fd, observed, 0, observed.length, 0) !== observed.length || atTemp.dev !== identity.dev || atTemp.ino !== identity.ino || !observed.equals(bytes)) completionBootstrapFailV1("temporary candidate changed");
+      unlinkSync(temp);
+    } finally { closeSync(fd); }
+    directoryGuard.assertStable();
+    const directory = openSync(path.dirname(target), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+    if (!completionBootstrapReadBytesV1(target).equals(bytes)) completionBootstrapFailV1("record reauthentication");
+    directoryGuard.assertStable();
+  } finally { mutationLock?.close(); directoryGuard.close(); }
+}
+
+function completionBootstrapReadV1(target: string): unknown {
+  const bytes = completionBootstrapReadBytesV1(target);
+  if (bytes.length < 1 || bytes.length > COMPLETION_BOOTSTRAP_MAX_BYTES_V1 || bytes[bytes.length - 1] !== 0x0a) completionBootstrapFailV1("record framing");
+  const value = JSON.parse(bytes.subarray(0, bytes.length - 1).toString("utf8")) as unknown;
+  if (!completionBootstrapBytesV1(value).equals(bytes)) completionBootstrapFailV1("record is not canonical");
+  return value;
+}
+
+function completionBootstrapAcquireLocatorMutationLockV1(target: string): Readonly<{ close: () => void }> {
+  const lockPath = `${target}.controller.lock`;
+  const directory = path.dirname(target);
+  const tempPrefix = `${path.basename(lockPath)}.tmp-`;
+  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-completion-bootstrap-locator-mutation-target.v1", target });
+  type ProcessSnapshotV1 =
+    | Readonly<{ state: "live"; processStart: string; processCommandHash: string; processIdentityHash: string }>
+    | Readonly<{ state: "dead" | "ambiguous" }>;
+  const snapshot = (pid: number): ProcessSnapshotV1 => {
+    try {
+      const observedPid = execFileSync("/bin/ps", ["-p", String(pid), "-o", "pid="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 2_000 }).trim();
+      if (observedPid !== String(pid)) return Object.freeze({ state: "ambiguous" as const });
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { status?: number | null; stdout?: string | Buffer; stderr?: string | Buffer };
+      const stdout = typeof failure.stdout === "string" ? failure.stdout : Buffer.isBuffer(failure.stdout) ? failure.stdout.toString("utf8") : "";
+      const stderr = typeof failure.stderr === "string" ? failure.stderr : Buffer.isBuffer(failure.stderr) ? failure.stderr.toString("utf8") : "";
+      if (failure.status === 1 && stdout.trim() === "" && stderr.trim() === "") return Object.freeze({ state: "dead" as const });
+      return Object.freeze({ state: "ambiguous" as const });
+    }
+    try {
+      const processStart = execFileSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 }).trim();
+      const command = execFileSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 }).trim();
+      if (!processStart || !command) return Object.freeze({ state: "ambiguous" as const });
+      const processCommandHash = hashCanonicalJson({ schema: "setfarm.internal-production-completion-bootstrap-lock-process-command.v1", command });
+      return Object.freeze({ state: "live" as const, processStart, processCommandHash, processIdentityHash: hashCanonicalJson({ schema: "setfarm.internal-production-completion-bootstrap-lock-process-identity.v1", pid, processStart, processCommandHash }) });
+    } catch { return Object.freeze({ state: "ambiguous" as const }); }
+  };
+  const parse = (bytes: Buffer): Record<string, unknown> => {
+    const value = JSON.parse(bytes.subarray(0, bytes.length - 1).toString("utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value) || !completionBootstrapBytesV1(value).equals(bytes) || !completionBootstrapHasExactStoredKeysV1(value as Record<string, unknown>, ["schema", "targetHash", "pid", "processStart", "processCommandHash", "processIdentityHash", "nonce"])) completionBootstrapFailV1("locator mutation lock shape");
+    const record = value as Record<string, unknown>;
+    if (record.schema !== "setfarm.internal-production-completion-bootstrap-locator-mutation-lock.v1" || record.targetHash !== targetHash || typeof record.pid !== "number" || !Number.isSafeInteger(record.pid) || record.pid < 1 || typeof record.processStart !== "string" || typeof record.processCommandHash !== "string" || !SHA256_V1.test(record.processCommandHash) || typeof record.processIdentityHash !== "string" || !SHA256_V1.test(record.processIdentityHash) || typeof record.nonce !== "string") completionBootstrapFailV1("locator mutation lock authority");
+    return record;
+  };
+  const unlinkPinned = (candidate: string, descriptor: number, identity: ReturnType<typeof fstatSync>, bytes: Buffer): void => {
+    const atPath = lstatSync(candidate, { bigint: true });
+    const again = fstatSync(descriptor, { bigint: true });
+    const observed = Buffer.alloc(Number(again.size));
+    if (readSync(descriptor, observed, 0, observed.length, 0) !== observed.length || !again.isFile() || (again.mode & 0o7777n) !== 0o600n || again.dev !== identity.dev || again.ino !== identity.ino || again.size !== identity.size || atPath.dev !== identity.dev || atPath.ino !== identity.ino || !observed.equals(bytes)) completionBootstrapFailV1("locator mutation lock changed");
+    unlinkSync(candidate);
+  };
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const guard = authenticateCompletionBootstrapPrivateDirectoryChainV1(directory);
+    guard.assertStable();
+    const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix));
+    if (candidates.length > 8) { guard.close(); completionBootstrapFailV1("locator mutation lock temporary cap"); }
+    let busy = false;
+    for (const entry of candidates) {
+      if (!new RegExp(`^${tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).test(entry)) { guard.close(); completionBootstrapFailV1("locator mutation lock temporary name"); }
+      const candidate = path.join(directory, entry);
+      const descriptor = openSync(candidate, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const identity = fstatSync(descriptor, { bigint: true });
+        const bytes = readFileSync(descriptor);
+        const owner = parse(bytes);
+        const live = snapshot(owner.pid as number);
+        if (live.state === "ambiguous" || (live.state === "live" && live.processStart === owner.processStart && live.processCommandHash === owner.processCommandHash && live.processIdentityHash === owner.processIdentityHash)) busy = true;
+        else unlinkPinned(candidate, descriptor, identity, bytes);
+      } finally { closeSync(descriptor); }
+    }
+    if (busy) { guard.close(); if (Date.now() >= deadline) completionBootstrapFailV1("locator mutation lock busy"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); continue; }
+    try {
+      const existingDescriptor = openSync(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const identity = fstatSync(existingDescriptor, { bigint: true });
+        const bytes = readFileSync(existingDescriptor);
+        const owner = parse(bytes);
+        const live = snapshot(owner.pid as number);
+        if (live.state === "ambiguous" || (live.state === "live" && live.processStart === owner.processStart && live.processCommandHash === owner.processCommandHash && live.processIdentityHash === owner.processIdentityHash)) busy = true;
+        else unlinkPinned(lockPath, existingDescriptor, identity, bytes);
+      } finally { closeSync(existingDescriptor); }
+    } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") { guard.close(); throw error; } }
+    if (busy) { guard.close(); if (Date.now() >= deadline) completionBootstrapFailV1("locator mutation lock busy"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); continue; }
+    const nonce = randomUUID();
+    const owner = snapshot(process.pid);
+    if (owner.state !== "live") { guard.close(); completionBootstrapFailV1("locator mutation lock owner unavailable"); }
+    const body = Object.freeze({ schema: "setfarm.internal-production-completion-bootstrap-locator-mutation-lock.v1", targetHash, pid: process.pid, processStart: owner.processStart, processCommandHash: owner.processCommandHash, processIdentityHash: owner.processIdentityHash, nonce });
+    const bytes = completionBootstrapBytesV1(body);
+    const temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`);
+    const descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+    writeFileSync(descriptor, bytes); fsyncSync(descriptor);
+    const identity = fstatSync(descriptor, { bigint: true });
+    try { linkSync(temp, lockPath); } catch (error) {
+      unlinkPinned(temp, descriptor, identity, bytes); closeSync(descriptor); guard.close();
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) completionBootstrapFailV1("locator mutation lock busy");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); continue;
+    }
+    unlinkPinned(temp, descriptor, identity, bytes);
+    const parentDescriptor = openSync(directory, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    try { fsyncSync(parentDescriptor); } finally { closeSync(parentDescriptor); }
+    guard.assertStable();
+    return Object.freeze({ close: () => {
+      try {
+        const atPath = lstatSync(lockPath, { bigint: true });
+        if (!identity.isFile() || identity.nlink !== 1n || identity.dev !== atPath.dev || identity.ino !== atPath.ino || !completionBootstrapReadBytesV1(lockPath).equals(bytes)) completionBootstrapFailV1("locator mutation lock changed");
+        unlinkSync(lockPath);
+        const directoryDescriptor = openSync(directory, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+        try { fsyncSync(directoryDescriptor); } finally { closeSync(directoryDescriptor); }
+        guard.assertStable();
+      } finally { closeSync(descriptor); guard.close(); }
+    } });
+  }
+}
+
+function completionBootstrapPairV1(value: unknown, refKey: string, hashKey: string, prefix: string): Readonly<Record<string, string>> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Reflect.ownKeys(value).some((key) => typeof key !== "string") || Object.keys(value).join(",") !== `${refKey},${hashKey}`) completionBootstrapFailV1("pair shape");
+  const pair = value as Record<string, unknown>;
+  if (typeof pair[hashKey] !== "string" || !SHA256_V1.test(pair[hashKey] as string) || pair[refKey] !== `${prefix}${pair[hashKey]}`) completionBootstrapFailV1("pair identity");
+  return Object.freeze({ [refKey]: pair[refKey] as string, [hashKey]: pair[hashKey] as string });
+}
+
+function completionBootstrapReceiptPathV1(hash: string): string {
+  return path.join(COMPLETION_BOOTSTRAP_ROOT_V1, "receipts/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function completionBootstrapConsumptionPathV1(hash: string): string {
+  return path.join(COMPLETION_BOOTSTRAP_ROOT_V1, "consumptions/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function completionBootstrapConsumedPathV1(hash: string): string {
+  return path.join(COMPLETION_BOOTSTRAP_ROOT_V1, "consumed-guards/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function completionBootstrapEligibilityPathV1(hash: string): string {
+  return path.join(COMPLETION_BOOTSTRAP_ROOT_V1, "eligibilities/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function completionBootstrapSelectedEligibilityPathV1(): string {
+  return path.join(COMPLETION_BOOTSTRAP_ROOT_V1, "selected-eligibility.json");
+}
+
+function completionBootstrapReadEligibilityV1(
+  input: Readonly<{ eligibilityRef: string; eligibilityHash: string }>,
+): InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1 {
+  const pair = completionBootstrapPairV1(input, "eligibilityRef", "eligibilityHash", COMPLETION_BOOTSTRAP_ELIGIBILITY_PREFIX_V1);
+  const value = completionBootstrapReadV1(completionBootstrapEligibilityPathV1(pair.eligibilityHash!));
+  if (!value || typeof value !== "object" || Array.isArray(value)) completionBootstrapFailV1("eligibility shape");
+  const eligibility = value as Record<string, unknown>;
+  const keys = ["schema", "kind", "deliveryAuthorityRef", "deliveryAuthorityHash", "bootstrapMergeSha", "bootstrapTreeHash", "p0FileSetHash", "buildInfoHash", "focusedVerificationHash", "baselineHistoricalReceiptRef", "baselineHistoricalReceiptHash", "bootstrapHandoffMigrationReceiptRef", "bootstrapHandoffMigrationReceiptHash", "requestIdHash", "claimIdHash", "runIdentityHash", "ownerGenerationHash", "eligibilityRef", "eligibilityHash"] as const;
+  if (!completionBootstrapHasExactStoredKeysV1(eligibility, keys) || eligibility.schema !== "setfarm.internal-production-baseline-completion-owner-bootstrap-eligibility.v1" || eligibility.kind !== "authenticated-baseline-completion-owner-bootstrap-clean-build-verification") completionBootstrapFailV1("eligibility keys");
+  const body = Object.fromEntries(keys.slice(0, -2).map((key) => [key, eligibility[key]]));
+  if (hashCanonicalJson(body) !== pair.eligibilityHash || eligibility.eligibilityRef !== pair.eligibilityRef || eligibility.eligibilityHash !== pair.eligibilityHash) completionBootstrapFailV1("eligibility authority");
+  for (const key of ["deliveryAuthorityHash", "p0FileSetHash", "buildInfoHash", "focusedVerificationHash", "baselineHistoricalReceiptHash", "bootstrapHandoffMigrationReceiptHash", "requestIdHash", "claimIdHash", "runIdentityHash", "ownerGenerationHash", "eligibilityHash"] as const) if (typeof eligibility[key] !== "string" || !SHA256_V1.test(eligibility[key] as string)) completionBootstrapFailV1(`eligibility ${key}`);
+  return recursivelyFreezeCompletionBootstrapV1(eligibility) as InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1;
+}
+
+function completionBootstrapReadSelectedEligibilityV1(): Readonly<{ eligibilityRef: string; eligibilityHash: string }> {
+  const value = completionBootstrapReadV1(completionBootstrapSelectedEligibilityPathV1());
+  if (!value || typeof value !== "object" || Array.isArray(value) || !completionBootstrapHasExactStoredKeysV1(value as Record<string, unknown>, ["eligibilityRef", "eligibilityHash"])) completionBootstrapFailV1("selected eligibility locator");
+  const stored = value as Record<string, unknown>;
+  return completionBootstrapPairV1(
+    { eligibilityRef: stored.eligibilityRef, eligibilityHash: stored.eligibilityHash },
+    "eligibilityRef",
+    "eligibilityHash",
+    COMPLETION_BOOTSTRAP_ELIGIBILITY_PREFIX_V1,
+  ) as Readonly<{ eligibilityRef: string; eligibilityHash: string }>;
+}
+
+function completionBootstrapSelectedEligibilityMatchesRowV1(row: RuntimeCompletionRow): boolean {
+  let selected: Readonly<{ eligibilityRef: string; eligibilityHash: string }>;
+  try { selected = completionBootstrapReadSelectedEligibilityV1(); } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+  const eligibility = completionBootstrapReadEligibilityV1(selected);
+  return eligibility.requestIdHash === hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id })
+    && eligibility.claimIdHash === hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) })
+    && eligibility.runIdentityHash === hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id })
+    && eligibility.ownerGenerationHash === hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: row.owner_instance_id, ownerAttemptCount: row.owner_attempt_count });
+}
+
+function completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1(
+  row: RuntimeCompletionRow,
+  receipt: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1,
+): InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1 {
+  const eligibility = completionBootstrapReadEligibilityV1(completionBootstrapReadSelectedEligibilityV1());
+  const requestIdHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id });
+  const claimIdHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) });
+  const runIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id });
+  const ownerGenerationHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: row.owner_instance_id, ownerAttemptCount: row.owner_attempt_count });
+  if (eligibility.requestIdHash !== requestIdHash || eligibility.claimIdHash !== claimIdHash || eligibility.runIdentityHash !== runIdentityHash || eligibility.ownerGenerationHash !== ownerGenerationHash || receipt.requestIdHash !== requestIdHash || receipt.claimIdHash !== claimIdHash || receipt.runIdentityHash !== runIdentityHash || receipt.ownerGenerationHash !== ownerGenerationHash) completionBootstrapFailV1("selected eligibility guard identity crossed");
+  return eligibility;
+}
 
 export {
   RuntimeCompletionSubmissionEvidenceV1Schema,
@@ -1637,7 +2190,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<Readonly<{
-      status: "none" | "resume_owner" | "resume_effects" | "finalize" | "preempted" | "quarantined";
+      status: "none" | "resume_owner" | "resume_effects" | "finalize" | "bootstrap_selected" | "preempted" | "quarantined";
       request?: RuntimeCompletionRequest;
     }>> {
       validTime(input.now);
@@ -1665,6 +2218,18 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           || !request.lease_expires_at
           || new Date(request.lease_expires_at).getTime() > wallClock.getTime()
         ) return { status: "none" as const };
+        if (request.apply_phase === "effects_committed" && completionBootstrapSelectedEligibilityMatchesRowV1(request)) {
+          if (!request.owner_instance_id || !request.lease_expires_at) throw new Error("RUNTIME_COMPLETION_BOOTSTRAP_SELECTED_RECOVERY_AUTHORITY_INCOMPLETE");
+          const token = Object.freeze({});
+          completionBootstrapSelectedRecoveryCandidatesV1.set(token, Object.freeze({
+            requestId: request.request_id,
+            ownerInstanceId: request.owner_instance_id,
+            ownerAttemptCount: request.owner_attempt_count,
+            leaseExpiresAt: timestamp(request.lease_expires_at),
+          }));
+          completionBootstrapPendingSelectedRecoveryTokenV1 = token;
+          return { status: "bootstrap_selected" as const, request: mapRequest(request) };
+        }
         const runtimeState = chain.runtimeState;
         const claimOutcome = chain.claimOutcome;
         const quarantineExpiredOwner = async (diagnostic: string): Promise<RuntimeCompletionRequest> => {
@@ -1768,7 +2333,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const quarantined = await quarantineExpiredOwner(diagnostic);
         return { status: "quarantined" as const, request: quarantined };
       }) as Promise<Readonly<{
-        status: "none" | "resume_owner" | "resume_effects" | "finalize" | "preempted" | "quarantined";
+        status: "none" | "resume_owner" | "resume_effects" | "finalize" | "bootstrap_selected" | "preempted" | "quarantined";
         request?: RuntimeCompletionRequest;
       }>>;
     },
@@ -2180,6 +2745,855 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       }) as Promise<RuntimeCompletionRequest>;
     },
   });
+}
+
+function completionBootstrapCleanBuildVerificationV1(
+  eligibility: InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1,
+  capability: object,
+): InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 {
+  const body = {
+    kind: eligibility.kind,
+    bootstrapMergeSha: eligibility.bootstrapMergeSha,
+    bootstrapTreeHash: eligibility.bootstrapTreeHash,
+    p0FileSetHash: eligibility.p0FileSetHash,
+    buildInfoHash: eligibility.buildInfoHash,
+    focusedVerificationHash: eligibility.focusedVerificationHash,
+    baselineHistoricalReceiptRef: eligibility.baselineHistoricalReceiptRef,
+    baselineHistoricalReceiptHash: eligibility.baselineHistoricalReceiptHash,
+    bootstrapHandoffMigrationReceiptRef: eligibility.bootstrapHandoffMigrationReceiptRef,
+    bootstrapHandoffMigrationReceiptHash: eligibility.bootstrapHandoffMigrationReceiptHash,
+    requestIdHash: eligibility.requestIdHash,
+    claimIdHash: eligibility.claimIdHash,
+    runIdentityHash: eligibility.runIdentityHash,
+    ownerGenerationHash: eligibility.ownerGenerationHash,
+  };
+  const verificationHash = hashCanonicalJson(body);
+  return recursivelyFreezeCompletionBootstrapV1({ ...body, verificationHash, capability });
+}
+
+async function completionBootstrapReopenEligibilityAuthoritiesV1(
+  eligibility: InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1,
+): Promise<void> {
+  const receipt = await import("../internal-production/baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
+  const resolveDelivery = receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1;
+  const observeCurrentDelivery = receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1;
+  const resolveHistorical = receipt.resolveInternalProductionCurrentEntryAuthorityV1;
+  const resolveMigration = receipt.resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1;
+  if (typeof resolveDelivery !== "function" || resolveDelivery.length !== 1 || typeof observeCurrentDelivery !== "function" || observeCurrentDelivery.length !== 0 || typeof resolveHistorical !== "function" || resolveHistorical.length !== 1 || typeof resolveMigration !== "function" || resolveMigration.length !== 1) completionBootstrapFailV1("clean-build authority resolver unavailable");
+  const delivery = await (resolveDelivery as (input: unknown) => Promise<Record<string, unknown>>)({ deliveryAuthorityRef: eligibility.deliveryAuthorityRef, deliveryAuthorityHash: eligibility.deliveryAuthorityHash });
+  const currentDelivery = await (observeCurrentDelivery as () => Promise<Record<string, unknown>>)();
+  await (resolveHistorical as (input: unknown) => Promise<unknown>)({ entryAuthorityRef: eligibility.baselineHistoricalReceiptRef, entryAuthorityHash: eligibility.baselineHistoricalReceiptHash });
+  await (resolveMigration as (input: unknown) => Promise<unknown>)({ migrationReceiptRef: eligibility.bootstrapHandoffMigrationReceiptRef, migrationReceiptHash: eligibility.bootstrapHandoffMigrationReceiptHash });
+  if (delivery.deliveryCommitSha !== eligibility.bootstrapMergeSha || delivery.deliveryTreeHash !== eligibility.bootstrapTreeHash || delivery.exact24PathBlobSetHash !== eligibility.p0FileSetHash || delivery.currentSourceBuildHash !== eligibility.buildInfoHash || delivery.focusedVerificationHash !== eligibility.focusedVerificationHash) completionBootstrapFailV1("clean-build delivery relation crossed");
+  if (currentDelivery.deliveryCommitSha !== eligibility.bootstrapMergeSha || currentDelivery.deliveryTreeHash !== eligibility.bootstrapTreeHash || currentDelivery.exact24PathBlobSetHash !== eligibility.p0FileSetHash || currentDelivery.focusedVerificationHash !== eligibility.focusedVerificationHash || currentDelivery.deliveryAncestorOfCurrentSource !== true) completionBootstrapFailV1("clean-build current delivery relation crossed");
+}
+
+export async function createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 | null> {
+  const capability = currentRuntimeCompletionOwnerCapability();
+  if (!capability) completionBootstrapFailV1("OWNER_CONTEXT_REQUIRED");
+  const receipt = await import("../internal-production/baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
+  const observeDelivery = receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1;
+  const observeCurrentEntry = receipt.observeInternalProductionCurrentEntryAuthorityStatusV1;
+  const resolveHistorical = receipt.resolveInternalProductionCurrentEntryAuthorityV1;
+  const resolveMigration = receipt.resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1;
+  if (typeof observeDelivery !== "function" || observeDelivery.length !== 0 || typeof observeCurrentEntry !== "function" || observeCurrentEntry.length !== 0 || typeof resolveHistorical !== "function" || resolveHistorical.length !== 1 || typeof resolveMigration !== "function" || resolveMigration.length !== 1) completionBootstrapFailV1("clean-build authority port unavailable");
+  const delivery = await (observeDelivery as () => Promise<Record<string, unknown>>)();
+  const currentEntry = await (observeCurrentEntry as () => Promise<Record<string, unknown>>)();
+  if (currentEntry.state !== "ready" || !currentEntry.entryAuthority || typeof currentEntry.entryAuthority !== "object" || !currentEntry.migrationApplyingPhase || typeof currentEntry.migrationApplyingPhase !== "object") completionBootstrapFailV1("clean-build current entry is not ready");
+  const historical = currentEntry.entryAuthority as Record<string, unknown>;
+  const migrationPhase = currentEntry.migrationApplyingPhase as Record<string, unknown>;
+  const migration = migrationPhase.migrationReceipt as Record<string, unknown> | undefined;
+  if (typeof historical.entryAuthorityRef !== "string" || typeof historical.entryAuthorityHash !== "string" || typeof migration?.migrationReceiptRef !== "string" || typeof migration.migrationReceiptHash !== "string") completionBootstrapFailV1("clean-build historical authority is incomplete");
+  await (resolveHistorical as (input: unknown) => Promise<unknown>)({ entryAuthorityRef: historical.entryAuthorityRef, entryAuthorityHash: historical.entryAuthorityHash });
+  await (resolveMigration as (input: unknown) => Promise<unknown>)({ migrationReceiptRef: migration.migrationReceiptRef, migrationReceiptHash: migration.migrationReceiptHash });
+  const row = await pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "request_id" | "claim_id" | "run_id" | "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "lease_expires_at">>>(
+      "SELECT request_id,claim_id,run_id,state,apply_phase,owner_instance_id,owner_attempt_count,lease_expires_at FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE",
+      [capability.requestId],
+    );
+    const current = rows[0];
+    const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+    if (!current || rows.length !== 1 || current.state !== "processing" || current.apply_phase !== "effects_committed" || current.owner_instance_id !== capability.ownerInstanceId || current.owner_attempt_count !== capability.ownerAttemptCount || current.lease_expires_at === null || new Date(current.lease_expires_at).getTime() <= wallClock.getTime()) completionBootstrapFailV1("clean-build owner context stale");
+    return current;
+  });
+  const body = {
+    schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-eligibility.v1" as const,
+    kind: "authenticated-baseline-completion-owner-bootstrap-clean-build-verification" as const,
+    deliveryAuthorityRef: String(delivery.deliveryAuthorityRef),
+    deliveryAuthorityHash: String(delivery.deliveryAuthorityHash),
+    bootstrapMergeSha: String(delivery.deliveryCommitSha),
+    bootstrapTreeHash: String(delivery.deliveryTreeHash),
+    p0FileSetHash: String(delivery.exact24PathBlobSetHash),
+    buildInfoHash: String(delivery.currentSourceBuildHash),
+    focusedVerificationHash: String(delivery.focusedVerificationHash),
+    baselineHistoricalReceiptRef: historical.entryAuthorityRef,
+    baselineHistoricalReceiptHash: historical.entryAuthorityHash,
+    bootstrapHandoffMigrationReceiptRef: migration.migrationReceiptRef,
+    bootstrapHandoffMigrationReceiptHash: migration.migrationReceiptHash,
+    requestIdHash: hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id }),
+    claimIdHash: hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) }),
+    runIdentityHash: hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id }),
+    ownerGenerationHash: hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: capability.ownerInstanceId, ownerAttemptCount: capability.ownerAttemptCount }),
+  };
+  const eligibilityHash = hashCanonicalJson(body);
+  const eligibilityRef = `${COMPLETION_BOOTSTRAP_ELIGIBILITY_PREFIX_V1}${eligibilityHash}`;
+  const eligibility = recursivelyFreezeCompletionBootstrapV1({ ...body, eligibilityRef, eligibilityHash });
+  completionBootstrapWriteNoReplaceV1(completionBootstrapEligibilityPathV1(eligibilityHash), eligibility);
+  const pair = Object.freeze({ eligibilityRef, eligibilityHash });
+  try { completionBootstrapWriteNoReplaceV1(completionBootstrapSelectedEligibilityPathV1(), pair); } catch (error) {
+    if (!(error instanceof Error) || !/collision/i.test(error.message)) throw error;
+  }
+  const selected = completionBootstrapReadSelectedEligibilityV1();
+  const winner = completionBootstrapReadEligibilityV1(selected);
+  await completionBootstrapReopenEligibilityAuthoritiesV1(winner);
+  if (selected.eligibilityRef !== eligibilityRef || selected.eligibilityHash !== eligibilityHash) return null;
+  const capabilityToken = Object.freeze({});
+  const verification = completionBootstrapCleanBuildVerificationV1(winner, capabilityToken);
+  completionBootstrapCleanBuildCapabilitiesV1.set(verification, { requestId: capability.requestId, ownerInstanceId: capability.ownerInstanceId, ownerAttemptCount: capability.ownerAttemptCount, eligibilityRef, eligibilityHash });
+  return verification;
+}
+
+function completionBootstrapValidateAnyStoredResultV1(value: unknown): Record<string, unknown> {
+  const keys = ["schema", "state", "targetGuardReceiptRef", "targetGuardReceiptHash", "operationRef", "operationHash", "targetGuardConsumptionRef", "targetGuardConsumptionHash", "recoveredOwnerGenerationHash", "targetOwnerReleaseReceiptHash", "sequenceRef", "sequenceHash"] as const;
+  if (!value || typeof value !== "object" || Array.isArray(value) || !completionBootstrapHasExactStoredKeysV1(value as Record<string, unknown>, keys)) completionBootstrapFailV1("bootstrap result shape");
+  const result = value as Record<string, unknown>;
+  const state = String(result.state);
+  const sha = (member: unknown): member is string => typeof member === "string" && SHA256_V1.test(member);
+  const pair = (ref: unknown, hash: unknown, prefix: string): boolean => sha(hash) && ref === `${prefix}${hash}`;
+  const operationPresent = pair(result.operationRef, result.operationHash, "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/");
+  const consumptionPresent = pair(result.targetGuardConsumptionRef, result.targetGuardConsumptionHash, "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/");
+  const recoveredPresent = sha(result.recoveredOwnerGenerationHash);
+  const releasePresent = sha(result.targetOwnerReleaseReceiptHash);
+  const sequencePresent = pair(result.sequenceRef, result.sequenceHash, "setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/");
+  if (
+    result.schema !== "setfarm.internal-production-baseline-spawner-bootstrap-completion-result.v1"
+    || !["guard_prepared", "operation_bound", "guard_consumed", "owner_recovered", "owner_released", "completed"].includes(state)
+    || !pair(result.targetGuardReceiptRef, result.targetGuardReceiptHash, "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/")
+    || (state === "guard_prepared" && (result.operationRef !== null || result.operationHash !== null || result.targetGuardConsumptionRef !== null || result.targetGuardConsumptionHash !== null || result.recoveredOwnerGenerationHash !== null || result.targetOwnerReleaseReceiptHash !== null || result.sequenceRef !== null || result.sequenceHash !== null))
+    || (state === "operation_bound" && (!operationPresent || result.targetGuardConsumptionRef !== null || result.targetGuardConsumptionHash !== null || result.recoveredOwnerGenerationHash !== null || result.targetOwnerReleaseReceiptHash !== null || result.sequenceRef !== null || result.sequenceHash !== null))
+    || (state === "guard_consumed" && (!operationPresent || !consumptionPresent || result.recoveredOwnerGenerationHash !== null || result.targetOwnerReleaseReceiptHash !== null || result.sequenceRef !== null || result.sequenceHash !== null))
+    || (state === "owner_recovered" && (!operationPresent || !consumptionPresent || !recoveredPresent || result.targetOwnerReleaseReceiptHash !== null || result.sequenceRef !== null || result.sequenceHash !== null))
+    || (state === "owner_released" && (!operationPresent || !consumptionPresent || !recoveredPresent || !releasePresent || result.sequenceRef !== null || result.sequenceHash !== null))
+    || (state === "completed" && (!operationPresent || !consumptionPresent || !recoveredPresent || !releasePresent || !sequencePresent))
+  ) completionBootstrapFailV1("bootstrap result authority");
+  return Object.fromEntries(keys.map((key) => [key, result[key]]));
+}
+
+async function completionBootstrapBindOperationForOwnerV1(
+  capability: Readonly<{ requestId: string; ownerInstanceId: string; ownerAttemptCount: number }>,
+  guard: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1,
+  operation: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<void> {
+  const selectedRecovery = completionBootstrapSelectedRecoveryContextV1.getStore();
+  if (selectedRecovery && (selectedRecovery.requestId !== capability.requestId || selectedRecovery.ownerInstanceId !== capability.ownerInstanceId || selectedRecovery.ownerAttemptCount !== capability.ownerAttemptCount)) completionBootstrapFailV1("selected recovery bind authority crossed");
+  await pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "request_id" | "claim_id" | "run_id" | "runtime_session_id" | "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "lease_expires_at" | "drained_at" | "result">>>("SELECT request_id,claim_id,run_id,runtime_session_id,state,apply_phase,owner_instance_id,owner_attempt_count,lease_expires_at,drained_at,result FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [capability.requestId]);
+    const row = rows[0];
+    if (selectedRecovery) {
+      const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+      const sessions = row ? await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 FOR UPDATE", [row.runtime_session_id]) : [];
+      if (!row || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.lease_expires_at === null || timestamp(row.lease_expires_at) !== selectedRecovery.leaseExpiresAt || new Date(row.lease_expires_at).getTime() > wallClock.getTime() || sessions.length !== 1 || sessions[0]!.state !== "drained") completionBootstrapFailV1("selected recovery consumption authority crossed");
+      const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1({ targetGuardReceiptRef: guard.targetGuardReceiptRef, targetGuardReceiptHash: guard.targetGuardReceiptHash });
+      completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1(row as RuntimeCompletionRow, receipt);
+    }
+    const result = row?.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const priorValue = result.internalProductionBaselineSpawnerBootstrap;
+    const prior = priorValue === undefined ? undefined : completionBootstrapValidateAnyStoredResultV1(priorValue);
+    if (!row || row.owner_instance_id !== capability.ownerInstanceId || row.owner_attempt_count !== capability.ownerAttemptCount || !prior || prior.targetGuardReceiptRef !== guard.targetGuardReceiptRef || prior.targetGuardReceiptHash !== guard.targetGuardReceiptHash) completionBootstrapFailV1("clean-build operation guard binding");
+    if (prior.state === "operation_bound") {
+      if (prior.operationRef !== operation.operationRef || prior.operationHash !== operation.operationHash) completionBootstrapFailV1("clean-build operation binding crossed");
+      return;
+    }
+    if (prior.state !== "guard_prepared" || prior.operationRef !== null || prior.operationHash !== null) completionBootstrapFailV1("clean-build operation predecessor");
+    const next = { ...prior, state: "operation_bound", operationRef: operation.operationRef, operationHash: operation.operationHash };
+    const updated = await transaction.unsafe<Array<{ result: unknown }>>("UPDATE runtime_completion_requests SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp() WHERE request_id=$1 AND owner_instance_id=$3 AND owner_attempt_count=$4 RETURNING result", [capability.requestId, JSON.stringify(next), capability.ownerInstanceId, capability.ownerAttemptCount]);
+    if (updated.length !== 1) completionBootstrapFailV1("clean-build operation bind CAS lost");
+    const updatedOuter = updated[0]!.result as Record<string, unknown>;
+    const reopened = completionBootstrapValidateAnyStoredResultV1(updatedOuter.internalProductionBaselineSpawnerBootstrap);
+    if (hashCanonicalJson(reopened) !== hashCanonicalJson(next)) completionBootstrapFailV1("clean-build operation bind successor invalid");
+  });
+}
+
+async function completionBootstrapCurrentSelectedPhaseForOwnerV1(
+  capability: Readonly<{ requestId: string; ownerInstanceId: string; ownerAttemptCount: number }>,
+  allowExpiredSelectedOwner: boolean,
+  expectedExpiredLeaseExpiresAt?: string,
+): Promise<Record<string, unknown> | null> {
+  return pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "lease_expires_at" | "result">>>("SELECT state,apply_phase,owner_instance_id,owner_attempt_count,lease_expires_at,result FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [capability.requestId]);
+    const row = rows[0];
+    const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+    if (!row || rows.length !== 1 || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.owner_instance_id !== capability.ownerInstanceId || row.owner_attempt_count !== capability.ownerAttemptCount || row.lease_expires_at === null || (!allowExpiredSelectedOwner && new Date(row.lease_expires_at).getTime() <= wallClock.getTime()) || (allowExpiredSelectedOwner && (new Date(row.lease_expires_at).getTime() > wallClock.getTime() || timestamp(row.lease_expires_at) !== expectedExpiredLeaseExpiresAt))) completionBootstrapFailV1("clean-build selected phase owner crossed");
+    const result = row.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const phase = result.internalProductionBaselineSpawnerBootstrap;
+    if (phase === undefined) return null;
+    return Object.freeze(completionBootstrapValidateAnyStoredResultV1(phase));
+  });
+}
+
+export async function continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1(
+  input: Readonly<{ verification: InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 }>,
+): Promise<void> {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype || Reflect.ownKeys(input).some((key) => typeof key !== "string") || Object.keys(input).join(",") !== "verification") completionBootstrapFailV1("VERIFICATION_INPUT_INVALID");
+  const state = completionBootstrapCleanBuildCapabilitiesV1.get(input.verification);
+  const capability = currentRuntimeCompletionOwnerCapability();
+  if (!state || !capability || state.requestId !== capability.requestId || state.ownerInstanceId !== capability.ownerInstanceId || state.ownerAttemptCount !== capability.ownerAttemptCount) completionBootstrapFailV1("VERIFICATION_CAPABILITY_INVALID");
+  const selected = completionBootstrapReadSelectedEligibilityV1();
+  if (selected.eligibilityRef !== state.eligibilityRef || selected.eligibilityHash !== state.eligibilityHash) completionBootstrapFailV1("VERIFICATION_SELECTION_CROSSED");
+  const eligibility = completionBootstrapReadEligibilityV1(selected);
+  await completionBootstrapReopenEligibilityAuthoritiesV1(eligibility);
+  if (!input.verification.capability || typeof input.verification.capability !== "object") completionBootstrapFailV1("VERIFICATION_CAPABILITY_INVALID");
+  const expected = completionBootstrapCleanBuildVerificationV1(eligibility, input.verification.capability);
+  if (hashCanonicalJson({ ...input.verification, capability: null }) !== hashCanonicalJson({ ...expected, capability: null })) completionBootstrapFailV1("VERIFICATION_BODY_CROSSED");
+  const currentPhase = await completionBootstrapCurrentSelectedPhaseForOwnerV1(capability, false);
+  if (currentPhase && ["operation_bound", "guard_consumed", "owner_recovered"].includes(String(currentPhase.state))) {
+    const operation = completionBootstrapOperationPairV1({ operationRef: currentPhase.operationRef, operationHash: currentPhase.operationHash });
+    const sequence = await import("../internal-production/baseline-service-restart-sequence-v1.js") as unknown as Record<string, unknown>;
+    const execute = sequence.executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1;
+    if (typeof execute !== "function" || execute.length !== 1) completionBootstrapFailV1("clean-build sequence execute port unavailable");
+    await (execute as (input: unknown) => Promise<unknown>)(operation);
+    return;
+  }
+  if (currentPhase !== null && currentPhase.state !== "guard_prepared") completionBootstrapFailV1("clean-build selected phase unsupported");
+  const guard = await prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1();
+  const retirement = await import("../internal-production/baseline-restart-authority-retirement-v1.js") as unknown as Record<string, unknown>;
+  const acquire = retirement.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  const release = retirement.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  if (typeof acquire !== "function" || acquire.length !== 0 || typeof release !== "function" || release.length !== 1) completionBootstrapFailV1("clean-build transition lease port unavailable");
+  const lease = await (acquire as () => Promise<unknown>)();
+  let released = false;
+  let operation: Readonly<{ operationRef: string; operationHash: string }> | null = null;
+  try {
+    const sequence = await import("../internal-production/baseline-service-restart-sequence-v1.js") as unknown as Record<string, unknown>;
+    const prepare = sequence.prepareInternalProductionBaselineSpawnerBootstrapRestartV1;
+    if (typeof prepare !== "function" || prepare.length !== 1) completionBootstrapFailV1("clean-build sequence prepare port unavailable");
+    operation = await (prepare as (input: unknown) => Promise<Readonly<{ operationRef: string; operationHash: string }>>)({ targetGuard: guard, postSettlementContinuationKind: "setfarm-bootstrap-main-claim-allocation-v1" });
+    await completionBootstrapBindOperationForOwnerV1(capability, guard, operation);
+  } finally {
+    await (release as (lease: unknown) => Promise<void>)(lease);
+    released = true;
+  }
+  if (!released || operation === null) completionBootstrapFailV1("clean-build transition lease release failed");
+  const sequence = await import("../internal-production/baseline-service-restart-sequence-v1.js") as unknown as Record<string, unknown>;
+  const execute = sequence.executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1;
+  if (typeof execute !== "function" || execute.length !== 1) completionBootstrapFailV1("clean-build sequence execute port unavailable");
+  await (execute as (input: unknown) => Promise<unknown>)(operation);
+}
+
+async function completionBootstrapPreflightSelectedRecoveryUnderLeaseV1(
+  candidate: CompletionBootstrapSelectedRecoveryCandidateV1,
+): Promise<Record<string, unknown> | null> {
+  return pgBegin(async (transaction) => {
+    const headProof = await lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1(transaction as PgTransactionSql, { requestId: candidate.requestId });
+    const rows = await transaction.unsafe<RuntimeCompletionRow[]>("SELECT * FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [candidate.requestId]);
+    const row = rows[0];
+    const sessions = row ? await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 FOR UPDATE", [row.runtime_session_id]) : [];
+    const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+    if (!row || rows.length !== 1 || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.owner_instance_id !== candidate.ownerInstanceId || row.owner_attempt_count !== candidate.ownerAttemptCount || row.lease_expires_at === null || timestamp(row.lease_expires_at) !== candidate.leaseExpiresAt || new Date(row.lease_expires_at).getTime() > wallClock.getTime() || sessions.length !== 1 || sessions[0]!.state !== "drained") completionBootstrapFailV1("selected bootstrap recovery preflight crossed");
+    const ownerRows = await transaction.unsafe<Array<{ reservation_ref: string; reservation_hash: string }>>("SELECT reservation_ref,reservation_hash FROM internal_production_owner_reservations_v1 WHERE category='completion-owner' AND owner_key=$1 AND state='bound'", [row.request_id]);
+    if (ownerRows.length !== 1 || ownerRows[0]!.reservation_ref !== headProof.targetOwnerReservationRef || ownerRows[0]!.reservation_hash !== headProof.targetOwnerReservationHash) completionBootstrapFailV1("selected bootstrap recovery target crossed");
+    const outer = row.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const rawPhase = outer.internalProductionBaselineSpawnerBootstrap;
+    if (rawPhase === undefined) {
+      const eligibility = completionBootstrapReadEligibilityV1(completionBootstrapReadSelectedEligibilityV1());
+      if (!completionBootstrapSelectedEligibilityMatchesRowV1(row) || eligibility.ownerGenerationHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: row.owner_instance_id, ownerAttemptCount: row.owner_attempt_count })) completionBootstrapFailV1("selected bootstrap recovery eligibility crossed");
+      return null;
+    }
+    const phase = completionBootstrapValidateAnyStoredResultV1(rawPhase);
+    const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1({ targetGuardReceiptRef: String(phase.targetGuardReceiptRef), targetGuardReceiptHash: String(phase.targetGuardReceiptHash) });
+    completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1(row, receipt);
+    return Object.freeze(phase);
+  });
+}
+
+export async function recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1(): Promise<void> {
+  const token = completionBootstrapPendingSelectedRecoveryTokenV1;
+  completionBootstrapPendingSelectedRecoveryTokenV1 = null;
+  if (!token) completionBootstrapFailV1("selected bootstrap recovery candidate token absent");
+  const candidate = completionBootstrapSelectedRecoveryCandidatesV1.get(token);
+  completionBootstrapSelectedRecoveryCandidatesV1.delete(token);
+  if (!candidate) completionBootstrapFailV1("selected bootstrap recovery candidate token invalid");
+  const selected = completionBootstrapReadSelectedEligibilityV1();
+  const eligibility = completionBootstrapReadEligibilityV1(selected);
+  await completionBootstrapReopenEligibilityAuthoritiesV1(eligibility);
+  const retirement = await import("../internal-production/baseline-restart-authority-retirement-v1.js") as unknown as Record<string, unknown>;
+  const acquire = retirement.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  const release = retirement.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  if (typeof acquire !== "function" || acquire.length !== 0 || typeof release !== "function" || release.length !== 1) completionBootstrapFailV1("selected bootstrap recovery transition lease unavailable");
+  const lease = await (acquire as () => Promise<unknown>)();
+  let operation: Readonly<{ operationRef: string; operationHash: string }> | null = null;
+  try {
+    const recoveryOwner = Object.freeze({ requestId: candidate.requestId, ownerInstanceId: candidate.ownerInstanceId, ownerAttemptCount: candidate.ownerAttemptCount });
+    await completionBootstrapReopenEligibilityAuthoritiesV1(eligibility);
+    await completionBootstrapSelectedRecoveryContextV1.run(candidate, async () => {
+      const phase = await completionBootstrapPreflightSelectedRecoveryUnderLeaseV1(candidate);
+      if (phase && ["operation_bound", "guard_consumed", "owner_recovered"].includes(String(phase.state))) {
+        operation = completionBootstrapOperationPairV1({ operationRef: phase.operationRef, operationHash: phase.operationHash });
+      } else {
+        if (phase !== null && phase.state !== "guard_prepared") completionBootstrapFailV1("selected bootstrap recovery phase unsupported");
+        let guard: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1;
+        if (phase === null) {
+          guard = await prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardCoreV1(recoveryOwner, true);
+        } else {
+          const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1({ targetGuardReceiptRef: String(phase.targetGuardReceiptRef), targetGuardReceiptHash: String(phase.targetGuardReceiptHash) });
+          guard = recursivelyFreezeCompletionBootstrapV1({ kind: receipt.kind, requestIdHash: receipt.requestIdHash, claimIdHash: receipt.claimIdHash, runIdentityHash: receipt.runIdentityHash, ownerGenerationHash: receipt.ownerGenerationHash, ownerFenced: true as const, ownerDrained: true as const, unrelatedOwnerCount: 0 as const, unrelatedOwnerCensusHash: receipt.unrelatedOwnerCensusHash, targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash });
+        }
+        const sequence = await import("../internal-production/baseline-service-restart-sequence-v1.js") as unknown as Record<string, unknown>;
+        const prepare = sequence.prepareInternalProductionBaselineSpawnerBootstrapRestartFromDurableTargetGuardReceiptForRecoveryV1;
+        if (typeof prepare !== "function" || prepare.length !== 1) completionBootstrapFailV1("selected bootstrap recovery prepare port unavailable");
+        operation = await (prepare as (input: unknown) => Promise<Readonly<{ operationRef: string; operationHash: string }>>)({ targetGuardReceiptRef: guard.targetGuardReceiptRef, targetGuardReceiptHash: guard.targetGuardReceiptHash });
+        await completionBootstrapBindOperationForOwnerV1(recoveryOwner, guard, operation);
+      }
+    });
+  } finally { await (release as (lease: unknown) => Promise<void>)(lease); }
+  if (!operation) completionBootstrapFailV1("selected bootstrap recovery operation absent");
+  const sequence = await import("../internal-production/baseline-service-restart-sequence-v1.js") as unknown as Record<string, unknown>;
+  const execute = sequence.executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1;
+  if (typeof execute !== "function" || execute.length !== 1) completionBootstrapFailV1("selected bootstrap recovery execute port unavailable");
+  await completionBootstrapSelectedRecoveryContextV1.run(candidate, () => (
+    (execute as (input: unknown) => Promise<unknown>)(operation)
+  ));
+}
+
+export async function resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1(
+  pair: Readonly<{ targetGuardReceiptRef: string; targetGuardReceiptHash: string }>,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1> {
+  const exact = completionBootstrapPairV1(
+    pair,
+    "targetGuardReceiptRef",
+    "targetGuardReceiptHash",
+    "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/",
+  );
+  const value = completionBootstrapReadV1(completionBootstrapReceiptPathV1(exact.targetGuardReceiptHash!));
+  if (!value || typeof value !== "object" || Array.isArray(value)) completionBootstrapFailV1("receipt shape");
+  const receipt = value as Record<string, unknown>;
+  const keys = ["schema", "kind", "requestIdHash", "claimIdHash", "runIdentityHash", "ownerGenerationHash", "ownerFenced", "ownerDrained", "unrelatedOwnerCount", "unrelatedOwnerCensusHash", "targetGuardHash", "targetGuardReceiptRef", "targetGuardReceiptHash"];
+  if (!completionBootstrapHasExactStoredKeysV1(receipt, keys)) completionBootstrapFailV1("receipt keys");
+  const body = Object.fromEntries(keys.slice(0, -2).map((key) => [key, receipt[key]]));
+  const receiptHash = hashCanonicalJson(body);
+  const targetGuardHash = hashCanonicalJson(Object.fromEntries(keys.slice(1, 10).map((key) => [key, receipt[key]])));
+  if (
+    receipt.schema !== "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-receipt.v1"
+    || receipt.kind !== "authenticated-completion-owner-bootstrap-target"
+    || receipt.ownerFenced !== true
+    || receipt.ownerDrained !== true
+    || receipt.unrelatedOwnerCount !== 0
+    || receipt.targetGuardHash !== targetGuardHash
+    || receipt.targetGuardReceiptHash !== receiptHash
+    || receipt.targetGuardReceiptRef !== exact.targetGuardReceiptRef
+    || receipt.targetGuardReceiptHash !== exact.targetGuardReceiptHash
+  ) completionBootstrapFailV1("receipt authority");
+  for (const key of ["requestIdHash", "claimIdHash", "runIdentityHash", "ownerGenerationHash", "unrelatedOwnerCensusHash", "targetGuardHash", "targetGuardReceiptHash"]) {
+    if (typeof receipt[key] !== "string" || !SHA256_V1.test(receipt[key] as string)) completionBootstrapFailV1(`receipt ${key}`);
+  }
+  return recursivelyFreezeCompletionBootstrapV1(receipt) as InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1;
+}
+
+async function prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardCoreV1(
+  capability: Readonly<{ requestId: string; ownerInstanceId: string; ownerAttemptCount: number }>,
+  allowExpiredSelectedOwner: boolean,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1> {
+  const receipt = await pgBegin(async (transaction) => {
+    const headProof = await lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1(transaction as PgTransactionSql, { requestId: capability.requestId });
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "request_id" | "claim_id" | "run_id" | "runtime_session_id" | "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "drained_at" | "lease_expires_at" | "result">>>(
+      "SELECT request_id,claim_id,run_id,runtime_session_id,state,apply_phase,owner_instance_id,owner_attempt_count,drained_at,lease_expires_at,result FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE",
+      [capability.requestId],
+    );
+    const row = rows[0];
+    const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+    if (!row || rows.length !== 1 || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.owner_instance_id !== capability.ownerInstanceId || row.owner_attempt_count !== capability.ownerAttemptCount || row.drained_at === null || row.lease_expires_at === null || (!allowExpiredSelectedOwner && new Date(row.lease_expires_at).getTime() <= wallClock.getTime())) completionBootstrapFailV1("OWNER_CONTEXT_STALE_OR_NOT_DRAINED");
+    const sessions = await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 AND state='drained' FOR UPDATE", [row.runtime_session_id]);
+    if (sessions.length !== 1 || sessions[0]?.state !== "drained") completionBootstrapFailV1("OWNER_SESSION_NOT_DRAINED");
+    const openOwnerRows = await transaction.unsafe<Array<{
+      reservation_ref: string;
+      reservation_hash: string;
+      category: string;
+      owner_key: string;
+      owner_key_hash: string;
+      producer_implementation_id: string;
+      state: string;
+      reservation_owner_key: string | null;
+      reservation_owner_key_hash: string | null;
+      identity_owner_key: string | null;
+      identity_owner_hash: string | null;
+    }>>(
+      `SELECT reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+              producer_implementation_id,state,
+              reservation_payload->>'ownerKey' AS reservation_owner_key,
+              reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash,
+              canonical_owner_identity->>'ownerKey' AS identity_owner_key,
+              canonical_owner_identity->>'ownerHash' AS identity_owner_hash
+         FROM internal_production_owner_reservations_v1
+        WHERE state IN ('pending','bound')
+        ORDER BY reservation_ref
+        FOR UPDATE`,
+    );
+    const completionOwnerIdentity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({ requestId: row.request_id });
+    const expectedOwnerKeyHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-owner-key.v1",
+      ownerKeyDerivationId: "completion-request-id-v1",
+      ownerKey: row.request_id,
+    });
+    const targetOwner = openOwnerRows[0];
+    const unrelatedOwnerCount = openOwnerRows.length - 1;
+    if (
+      openOwnerRows.length !== 1
+      || unrelatedOwnerCount !== 0
+      || !targetOwner
+      || targetOwner.category !== "completion-owner"
+      || targetOwner.producer_implementation_id !== "a-completion-owner-v1"
+      || targetOwner.state !== "bound"
+      || targetOwner.owner_key !== row.request_id
+      || targetOwner.owner_key_hash !== expectedOwnerKeyHash
+      || targetOwner.reservation_owner_key !== row.request_id
+      || targetOwner.reservation_owner_key_hash !== expectedOwnerKeyHash
+      || targetOwner.identity_owner_key !== completionOwnerIdentity.ownerKey
+      || targetOwner.identity_owner_hash !== completionOwnerIdentity.ownerHash
+      || targetOwner.reservation_ref !== headProof.targetOwnerReservationRef
+      || targetOwner.reservation_hash !== headProof.targetOwnerReservationHash
+    ) completionBootstrapFailV1("TARGET_OWNER_IS_NOT_SOLE_OPEN_OWNER");
+    const requestIdHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id });
+    const claimIdHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) });
+    const runIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id });
+    const ownerGenerationHash = hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: capability.ownerInstanceId, ownerAttemptCount: capability.ownerAttemptCount });
+    const unrelatedOwnerCensusHash = hashCanonicalJson({ schema: "setfarm.internal-production-baseline-completion-owner-unrelated-census.v1", requestIdHash, unrelatedOwnerCount });
+    const targetGuardBody = { kind: "authenticated-completion-owner-bootstrap-target" as const, requestIdHash, claimIdHash, runIdentityHash, ownerGenerationHash, ownerFenced: true as const, ownerDrained: true as const, unrelatedOwnerCount: 0 as const, unrelatedOwnerCensusHash };
+    const targetGuardHash = hashCanonicalJson(targetGuardBody);
+    const receiptBody = { schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-receipt.v1" as const, ...targetGuardBody, targetGuardHash };
+    const targetGuardReceiptHash = hashCanonicalJson(receiptBody);
+    const targetGuardReceiptRef = `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/${targetGuardReceiptHash}`;
+    const value = recursivelyFreezeCompletionBootstrapV1({ ...receiptBody, targetGuardReceiptRef, targetGuardReceiptHash });
+    completionBootstrapWriteNoReplaceV1(completionBootstrapReceiptPathV1(targetGuardReceiptHash), value);
+    const rawResult = row.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const priorValue = rawResult.internalProductionBaselineSpawnerBootstrap;
+    const prior = priorValue === undefined ? undefined : completionBootstrapValidateAnyStoredResultV1(priorValue);
+    if (prior && (prior.targetGuardReceiptRef !== targetGuardReceiptRef || prior.targetGuardReceiptHash !== targetGuardReceiptHash)) completionBootstrapFailV1("request guard already crossed");
+    if (!prior) {
+      const bootstrap = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-completion-result.v1", state: "guard_prepared", targetGuardReceiptRef, targetGuardReceiptHash, operationRef: null, operationHash: null, targetGuardConsumptionRef: null, targetGuardConsumptionHash: null, recoveredOwnerGenerationHash: null, targetOwnerReleaseReceiptHash: null, sequenceRef: null, sequenceHash: null };
+      const updated = await transaction.unsafe<Array<{ result: unknown }>>("UPDATE runtime_completion_requests SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp() WHERE request_id=$1 RETURNING result", [capability.requestId, JSON.stringify(bootstrap)]);
+      if (updated.length !== 1) completionBootstrapFailV1("guard result CAS lost");
+      const successor = (updated[0]!.result as Record<string, unknown>).internalProductionBaselineSpawnerBootstrap;
+      if (hashCanonicalJson(completionBootstrapValidateAnyStoredResultV1(successor)) !== hashCanonicalJson(bootstrap)) completionBootstrapFailV1("guard result successor invalid");
+    }
+    return value;
+  });
+  const guard = recursivelyFreezeCompletionBootstrapV1({ kind: receipt.kind, requestIdHash: receipt.requestIdHash, claimIdHash: receipt.claimIdHash, runIdentityHash: receipt.runIdentityHash, ownerGenerationHash: receipt.ownerGenerationHash, ownerFenced: true as const, ownerDrained: true as const, unrelatedOwnerCount: 0 as const, unrelatedOwnerCensusHash: receipt.unrelatedOwnerCensusHash, targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash });
+  completionBootstrapGuardsV1.set(guard, { receipt, requestId: capability.requestId, ownerInstanceId: capability.ownerInstanceId, ownerAttemptCount: capability.ownerAttemptCount });
+  return guard;
+}
+
+export async function prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1(
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1> {
+  const capability = currentRuntimeCompletionOwnerCapability();
+  if (!capability) completionBootstrapFailV1("OWNER_CONTEXT_REQUIRED");
+  return prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardCoreV1(capability, false);
+}
+
+export async function authenticateInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1(
+  guard: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1> {
+  const state = completionBootstrapGuardsV1.get(guard);
+  const capability = currentRuntimeCompletionOwnerCapability();
+  if (!state || !capability || state.requestId !== capability.requestId || state.ownerInstanceId !== capability.ownerInstanceId || state.ownerAttemptCount !== capability.ownerAttemptCount) completionBootstrapFailV1("GUARD_CAPABILITY_INVALID");
+  const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1({ targetGuardReceiptRef: guard.targetGuardReceiptRef, targetGuardReceiptHash: guard.targetGuardReceiptHash });
+  const visible = { kind: receipt.kind, requestIdHash: receipt.requestIdHash, claimIdHash: receipt.claimIdHash, runIdentityHash: receipt.runIdentityHash, ownerGenerationHash: receipt.ownerGenerationHash, ownerFenced: receipt.ownerFenced, ownerDrained: receipt.ownerDrained, unrelatedOwnerCount: receipt.unrelatedOwnerCount, unrelatedOwnerCensusHash: receipt.unrelatedOwnerCensusHash, targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash };
+  if (hashCanonicalJson(visible) !== hashCanonicalJson(guard) || receipt.targetGuardReceiptHash !== state.receipt.targetGuardReceiptHash) completionBootstrapFailV1("GUARD_RECEIPT_CROSSED");
+  return receipt;
+}
+
+function completionBootstrapReadConsumptionContentV1(
+  exact: Readonly<Record<string, string>>,
+): InternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1 {
+  const value = completionBootstrapReadV1(completionBootstrapConsumptionPathV1(exact.consumptionHash!));
+  if (!value || typeof value !== "object" || Array.isArray(value)) completionBootstrapFailV1("consumption shape");
+  const consumption = value as Record<string, unknown>;
+  const keys = ["schema", "targetGuardReceiptRef", "targetGuardReceiptHash", "targetGuardHash", "operationRef", "operationHash", "requestIdHash", "claimIdHash", "runIdentityHash", "ownerGenerationHash", "targetGuardConsumed", "consumptionRef", "consumptionHash"];
+  if (!completionBootstrapHasExactStoredKeysV1(consumption, keys)) completionBootstrapFailV1("consumption keys");
+  const body = Object.fromEntries(keys.slice(0, -2).map((key) => [key, consumption[key]]));
+  const hash = hashCanonicalJson(body);
+  if (consumption.schema !== "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-consumption.v1" || consumption.targetGuardConsumed !== true || consumption.consumptionHash !== hash || consumption.consumptionRef !== exact.consumptionRef || consumption.consumptionHash !== exact.consumptionHash) completionBootstrapFailV1("consumption authority");
+  if (typeof consumption.targetGuardReceiptHash !== "string" || !SHA256_V1.test(consumption.targetGuardReceiptHash)) completionBootstrapFailV1("consumption guard hash");
+  return recursivelyFreezeCompletionBootstrapV1(consumption) as InternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1;
+}
+
+export async function resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1(
+  pair: Readonly<{ consumptionRef: string; consumptionHash: string }>,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1> {
+  const exact = completionBootstrapPairV1(pair, "consumptionRef", "consumptionHash", "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/");
+  const consumption = completionBootstrapReadConsumptionContentV1(exact);
+  const marker = completionBootstrapPairV1(
+    completionBootstrapReadV1(completionBootstrapConsumedPathV1(String(consumption.targetGuardReceiptHash))),
+    "consumptionRef",
+    "consumptionHash",
+    "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/",
+  );
+  if (marker.consumptionRef !== exact.consumptionRef || marker.consumptionHash !== exact.consumptionHash) completionBootstrapFailV1("consumption index is crossed");
+  return consumption;
+}
+
+export async function consumeInternalProductionBaselineCompletionOwnerBootstrapTargetGuardForOperationV1(
+  input: Readonly<{ targetGuardReceiptRef: string; targetGuardReceiptHash: string; operationRef: string; operationHash: string }>,
+): Promise<Readonly<{ consumptionRef: string; consumptionHash: string }>> {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype || Reflect.ownKeys(input).some((key) => typeof key !== "string") || Object.keys(input).join(",") !== "targetGuardReceiptRef,targetGuardReceiptHash,operationRef,operationHash") completionBootstrapFailV1("consume input shape");
+  const selectedRecovery = completionBootstrapSelectedRecoveryContextV1.getStore();
+  const capability = currentRuntimeCompletionOwnerCapability() ?? (selectedRecovery ? Object.freeze({ requestId: selectedRecovery.requestId, ownerInstanceId: selectedRecovery.ownerInstanceId, ownerAttemptCount: selectedRecovery.ownerAttemptCount }) : null);
+  if (!SHA256_V1.test(input.operationHash) || input.operationRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${input.operationHash}`) completionBootstrapFailV1("operation pair");
+  const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1(input);
+  const consumptionBody = { schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-consumption.v1" as const, targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash, operationRef: input.operationRef, operationHash: input.operationHash, requestIdHash: receipt.requestIdHash, claimIdHash: receipt.claimIdHash, runIdentityHash: receipt.runIdentityHash, ownerGenerationHash: receipt.ownerGenerationHash, targetGuardConsumed: true as const };
+  const consumptionHash = hashCanonicalJson(consumptionBody);
+  const consumptionRef = `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/${consumptionHash}`;
+  const consumption = recursivelyFreezeCompletionBootstrapV1({ ...consumptionBody, consumptionRef, consumptionHash });
+  if (!capability) {
+    const durableConsumption = completionBootstrapReadConsumptionContentV1({ consumptionRef, consumptionHash });
+    const operationPair = Object.freeze({ operationRef: input.operationRef, operationHash: input.operationHash });
+    const row = await completionBootstrapFindRequestV1(operationPair);
+    const prior = completionBootstrapStoredResultV1(row, operationPair);
+    if (
+      prior.state !== "guard_consumed"
+      || prior.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || prior.targetGuardReceiptHash !== receipt.targetGuardReceiptHash
+      || prior.targetGuardConsumptionRef !== durableConsumption.consumptionRef || prior.targetGuardConsumptionHash !== durableConsumption.consumptionHash
+      || receipt.requestIdHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id })
+      || receipt.claimIdHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) })
+      || receipt.runIdentityHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id })
+      || row.owner_instance_id === null
+      || receipt.ownerGenerationHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: row.owner_instance_id, ownerAttemptCount: row.owner_attempt_count })
+    ) completionBootstrapFailV1("durable consumption adoption crossed");
+    completionBootstrapWriteNoReplaceV1(completionBootstrapConsumedPathV1(receipt.targetGuardReceiptHash), { consumptionRef, consumptionHash });
+    await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1({ consumptionRef, consumptionHash });
+    return Object.freeze({ consumptionRef, consumptionHash });
+  }
+  await pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "request_id" | "claim_id" | "run_id" | "runtime_session_id" | "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "lease_expires_at" | "drained_at" | "result">>>("SELECT request_id,claim_id,run_id,runtime_session_id,state,apply_phase,owner_instance_id,owner_attempt_count,lease_expires_at,drained_at,result FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [capability.requestId]);
+    const row = rows[0];
+    if (selectedRecovery) {
+      const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+      const sessions = row ? await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 FOR UPDATE", [row.runtime_session_id]) : [];
+      if (!row || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.lease_expires_at === null || timestamp(row.lease_expires_at) !== selectedRecovery.leaseExpiresAt || new Date(row.lease_expires_at).getTime() > wallClock.getTime() || sessions.length !== 1 || sessions[0]!.state !== "drained") completionBootstrapFailV1("selected recovery consumption authority crossed");
+      completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1(row as RuntimeCompletionRow, receipt);
+    }
+    const result = row?.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const priorValue = result.internalProductionBaselineSpawnerBootstrap;
+    const prior = priorValue === undefined ? undefined : completionBootstrapValidateAnyStoredResultV1(priorValue);
+    if (!row || row.owner_instance_id !== capability.ownerInstanceId || row.owner_attempt_count !== capability.ownerAttemptCount || !prior || prior.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || prior.targetGuardReceiptHash !== receipt.targetGuardReceiptHash) completionBootstrapFailV1("request guard binding");
+    if (["operation_bound", "guard_consumed"].includes(String(prior.state))) {
+      if (prior.operationRef !== input.operationRef || prior.operationHash !== input.operationHash) completionBootstrapFailV1("operation binding crossed");
+      return;
+    }
+    if (prior.state !== "guard_prepared" || prior.operationRef !== null || prior.operationHash !== null) completionBootstrapFailV1("request operation predecessor");
+    const next = { ...prior, state: "operation_bound", operationRef: input.operationRef, operationHash: input.operationHash };
+    const updated = await transaction.unsafe<Array<{ result: unknown }>>("UPDATE runtime_completion_requests SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp() WHERE request_id=$1 RETURNING result", [capability.requestId, JSON.stringify(next)]);
+    if (updated.length !== 1 || hashCanonicalJson(completionBootstrapValidateAnyStoredResultV1((updated[0]!.result as Record<string, unknown>).internalProductionBaselineSpawnerBootstrap)) !== hashCanonicalJson(next)) completionBootstrapFailV1("operation binding successor invalid");
+  });
+  completionBootstrapWriteNoReplaceV1(completionBootstrapConsumptionPathV1(consumptionHash), consumption);
+  await pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<Array<Pick<RuntimeCompletionRow, "request_id" | "claim_id" | "run_id" | "runtime_session_id" | "state" | "apply_phase" | "owner_instance_id" | "owner_attempt_count" | "lease_expires_at" | "drained_at" | "result">>>("SELECT request_id,claim_id,run_id,runtime_session_id,state,apply_phase,owner_instance_id,owner_attempt_count,lease_expires_at,drained_at,result FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [capability.requestId]);
+    const row = rows[0];
+    if (selectedRecovery) {
+      const wallClock = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_CLOCK_UNAVAILABLE");
+      const sessions = row ? await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 FOR UPDATE", [row.runtime_session_id]) : [];
+      if (!row || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.lease_expires_at === null || timestamp(row.lease_expires_at) !== selectedRecovery.leaseExpiresAt || new Date(row.lease_expires_at).getTime() > wallClock.getTime() || sessions.length !== 1 || sessions[0]!.state !== "drained" || !completionBootstrapSelectedEligibilityMatchesRowV1(row as RuntimeCompletionRow)) completionBootstrapFailV1("selected recovery consumption authority crossed");
+      completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1(row as RuntimeCompletionRow, receipt);
+    }
+    const result = row?.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : {};
+    const priorValue = result.internalProductionBaselineSpawnerBootstrap;
+    const prior = priorValue === undefined ? undefined : completionBootstrapValidateAnyStoredResultV1(priorValue);
+    if (!row || row.owner_instance_id !== capability.ownerInstanceId || row.owner_attempt_count !== capability.ownerAttemptCount || !prior || prior.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || prior.targetGuardReceiptHash !== receipt.targetGuardReceiptHash) completionBootstrapFailV1("request guard binding");
+    if (prior.state === "guard_consumed" && prior.targetGuardConsumptionHash === consumptionHash) return;
+    if (prior.state !== "operation_bound" || prior.operationRef !== input.operationRef || prior.operationHash !== input.operationHash) completionBootstrapFailV1("operation not durably bound");
+    const next = { ...prior, state: "guard_consumed", targetGuardConsumptionRef: consumptionRef, targetGuardConsumptionHash: consumptionHash };
+    const updated = await transaction.unsafe<Array<{ result: unknown }>>("UPDATE runtime_completion_requests SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp() WHERE request_id=$1 RETURNING result", [capability.requestId, JSON.stringify(next)]);
+    if (updated.length !== 1 || hashCanonicalJson(completionBootstrapValidateAnyStoredResultV1((updated[0]!.result as Record<string, unknown>).internalProductionBaselineSpawnerBootstrap)) !== hashCanonicalJson(next)) completionBootstrapFailV1("guard consumption successor invalid");
+  });
+  completionBootstrapWriteNoReplaceV1(completionBootstrapConsumedPathV1(receipt.targetGuardReceiptHash), { consumptionRef, consumptionHash });
+  return Object.freeze({ consumptionRef, consumptionHash });
+}
+
+const COMPLETION_BOOTSTRAP_RESULT_KEYS_V1 = Object.freeze([
+  "schema", "state", "targetGuardReceiptRef", "targetGuardReceiptHash", "operationRef", "operationHash",
+  "targetGuardConsumptionRef", "targetGuardConsumptionHash", "recoveredOwnerGenerationHash",
+  "targetOwnerReleaseReceiptHash", "sequenceRef", "sequenceHash",
+] as const);
+
+type CompletionBootstrapLifecycleContextV1 = Readonly<{
+  row: RuntimeCompletionRow;
+  result: Record<string, unknown>;
+  operation: Record<string, unknown>;
+  receipt: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1;
+  consumption: InternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1;
+  startupAdmissionPair: Readonly<{ startupAdmissionRef: string; startupAdmissionHash: string }>;
+  startupAdmission: Record<string, unknown>;
+  startupClaim: Record<string, unknown>;
+  restartAuthorityPair: Readonly<{ receiptRef: string; receiptHash: string }>;
+  restartAuthority: Record<string, unknown>;
+}>;
+
+function completionBootstrapOperationPairV1(input: unknown): Readonly<{ operationRef: string; operationHash: string }> {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype || Reflect.ownKeys(input).some((key) => typeof key !== "string") || Object.keys(input).join(",") !== "operationRef,operationHash") completionBootstrapFailV1("lifecycle operation pair");
+  const pair = input as Record<string, unknown>;
+  if (typeof pair.operationHash !== "string" || !SHA256_V1.test(pair.operationHash) || pair.operationRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${pair.operationHash}`) completionBootstrapFailV1("lifecycle operation identity");
+  return Object.freeze({ operationRef: pair.operationRef as string, operationHash: pair.operationHash });
+}
+
+function completionBootstrapStoredResultV1(row: RuntimeCompletionRow, operationPair: Readonly<{ operationRef: string; operationHash: string }>): Record<string, unknown> {
+  const outer = row.result && typeof row.result === "object" && !Array.isArray(row.result) ? row.result as Record<string, unknown> : completionBootstrapFailV1("lifecycle result object");
+  const exact = completionBootstrapValidateAnyStoredResultV1(outer.internalProductionBaselineSpawnerBootstrap);
+  if (
+    !["guard_consumed", "owner_recovered", "owner_released", "completed"].includes(String(exact.state))
+    || exact.operationRef !== operationPair.operationRef || exact.operationHash !== operationPair.operationHash
+    || typeof exact.targetGuardReceiptHash !== "string" || !SHA256_V1.test(exact.targetGuardReceiptHash)
+    || typeof exact.targetGuardConsumptionHash !== "string" || !SHA256_V1.test(exact.targetGuardConsumptionHash)
+    || (exact.state === "guard_consumed" && (exact.recoveredOwnerGenerationHash !== null || exact.targetOwnerReleaseReceiptHash !== null || exact.sequenceRef !== null || exact.sequenceHash !== null))
+    || (exact.state === "owner_recovered" && (typeof exact.recoveredOwnerGenerationHash !== "string" || !SHA256_V1.test(exact.recoveredOwnerGenerationHash) || exact.targetOwnerReleaseReceiptHash !== null || exact.sequenceRef !== null || exact.sequenceHash !== null))
+    || (exact.state === "owner_released" && (typeof exact.recoveredOwnerGenerationHash !== "string" || !SHA256_V1.test(exact.recoveredOwnerGenerationHash) || typeof exact.targetOwnerReleaseReceiptHash !== "string" || !SHA256_V1.test(exact.targetOwnerReleaseReceiptHash) || exact.sequenceRef !== null || exact.sequenceHash !== null))
+    || (exact.state === "completed" && (typeof exact.recoveredOwnerGenerationHash !== "string" || !SHA256_V1.test(exact.recoveredOwnerGenerationHash) || typeof exact.targetOwnerReleaseReceiptHash !== "string" || !SHA256_V1.test(exact.targetOwnerReleaseReceiptHash) || typeof exact.sequenceHash !== "string" || !SHA256_V1.test(exact.sequenceHash) || exact.sequenceRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/${exact.sequenceHash}`))
+  ) completionBootstrapFailV1("lifecycle result authority");
+  return Object.fromEntries(COMPLETION_BOOTSTRAP_RESULT_KEYS_V1.map((key) => [key, exact[key]]));
+}
+
+async function completionBootstrapFindRequestV1(operationPair: Readonly<{ operationRef: string; operationHash: string }>): Promise<RuntimeCompletionRow> {
+  return pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<RuntimeCompletionRow[]>(
+      `SELECT * FROM runtime_completion_requests
+        WHERE result->'internalProductionBaselineSpawnerBootstrap'->>'operationRef'=$1
+          AND result->'internalProductionBaselineSpawnerBootstrap'->>'operationHash'=$2
+        FOR UPDATE`,
+      [operationPair.operationRef, operationPair.operationHash],
+    );
+    if (rows.length !== 1 || !rows[0]) completionBootstrapFailV1("lifecycle request cardinality");
+    completionBootstrapStoredResultV1(rows[0], operationPair);
+    return rows[0];
+  });
+}
+
+async function resolveCompletionBootstrapLifecycleContextV1(
+  operationPair: Readonly<{ operationRef: string; operationHash: string }>,
+  suppliedSequencePair?: Readonly<{ sequenceRef: string; sequenceHash: string }>,
+): Promise<CompletionBootstrapLifecycleContextV1> {
+  const sequenceModule = await import("../internal-production/baseline-service-restart-sequence-v1.js") as Record<string, unknown>;
+  const resolveOperation = sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1;
+  const resolveSequence = sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1;
+  if (typeof resolveOperation !== "function" || resolveOperation.length !== 1 || typeof resolveSequence !== "function" || resolveSequence.length !== 1) completionBootstrapFailV1("lifecycle sequence resolvers");
+  const operation = await (resolveOperation as (value: unknown) => Promise<Record<string, unknown>>)(operationPair);
+  if (operation.operationRef !== operationPair.operationRef || operation.operationHash !== operationPair.operationHash) completionBootstrapFailV1("lifecycle operation crossed");
+  const row = await completionBootstrapFindRequestV1(operationPair);
+  const result = completionBootstrapStoredResultV1(row, operationPair);
+  const receipt = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1({ targetGuardReceiptRef: String(result.targetGuardReceiptRef), targetGuardReceiptHash: String(result.targetGuardReceiptHash) });
+  const consumption = await resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1({ consumptionRef: String(result.targetGuardConsumptionRef), consumptionHash: String(result.targetGuardConsumptionHash) });
+  if (
+    receipt.requestIdHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-request-id.v1", requestId: row.request_id })
+    || receipt.claimIdHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-claim-id.v1", claimId: String(row.claim_id) })
+    || receipt.runIdentityHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-run-identity.v1", runId: row.run_id })
+    || row.owner_instance_id === null
+    || receipt.ownerGenerationHash !== hashCanonicalJson({ schema: "setfarm.internal-production-runtime-completion-owner-generation.v1", ownerInstanceId: row.owner_instance_id, ownerAttemptCount: row.owner_attempt_count })
+    || operation.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || operation.targetGuardReceiptHash !== receipt.targetGuardReceiptHash
+    || consumption.operationRef !== operationPair.operationRef || consumption.operationHash !== operationPair.operationHash
+    || consumption.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || consumption.targetGuardReceiptHash !== receipt.targetGuardReceiptHash
+  ) completionBootstrapFailV1("lifecycle guard/operation/raw request crossed");
+  if (["guard_consumed", "owner_recovered"].includes(String(result.state))) {
+    await pgBegin(async (transaction) => {
+      const sessions = await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 AND state='drained' FOR UPDATE", [row.runtime_session_id]);
+      const owners = await transaction.unsafe<Array<{ reservation_ref: string; reservation_hash: string; state: string; owner_key: string; owner_key_hash: string; producer_implementation_id: string; reservation_owner_key: string | null; reservation_owner_key_hash: string | null; identity_owner_key: string | null; identity_owner_hash: string | null }>>(
+        `SELECT reservation_ref,reservation_hash,state,owner_key,owner_key_hash,producer_implementation_id,
+                reservation_payload->>'ownerKey' AS reservation_owner_key,
+                reservation_payload->>'ownerKeyHash' AS reservation_owner_key_hash,
+                canonical_owner_identity->>'ownerKey' AS identity_owner_key,
+                canonical_owner_identity->>'ownerHash' AS identity_owner_hash
+           FROM internal_production_owner_reservations_v1
+          WHERE category='completion-owner' AND owner_key=$1 AND producer_implementation_id='a-completion-owner-v1' AND state='bound'
+          FOR UPDATE`,
+        [row.request_id],
+      );
+      const canonicalOwner = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({ requestId: row.request_id });
+      const expectedOwnerKeyHash = hashCanonicalJson({ schema: "setfarm.internal-production-owner-key.v1", ownerKeyDerivationId: "completion-request-id-v1", ownerKey: row.request_id });
+      const owner = owners[0];
+      if (sessions.length !== 1 || sessions[0]?.state !== "drained" || owners.length !== 1 || !owner || owner.state !== "bound" || owner.owner_key !== row.request_id || owner.owner_key_hash !== expectedOwnerKeyHash || owner.producer_implementation_id !== "a-completion-owner-v1" || owner.reservation_owner_key !== row.request_id || owner.reservation_owner_key_hash !== expectedOwnerKeyHash || owner.identity_owner_key !== canonicalOwner.ownerKey || owner.identity_owner_hash !== canonicalOwner.ownerHash) completionBootstrapFailV1("recoverable lifecycle owner/session state");
+    });
+  }
+
+  const spawner = await import("../spawner.js") as Record<string, unknown>;
+  const resolveAdmission = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionV1;
+  const resolveAdmissionForOperation = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1;
+  const resolveClaim = spawner.resolveInternalProductionBaselineSpawnerStartupClaimV1;
+  const resolveActive = spawner.resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1;
+  if (typeof resolveAdmission !== "function" || resolveAdmission.length !== 1 || typeof resolveAdmissionForOperation !== "function" || resolveAdmissionForOperation.length !== 1 || typeof resolveClaim !== "function" || resolveClaim.length !== 1 || typeof resolveActive !== "function" || resolveActive.length !== 0) completionBootstrapFailV1("lifecycle spawner resolvers");
+  let startupAdmissionPair: Readonly<{ startupAdmissionRef: string; startupAdmissionHash: string }>;
+  if (suppliedSequencePair || result.state === "completed") {
+    const sequencePair = suppliedSequencePair ?? { sequenceRef: String(result.sequenceRef), sequenceHash: String(result.sequenceHash) };
+    const sequence = await (resolveSequence as (value: unknown) => Promise<Record<string, unknown>>)(sequencePair);
+    if (sequence.operationRef !== operationPair.operationRef || sequence.operationHash !== operationPair.operationHash) completionBootstrapFailV1("lifecycle sequence crossed");
+    startupAdmissionPair = Object.freeze({ startupAdmissionRef: String(sequence.startupAdmissionRef), startupAdmissionHash: String(sequence.startupAdmissionHash) });
+  } else {
+    const active = await (resolveActive as () => Promise<Record<string, unknown> | null>)();
+    if (!active || active.bootstrapOperationRef !== operationPair.operationRef || active.bootstrapOperationHash !== operationPair.operationHash) completionBootstrapFailV1("lifecycle active admission crossed");
+    startupAdmissionPair = Object.freeze({ startupAdmissionRef: `setfarm://internal-production/baseline-spawner-startup-admission/sha256/${String(active.admissionHash)}`, startupAdmissionHash: String(active.admissionHash) });
+  }
+  const startupAdmission = await (resolveAdmission as (value: unknown) => Promise<Record<string, unknown>>)(startupAdmissionPair);
+  if (startupAdmission.bootstrapOperationRef !== operationPair.operationRef || startupAdmission.bootstrapOperationHash !== operationPair.operationHash) completionBootstrapFailV1("lifecycle admission bootstrap crossed");
+  const normalOperationPair = Object.freeze({ operationRef: `setfarm://internal-production/baseline-service-restart-operation/sha256/${String(startupAdmission.operationId)}`, operationHash: String(startupAdmission.operationId) });
+  const reopenedAdmissionPair = await (resolveAdmissionForOperation as (value: unknown) => Promise<Record<string, string>>)(normalOperationPair);
+  if (reopenedAdmissionPair.startupAdmissionRef !== startupAdmissionPair.startupAdmissionRef || reopenedAdmissionPair.startupAdmissionHash !== startupAdmissionPair.startupAdmissionHash) completionBootstrapFailV1("lifecycle admission locator crossed");
+  const startupClaim = await (resolveClaim as (value: unknown) => Promise<Record<string, unknown>>)(startupAdmissionPair);
+
+  const receiptModule = await import("../internal-production/baseline-post-handoff-receipt-v1.js") as Record<string, unknown>;
+  const resolveNormalOperation = receiptModule.resolveInternalProductionBaselineServiceRestartOperationV1;
+  const resolveAuthorization = receiptModule.resolveInternalProductionBaselineServiceRestartAuthorizationV1;
+  const observeStatus = receiptModule.observeInternalProductionBaselineServiceRestartAuthorizationStatusV1;
+  const resolveRestart = receiptModule.resolveInternalProductionBaselineServiceRestartAuthorityV1;
+  if (typeof resolveNormalOperation !== "function" || resolveNormalOperation.length !== 1 || typeof resolveAuthorization !== "function" || resolveAuthorization.length !== 1 || typeof observeStatus !== "function" || observeStatus.length !== 1 || typeof resolveRestart !== "function" || resolveRestart.length !== 1) completionBootstrapFailV1("lifecycle restart resolvers");
+  const normalOperation = await (resolveNormalOperation as (value: unknown) => Promise<Record<string, unknown>>)(normalOperationPair);
+  const authorization = await (resolveAuthorization as (value: unknown) => Promise<Record<string, unknown>>)({ authorizationRef: normalOperation.authorizationRef, authorizationHash: normalOperation.authorizationHash });
+  const status = await (observeStatus as (value: unknown) => Promise<Record<string, unknown>>)({ authorizationRef: normalOperation.authorizationRef, authorizationHash: normalOperation.authorizationHash });
+  if (status.state !== "consumed" || typeof status.consumptionRef !== "string" || typeof status.consumptionHash !== "string") completionBootstrapFailV1("lifecycle restart authority incomplete");
+  const restartAuthorityPair = Object.freeze({ receiptRef: status.consumptionRef as string, receiptHash: status.consumptionHash as string });
+  const restartAuthority = await (resolveRestart as (value: unknown) => Promise<Record<string, unknown>>)(restartAuthorityPair);
+  const restart = restartAuthority.restart as Record<string, unknown> | undefined;
+  if (!restart || restartAuthority.guardKind !== "fenced-completion-owner-bootstrap" || restartAuthority.operationId !== normalOperationPair.operationHash || restartAuthority.targetGuardReceiptRef !== receipt.targetGuardReceiptRef || restartAuthority.targetGuardReceiptHash !== receipt.targetGuardReceiptHash || startupAdmission.restartLaunchOutboxHash !== restart.outboxHash || startupAdmission.beforeGenerationHash !== restart.beforeGenerationHash || startupClaim.operationId !== normalOperationPair.operationHash || startupClaim.currentGenerationHash !== restart.afterGenerationHash || (result.recoveredOwnerGenerationHash !== null && result.recoveredOwnerGenerationHash !== restart.afterGenerationHash)) completionBootstrapFailV1("lifecycle restart/admission/claim crossed");
+  if (["owner_released", "completed"].includes(String(result.state))) {
+    if (row.state !== "accepted" || row.apply_phase !== "effects_committed" || row.accepted_at === null || row.lease_expires_at !== null || typeof result.targetOwnerReleaseReceiptHash !== "string") completionBootstrapFailV1("released lifecycle request state");
+    await pgBegin(async (transaction) => {
+      const sessions = await transaction.unsafe<Array<{ state: string }>>("SELECT state FROM runtime_sessions WHERE session_id=$1 AND state='released' FOR UPDATE", [row.runtime_session_id]);
+      if (sessions.length !== 1 || sessions[0]?.state !== "released") completionBootstrapFailV1("released lifecycle session state");
+      const owners = await transaction.unsafe<Array<{ reservation_ref: string; reservation_hash: string; state: string }>>("SELECT reservation_ref,reservation_hash,state FROM internal_production_owner_reservations_v1 WHERE category='completion-owner' AND owner_key=$1 AND state='closed' FOR UPDATE", [row.request_id]);
+      if (owners.length !== 1 || owners[0]?.state !== "closed") completionBootstrapFailV1("released lifecycle owner state");
+      const closeHash = result.targetOwnerReleaseReceiptHash as string;
+      const close = await resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction as PgTransactionSql, { closeRef: `setfarm://internal-production/owner-reservation-closes/sha256/${closeHash}`, closeHash });
+      if (close.reservationRef !== owners[0]!.reservation_ref || close.reservationHash !== owners[0]!.reservation_hash) completionBootstrapFailV1("released lifecycle close state");
+    });
+  } else if (row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.lease_expires_at === null) completionBootstrapFailV1("open lifecycle request state");
+  return Object.freeze({ row, result, operation, receipt, consumption, startupAdmissionPair, startupAdmission, startupClaim, restartAuthorityPair, restartAuthority });
+}
+
+function completionBootstrapLifecycleObservationV1(context: CompletionBootstrapLifecycleContextV1): InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1 {
+  const body = {
+    schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-lifecycle-observation.v1" as const,
+    state: context.result.state as "guard_consumed" | "owner_recovered" | "owner_released" | "completed",
+    targetGuardReceiptRef: context.receipt.targetGuardReceiptRef,
+    targetGuardReceiptHash: context.receipt.targetGuardReceiptHash,
+    operationRef: String(context.operation.operationRef),
+    operationHash: String(context.operation.operationHash),
+    targetGuardConsumptionRef: context.consumption.consumptionRef,
+    targetGuardConsumptionHash: context.consumption.consumptionHash,
+    startupAdmissionRef: context.startupAdmissionPair.startupAdmissionRef,
+    startupAdmissionHash: context.startupAdmissionPair.startupAdmissionHash,
+    startupClaimHash: String(context.startupClaim.startupClaimHash),
+    restartAuthorityRef: context.restartAuthorityPair.receiptRef,
+    restartAuthorityHash: context.restartAuthorityPair.receiptHash,
+    recoveredOwnerGenerationHash: context.result.recoveredOwnerGenerationHash as string | null,
+    targetOwnerReleaseReceiptHash: context.result.targetOwnerReleaseReceiptHash as string | null,
+    sequenceRef: context.result.sequenceRef as string | null,
+    sequenceHash: context.result.sequenceHash as string | null,
+  };
+  return recursivelyFreezeCompletionBootstrapV1({ ...body, observationHash: hashCanonicalJson(body) });
+}
+
+export async function observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1> {
+  const operationPair = completionBootstrapOperationPairV1(input);
+  const context = await resolveCompletionBootstrapLifecycleContextV1(operationPair);
+  return completionBootstrapLifecycleObservationV1(context);
+}
+
+export async function recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1> {
+  const operationPair = completionBootstrapOperationPairV1(input);
+  let context = await resolveCompletionBootstrapLifecycleContextV1(operationPair);
+  if (context.result.state === "guard_consumed") {
+    await pgBegin(async (transaction) => {
+      const rows = await transaction.unsafe<RuntimeCompletionRow[]>("SELECT * FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [context.row.request_id]);
+      const row = rows[0];
+      if (!row || rows.length !== 1 || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.owner_instance_id !== context.row.owner_instance_id || row.owner_attempt_count !== context.row.owner_attempt_count || row.lease_expires_at === null) completionBootstrapFailV1("owner recovery request state");
+      const prior = completionBootstrapStoredResultV1(row, operationPair);
+      if (prior.state !== "guard_consumed" || hashCanonicalJson(prior) !== hashCanonicalJson(context.result)) completionBootstrapFailV1("owner recovery predecessor");
+      const next = { ...prior, state: "owner_recovered", recoveredOwnerGenerationHash: String(context.startupClaim.currentGenerationHash) };
+      const updated = await transaction.unsafe<Array<{ request_id: string }>>(
+        `UPDATE runtime_completion_requests
+            SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp()
+          WHERE request_id=$1 AND state='processing' AND apply_phase='effects_committed'
+            AND result->'internalProductionBaselineSpawnerBootstrap'->>'state'='guard_consumed'
+          RETURNING request_id`,
+        [row.request_id, JSON.stringify(next)],
+      );
+      if (updated.length !== 1) completionBootstrapFailV1("owner recovery CAS");
+    });
+    context = await resolveCompletionBootstrapLifecycleContextV1(operationPair);
+  }
+  if (context.result.state === "owner_recovered") {
+    await pgBegin(async (transaction) => {
+      const headProof = await lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1(transaction as PgTransactionSql, { requestId: context.row.request_id, targetGuardReceiptRef: String(context.result.targetGuardReceiptRef), targetGuardReceiptHash: String(context.result.targetGuardReceiptHash), operationRef: String(context.result.operationRef), operationHash: String(context.result.operationHash) });
+      const rows = await transaction.unsafe<RuntimeCompletionRow[]>("SELECT * FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [context.row.request_id]);
+      const row = rows[0];
+      if (!row || rows.length !== 1 || row.state !== "processing" || row.apply_phase !== "effects_committed" || row.drained_at === null || row.owner_instance_id !== context.row.owner_instance_id || row.owner_attempt_count !== context.row.owner_attempt_count || row.lease_expires_at === null) completionBootstrapFailV1("owner release request state");
+      const prior = completionBootstrapStoredResultV1(row, operationPair);
+      if (prior.state !== "owner_recovered" || prior.recoveredOwnerGenerationHash !== context.startupClaim.currentGenerationHash || hashCanonicalJson(prior) !== hashCanonicalJson(context.result)) completionBootstrapFailV1("owner release predecessor");
+      const now = await readDatabaseWallClock(transaction, "INTERNAL_PRODUCTION_COMPLETION_OWNER_BOOTSTRAP_CLOCK_UNAVAILABLE");
+      await releaseDrainedRuntimeSessionInTransaction(transaction, { sessionId: row.runtime_session_id, claimId: Number(row.claim_id), ownerInstanceId: row.owner_instance_id ?? undefined, now });
+      const accepted = await transaction.unsafe<Array<{ request_id: string }>>(
+        `UPDATE runtime_completion_requests
+            SET state='accepted',accepted_at=$2,lease_expires_at=NULL,updated_at=$2
+          WHERE request_id=$1 AND state='processing' AND apply_phase='effects_committed'
+            AND owner_instance_id=$3 AND owner_attempt_count=$4
+            AND result->'internalProductionBaselineSpawnerBootstrap'->>'state'='owner_recovered'
+          RETURNING request_id`,
+        [row.request_id, now, row.owner_instance_id, row.owner_attempt_count],
+      );
+      if (accepted.length !== 1) completionBootstrapFailV1("owner release acceptance CAS");
+      const terminal = await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(transaction as PgTransactionSql, { requestId: row.request_id });
+      if (terminal.reservationRef !== headProof.targetOwnerReservationRef || terminal.reservationHash !== headProof.targetOwnerReservationHash) completionBootstrapFailV1("owner release head proof crossed");
+      const close = await closeInternalProductionOwnerReservationV1(transaction as PgTransactionSql, terminal);
+      const reopened = await resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction as PgTransactionSql, { closeRef: close.closeRef, closeHash: close.closeHash });
+      if (reopened.reservationRef !== terminal.reservationRef || reopened.reservationHash !== terminal.reservationHash) completionBootstrapFailV1("owner release close crossed");
+      const next = { ...prior, state: "owner_released", targetOwnerReleaseReceiptHash: close.closeHash };
+      const updated = await transaction.unsafe<Array<{ request_id: string }>>(
+        `UPDATE runtime_completion_requests
+            SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=$3
+          WHERE request_id=$1 AND state='accepted' AND apply_phase='effects_committed'
+            AND result->'internalProductionBaselineSpawnerBootstrap'->>'state'='owner_recovered'
+          RETURNING request_id`,
+        [row.request_id, JSON.stringify(next), now],
+      );
+      if (updated.length !== 1) completionBootstrapFailV1("owner release result CAS");
+    });
+    context = await resolveCompletionBootstrapLifecycleContextV1(operationPair);
+  }
+  if (context.result.state !== "owner_released") completionBootstrapFailV1("owner release terminal state");
+  return completionBootstrapLifecycleObservationV1(context);
+}
+
+export async function completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1(
+  input: Readonly<{ operationRef: string; operationHash: string; sequenceRef: string; sequenceHash: string }>,
+): Promise<InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1> {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype || Reflect.ownKeys(input).some((key) => typeof key !== "string") || Object.keys(input).join(",") !== "operationRef,operationHash,sequenceRef,sequenceHash" || typeof input.sequenceHash !== "string" || !SHA256_V1.test(input.sequenceHash) || input.sequenceRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/${input.sequenceHash}`) completionBootstrapFailV1("complete sequence input");
+  const operationPair = completionBootstrapOperationPairV1({ operationRef: input.operationRef, operationHash: input.operationHash });
+  const sequencePair = Object.freeze({ sequenceRef: input.sequenceRef, sequenceHash: input.sequenceHash });
+  let context = await resolveCompletionBootstrapLifecycleContextV1(operationPair, sequencePair);
+  if (context.result.state === "completed") {
+    if (context.result.sequenceRef !== input.sequenceRef || context.result.sequenceHash !== input.sequenceHash) completionBootstrapFailV1("completed sequence crossed");
+    return completionBootstrapLifecycleObservationV1(context);
+  }
+  if (context.result.state !== "owner_released") completionBootstrapFailV1("sequence completion predecessor");
+  await pgBegin(async (transaction) => {
+    const rows = await transaction.unsafe<RuntimeCompletionRow[]>("SELECT * FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", [context.row.request_id]);
+    const row = rows[0];
+    if (!row || rows.length !== 1 || row.state !== "accepted" || row.apply_phase !== "effects_committed" || row.accepted_at === null || row.lease_expires_at !== null) completionBootstrapFailV1("sequence completion request state");
+    const prior = completionBootstrapStoredResultV1(row, operationPair);
+    if (prior.state !== "owner_released" || hashCanonicalJson(prior) !== hashCanonicalJson(context.result)) completionBootstrapFailV1("sequence completion predecessor crossed");
+    const next = { ...prior, state: "completed", sequenceRef: input.sequenceRef, sequenceHash: input.sequenceHash };
+    const updated = await transaction.unsafe<Array<{ request_id: string }>>(
+      `UPDATE runtime_completion_requests
+          SET result=jsonb_set(COALESCE(result,'{}'::jsonb),'{internalProductionBaselineSpawnerBootstrap}',$2::jsonb,true),updated_at=clock_timestamp()
+        WHERE request_id=$1 AND state='accepted' AND apply_phase='effects_committed'
+          AND result->'internalProductionBaselineSpawnerBootstrap'->>'state'='owner_released'
+        RETURNING request_id`,
+      [row.request_id, JSON.stringify(next)],
+    );
+    if (updated.length !== 1) completionBootstrapFailV1("sequence completion CAS");
+  });
+  context = await resolveCompletionBootstrapLifecycleContextV1(operationPair, sequencePair);
+  if (context.result.state !== "completed") completionBootstrapFailV1("sequence completion not visible");
+  return completionBootstrapLifecycleObservationV1(context);
 }
 
 export async function terminalizeRuntimeCompletionForRunInTransactionV1(

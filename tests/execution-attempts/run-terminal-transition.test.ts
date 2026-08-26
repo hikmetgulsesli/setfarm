@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import type postgres from "postgres";
 
@@ -328,6 +330,218 @@ async function seedActiveRecovery(
 }
 
 describe("canonical run terminal owner", () => {
+  it("P4 recovery source bootstrap actual terminal skips the second owner close only after deep proof", async () => {
+    const source = await readFile(path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../src/execution/run-terminal-transition.ts",
+    ), "utf8");
+    const mutation = source.indexOf("UPDATE runs");
+    const proof = source.indexOf("resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(", mutation);
+    const ordinary = source.indexOf("resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(", proof);
+    assert.ok(mutation >= 0 && proof > mutation && ordinary > proof);
+    assert.match(source.slice(proof, ordinary + 500), /recoverySourceBootstrapTerminal === null/);
+    assert.match(source, /if \(terminalPair !== null\) \{/);
+    const dbSource = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/db-pg.ts"), "utf8");
+    assert.doesNotMatch(dbSource, /observeInternalProductionRecoverySourceBootstrapStatusV1/, "db-pg terminal proof cannot discover authority through the mutable zero-input status");
+    assert.match(dbSource, /resolveInternalProductionRecoverySourceBootstrapRunReceiptV1/, "db-pg uses only the final pair-only run-receipt authority edge");
+  });
+
+  it("P4 recovery source bootstrap actual terminal executes exact31 closed-pair release and five-resolver proof", async () => {
+    const production = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+    const transitionProduction = await readFile(new URL("../../src/execution/run-terminal-transition.ts", import.meta.url), "utf8");
+    const storedStart = production.indexOf("async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(");
+    const storedEnd = production.indexOf("async function resolveLockedWorkflowRunOwnerByRunIdV1(", storedStart);
+    const terminalStart = production.indexOf("export async function resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(");
+    const terminalEnd = production.indexOf("export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(", terminalStart);
+    const transitionStart = transitionProduction.indexOf("export async function transitionRunToTerminalInTransaction(");
+    const transitionEnd = transitionProduction.indexOf("export async function transitionRunToTerminal(", transitionStart + 1);
+    assert.ok(storedStart >= 0 && storedEnd > storedStart && terminalStart > storedEnd && terminalEnd > terminalStart && transitionStart >= 0 && transitionEnd > transitionStart);
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-source-bootstrap-terminal-"));
+    try {
+      const sourceDir = path.join(fixture, "src");
+      const internalDir = path.join(sourceDir, "internal-production");
+      mkdirSync(internalDir, { recursive: true });
+      writeFileSync(path.join(internalDir, "baseline-post-handoff-receipt-v1.ts"), `
+const g=globalThis;
+const crossed=(name,value)=>g.__p4TerminalCross===name?{...value,operationHash:"f".repeat(64)}:value;
+export async function resolveInternalProductionRecoverySourceBootstrapPendingInputV1(pair){g.__p4TerminalCalls.push("pending");return g.__p4TerminalCross==="pending"?{...pair,pendingInputHash:"f".repeat(64)}:{...pair}}
+export async function resolveInternalProductionRecoverySourceRunTerminalAuthorityV1(_pair){g.__p4TerminalCalls.push("source");return crossed("source",g.__p4SourceTerminal)}
+export async function resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1(_pair){g.__p4TerminalCalls.push("run");return crossed("run",g.__p4RunTerminal)}
+export async function resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1(_pair){g.__p4TerminalCalls.push("pair-close");return g.__p4TerminalCross==="pair-close"?{...g.__p4PairClose,targetReservationPairCloseHash:"f".repeat(64)}:g.__p4PairClose}
+export async function resolveInternalProductionRecoverySourceBootstrapRunReceiptV1(pair){g.__p4TerminalCalls.push("receipt");const value={...g.__p4ReceiptBody,...pair};return g.__p4TerminalCross==="receipt"?{...value,runId:"crossed"}:value}
+`, "utf8");
+      const modulePath = path.join(sourceDir, "db-kernel.ts");
+      writeFileSync(modulePath, `
+import {createHash} from "node:crypto";
+type InternalProductionPgTransactionSql=any; type OwnerReservationRowV1=any; type InternalProductionBoundOwnerReservationV1<T=any>=any; type OwnerAdmissionAuthorityRowV1=any; type WorkflowRunTerminalRowV1=any;
+const g=globalThis as any;
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
+const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
+const strictCanonicalText=(v:string)=>JSON.parse(v);
+const validateOwnerAdmissionPairV1=(input:any,refKey:string,hashKey:string)=>({[refKey]:input[refKey],[hashKey]:input[hashKey]});
+const resolveOwnerReservationInTransactionV1=async(_sql:any,pair:any)=>pair.reservationRef===g.__p4RunReservation.reservationRef?g.__p4RunReservation:g.__p4SourceReservation;
+const validateBoundOwnerReservationRowV1=async()=>g.__p4Bound;
+const createInternalProductionWorkflowRunCanonicalOwnerIdentityV1=(runId:string)=>({ownerRef:"setfarm://run/"+runId,ownerHash:hashCanonicalJson({runId}),ownerKey:runId});
+const validateInternalProductionOwnerReservationCloseV1=(v:any)=>v;
+const createInternalProductionSourceRunLaunchTargetReservationPairCloseV1=(v:any)=>{const targetReservationPairCloseHash=hashCanonicalJson(v);return Object.freeze({...v,targetReservationPairCloseRef:"setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/"+targetReservationPairCloseHash,targetReservationPairCloseHash})};
+const resolveGlobalOwnerAdmissionFenceReleaseInTransactionV1=async()=>g.__p4Release;
+const createWorkflowRunTerminalAuthorityFromLockedRowsV1=(run:any,bound:any)=>({schema:"terminal",runId:run.id,status:run.status,reservationRef:bound.reservationRef,reservationHash:bound.reservationHash});
+const deriveInternalProductionTerminalOwnerAuthorityPairV1=(authority:any)=>{const terminalAuthorityHash=hashCanonicalJson(authority);return {terminalAuthorityRef:"setfarm://internal-production/terminal-owner-authorities/sha256/"+terminalAuthorityHash,terminalAuthorityHash}};
+const validateInternalProductionTerminalOwnerAuthorityPairV1=()=>undefined;
+${production.slice(storedStart, storedEnd)}
+${production.slice(terminalStart, terminalEnd)}
+const readDatabaseWallClock=async()=>new Date("2026-08-26T12:00:00.000Z");
+const normalizeTask5TerminalCompletionContractInTransactionV1=async()=>undefined;
+const metaObject=(value:any)=>value&&typeof value==="object"&&!Array.isArray(value)?{...value}:{};
+const canonicalJsonStringify=canonical;
+const createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1=()=>{throw new Error("completion owner unexpected")};
+const lockV3TerminalRecoveryChainInTransaction=async()=>{throw new Error("v3 unexpected")};
+const settleV3TerminalRecoveryChainInTransaction=async()=>{throw new Error("v3 unexpected")};
+const assertRuntimeCompletionManifestInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const authenticateTask5ClosedMandatoryEffectReplayInTransactionV1=async()=>{throw new Error("effect unexpected")};
+const releaseRuntimeSessionForTerminalRunInTransactionV1=async()=>{throw new Error("runtime unexpected")};
+const terminalizeRuntimeCompletionForRunInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const terminalizeRunTerminationRequestInTransactionV1=async()=>{throw new Error("termination unexpected")};
+const resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("claim unexpected")};
+const resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("attempt unexpected")};
+const resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("runtime unexpected")};
+const resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("completion unexpected")};
+const resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1=async()=>{throw new Error("termination unexpected")};
+const resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1=async()=>{g.__p4OrdinaryTerminalResolverCalls+=1;throw new Error("ordinary resolver forbidden")};
+const closeInternalProductionOwnerReservationV1=async()=>{g.__p4OwnerCloseCalls+=1;throw new Error("second owner close forbidden")};
+const resolveInternalProductionOwnerReservationCloseInTransactionV1=async()=>{g.__p4OwnerCloseReopenCalls+=1;throw new Error("owner close reopen forbidden")};
+const enqueueOperationalOutboxEventInTransaction=async(_sql:any,input:any)=>{g.__p4OutboxCalls.push(input)};
+${transitionProduction.slice(transitionStart, transitionEnd)}
+export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservationPairCloseV1;
+`, "utf8");
+      const kernel = await import(`${pathToFileURL(modulePath).href}?p4=${Date.now()}`) as any;
+      const sha = (member: string) => member.repeat(64);
+      const runId = "RUN_P4_RECOVERY_SOURCE_BOOTSTRAP_0001";
+      const runReservation = { reservationRef: "setfarm://tests/p4/run-reservation", reservationHash: sha("1"), category: "run", producerImplementationId: "a-recovery-source-bootstrap-run-v1", ownerKey: runId };
+      const sourceReservation = { reservationRef: "setfarm://tests/p4/source-reservation", reservationHash: sha("2"), category: "source-run", producerImplementationId: "a-recovery-source-run-v1", ownerKey: "source" };
+      const bound = { reservationRef: runReservation.reservationRef, reservationHash: runReservation.reservationHash, category: "run", producerImplementationId: runReservation.producerImplementationId, ownerKey: runId, canonicalOwnerIdentity: { ownerRef: `setfarm://run/${runId}`, ownerHash: hashCanonicalJson({ runId }), ownerKey: runId } };
+      const fenceRef = "setfarm://tests/p4/fence";
+      const fenceHash = sha("3");
+      const sourceTerminal = { operationRef: "setfarm://tests/p4/operation", operationHash: sha("4"), runId, operationRunBindingHash: sha("5"), reciprocalRunOperationBindingHash: sha("6"), terminalOwnerRef: "setfarm://tests/p4/source-terminal", terminalOwnerHash: sha("7"), terminalSourceRunRef: "setfarm://tests/p4/source-terminal", terminalSourceRunHash: sha("7") };
+      const runTerminal = { operationRef: sourceTerminal.operationRef, operationHash: sourceTerminal.operationHash, runId, operationRunBindingHash: sourceTerminal.operationRunBindingHash, reciprocalRunOperationBindingHash: sourceTerminal.reciprocalRunOperationBindingHash, terminalOwnerRef: "setfarm://tests/p4/run-terminal", terminalOwnerHash: sha("8"), terminalRunLaunchRef: "setfarm://tests/p4/run-terminal", terminalRunLaunchHash: sha("8") };
+      const sourceClose = { reservationRef: sourceReservation.reservationRef, reservationHash: sourceReservation.reservationHash, terminalOwnerRef: sourceTerminal.terminalSourceRunRef, terminalOwnerHash: sourceTerminal.terminalSourceRunHash, ownerAdmissionHeadPredecessorHash: sha("9"), ownerAdmissionHeadSuccessorHash: sha("a"), preservedFenceRef: fenceRef, preservedFenceHash: fenceHash };
+      const runClose = { reservationRef: runReservation.reservationRef, reservationHash: runReservation.reservationHash, terminalOwnerRef: runTerminal.terminalRunLaunchRef, terminalOwnerHash: runTerminal.terminalRunLaunchHash, ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadSuccessorHash, ownerAdmissionHeadSuccessorHash: sha("b"), preservedFenceRef: fenceRef, preservedFenceHash: fenceHash };
+      const context = {
+        schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1", task: "task", purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", protocol: "v3", promptManifestHash: sha("c"),
+        baseSourceSha: "1".repeat(40), baseSourceTreeHash: "2".repeat(40), buildHash: sha("d"), activationPreflightHash: sha("e"), releaseAdmissionHash: sha("f"),
+        pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: sha("1"), startIntentRef: "setfarm://tests/p4/intent", startIntentHash: sha("2"), startOutboxRef: "setfarm://tests/p4/outbox", startOutboxHash: sha("3"),
+        operationRef: sourceTerminal.operationRef, operationHash: sourceTerminal.operationHash, targetSourceRunReservationRef: sourceReservation.reservationRef, targetSourceRunReservationHash: sourceReservation.reservationHash,
+        targetRunReservationRef: runReservation.reservationRef, targetRunReservationHash: runReservation.reservationHash, targetRunLaunchCompositeHash: sha("4"), sourceRunOwnerRef: "setfarm://tests/p4/source-owner", sourceRunOwnerHash: sha("5"),
+        runOwnerRef: bound.canonicalOwnerIdentity.ownerRef, runOwnerHash: bound.canonicalOwnerIdentity.ownerHash, operationRunBindingHash: sourceTerminal.operationRunBindingHash, reciprocalRunOperationBindingHash: sourceTerminal.reciprocalRunOperationBindingHash,
+      };
+      const pairClose = kernel.p4PairClose({ fenceRef, fenceHash, targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash, sourceRunReservationRef: sourceReservation.reservationRef, sourceRunReservationHash: sourceReservation.reservationHash, runReservationRef: runReservation.reservationRef, runReservationHash: runReservation.reservationHash, terminalSourceRunRef: sourceTerminal.terminalSourceRunRef, terminalSourceRunHash: sourceTerminal.terminalSourceRunHash, terminalRunLaunchRef: runTerminal.terminalRunLaunchRef, terminalRunLaunchHash: runTerminal.terminalRunLaunchHash, ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadPredecessorHash, ownerAdmissionHeadSuccessorHash: runClose.ownerAdmissionHeadSuccessorHash, preservedFenceRef: fenceRef, preservedFenceHash: fenceHash });
+      const release = { releaseRef: "setfarm://tests/p4/release", releaseHash: sha("6"), fenceRef, fenceHash, releaseAuthority: { purpose: "recovery-d-source-delivery-v1", targetFamilyKind: "source-run-launch", targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef, targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash } };
+      const receiptBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-run-receipt.v1", purpose: "recovery-d-source-delivery-v1", pendingInputRef: context.pendingInputRef, pendingInputHash: context.pendingInputHash, operationRef: context.operationRef, operationHash: context.operationHash, targetSourceRunReservationRef: context.targetSourceRunReservationRef, targetSourceRunReservationHash: context.targetSourceRunReservationHash, targetRunReservationRef: context.targetRunReservationRef, targetRunReservationHash: context.targetRunReservationHash, targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash, ownerAdmissionFenceRef: fenceRef, ownerAdmissionFenceHash: fenceHash, startIntentRef: context.startIntentRef, startIntentHash: context.startIntentHash, startOutboxRef: context.startOutboxRef, startOutboxHash: context.startOutboxHash, runId, operationRunBindingHash: context.operationRunBindingHash, reciprocalRunOperationBindingHash: context.reciprocalRunOperationBindingHash, terminalOwnerRef: sourceTerminal.terminalOwnerRef, terminalOwnerHash: sourceTerminal.terminalOwnerHash, terminalSourceRunRef: sourceTerminal.terminalSourceRunRef, terminalSourceRunHash: sourceTerminal.terminalSourceRunHash, terminalRunLaunchRef: runTerminal.terminalRunLaunchRef, terminalRunLaunchHash: runTerminal.terminalRunLaunchHash, targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef, targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash, fenceReleaseRef: release.releaseRef, fenceReleaseHash: release.releaseHash };
+      const runRow = { ...runReservation, state: "closed", close_kind: "fence-target", close_payload: runClose };
+      const sourceRow = { ...sourceReservation, state: "closed", close_kind: "fence-target", close_payload: sourceClose };
+      Object.assign(globalThis as any, { __p4RunReservation: runReservation, __p4SourceReservation: sourceReservation, __p4Bound: bound, __p4SourceTerminal: sourceTerminal, __p4RunTerminal: runTerminal, __p4PairClose: pairClose, __p4Release: release, __p4ReceiptBody: receiptBody, __p4TerminalCross: null, __p4TerminalCalls: [] });
+      const sql = Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const query = strings.join("?");
+        if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
+        if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
+        if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: "completed" }];
+        if (query.includes("authority_kind='release'")) return [{ authority_ref: release.releaseRef, authority_hash: release.releaseHash }];
+        if (query.includes("SELECT id,status FROM runs")) return [{ id: runId, status: "completed" }];
+        throw new Error(`UNEXPECTED_SQL:${query}`);
+      }, { unsafe: async () => { throw new Error("unsafe forbidden"); } });
+      const terminal = await kernel.resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(sql, { runId });
+      assert.equal(terminal.producerImplementationId, "a-recovery-source-bootstrap-run-v1");
+      assert.deepEqual((globalThis as any).__p4TerminalCalls, ["pending", "source", "run", "pair-close", "receipt"]);
+      for (const crossed of ["pending", "source", "run", "pair-close", "receipt"]) {
+        (globalThis as any).__p4TerminalCross = crossed;
+        (globalThis as any).__p4TerminalCalls = [];
+        await assert.rejects(kernel.resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(sql, { runId }), /WORKFLOW_RUN_OWNER_CORRUPTION/);
+        assert.ok((globalThis as any).__p4TerminalCalls.includes(crossed), `${crossed} resolver was executed before rollback`);
+      }
+
+      const durable = { status: "running" };
+      const createTransaction = () => {
+        const staged = { status: durable.status };
+        const tagged = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const query = strings.join("?");
+          if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
+          if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
+          if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: staged.status }];
+          if (query.includes("authority_kind='release'")) return [{ authority_ref: release.releaseRef, authority_hash: release.releaseHash }];
+          if (query.includes("SELECT id,status FROM runs")) return [{ id: runId, status: staged.status }];
+          throw new Error(`UNEXPECTED_TAGGED_SQL:${query}`);
+        };
+        const unsafe = async (query: string, values: unknown[] = []) => {
+          if (query.includes("FROM runs WHERE id = $1 FOR UPDATE")) return [{ id: runId, status: staged.status, protocol: "legacy", packet_hash: null, accepted_candidate_hash: null, meta: {} }];
+          if (query.includes("FROM run_termination_requests")) return [];
+          if (query.includes("FROM runtime_sessions")) return [];
+          if (query.includes("FROM execution_attempts")) return [];
+          if (query.includes("FROM claim_log")) return [];
+          if (query.includes("FROM runtime_completion_requests")) return [];
+          if (query.includes("FROM runtime_completion_effects")) return [];
+          if (query.includes("FROM internal_production_owner_reservations_v1")) return [];
+          if (query.includes("SELECT") && query.includes("COUNT(*)::integer FROM steps")) return [{ steps: 0, stories: 0 }];
+          if (query.includes("UPDATE runs") && query.includes("RETURNING id,status")) {
+            staged.status = String(values[1]);
+            return [{ id: runId, status: staged.status }];
+          }
+          throw new Error(`UNEXPECTED_UNSAFE_SQL:${query}`);
+        };
+        return {
+          sql: Object.assign(tagged, { unsafe }),
+          commit: () => { durable.status = staged.status; },
+          staged,
+        };
+      };
+      const executeTransition = async () => {
+        const transaction = createTransaction();
+        const result = await kernel.transitionRunToTerminalInTransaction(transaction.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "p4 special terminal",
+        });
+        transaction.commit();
+        return result;
+      };
+      Object.assign(globalThis as any, {
+        __p4TerminalCross: null,
+        __p4TerminalCalls: [],
+        __p4OrdinaryTerminalResolverCalls: 0,
+        __p4OwnerCloseCalls: 0,
+        __p4OwnerCloseReopenCalls: 0,
+        __p4OutboxCalls: [],
+      });
+      const transition = await executeTransition();
+      assert.equal(transition.status, "completed");
+      assert.equal(durable.status, "completed");
+      assert.deepEqual((globalThis as any).__p4TerminalCalls, ["pending", "source", "run", "pair-close", "receipt"]);
+      assert.equal((globalThis as any).__p4OrdinaryTerminalResolverCalls, 0);
+      assert.equal((globalThis as any).__p4OwnerCloseCalls, 0, "the already-closed special target is never closed a second time");
+      assert.equal((globalThis as any).__p4OwnerCloseReopenCalls, 0);
+      assert.equal((globalThis as any).__p4OutboxCalls.length, 1);
+
+      for (const crossed of ["pending", "source", "run", "pair-close", "receipt"]) {
+        durable.status = "running";
+        Object.assign(globalThis as any, {
+          __p4TerminalCross: crossed,
+          __p4TerminalCalls: [],
+          __p4OrdinaryTerminalResolverCalls: 0,
+          __p4OwnerCloseCalls: 0,
+          __p4OwnerCloseReopenCalls: 0,
+          __p4OutboxCalls: [],
+        });
+        await assert.rejects(executeTransition(), /WORKFLOW_RUN_OWNER_CORRUPTION/);
+        assert.equal(durable.status, "running", `${crossed} proof failure rolls back the preceding run terminal UPDATE`);
+        assert.equal((globalThis as any).__p4OwnerCloseCalls, 0);
+        assert.equal((globalThis as any).__p4OutboxCalls.length, 0);
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("keeps attempt birth, recovery pair publication, m33 use, and terminal closes in the exact Task 4 inventory", async () => {
     const testDirectory = path.dirname(fileURLToPath(import.meta.url));
     const productionPaths = [

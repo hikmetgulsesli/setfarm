@@ -237,8 +237,8 @@ export const INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1 = detachedDeepFreeze([
   { plan: "A", module: "src/recovery/v3-downstream-evidence-publication.ts", function: "putFindingSet", implementationId: "a-finding-v3-downstream-evidence-v1", category: "finding", ownerKeyDerivationId: "finding-set-hash-v1", censusKeys: ["findingOwnerCount"] },
   { plan: "A", module: "src/recovery/v3-evidence-only-publication.ts", function: "putFindingSetInTransaction", implementationId: "a-finding-v3-evidence-only-v1", category: "finding", ownerKeyDerivationId: "finding-set-hash-v1", censusKeys: ["findingOwnerCount"] },
   { plan: "A", module: "src/execution/operational-outbox-repository.ts", function: "createOperationalOutboxRepository.publish", implementationId: "a-operational-delivery-v1", category: "operational-delivery", ownerKeyDerivationId: "operational-event-key-consumer-v1", censusKeys: ["operationalDeliveryCount"] },
-  { plan: "A", module: "src/internal-production/baseline-post-handoff-receipt-v1.ts", function: "reserveRecoverySourceRunOwnerV1", implementationId: "a-recovery-source-run-v1", category: "source-run", ownerKeyDerivationId: "source-bootstrap-operation-run-v1", censusKeys: ["sourceRunOwnerCount"] },
-  { plan: "A", module: "src/internal-production/baseline-post-handoff-receipt-v1.ts", function: "reserveRecoverySourceBootstrapRunOwnerV1", implementationId: "a-recovery-source-bootstrap-run-v1", category: "run", ownerKeyDerivationId: "source-bootstrap-reciprocal-run-v1", censusKeys: ["activeRunCount"] },
+  { plan: "A", module: "src/db-pg.ts", function: "reserveRecoverySourceRunOwnerV1", implementationId: "a-recovery-source-run-v1", category: "source-run", ownerKeyDerivationId: "source-bootstrap-operation-run-v1", censusKeys: ["sourceRunOwnerCount"] },
+  { plan: "A", module: "src/db-pg.ts", function: "reserveRecoverySourceBootstrapRunOwnerV1", implementationId: "a-recovery-source-bootstrap-run-v1", category: "run", ownerKeyDerivationId: "source-bootstrap-reciprocal-run-v1", censusKeys: ["activeRunCount"] },
 ] as const satisfies readonly InternalProductionOwnerProducerRowV1[]);
 
 export type InternalProductionOwnerProducerManifestV1 = Readonly<{
@@ -960,6 +960,962 @@ export type InternalProductionOwnerReservationCloseV1 = Readonly<{
   closeRef: string;
   closeHash: string;
 }>;
+
+export type InternalProductionOwnerReservationIdentityV1 = Readonly<{
+  category: InternalProductionOwnerCategoryV1;
+  producerImplementationId: InternalProductionOwnerProducerImplementationIdV1;
+  ownerKeyHash: string;
+  reservationRef: string;
+  reservationHash: string;
+}>;
+
+export type InternalProductionSourceRunLaunchTargetFamilyV1 = Readonly<{
+  kind: "source-run-launch";
+  sourceRunReservation: InternalProductionOwnerReservationIdentityV1 & Readonly<{
+    category: "source-run";
+    producerImplementationId: "a-recovery-source-run-v1";
+  }>;
+  runReservation: InternalProductionOwnerReservationIdentityV1 & Readonly<{
+    category: "run";
+    producerImplementationId: "a-recovery-source-bootstrap-run-v1";
+  }>;
+  targetRunLaunchCompositeHash: string;
+  targetFamilyHash: string;
+}>;
+
+export type InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1 =
+  | Readonly<{ kind: "recovery-active-run"; coordinatorAuthorityRef: string; coordinatorAuthorityHash: string; activeTargetAuthorityRef: string; activeTargetAuthorityHash: string }>
+  | Readonly<{ kind: "source-release-barrier"; coordinatorAuthorityRef: string; coordinatorAuthorityHash: string; activeTargetAuthorityRef: null; activeTargetAuthorityHash: null }>
+  | Readonly<{ kind: "cold-rehearsal"; coordinatorAuthorityRef: string; coordinatorAuthorityHash: string; activeTargetAuthorityRef: null; activeTargetAuthorityHash: null }>
+  | Readonly<{ kind: "documentation-handoff"; coordinatorAuthorityRef: string; coordinatorAuthorityHash: string; activeTargetAuthorityRef: null; activeTargetAuthorityHash: null }>;
+
+export const INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1 = detachedDeepFreeze({
+  schema: "setfarm.internal-production-recovery-restart-target-family-abi.v1",
+  restartReservation: { role: "restart-reservation", category: "restart-reservation", producerImplementationId: "d-restart-reservation-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "reserveInternalProductionServiceRestartDispatchOwnerV1" },
+  serviceRestartOperationReservation: { role: "service-restart-operation", category: "service-restart-operation", producerImplementationId: "d-service-restart-operation-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "reserveInternalProductionServiceRestartOperationOwnerV1" },
+  launchOutboxReservation: { role: "launch-outbox", category: "launch-outbox", producerImplementationId: "d-service-restart-launch-outbox-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "publishInternalProductionServiceRestartLaunchOutboxUnderFenceV1" },
+  helperProcessReservation: { role: "helper-process", category: "process", producerImplementationId: "d-service-restart-helper-process-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "publishInternalProductionServiceRestartHelperProcessUnderFenceV1" },
+  dispatchChildProcessReservation: { role: "dispatch-child-process", category: "process", producerImplementationId: "d-service-restart-child-process-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "publishInternalProductionServiceRestartDispatchChildProcessUnderFenceV1" },
+  startupListenerReservation: { role: "startup-listener", category: "listener", producerImplementationId: "d-service-restart-startup-listener-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "publishInternalProductionServiceRestartStartupListenerUnderFenceV1" },
+  replacementProcessReservation: { role: "replacement-process", category: "process", producerImplementationId: "d-service-restart-replacement-process-v1", expectedModuleRelativePath: "src/internal-production/internal-production-service-restart-authority-v1.ts", expectedExportName: "publishInternalProductionServiceRestartReplacementProcessUnderFenceV1" },
+} as const);
+export const INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1 = "c3d88ba2dc7d9e70d773d0056d2fdeaced399f63adc7fd1c37eb423fa22d08d5" as const;
+export type InternalProductionRecoveryRestartNamespaceV1 = InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1["kind"];
+
+type InternalProductionRecoveryRestartTargetFamilyCommonV1 = Readonly<{
+  kind: "recovery-restart";
+  authorizationOperationRef: string;
+  authorizationOperationHash: string;
+  service: "setfarm-spawner" | "setfarm-dashboard" | "mission-control";
+  coordinationHash: string;
+  restartReservation: InternalProductionOwnerReservationIdentityV1 & { category: "restart-reservation"; producerImplementationId: "d-restart-reservation-v1" };
+  serviceRestartOperationReservation: InternalProductionOwnerReservationIdentityV1 & { category: "service-restart-operation"; producerImplementationId: "d-service-restart-operation-v1" };
+  launchOutboxReservation: InternalProductionOwnerReservationIdentityV1 & { category: "launch-outbox"; producerImplementationId: "d-service-restart-launch-outbox-v1" };
+  helperProcessReservation: InternalProductionOwnerReservationIdentityV1 & { category: "process"; producerImplementationId: "d-service-restart-helper-process-v1" };
+  dispatchChildProcessReservation: InternalProductionOwnerReservationIdentityV1 & { category: "process"; producerImplementationId: "d-service-restart-child-process-v1" };
+  startupListenerReservation: InternalProductionOwnerReservationIdentityV1 & { category: "listener"; producerImplementationId: "d-service-restart-startup-listener-v1" };
+  replacementProcessReservation: InternalProductionOwnerReservationIdentityV1 & { category: "process"; producerImplementationId: "d-service-restart-replacement-process-v1" };
+  targetFamilyAbiHash: typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1;
+  targetFamilyHash: string;
+}>;
+export type InternalProductionRecoveryRestartTargetFamilyV1 = {
+  [Namespace in InternalProductionRecoveryRestartNamespaceV1]: InternalProductionRecoveryRestartTargetFamilyCommonV1 & Readonly<{ namespace: Namespace; coordinatorTargetAuthority: Extract<InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1, { kind: Namespace }> }>;
+}[InternalProductionRecoveryRestartNamespaceV1];
+export type InternalProductionRecoveryRestartOwnerAdmissionFenceInputV1 = {
+  [Namespace in InternalProductionRecoveryRestartNamespaceV1]: Readonly<{
+    purpose: "recovery-d-physical-service-restart-operation-v1";
+    authorizationOperationRef: string;
+    authorizationOperationHash: string;
+    namespace: Namespace;
+    service: "setfarm-spawner" | "setfarm-dashboard" | "mission-control";
+    coordinationHash: string;
+    coordinatorTargetAuthority: Extract<InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1, { kind: Namespace }>;
+  }>;
+}[InternalProductionRecoveryRestartNamespaceV1];
+export type InternalProductionRecoveryRestartOwnerAdmissionFenceResultV1 = Readonly<{
+  fence: InternalProductionGlobalOwnerAdmissionFenceV1 & { targetFamily: InternalProductionRecoveryRestartTargetFamilyV1 };
+  restartReservation: InternalProductionOwnerReservationV1 & { category: "restart-reservation"; producerImplementationId: "d-restart-reservation-v1" };
+  serviceRestartOperationReservation: InternalProductionOwnerReservationV1 & { category: "service-restart-operation"; producerImplementationId: "d-service-restart-operation-v1" };
+  launchOutboxReservation: InternalProductionOwnerReservationV1 & { category: "launch-outbox"; producerImplementationId: "d-service-restart-launch-outbox-v1" };
+  helperProcessReservation: InternalProductionOwnerReservationV1 & { category: "process"; producerImplementationId: "d-service-restart-helper-process-v1" };
+  dispatchChildProcessReservation: InternalProductionOwnerReservationV1 & { category: "process"; producerImplementationId: "d-service-restart-child-process-v1" };
+  startupListenerReservation: InternalProductionOwnerReservationV1 & { category: "listener"; producerImplementationId: "d-service-restart-startup-listener-v1" };
+  replacementProcessReservation: InternalProductionOwnerReservationV1 & { category: "process"; producerImplementationId: "d-service-restart-replacement-process-v1" };
+}>;
+
+export type InternalProductionServiceRestartTerminalOwnerAuthoritiesV1 = Readonly<{
+  restartReservationTerminalOwnerRef: string; restartReservationTerminalOwnerHash: string;
+  serviceRestartOperationTerminalOwnerRef: string; serviceRestartOperationTerminalOwnerHash: string;
+  launchOutboxTerminalOwnerRef: string; launchOutboxTerminalOwnerHash: string;
+  helperProcessTerminalOwnerRef: string; helperProcessTerminalOwnerHash: string;
+  dispatchChildProcessTerminalOwnerRef: string; dispatchChildProcessTerminalOwnerHash: string;
+  startupListenerTerminalOwnerRef: string; startupListenerTerminalOwnerHash: string;
+  replacementProcessTerminalOwnerRef: string; replacementProcessTerminalOwnerHash: string;
+}>;
+export type InternalProductionServiceRestartTerminalCoreDispositionV1 =
+  | Readonly<{ kind: "complete"; completionKind: "executed" | "adopted"; afterGenerationHash: string; failureCode: null; exactProcessAbsenceAuthorityHash: null }>
+  | Readonly<{ kind: "failed"; completionKind: null; afterGenerationHash: null; failureCode: "SERVICE_RESTART_DISPATCH_OUTCOME_UNCERTAIN" | "SERVICE_RESTART_EXPECTED_PROCESS_DIED" | "SERVICE_RESTART_IDENTITY_AMBIGUOUS"; exactProcessAbsenceAuthorityHash: string }>;
+export type InternalProductionServiceRestartTerminalCoreV1 = Readonly<{
+  schema: "setfarm.internal-production-service-restart-terminal-core.v1"; namespace: InternalProductionRecoveryRestartNamespaceV1; service: "setfarm-spawner" | "setfarm-dashboard" | "mission-control"; coordinationHash: string;
+  authorizationOperationRef: string; authorizationOperationHash: string; operationRef: string; operationHash: string; authorizationConsumptionRef: string; authorizationConsumptionHash: string;
+  restartReservationRef: string; restartReservationHash: string; serviceRestartOperationReservationRef: string; serviceRestartOperationReservationHash: string; launchOutboxReservationRef: string; launchOutboxReservationHash: string; helperProcessReservationRef: string; helperProcessReservationHash: string; dispatchChildProcessReservationRef: string; dispatchChildProcessReservationHash: string; startupListenerReservationRef: string; startupListenerReservationHash: string; replacementProcessReservationRef: string; replacementProcessReservationHash: string;
+  terminalOwnerAuthorities: InternalProductionServiceRestartTerminalOwnerAuthoritiesV1; disposition: InternalProductionServiceRestartTerminalCoreDispositionV1;
+  targetFamilyAbiHash: typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1; targetFamilyHash: string; terminalCoreRef: string; terminalCoreHash: string;
+}>;
+export type InternalProductionRecoveryRestartTargetSetCloseV1 = Readonly<{
+  schema: "setfarm.internal-production-recovery-restart-target-set-close.v1"; fenceRef: string; fenceHash: string; authorizationOperationRef: string; authorizationOperationHash: string;
+  restartReservationRef: string; restartReservationHash: string; serviceRestartOperationReservationRef: string; serviceRestartOperationReservationHash: string; launchOutboxReservationRef: string; launchOutboxReservationHash: string; helperProcessReservationRef: string; helperProcessReservationHash: string; dispatchChildProcessReservationRef: string; dispatchChildProcessReservationHash: string; startupListenerReservationRef: string; startupListenerReservationHash: string; replacementProcessReservationRef: string; replacementProcessReservationHash: string;
+  terminalCoreRef: string; terminalCoreHash: string; targetFamilyAbiHash: typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1; targetFamilyHash: string; ownerAdmissionHeadPredecessorHash: string; ownerAdmissionHeadSuccessorHash: string; preservedFenceRef: string; preservedFenceHash: string; targetSetCloseRef: string; targetSetCloseHash: string;
+}>;
+
+export type InternalProductionGlobalOwnerAdmissionFencePurposeV1 =
+  | "recovery-d-physical-service-restart-operation-v1"
+  | "recovery-d-source-delivery-v1"
+  | "golden-launch-operation-migration-release-v1"
+  | "recovery-d-physical-service-restart-authority-cutover-v1";
+
+export type InternalProductionGlobalOwnerAdmissionFenceTargetFamilyV1 =
+  | Readonly<{ kind: "none"; targetFamilyHash: null }>
+  | InternalProductionSourceRunLaunchTargetFamilyV1
+  | InternalProductionRecoveryRestartTargetFamilyV1;
+
+export type InternalProductionGlobalOwnerAdmissionFenceV1 = Readonly<{
+  schema: "setfarm.internal-production-global-owner-admission-fence.v1";
+  purpose: InternalProductionGlobalOwnerAdmissionFencePurposeV1;
+  pendingInputRef: string;
+  pendingInputHash: string;
+  ownerCategories: typeof INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1;
+  ownerCategoryRegistryHash: string;
+  ownerCategoryCensusMapHash: string;
+  targetFamily: InternalProductionGlobalOwnerAdmissionFenceTargetFamilyV1;
+  observedUnrelatedReservationCount: 0;
+  observedUnrelatedOwnerCount: 0;
+  ownerIdentitySetHash: string;
+  predecessorFenceHeadHash: string | null;
+  ownerAdmissionHeadHash: string;
+  fenceRef: string;
+  fenceHash: string;
+}>;
+
+export type InternalProductionSourceRunLaunchTargetReservationPairCloseV1 = Readonly<{
+  schema: "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1";
+  fenceRef: string;
+  fenceHash: string;
+  targetRunLaunchCompositeHash: string;
+  sourceRunReservationRef: string;
+  sourceRunReservationHash: string;
+  runReservationRef: string;
+  runReservationHash: string;
+  terminalSourceRunRef: string;
+  terminalSourceRunHash: string;
+  terminalRunLaunchRef: string;
+  terminalRunLaunchHash: string;
+  ownerAdmissionHeadPredecessorHash: string;
+  ownerAdmissionHeadSuccessorHash: string;
+  preservedFenceRef: string;
+  preservedFenceHash: string;
+  targetReservationPairCloseRef: string;
+  targetReservationPairCloseHash: string;
+}>;
+
+type InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityMembersV1 = Readonly<{
+  terminalCoreRef: string | null;
+  terminalCoreHash: string | null;
+  targetSetCloseRef: string | null;
+  targetSetCloseHash: string | null;
+  occurrenceRef: string | null;
+  occurrenceHash: string | null;
+  headRef: string | null;
+  headHash: string | null;
+  targetReservationPairCloseRef: string | null;
+  targetReservationPairCloseHash: string | null;
+  purposeTerminalKind:
+    | "golden-launch-operation-migration-release-terminal"
+    | "recovery-d-physical-service-restart-authority-cutover-terminal"
+    | null;
+  purposeTerminalRef: string | null;
+  purposeTerminalHash: string | null;
+}>;
+
+export type InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1 =
+  | (InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityMembersV1 & Readonly<{
+      purpose: "recovery-d-physical-service-restart-operation-v1";
+      targetFamilyKind: "recovery-restart";
+      terminalCoreRef: string;
+      terminalCoreHash: string;
+      targetSetCloseRef: string;
+      targetSetCloseHash: string;
+      occurrenceRef: string;
+      occurrenceHash: string;
+      headRef: string;
+      headHash: string;
+      targetReservationPairCloseRef: null;
+      targetReservationPairCloseHash: null;
+      purposeTerminalKind: null;
+      purposeTerminalRef: null;
+      purposeTerminalHash: null;
+    }>)
+  | (InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityMembersV1 & Readonly<{
+      purpose: "recovery-d-source-delivery-v1";
+      targetFamilyKind: "source-run-launch";
+      terminalCoreRef: null;
+      terminalCoreHash: null;
+      targetSetCloseRef: null;
+      targetSetCloseHash: null;
+      occurrenceRef: null;
+      occurrenceHash: null;
+      headRef: null;
+      headHash: null;
+      targetReservationPairCloseRef: string;
+      targetReservationPairCloseHash: string;
+      purposeTerminalKind: null;
+      purposeTerminalRef: null;
+      purposeTerminalHash: null;
+    }>)
+  | (InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityMembersV1 & Readonly<{
+      purpose: "golden-launch-operation-migration-release-v1";
+      targetFamilyKind: "none";
+      terminalCoreRef: null;
+      terminalCoreHash: null;
+      targetSetCloseRef: null;
+      targetSetCloseHash: null;
+      occurrenceRef: null;
+      occurrenceHash: null;
+      headRef: null;
+      headHash: null;
+      targetReservationPairCloseRef: null;
+      targetReservationPairCloseHash: null;
+      purposeTerminalKind: "golden-launch-operation-migration-release-terminal";
+      purposeTerminalRef: string;
+      purposeTerminalHash: string;
+    }>)
+  | (InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityMembersV1 & Readonly<{
+      purpose: "recovery-d-physical-service-restart-authority-cutover-v1";
+      targetFamilyKind: "none";
+      terminalCoreRef: null;
+      terminalCoreHash: null;
+      targetSetCloseRef: null;
+      targetSetCloseHash: null;
+      occurrenceRef: null;
+      occurrenceHash: null;
+      headRef: null;
+      headHash: null;
+      targetReservationPairCloseRef: null;
+      targetReservationPairCloseHash: null;
+      purposeTerminalKind: "recovery-d-physical-service-restart-authority-cutover-terminal";
+      purposeTerminalRef: string;
+      purposeTerminalHash: string;
+    }>);
+
+export type InternalProductionGlobalOwnerAdmissionFenceReleaseV1 = Readonly<{
+  schema: "setfarm.internal-production-global-owner-admission-fence-release.v1";
+  fenceRef: string;
+  fenceHash: string;
+  releaseAuthority: InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1;
+  ownerAdmissionHeadPredecessorHash: string;
+  ownerAdmissionHeadSuccessorHash: string;
+  releaseRef: string;
+  releaseHash: string;
+}>;
+
+export type InternalProductionGlobalOwnerAdmissionFenceTransitionV1 = Readonly<{
+  schema: "setfarm.internal-production-global-owner-admission-fence-transition.v1";
+  purpose: InternalProductionGlobalOwnerAdmissionFencePurposeV1;
+  pendingInputRef: string;
+  pendingInputHash: string;
+  targetFamilyHash: string;
+  ownerIdentitySetHash: string;
+  transitionRef: string;
+  transitionHash: string;
+}>;
+
+export type InternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1 = Readonly<{
+  schema: "setfarm.internal-production-global-owner-admission-fence-release-transition.v1";
+  fenceRef: string;
+  fenceHash: string;
+  releaseAuthority: InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1;
+  transitionRef: string;
+  transitionHash: string;
+}>;
+
+function ownerReservationIdentityV1(
+  value: unknown,
+  expectedCategory: "source-run",
+  expectedImplementationId: "a-recovery-source-run-v1",
+): InternalProductionSourceRunLaunchTargetFamilyV1["sourceRunReservation"];
+function ownerReservationIdentityV1(
+  value: unknown,
+  expectedCategory: "run",
+  expectedImplementationId: "a-recovery-source-bootstrap-run-v1",
+): InternalProductionSourceRunLaunchTargetFamilyV1["runReservation"];
+function ownerReservationIdentityV1(
+  value: unknown,
+  expectedCategory: "source-run" | "run",
+  expectedImplementationId:
+    | "a-recovery-source-run-v1"
+    | "a-recovery-source-bootstrap-run-v1",
+): InternalProductionOwnerReservationIdentityV1 {
+  const identity = record(value, "INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_INVALID");
+  exactKeys(identity, [
+    "category", "producerImplementationId", "ownerKeyHash", "reservationRef", "reservationHash",
+  ], "INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_KEYS_INVALID");
+  if (identity.category !== expectedCategory || identity.producerImplementationId !== expectedImplementationId) {
+    fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_DISCRIMINATOR_INVALID");
+  }
+  sha256(identity.ownerKeyHash, "INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_OWNER_KEY_HASH_INVALID");
+  const reservationHash = sha256(identity.reservationHash, "INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_HASH_INVALID");
+  if (identity.reservationRef !== `setfarm://internal-production/owner-reservations/${reservationHash}`) {
+    fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_REF_INVALID");
+  }
+  return detachedDeepFreeze(identity as InternalProductionOwnerReservationIdentityV1);
+}
+
+function ownerReservationIdentityFromReservationV1(
+  reservationInput: InternalProductionOwnerReservationV1,
+  expectedCategory: "source-run",
+  expectedImplementationId: "a-recovery-source-run-v1",
+): InternalProductionSourceRunLaunchTargetFamilyV1["sourceRunReservation"];
+function ownerReservationIdentityFromReservationV1(
+  reservationInput: InternalProductionOwnerReservationV1,
+  expectedCategory: "run",
+  expectedImplementationId: "a-recovery-source-bootstrap-run-v1",
+): InternalProductionSourceRunLaunchTargetFamilyV1["runReservation"];
+function ownerReservationIdentityFromReservationV1(
+  reservationInput: InternalProductionOwnerReservationV1,
+  expectedCategory: "source-run" | "run",
+  expectedImplementationId:
+    | "a-recovery-source-run-v1"
+    | "a-recovery-source-bootstrap-run-v1",
+): InternalProductionOwnerReservationIdentityV1 {
+  const producer = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1.find(
+    (row) => row.implementationId === expectedImplementationId,
+  );
+  if (!producer) fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_PRODUCER_INVALID");
+  const reservation = validateInternalProductionOwnerReservationV1(reservationInput, producer);
+  if (reservation.category !== expectedCategory || reservation.producerImplementationId !== expectedImplementationId) {
+    fail("INTERNAL_PRODUCTION_OWNER_RESERVATION_IDENTITY_DISCRIMINATOR_INVALID");
+  }
+  return detachedDeepFreeze({
+    category: reservation.category,
+    producerImplementationId: reservation.producerImplementationId,
+    ownerKeyHash: reservation.ownerKeyHash,
+    reservationRef: reservation.reservationRef,
+    reservationHash: reservation.reservationHash,
+  });
+}
+
+export function createInternalProductionSourceRunLaunchTargetFamilyV1(input: Readonly<{
+  sourceRunReservation: InternalProductionOwnerReservationV1;
+  runReservation: InternalProductionOwnerReservationV1;
+  targetRunLaunchCompositeHash: string;
+}>): InternalProductionSourceRunLaunchTargetFamilyV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_INPUT_INVALID");
+  exactKeys(outer, ["sourceRunReservation", "runReservation", "targetRunLaunchCompositeHash"],
+    "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_INPUT_KEYS_INVALID");
+  const projection = {
+    kind: "source-run-launch" as const,
+    sourceRunReservation: ownerReservationIdentityFromReservationV1(
+      input.sourceRunReservation,
+      "source-run",
+      "a-recovery-source-run-v1",
+    ),
+    runReservation: ownerReservationIdentityFromReservationV1(
+      input.runReservation,
+      "run",
+      "a-recovery-source-bootstrap-run-v1",
+    ),
+    targetRunLaunchCompositeHash: sha256(
+      input.targetRunLaunchCompositeHash,
+      "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_COMPOSITE_HASH_INVALID",
+    ),
+  };
+  return detachedDeepFreeze({ ...projection, targetFamilyHash: hashCanonicalJson(projection) });
+}
+
+export function validateInternalProductionSourceRunLaunchTargetFamilyV1(
+  value: unknown,
+): InternalProductionSourceRunLaunchTargetFamilyV1 {
+  const family = record(value, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_INVALID");
+  exactKeys(family, [
+    "kind", "sourceRunReservation", "runReservation", "targetRunLaunchCompositeHash", "targetFamilyHash",
+  ], "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_KEYS_INVALID");
+  if (family.kind !== "source-run-launch") fail("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_KIND_INVALID");
+  const sourceRunReservation = ownerReservationIdentityV1(
+    family.sourceRunReservation,
+    "source-run",
+    "a-recovery-source-run-v1",
+  );
+  const runReservation = ownerReservationIdentityV1(
+    family.runReservation,
+    "run",
+    "a-recovery-source-bootstrap-run-v1",
+  );
+  const targetRunLaunchCompositeHash = sha256(
+    family.targetRunLaunchCompositeHash,
+    "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_COMPOSITE_HASH_INVALID",
+  );
+  const targetFamilyHash = sha256(
+    family.targetFamilyHash,
+    "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_HASH_INVALID",
+  );
+  const projection = { kind: "source-run-launch" as const, sourceRunReservation, runReservation, targetRunLaunchCompositeHash };
+  if (hashCanonicalJson(projection) !== targetFamilyHash) {
+    fail("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_TARGET_FAMILY_DERIVATION_INVALID");
+  }
+  return detachedDeepFreeze({ ...projection, targetFamilyHash });
+}
+
+export function validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1(
+  value: unknown,
+): InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1 {
+  const authority = record(value, "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_INVALID");
+  exactKeys(authority, ["kind", "coordinatorAuthorityRef", "coordinatorAuthorityHash", "activeTargetAuthorityRef", "activeTargetAuthorityHash"], "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_KEYS_INVALID");
+  if (!['recovery-active-run', 'source-release-barrier', 'cold-rehearsal', 'documentation-handoff'].includes(String(authority.kind))) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_KIND_INVALID");
+  canonicalRef(authority.coordinatorAuthorityRef, "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_PAIR_INVALID");
+  sha256(authority.coordinatorAuthorityHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_PAIR_INVALID");
+  if (authority.kind === "recovery-active-run") {
+    canonicalRef(authority.activeTargetAuthorityRef, "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_ACTIVE_PAIR_INVALID");
+    sha256(authority.activeTargetAuthorityHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_ACTIVE_PAIR_INVALID");
+  } else if (authority.activeTargetAuthorityRef !== null || authority.activeTargetAuthorityHash !== null) {
+    fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_COORDINATOR_TARGET_AUTHORITY_ACTIVE_PAIR_INVALID");
+  }
+  return detachedDeepFreeze(authority as InternalProductionRecoveryRestartCoordinatorTargetAuthorityV1);
+}
+
+type RecoveryRestartAbiKeyV1 = Exclude<keyof typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1, "schema">;
+function recoveryRestartReservationIdentityV1(value: unknown, key: RecoveryRestartAbiKeyV1): InternalProductionOwnerReservationIdentityV1 {
+  const descriptor = INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1[key];
+  const identity = record(value, "INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_INVALID");
+  exactKeys(identity, ["category", "producerImplementationId", "ownerKeyHash", "reservationRef", "reservationHash"], "INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_KEYS_INVALID");
+  if (identity.category !== descriptor.category || identity.producerImplementationId !== descriptor.producerImplementationId) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_DISCRIMINATOR_INVALID");
+  sha256(identity.ownerKeyHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_OWNER_KEY_INVALID");
+  const reservationHash = sha256(identity.reservationHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_HASH_INVALID");
+  if (identity.reservationRef !== `setfarm://internal-production/owner-reservations/${reservationHash}`) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_RESERVATION_IDENTITY_REF_INVALID");
+  return detachedDeepFreeze(identity as InternalProductionOwnerReservationIdentityV1);
+}
+
+const RECOVERY_RESTART_FAMILY_INPUT_KEYS_V1 = [
+  "authorizationOperationRef", "authorizationOperationHash", "namespace", "service", "coordinationHash", "coordinatorTargetAuthority",
+  "restartReservation", "serviceRestartOperationReservation", "launchOutboxReservation", "helperProcessReservation",
+  "dispatchChildProcessReservation", "startupListenerReservation", "replacementProcessReservation",
+] as const;
+
+export function createInternalProductionRecoveryRestartTargetFamilyV1(input: Readonly<Record<(typeof RECOVERY_RESTART_FAMILY_INPUT_KEYS_V1)[number], unknown>>): InternalProductionRecoveryRestartTargetFamilyV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_INPUT_INVALID");
+  exactKeys(outer, RECOVERY_RESTART_FAMILY_INPUT_KEYS_V1, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_INPUT_KEYS_INVALID");
+  const coordinatorTargetAuthority = validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1(input.coordinatorTargetAuthority);
+  if (input.namespace !== coordinatorTargetAuthority.kind) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_NAMESPACE_INVALID");
+  if (!['setfarm-spawner', 'setfarm-dashboard', 'mission-control'].includes(String(input.service))) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_SERVICE_INVALID");
+  const projection = {
+    kind: "recovery-restart" as const,
+    authorizationOperationRef: canonicalRef(input.authorizationOperationRef, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_OPERATION_INVALID"),
+    authorizationOperationHash: sha256(input.authorizationOperationHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_OPERATION_INVALID"),
+    namespace: input.namespace as InternalProductionRecoveryRestartNamespaceV1,
+    service: input.service as "setfarm-spawner" | "setfarm-dashboard" | "mission-control",
+    coordinationHash: sha256(input.coordinationHash, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_COORDINATION_INVALID"),
+    coordinatorTargetAuthority,
+    restartReservation: recoveryRestartReservationIdentityV1(input.restartReservation, "restartReservation"),
+    serviceRestartOperationReservation: recoveryRestartReservationIdentityV1(input.serviceRestartOperationReservation, "serviceRestartOperationReservation"),
+    launchOutboxReservation: recoveryRestartReservationIdentityV1(input.launchOutboxReservation, "launchOutboxReservation"),
+    helperProcessReservation: recoveryRestartReservationIdentityV1(input.helperProcessReservation, "helperProcessReservation"),
+    dispatchChildProcessReservation: recoveryRestartReservationIdentityV1(input.dispatchChildProcessReservation, "dispatchChildProcessReservation"),
+    startupListenerReservation: recoveryRestartReservationIdentityV1(input.startupListenerReservation, "startupListenerReservation"),
+    replacementProcessReservation: recoveryRestartReservationIdentityV1(input.replacementProcessReservation, "replacementProcessReservation"),
+    targetFamilyAbiHash: INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1,
+  };
+  return detachedDeepFreeze({ ...projection, targetFamilyHash: hashCanonicalJson(projection) }) as InternalProductionRecoveryRestartTargetFamilyV1;
+}
+
+export function validateInternalProductionRecoveryRestartTargetFamilyV1(value: unknown): InternalProductionRecoveryRestartTargetFamilyV1 {
+  const family = record(value, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_INVALID");
+  exactKeys(family, ["kind", ...RECOVERY_RESTART_FAMILY_INPUT_KEYS_V1, "targetFamilyAbiHash", "targetFamilyHash"], "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_KEYS_INVALID");
+  if (family.kind !== "recovery-restart" || family.targetFamilyAbiHash !== INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_INVALID");
+  const rebuilt = createInternalProductionRecoveryRestartTargetFamilyV1(Object.fromEntries(RECOVERY_RESTART_FAMILY_INPUT_KEYS_V1.map((key) => [key, family[key]])) as never);
+  if (family.targetFamilyHash !== rebuilt.targetFamilyHash) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_DERIVATION_INVALID");
+  return rebuilt;
+}
+
+const TERMINAL_OWNER_AUTHORITY_KEYS_V1 = [
+  "restartReservationTerminalOwnerRef", "restartReservationTerminalOwnerHash", "serviceRestartOperationTerminalOwnerRef", "serviceRestartOperationTerminalOwnerHash",
+  "launchOutboxTerminalOwnerRef", "launchOutboxTerminalOwnerHash", "helperProcessTerminalOwnerRef", "helperProcessTerminalOwnerHash",
+  "dispatchChildProcessTerminalOwnerRef", "dispatchChildProcessTerminalOwnerHash", "startupListenerTerminalOwnerRef", "startupListenerTerminalOwnerHash",
+  "replacementProcessTerminalOwnerRef", "replacementProcessTerminalOwnerHash",
+] as const;
+function validateServiceRestartTerminalOwnerAuthoritiesV1(value: unknown): InternalProductionServiceRestartTerminalOwnerAuthoritiesV1 {
+  const authorities = record(value, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_OWNER_AUTHORITIES_INVALID");
+  exactKeys(authorities, TERMINAL_OWNER_AUTHORITY_KEYS_V1, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_OWNER_AUTHORITIES_KEYS_INVALID");
+  for (let index = 0; index < TERMINAL_OWNER_AUTHORITY_KEYS_V1.length; index += 2) {
+    canonicalRef(authorities[TERMINAL_OWNER_AUTHORITY_KEYS_V1[index]!], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID");
+    sha256(authorities[TERMINAL_OWNER_AUTHORITY_KEYS_V1[index + 1]!], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_OWNER_AUTHORITY_PAIR_INVALID");
+  }
+  return detachedDeepFreeze(authorities as InternalProductionServiceRestartTerminalOwnerAuthoritiesV1);
+}
+function validateServiceRestartTerminalDispositionV1(value: unknown): InternalProductionServiceRestartTerminalCoreDispositionV1 {
+  const disposition = record(value, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_INVALID");
+  exactKeys(disposition, ["kind", "completionKind", "afterGenerationHash", "failureCode", "exactProcessAbsenceAuthorityHash"], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_KEYS_INVALID");
+  if (disposition.kind === "complete") {
+    if (!['executed', 'adopted'].includes(String(disposition.completionKind)) || disposition.failureCode !== null || disposition.exactProcessAbsenceAuthorityHash !== null) fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_COMPLETE_INVALID");
+    sha256(disposition.afterGenerationHash, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_COMPLETE_INVALID");
+  } else if (disposition.kind === "failed") {
+    if (disposition.completionKind !== null || disposition.afterGenerationHash !== null || !['SERVICE_RESTART_DISPATCH_OUTCOME_UNCERTAIN', 'SERVICE_RESTART_EXPECTED_PROCESS_DIED', 'SERVICE_RESTART_IDENTITY_AMBIGUOUS'].includes(String(disposition.failureCode))) fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_FAILED_INVALID");
+    sha256(disposition.exactProcessAbsenceAuthorityHash, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_FAILED_INVALID");
+  } else fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_DISPOSITION_KIND_INVALID");
+  return detachedDeepFreeze(disposition as InternalProductionServiceRestartTerminalCoreDispositionV1);
+}
+
+const TERMINAL_CORE_INPUT_KEYS_V1 = [
+  "namespace", "service", "coordinationHash", "authorizationOperationRef", "authorizationOperationHash", "operationRef", "operationHash", "authorizationConsumptionRef", "authorizationConsumptionHash",
+  "restartReservationRef", "restartReservationHash", "serviceRestartOperationReservationRef", "serviceRestartOperationReservationHash", "launchOutboxReservationRef", "launchOutboxReservationHash", "helperProcessReservationRef", "helperProcessReservationHash", "dispatchChildProcessReservationRef", "dispatchChildProcessReservationHash", "startupListenerReservationRef", "startupListenerReservationHash", "replacementProcessReservationRef", "replacementProcessReservationHash",
+  "terminalOwnerAuthorities", "disposition", "targetFamilyAbiHash", "targetFamilyHash",
+] as const;
+export function createInternalProductionServiceRestartTerminalCoreV1(input: Readonly<Record<(typeof TERMINAL_CORE_INPUT_KEYS_V1)[number], unknown>>): InternalProductionServiceRestartTerminalCoreV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_INPUT_INVALID");
+  exactKeys(outer, TERMINAL_CORE_INPUT_KEYS_V1, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_INPUT_KEYS_INVALID");
+  if (!['recovery-active-run', 'source-release-barrier', 'cold-rehearsal', 'documentation-handoff'].includes(String(input.namespace)) || !['setfarm-spawner', 'setfarm-dashboard', 'mission-control'].includes(String(input.service)) || input.targetFamilyAbiHash !== INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1) fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_DISCRIMINATOR_INVALID");
+  const body: Record<string, unknown> = { schema: "setfarm.internal-production-service-restart-terminal-core.v1" };
+  for (const key of TERMINAL_CORE_INPUT_KEYS_V1) body[key] = key === "terminalOwnerAuthorities" ? validateServiceRestartTerminalOwnerAuthoritiesV1(input[key]) : key === "disposition" ? validateServiceRestartTerminalDispositionV1(input[key]) : input[key];
+  for (const key of ["coordinationHash", "authorizationOperationHash", "operationHash", "authorizationConsumptionHash", "restartReservationHash", "serviceRestartOperationReservationHash", "launchOutboxReservationHash", "helperProcessReservationHash", "dispatchChildProcessReservationHash", "startupListenerReservationHash", "replacementProcessReservationHash", "targetFamilyHash"] as const) body[key] = sha256(body[key], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_HASH_INVALID");
+  for (const key of ["authorizationOperationRef", "operationRef", "authorizationConsumptionRef", "restartReservationRef", "serviceRestartOperationReservationRef", "launchOutboxReservationRef", "helperProcessReservationRef", "dispatchChildProcessReservationRef", "startupListenerReservationRef", "replacementProcessReservationRef"] as const) body[key] = canonicalRef(body[key], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_REF_INVALID");
+  const terminalCoreHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({ ...body, terminalCoreRef: `setfarm://internal-production/service-restart-terminal-core/sha256/${terminalCoreHash}`, terminalCoreHash }) as InternalProductionServiceRestartTerminalCoreV1;
+}
+export function validateInternalProductionServiceRestartTerminalCoreV1(value: unknown): InternalProductionServiceRestartTerminalCoreV1 {
+  const core = record(value, "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_INVALID");
+  exactKeys(core, ["schema", ...TERMINAL_CORE_INPUT_KEYS_V1, "terminalCoreRef", "terminalCoreHash"], "INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_KEYS_INVALID");
+  if (core.schema !== "setfarm.internal-production-service-restart-terminal-core.v1") fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_SCHEMA_INVALID");
+  const rebuilt = createInternalProductionServiceRestartTerminalCoreV1(Object.fromEntries(TERMINAL_CORE_INPUT_KEYS_V1.map((key) => [key, core[key]])) as never);
+  if (core.terminalCoreRef !== rebuilt.terminalCoreRef || core.terminalCoreHash !== rebuilt.terminalCoreHash) fail("INTERNAL_PRODUCTION_SERVICE_RESTART_TERMINAL_CORE_DERIVATION_INVALID");
+  return rebuilt;
+}
+
+const RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1 = [
+  "fenceRef", "fenceHash", "authorizationOperationRef", "authorizationOperationHash", "restartReservationRef", "restartReservationHash", "serviceRestartOperationReservationRef", "serviceRestartOperationReservationHash", "launchOutboxReservationRef", "launchOutboxReservationHash", "helperProcessReservationRef", "helperProcessReservationHash", "dispatchChildProcessReservationRef", "dispatchChildProcessReservationHash", "startupListenerReservationRef", "startupListenerReservationHash", "replacementProcessReservationRef", "replacementProcessReservationHash", "terminalCoreRef", "terminalCoreHash", "targetFamilyAbiHash", "targetFamilyHash", "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash", "preservedFenceRef", "preservedFenceHash",
+] as const;
+export function createInternalProductionRecoveryRestartTargetSetCloseV1(input: Readonly<Record<(typeof RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1)[number], unknown>>): InternalProductionRecoveryRestartTargetSetCloseV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_INPUT_INVALID");
+  exactKeys(outer, RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_INPUT_KEYS_INVALID");
+  if (input.targetFamilyAbiHash !== INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1 || input.fenceRef !== input.preservedFenceRef || input.fenceHash !== input.preservedFenceHash) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_FENCE_INVALID");
+  const body: Record<string, unknown> = { schema: "setfarm.internal-production-recovery-restart-target-set-close.v1" };
+  for (const key of RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1) body[key] = input[key];
+  for (const key of ["fenceHash", "authorizationOperationHash", "restartReservationHash", "serviceRestartOperationReservationHash", "launchOutboxReservationHash", "helperProcessReservationHash", "dispatchChildProcessReservationHash", "startupListenerReservationHash", "replacementProcessReservationHash", "terminalCoreHash", "targetFamilyHash", "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash", "preservedFenceHash"] as const) body[key] = sha256(body[key], "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_HASH_INVALID");
+  for (const key of ["fenceRef", "authorizationOperationRef", "restartReservationRef", "serviceRestartOperationReservationRef", "launchOutboxReservationRef", "helperProcessReservationRef", "dispatchChildProcessReservationRef", "startupListenerReservationRef", "replacementProcessReservationRef", "terminalCoreRef", "preservedFenceRef"] as const) body[key] = canonicalRef(body[key], "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_REF_INVALID");
+  const targetSetCloseHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({ ...body, targetSetCloseRef: `setfarm://internal-production/recovery-restart-target-set-close/sha256/${targetSetCloseHash}`, targetSetCloseHash }) as InternalProductionRecoveryRestartTargetSetCloseV1;
+}
+export function validateInternalProductionRecoveryRestartTargetSetCloseV1(value: unknown): InternalProductionRecoveryRestartTargetSetCloseV1 {
+  const close = record(value, "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_INVALID");
+  exactKeys(close, ["schema", ...RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1, "targetSetCloseRef", "targetSetCloseHash"], "INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_KEYS_INVALID");
+  if (close.schema !== "setfarm.internal-production-recovery-restart-target-set-close.v1") fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_SCHEMA_INVALID");
+  const rebuilt = createInternalProductionRecoveryRestartTargetSetCloseV1(Object.fromEntries(RECOVERY_RESTART_CLOSE_INPUT_KEYS_V1.map((key) => [key, close[key]])) as never);
+  if (close.targetSetCloseRef !== rebuilt.targetSetCloseRef || close.targetSetCloseHash !== rebuilt.targetSetCloseHash) fail("INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_SET_CLOSE_DERIVATION_INVALID");
+  return rebuilt;
+}
+
+function globalOwnerAdmissionFencePurposeV1(value: unknown): InternalProductionGlobalOwnerAdmissionFencePurposeV1 {
+  if (
+    value !== "recovery-d-physical-service-restart-operation-v1"
+    && value !== "recovery-d-source-delivery-v1"
+    && value !== "golden-launch-operation-migration-release-v1"
+    && value !== "recovery-d-physical-service-restart-authority-cutover-v1"
+  ) fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PURPOSE_INVALID");
+  return value;
+}
+
+export function createInternalProductionGlobalOwnerAdmissionFenceTransitionV1(input: Readonly<{
+  purpose: InternalProductionGlobalOwnerAdmissionFencePurposeV1;
+  pendingInputRef: string;
+  pendingInputHash: string;
+  targetFamilyHash: string;
+  ownerIdentitySetHash: string;
+}>): InternalProductionGlobalOwnerAdmissionFenceTransitionV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_INPUT_INVALID");
+  exactKeys(outer, [
+    "purpose", "pendingInputRef", "pendingInputHash", "targetFamilyHash", "ownerIdentitySetHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_INPUT_KEYS_INVALID");
+  const projection = {
+    schema: "setfarm.internal-production-global-owner-admission-fence-transition.v1" as const,
+    purpose: globalOwnerAdmissionFencePurposeV1(input.purpose),
+    pendingInputRef: canonicalRef(input.pendingInputRef, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_PENDING_INVALID"),
+    pendingInputHash: sha256(input.pendingInputHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_PENDING_INVALID"),
+    targetFamilyHash: sha256(input.targetFamilyHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_TARGET_INVALID"),
+    ownerIdentitySetHash: sha256(input.ownerIdentitySetHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_OWNER_SET_INVALID"),
+  };
+  const transitionHash = hashCanonicalJson(projection);
+  return detachedDeepFreeze({
+    ...projection,
+    transitionRef: `setfarm://internal-production/global-owner-admission-fence-transition/sha256/${transitionHash}`,
+    transitionHash,
+  });
+}
+
+export function validateInternalProductionGlobalOwnerAdmissionFenceTransitionV1(
+  value: unknown,
+): InternalProductionGlobalOwnerAdmissionFenceTransitionV1 {
+  const transition = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_INVALID");
+  exactKeys(transition, [
+    "schema", "purpose", "pendingInputRef", "pendingInputHash", "targetFamilyHash",
+    "ownerIdentitySetHash", "transitionRef", "transitionHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_KEYS_INVALID");
+  if (transition.schema !== "setfarm.internal-production-global-owner-admission-fence-transition.v1") {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_SCHEMA_INVALID");
+  }
+  const rebuilt = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+    purpose: transition.purpose as InternalProductionGlobalOwnerAdmissionFencePurposeV1,
+    pendingInputRef: String(transition.pendingInputRef),
+    pendingInputHash: String(transition.pendingInputHash),
+    targetFamilyHash: String(transition.targetFamilyHash),
+    ownerIdentitySetHash: String(transition.ownerIdentitySetHash),
+  });
+  if (transition.transitionRef !== rebuilt.transitionRef || transition.transitionHash !== rebuilt.transitionHash) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TRANSITION_DERIVATION_INVALID");
+  }
+  return rebuilt;
+}
+
+function validateFenceTargetFamilyV1(value: unknown): InternalProductionGlobalOwnerAdmissionFenceTargetFamilyV1 {
+  const target = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TARGET_INVALID");
+  if (target.kind === "none") {
+    exactKeys(target, ["kind", "targetFamilyHash"], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TARGET_KEYS_INVALID");
+    if (target.targetFamilyHash !== null) fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TARGET_INVALID");
+    return detachedDeepFreeze({ kind: "none" as const, targetFamilyHash: null });
+  }
+  return target.kind === "recovery-restart"
+    ? validateInternalProductionRecoveryRestartTargetFamilyV1(target)
+    : validateInternalProductionSourceRunLaunchTargetFamilyV1(target);
+}
+
+export function createInternalProductionGlobalOwnerAdmissionFenceV1(input: Readonly<{
+  purpose: InternalProductionGlobalOwnerAdmissionFencePurposeV1;
+  pendingInputRef: string;
+  pendingInputHash: string;
+  targetFamily: InternalProductionGlobalOwnerAdmissionFenceTargetFamilyV1;
+  observedUnrelatedReservationCount: 0;
+  observedUnrelatedOwnerCount: 0;
+  ownerIdentitySetHash: string;
+  predecessorFenceHeadHash: string | null;
+  ownerAdmissionHeadHash: string;
+}>): InternalProductionGlobalOwnerAdmissionFenceV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_INPUT_INVALID");
+  exactKeys(outer, [
+    "purpose", "pendingInputRef", "pendingInputHash", "targetFamily",
+    "observedUnrelatedReservationCount", "observedUnrelatedOwnerCount",
+    "ownerIdentitySetHash", "predecessorFenceHeadHash", "ownerAdmissionHeadHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_INPUT_KEYS_INVALID");
+  const purpose = globalOwnerAdmissionFencePurposeV1(input.purpose);
+  const targetFamily = validateFenceTargetFamilyV1(input.targetFamily);
+  if (
+    (purpose === "recovery-d-source-delivery-v1") !== (targetFamily.kind === "source-run-launch")
+    || (purpose === "recovery-d-physical-service-restart-operation-v1") !== (targetFamily.kind === "recovery-restart")
+  ) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_TARGET_INVALID");
+  }
+  if (input.observedUnrelatedReservationCount !== 0 || input.observedUnrelatedOwnerCount !== 0) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_CENSUS_NONZERO");
+  }
+  const predecessorFenceHeadHash = input.predecessorFenceHeadHash === null
+    ? null
+    : sha256(input.predecessorFenceHeadHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PREDECESSOR_INVALID");
+  const body = {
+    schema: "setfarm.internal-production-global-owner-admission-fence.v1" as const,
+    purpose,
+    pendingInputRef: canonicalRef(input.pendingInputRef, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PENDING_INPUT_INVALID"),
+    pendingInputHash: sha256(input.pendingInputHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PENDING_INPUT_INVALID"),
+    ownerCategories: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1,
+    ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+    ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+    targetFamily,
+    observedUnrelatedReservationCount: 0 as const,
+    observedUnrelatedOwnerCount: 0 as const,
+    ownerIdentitySetHash: sha256(input.ownerIdentitySetHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_OWNER_SET_INVALID"),
+    predecessorFenceHeadHash,
+    ownerAdmissionHeadHash: sha256(input.ownerAdmissionHeadHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_HEAD_INVALID"),
+  };
+  const fenceHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({
+    ...body,
+    fenceRef: `setfarm://internal-production/global-owner-admission-fence/sha256/${fenceHash}`,
+    fenceHash,
+  });
+}
+
+export function validateInternalProductionGlobalOwnerAdmissionFenceV1(
+  value: unknown,
+): InternalProductionGlobalOwnerAdmissionFenceV1 {
+  const fence = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_INVALID");
+  exactKeys(fence, [
+    "schema", "purpose", "pendingInputRef", "pendingInputHash", "ownerCategories",
+    "ownerCategoryRegistryHash", "ownerCategoryCensusMapHash", "targetFamily",
+    "observedUnrelatedReservationCount", "observedUnrelatedOwnerCount", "ownerIdentitySetHash",
+    "predecessorFenceHeadHash", "ownerAdmissionHeadHash", "fenceRef", "fenceHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_KEYS_INVALID");
+  if (fence.schema !== "setfarm.internal-production-global-owner-admission-fence.v1") {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_SCHEMA_INVALID");
+  }
+  const { fenceRef, fenceHash, ...inputBody } = fence;
+  if (!equalCanonical(fence.ownerCategories, INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1)
+    || fence.ownerCategoryRegistryHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1
+    || fence.ownerCategoryCensusMapHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_REGISTRY_INVALID");
+  }
+  const rebuilt = createInternalProductionGlobalOwnerAdmissionFenceV1({
+    purpose: inputBody.purpose as InternalProductionGlobalOwnerAdmissionFencePurposeV1,
+    pendingInputRef: String(inputBody.pendingInputRef),
+    pendingInputHash: String(inputBody.pendingInputHash),
+    targetFamily: inputBody.targetFamily as InternalProductionGlobalOwnerAdmissionFenceTargetFamilyV1,
+    observedUnrelatedReservationCount: inputBody.observedUnrelatedReservationCount as 0,
+    observedUnrelatedOwnerCount: inputBody.observedUnrelatedOwnerCount as 0,
+    ownerIdentitySetHash: String(inputBody.ownerIdentitySetHash),
+    predecessorFenceHeadHash: inputBody.predecessorFenceHeadHash as string | null,
+    ownerAdmissionHeadHash: String(inputBody.ownerAdmissionHeadHash),
+  });
+  if (fenceHash !== rebuilt.fenceHash || fenceRef !== rebuilt.fenceRef) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_DERIVATION_INVALID");
+  }
+  return rebuilt;
+}
+
+export function createInternalProductionSourceRunLaunchTargetReservationPairCloseV1(input: Readonly<{
+  fenceRef: string;
+  fenceHash: string;
+  targetRunLaunchCompositeHash: string;
+  sourceRunReservationRef: string;
+  sourceRunReservationHash: string;
+  runReservationRef: string;
+  runReservationHash: string;
+  terminalSourceRunRef: string;
+  terminalSourceRunHash: string;
+  terminalRunLaunchRef: string;
+  terminalRunLaunchHash: string;
+  ownerAdmissionHeadPredecessorHash: string;
+  ownerAdmissionHeadSuccessorHash: string;
+  preservedFenceRef: string;
+  preservedFenceHash: string;
+}>): InternalProductionSourceRunLaunchTargetReservationPairCloseV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_INVALID");
+  exactKeys(outer, [
+    "fenceRef", "fenceHash", "targetRunLaunchCompositeHash",
+    "sourceRunReservationRef", "sourceRunReservationHash", "runReservationRef", "runReservationHash",
+    "terminalSourceRunRef", "terminalSourceRunHash", "terminalRunLaunchRef", "terminalRunLaunchHash",
+    "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
+    "preservedFenceRef", "preservedFenceHash",
+  ], "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_KEYS_INVALID");
+  const body = {
+    schema: "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1" as const,
+    fenceRef: canonicalRef(input.fenceRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_FENCE_INVALID"),
+    fenceHash: sha256(input.fenceHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_FENCE_INVALID"),
+    targetRunLaunchCompositeHash: sha256(input.targetRunLaunchCompositeHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_COMPOSITE_INVALID"),
+    sourceRunReservationRef: canonicalRef(input.sourceRunReservationRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_SOURCE_RESERVATION_INVALID"),
+    sourceRunReservationHash: sha256(input.sourceRunReservationHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_SOURCE_RESERVATION_INVALID"),
+    runReservationRef: canonicalRef(input.runReservationRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_RUN_RESERVATION_INVALID"),
+    runReservationHash: sha256(input.runReservationHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_RUN_RESERVATION_INVALID"),
+    terminalSourceRunRef: canonicalRef(input.terminalSourceRunRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_SOURCE_TERMINAL_INVALID"),
+    terminalSourceRunHash: sha256(input.terminalSourceRunHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_SOURCE_TERMINAL_INVALID"),
+    terminalRunLaunchRef: canonicalRef(input.terminalRunLaunchRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_RUN_TERMINAL_INVALID"),
+    terminalRunLaunchHash: sha256(input.terminalRunLaunchHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_RUN_TERMINAL_INVALID"),
+    ownerAdmissionHeadPredecessorHash: sha256(input.ownerAdmissionHeadPredecessorHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_HEAD_INVALID"),
+    ownerAdmissionHeadSuccessorHash: sha256(input.ownerAdmissionHeadSuccessorHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_HEAD_INVALID"),
+    preservedFenceRef: canonicalRef(input.preservedFenceRef, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_PRESERVED_FENCE_INVALID"),
+    preservedFenceHash: sha256(input.preservedFenceHash, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_PRESERVED_FENCE_INVALID"),
+  };
+  if (body.fenceRef !== body.preservedFenceRef || body.fenceHash !== body.preservedFenceHash) {
+    fail("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_PRESERVED_FENCE_INVALID");
+  }
+  const targetReservationPairCloseHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({
+    ...body,
+    targetReservationPairCloseRef: `setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/${targetReservationPairCloseHash}`,
+    targetReservationPairCloseHash,
+  });
+}
+
+export function validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(
+  value: unknown,
+): InternalProductionSourceRunLaunchTargetReservationPairCloseV1 {
+  const close = record(value, "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_INVALID");
+  exactKeys(close, [
+    "schema", "fenceRef", "fenceHash", "targetRunLaunchCompositeHash",
+    "sourceRunReservationRef", "sourceRunReservationHash", "runReservationRef", "runReservationHash",
+    "terminalSourceRunRef", "terminalSourceRunHash", "terminalRunLaunchRef", "terminalRunLaunchHash",
+    "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
+    "preservedFenceRef", "preservedFenceHash", "targetReservationPairCloseRef", "targetReservationPairCloseHash",
+  ], "INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_KEYS_INVALID");
+  if (close.schema !== "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1") {
+    fail("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_SCHEMA_INVALID");
+  }
+  const rebuilt = createInternalProductionSourceRunLaunchTargetReservationPairCloseV1({
+    fenceRef: String(close.fenceRef),
+    fenceHash: String(close.fenceHash),
+    targetRunLaunchCompositeHash: String(close.targetRunLaunchCompositeHash),
+    sourceRunReservationRef: String(close.sourceRunReservationRef),
+    sourceRunReservationHash: String(close.sourceRunReservationHash),
+    runReservationRef: String(close.runReservationRef),
+    runReservationHash: String(close.runReservationHash),
+    terminalSourceRunRef: String(close.terminalSourceRunRef),
+    terminalSourceRunHash: String(close.terminalSourceRunHash),
+    terminalRunLaunchRef: String(close.terminalRunLaunchRef),
+    terminalRunLaunchHash: String(close.terminalRunLaunchHash),
+    ownerAdmissionHeadPredecessorHash: String(close.ownerAdmissionHeadPredecessorHash),
+    ownerAdmissionHeadSuccessorHash: String(close.ownerAdmissionHeadSuccessorHash),
+    preservedFenceRef: String(close.preservedFenceRef),
+    preservedFenceHash: String(close.preservedFenceHash),
+  });
+  if (
+    close.targetReservationPairCloseRef !== rebuilt.targetReservationPairCloseRef
+    || close.targetReservationPairCloseHash !== rebuilt.targetReservationPairCloseHash
+  ) fail("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_DERIVATION_INVALID");
+  return rebuilt;
+}
+
+function validateFenceReleaseAuthorityV1(
+  value: unknown,
+): InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1 {
+  const authority = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_INVALID");
+  exactKeys(authority, [
+    "purpose", "targetFamilyKind", "terminalCoreRef", "terminalCoreHash", "targetSetCloseRef",
+    "targetSetCloseHash", "occurrenceRef", "occurrenceHash", "headRef", "headHash",
+    "targetReservationPairCloseRef", "targetReservationPairCloseHash", "purposeTerminalKind",
+    "purposeTerminalRef", "purposeTerminalHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_KEYS_INVALID");
+  const purpose = globalOwnerAdmissionFencePurposeV1(authority.purpose);
+  const pairMembers: readonly [string, string][] = [
+    ["terminalCoreRef", "terminalCoreHash"], ["targetSetCloseRef", "targetSetCloseHash"],
+    ["occurrenceRef", "occurrenceHash"], ["headRef", "headHash"],
+    ["targetReservationPairCloseRef", "targetReservationPairCloseHash"],
+    ["purposeTerminalRef", "purposeTerminalHash"],
+  ];
+  for (const [refKey, hashKey] of pairMembers) {
+    if ((authority[refKey] === null) !== (authority[hashKey] === null)) {
+      fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_PAIR_INVALID");
+    }
+    if (authority[refKey] !== null) {
+      canonicalRef(authority[refKey], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_PAIR_INVALID");
+      sha256(authority[hashKey], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_PAIR_INVALID");
+    }
+  }
+  if (purpose === "recovery-d-source-delivery-v1") {
+    if (
+      authority.targetFamilyKind !== "source-run-launch"
+      || authority.targetReservationPairCloseRef === null
+      || authority.purposeTerminalKind !== null
+      || pairMembers.slice(0, 4).some(([refKey]) => authority[refKey] !== null)
+      || authority.purposeTerminalRef !== null
+    ) fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_BRANCH_INVALID");
+  } else if (purpose === "recovery-d-physical-service-restart-operation-v1") {
+    if (
+      authority.targetFamilyKind !== "recovery-restart"
+      || pairMembers.slice(0, 4).some(([refKey]) => authority[refKey] === null)
+      || authority.targetReservationPairCloseRef !== null
+      || authority.purposeTerminalKind !== null
+      || authority.purposeTerminalRef !== null
+    ) fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_BRANCH_INVALID");
+  } else {
+    const expectedTerminalKind = purpose === "golden-launch-operation-migration-release-v1"
+      ? "golden-launch-operation-migration-release-terminal"
+      : "recovery-d-physical-service-restart-authority-cutover-terminal";
+    if (
+      authority.targetFamilyKind !== "none"
+      || pairMembers.slice(0, 5).some(([refKey]) => authority[refKey] !== null)
+      || authority.purposeTerminalKind !== expectedTerminalKind
+      || authority.purposeTerminalRef === null
+    ) fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_AUTHORITY_BRANCH_INVALID");
+  }
+  return detachedDeepFreeze(authority as InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1);
+}
+
+export function createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1(input: Readonly<{
+  fenceRef: string;
+  fenceHash: string;
+  releaseAuthority: InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1;
+}>): InternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_INPUT_INVALID");
+  exactKeys(outer, ["fenceRef", "fenceHash", "releaseAuthority"],
+    "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_INPUT_KEYS_INVALID");
+  const projection = {
+    schema: "setfarm.internal-production-global-owner-admission-fence-release-transition.v1" as const,
+    fenceRef: canonicalRef(input.fenceRef, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_FENCE_INVALID"),
+    fenceHash: sha256(input.fenceHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_FENCE_INVALID"),
+    releaseAuthority: validateFenceReleaseAuthorityV1(input.releaseAuthority),
+  };
+  const transitionHash = hashCanonicalJson(projection);
+  return detachedDeepFreeze({
+    ...projection,
+    transitionRef: `setfarm://internal-production/global-owner-admission-fence-release-transition/sha256/${transitionHash}`,
+    transitionHash,
+  });
+}
+
+export function validateInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1(
+  value: unknown,
+): InternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1 {
+  const transition = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_INVALID");
+  exactKeys(transition, [
+    "schema", "fenceRef", "fenceHash", "releaseAuthority", "transitionRef", "transitionHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_KEYS_INVALID");
+  if (transition.schema !== "setfarm.internal-production-global-owner-admission-fence-release-transition.v1") {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_SCHEMA_INVALID");
+  }
+  const rebuilt = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+    fenceRef: String(transition.fenceRef),
+    fenceHash: String(transition.fenceHash),
+    releaseAuthority: transition.releaseAuthority as InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1,
+  });
+  if (transition.transitionRef !== rebuilt.transitionRef || transition.transitionHash !== rebuilt.transitionHash) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_TRANSITION_DERIVATION_INVALID");
+  }
+  return rebuilt;
+}
+
+export function createInternalProductionGlobalOwnerAdmissionFenceReleaseV1(input: Readonly<{
+  fenceRef: string;
+  fenceHash: string;
+  releaseAuthority: InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1;
+  ownerAdmissionHeadPredecessorHash: string;
+  ownerAdmissionHeadSuccessorHash: string;
+}>): InternalProductionGlobalOwnerAdmissionFenceReleaseV1 {
+  const outer = record(input, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INPUT_INVALID");
+  exactKeys(outer, [
+    "fenceRef", "fenceHash", "releaseAuthority",
+    "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INPUT_KEYS_INVALID");
+  const body = {
+    schema: "setfarm.internal-production-global-owner-admission-fence-release.v1" as const,
+    fenceRef: canonicalRef(input.fenceRef, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_FENCE_INVALID"),
+    fenceHash: sha256(input.fenceHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_FENCE_INVALID"),
+    releaseAuthority: validateFenceReleaseAuthorityV1(input.releaseAuthority),
+    ownerAdmissionHeadPredecessorHash: sha256(input.ownerAdmissionHeadPredecessorHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_HEAD_INVALID"),
+    ownerAdmissionHeadSuccessorHash: sha256(input.ownerAdmissionHeadSuccessorHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_HEAD_INVALID"),
+  };
+  const releaseHash = hashCanonicalJson(body);
+  return detachedDeepFreeze({
+    ...body,
+    releaseRef: `setfarm://internal-production/global-owner-admission-fence-release/sha256/${releaseHash}`,
+    releaseHash,
+  });
+}
+
+export function validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(
+  value: unknown,
+): InternalProductionGlobalOwnerAdmissionFenceReleaseV1 {
+  const release = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INVALID");
+  exactKeys(release, [
+    "schema", "fenceRef", "fenceHash", "releaseAuthority",
+    "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash", "releaseRef", "releaseHash",
+  ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_KEYS_INVALID");
+  if (release.schema !== "setfarm.internal-production-global-owner-admission-fence-release.v1") {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_SCHEMA_INVALID");
+  }
+  const rebuilt = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: String(release.fenceRef),
+    fenceHash: String(release.fenceHash),
+    releaseAuthority: release.releaseAuthority as InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1,
+    ownerAdmissionHeadPredecessorHash: String(release.ownerAdmissionHeadPredecessorHash),
+    ownerAdmissionHeadSuccessorHash: String(release.ownerAdmissionHeadSuccessorHash),
+  });
+  if (release.releaseRef !== rebuilt.releaseRef || release.releaseHash !== rebuilt.releaseHash) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_DERIVATION_INVALID");
+  }
+  return rebuilt;
+}
 
 function reservationProjection(input: Readonly<{
   producer: InternalProductionOwnerProducerRowV1;

@@ -91,6 +91,33 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
   }
 });
 
+test("P4 one-service completion bootstrap persists before replacement and consumes before dispatch", async () => {
+  const sequence = await import("../../src/internal-production/baseline-service-restart-sequence-v1.js");
+  const source = readFileSync(sourcePath, "utf8");
+  const required = [
+    ["prepareInternalProductionBaselineSpawnerBootstrapRestartV1", 1],
+    ["executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1", 1],
+    ["resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1", 1],
+    ["resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1", 1],
+    ["finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1", 1],
+    ["resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1", 1],
+  ] as const;
+  for (const [name, arity] of required) {
+    const value = Reflect.get(sequence, name);
+    assert.equal(typeof value, "function", name);
+    assert.equal((value as Function).length, arity, name);
+  }
+  assert.doesNotMatch(source, /const BOOTSTRAP_ROOT_V1 = path\.resolve\(process\.cwd\(\)/, "bootstrap authority root must derive from the authenticated module repository");
+  assert.match(source, /const BOOTSTRAP_ROOT_V1 = path\.join\(repositoryRoot\(\)/, "bootstrap authority root derives from repositoryRoot");
+  assert.doesNotMatch(source, /startupAdmissionRef,startupAdmissionHash,recoveredOwnerGenerationHash,targetOwnerReleaseReceiptHash/, "bootstrap startup-admission locator remains exact-two");
+  assert.match(source, /function resolveBootstrapRecordV1[\s\S]*const exact = pair\(pairValue, refKey, hashKey, prefix\)/, "public resolver inputs retain their ref-then-hash ABI");
+  assert.match(source, /function bootstrapHasExactStoredKeysV1\(/, "canonical records validate the sorted wire key set");
+  assert.match(source, /const consume = runtime\.[\s\S]*const prepare = receipt\.[\s\S]*const resolveStartupAdmissionForOperation = spawner\.[\s\S]*await \(resolveGuardReceipt/, "all lazy ports are checked before the one-use guard mutation");
+  assert.match(source, /resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1/, "execute/recover deep-resolves admission by the normal restart operation");
+  assert.match(source, /observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1/, "finalization authenticates owner-released lifecycle before global zero");
+  assert.match(source, /completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1/, "runtime completion alone seals the sequence lifecycle");
+});
+
 test("P4 restart sequence resumes every durable prefix", async () => {
   const source = readFileSync(sourcePath, "utf8");
   assert.doesNotMatch(source, /^import[\s\S]*?from "\.\/baseline-post-handoff-receipt-v1\.js";/m, "sequence has no eager receipt-module edge");

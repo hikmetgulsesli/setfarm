@@ -1,8 +1,8 @@
 import os from "node:os";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
-import { resolveWorkflowDir } from "./paths.js";
-import { pgRun, pgGet, pgExec, pgNextRunNumber, now } from "../db-pg.js";
+import { resolveBundledWorkflowDir, resolveWorkflowDir } from "./paths.js";
+import { pgRun, pgGet, pgExec, pgNextRunNumber, now, resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1 } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
 import { cleanAgentWorkspace } from "./worktree-ops.js";
@@ -15,9 +15,11 @@ import {
   type RunReleaseAdmissionSelection,
 } from "../execution/run-protocol.js";
 import {
+  persistInternalProductionRecoverySourceBootstrapRunV1,
   persistWorkflowRun,
   type PersistedWorkflowStep,
 } from "../execution/run-persistence.js";
+import { resolveInternalProductionRecoverySourceBootstrapOperationV1 } from "../internal-production/baseline-post-handoff-receipt-v1.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -191,4 +193,38 @@ export async function runWorkflow(params: {
     protocol: persisted.run.protocol,
     protocolVersion: persisted.run.protocolVersion,
   };
+}
+
+export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<Readonly<{
+  runId: string;
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}>> {
+  const operation = await resolveInternalProductionRecoverySourceBootstrapOperationV1(input);
+  const protocol = await resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1();
+  if (
+    operation.protocol !== protocol.protocol
+    || operation.baseSourceSha !== protocol.compilerReleaseSha
+    || operation.baseSourceTreeHash !== protocol.baseSourceTreeHash
+    || operation.buildHash !== protocol.buildHash
+    || operation.activationPreflightHash !== protocol.activationPreflightHash
+    || operation.releaseAdmissionHash !== protocol.releaseAdmissionHash
+    || protocol.protocolVersion !== 1
+    || protocol.releaseAdmissionKind !== "release_go"
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DISPATCH_PROTOCOL_CROSSED");
+  const workflow = await loadWorkflowSpec(resolveBundledWorkflowDir("feature-dev"));
+  if (workflow.id !== "feature-dev" || !Array.isArray(workflow.steps) || workflow.steps.length === 0) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DISPATCH_WORKFLOW_INVALID");
+  }
+  const persisted = await persistInternalProductionRecoverySourceBootstrapRunV1({
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+  });
+  return Object.freeze({
+    runId: persisted.run.id,
+    operationRunBindingHash: persisted.operationRunBindingHash,
+    reciprocalRunOperationBindingHash: persisted.reciprocalRunOperationBindingHash,
+  });
 }

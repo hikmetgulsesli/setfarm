@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   getSql,
   pgBegin,
@@ -422,11 +422,6 @@ function assertAgentCwdSafe(): void {
     throw new Error("SELF_CONTAIN_VIOLATION: AGENT_SAFE_CWD (" + resolved + ") resolves inside platform source tree (" + SETFARM_SRC + "). Refusing to spawn agents — they would corrupt setfarm-repo.");
   }
 }
-try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
-try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
-try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
-assertAgentCwdSafe();
-
 function safeAgentCwdFromCandidate(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   let candidate = raw.trim();
@@ -8599,12 +8594,22 @@ async function applyAndAcceptRuntimeCompletionEffects(
     ownerAttemptCount: request.ownerAttemptCount,
     result,
   });
-  await completions.acceptAndRelease({
-    requestId: request.requestId,
-    ownerInstanceId: request.ownerInstanceId!,
-    ownerAttemptCount: request.ownerAttemptCount,
-    result,
-  });
+  const completionBootstrap = await import("./execution/runtime-completion.js") as unknown as Record<string, unknown>;
+  const createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 = completionBootstrap.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1;
+  const continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 = completionBootstrap.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1;
+  if (typeof createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 !== "function" || createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1.length !== 0 || typeof continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 !== "function" || continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1.length !== 1) throw new Error("INTERNAL_PRODUCTION_BASELINE_COMPLETION_BOOTSTRAP_PORT_UNAVAILABLE");
+  const verification = await (createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 as () => Promise<unknown | null>)();
+  if (verification === null) {
+    await completions.acceptAndRelease({
+      requestId: request.requestId,
+      ownerInstanceId: request.ownerInstanceId!,
+      ownerAttemptCount: request.ownerAttemptCount,
+      result,
+    });
+  } else {
+    await (continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 as (input: unknown) => Promise<void>)({ verification });
+    return;
+  }
   if (request.storyId) {
     await cleanupQuiescedStoryWorktree(
       request.runId,
@@ -8665,7 +8670,12 @@ async function runRuntimeCompletionProcessor(requestId?: string): Promise<number
       continue;
     }
     try {
-      if (recovered.status === "finalize") {
+      if (recovered.status === "bootstrap_selected") {
+        const bootstrap = await import("./execution/runtime-completion.js") as unknown as Record<string, unknown>;
+        const recoverSelected = bootstrap.recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1;
+        if (typeof recoverSelected !== "function" || recoverSelected.length !== 0) throw new Error("INTERNAL_PRODUCTION_BASELINE_COMPLETION_BOOTSTRAP_RECOVERY_PORT_UNAVAILABLE");
+        await (recoverSelected as () => Promise<void>)();
+      } else if (recovered.status === "finalize") {
         await finalizeRecoveredRuntimeCompletion(recovered.request);
       } else if (recovered.status === "resume_owner") {
         await executeRuntimeCompletionOwner(recovered.request);
@@ -8997,8 +9007,11 @@ async function handleStepPending(payload: {
     : await recoverBoundInternalProductionWorkflowRunOwnerV1({ runId });
   if (
     boundRunOwner.ownerKey !== runId
-    || boundRunOwner.producerImplementationId !== "a-runtime-run-v1"
     || boundRunOwner.category !== "run"
+    || (
+      boundRunOwner.producerImplementationId !== "a-runtime-run-v1"
+      && boundRunOwner.producerImplementationId !== "a-recovery-source-bootstrap-run-v1"
+    )
   ) {
     throw new Error("SPAWNER_RUN_OWNER_IDENTITY_INVALID");
   }
@@ -9803,6 +9816,10 @@ type PreSchemaSpawnerStartupGateDependenciesV1 = Readonly<{
       replacementSpawnerProcessIdentityHash: string; actualSpawnerGenerationHash: string;
       actualSpawnerSourceSha: string; actualSpawnerTreeHash: string; actualSpawnerBuildHash: string;
     }>>;
+    resolveInternalProductionTask0SpawnerAdmissionReadyV1: (pair: Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>) => Promise<Readonly<{
+      state: "normal-task0-admission-ready";
+      unchangedSpawnerGenerationHash: string;
+    }>>;
   }>;
   loadReceiptAuthority: () => Promise<Readonly<{
     observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => Readonly<{ sha: string; treeHash: string; buildHash: string }>;
@@ -9845,10 +9862,791 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
     dependencies.cleanupSealedProcess();
     return "sealed";
   }
+  if (preSchemaStatus.state === "normal_task0_admission_ready") {
+    const readyPair = (preSchemaStatus as Readonly<Record<string, unknown>>).admissionReady;
+    if (!readyPair || typeof readyPair !== "object" || Array.isArray(readyPair)) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_REQUIRED");
+    const ready = await dependencies.startupAdmission.resolveInternalProductionTask0SpawnerAdmissionReadyV1(readyPair as Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>);
+    const receiptAuthority = await dependencies.loadReceiptAuthority();
+    const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
+    if (ready.state !== "normal-task0-admission-ready" || ready.unchangedSpawnerGenerationHash !== census.spawner.generationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_INVALID");
+    return "normal";
+  }
   if (preSchemaStatus.state !== "absent") {
     throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_ADMISSION_BLOCKED");
   }
   return "normal";
+}
+
+export type InternalProductionBaselineSpawnerStartupAdmissionPairV1 = Readonly<{
+  startupAdmissionRef: string;
+  startupAdmissionHash: string;
+}>;
+
+export type InternalProductionBaselineSpawnerStartupAdmissionV1 = Readonly<{
+  kind: "authenticated-internal-production-baseline-spawner-startup-admission";
+  admissionMode: "ordinary-manifest-backed";
+  service: "setfarm-spawner";
+  actionId: "a-restart-service-setfarm-spawner-v1";
+  operationId: string;
+  bootstrapOperationRef: string | null;
+  bootstrapOperationHash: string | null;
+  restartLaunchOutboxHash: string;
+  expectedRuntimeSourceProjectionHash: string;
+  expectedSetfarmSha: string;
+  expectedSpawnerBuildHash: string;
+  migrationReceiptRef: string;
+  migrationReceiptHash: string;
+  manifestActivationRef: string;
+  manifestActivationHash: string;
+  genericFullVerifyRequired: true;
+  beforeGenerationHash: string;
+  admissionHash: string;
+}>;
+
+export type InternalProductionBaselineSpawnerStartupClaimV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-spawner-startup-claim.v1";
+  startupAdmissionRef: string;
+  startupAdmissionHash: string;
+  operationId: string;
+  currentGenerationHash: string;
+  pid: number;
+  processStartTimeEpochMs: number;
+  processIdentityHash: string;
+  startupClaimHash: string;
+}>;
+
+const TASK12_STARTUP_ADMISSION_ROOT_V1 = path.join(
+  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+  "data/internal-production-baseline/baseline-spawner-startup-admission-v1",
+);
+const TASK12_BOOTSTRAP_RESTART_ROOT_V1 = path.join(
+  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+  "data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1",
+);
+const TASK12_STARTUP_ADMISSION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-startup-admission/sha256/";
+const TASK12_SHA256_V1 = /^[a-f0-9]{64}$/;
+const TASK12_GIT_HASH_V1 = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const TASK12_STARTUP_ADMISSION_KEYS_V1 = Object.freeze([
+  "kind", "admissionMode", "service", "actionId", "operationId",
+  "bootstrapOperationRef", "bootstrapOperationHash", "restartLaunchOutboxHash",
+  "expectedRuntimeSourceProjectionHash", "expectedSetfarmSha", "expectedSpawnerBuildHash",
+  "migrationReceiptRef", "migrationReceiptHash", "manifestActivationRef",
+  "manifestActivationHash", "genericFullVerifyRequired", "beforeGenerationHash", "admissionHash",
+] as const);
+const task12StartupAdmissionCapabilitiesV1 = new WeakMap<object, Readonly<{
+  startupAdmissionRef: string;
+  startupAdmissionHash: string;
+  operationRef: string;
+  operationHash: string;
+}>>();
+
+function task12CanonicalV1(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(task12CanonicalV1).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${task12CanonicalV1(record[key])}`).join(",")}}`;
+}
+
+function task12HashV1(value: unknown): string {
+  return crypto.createHash("sha256").update(task12CanonicalV1(value)).digest("hex");
+}
+
+function task12HasExactStoredKeysV1(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).join(",") === [...keys].sort().join(",");
+}
+
+function task12ExactInputV1(value: unknown, keys: readonly string[], code: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Reflect.ownKeys(value).some((key) => typeof key !== "string") || Object.keys(value).join(",") !== keys.join(",")) throw new Error(code);
+  return value as Record<string, unknown>;
+}
+
+type Task12PrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
+
+function authenticateTask12PrivateDirectoryChainV1(target: string): Task12PrivateDirectoryGuardV1 {
+  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const resolvedTarget = path.resolve(target);
+  const relative = path.relative(anchor, resolvedTarget);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const descriptors: number[] = [];
+  const held: Array<ReturnType<typeof fs.fstatSync>> = [];
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED");
+    for (const [index, current] of paths.entries()) {
+      const atPath = fs.lstatSync(current, { bigint: true });
+      const atDescriptor = fs.fstatSync(descriptors[index]!, { bigint: true });
+      const expected = held[index]!;
+      if (!atPath.isDirectory() || atPath.isSymbolicLink() || !atDescriptor.isDirectory() || atPath.dev !== expected.dev || atPath.ino !== expected.ino || atPath.mode !== expected.mode || atDescriptor.dev !== expected.dev || atDescriptor.ino !== expected.ino || atDescriptor.mode !== expected.mode) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_CHANGED");
+    }
+  };
+  try {
+    for (const [index, current] of paths.entries()) {
+      const before = fs.lstatSync(current, { bigint: true });
+      const descriptor = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+      descriptors.push(descriptor);
+      const observed = fs.fstatSync(descriptor, { bigint: true });
+      if (!before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory() || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode || before.nlink !== observed.nlink || before.nlink < 1n || (index > 0 && (observed.mode & 0o7777n) !== 0o700n) || (index > 0 && observed.dev !== held[0]!.dev)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_INVALID");
+      held.push(observed);
+    }
+    assertStable();
+    return Object.freeze({ assertStable, close: () => { if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED"); closed = true; for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } });
+  } catch (error) {
+    closed = true;
+    for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function ensureTask12PrivateDirectoryV1(directory: string): Task12PrivateDirectoryGuardV1 {
+  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const target = path.resolve(directory);
+  const relative = path.relative(anchor, target);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
+  let current = anchor;
+  for (const segment of relative.split(path.sep)) {
+    const parent = authenticateTask12PrivateDirectoryChainV1(current);
+    current = path.join(current, segment);
+    try {
+      parent.assertStable();
+      try { fs.mkdirSync(current, { mode: 0o700 }); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error; }
+      parent.assertStable();
+    } finally { parent.close(); }
+    const created = authenticateTask12PrivateDirectoryChainV1(current);
+    created.close();
+  }
+  return authenticateTask12PrivateDirectoryChainV1(target);
+}
+
+function task12ReadBytesV1(target: string): Buffer {
+  const guard = authenticateTask12PrivateDirectoryChainV1(path.dirname(target));
+  try {
+    guard.assertStable();
+    const descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      const before = fs.fstatSync(descriptor, { bigint: true });
+      const atPath = fs.lstatSync(target, { bigint: true });
+      if (!before.isFile() || before.isSymbolicLink() || before.dev !== atPath.dev || before.ino !== atPath.ino || before.nlink !== 1n || atPath.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.size < 1n || before.size > 1_048_576n) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_IDENTITY_INVALID");
+      const bytes = fs.readFileSync(descriptor);
+      const after = fs.fstatSync(descriptor, { bigint: true });
+      const reopened = fs.lstatSync(target, { bigint: true });
+      if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode || before.nlink !== after.nlink || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.dev !== reopened.dev || after.ino !== reopened.ino || BigInt(bytes.length) !== after.size) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_CHANGED");
+      guard.assertStable();
+      return bytes;
+    } finally { fs.closeSync(descriptor); }
+  } finally { guard.close(); }
+}
+
+function task12RecoverNoReplacePublicationV1(target: string, bytes: Buffer): void {
+  const directory = path.dirname(target);
+  const prefix = `${path.basename(target)}.tmp-`;
+  const candidates = fs.readdirSync(directory)
+    .filter((entry) => entry.startsWith(prefix))
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  if (candidates.length > 8) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_CAP");
+  if (candidates.length === 0) return;
+  const namePattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
+  const pinned: Array<{ temp: string; descriptor: number; identity: fs.BigIntStats; observed: Buffer }> = [];
+  try {
+    for (const entry of candidates) {
+      if (!namePattern.test(entry)) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_INVALID");
+      const temp = path.join(directory, entry);
+      const descriptor = fs.openSync(temp, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const identity = fs.fstatSync(descriptor, { bigint: true });
+      const atTemp = fs.lstatSync(temp, { bigint: true });
+      const observed = fs.readFileSync(descriptor);
+      if (!identity.isFile() || identity.dev !== atTemp.dev || identity.ino !== atTemp.ino || (identity.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(identity.nlink) || identity.size !== BigInt(observed.length) || !observed.equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_INVALID");
+      pinned.push({ temp, descriptor, identity, observed });
+    }
+    let targetStats: ReturnType<typeof fs.lstatSync> | null = null;
+    try { targetStats = fs.lstatSync(target, { bigint: true }); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    if (targetStats === null) {
+      const prelinks = pinned.filter(({ identity }) => identity.nlink === 1n);
+      if (prelinks.length < 1) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_LINK_STATE_INVALID");
+      fs.linkSync(prelinks[0]!.temp, target);
+      targetStats = fs.lstatSync(target, { bigint: true });
+    }
+    const targetIsLinkedTemp = pinned.some(({ identity, observed }) => targetStats!.dev === identity.dev && targetStats!.ino === identity.ino && observed.equals(bytes));
+    const targetIsIndependent = targetStats.nlink === 1n && task12ReadBytesV1(target).equals(bytes);
+    if (!targetStats.isFile() || targetStats.isSymbolicLink() || (!targetIsLinkedTemp && !targetIsIndependent)) throw new Error("INTERNAL_PRODUCTION_TASK12_LINKED_TEMP_IDENTITY_INVALID");
+    for (const item of pinned) {
+      const now = fs.fstatSync(item.descriptor, { bigint: true });
+      const atPath = fs.lstatSync(item.temp, { bigint: true });
+      const observed = Buffer.alloc(Number(now.size));
+      if (fs.readSync(item.descriptor, observed, 0, observed.length, 0) !== observed.length || now.dev !== item.identity.dev || now.ino !== item.identity.ino || atPath.dev !== item.identity.dev || atPath.ino !== item.identity.ino || !observed.equals(item.observed) || !observed.equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_CHANGED");
+      const linked = targetStats.dev === now.dev && targetStats.ino === now.ino && now.nlink === 2n;
+      const stale = targetIsIndependent && (targetStats.dev !== now.dev || targetStats.ino !== now.ino) && now.nlink === 1n;
+      const duplicate = targetIsLinkedTemp && (targetStats.dev !== now.dev || targetStats.ino !== now.ino) && now.nlink === 1n;
+      if (!now.isFile() || now.isSymbolicLink() || !atPath.isFile() || atPath.isSymbolicLink() || (now.mode & 0o7777n) !== 0o600n || (atPath.mode & 0o7777n) !== 0o600n || atPath.nlink !== now.nlink || !linked && !stale && !duplicate) throw new Error("INTERNAL_PRODUCTION_TASK12_LINKED_TEMP_IDENTITY_INVALID");
+      fs.unlinkSync(item.temp);
+      const directoryDescriptor = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+      try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+    }
+  } finally { for (const item of pinned) fs.closeSync(item.descriptor); }
+  if (!task12ReadBytesV1(target).equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_RECOVERED_RECORD_INVALID");
+}
+
+type Task12LocatorMutationLockV1 = Readonly<{ close: () => void }>;
+
+function task12AcquireLocatorMutationLockV1(target: string): Task12LocatorMutationLockV1 {
+  const lockPath = `${target}.controller.lock`;
+  const tempPrefix = `${path.basename(lockPath)}.tmp-`;
+  type Task12ProcessSnapshotV1 =
+    | Readonly<{ state: "live"; processStart: string; processCommandHash: string; processIdentityHash: string }>
+    | Readonly<{ state: "dead" | "ambiguous" }>;
+  const ownerSnapshot = (pid: number): Task12ProcessSnapshotV1 => {
+    try {
+      const observedPid = execFileSync("/bin/ps", ["-p", String(pid), "-o", "pid="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 2_000 }).trim();
+      if (observedPid !== String(pid)) return Object.freeze({ state: "ambiguous" as const });
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { status?: number | null; stdout?: string | Buffer; stderr?: string | Buffer };
+      const stdout = typeof failure.stdout === "string" ? failure.stdout : Buffer.isBuffer(failure.stdout) ? failure.stdout.toString("utf8") : "";
+      const stderr = typeof failure.stderr === "string" ? failure.stderr : Buffer.isBuffer(failure.stderr) ? failure.stderr.toString("utf8") : "";
+      if (failure.status === 1 && stdout.trim() === "" && stderr.trim() === "") return Object.freeze({ state: "dead" as const });
+      return Object.freeze({ state: "ambiguous" as const });
+    }
+    try {
+      const processStart = execFileSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 }).trim();
+      const processCommand = execFileSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 }).trim();
+      if (!processStart || !processCommand) return Object.freeze({ state: "ambiguous" as const });
+      const processCommandHash = task12HashV1({ schema: "setfarm.internal-production-task12-lock-process-command.v1", processCommand });
+      return Object.freeze({ state: "live" as const, processStart, processCommandHash, processIdentityHash: task12HashV1({ schema: "setfarm.internal-production-task12-lock-process-identity.v1", pid, processStart, processCommandHash }) });
+    } catch { return Object.freeze({ state: "ambiguous" as const }); }
+  };
+  const parseOwner = (bytes: Buffer): Record<string, unknown> => {
+    if (bytes.length < 1 || bytes[bytes.length - 1] !== 0x0a) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_INVALID");
+    const owner = JSON.parse(bytes.subarray(0, -1).toString("utf8")) as Record<string, unknown>;
+    if (`${task12CanonicalV1(owner)}\n` !== bytes.toString("utf8") || !task12HasExactStoredKeysV1(owner, ["schema", "targetHash", "pid", "processStart", "processCommandHash", "processIdentityHash", "nonce"]) || owner.schema !== "setfarm.internal-production-task12-locator-mutation-lock.v1" || owner.targetHash !== task12HashV1({ schema: "setfarm.internal-production-task12-locator-mutation-target.v1", target }) || typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.processStart !== "string" || typeof owner.processCommandHash !== "string" || !TASK12_SHA256_V1.test(owner.processCommandHash) || typeof owner.processIdentityHash !== "string" || !TASK12_SHA256_V1.test(owner.processIdentityHash) || typeof owner.nonce !== "string") throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_INVALID");
+    return owner;
+  };
+  const unlinkPinned = (candidate: string, descriptor: number, identity: fs.BigIntStats, bytes: Buffer, expectedLinkCount = 1n): void => {
+    const atPath = fs.lstatSync(candidate, { bigint: true });
+    const again = fs.fstatSync(descriptor, { bigint: true });
+    const pinnedBytes = Buffer.alloc(Number(again.size));
+    if (fs.readSync(descriptor, pinnedBytes, 0, pinnedBytes.length, 0) !== pinnedBytes.length || !again.isFile() || (again.mode & 0o7777n) !== 0o600n || again.nlink !== expectedLinkCount || atPath.nlink !== expectedLinkCount || again.dev !== identity.dev || again.ino !== identity.ino || again.size !== identity.size || again.mtimeNs !== identity.mtimeNs || atPath.dev !== identity.dev || atPath.ino !== identity.ino || !pinnedBytes.equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_CHANGED");
+    fs.unlinkSync(candidate);
+  };
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const candidates = fs.readdirSync(path.dirname(target)).filter((entry) => entry.startsWith(tempPrefix));
+    if (candidates.length > 8) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_TEMP_CAP");
+    let busy = false;
+    for (const entry of candidates) {
+      if (!new RegExp(`^${tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).test(entry)) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_TEMP_NAME_INVALID");
+      const candidate = path.join(path.dirname(target), entry);
+      const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      try {
+        const identity = fs.fstatSync(descriptor, { bigint: true });
+        const atPath = fs.lstatSync(candidate, { bigint: true });
+        if (!identity.isFile() || (identity.mode & 0o7777n) !== 0o600n || identity.nlink !== 1n || atPath.dev !== identity.dev || atPath.ino !== identity.ino || atPath.nlink !== 1n) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_CHANGED");
+        const bytes = fs.readFileSync(descriptor);
+        const owner = parseOwner(bytes);
+        const observedOwner = ownerSnapshot(owner.pid as number);
+        const sameLiveOwner = observedOwner.state === "live" && observedOwner.processStart === owner.processStart && observedOwner.processCommandHash === owner.processCommandHash && observedOwner.processIdentityHash === owner.processIdentityHash;
+        if (observedOwner.state === "ambiguous" || sameLiveOwner) {
+          if (Date.now() >= deadline) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_BUSY");
+          busy = true;
+        } else {
+          unlinkPinned(candidate, descriptor, identity, bytes);
+          const directory = fs.openSync(path.dirname(target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+          try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+        }
+      } finally { fs.closeSync(descriptor); }
+    }
+    if (busy) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
+    }
+    try {
+      const lockDescriptor = fs.openSync(lockPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      try {
+        const identity = fs.fstatSync(lockDescriptor, { bigint: true });
+        const atPath = fs.lstatSync(lockPath, { bigint: true });
+        if (!identity.isFile() || (identity.mode & 0o7777n) !== 0o600n || identity.nlink !== 1n || atPath.dev !== identity.dev || atPath.ino !== identity.ino || atPath.nlink !== 1n) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_CHANGED");
+        const bytes = fs.readFileSync(lockDescriptor);
+        const owner = parseOwner(bytes);
+        const observedOwner = ownerSnapshot(owner.pid as number);
+        const sameLiveOwner = observedOwner.state === "live" && observedOwner.processStart === owner.processStart && observedOwner.processCommandHash === owner.processCommandHash && observedOwner.processIdentityHash === owner.processIdentityHash;
+        if (observedOwner.state === "ambiguous" || sameLiveOwner) busy = true;
+        else unlinkPinned(lockPath, lockDescriptor, identity, bytes);
+      } finally { fs.closeSync(lockDescriptor); }
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    }
+    if (busy) {
+      if (Date.now() >= deadline) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_BUSY");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
+    }
+    const nonce = crypto.randomUUID();
+    const snapshot = ownerSnapshot(process.pid);
+    if (snapshot.state !== "live") throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_OWNER_UNAVAILABLE");
+    const body = Object.freeze({ schema: "setfarm.internal-production-task12-locator-mutation-lock.v1", targetHash: task12HashV1({ schema: "setfarm.internal-production-task12-locator-mutation-target.v1", target }), pid: process.pid, processStart: snapshot.processStart, processCommandHash: snapshot.processCommandHash, processIdentityHash: snapshot.processIdentityHash, nonce });
+    const bytes = Buffer.from(`${task12CanonicalV1(body)}\n`);
+    const temp = path.join(path.dirname(target), `${tempPrefix}${process.pid}-${nonce}`);
+    const descriptor = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+    fs.writeFileSync(descriptor, bytes); fs.fsyncSync(descriptor);
+    const identity = fs.fstatSync(descriptor, { bigint: true });
+    try {
+      fs.linkSync(temp, lockPath);
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      unlinkPinned(temp, descriptor, identity, bytes);
+      if (Date.now() >= deadline) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_BUSY");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      fs.closeSync(descriptor);
+      continue;
+    }
+    unlinkPinned(temp, descriptor, identity, bytes, 2n);
+    const directoryDescriptor = fs.openSync(path.dirname(target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+    try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+    return Object.freeze({ close: () => {
+      try {
+        const atPath = fs.lstatSync(lockPath, { bigint: true });
+        if (!identity.isFile() || identity.nlink !== 1n || atPath.dev !== identity.dev || atPath.ino !== identity.ino || !task12ReadBytesV1(lockPath).equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_LOCATOR_MUTATION_LOCK_CHANGED");
+        fs.unlinkSync(lockPath);
+        const directory = fs.openSync(path.dirname(target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+        try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+      } finally { fs.closeSync(descriptor); }
+    } });
+  }
+}
+
+function task12WriteNoReplaceV1(target: string, value: unknown): void {
+  const bytes = Buffer.from(`${task12CanonicalV1(value)}\n`);
+  if (bytes.length < 1 || bytes.length > 1_048_576) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_SIZE_INVALID");
+  const guard = ensureTask12PrivateDirectoryV1(path.dirname(target));
+  let mutationLock: Task12LocatorMutationLockV1 | null = null;
+  try {
+    guard.assertStable();
+    mutationLock = task12AcquireLocatorMutationLockV1(target);
+    guard.assertStable();
+    task12RecoverNoReplacePublicationV1(target, bytes);
+    const prefix = `${path.basename(target)}.tmp-`;
+    if (fs.readdirSync(path.dirname(target)).filter((entry) => entry.startsWith(prefix)).length >= 8) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_CAP");
+    const temp = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    const tempDescriptor = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+    try {
+      fs.writeFileSync(tempDescriptor, bytes); fs.fsyncSync(tempDescriptor);
+      const identity = fs.fstatSync(tempDescriptor, { bigint: true });
+      try { fs.linkSync(temp, target); } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+        if (!task12ReadBytesV1(target).equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_COLLISION");
+      }
+      const atTemp = fs.lstatSync(temp, { bigint: true });
+      const observed = Buffer.alloc(Number(identity.size));
+      if (fs.readSync(tempDescriptor, observed, 0, observed.length, 0) !== observed.length || atTemp.dev !== identity.dev || atTemp.ino !== identity.ino || !observed.equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_CHANGED");
+      fs.unlinkSync(temp);
+    } finally { fs.closeSync(tempDescriptor); }
+    guard.assertStable();
+    const directory = fs.openSync(path.dirname(target), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    if (!task12ReadBytesV1(target).equals(bytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_REAUTHENTICATION_FAILED");
+    guard.assertStable();
+  } finally { mutationLock?.close(); guard.close(); }
+}
+
+function task12WriteExpectedPredecessorCasV1(target: string, predecessor: unknown, successor: unknown): void {
+  const predecessorBytes = Buffer.from(`${task12CanonicalV1(predecessor)}\n`);
+  const successorBytes = Buffer.from(`${task12CanonicalV1(successor)}\n`);
+  const guard = authenticateTask12PrivateDirectoryChainV1(path.dirname(target));
+  let mutationLock: Task12LocatorMutationLockV1 | null = null;
+  let predecessorDescriptor = -1;
+  const candidates: Array<{ path: string; descriptor: number; identity: fs.BigIntStats }> = [];
+  const readPinned = (fd: number, size: bigint): Buffer => {
+    const value = Buffer.alloc(Number(size));
+    if (fs.readSync(fd, value, 0, value.length, 0) !== value.length) throw new Error("INTERNAL_PRODUCTION_TASK12_PINNED_READ_INCOMPLETE");
+    return value;
+  };
+  const authenticateCandidate = (candidate: { path: string; descriptor: number; identity: fs.BigIntStats }): void => {
+    const current = fs.fstatSync(candidate.descriptor, { bigint: true });
+    const atPath = fs.lstatSync(candidate.path, { bigint: true });
+    if (!current.isFile() || (current.mode & 0o7777n) !== 0o600n || current.nlink !== 1n || current.dev !== candidate.identity.dev || current.ino !== candidate.identity.ino || atPath.dev !== candidate.identity.dev || atPath.ino !== candidate.identity.ino || !readPinned(candidate.descriptor, current.size).equals(successorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_TEMP_IDENTITY_INVALID");
+  };
+  try {
+    guard.assertStable();
+    mutationLock = task12AcquireLocatorMutationLockV1(target);
+    guard.assertStable();
+    const directoryPath = path.dirname(target);
+    const prefix = `${path.basename(target)}.tmp-`;
+    const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
+    const names = fs.readdirSync(directoryPath).filter((entry) => entry.startsWith(prefix)).sort();
+    if (names.length > 8) throw new Error("INTERNAL_PRODUCTION_TASK12_TEMP_CANDIDATE_CAP");
+    const parentIdentity = fs.lstatSync(directoryPath, { bigint: true });
+    for (const name of names) {
+      if (!pattern.test(name)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_TEMP_NAME_INVALID");
+      const candidatePath = path.join(directoryPath, name);
+      const candidateDescriptor = fs.openSync(candidatePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const candidate = { path: candidatePath, descriptor: candidateDescriptor, identity: fs.fstatSync(candidateDescriptor, { bigint: true }) };
+      candidates.push(candidate);
+      if (candidate.identity.dev !== parentIdentity.dev) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_TEMP_IDENTITY_INVALID");
+      authenticateCandidate(candidate);
+    }
+    const currentBytes = task12ReadBytesV1(target);
+    if (currentBytes.equals(successorBytes)) {
+      for (const candidate of candidates) { authenticateCandidate(candidate); fs.unlinkSync(candidate.path); }
+      const directoryDescriptor = fs.openSync(directoryPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+      try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+      guard.assertStable();
+      return;
+    }
+    if (!currentBytes.equals(predecessorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_PREDECESSOR_CROSSED");
+    predecessorDescriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const identity = fs.fstatSync(predecessorDescriptor, { bigint: true });
+    const predecessorAtPath = fs.lstatSync(target, { bigint: true });
+    const pinnedPredecessorBytes = readPinned(predecessorDescriptor, identity.size);
+    if (!identity.isFile() || (identity.mode & 0o7777n) !== 0o600n || identity.nlink !== 1n || predecessorAtPath.dev !== identity.dev || predecessorAtPath.ino !== identity.ino || identity.size !== BigInt(predecessorBytes.length) || !pinnedPredecessorBytes.equals(predecessorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_PREDECESSOR_CROSSED");
+    let selected = candidates[0];
+    if (!selected) {
+      const temp = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
+      const tempDescriptor = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+      fs.writeFileSync(tempDescriptor, successorBytes); fs.fsyncSync(tempDescriptor);
+      selected = { path: temp, descriptor: tempDescriptor, identity: fs.fstatSync(tempDescriptor, { bigint: true }) };
+      candidates.push(selected);
+      authenticateCandidate(selected);
+    }
+    const current = fs.lstatSync(target, { bigint: true });
+    const predecessorBeforeRename = fs.fstatSync(predecessorDescriptor, { bigint: true });
+    if (current.dev !== identity.dev || current.ino !== identity.ino || predecessorBeforeRename.dev !== identity.dev || predecessorBeforeRename.ino !== identity.ino || !predecessorBeforeRename.isFile() || (predecessorBeforeRename.mode & 0o7777n) !== 0o600n || predecessorBeforeRename.nlink !== 1n || !readPinned(predecessorDescriptor, predecessorBeforeRename.size).equals(predecessorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_PREDECESSOR_CHANGED");
+    authenticateCandidate(selected);
+    fs.renameSync(selected.path, target);
+    const predecessorAfter = fs.fstatSync(predecessorDescriptor, { bigint: true });
+    const successorAfter = fs.fstatSync(selected.descriptor, { bigint: true });
+    const successorAtPath = fs.lstatSync(target, { bigint: true });
+    if (predecessorAfter.dev !== identity.dev || predecessorAfter.ino !== identity.ino || predecessorAfter.nlink !== 0n || !readPinned(predecessorDescriptor, predecessorAfter.size).equals(predecessorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_PREDECESSOR_REPLACEMENT_INVALID");
+    if (successorAfter.dev !== selected.identity.dev || successorAfter.ino !== selected.identity.ino || !successorAfter.isFile() || (successorAfter.mode & 0o7777n) !== 0o600n || successorAfter.nlink !== 1n || successorAtPath.dev !== selected.identity.dev || successorAtPath.ino !== selected.identity.ino || !readPinned(selected.descriptor, successorAfter.size).equals(successorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_SUCCESSOR_INVALID");
+    for (const candidate of candidates) {
+      if (candidate === selected) continue;
+      authenticateCandidate(candidate);
+      fs.unlinkSync(candidate.path);
+    }
+    const directory = fs.openSync(directoryPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY);
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    const successorDescriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      const successorIdentity = fs.fstatSync(successorDescriptor, { bigint: true });
+      if (!successorIdentity.isFile() || (successorIdentity.mode & 0o7777n) !== 0o600n || successorIdentity.nlink !== 1n || successorIdentity.dev !== selected.identity.dev || successorIdentity.ino !== selected.identity.ino || !readPinned(successorDescriptor, successorIdentity.size).equals(successorBytes)) throw new Error("INTERNAL_PRODUCTION_TASK12_PENDING_SUCCESSOR_INVALID");
+    } finally { fs.closeSync(successorDescriptor); }
+    guard.assertStable();
+  } finally {
+    if (predecessorDescriptor >= 0) fs.closeSync(predecessorDescriptor);
+    for (const candidate of candidates) fs.closeSync(candidate.descriptor);
+    try { mutationLock?.close(); } finally { guard.close(); }
+  }
+}
+
+function task12ReadV1(target: string): Record<string, unknown> {
+  const bytes = task12ReadBytesV1(target);
+  if (bytes.length < 1 || bytes.length > 1_048_576 || bytes[bytes.length - 1] !== 0x0a) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_INVALID");
+  const value = JSON.parse(bytes.subarray(0, -1).toString("utf8")) as unknown;
+  if (!value || typeof value !== "object" || Array.isArray(value) || `${task12CanonicalV1(value)}\n` !== bytes.toString("utf8")) throw new Error("INTERNAL_PRODUCTION_TASK12_RECORD_INVALID");
+  return Object.freeze(value as Record<string, unknown>);
+}
+
+function task12StartupAdmissionRecordPathV1(hash: string): string {
+  return path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "records/sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function task12StartupAdmissionByOperationPathV1(operationHash: string): string {
+  return path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "by-operation/sha256", operationHash.slice(0, 2), operationHash, "startup-admission.pair.json");
+}
+
+function task12RestartOperationPairV1(input: unknown): Readonly<{ operationRef: string; operationHash: string }> {
+  const pair = task12ExactInputV1(input, ["operationRef", "operationHash"], "INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_OPERATION_PAIR_INVALID");
+  if (typeof pair.operationHash !== "string" || !TASK12_SHA256_V1.test(pair.operationHash) || pair.operationRef !== `setfarm://internal-production/baseline-service-restart-operation/sha256/${pair.operationHash}`) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_OPERATION_PAIR_INVALID");
+  return Object.freeze({ operationRef: pair.operationRef as string, operationHash: pair.operationHash });
+}
+
+function task12StartupAdmissionPairFromStoredV1(value: unknown): InternalProductionBaselineSpawnerStartupAdmissionPairV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Reflect.ownKeys(value).some((key) => typeof key !== "string")) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_STORED_PAIR_INVALID");
+  const stored = value as Record<string, unknown>;
+  if (!task12HasExactStoredKeysV1(stored, ["startupAdmissionRef", "startupAdmissionHash"]) || typeof stored.startupAdmissionRef !== "string" || typeof stored.startupAdmissionHash !== "string" || !TASK12_SHA256_V1.test(stored.startupAdmissionHash) || stored.startupAdmissionRef !== `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${stored.startupAdmissionHash}`) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_STORED_PAIR_INVALID");
+  return Object.freeze({ startupAdmissionRef: stored.startupAdmissionRef, startupAdmissionHash: stored.startupAdmissionHash });
+}
+
+export async function resolveInternalProductionBaselineSpawnerStartupAdmissionV1(
+  pair: InternalProductionBaselineSpawnerStartupAdmissionPairV1,
+): Promise<InternalProductionBaselineSpawnerStartupAdmissionV1> {
+  task12ExactInputV1(pair, ["startupAdmissionRef", "startupAdmissionHash"], "INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_PAIR_INVALID");
+  if (!TASK12_SHA256_V1.test(pair.startupAdmissionHash) || pair.startupAdmissionRef !== `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${pair.startupAdmissionHash}`) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_PAIR_INVALID");
+  const admission = task12ReadV1(task12StartupAdmissionRecordPathV1(pair.startupAdmissionHash));
+  const body = { ...admission }; delete body.admissionHash;
+  if (
+    !task12HasExactStoredKeysV1(admission, TASK12_STARTUP_ADMISSION_KEYS_V1)
+    || admission.admissionHash !== pair.startupAdmissionHash
+    || task12HashV1(body) !== pair.startupAdmissionHash
+    || admission.kind !== "authenticated-internal-production-baseline-spawner-startup-admission"
+    || admission.admissionMode !== "ordinary-manifest-backed"
+    || admission.service !== "setfarm-spawner"
+    || admission.actionId !== "a-restart-service-setfarm-spawner-v1"
+    || typeof admission.operationId !== "string" || !TASK12_SHA256_V1.test(admission.operationId)
+    || (admission.bootstrapOperationRef === null) !== (admission.bootstrapOperationHash === null)
+    || (admission.bootstrapOperationHash !== null && (typeof admission.bootstrapOperationHash !== "string" || !TASK12_SHA256_V1.test(admission.bootstrapOperationHash) || admission.bootstrapOperationRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${admission.bootstrapOperationHash}`))
+    || typeof admission.restartLaunchOutboxHash !== "string" || !TASK12_SHA256_V1.test(admission.restartLaunchOutboxHash)
+    || typeof admission.expectedRuntimeSourceProjectionHash !== "string" || !TASK12_SHA256_V1.test(admission.expectedRuntimeSourceProjectionHash)
+    || typeof admission.expectedSetfarmSha !== "string" || !TASK12_GIT_HASH_V1.test(admission.expectedSetfarmSha)
+    || typeof admission.expectedSpawnerBuildHash !== "string" || !TASK12_SHA256_V1.test(admission.expectedSpawnerBuildHash)
+    || typeof admission.migrationReceiptHash !== "string" || !TASK12_SHA256_V1.test(admission.migrationReceiptHash)
+    || admission.migrationReceiptRef !== `setfarm://internal-production/baseline-bootstrap-handoff-migration-receipt/sha256/${admission.migrationReceiptHash}`
+    || typeof admission.manifestActivationHash !== "string" || !TASK12_SHA256_V1.test(admission.manifestActivationHash)
+    || admission.manifestActivationRef !== `setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${admission.manifestActivationHash}`
+    || admission.genericFullVerifyRequired !== true
+    || typeof admission.beforeGenerationHash !== "string" || !TASK12_SHA256_V1.test(admission.beforeGenerationHash)
+  ) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_INVALID");
+  return admission as InternalProductionBaselineSpawnerStartupAdmissionV1;
+}
+
+export async function resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionBaselineSpawnerStartupAdmissionPairV1> {
+  const operationPair = task12RestartOperationPairV1(input);
+  const stored = task12ReadV1(task12StartupAdmissionByOperationPathV1(operationPair.operationHash));
+  const pair = task12StartupAdmissionPairFromStoredV1(stored);
+  const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1(pair);
+  if (admission.operationId !== operationPair.operationHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_OPERATION_CROSSED");
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js") as Record<string, unknown>;
+  const resolveOperation = receipt.resolveInternalProductionBaselineServiceRestartOperationV1;
+  const observeOutbox = receipt.observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1;
+  if (typeof resolveOperation !== "function" || resolveOperation.length !== 1 || typeof observeOutbox !== "function" || observeOutbox.length !== 1) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_OPERATION_AUTHORITY_UNAVAILABLE");
+  const operation = await (resolveOperation as (value: unknown) => Promise<Record<string, unknown>>)(operationPair);
+  const outbox = await (observeOutbox as (value: unknown) => Promise<Record<string, unknown>>)(operationPair);
+  if (operation.operationRef !== operationPair.operationRef || operation.operationHash !== operationPair.operationHash || outbox.operationRef !== operationPair.operationRef || outbox.operationHash !== operationPair.operationHash || outbox.outboxHash !== admission.restartLaunchOutboxHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_OUTBOX_CROSSED");
+  return pair;
+}
+
+export async function prepareInternalProductionBaselineSpawnerStartupAdmissionV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionBaselineSpawnerStartupAdmissionPairV1> {
+  const operationPair = task12RestartOperationPairV1(input);
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js") as Record<string, unknown>;
+  const resolveOperation = receipt.resolveInternalProductionBaselineServiceRestartOperationV1;
+  const observeOutbox = receipt.observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1;
+  const resolveAuthorization = receipt.resolveInternalProductionBaselineServiceRestartAuthorizationV1;
+  const observeCurrentEntry = receipt.observeInternalProductionCurrentEntryAuthorityStatusV1;
+  const observeCensus = receipt.observeInternalProductionServiceCensusV1;
+  if (typeof resolveOperation !== "function" || resolveOperation.length !== 1 || typeof observeOutbox !== "function" || observeOutbox.length !== 1 || typeof resolveAuthorization !== "function" || resolveAuthorization.length !== 1 || typeof observeCurrentEntry !== "function" || observeCurrentEntry.length !== 0 || typeof observeCensus !== "function" || observeCensus.length !== 0) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_AUTHORITY_UNAVAILABLE");
+  const operation = await (resolveOperation as (value: unknown) => Promise<Record<string, unknown>>)(operationPair);
+  const outbox = await (observeOutbox as (value: unknown) => Promise<Record<string, unknown>>)(operationPair);
+  const authorization = await (resolveAuthorization as (value: unknown) => Promise<Record<string, unknown>>)({ authorizationRef: operation.authorizationRef, authorizationHash: operation.authorizationHash });
+  const currentEntry = await (observeCurrentEntry as () => Promise<Record<string, unknown>>)();
+  const census = await (observeCensus as () => Promise<Record<string, unknown>>)();
+  const spawner = census.spawner as Record<string, unknown> | undefined;
+  const manifest = currentEntry.manifestActivation as Record<string, unknown> | undefined;
+  if (currentEntry.state !== "ready" || operation.operationRef !== operationPair.operationRef || operation.operationHash !== operationPair.operationHash || operation.service !== "setfarm-spawner" || operation.actionId !== "a-restart-service-setfarm-spawner-v1" || outbox.operationRef !== operationPair.operationRef || outbox.operationHash !== operationPair.operationHash || outbox.authorizationRef !== operation.authorizationRef || outbox.authorizationHash !== operation.authorizationHash || typeof outbox.outboxHash !== "string" || !TASK12_SHA256_V1.test(outbox.outboxHash) || !spawner || !manifest) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_PREDECESSOR_CROSSED");
+  const fenced = authorization.schema === "setfarm.internal-production-baseline-spawner-bootstrap-service-restart-authorization.v1";
+  const ordinary = authorization.schema === "setfarm.internal-production-baseline-service-restart-authorization.v1";
+  if (!fenced && !ordinary) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_AUTHORIZATION_INVALID");
+  const bootstrapOperationRef = fenced ? String(authorization.bootstrapOperationRef) : null;
+  const bootstrapOperationHash = fenced ? String(authorization.bootstrapOperationHash) : null;
+  if (fenced && (!TASK12_SHA256_V1.test(bootstrapOperationHash!) || bootstrapOperationRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${bootstrapOperationHash}`)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_BOOTSTRAP_CROSSED");
+  const db = await import("./db-pg.js") as Record<string, unknown>;
+  const verify = db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1;
+  if (typeof verify !== "function" || verify.length !== 0) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_VERIFY_UNAVAILABLE");
+  const verification = await (verify as () => Promise<Record<string, unknown>>)();
+  if (typeof verification.verificationHash !== "string" || !TASK12_SHA256_V1.test(verification.verificationHash) || verification.manifestActivationRef !== manifest.ownerProducerManifestActivationRef || verification.manifestActivationHash !== manifest.ownerProducerManifestActivationHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_VERIFY_INVALID");
+  const body = {
+    kind: "authenticated-internal-production-baseline-spawner-startup-admission" as const,
+    admissionMode: "ordinary-manifest-backed" as const,
+    service: "setfarm-spawner" as const,
+    actionId: "a-restart-service-setfarm-spawner-v1" as const,
+    operationId: operationPair.operationHash,
+    bootstrapOperationRef,
+    bootstrapOperationHash,
+    restartLaunchOutboxHash: String(outbox.outboxHash),
+    expectedRuntimeSourceProjectionHash: String(authorization.preparedRuntimeSourceProjectionHash),
+    expectedSetfarmSha: String(spawner.loadedSourceSha),
+    expectedSpawnerBuildHash: String(spawner.loadedBuildHash),
+    migrationReceiptRef: String(authorization.migrationReceiptRef),
+    migrationReceiptHash: String(authorization.migrationReceiptHash),
+    manifestActivationRef: String(manifest.ownerProducerManifestActivationRef),
+    manifestActivationHash: String(manifest.ownerProducerManifestActivationHash),
+    genericFullVerifyRequired: true as const,
+    beforeGenerationHash: String(spawner.processIdentityHash),
+  };
+  const admissionHash = task12HashV1(body);
+  const pair = Object.freeze({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admissionHash}`, startupAdmissionHash: admissionHash });
+  const admission = Object.freeze({ ...body, admissionHash });
+  task12WriteNoReplaceV1(task12StartupAdmissionRecordPathV1(admissionHash), admission);
+  task12WriteNoReplaceV1(task12StartupAdmissionByOperationPathV1(operationPair.operationHash), pair);
+  const pendingPath = path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "pending/current-startup-admission.pair.json");
+  try {
+    const predecessor = task12ReadV1(pendingPath);
+    if (task12CanonicalV1(predecessor) !== task12CanonicalV1(pair)) {
+      const active = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
+      if (active !== null) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_ACTIVE_PREDECESSOR");
+      task12WriteExpectedPredecessorCasV1(pendingPath, predecessor, pair);
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    task12WriteNoReplaceV1(pendingPath, pair);
+  }
+  await resolveInternalProductionBaselineSpawnerStartupAdmissionV1(pair);
+  await resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1(operationPair);
+  return pair;
+}
+
+export async function resolveInternalProductionBaselineSpawnerStartupClaimV1(
+  pair: InternalProductionBaselineSpawnerStartupAdmissionPairV1,
+): Promise<InternalProductionBaselineSpawnerStartupClaimV1> {
+  const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1(pair);
+  const claim = task12ReadV1(path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "claims/by-admission/sha256", admission.admissionHash.slice(0, 2), admission.admissionHash, "startup-claim.json"));
+  const body = { ...claim }; delete body.startupClaimHash;
+  if (!task12HasExactStoredKeysV1(claim, ["schema", "startupAdmissionRef", "startupAdmissionHash", "operationId", "currentGenerationHash", "pid", "processStartTimeEpochMs", "processIdentityHash", "startupClaimHash"]) || claim.schema !== "setfarm.internal-production-baseline-spawner-startup-claim.v1" || claim.startupAdmissionRef !== pair.startupAdmissionRef || claim.startupAdmissionHash !== pair.startupAdmissionHash || claim.operationId !== admission.operationId || typeof claim.pid !== "number" || !Number.isSafeInteger(claim.pid) || claim.pid < 1 || typeof claim.processStartTimeEpochMs !== "number" || !Number.isSafeInteger(claim.processStartTimeEpochMs) || claim.processStartTimeEpochMs < 0 || typeof claim.currentGenerationHash !== "string" || !TASK12_SHA256_V1.test(claim.currentGenerationHash) || typeof claim.processIdentityHash !== "string" || !TASK12_SHA256_V1.test(claim.processIdentityHash) || typeof claim.startupClaimHash !== "string" || !TASK12_SHA256_V1.test(claim.startupClaimHash) || task12HashV1(body) !== claim.startupClaimHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_INVALID");
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const census = await receipt.observeInternalProductionServiceCensusV1();
+  if (claim.pid !== census.spawner.pid || claim.processStartTimeEpochMs !== census.spawner.processStartTimeEpochMs || claim.processIdentityHash !== census.spawner.processIdentityHash || claim.currentGenerationHash !== census.spawner.processIdentityHash || census.spawner.loadedSourceSha !== admission.expectedSetfarmSha || census.spawner.loadedBuildHash !== admission.expectedSpawnerBuildHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_STALE");
+  return Object.freeze(claim) as InternalProductionBaselineSpawnerStartupClaimV1;
+}
+
+export async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(
+): Promise<InternalProductionBaselineSpawnerStartupAdmissionV1 | null> {
+  const pending = path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "pending/current-startup-admission.pair.json");
+  let pair: Record<string, unknown>;
+  try { pair = task12ReadV1(pending); } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  const publicPair = task12StartupAdmissionPairFromStoredV1(pair);
+  const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1(publicPair);
+  const operationRef = `setfarm://internal-production/baseline-service-restart-operation/sha256/${admission.operationId}`;
+  const operationPair = task12RestartOperationPairV1({ operationRef, operationHash: admission.operationId });
+  const reopenedPair = await resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1(operationPair);
+  if (reopenedPair.startupAdmissionRef !== publicPair.startupAdmissionRef || reopenedPair.startupAdmissionHash !== publicPair.startupAdmissionHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_PENDING_CROSSED");
+  if (admission.bootstrapOperationHash !== null) {
+    const completed = path.join(TASK12_BOOTSTRAP_RESTART_ROOT_V1, "by-operation/sha256", admission.bootstrapOperationHash.slice(0, 2), admission.bootstrapOperationHash, "sequence.pair.json");
+    try {
+      const sequencePair = task12ReadV1(completed);
+      const sequenceModule = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+      const sequence = await sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(sequencePair as Readonly<{ sequenceRef: string; sequenceHash: string }>);
+      if (sequence.operationRef !== admission.bootstrapOperationRef || sequence.operationHash !== admission.bootstrapOperationHash || sequence.startupAdmissionHash !== admission.admissionHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_TERMINAL_CROSSED");
+      const runtime = await import("./execution/runtime-completion.js");
+      const lifecycle = await runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1({ operationRef: admission.bootstrapOperationRef, operationHash: admission.bootstrapOperationHash });
+      if (lifecycle.state !== "completed" || lifecycle.sequenceRef !== sequencePair.sequenceRef || lifecycle.sequenceHash !== sequencePair.sequenceHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_LIFECYCLE_INCOMPLETE");
+      return null;
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    }
+  } else {
+    const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+    const operation = await receipt.resolveInternalProductionBaselineServiceRestartOperationV1(operationPair);
+    const status = await receipt.observeInternalProductionBaselineServiceRestartAuthorizationStatusV1({ authorizationRef: String(operation.authorizationRef), authorizationHash: String(operation.authorizationHash) });
+    if (status.state === "consumed" && status.consumptionRef && status.consumptionHash) {
+      await receipt.resolveInternalProductionBaselineServiceRestartAuthorityV1({ receiptRef: String(status.consumptionRef), receiptHash: String(status.consumptionHash) });
+      return null;
+    }
+  }
+  task12StartupAdmissionCapabilitiesV1.set(admission, Object.freeze({
+    startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admission.admissionHash}`,
+    startupAdmissionHash: admission.admissionHash,
+    operationRef: operationPair.operationRef,
+    operationHash: operationPair.operationHash,
+  }));
+  return admission;
+}
+
+export async function claimInternalProductionBaselineSpawnerStartupAdmissionV1(
+  input: Readonly<{ admission: InternalProductionBaselineSpawnerStartupAdmissionV1 }>,
+): Promise<Readonly<{ operationId: string; currentGenerationHash: string; startupClaimHash: string }>> {
+  task12ExactInputV1(input, ["admission"], "INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CAPABILITY_INVALID");
+  if (!input.admission || typeof input.admission !== "object") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CAPABILITY_INVALID");
+  const capability = task12StartupAdmissionCapabilitiesV1.get(input.admission);
+  if (!capability || capability.startupAdmissionHash !== input.admission.admissionHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CAPABILITY_INVALID");
+  const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${input.admission.admissionHash}`, startupAdmissionHash: input.admission.admissionHash });
+  if (task12HashV1(input.admission) !== task12HashV1(admission)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CLONE_INVALID");
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const census = await receipt.observeInternalProductionServiceCensusV1();
+  if (census.spawner.pid !== process.pid || census.spawner.loadedSourceSha !== admission.expectedSetfarmSha || census.spawner.loadedBuildHash !== admission.expectedSpawnerBuildHash || census.spawner.processIdentityHash === admission.beforeGenerationHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_PROCESS_INVALID");
+  const claimBody = { schema: "setfarm.internal-production-baseline-spawner-startup-claim.v1", startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admission.admissionHash}`, startupAdmissionHash: admission.admissionHash, operationId: admission.operationId, currentGenerationHash: census.spawner.processIdentityHash, pid: census.spawner.pid, processStartTimeEpochMs: census.spawner.processStartTimeEpochMs, processIdentityHash: census.spawner.processIdentityHash };
+  const startupClaimHash = task12HashV1(claimBody);
+  task12WriteNoReplaceV1(path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "claims/by-admission/sha256", admission.admissionHash.slice(0, 2), admission.admissionHash, "startup-claim.json"), { ...claimBody, startupClaimHash });
+  return Object.freeze({ operationId: admission.operationId, currentGenerationHash: census.spawner.processIdentityHash, startupClaimHash });
+}
+
+export async function awaitInternalProductionBaselineSpawnerRestartAuthorityV1(
+  input: Readonly<{ admission: InternalProductionBaselineSpawnerStartupAdmissionV1; startupClaimHash: string }>,
+): Promise<Readonly<{ receiptRef: string; receiptHash: string }>> {
+  task12ExactInputV1(input, ["admission", "startupClaimHash"], "INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_CAPABILITY_INVALID");
+  if (!task12StartupAdmissionCapabilitiesV1.has(input.admission) || !TASK12_SHA256_V1.test(input.startupClaimHash)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_CAPABILITY_INVALID");
+  const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${input.admission.admissionHash}`, startupAdmissionHash: input.admission.admissionHash });
+  const claim = await resolveInternalProductionBaselineSpawnerStartupClaimV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admission.admissionHash}`, startupAdmissionHash: admission.admissionHash });
+  if (claim.startupClaimHash !== input.startupClaimHash || claim.pid !== process.pid) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_INVALID");
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  if (admission.bootstrapOperationHash === null || admission.bootstrapOperationRef === null) {
+    const operationPair = task12RestartOperationPairV1({ operationRef: `setfarm://internal-production/baseline-service-restart-operation/sha256/${admission.operationId}`, operationHash: admission.operationId });
+    const operation = await receipt.resolveInternalProductionBaselineServiceRestartOperationV1(operationPair);
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const status = await receipt.observeInternalProductionBaselineServiceRestartAuthorizationStatusV1({ authorizationRef: String(operation.authorizationRef), authorizationHash: String(operation.authorizationHash) });
+      if (status.state === "consumed" && status.consumptionRef && status.consumptionHash) {
+        await receipt.resolveInternalProductionBaselineServiceRestartAuthorityV1({ receiptRef: String(status.consumptionRef), receiptHash: String(status.consumptionHash) });
+        return Object.freeze({ receiptRef: String(status.consumptionRef), receiptHash: String(status.consumptionHash) });
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_AUTHORITY_WAIT_EXHAUSTED");
+  }
+  const bootstrap = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+  await bootstrap.executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({ operationRef: admission.bootstrapOperationRef, operationHash: admission.bootstrapOperationHash });
+  const authority = task12ReadV1(path.join(TASK12_BOOTSTRAP_RESTART_ROOT_V1, "by-operation/sha256", admission.bootstrapOperationHash.slice(0, 2), admission.bootstrapOperationHash, "restart-authority.pair.json"));
+  if (typeof authority.receiptRef !== "string" || typeof authority.receiptHash !== "string" || !TASK12_SHA256_V1.test(authority.receiptHash)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_AUTHORITY_INVALID");
+  const resolved = await receipt.resolveInternalProductionBaselineServiceRestartAuthorityV1({ receiptRef: authority.receiptRef, receiptHash: authority.receiptHash });
+  const operation = await bootstrap.resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1({ operationRef: admission.bootstrapOperationRef, operationHash: admission.bootstrapOperationHash });
+  const restart = resolved.restart;
+  const before = resolved.before;
+  if (!restart || typeof restart !== "object" || Array.isArray(restart) || !before || typeof before !== "object" || Array.isArray(before) || resolved.guardKind !== "fenced-completion-owner-bootstrap" || operation.targetGuardReceiptRef !== resolved.targetGuardReceiptRef || operation.targetGuardReceiptHash !== resolved.targetGuardReceiptHash || (before as Record<string, unknown>).projectionHash !== admission.expectedRuntimeSourceProjectionHash || (restart as Record<string, unknown>).operationHash !== admission.operationId || (restart as Record<string, unknown>).beforeGenerationHash !== admission.beforeGenerationHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_AUTHORITY_CROSSED");
+  return Object.freeze({ receiptRef: authority.receiptRef, receiptHash: authority.receiptHash });
+}
+
+export async function transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(
+): Promise<Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>> {
+  const startup = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+  const status = await startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+  if (status.state === "normal_task0_admission_ready" && status.admissionReady) {
+    await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(status.admissionReady);
+    return status.admissionReady;
+  }
+  if (status.state !== "pre_manifest_bootstrap_sealed" || !status.currentEntryOperation || !status.authorization || !status.startupToken || !status.restartAuthority || !status.dispatchPrefix || !status.sealedAdmission) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_NOT_SEALED");
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const currentEntry = await receipt.observeInternalProductionCurrentEntryAuthorityStatusV1();
+  if (currentEntry.state !== "spawner_admission_transitioning" || !currentEntry.migrationApplyingPhase || !currentEntry.manifestActivation) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_CURRENT_ENTRY_NOT_VERIFIED");
+  const db = await import("./db-pg.js");
+  const verification = await db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
+  const initialization = await db.initializeInternalProductionCurrentEntryDatabaseV1();
+  const census = await receipt.observeInternalProductionServiceCensusV1();
+  const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(status.sealedAdmission);
+  if (census.spawner.generationHash !== sealed.currentSpawnerGenerationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_GENERATION_CHANGED");
+  const migration = currentEntry.migrationApplyingPhase as Record<string, unknown>;
+  const manifest = currentEntry.manifestActivation as Record<string, unknown>;
+  const body = {
+    schema: "setfarm.internal-production-task0-spawner-admission-ready.v1", state: "normal-task0-admission-ready",
+    currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: status.currentEntryOperation.operationHash,
+    preSchemaSpawnerRebindAuthorizationRef: status.authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: status.authorization.authorizationHash,
+    startupTokenRef: status.startupToken.startupTokenRef, startupTokenHash: status.startupToken.startupTokenHash,
+    restartAuthorityRef: status.restartAuthority.restartAuthorityRef, restartAuthorityHash: status.restartAuthority.restartAuthorityHash,
+    predecessorTerminationObservationRef: status.dispatchPrefix.predecessorTerminationObservation!.predecessorTerminationObservationRef,
+    predecessorTerminationObservationHash: status.dispatchPrefix.predecessorTerminationObservation!.predecessorTerminationObservationHash,
+    replacementProcessObservationRef: status.dispatchPrefix.replacementProcessObservation!.replacementProcessObservationRef,
+    replacementProcessObservationHash: status.dispatchPrefix.replacementProcessObservation!.replacementProcessObservationHash,
+    sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash,
+    migrationReceiptRef: String((migration.migrationReceipt as Record<string, unknown>)?.migrationReceiptRef), migrationReceiptHash: String((migration.migrationReceipt as Record<string, unknown>)?.migrationReceiptHash),
+    migrationCurrentAuditRef: String((migration.currentAudit as Record<string, unknown>)?.bootstrapHandoffCurrentAuditRef), migrationCurrentAuditHash: String((migration.currentAudit as Record<string, unknown>)?.bootstrapHandoffCurrentAuditHash),
+    manifestActivationRef: String(manifest.ownerProducerManifestActivationRef), manifestActivationHash: String(manifest.ownerProducerManifestActivationHash),
+    manifestHeadRef: String(manifest.ownerProducerManifestHeadRef), manifestHeadHash: String(manifest.ownerProducerManifestHeadHash),
+    unchangedSpawnerGenerationHash: census.spawner.generationHash, genericFullVerifyStatus: verification.verificationHash ? "verified" : "invalid", normalDatabaseInitializationStatus: initialization.state,
+  };
+  if (body.genericFullVerifyStatus !== "verified" || body.normalDatabaseInitializationStatus !== "ready") throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_DATABASE_NOT_READY");
+  const admissionReadyHash = task12HashV1(body);
+  const admissionReadyRef = `setfarm://internal-production/task0-spawner-admission-ready/sha256/${admissionReadyHash}`;
+  const ready = { ...body, admissionReadyRef, admissionReadyHash };
+  const root = path.resolve(process.cwd(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+  task12WriteNoReplaceV1(path.join(root, "records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`), ready);
+  const operationDirectory = path.join(root, "operations/sha256", status.currentEntryOperation.operationHash);
+  task12WriteNoReplaceV1(path.join(operationDirectory, "08-admission-ready.pair.json"), { admissionReadyRef, admissionReadyHash });
+  const statusBody = { schema: "setfarm.internal-production-pre-schema-spawner-rebind-status.v1", state: "normal_task0_admission_ready", currentEntryOperation: status.currentEntryOperation, authorization: status.authorization, startupToken: status.startupToken, restartAuthority: status.restartAuthority, dispatchPrefix: status.dispatchPrefix, sealedAdmission: status.sealedAdmission, admissionReady: { admissionReadyRef, admissionReadyHash }, refusalCode: null };
+  const statusHash = task12HashV1(statusBody); const statusRef = `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${statusHash}`;
+  task12WriteNoReplaceV1(path.join(root, "records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`), { ...statusBody, statusRef, statusHash });
+  task12WriteNoReplaceV1(path.join(operationDirectory, "status-06-normal-task0-admission-ready.pair.json"), { statusRef, statusHash });
+  return startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef, admissionReadyHash });
 }
 
 async function main() {
@@ -9856,9 +10654,30 @@ async function main() {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
+  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  assertAgentCwdSafe();
+
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
+  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
+  if (activeStartupAdmission) {
+    const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
+    await awaitInternalProductionBaselineSpawnerRestartAuthorityV1({ admission: activeStartupAdmission, startupClaimHash: startupClaim.startupClaimHash });
+    if (activeStartupAdmission.bootstrapOperationRef !== null && activeStartupAdmission.bootstrapOperationHash !== null) {
+      const operationPair = { operationRef: activeStartupAdmission.bootstrapOperationRef, operationHash: activeStartupAdmission.bootstrapOperationHash };
+      const runtime = await import("./execution/runtime-completion.js");
+      const released = await runtime.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operationPair);
+      if (released.state !== "owner_released") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_OWNER_NOT_RELEASED");
+      const sequenceModule = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+      const sequencePair = await sequenceModule.finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(operationPair);
+      const sequence = await sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(sequencePair);
+      const completed = await runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1(operationPair);
+      if (sequence.operationRef !== operationPair.operationRef || sequence.operationHash !== operationPair.operationHash || completed.state !== "completed" || completed.sequenceRef !== sequencePair.sequenceRef || completed.sequenceHash !== sequencePair.sequenceHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_SEQUENCE_INCOMPLETE");
+    }
+  }
   const startupAdmission = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
   const startupGate = await enforceInternalProductionPreSchemaSpawnerStartupGateV1({
     startupAdmission,

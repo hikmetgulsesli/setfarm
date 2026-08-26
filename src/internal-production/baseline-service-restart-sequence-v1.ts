@@ -105,6 +105,11 @@ function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function bootstrapHasExactStoredKeysV1(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const ordered = [...keys].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  return Object.keys(value).join(",") === ordered.join(",");
+}
+
 async function observeCurrentCleanSetfarmSourceBuildV1(): Promise<Readonly<Record<string, unknown>>> {
   const module = await import("./baseline-post-handoff-receipt-v1.js") as Readonly<Record<string, unknown>>;
   const observe = module.observeCurrentInternalProductionCleanSetfarmSourceBuildV1;
@@ -978,4 +983,258 @@ export async function resumeInternalProductionBaselineRestartSequenceV1(
     publish(path.join(rootPath(), "receipts", "sha256", sequenceHash.slice(0, 2), `${sequenceHash}.json`), receipt);
     publish(receiptLocatorPath(intentKind), { sequenceRef, sequenceHash });
   return recursivelyFreeze({ sequenceRef, sequenceHash });
+}
+
+export type InternalProductionBaselineSpawnerBootstrapRestartOperationV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-operation.v1";
+  kind: "completion-owner-bootstrap";
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  targetGuardHash: string;
+  operationId: string;
+  outboxHash: string;
+  continuationGrantRef: string;
+  continuationGrantHash: string;
+  state: "prepared";
+  operationRef: string;
+  operationHash: string;
+}>;
+
+export type InternalProductionBaselineSpawnerBootstrapContinuationGrantV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-spawner-bootstrap-continuation-grant.v1";
+  continuationKind: "setfarm-bootstrap-main-claim-allocation-v1";
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  operationId: string;
+  bootstrapSetfarmSha: string;
+  bootstrapTreeHash: string;
+  disposition: "authorized-no-claim";
+  allocatedClaimId: null;
+  allocatedWorktreeIdentityHash: null;
+  continuationGrantRef: string;
+  continuationGrantHash: string;
+}>;
+
+export type InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-sequence.v1";
+  kind: "completion-owner-bootstrap";
+  targetGuardReceiptRef: string;
+  targetGuardReceiptHash: string;
+  targetGuardHash: string;
+  operationId: string;
+  operationRef: string;
+  operationHash: string;
+  targetRequestOperationBindingHash: string;
+  continuationGrantRef: string;
+  continuationGrantHash: string;
+  startupAdmissionRef: string;
+  startupAdmissionHash: string;
+  restartAuthorityRef: string;
+  restartAuthorityHash: string;
+  recoveredOwnerGenerationHash: string;
+  targetOwnerReleaseReceiptHash: string;
+  terminalCompleteZeroOwnerCensusHash: string;
+  sequenceRef: string;
+  sequenceHash: string;
+}>;
+
+const BOOTSTRAP_ROOT_V1 = path.join(repositoryRoot(), "data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1");
+const BOOTSTRAP_OPERATION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/";
+const BOOTSTRAP_CONTINUATION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-continuation-grant/sha256/";
+const BOOTSTRAP_SEQUENCE_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/";
+
+function bootstrapRecordPathV1(kind: "continuation-grants" | "outboxes" | "operations" | "sequences", hash: string): string {
+  return path.join(BOOTSTRAP_ROOT_V1, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function bootstrapOperationDirectoryV1(operationHash: string): string {
+  return path.join(BOOTSTRAP_ROOT_V1, "by-operation", "sha256", operationHash.slice(0, 2), operationHash);
+}
+
+function resolveBootstrapRecordV1(pairValue: unknown, refKey: string, hashKey: string, prefix: string, kind: "continuation-grants" | "operations" | "sequences", label: string): Record<string, unknown> {
+  const exact = pair(pairValue, refKey, hashKey, prefix);
+  const value = read(bootstrapRecordPathV1(kind, exact[hashKey]!), label);
+  const projection = { ...value };
+  delete projection[refKey]; delete projection[hashKey];
+  if (value[refKey] !== exact[refKey] || value[hashKey] !== exact[hashKey] || sha256(canonical(projection)) !== exact[hashKey]) fail(`${label} hash is crossed`);
+  return recursivelyFreeze(value);
+}
+
+export async function resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionBaselineSpawnerBootstrapRestartOperationV1> {
+  const value = resolveBootstrapRecordV1(input, "operationRef", "operationHash", BOOTSTRAP_OPERATION_PREFIX_V1, "operations", "bootstrap operation");
+  const keys = ["schema", "kind", "targetGuardReceiptRef", "targetGuardReceiptHash", "targetGuardHash", "operationId", "outboxHash", "continuationGrantRef", "continuationGrantHash", "state", "operationRef", "operationHash"];
+  if (!bootstrapHasExactStoredKeysV1(value, keys) || value.schema !== "setfarm.internal-production-baseline-spawner-bootstrap-restart-operation.v1" || value.kind !== "completion-owner-bootstrap" || value.state !== "prepared") fail("bootstrap operation shape");
+  return value as InternalProductionBaselineSpawnerBootstrapRestartOperationV1;
+}
+
+export async function resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1(
+  input: Readonly<{ continuationGrantRef: string; continuationGrantHash: string }>,
+): Promise<InternalProductionBaselineSpawnerBootstrapContinuationGrantV1> {
+  const value = resolveBootstrapRecordV1(input, "continuationGrantRef", "continuationGrantHash", BOOTSTRAP_CONTINUATION_PREFIX_V1, "continuation-grants", "bootstrap continuation grant");
+  const keys = ["schema", "continuationKind", "targetGuardReceiptRef", "targetGuardReceiptHash", "operationId", "bootstrapSetfarmSha", "bootstrapTreeHash", "disposition", "allocatedClaimId", "allocatedWorktreeIdentityHash", "continuationGrantRef", "continuationGrantHash"];
+  if (!bootstrapHasExactStoredKeysV1(value, keys) || value.schema !== "setfarm.internal-production-baseline-spawner-bootstrap-continuation-grant.v1" || value.continuationKind !== "setfarm-bootstrap-main-claim-allocation-v1" || value.disposition !== "authorized-no-claim" || value.allocatedClaimId !== null || value.allocatedWorktreeIdentityHash !== null) fail("bootstrap continuation grant shape");
+  return value as InternalProductionBaselineSpawnerBootstrapContinuationGrantV1;
+}
+
+async function prepareInternalProductionBaselineSpawnerBootstrapRestartFromReceiptV1(
+  receipt: Readonly<Record<string, unknown>>,
+): Promise<Readonly<{ operationRef: string; operationHash: string }>> {
+  const current = await observeCurrentCleanSetfarmSourceBuildV1();
+  const bootstrapSetfarmSha = current.sha ?? current.sourceSha;
+  const bootstrapTreeHash = current.treeHash;
+  if (typeof bootstrapSetfarmSha !== "string" || typeof bootstrapTreeHash !== "string") fail("bootstrap source authority");
+  const operationId = sha256(canonical({ schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-operation-id.v1", kind: "completion-owner-bootstrap", targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash, postSettlementContinuationKind: "setfarm-bootstrap-main-claim-allocation-v1", bootstrapSetfarmSha, bootstrapTreeHash }));
+  const continuationBody = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-continuation-grant.v1", continuationKind: "setfarm-bootstrap-main-claim-allocation-v1", targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, operationId, bootstrapSetfarmSha, bootstrapTreeHash, disposition: "authorized-no-claim", allocatedClaimId: null, allocatedWorktreeIdentityHash: null };
+  const continuationGrantHash = sha256(canonical(continuationBody));
+  const continuationGrantRef = `${BOOTSTRAP_CONTINUATION_PREFIX_V1}${continuationGrantHash}`;
+  const continuation = recursivelyFreeze({ ...continuationBody, continuationGrantRef, continuationGrantHash });
+  const runtimeProjection = await observeRuntimeProjectionV1();
+  const outboxBody = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-outbox.v1", kind: "completion-owner-bootstrap", targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash, operationId, continuationGrantRef, continuationGrantHash, preparedRuntimeSourceProjectionHash: runtimeProjection.projectionHash };
+  const outboxHash = sha256(canonical(outboxBody));
+  const outbox = recursivelyFreeze({ ...outboxBody, outboxHash });
+  const operationBody = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-operation.v1", kind: "completion-owner-bootstrap", targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, targetGuardHash: receipt.targetGuardHash, operationId, outboxHash, continuationGrantRef, continuationGrantHash, state: "prepared" };
+  const operationHash = sha256(canonical(operationBody));
+  const operationRef = `${BOOTSTRAP_OPERATION_PREFIX_V1}${operationHash}`;
+  const operation = recursivelyFreeze({ ...operationBody, operationRef, operationHash });
+  publish(bootstrapRecordPathV1("continuation-grants", continuationGrantHash), continuation);
+  publish(bootstrapRecordPathV1("outboxes", outboxHash), outbox);
+  publish(bootstrapRecordPathV1("operations", operationHash), operation);
+  const operationDirectory = bootstrapOperationDirectoryV1(operationHash);
+  publish(path.join(operationDirectory, "continuation-grant.pair.json"), { continuationGrantRef, continuationGrantHash });
+  publish(path.join(operationDirectory, "outbox-hash.json"), { outboxHash });
+  publish(path.join(BOOTSTRAP_ROOT_V1, "by-target-guard/sha256", String(receipt.targetGuardReceiptHash).slice(0, 2), String(receipt.targetGuardReceiptHash), "operation.pair.json"), { operationRef, operationHash });
+  return Object.freeze({ operationRef, operationHash });
+}
+
+export async function prepareInternalProductionBaselineSpawnerBootstrapRestartV1(
+  input: Readonly<{ targetGuard: Readonly<Record<string, unknown>>; postSettlementContinuationKind: "setfarm-bootstrap-main-claim-allocation-v1" }>,
+): Promise<Readonly<{ operationRef: string; operationHash: string }>> {
+  if (!input || Object.keys(input).join(",") !== "targetGuard,postSettlementContinuationKind" || input.postSettlementContinuationKind !== "setfarm-bootstrap-main-claim-allocation-v1") fail("bootstrap prepare input");
+  const runtime = await import("../execution/runtime-completion.js") as unknown as Record<string, unknown>;
+  const authenticate = runtime.authenticateInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1;
+  if (typeof authenticate !== "function" || authenticate.length !== 1) fail("completion bootstrap guard authenticator is unavailable");
+  const receipt = await (authenticate as (guard: unknown) => Promise<Record<string, unknown>>)(input.targetGuard);
+  return prepareInternalProductionBaselineSpawnerBootstrapRestartFromReceiptV1(receipt);
+}
+
+export async function prepareInternalProductionBaselineSpawnerBootstrapRestartFromDurableTargetGuardReceiptForRecoveryV1(
+  input: Readonly<{ targetGuardReceiptRef: string; targetGuardReceiptHash: string }>,
+): Promise<Readonly<{ operationRef: string; operationHash: string }>> {
+  const exact = pair(input, "targetGuardReceiptRef", "targetGuardReceiptHash", "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/");
+  const runtime = await import("../execution/runtime-completion.js") as unknown as Record<string, unknown>;
+  const resolve = runtime.resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1;
+  if (typeof resolve !== "function" || resolve.length !== 1) fail("completion bootstrap durable guard resolver is unavailable");
+  const receipt = await (resolve as (pair: unknown) => Promise<Record<string, unknown>>)(exact);
+  return prepareInternalProductionBaselineSpawnerBootstrapRestartFromReceiptV1(receipt);
+}
+
+export async function executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<Readonly<{ operationRef: string; operationHash: string }>> {
+  const operation = await resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1(input);
+  const runtime = await import("../execution/runtime-completion.js") as unknown as Record<string, unknown>;
+  const consume = runtime.consumeInternalProductionBaselineCompletionOwnerBootstrapTargetGuardForOperationV1;
+  const resolveConsumption = runtime.resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1;
+  const resolveGuardReceipt = runtime.resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1;
+  if (typeof consume !== "function" || consume.length !== 1 || typeof resolveConsumption !== "function" || resolveConsumption.length !== 1 || typeof resolveGuardReceipt !== "function" || resolveGuardReceipt.length !== 1) fail("completion bootstrap guard consumer is unavailable");
+  const receipt = await import("./baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
+  const prepare = receipt.prepareInternalProductionBaselineSpawnerBootstrapServiceRestartAuthorizationV1;
+  const restart = receipt.restartInternalProductionBaselineServiceV1;
+  const resolveRestartAuthority = receipt.resolveInternalProductionBaselineServiceRestartAuthorityV1;
+  const resolveNormalOperation = receipt.resolveInternalProductionBaselineServiceRestartOperationV1;
+  const resolveNormalAuthorization = receipt.resolveInternalProductionBaselineServiceRestartAuthorizationV1;
+  const observeNormalOutbox = receipt.observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1;
+  if (typeof prepare !== "function" || prepare.length !== 1 || typeof restart !== "function" || restart.length !== 1 || typeof resolveRestartAuthority !== "function" || resolveRestartAuthority.length !== 1 || typeof resolveNormalOperation !== "function" || resolveNormalOperation.length !== 1 || typeof resolveNormalAuthorization !== "function" || resolveNormalAuthorization.length !== 1 || typeof observeNormalOutbox !== "function" || observeNormalOutbox.length !== 1) fail("fenced bootstrap restart ports are unavailable");
+  const spawner = await import("../spawner.js") as unknown as Record<string, unknown>;
+  const resolveStartupAdmissionForOperation = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionForRestartOperationV1;
+  const resolveStartupAdmission = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionV1;
+  if (typeof resolveStartupAdmissionForOperation !== "function" || resolveStartupAdmissionForOperation.length !== 1 || typeof resolveStartupAdmission !== "function" || resolveStartupAdmission.length !== 1) fail("bootstrap startup-admission resolver is unavailable");
+  const guard = await (resolveGuardReceipt as (value: unknown) => Promise<Record<string, unknown>>)({ targetGuardReceiptRef: operation.targetGuardReceiptRef, targetGuardReceiptHash: operation.targetGuardReceiptHash });
+  if (guard.targetGuardHash !== operation.targetGuardHash) fail("bootstrap operation guard is crossed");
+  const consumptionBody = { schema: "setfarm.internal-production-baseline-completion-owner-bootstrap-target-guard-consumption.v1", targetGuardReceiptRef: guard.targetGuardReceiptRef, targetGuardReceiptHash: guard.targetGuardReceiptHash, targetGuardHash: guard.targetGuardHash, operationRef: operation.operationRef, operationHash: operation.operationHash, requestIdHash: guard.requestIdHash, claimIdHash: guard.claimIdHash, runIdentityHash: guard.runIdentityHash, ownerGenerationHash: guard.ownerGenerationHash, targetGuardConsumed: true };
+  const consumptionHash = sha256(canonical(consumptionBody));
+  const consumptionPair = { consumptionRef: `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/${consumptionHash}`, consumptionHash };
+  try {
+    await (resolveConsumption as (value: unknown) => Promise<unknown>)(consumptionPair);
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    await (consume as (value: unknown) => Promise<unknown>)({ targetGuardReceiptRef: operation.targetGuardReceiptRef, targetGuardReceiptHash: operation.targetGuardReceiptHash, operationRef: operation.operationRef, operationHash: operation.operationHash });
+    await (resolveConsumption as (value: unknown) => Promise<unknown>)(consumptionPair);
+  }
+  const authorization = pair(await (prepare as (value: unknown) => Promise<unknown>)({ bootstrapOperationRef: operation.operationRef, bootstrapOperationHash: operation.operationHash, targetGuardReceiptRef: operation.targetGuardReceiptRef, targetGuardReceiptHash: operation.targetGuardReceiptHash }), "authorizationRef", "authorizationHash", NORMAL_AUTHORIZATION_PREFIX);
+  publish(path.join(bootstrapOperationDirectoryV1(operation.operationHash), "restart-authorization.pair.json"), authorization);
+  const authority = pair(await (restart as (value: unknown) => Promise<unknown>)(authorization), "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX);
+  publish(path.join(bootstrapOperationDirectoryV1(operation.operationHash), "restart-authority.pair.json"), authority);
+  const resolvedAuthority = await (resolveRestartAuthority as (value: unknown) => Promise<Record<string, unknown>>)(authority);
+  const normalOperationPair = pair({ operationRef: `setfarm://internal-production/baseline-service-restart-operation/sha256/${String(resolvedAuthority.operationId)}`, operationHash: String(resolvedAuthority.operationId) }, "operationRef", "operationHash", "setfarm://internal-production/baseline-service-restart-operation/sha256/");
+  const normalOperation = await (resolveNormalOperation as (value: unknown) => Promise<Record<string, unknown>>)(normalOperationPair);
+  const resolvedAuthorization = await (resolveNormalAuthorization as (value: unknown) => Promise<Record<string, unknown>>)({ authorizationRef: normalOperation.authorizationRef, authorizationHash: normalOperation.authorizationHash });
+  const launchOutbox = await (observeNormalOutbox as (value: unknown) => Promise<Record<string, unknown>>)(normalOperationPair);
+  if (resolvedAuthority.guardKind !== "fenced-completion-owner-bootstrap" || resolvedAuthorization.bootstrapOperationRef !== operation.operationRef || resolvedAuthorization.bootstrapOperationHash !== operation.operationHash || resolvedAuthorization.targetGuardReceiptRef !== operation.targetGuardReceiptRef || resolvedAuthorization.targetGuardReceiptHash !== operation.targetGuardReceiptHash || launchOutbox.operationRef !== normalOperation.operationRef || launchOutbox.operationHash !== normalOperation.operationHash) fail("bootstrap restart authority relation is crossed");
+  const startupAdmissionPair = pair(await (resolveStartupAdmissionForOperation as (value: unknown) => Promise<unknown>)(normalOperationPair), "startupAdmissionRef", "startupAdmissionHash", "setfarm://internal-production/baseline-spawner-startup-admission/sha256/");
+  const startupAdmission = await (resolveStartupAdmission as (value: unknown) => Promise<Record<string, unknown>>)(startupAdmissionPair);
+  if (startupAdmission.operationId !== normalOperation.operationHash || startupAdmission.bootstrapOperationRef !== operation.operationRef || startupAdmission.bootstrapOperationHash !== operation.operationHash || startupAdmission.restartLaunchOutboxHash !== launchOutbox.outboxHash) fail("bootstrap startup-admission relation is crossed");
+  publish(path.join(bootstrapOperationDirectoryV1(operation.operationHash), "startup-admission.pair.json"), startupAdmissionPair);
+  return Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash });
+}
+
+export async function resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(
+  input: Readonly<{ sequenceRef: string; sequenceHash: string }>,
+): Promise<InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1> {
+  const value = resolveBootstrapRecordV1(input, "sequenceRef", "sequenceHash", BOOTSTRAP_SEQUENCE_PREFIX_V1, "sequences", "bootstrap sequence");
+  const keys = ["schema", "kind", "targetGuardReceiptRef", "targetGuardReceiptHash", "targetGuardHash", "operationId", "operationRef", "operationHash", "targetRequestOperationBindingHash", "continuationGrantRef", "continuationGrantHash", "startupAdmissionRef", "startupAdmissionHash", "restartAuthorityRef", "restartAuthorityHash", "recoveredOwnerGenerationHash", "targetOwnerReleaseReceiptHash", "terminalCompleteZeroOwnerCensusHash", "sequenceRef", "sequenceHash"];
+  if (!bootstrapHasExactStoredKeysV1(value, keys) || value.schema !== "setfarm.internal-production-baseline-spawner-bootstrap-restart-sequence.v1" || value.kind !== "completion-owner-bootstrap" || !["targetGuardReceiptHash", "targetGuardHash", "operationId", "operationHash", "targetRequestOperationBindingHash", "continuationGrantHash", "startupAdmissionHash", "restartAuthorityHash", "recoveredOwnerGenerationHash", "targetOwnerReleaseReceiptHash", "terminalCompleteZeroOwnerCensusHash", "sequenceHash"].every((key) => typeof value[key] === "string" && SHA256.test(value[key] as string))) fail("bootstrap sequence shape");
+  const operation = await resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1({ operationRef: String(value.operationRef), operationHash: String(value.operationHash) });
+  const continuation = await resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1({ continuationGrantRef: String(value.continuationGrantRef), continuationGrantHash: String(value.continuationGrantHash) });
+  const spawner = await import("../spawner.js") as unknown as Record<string, unknown>;
+  const resolveAdmission = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionV1;
+  const receipt = await import("./baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
+  const resolveRestart = receipt.resolveInternalProductionBaselineServiceRestartAuthorityV1;
+  if (typeof resolveAdmission !== "function" || resolveAdmission.length !== 1 || typeof resolveRestart !== "function" || resolveRestart.length !== 1) fail("bootstrap sequence nested resolvers unavailable");
+  const admission = await (resolveAdmission as (input: unknown) => Promise<Record<string, unknown>>)({ startupAdmissionRef: value.startupAdmissionRef, startupAdmissionHash: value.startupAdmissionHash });
+  const restart = await (resolveRestart as (input: unknown) => Promise<Record<string, unknown>>)({ receiptRef: value.restartAuthorityRef, receiptHash: value.restartAuthorityHash });
+  const zero = await observeCompleteZeroOwnerCensusV1();
+  if (operation.targetGuardReceiptRef !== value.targetGuardReceiptRef || operation.targetGuardReceiptHash !== value.targetGuardReceiptHash || operation.targetGuardHash !== value.targetGuardHash || operation.operationId !== value.operationId || continuation.operationId !== value.operationId || continuation.targetGuardReceiptRef !== value.targetGuardReceiptRef || continuation.targetGuardReceiptHash !== value.targetGuardReceiptHash || admission.bootstrapOperationRef !== value.operationRef || admission.bootstrapOperationHash !== value.operationHash || restart.operationId !== admission.operationId || value.targetRequestOperationBindingHash !== sha256(canonical({ targetGuardReceiptHash: value.targetGuardReceiptHash, operationHash: value.operationHash })) || zero.observationHash !== value.terminalCompleteZeroOwnerCensusHash) fail("bootstrap sequence relation crossed");
+  return value as InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1;
+}
+
+export async function finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<Readonly<{ sequenceRef: string; sequenceHash: string }>> {
+  const operation = await resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1(input);
+  const dir = bootstrapOperationDirectoryV1(operation.operationHash);
+  const continuation = storedPair(read(path.join(dir, "continuation-grant.pair.json"), "bootstrap continuation locator"), "continuationGrantRef", "continuationGrantHash", BOOTSTRAP_CONTINUATION_PREFIX_V1);
+  const authority = storedPair(read(path.join(dir, "restart-authority.pair.json"), "bootstrap restart authority locator"), "receiptRef", "receiptHash", NORMAL_RESTART_PREFIX);
+  const admissionLocator = read(path.join(dir, "startup-admission.pair.json"), "bootstrap startup admission locator");
+  if (!bootstrapHasExactStoredKeysV1(admissionLocator, ["startupAdmissionRef", "startupAdmissionHash"])) fail("bootstrap startup admission locator is not exact-two");
+  const admission = storedPair(admissionLocator, "startupAdmissionRef", "startupAdmissionHash", "setfarm://internal-production/baseline-spawner-startup-admission/sha256/");
+  const spawner = await import("../spawner.js") as unknown as Record<string, unknown>;
+  const resolveAdmission = spawner.resolveInternalProductionBaselineSpawnerStartupAdmissionV1;
+  if (typeof resolveAdmission !== "function" || resolveAdmission.length !== 1) fail("bootstrap startup admission resolver is unavailable");
+  const resolvedAdmission = await (resolveAdmission as (value: unknown) => Promise<Record<string, unknown>>)(admission);
+  if (resolvedAdmission.bootstrapOperationRef !== operation.operationRef || resolvedAdmission.bootstrapOperationHash !== operation.operationHash) fail("bootstrap startup admission is crossed");
+  const runtime = await import("../execution/runtime-completion.js") as unknown as Record<string, unknown>;
+  const observeLifecycle = runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1;
+  const completeLifecycle = runtime.completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1;
+  if (typeof observeLifecycle !== "function" || observeLifecycle.length !== 1 || typeof completeLifecycle !== "function" || completeLifecycle.length !== 1) fail("bootstrap completion lifecycle ports are unavailable");
+  const lifecycle = await (observeLifecycle as (value: unknown) => Promise<Record<string, unknown>>)(input);
+  if (lifecycle.state === "completed") {
+    const existingPair = storedPair(read(path.join(dir, "sequence.pair.json"), "bootstrap sequence locator"), "sequenceRef", "sequenceHash", BOOTSTRAP_SEQUENCE_PREFIX_V1);
+    const existing = await resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1({ sequenceRef: existingPair.sequenceRef!, sequenceHash: existingPair.sequenceHash! });
+    if (lifecycle.sequenceRef !== existing.sequenceRef || lifecycle.sequenceHash !== existing.sequenceHash || existing.operationRef !== operation.operationRef || existing.operationHash !== operation.operationHash) fail("completed bootstrap sequence adoption crossed");
+    return Object.freeze({ sequenceRef: existing.sequenceRef, sequenceHash: existing.sequenceHash });
+  }
+  if (lifecycle.state !== "owner_released" || lifecycle.startupAdmissionRef !== admission.startupAdmissionRef || lifecycle.startupAdmissionHash !== admission.startupAdmissionHash || lifecycle.restartAuthorityRef !== authority.receiptRef || lifecycle.restartAuthorityHash !== authority.receiptHash || typeof lifecycle.recoveredOwnerGenerationHash !== "string" || typeof lifecycle.targetOwnerReleaseReceiptHash !== "string") fail("bootstrap completion owner is not released");
+  const zero = await observeCompleteZeroOwnerCensusV1();
+  const body = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-restart-sequence.v1", kind: "completion-owner-bootstrap", targetGuardReceiptRef: operation.targetGuardReceiptRef, targetGuardReceiptHash: operation.targetGuardReceiptHash, targetGuardHash: operation.targetGuardHash, operationId: operation.operationId, operationRef: operation.operationRef, operationHash: operation.operationHash, targetRequestOperationBindingHash: sha256(canonical({ targetGuardReceiptHash: operation.targetGuardReceiptHash, operationHash: operation.operationHash })), continuationGrantRef: continuation.continuationGrantRef, continuationGrantHash: continuation.continuationGrantHash, startupAdmissionRef: admission.startupAdmissionRef, startupAdmissionHash: admission.startupAdmissionHash, restartAuthorityRef: authority.receiptRef, restartAuthorityHash: authority.receiptHash, recoveredOwnerGenerationHash: lifecycle.recoveredOwnerGenerationHash, targetOwnerReleaseReceiptHash: lifecycle.targetOwnerReleaseReceiptHash, terminalCompleteZeroOwnerCensusHash: String(zero.observationHash) };
+  const sequenceHash = sha256(canonical(body));
+  const sequenceRef = `${BOOTSTRAP_SEQUENCE_PREFIX_V1}${sequenceHash}`;
+  const sequence = recursivelyFreeze({ ...body, sequenceRef, sequenceHash });
+  publish(bootstrapRecordPathV1("sequences", sequenceHash), sequence);
+  publish(path.join(dir, "sequence.pair.json"), { sequenceRef, sequenceHash });
+  const completed = await (completeLifecycle as (value: unknown) => Promise<Record<string, unknown>>)({ operationRef: operation.operationRef, operationHash: operation.operationHash, sequenceRef, sequenceHash });
+  if (completed.state !== "completed" || completed.sequenceRef !== sequenceRef || completed.sequenceHash !== sequenceHash) fail("bootstrap completion lifecycle did not complete");
+  return Object.freeze({ sequenceRef, sequenceHash });
 }

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import type postgres from "postgres";
 
@@ -66,6 +70,284 @@ const DRAIN_EVIDENCE = {
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/completion-drain-proof"],
 };
+
+it("P4 completion owner mints bootstrap target guard only in current context", async () => {
+  const completion = await import("../../src/execution/runtime-completion.js");
+  const required = [
+    ["prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1", 0],
+    ["authenticateInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1", 1],
+    ["resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1", 1],
+    ["consumeInternalProductionBaselineCompletionOwnerBootstrapTargetGuardForOperationV1", 1],
+    ["resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardConsumptionV1", 1],
+    ["recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1", 1],
+    ["observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1", 1],
+    ["completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1", 1],
+  ] as const;
+  for (const [name, arity] of required) {
+    const value = Reflect.get(completion, name);
+    assert.equal(typeof value, "function", name);
+    assert.equal((value as Function).length, arity, name);
+  }
+  await assert.rejects(
+    (completion.prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1 as () => Promise<unknown>)(),
+    /CURRENT_CONTEXT|OWNER_CONTEXT|CAPABILITY/,
+  );
+  const source = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  assert.match(source, /state:\s*"operation_bound"/, "request result must durably bind the operation before guard consumption");
+  assert.match(source, /state:\s*"guard_consumed"/, "request result must durably record guard consumption after operation binding");
+  assert.match(source, /FROM internal_production_owner_reservations_v1[\s\S]*FOR UPDATE/, "guard preparation must lock and authenticate the complete owner sidecar census");
+  assert.match(source, /openOwnerRows\.length !== 1/, "the retained completion owner must be the sole open owner");
+  assert.match(source, /unrelatedOwnerCount = openOwnerRows\.length - 1/, "the unrelated-owner count must come from the locked census");
+  assert.match(source, /completionBootstrapConsumedPathV1\(String\(consumption\.targetGuardReceiptHash\)\)/, "consumption resolution must reopen the shared consumed-guard index");
+  assert.doesNotMatch(source, /path\.resolve\(process\.cwd\(\), "data\/internal-production-baseline\/completion-owner-bootstrap-target-guard-v1"\)/, "guard authority root must not depend on ambient cwd");
+  assert.match(source, /function authenticateCompletionBootstrapPrivateDirectoryChainV1\(/, "the authority store must pin its complete directory chain");
+  assert.match(source, /function completionBootstrapRecoverNoReplacePublicationV1\(/, "guard publication adopts the exact temp-only or linked-temp crash prefix");
+  assert.match(source, /function completionBootstrapHasExactStoredKeysV1\(/, "filesystem and JSONB authorities validate exact key sets independently of canonical wire order");
+  assert.match(source, /index > 0[\s\S]*0o700n/, "the repository root is an anchor while every authority descendant is private");
+  assert.match(source, /observed\.dev !== held\[0\]!\.dev/, "every authority descendant must stay on the repository device");
+  assert.match(source, /parentGuard\.assertStable\(\)[\s\S]*mkdirSync\(current, \{ mode: 0o700 \}\)[\s\S]*parentGuard\.assertStable\(\)/, "directory creation must occur under a pinned stable parent");
+  assert.match(source, /setfarm\.internal-production-baseline-completion-owner-bootstrap-lifecycle-observation\.v1/);
+  assert.match(source, /"guard_consumed" \| "owner_recovered" \| "owner_released" \| "completed"/);
+  assert.match(source, /targetGuardReceiptRef[\s\S]*targetGuardReceiptHash[\s\S]*operationRef[\s\S]*operationHash[\s\S]*targetGuardConsumptionRef[\s\S]*targetGuardConsumptionHash[\s\S]*startupAdmissionRef[\s\S]*startupAdmissionHash[\s\S]*startupClaimHash[\s\S]*restartAuthorityRef[\s\S]*restartAuthorityHash[\s\S]*recoveredOwnerGenerationHash[\s\S]*targetOwnerReleaseReceiptHash[\s\S]*sequenceRef[\s\S]*sequenceHash[\s\S]*observationHash/);
+  assert.match(source, /requestIdHash !== hashCanonicalJson\([\s\S]*row\.request_id/, "lifecycle recovery authenticates the raw request identifier against the durable guard");
+  assert.match(source, /claimIdHash !== hashCanonicalJson\([\s\S]*row\.claim_id/, "lifecycle recovery authenticates the claim identifier against the durable guard");
+  assert.match(source, /runIdentityHash !== hashCanonicalJson\([\s\S]*row\.run_id/, "lifecycle recovery authenticates the run identifier against the durable guard");
+  assert.match(source, /FROM runtime_sessions[\s\S]*state='released'/, "owner-release adoption freshly reopens the released runtime session");
+  assert.match(source, /FROM internal_production_owner_reservations_v1[\s\S]*state='closed'/, "owner-release adoption freshly proves the target owner is closed");
+  assert.match(source, /if \(!capability\)[\s\S]*completionBootstrapFindRequestV1[\s\S]*state !== "guard_consumed"[\s\S]*completionBootstrapConsumedPathV1/, "replacement adoption repairs only a durable content-plus-DB consumption prefix without reminting or reconsuming");
+  assert.match(source, /state='drained'[\s\S]*producer_implementation_id='a-completion-owner-v1'[\s\S]*state='bound'/, "lifecycle context freshly proves the drained session and exact still-bound completion owner before recovery CAS");
+  assert.match(source, /context\.result\.state !== "owner_released"\) completionBootstrapFailV1\("owner release terminal state"\)/, "the recovery port exposes only its owner-released terminal, never the later completed state");
+  assert.doesNotMatch(source, /context\.result\.state !== "owner_released" && context\.result\.state !== "completed"/, "completed adoption belongs to the observer/finalizer, not the recovery mutation port");
+});
+
+it("P4 completion bootstrap clean-build selection is opaque and owner-bound", async () => {
+  const completion = await import("../../src/execution/runtime-completion.js");
+  assert.equal(typeof completion.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1, "function");
+  assert.equal(completion.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1.length, 0);
+  assert.equal(typeof completion.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1, "function");
+  assert.equal(completion.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1.length, 1);
+  await assert.rejects(
+    completion.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(),
+    /OWNER_CONTEXT_REQUIRED/,
+  );
+  await assert.rejects(
+    completion.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({ verification: Object.freeze({}) as never }),
+    /CAPABILITY|VERIFICATION/,
+  );
+  const source = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  assert.match(source, /setfarm\.internal-production-baseline-completion-owner-bootstrap-eligibility\.v1/);
+  assert.match(source, /selected-eligibility\.json/);
+  assert.match(source, /const completionBootstrapCleanBuildCapabilitiesV1 = new WeakMap<object,/);
+});
+
+it("P4 expired selected bootstrap preserves owner generation and phase-recovers under the transition lease", async () => {
+  const completion = await import("../../src/execution/runtime-completion.js");
+  const source = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  const spawner = readFileSync(new URL("../../src/spawner.ts", import.meta.url), "utf8");
+  assert.equal(typeof completion.recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1, "function");
+  assert.equal(completion.recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1.length, 0);
+  assert.match(source, /completionBootstrapSelectedEligibilityMatchesRowV1\(request\)[\s\S]*status: "bootstrap_selected"/);
+  assert.match(source, /completionBootstrapSelectedRecoveryCandidatesV1\.set\(token[\s\S]*completionBootstrapPendingSelectedRecoveryTokenV1 = token/);
+  assert.match(source, /acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1[\s\S]*completionBootstrapSelectedRecoveryContextV1\.run\(candidate[\s\S]*completionBootstrapPreflightSelectedRecoveryUnderLeaseV1\(candidate\)/);
+  assert.match(source, /completionBootstrapRequireSelectedEligibilityMatchesReceiptAndRowV1\(row, receipt\)/);
+  assert.doesNotMatch(source, /WHERE state='processing' AND apply_phase='effects_committed' ORDER BY request_id/);
+  assert.doesNotMatch(source, /recoverSelectedBootstrapGeneration/);
+  assert.match(source, /\["operation_bound", "guard_consumed", "owner_recovered"\][\s\S]*executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1/);
+  assert.match(source, /prepareInternalProductionBaselineSpawnerBootstrapRestartFromDurableTargetGuardReceiptForRecoveryV1/);
+  assert.match(source, /failure\.status === 1[\s\S]*state: "dead"[\s\S]*state: "ambiguous"/, "runtime locator locks retain ambiguous ps owners and reclaim only explicit no-PID owners");
+  assert.match(spawner, /recovered\.status === "bootstrap_selected"[\s\S]*recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1/);
+});
+
+it("P4 clean-build selection and selected recovery execute every durable phase with fake PG and FS", async () => {
+  const production = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  const take = (start: string, end: string): string => {
+    const from = production.indexOf(start);
+    const to = production.indexOf(end, from + start.length);
+    assert.ok(from >= 0 && to > from, `${start} slice`);
+    return production.slice(from, to);
+  };
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-completion-bootstrap-kernel-"));
+  try {
+    const execution = path.join(fixture, "src/execution");
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(execution, { recursive: true });
+    mkdirSync(internal, { recursive: true });
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `
+const g=globalThis;
+export async function observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1(){return g.__p4Delivery}
+export async function resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1(input){if(input.deliveryAuthorityRef!==g.__p4Delivery.deliveryAuthorityRef||input.deliveryAuthorityHash!==g.__p4Delivery.deliveryAuthorityHash)throw new Error("crossed delivery");return g.__p4Delivery}
+export async function observeInternalProductionCurrentEntryAuthorityStatusV1(){return g.__p4CurrentEntry}
+export async function resolveInternalProductionCurrentEntryAuthorityV1(input){if(input.entryAuthorityRef!==g.__p4Entry.entryAuthorityRef||input.entryAuthorityHash!==g.__p4Entry.entryAuthorityHash)throw new Error("crossed entry");return g.__p4Entry}
+export async function resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(input){if(input.migrationReceiptRef!==g.__p4Migration.migrationReceiptRef||input.migrationReceiptHash!==g.__p4Migration.migrationReceiptHash)throw new Error("crossed migration");return g.__p4Migration}
+`);
+    writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), `
+const g=globalThis;
+export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){g.__p4Counts.acquire+=1;return Object.freeze({lease:true})}
+export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(_lease){g.__p4Counts.release+=1}
+`);
+    writeFileSync(path.join(internal, "baseline-service-restart-sequence-v1.ts"), `
+const g=globalThis;
+const operation=()=>Object.freeze({operationRef:"setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/"+"8".repeat(64),operationHash:"8".repeat(64)});
+export async function prepareInternalProductionBaselineSpawnerBootstrapRestartV1(_input){g.__p4Counts.prepare+=1;return operation()}
+export async function prepareInternalProductionBaselineSpawnerBootstrapRestartFromDurableTargetGuardReceiptForRecoveryV1(_input){g.__p4Counts.prepareRecovery+=1;return operation()}
+export async function executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1(_input){g.__p4Counts.execute+=1;g.__p4Phase={...g.__p4Phase,state:"completed",recoveredOwnerGenerationHash:"9".repeat(64),targetOwnerReleaseReceiptHash:"a".repeat(64),sequenceRef:"setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/"+"b".repeat(64),sequenceHash:"b".repeat(64)}}
+`);
+    const verificationKernel = take("function completionBootstrapCleanBuildVerificationV1(", "async function completionBootstrapReopenEligibilityAuthoritiesV1(");
+    const reopenKernel = take("async function completionBootstrapReopenEligibilityAuthoritiesV1(", "export async function createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(");
+    const createKernel = take("export async function createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(", "function completionBootstrapValidateAnyStoredResultV1(");
+    const resultValidatorKernel = take("function completionBootstrapValidateAnyStoredResultV1(", "async function completionBootstrapBindOperationForOwnerV1(");
+    const phaseKernel = take("async function completionBootstrapCurrentSelectedPhaseForOwnerV1(", "export async function continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1(");
+    const identityKernel = take("function completionBootstrapSelectedEligibilityMatchesRowV1(", "export {\n  RuntimeCompletionSubmissionEvidenceV1Schema");
+    const continueKernel = take("export async function continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1(", "async function completionBootstrapPreflightSelectedRecoveryUnderLeaseV1(");
+    const preflightKernel = take("async function completionBootstrapPreflightSelectedRecoveryUnderLeaseV1(", "export async function recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1(");
+    const recoveryKernel = take("export async function recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1(", "export async function resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1(");
+    const recoverMethodStart = production.indexOf("    async recoverExpiredProcessing(");
+    const recoverMethodEnd = production.indexOf("    async heartbeatProcessing(", recoverMethodStart);
+    assert.ok(recoverMethodStart >= 0 && recoverMethodEnd > recoverMethodStart, "production recoverExpiredProcessing method slice");
+    const recoverMethod = production.slice(recoverMethodStart, recoverMethodEnd).replace(/,\s*$/, "");
+    const harnessPath = path.join(execution, "runtime-completion-kernel.ts");
+    writeFileSync(harnessPath, `
+import {createHash} from "node:crypto";
+import {AsyncLocalStorage} from "node:async_hooks";
+import fs from "node:fs";
+import path from "node:path";
+type RuntimeCompletionRow=any; type PgTransactionSql=any; type InternalProductionBaselineCompletionOwnerBootstrapEligibilityV1=any; type InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1=any; type InternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1=any; type InternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1=any; type CompletionBootstrapSelectedRecoveryCandidateV1=any;
+const g=globalThis as any; const SHA=/^[a-f0-9]{64}$/; const SHA256_V1=SHA; const COMPLETION_BOOTSTRAP_ELIGIBILITY_PREFIX_V1="setfarm://internal-production/baseline-completion-owner-bootstrap-eligibility/sha256/";
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const recursivelyFreezeCompletionBootstrapV1=(v:any):any=>{if(v&&typeof v==="object"&&!Object.isFrozen(v)){for(const m of Object.values(v))recursivelyFreezeCompletionBootstrapV1(m);Object.freeze(v)}return v};
+const completionBootstrapFailV1=(m:string):never=>{throw new Error("P4_BOOTSTRAP:"+m)};
+const completionBootstrapHasExactStoredKeysV1=(value:Record<string,unknown>,keys:readonly string[])=>Object.keys(value).length===keys.length&&keys.every((key)=>Object.prototype.hasOwnProperty.call(value,key));
+const completionBootstrapCleanBuildCapabilitiesV1=new WeakMap<object,any>(); const completionBootstrapSelectedRecoveryCandidatesV1=new WeakMap<object,any>(); let completionBootstrapPendingSelectedRecoveryTokenV1:object|null=null; const completionBootstrapSelectedRecoveryContextV1=new AsyncLocalStorage<any>();
+const currentRuntimeCompletionOwnerCapability=()=>g.__p4Owner??null; const readDatabaseWallClock=async()=>new Date("2026-08-26T12:00:00.000Z"); const timestamp=(v:any)=>new Date(v).toISOString(); const validTime=()=>undefined;
+const pgBegin=async(cb:any)=>cb({unsafe:async(q:string,p:any[])=>{if(q.includes("runtime_completion_requests"))return [g.__p4Row];if(q.includes("runtime_sessions"))return [{state:"drained"}];if(q.includes("owner_reservations"))return [{reservation_ref:"setfarm://tests/p4/target",reservation_hash:"c".repeat(64)}];throw new Error("unexpected SQL:"+q)}});
+const lockRuntimeCompletionChainInTransaction=async()=>({request:g.__p4Row,runtimeState:"drained",claimOutcome:"done"}); const mapRequest=(row:any)=>({requestId:row.request_id,runtimeSessionId:row.runtime_session_id,claimId:Number(row.claim_id),runId:row.run_id,state:row.state,applyPhase:row.apply_phase,ownerInstanceId:row.owner_instance_id,ownerAttemptCount:row.owner_attempt_count,leaseExpiresAt:row.lease_expires_at,updatedAt:row.updated_at??"2026-08-26T11:00:00.000Z"});
+const eligibilityRoot=path.join(import.meta.dirname,"durable-eligibility-store");fs.mkdirSync(eligibilityRoot,{recursive:true,mode:0o700});
+const completionBootstrapEligibilityPathV1=(h:string)=>path.join(eligibilityRoot,"elig-"+h+".json"); const completionBootstrapSelectedEligibilityPathV1=()=>path.join(eligibilityRoot,"selected.json");
+function completionBootstrapWriteNoReplaceV1(target:string,value:any){const bytes=canonical(value)+"\\n";try{fs.writeFileSync(target,bytes,{flag:"wx",mode:0o600})}catch(error){if(!(error instanceof Error)||!("code" in error)||error.code!=="EEXIST")throw error;if(fs.readFileSync(target,"utf8")!==bytes)throw new Error("collision")}}
+const completionBootstrapReadSelectedEligibilityV1=()=>Object.freeze(JSON.parse(fs.readFileSync(completionBootstrapSelectedEligibilityPathV1(),"utf8")));
+const completionBootstrapReadEligibilityV1=(pair:any)=>{const v=JSON.parse(fs.readFileSync(completionBootstrapEligibilityPathV1(pair.eligibilityHash),"utf8"));if(!v||v.eligibilityRef!==pair.eligibilityRef)throw new Error("eligibility crossed");return recursivelyFreezeCompletionBootstrapV1(v)};
+const completionBootstrapOperationPairV1=(v:any)=>{if(v.operationRef!=="setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/"+v.operationHash||!SHA.test(v.operationHash))throw new Error("operation crossed");return Object.freeze({...v})};
+const lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1=async()=>({targetOwnerReservationRef:"setfarm://tests/p4/target",targetOwnerReservationHash:"c".repeat(64)});
+async function resolveInternalProductionBaselineCompletionOwnerBootstrapTargetGuardReceiptV1(_pair:any){return g.__p4Receipt}
+async function prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardCoreV1(owner:any,_expired:boolean){g.__p4Counts.guard+=1;g.__p4Phase=g.__p4GuardPrepared;return {...g.__p4Guard}}
+async function prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1(){g.__p4Counts.guard+=1;g.__p4Phase=g.__p4GuardPrepared;return {...g.__p4Guard}}
+async function completionBootstrapBindOperationForOwnerV1(_owner:any,_guard:any,operation:any){g.__p4Counts.bind+=1;g.__p4Phase={...g.__p4GuardPrepared,state:"operation_bound",operationRef:operation.operationRef,operationHash:operation.operationHash}}
+${identityKernel}
+${verificationKernel}
+${reopenKernel}
+${createKernel}
+${resultValidatorKernel}
+${phaseKernel}
+${continueKernel}
+${preflightKernel}
+${recoveryKernel}
+export function createRuntimeCompletionRepository(sql:any){return Object.freeze({
+${recoverMethod}
+})}
+export function p4SetOwner(owner:any,row:any){g.__p4Owner=owner;g.__p4Row=row}
+export function p4SetPhase(phase:any){g.__p4Phase=phase;g.__p4Row.result=phase===null?{}:{internalProductionBaselineSpawnerBootstrap:structuredClone(phase)}}
+export function p4ResetCounts(){g.__p4Counts={guard:0,acquire:0,release:0,prepare:0,prepareRecovery:0,bind:0,execute:0}}
+export function p4Counts(){return {...g.__p4Counts}}
+export function p4RepositorySql(){return {begin:pgBegin}}
+export function p4CorruptSelected(){fs.writeFileSync(completionBootstrapSelectedEligibilityPathV1(),canonical({eligibilityRef:"setfarm://internal-production/baseline-completion-owner-bootstrap-eligibility/sha256/"+"f".repeat(64),eligibilityHash:"f".repeat(64)})+"\\n",{mode:0o600})}
+export function p4ResetDurableStore(){fs.rmSync(eligibilityRoot,{recursive:true,force:true});fs.mkdirSync(eligibilityRoot,{recursive:true,mode:0o700})}
+`, "utf8");
+    const sha = (n: string) => n.repeat(64);
+    const delivery = { deliveryAuthorityRef: "setfarm://tests/p4/delivery", deliveryAuthorityHash: sha("1"), deliveryCommitSha: "1".repeat(40), deliveryTreeHash: "2".repeat(40), exact24PathBlobSetHash: sha("2"), currentSourceBuildHash: sha("3"), focusedVerificationHash: sha("4"), deliveryAncestorOfCurrentSource: true };
+    const entry = { entryAuthorityRef: "setfarm://tests/p4/entry", entryAuthorityHash: sha("5") };
+    const migration = { migrationReceiptRef: "setfarm://tests/p4/migration", migrationReceiptHash: sha("6") };
+    Object.assign(globalThis as any, { __p4Delivery: delivery, __p4Entry: entry, __p4Migration: migration, __p4CurrentEntry: { state: "ready", entryAuthority: entry, migrationApplyingPhase: { migrationReceipt: migration } } });
+    const harness = await import(`${pathToFileURL(harnessPath).href}?p4=${Date.now()}`) as any;
+    const owner = { requestId: "request-one", ownerInstanceId: "owner-one", ownerAttemptCount: 3 };
+    const row = { request_id: owner.requestId, runtime_session_id: "session-one", claim_id: "claim-one", run_id: "run-one", state: "processing", apply_phase: "effects_committed", owner_instance_id: owner.ownerInstanceId, owner_attempt_count: owner.ownerAttemptCount, lease_expires_at: "2026-08-26T13:00:00.000Z", drained_at: "2026-08-26T11:00:00.000Z", result: {} };
+    harness.p4SetOwner(owner, row); harness.p4ResetCounts();
+    const verification = await harness.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1();
+    assert.ok(verification && Object.isFrozen(verification));
+    const requestIdHash = createHash("sha256").update(JSON.stringify({ requestId: row.request_id, schema: "setfarm.internal-production-runtime-completion-request-id.v1" })).digest("hex");
+    const claimIdHash = createHash("sha256").update(JSON.stringify({ claimId: row.claim_id, schema: "setfarm.internal-production-runtime-completion-claim-id.v1" })).digest("hex");
+    const runIdentityHash = createHash("sha256").update(JSON.stringify({ runId: row.run_id, schema: "setfarm.internal-production-runtime-completion-run-identity.v1" })).digest("hex");
+    const ownerGenerationHash = createHash("sha256").update(JSON.stringify({ ownerAttemptCount: row.owner_attempt_count, ownerInstanceId: row.owner_instance_id, schema: "setfarm.internal-production-runtime-completion-owner-generation.v1" })).digest("hex");
+    const receipt = { targetGuardReceiptRef: "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/" + sha("7"), targetGuardReceiptHash: sha("7"), targetGuardHash: sha("d"), kind: "authenticated-completion-owner-bootstrap-target", requestIdHash, claimIdHash, runIdentityHash, ownerGenerationHash, ownerFenced: true, ownerDrained: true, unrelatedOwnerCount: 0, unrelatedOwnerCensusHash: sha("e") };
+    const guard = { ...receipt }; delete (guard as any).targetGuardReceiptHash; Object.assign(guard, { targetGuardReceiptHash: receipt.targetGuardReceiptHash });
+    const guardPrepared = { schema: "setfarm.internal-production-baseline-spawner-bootstrap-completion-result.v1", state: "guard_prepared", targetGuardReceiptRef: receipt.targetGuardReceiptRef, targetGuardReceiptHash: receipt.targetGuardReceiptHash, operationRef: null, operationHash: null, targetGuardConsumptionRef: null, targetGuardConsumptionHash: null, recoveredOwnerGenerationHash: null, targetOwnerReleaseReceiptHash: null, sequenceRef: null, sequenceHash: null };
+    Object.assign(globalThis as any, { __p4Receipt: receipt, __p4Guard: guard, __p4GuardPrepared: guardPrepared });
+    const secondOwner = { requestId: "request-two", ownerInstanceId: "owner-two", ownerAttemptCount: 1 };
+    const secondRow = { ...row, request_id: secondOwner.requestId, owner_instance_id: secondOwner.ownerInstanceId, owner_attempt_count: secondOwner.ownerAttemptCount };
+    harness.p4SetOwner(secondOwner, secondRow);
+    assert.equal(await harness.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(), null, "a valid different selected request loses without replacing the winner");
+    harness.p4CorruptSelected();
+    await assert.rejects(harness.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1(), /eligibility crossed|ENOENT/);
+    // A fresh kernel recreates the original durable winner for phase execution.
+    harness.p4ResetDurableStore();
+    const fresh = await import(`${pathToFileURL(harnessPath).href}?p4-fresh=${Date.now()}`) as any;
+    fresh.p4SetOwner(owner, row); fresh.p4ResetCounts();
+    const freshVerification = await fresh.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1();
+    Object.assign(globalThis as any, { __p4Receipt: receipt, __p4Guard: guard, __p4GuardPrepared: guardPrepared });
+    for (const phase of [null, guardPrepared, { ...guardPrepared, state: "operation_bound", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8") }, { ...guardPrepared, state: "guard_consumed", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8"), targetGuardConsumptionRef: "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/" + sha("c"), targetGuardConsumptionHash: sha("c") }, { ...guardPrepared, state: "owner_recovered", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8"), targetGuardConsumptionRef: "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/" + sha("c"), targetGuardConsumptionHash: sha("c"), recoveredOwnerGenerationHash: sha("9") }]) {
+      fresh.p4ResetCounts(); fresh.p4SetPhase(phase);
+      await fresh.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1({ verification: freshVerification });
+      assert.equal(fresh.p4Counts().execute, 1);
+      assert.ok(fresh.p4Counts().prepare <= 1 && fresh.p4Counts().release <= 1);
+    }
+    const expiredRow = { ...row, lease_expires_at: "2026-08-26T11:30:00.000Z" };
+    for (const phase of [null, guardPrepared, { ...guardPrepared, state: "operation_bound", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8") }, { ...guardPrepared, state: "guard_consumed", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8"), targetGuardConsumptionRef: "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/" + sha("c"), targetGuardConsumptionHash: sha("c") }, { ...guardPrepared, state: "owner_recovered", operationRef: "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/" + sha("8"), operationHash: sha("8"), targetGuardConsumptionRef: "setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/" + sha("c"), targetGuardConsumptionHash: sha("c"), recoveredOwnerGenerationHash: sha("9") }]) {
+      fresh.p4ResetCounts(); fresh.p4SetOwner(owner, expiredRow); fresh.p4SetPhase(phase);
+      const decision = await fresh.createRuntimeCompletionRepository(fresh.p4RepositorySql()).recoverExpiredProcessing({ ownerInstanceId: "replacement-owner" });
+      assert.equal(decision.status, "bootstrap_selected", "real repository recovery selects only the durable eligibility winner");
+      await fresh.recoverSelectedInternalProductionBaselineCompletionOwnerBootstrapV1();
+      const counts = fresh.p4Counts();
+      assert.equal(counts.execute, 1); assert.equal(counts.release, 1); assert.ok(counts.guard <= 1 && counts.prepareRecovery <= 1 && counts.bind <= 1);
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+it("P4 completion owner release rolls back session, acceptance, close, and result failures atomically", async () => {
+  const production = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  const start = production.indexOf("export async function recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(");
+  const end = production.indexOf("export async function completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1(", start);
+  assert.ok(start >= 0 && end > start);
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-completion-release-"));
+  try {
+    const modulePath = path.join(fixture, "release.ts");
+    writeFileSync(modulePath, `
+import {createHash} from "node:crypto";
+type PgTransactionSql=any; type RuntimeCompletionRow=any; type InternalProductionBaselineCompletionOwnerBootstrapLifecycleObservationV1=any;
+const g=globalThis as any;
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const completionBootstrapFailV1=(m:string):never=>{throw new Error(m)};
+const completionBootstrapOperationPairV1=(v:any)=>Object.freeze({...v});
+const completionBootstrapStoredResultV1=(row:any)=>row.result.internalProductionBaselineSpawnerBootstrap;
+const completionBootstrapLifecycleObservationV1=(context:any)=>Object.freeze({state:context.result.state,targetOwnerReleaseReceiptHash:context.result.targetOwnerReleaseReceiptHash});
+const resolveCompletionBootstrapLifecycleContextV1=async()=>Object.freeze({row:structuredClone(g.__p4ReleaseState.row),result:structuredClone(g.__p4ReleaseState.row.result.internalProductionBaselineSpawnerBootstrap),startupClaim:{currentGenerationHash:"9".repeat(64)}});
+const readDatabaseWallClock=async()=>new Date("2026-08-26T12:00:00.000Z");
+const lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1=async()=>({targetOwnerReservationRef:"setfarm://tests/p4/target",targetOwnerReservationHash:"a".repeat(64)});
+const releaseDrainedRuntimeSessionInTransaction=async(tx:any)=>{tx.state.session="released";if(g.__p4ReleaseFailure==="session")throw new Error("INJECT_SESSION")};
+const resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1=async()=>({reservationRef:"setfarm://tests/p4/target",reservationHash:"a".repeat(64),terminalAuthorityRef:"setfarm://tests/p4/terminal",terminalAuthorityHash:"b".repeat(64)});
+const closeInternalProductionOwnerReservationV1=async(tx:any)=>{tx.state.owner="closed";if(g.__p4ReleaseFailure==="close")throw new Error("INJECT_CLOSE");return {closeRef:"setfarm://internal-production/owner-reservation-closes/sha256/"+"c".repeat(64),closeHash:"c".repeat(64)}};
+const resolveInternalProductionOwnerReservationCloseInTransactionV1=async()=>({reservationRef:"setfarm://tests/p4/target",reservationHash:"a".repeat(64)});
+const pgBegin=async(cb:any)=>{const txState=structuredClone(g.__p4ReleaseState);const tx:any={state:txState,unsafe:async(q:string,p:any[])=>{if(q.includes("SELECT * FROM runtime_completion_requests"))return [txState.row];if(q.includes("SET state='accepted'")){txState.row.state="accepted";txState.row.accepted_at=p[1];txState.row.lease_expires_at=null;if(g.__p4ReleaseFailure==="accept")throw new Error("INJECT_ACCEPT");return [{request_id:txState.row.request_id}]}if(q.includes("SET result=jsonb_set")){txState.row.result={internalProductionBaselineSpawnerBootstrap:JSON.parse(p[1])};if(g.__p4ReleaseFailure==="result")throw new Error("INJECT_RESULT");return [{request_id:txState.row.request_id}]}throw new Error("UNEXPECTED_SQL:"+q)}};const value=await cb(tx);g.__p4ReleaseState=txState;return value};
+${production.slice(start, end)}
+export function p4Seed(failure:string|null){g.__p4ReleaseFailure=failure;g.__p4ReleaseState={session:"drained",owner:"bound",row:{request_id:"RCR_p4-release-request-0001",runtime_session_id:"RTS_p4-release-session",claim_id:1,state:"processing",apply_phase:"effects_committed",drained_at:"2026-08-26T11:00:00.000Z",owner_instance_id:"owner",owner_attempt_count:2,lease_expires_at:"2026-08-26T13:00:00.000Z",accepted_at:null,result:{internalProductionBaselineSpawnerBootstrap:{schema:"setfarm.internal-production-baseline-spawner-bootstrap-completion-result.v1",state:"owner_recovered",targetGuardReceiptRef:"setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/"+"1".repeat(64),targetGuardReceiptHash:"1".repeat(64),operationRef:"setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/"+"2".repeat(64),operationHash:"2".repeat(64),targetGuardConsumptionRef:"setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/"+"3".repeat(64),targetGuardConsumptionHash:"3".repeat(64),recoveredOwnerGenerationHash:"9".repeat(64),targetOwnerReleaseReceiptHash:null,sequenceRef:null,sequenceHash:null}}}}}
+export function p4State(){return structuredClone(g.__p4ReleaseState)}
+`, "utf8");
+    const kernel = await import(`${pathToFileURL(modulePath).href}?p4=${Date.now()}`) as any;
+    const operation = { operationRef: `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${"2".repeat(64)}`, operationHash: "2".repeat(64) };
+    for (const failure of ["session", "accept", "close", "result"]) {
+      kernel.p4Seed(failure);
+      const before = kernel.p4State();
+      await assert.rejects(kernel.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operation), new RegExp(`INJECT_${failure.toUpperCase()}`));
+      assert.deepEqual(kernel.p4State(), before, `${failure} injection rolls the entire transaction back`);
+    }
+    kernel.p4Seed(null);
+    const observation = await kernel.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operation);
+    assert.equal(observation.state, "owner_released");
+    assert.deepEqual({ session: kernel.p4State().session, owner: kernel.p4State().owner, request: kernel.p4State().row.state }, { session: "released", owner: "closed", request: "accepted" });
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 async function bindTestRunOwner(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,

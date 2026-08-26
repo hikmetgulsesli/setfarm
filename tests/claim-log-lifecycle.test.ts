@@ -418,6 +418,16 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /\[redacted-sha256\]/);
   });
 
+  it("P4 spawner admits only ordinary or authenticated recovery source bootstrap run owners", () => {
+    const handler = handleStepPendingSource();
+    assert.match(handler, /producerImplementationId !== "a-runtime-run-v1"/);
+    assert.match(handler, /producerImplementationId !== "a-recovery-source-bootstrap-run-v1"/);
+    const authentication = handler.indexOf("resolveBoundInternalProductionWorkflowRunOwnerV1({");
+    const firstRead = handler.indexOf("pgGet<");
+    assert.ok(authentication >= 0 && authentication < firstRead);
+    assert.doesNotMatch(handler, /includes\(boundRunOwner\.producerImplementationId\)/);
+  });
+
   it("private step_pending handler authenticates notification pairs and recovers notification loss", async () => {
     const calls: string[] = [];
     const resolverInputs: unknown[] = [];

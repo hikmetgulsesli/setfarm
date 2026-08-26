@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -94,6 +95,8 @@ type FixtureOptions = Readonly<{
   pbaObservationExtra?: boolean;
   pbaResponseExtra?: boolean;
   normalizationContentionBarrier?: boolean;
+  currentEntryAncestorSwapAfterGuard?: boolean;
+  stopAfterCurrentEntryOperationPublication?: boolean;
   preparedAccessorReobservationDrift?: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation";
   preparedAccessorByteDrift?: boolean;
   preparedAccessorWrongDevice?: boolean;
@@ -163,7 +166,20 @@ function createFixture(options: FixtureOptions = {}): string {
       "CURRENT_ENTRY_MAX_BYTES,\n      store.device + 1n,\n      1,",
     );
   }
+  if (options.currentEntryAncestorSwapAfterGuard) {
+    fixtureObserver = fixtureObserver.replace(
+      'const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");',
+      'if(basename===CURRENT_ENTRY_FILES.pendingBootstrapHandoffMigration){const heldStore=path.join(path.dirname(store.directory),`held-current-entry-${process.pid}`);renameSync(store.directory,heldStore);mkdirSync(store.directory,{mode:0o700})} const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");',
+    );
+  }
+  if (options.stopAfterCurrentEntryOperationPublication) {
+    fixtureObserver = fixtureObserver.replace(
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      "\n  return resolved;",
+    );
+  }
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver);
+  fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
   fixtureFile(root, "src/db/bootstrap-main-claim-handoff-v1-migration.ts", readFileSync(path.join(sourceRoot, "src/db/bootstrap-main-claim-handoff-v1-migration.ts")));
   fixtureFile(root, "src/db-pg.ts", fixtureDatabasePortSource(options));
   fixtureFile(root, "src/db/contract-spine-migration-digests.generated.ts", 'export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS={31:"f052eff1b45df0f00ffb844fe0d23b542eafa4789da5e90a329a8d756dfcdc3a"};\n');
@@ -171,7 +187,7 @@ function createFixture(options: FixtureOptions = {}): string {
   fixtureFile(root, "src/execution/v3-git-revision.ts", 'export function replayV3HistoricalGitCommitAncestryV1(){}\n');
   fixtureFile(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", fixturePbaPortSource(options));
   fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
-  fixtureFile(root, ".gitignore", "dist/\n.setfarm/\n");
+  fixtureFile(root, ".gitignore", "dist/\n.setfarm/\ndata/\n");
   fixtureFile(root, "package.json", `${JSON.stringify({ version: "9.8.7", scripts: EXACT_SCRIPTS }, null, 2)}\n`);
   fixtureFile(root, "tsconfig.json", `${JSON.stringify(EXACT_TSCONFIG, null, 2)}\n`);
   fixtureFile(root, "src/cli/cli.ts", 'console.log("fixture");\n');
@@ -203,6 +219,85 @@ function runProducer(root: string, phase: "--prepare" | "--finalize") {
   });
 }
 
+it("P4 current-entry status preserves every crash prefix", async () => {
+  const controller = await import("../../src/internal-production/baseline-post-handoff-receipt-v1.js");
+  const required = [
+    ["resumeInternalProductionCurrentEntryAuthorityV1", 0],
+    ["observeInternalProductionCurrentEntryAuthorityStatusV1", 0],
+    ["resolveInternalProductionCurrentEntryAuthorityStatusV1", 1],
+    ["resolveInternalProductionCurrentEntryAuthorityV1", 1],
+    ["verifyCurrentInternalProductionCurrentEntryV1", 0],
+    ["resolveInternalProductionCurrentEntryVerificationV1", 1],
+    ["applyInternalProductionBaselineBootstrapHandoffMigrationV1", 1],
+  ] as const;
+  for (const [name, arity] of required) {
+    const value = Reflect.get(controller, name);
+    assert.equal(typeof value, "function", name);
+    assert.equal((value as Function).length, arity, name);
+  }
+  for (const [name, arity] of [
+    ["prepareInternalProductionRecoverySourceBootstrapRunV1", 0],
+    ["resumeActiveInternalProductionRecoverySourceBootstrapRunV1", 0],
+    ["observeInternalProductionRecoverySourceBootstrapStatusV1", 0],
+    ["resolveInternalProductionRecoverySourceBootstrapPendingInputV1", 1],
+    ["resolveInternalProductionRecoverySourceBootstrapOperationV1", 1],
+  ] as const) {
+    const value = Reflect.get(controller, name);
+    assert.equal(typeof value, "function", name);
+    assert.equal((value as Function).length, arity, name);
+  }
+  const source = readFileSync(observerSource, "utf8");
+  assert.doesNotMatch(source, /migration-32 authorization store is not prepared|current-entry durable prefix requires controller recovery/);
+  const orderedPorts = [
+    "openInternalProductionCurrentEntryMigration32TransactionV1",
+    "stageInternalProductionCurrentEntryMigration32InTransactionV1",
+    "commitInternalProductionCurrentEntryMigration32TransactionV1",
+    "applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1",
+    "activateInternalProductionBaselineOwnerProducerManifestV1",
+    "prepareRecoverySourceBootstrapHeldLockV1",
+    "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1",
+    "initializeInternalProductionCurrentEntryDatabaseV1",
+    "transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1",
+    "resumeRecoverySourceBootstrapHeldLockV1",
+  ];
+  let cursor = -1;
+  for (const port of orderedPorts) {
+    const next = source.indexOf(port, cursor + 1);
+    assert.ok(next > cursor, `${port} must occur after its predecessor`);
+    cursor = next;
+  }
+  for (const required of [
+    'hasExactKeys(migration, ["phase", "authorization", "consumption", "migrationReceipt", "currentAudit"])',
+    'hasExactKeys(manifest, ["ownerProducerManifestActivationRef", "ownerProducerManifestActivationHash", "ownerProducerManifestHeadRef", "ownerProducerManifestHeadHash"])',
+    'hasExactKeys(admission, ["phase", "sealedAdmission", "admissionReady", "loadedRuntimeServiceAuthority"])',
+    'deriveTask12ResolvedAuthorityPairsV1(',
+    'canonicalComparable(freshServices) !== canonicalComparable(fresh.serviceCensus)',
+    'canonicalComparable(freshOwners) !== canonicalComparable(fresh.completeZeroOwnerCensusObservationBody)',
+    'await resolveInternalProductionBootstrapHandoffCurrentAuditV1(phase.currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>)',
+    'recovery-source-bootstrap-pending-input.json',
+    'recovery-source-bootstrap-visibility-head.json',
+    'acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1',
+    'const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written."',
+    'planPath: "docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md"',
+    'taskOrdinals: recursivelyFreeze([1, 2])',
+    '"buildHash", "activationPreflightHash", "releaseAdmissionHash", "targetSourceRunReservationRef"',
+    'resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1',
+    'name === "authorityV3FocusedTestReceipt"',
+    'name === "preMutationLoadedRuntimeServiceAuthority"',
+    'name === "loadedRuntimeServiceAuthority"',
+    'name === "ownerAdmissionFence"',
+    'const focused = deliveryEvidence.focusedTests as Record<string, unknown>',
+  ]) assert.ok(source.includes(required), `missing strict Task12 status/verifier behavior: ${required}`);
+});
+
+it("P4 reviewed D source build gate is invoked only and fail closed", async () => {
+  const controller = await import("../../src/internal-production/baseline-post-handoff-receipt-v1.js");
+  assert.equal(typeof controller.observeInternalProductionReviewedDSourceBuildGateV1, "function");
+  assert.equal(controller.observeInternalProductionReviewedDSourceBuildGateV1.length, 0);
+  assert.equal(typeof controller.observeInternalProductionServiceRestartCutoverReadinessCandidateV1, "function");
+  assert.equal(controller.observeInternalProductionServiceRestartCutoverReadinessCandidateV1.length, 0);
+});
+
 function materializeOutputs(root: string): void {
   const outputs: Readonly<Record<string, string>> = Object.freeze({
     "dist/cli/cli.js": 'console.log("fixture");\n',
@@ -215,6 +310,7 @@ function materializeOutputs(root: string): void {
     "dist/installer/prompts/prompt.md": "prompt\n",
     "dist/installer/steps/nested/step.md": "step\n",
     "dist/internal-production/baseline-post-handoff-receipt-v1.js": "// compiled observer fixture\n",
+    "dist/internal-production/owner-admission-v1.js": "// compiled owner admission fixture\n",
     "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js": "// compiled PBA fixture\n",
     "dist/product-compiler/canonical-json.js": "// compiled canonical fixture\n",
     "dist/server/index.html": "<!doctype html>fixture\n",
@@ -363,6 +459,11 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
   fixtureFile(
     root,
+    "src/internal-production/owner-admission-v1.ts",
+    readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")),
+  );
+  fixtureFile(
+    root,
     "src/product-compiler/canonical-json.ts",
     readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")),
   );
@@ -398,6 +499,224 @@ async function loadDatabaseOnlyForIsolatedLifecycleTest<T>(
 }
 
 describe("OA17 zero-input current Setfarm source/build observation", () => {
+  it("P4 Task12 delivery authority is pair-resolved and fail closed until reviewed constants land", async () => {
+    const receipt = await import(
+      `../../src/internal-production/baseline-post-handoff-receipt-v1.js?p4-delivery=${Date.now()}`
+    );
+    assert.equal(typeof receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1, "function");
+    assert.equal(receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1.length, 0);
+    assert.equal(typeof receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1, "function");
+    assert.equal(receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1.length, 1);
+    await assert.rejects(
+      receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1(),
+      /DELIVERY_CONSTANTS_UNFILLED/,
+    );
+    await assert.rejects(
+      receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1({
+        deliveryAuthorityRef: `setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/${"a".repeat(64)}`,
+        deliveryAuthorityHash: "a".repeat(64),
+      }),
+      /ENOENT|not found|missing/i,
+    );
+
+    const source = readFileSync(observerSource, "utf8");
+    assert.match(source, /setfarm\.internal-production-baseline-task12-p0-delivery-authority\.v1/);
+    assert.match(source, /task12-p0-delivery-authorities/);
+    assert.match(source, /"task12-p0-delivery-authorities", "sha256"/);
+    assert.match(source, /setfarm\.internal-production-baseline-task12-p0-focused-verification\.v1/);
+    assert.match(source, /--test-name-pattern=\^P4 /);
+    assert.doesNotMatch(source, /process\.env\.[A-Z0-9_]*TASK12.*DELIVERY/i);
+  });
+
+  it("P4 Task12 public resolvers reject special-bit records and insecure store ancestors", () => {
+    for (const fault of ["record-special-bit", "ancestor-mode"] as const) {
+      const root = createFixture();
+      try {
+        const body = {
+          schema: "setfarm.internal-production-baseline-task12-p0-delivery-authority.v1",
+          deliveryCommitSha: "1".repeat(40),
+          deliveryTreeHash: "2".repeat(40),
+          deliveryAncestorOfCurrentSource: true,
+          currentSourceSha: "3".repeat(40),
+          currentSourceTreeHash: "4".repeat(40),
+          currentSourceBuildHash: "5".repeat(64),
+          exact24PathBlobSetHash: "6".repeat(64),
+          focusedVerificationHash: "7".repeat(64),
+        };
+        const deliveryAuthorityHash = canonicalHash(body);
+        const deliveryAuthorityRef = `setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/${deliveryAuthorityHash}`;
+        const target = path.join(root, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", deliveryAuthorityHash.slice(0, 2), `${deliveryAuthorityHash}.json`);
+        const chain = ["data", "data/internal-production-baseline", "data/internal-production-baseline/current-entry-v1", "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities", "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", `data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256/${deliveryAuthorityHash.slice(0, 2)}`];
+        for (const member of chain) { mkdirSync(path.join(root, member), { recursive: true, mode: 0o700 }); chmodSync(path.join(root, member), 0o700); }
+        writeFileSync(target, `${canonical({ ...body, deliveryAuthorityRef, deliveryAuthorityHash })}\n`, { mode: 0o600 });
+        if (fault === "record-special-bit") chmodSync(target, 0o4600);
+        else chmodSync(path.join(root, "data/internal-production-baseline/current-entry-v1"), 0o755);
+        const result = runFixtureExpression(root, `m.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1(${JSON.stringify({ deliveryAuthorityRef, deliveryAuthorityHash })})`);
+        assert.notEqual(result.status, 0, `${fault} must fail through the public delivery resolver`);
+        assert.match(result.stderr, /directory|mode|inode|identity|record/i);
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  it("P4 Task12 receipt no-replace deterministically adopts two and eight equal pre-link temps", () => {
+    for (const count of [2, 8]) {
+      const root = createFixture();
+      try {
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        const source = readFileSync(modulePath, "utf8").replace("function publishLegacyZeroRecordV1(", "export function publishLegacyZeroRecordV1(");
+        assert.notEqual(source, readFileSync(modulePath, "utf8"));
+        writeFileSync(modulePath, source);
+        const canonicalRoot = realpathSync(root);
+        const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-prelinks");
+        for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
+        const target = path.join(directory, `record-${count}.json`);
+        const value = { schema: "setfarm.tests.task12-receipt-prelink.v1", count };
+        const bytes = `${canonical(value)}\n`;
+        const temps = Array.from({ length: count }, (_, index) => `${target}.tmp-${process.pid}-${`42345678-1234-4123-8123-${String(count - index).padStart(12, "0")}`}`);
+        for (const temp of temps) writeFileSync(temp, bytes, { mode: 0o600 });
+        const expectedInode = lstatSync([...temps].sort()[0]!, { bigint: true }).ino;
+        const result = runFixtureExpression(root, `m.publishLegacyZeroRecordV1(${JSON.stringify(target)},Buffer.from(${JSON.stringify(bytes)}))`);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(lstatSync(target, { bigint: true }).ino, expectedInode, `${count} candidates select the unsigned-name-first inode`);
+        assert.equal(temps.some(existsSync), false, `${count} candidates are all cleaned`);
+      } finally {
+        removeFixture(root);
+      }
+    }
+
+    {
+      const root = createFixture();
+      try {
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        const original = readFileSync(modulePath, "utf8");
+        const source = original
+          .replace("function publishLegacyZeroRecordV1(", "export function publishLegacyZeroRecordV1(")
+          .replace(
+            "        const now = fstatSync(item.descriptor, { bigint: true }); const atPath = lstatSync(item.path, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(item.descriptor, now.size);",
+            "        ((globalThis as Record<string, unknown>).__p4ReceiptBeforeTempUnlink as undefined | ((member: string) => void))?.(item.path);\n        const now = fstatSync(item.descriptor, { bigint: true }); const atPath = lstatSync(item.path, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(item.descriptor, now.size);",
+          )
+          .replace(
+            "        unlinkSync(item.path);\n        fsyncCurrentEntryDirectory(directory);",
+            "        unlinkSync(item.path);\n        fsyncCurrentEntryDirectory(directory);\n        ((globalThis as Record<string, unknown>).__p4ReceiptAfterTempFsync as undefined | ((member: string) => void))?.(item.path);",
+          );
+        assert.notEqual(source, original);
+        writeFileSync(modulePath, source);
+        const canonicalRoot = realpathSync(root);
+        const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-cleanup-race");
+        for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
+        const value = { schema: "setfarm.tests.task12-receipt-cleanup-race.v1" };
+        const bytes = `${canonical(value)}\n`;
+
+        const replacementTarget = path.join(directory, "replacement.json");
+        writeFileSync(replacementTarget, bytes, { mode: 0o600 });
+        const replacementTemp = `${replacementTarget}.tmp-${process.pid}-62345678-1234-4123-8123-123456789abc`;
+        writeFileSync(replacementTemp, bytes, { mode: 0o600 });
+        const replacement = runFixtureExpression(root, `(async()=>{const fs=await import('node:fs');let fired=false;globalThis.__p4ReceiptBeforeTempUnlink=(member)=>{if(fired)return;fired=true;fs.renameSync(member,member+'.pinned');fs.writeFileSync(member,${JSON.stringify(bytes)},{mode:0o600})};try{m.publishLegacyZeroRecordV1(${JSON.stringify(replacementTarget)},Buffer.from(${JSON.stringify(bytes)}))}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_REPLACEMENT_REJECTION')})()`);
+        assert.equal(replacement.status, 0, replacement.stderr);
+        assert.match(replacement.stdout, /temp changed|candidate changed|crossed/i);
+        assert.equal(existsSync(replacementTemp), true, "a foreign replacement at the candidate path is never unlinked");
+
+        const crashTarget = path.join(directory, "crash.json");
+        const crashTemps = [
+          `${crashTarget}.tmp-${process.pid}-72345678-1234-4123-8123-000000000001`,
+          `${crashTarget}.tmp-${process.pid}-72345678-1234-4123-8123-000000000002`,
+        ];
+        for (const member of crashTemps) writeFileSync(member, bytes, { mode: 0o600 });
+        const crash = runFixtureExpression(root, `(async()=>{const fs=await import('node:fs');let faults=2;globalThis.__p4ReceiptAfterTempFsync=()=>{if(faults-->0)throw new Error('P4_RECEIPT_AFTER_TEMP_FSYNC')};const attempt=()=>{try{m.publishLegacyZeroRecordV1(${JSON.stringify(crashTarget)},Buffer.from(${JSON.stringify(bytes)}));return 'ok'}catch(error){return String(error)}};const first=attempt();const afterFirst=${JSON.stringify(crashTemps)}.filter(fs.existsSync);const second=attempt();const afterSecond=${JSON.stringify(crashTemps)}.filter(fs.existsSync);delete globalThis.__p4ReceiptAfterTempFsync;const third=attempt();process.stdout.write(JSON.stringify({first,afterFirst,second,afterSecond,third,target:fs.readFileSync(${JSON.stringify(crashTarget)},'utf8')}))})()`);
+        assert.equal(crash.status, 0, crash.stderr);
+        const crashEvidence = JSON.parse(crash.stdout);
+        assert.match(crashEvidence.first, /P4_RECEIPT_AFTER_TEMP_FSYNC/);
+        assert.equal(crashEvidence.afterFirst.length, 1, "the first unlink+fsync is the only durable cleanup prefix before the first crash");
+        assert.match(crashEvidence.second, /P4_RECEIPT_AFTER_TEMP_FSYNC/);
+        assert.equal(crashEvidence.afterSecond.length, 0, "the second retry durably removes only the remaining candidate");
+        assert.equal(crashEvidence.third, "ok");
+        assert.equal(crashEvidence.target, bytes);
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  it("P4 Task12 receipt refuses a hardlinked stale writer lock without unlinking either name", () => {
+    const root = createFixture();
+    try {
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const original = readFileSync(modulePath, "utf8");
+      const source = original
+        .replace("function acquireTask12ReceiptLocatorWriterV1(", "export function acquireTask12ReceiptLocatorWriterV1(")
+        .replace('    const result = spawnSync("/bin/ps",', '    (globalThis as Record<string, number>).__p4ReceiptOwnerObservations = ((globalThis as Record<string, number>).__p4ReceiptOwnerObservations ?? 0) + 1;\n    const result = spawnSync("/bin/ps",');
+      assert.notEqual(source, original);
+      writeFileSync(modulePath, source);
+      const canonicalRoot = realpathSync(root);
+      const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-lock");
+      for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
+      const target = path.join(directory, "record.json");
+      const lockPath = path.join(directory, ".record.json.writer.lock");
+      const alias = `${lockPath}.alias`;
+      const body = {
+        schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1",
+        targetHash: canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target }),
+        pid: 999999,
+        start: "Mon Jan 01 00:00:00 2001",
+        commandHash: "8".repeat(64),
+        identityHash: "9".repeat(64),
+        nonce: "52345678-1234-4123-8123-123456789abc",
+      };
+      writeFileSync(lockPath, `${canonical(body)}\n`, { mode: 0o600 });
+      linkSync(lockPath, alias);
+      const result = runFixtureExpression(root, `(async()=>{globalThis.__p4ReceiptOwnerObservations=0;try{m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(target)}).close()}catch(error){process.stdout.write(String(globalThis.__p4ReceiptOwnerObservations));throw error}})()`);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stdout, "0", "a non-sole stale lock is rejected before owner observation");
+      assert.equal(lstatSync(lockPath, { bigint: true }).nlink, 2n);
+      assert.equal(lstatSync(alias, { bigint: true }).nlink, 2n);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P4 Task12 receipt writer closes every busy guard and recovers a post-link fault", () => {
+    const root = createFixture();
+    try {
+      const canonicalRoot = realpathSync(root);
+      const modulePath = path.join(canonicalRoot, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const original = readFileSync(modulePath, "utf8");
+      const source = original
+        .replace("function acquireTask12ReceiptLocatorWriterV1(", "export function acquireTask12ReceiptLocatorWriterV1(")
+        .replace("function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 {", "function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 { (globalThis as Record<string, number>).__p4ReceiptGuardCreates=((globalThis as Record<string, number>).__p4ReceiptGuardCreates??0)+1;")
+        .replace("        closed = true;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);", "        closed = true; (globalThis as Record<string, number>).__p4ReceiptGuardCloses=((globalThis as Record<string, number>).__p4ReceiptGuardCloses??0)+1;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);")
+        .replace("const deadline = Date.now() + 10_000;", "const deadline = Date.now() + 75;")
+        .replace(
+          "      }\n      unlinkPinned(temp, descriptor, identity, bytes, 2n);",
+          "      }\n      const hook=Reflect.get(globalThis,'__p4ReceiptPostLinkHook'); if(typeof hook==='function')hook(directory);\n      unlinkPinned(temp, descriptor, identity, bytes, 2n);",
+        );
+      assert.notEqual(source, original);
+      writeFileSync(modulePath, source);
+      const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-writer-faults");
+      for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
+
+      const busyTarget = path.join(directory, "busy.json");
+      const busyProgram = `(async()=>{globalThis.__p4ReceiptGuardCreates=0;globalThis.__p4ReceiptGuardCloses=0;const held=m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(busyTarget)});const beforeFd=(await import('node:fs')).readdirSync('/dev/fd').length;const beforeCreates=globalThis.__p4ReceiptGuardCreates;const beforeCloses=globalThis.__p4ReceiptGuardCloses;let rejected=false;try{m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(busyTarget)})}catch{rejected=true}const afterFd=(await import('node:fs')).readdirSync('/dev/fd').length;const created=globalThis.__p4ReceiptGuardCreates-beforeCreates;const closed=globalThis.__p4ReceiptGuardCloses-beforeCloses;held.close();process.stdout.write(JSON.stringify({rejected,beforeFd,afterFd,created,closed}))})()`;
+      const busy = runFixtureExpression(root, busyProgram);
+      assert.equal(busy.status, 0, busy.stderr);
+      const busyEvidence = JSON.parse(busy.stdout);
+      assert.equal(busyEvidence.rejected, true);
+      assert.equal(busyEvidence.afterFd, busyEvidence.beforeFd, "busy retries leak no chain descriptors");
+      assert.equal(busyEvidence.closed, busyEvidence.created, "each busy retry closes its exact chain guard");
+
+      const faultTarget = path.join(directory, "post-link.json");
+      const faultProgram = `(async()=>{const fs=await import('node:fs');let injected=true;globalThis.__p4ReceiptPostLinkHook=(directory)=>{if(!injected)return;injected=false;const held=directory+'.held';fs.renameSync(directory,held);fs.renameSync(held,directory);throw new Error('P4_POST_LINK_FAULT')};let first='';try{m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(faultTarget)})}catch(error){first=String(error)}delete globalThis.__p4ReceiptPostLinkHook;const inventory=fs.readdirSync(${JSON.stringify(directory)}).filter(name=>name.includes('post-link'));const retry=m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(faultTarget)});retry.close();process.stdout.write(JSON.stringify({first,inventory}))})()`;
+      const fault = runFixtureExpression(root, faultProgram);
+      assert.equal(fault.status, 0, fault.stderr);
+      const faultEvidence = JSON.parse(fault.stdout);
+      assert.match(faultEvidence.first, /P4_POST_LINK_FAULT/);
+      assert.deepEqual(faultEvidence.inventory, [], "post-link failure removes only its authenticated lock/temp before retry");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
   it("P4 receipt owns startup prerequisite observations", async () => {
     const receipt = await import(
       `../../src/internal-production/baseline-post-handoff-receipt-v1.js?p4-prerequisites=${Date.now()}`
@@ -414,6 +733,39 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.doesNotMatch(source, /^import .*baseline-spawner-startup-admission-v1/m);
     assert.doesNotMatch(source, /newest|latest.*legacy-pre-manifest/i);
     assert.doesNotMatch(source, /Object\.fromEntries\(COMPLETE_ZERO_CENSUS_KEYS_V1/);
+    const completeObserver = /export async function observeCompleteInternalProductionZeroOwnerCensusV1\([\s\S]*?\n}\n\nconst ZERO_OWNER_GUARD_ROOT_V1/.exec(source)?.[0] ?? "";
+    assert.match(completeObserver, /observeInternalProductionPostManifestOwnerCensusSnapshotV1/);
+    assert.doesNotMatch(completeObserver, /observeLegacyDatabaseCensusV1\(/);
+    assert.match(completeObserver, /reservationIdentitySetHash: snapshot\.reservationIdentitySetHash/);
+    assert.match(completeObserver, /ownerIdentitySetHash: snapshot\.ownerIdentitySetHash/);
+    const databaseSource = readFileSync(dbSource, "utf8");
+    const postManifestSnapshot = /export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1\([\s\S]*?\n}\n\nclass OwnerProducerActivationSupersededError/.exec(databaseSource)?.[0] ?? "";
+    assert.match(postManifestSnapshot, /isolation level repeatable read read only/);
+    assert.match(postManifestSnapshot, /WHERE state IN \('pending','bound'\)/);
+    assert.match(postManifestSnapshot, /openRows\.length !== 0/);
+    assert.match(postManifestSnapshot, /INTERNAL_PRODUCTION_COMPLETE_OWNER_SIDECAR_NONZERO/);
+    assert.match(postManifestSnapshot, /emptyIdentitySetHash = hashCanonicalJson\(\[\]\)/);
+    const cutoverFenceConsumer = /export async function consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1\([\s\S]*?\n}\n/.exec(source)?.[0] ?? "";
+    assert.match(cutoverFenceConsumer, /import\("\.\.\/db-pg\.js"\)/);
+    assert.doesNotMatch(cutoverFenceConsumer, /owner-admission-v1\.js/);
+    assert.match(postManifestSnapshot, /reservationIdentitySetHash = hashCanonicalJson\(reservationIdentities\)/);
+    assert.match(postManifestSnapshot, /ownerIdentitySetHash = hashCanonicalJson\(ownerIdentities\)/);
+    const cutoverConsumer = /export async function consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1\([\s\S]*?\n}\n\nexport type InternalProductionCurrentEntryAuthorityStatusPairV1/.exec(source)?.[0] ?? "";
+    let cutoverCursor = -1;
+    for (const required of [
+      "const status = await (observeCutoverStatus",
+      "const operation = await (resolveOperation",
+      "const fence = await (reobserveFence",
+      "const freshZero = await observeCompleteInternalProductionZeroOwnerCensusV1",
+      "const helper = await (observeHelperCensus",
+      "cutoverZeroOwnerConsumptionPathV1",
+      "zeroOwnerConsumedIndexPathV1",
+      "reopenedIndex",
+    ]) {
+      const next = cutoverConsumer.indexOf(required, cutoverCursor + 1);
+      assert.ok(next > cutoverCursor, `cutover consumer ordering missing ${required}`);
+      cutoverCursor = next;
+    }
     for (const producer of [
       "reserveInternalProductionOrdinaryServiceStartOwnerV1",
       "reserveInternalProductionServiceRestartDispatchOwnerV1",
@@ -519,6 +871,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       .replace("function requireAbsentProducerLiteralV1(", "export function requireAbsentProducerLiteralV1(")
       .replace("function assertPhaseSourceEqualV1(", "export function assertPhaseSourceEqualV1(");
     fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
     fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
     fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
     const moduleUrl = `${pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href}?phase=${Date.now()}`;
@@ -561,6 +914,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       .replace("function parseProcessListenersV1(", "export function parseProcessListenersV1(")
       .replace("function assertPhysicalInventoryPassStableV1(", "export function assertPhysicalInventoryPassStableV1(");
     fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
     fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
     fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
     const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
@@ -1322,8 +1676,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
-  it("recovers complete v31 and pending temp-only crash states before publishing the operation", () => {
-    const fixture = finalizedFixture();
+  it("P4 recovers complete v31 and pending temp-only crash states before publishing the operation", () => {
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const v31 = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
       const pending = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
@@ -1342,7 +1696,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
-  it("normalizes every non-target family pre-link and response-loss state before unrelated publication", () => {
+  it("P4 normalizes every non-target family pre-link and response-loss state before unrelated publication", () => {
     const families = [
       { basename: "authority-v3-migration31-audit.json", publish: "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()" },
       { basename: "pending-bootstrap-handoff-migration.json", publish: "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()" },
@@ -1352,7 +1706,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     const failures: string[] = [];
     for (const family of families) {
       for (const state of ["pre-link", "response-loss"] as const) {
-        const fixture = finalizedFixture();
+        const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
         try {
           const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
           assert.equal(seeded.status, 0, seeded.stderr);
@@ -1374,9 +1728,9 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.deepEqual(failures, []);
   });
 
-  it("resnapshots when two publishers contend on non-target pre-link and response-loss normalization", async () => {
+  it("P4 resnapshots when two publishers contend on non-target pre-link and response-loss normalization", async () => {
     for (const state of ["pre-link", "response-loss"] as const) {
-      const fixture = finalizedFixture({ normalizationContentionBarrier: true });
+      const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
       try {
         const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
         assert.equal(seeded.status, 0, seeded.stderr);
@@ -1391,6 +1745,84 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         ]);
         assert.deepEqual(results.map((result) => result.status), [0, 0], results.map((result) => result.stderr).join("\n"));
         assert.deepEqual(readdirSync(store).sort(), ["authority-v3-migration31-audit.json", "current-entry-operation.json", "pending-bootstrap-handoff-migration.json"]);
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
+  it("P4 rejects special-bit directories and records on public current-entry publication paths", () => {
+    const directoryFixture = finalizedFixture();
+    const recordFixture = finalizedFixture();
+    try {
+      const directoryStore = currentEntryStore(directoryFixture.root);
+      const seededDirectory = runFixtureExpression(directoryFixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
+      assert.equal(seededDirectory.status, 0, seededDirectory.stderr);
+      chmodSync(directoryStore, 0o4700);
+      const directoryBlocked = runFixtureExpression(directoryFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+      assert.notEqual(directoryBlocked.status, 0);
+      assert.equal(existsSync(path.join(directoryStore, "pending-bootstrap-handoff-migration.json")), false);
+      chmodSync(directoryStore, 0o700);
+
+      const recordStore = currentEntryStore(recordFixture.root);
+      const seededRecord = runFixtureExpression(recordFixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
+      assert.equal(seededRecord.status, 0, seededRecord.stderr);
+      const v31 = path.join(recordStore, "authority-v3-migration31-audit.json");
+      chmodSync(v31, 0o4600);
+      const recordBlocked = runFixtureExpression(recordFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+      assert.notEqual(recordBlocked.status, 0);
+      assert.equal(existsSync(path.join(recordStore, "pending-bootstrap-handoff-migration.json")), false);
+      chmodSync(v31, 0o600);
+    } finally {
+      removeFixture(directoryFixture.root);
+      removeFixture(recordFixture.root);
+    }
+  });
+
+  it("P4 detects a current-entry ancestor replacement after the descriptor chain is pinned", () => {
+    const fixture = finalizedFixture({ currentEntryAncestorSwapAfterGuard: true });
+    try {
+      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const original = readFileSync(path.join(currentEntryStore(fixture.root), "authority-v3-migration31-audit.json"));
+      const blocked = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+      assert.notEqual(blocked.status, 0);
+      assert.match(blocked.stderr, /directory chain changed|identity/i);
+      const heldDirectories = readdirSync(path.dirname(currentEntryStore(fixture.root))).filter((name) => name.startsWith("held-current-entry-"));
+      assert.equal(heldDirectories.length, 1);
+      assert.equal(readFileSync(path.join(path.dirname(currentEntryStore(fixture.root)), heldDirectories[0]!, "authority-v3-migration31-audit.json")).equals(original), true);
+      assert.equal(existsSync(path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json")), false);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("P4 adopts at most eight authenticated current-entry crash temps and refuses the ninth untouched", () => {
+    for (const count of [8, 9]) {
+      const fixture = finalizedFixture();
+      try {
+        const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        const store = currentEntryStore(fixture.root);
+        const fixed = path.join(store, "authority-v3-migration31-audit.json");
+        const bytes = readFileSync(fixed);
+        unlinkSync(fixed);
+        const tempNames = Array.from({ length: count }, (_, index) => `.authority-v3-migration31-audit.json.12345678-1234-4123-8123-${String(index + 1).padStart(12, "0")}.tmp`);
+        for (const name of tempNames) {
+          writeFileSync(path.join(store, name), bytes, { mode: 0o600 });
+          chmodSync(path.join(store, name), 0o600);
+        }
+        const result = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+        if (count === 8) {
+          assert.equal(result.status, 0, result.stderr);
+          assert.equal(readFileSync(fixed).equals(bytes), true);
+          assert.equal(tempNames.some((name) => existsSync(path.join(store, name))), false);
+        } else {
+          assert.notEqual(result.status, 0);
+          assert.equal(existsSync(fixed), false);
+          assert.deepEqual(tempNames.filter((name) => existsSync(path.join(store, name))), tempNames);
+          assert.equal(existsSync(path.join(store, "pending-bootstrap-handoff-migration.json")), false);
+        }
       } finally {
         removeFixture(fixture.root);
       }

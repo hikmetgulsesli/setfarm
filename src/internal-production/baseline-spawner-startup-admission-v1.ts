@@ -193,6 +193,9 @@ export type InternalProductionTask0SpawnerAdmissionReadyV1 = Readonly<{
   admissionReadyHash: Sha256V1;
 }>;
 
+// Task 12 deliberately keeps this record grammar and pair-only resolver here,
+// while src/spawner.ts remains the sole publisher of the ready record/locators.
+
 const SHA256 = /^[a-f0-9]{64}$/;
 const STORE = "data/internal-production-baseline/pre-schema-spawner-rebind-v1";
 const MAX_RECORD_BYTES = 1_048_576;

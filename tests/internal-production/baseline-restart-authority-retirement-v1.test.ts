@@ -156,6 +156,7 @@ export async function resolveInternalProductionCurrentEntryOperationV1(value){re
 export async function observeInternalProductionServiceCensusV1(){return globalThis.__p4ServiceCensus}
 export async function resolveInternalProductionBaselineServiceRestartOperationV1(input){const value=globalThis.__p4BaselineOperation;if(!value||value.operationRef!==input.operationRef||value.operationHash!==input.operationHash)throw new Error("crossed fixture baseline operation");return value}
 export async function observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1(input){const value=globalThis.__p4BaselineOutbox;if(!value||value.operationRef!==input.operationRef||value.operationHash!==input.operationHash)throw new Error("crossed fixture baseline outbox");return value}
+export async function reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1(input){globalThis.__p4ProjectionReobserveCount=(globalThis.__p4ProjectionReobserveCount??0)+1;const operation=globalThis.__p4BaselineOperation;if(!operation||operation.authorizationRef!==input.authorizationRef||operation.authorizationHash!==input.authorizationHash)throw new Error("crossed fixture prepared runtime projection");if(globalThis.__p4PreparedProjectionMissing)throw new Error("prepared runtime projection missing");if(globalThis.__p4PreparedProjectionDrift)throw new Error("prepared runtime projection drifted before dispatch");return Object.freeze({authorizationRef:input.authorizationRef,authorizationHash:input.authorizationHash})}
 export async function observeInternalProductionReviewedDSourceBuildGateV1(){if(!globalThis.__p4CutoverGate)throw new Error("complete code-owned cutover readiness gate is unavailable");return globalThis.__p4CutoverGate}
 export async function observeInternalProductionServiceRestartCutoverReadinessCandidateV1(){globalThis.__p4ReadinessObservations=(globalThis.__p4ReadinessObservations??0)+1;if(!globalThis.__p4CutoverReadiness)throw new Error("complete code-owned cutover readiness observer is unavailable");if((globalThis.__p4ReadinessDriftUnderLease&&globalThis.__p4ReadinessObservations>=2)||(globalThis.__p4ReadinessDriftAfterConsumption&&globalThis.__p4GuardConsumption))return Object.freeze({...globalThis.__p4CutoverReadiness,runtimeSourceProjectionHash:${JSON.stringify("f".repeat(64))}});return globalThis.__p4CutoverReadiness}
 export async function observeCompleteInternalProductionZeroOwnerCensusV1(){if(!globalThis.__p4CompleteZero)throw new Error("complete zero unavailable");return globalThis.__p4CompleteZero}
@@ -183,6 +184,14 @@ export async function acquireInternalProductionGlobalOwnerAdmissionFenceV1(input
 export async function reobserveInternalProductionGlobalOwnerAdmissionFenceV1(input){const value=globalThis.__p4OwnerFence;if(!value||value.fenceRef!==input.fenceRef||value.fenceHash!==input.fenceHash)throw new Error("crossed fixture fence");globalThis.__p4OwnerFenceReobservations=(globalThis.__p4OwnerFenceReobservations??0)+1;if(globalThis.__p4FenceDriftAfterConsumption&&globalThis.__p4GuardConsumption)return freeze({...value,ownerIdentitySetHash:${JSON.stringify("f".repeat(64))}});return value}
 export async function releaseInternalProductionGlobalOwnerAdmissionFenceV1(input){const body={schema:"setfarm.internal-production-global-owner-admission-fence-release.v1",fenceRef:input.fenceRef,fenceHash:input.fenceHash,releaseAuthority:input.releaseAuthority,ownerAdmissionHeadPredecessorHash:${JSON.stringify("4".repeat(64))},ownerAdmissionHeadSuccessorHash:${JSON.stringify("5".repeat(64))}};const releaseHash=hash(body);const value=freeze({...body,releaseRef:\`setfarm://internal-production/global-owner-admission-fence-release/sha256/\${releaseHash}\`,releaseHash});globalThis.__p4FenceRelease=value;return value}
 export async function resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1(input){const value=globalThis.__p4FenceRelease;if(!value||value.releaseRef!==input.releaseRef||value.releaseHash!==input.releaseHash)throw new Error("crossed fixture fence release");return value}
+`);
+  writeFileSync(path.join(fixture, "src/db-pg.ts"), `
+export {
+  acquireInternalProductionGlobalOwnerAdmissionFenceV1,
+  reobserveInternalProductionGlobalOwnerAdmissionFenceV1,
+  releaseInternalProductionGlobalOwnerAdmissionFenceV1,
+  resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
+} from "./internal-production/owner-admission-v1.js";
 `);
   writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), "export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(value){const uid=process.getuid?.();return {...value,schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.v1',actionId:'task6a-pre-schema-setfarm-spawner-rebind-v1',service:'setfarm-spawner',currentEntryOperationRef:globalThis.__p4CurrentEntryOperation.operationRef,currentEntryOperationHash:globalThis.__p4CurrentEntryOperation.operationHash,uid,launchdLabel:'com.setrox.setfarm-spawner',executable:'/bin/launchctl',argv:['kickstart','-k',`gui/${uid}/com.setrox.setfarm-spawner`],...(globalThis.__p4RestartOverrides??{})}}\n");
   writeFileSync(path.join(internal, "baseline-service-restart-sequence-v1.ts"), `
@@ -258,6 +267,201 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
     await assert.rejects(isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /foreign, cloned, or released/);
   } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 normal restart keeps census generation stable and binds physical process projection", () => {
+  const receipt = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+  const retirement = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-restart-authority-retirement-v1.ts"), "utf8");
+  const spawner = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  assert.match(receipt, /"runtime-projections"/);
+  assert.match(receipt, /spawnerServiceIdentityHash: census\.spawner\.processIdentityHash/);
+  assert.match(receipt, /dashboardServiceIdentityHash: census\.dashboard\.processIdentityHash/);
+  assert.match(receipt, /missionControlServiceIdentityHash: census\.missionControl\.processIdentityHash/);
+  assert.match(receipt, /resolveTask12PreparedRuntimeProjectionV1\(authorization\.preparedRuntimeSourceProjectionHash\)/);
+  assert.match(receipt, /beforeGenerationHash: selectedBeforeProcessIdentityHash[\s\S]*afterGenerationHash: selectedAfterProcessIdentityHash/);
+  const invoke = retirement.slice(retirement.indexOf("export async function invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1"));
+  assert.ok(invoke.indexOf("priorTerminal") < invoke.indexOf("reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1"), "response-loss recovery adopts the terminal before requiring the old live process");
+  assert.match(spawner, /beforeGenerationHash: String\(spawner\.processIdentityHash\)/);
+  assert.match(spawner, /currentGenerationHash: census\.spawner\.processIdentityHash/);
+});
+
+test("P4 normal restart executes the production P1 to P2 projection and adopts the terminal before live drift", async () => {
+  const receiptSource = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+  const projectionStart = receiptSource.indexOf("function task12RuntimeProjectionV1(");
+  const projectionEnd = receiptSource.indexOf("export async function reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1(", projectionStart);
+  const restartStart = receiptSource.indexOf("export async function restartInternalProductionBaselineServiceV1(");
+  assert.ok(projectionStart >= 0 && projectionEnd > projectionStart && restartStart > projectionEnd);
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-normal-restart-production-"));
+  try {
+    const internalDirectory = path.join(fixture, "src/internal-production");
+    mkdirSync(internalDirectory, { recursive: true });
+    writeFileSync(path.join(internalDirectory, "baseline-restart-authority-retirement-v1.ts"), `
+const g=globalThis;
+export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){g.__p4RestartAcquireCalls+=1;return Object.freeze({schema:"lease"})}
+export async function invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(_lease,input){g.__p4RestartInvokeCalls+=1;g.__p4LiveCensus=g.__p4AfterCensus;const helperSettlementHash="e".repeat(64);return Object.freeze({helperSettlementRef:"setfarm://internal-production/baseline-service-restart-helper-settlement/sha256/"+helperSettlementHash,helperSettlementHash})}
+export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){g.__p4RestartReleaseCalls+=1}
+`, "utf8");
+    const kernelPath = path.join(internalDirectory, "restart-kernel.ts");
+    writeFileSync(kernelPath, `
+import path from "node:path";
+import {createHash} from "node:crypto";
+const g=globalThis as any;
+const store=new Map<string,Buffer>();
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const recursivelyFreeze=(v:any):any=>{if(v&&typeof v==="object"&&!Object.isFrozen(v)){for(const member of Object.values(v))recursivelyFreeze(member);Object.freeze(v)}return v};
+const currentEntryFail=(message:string):never=>{throw new Error(message)};
+const requireSha256=(value:any,message:string)=>{if(typeof value!=="string"||!/^[0-9a-f]{64}$/.test(value))currentEntryFail(message);return value};
+const requireGitHash=(value:any,message:string)=>{if(typeof value!=="string"||!/^[0-9a-f]{40}$/.test(value))currentEntryFail(message);return value};
+const hasExactKeys=(value:any,keys:readonly string[])=>value&&typeof value==="object"&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.prototype.hasOwnProperty.call(value,k));
+const strictCanonicalRecord=(bytes:Buffer)=>JSON.parse(bytes.toString("utf8"));
+const canonicalRecordBytes=async(value:any)=>Buffer.from(canonical(value));
+const readStableRegular=(target:string)=>{const bytes=store.get(target);if(!bytes){const error:any=new Error("ENOENT");error.code="ENOENT";throw error}return {bytes}};
+const readTask12ReceiptStoreBytesV1=(target:string)=>readStableRegular(target).bytes;
+const publishLegacyZeroRecordV1=(target:string,bytes:Buffer)=>{const current=store.get(target);if(current&&!current.equals(bytes))throw new Error("store conflict");store.set(target,Buffer.from(bytes))};
+const isEnoent=(error:any)=>error&&error.code==="ENOENT";
+const lstatSync=()=>({dev:1n});
+const fixedRepositoryRoot=()=>"/p4";
+const CURRENT_ENTRY_MAX_BYTES=1024*1024;
+const BASELINE_RESTART_ROOT_V1="data/internal-production-baseline/baseline-service-restart-v1";
+const BASELINE_RESTART_AUTHORIZATION_PREFIX_V1="setfarm://internal-production/baseline-service-restart-authorization/sha256/";
+const BASELINE_RESTART_OPERATION_PREFIX_V1="setfarm://internal-production/baseline-service-restart-operation/sha256/";
+const BASELINE_RESTART_OUTBOX_PREFIX_V1="setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/";
+const BASELINE_RESTART_RECEIPT_PREFIX_V1="setfarm://internal-production/baseline/service-restarts/";
+const ZERO_OWNER_GUARD_ROOT_V1="data/zero";
+const BASELINE_RESTART_ACTIONS_V1=Object.freeze({"setfarm-spawner":"a-restart-service-setfarm-spawner-v1","setfarm-dashboard":"a-restart-service-setfarm-dashboard-v1","mission-control":"a-restart-service-mission-control-v1"} as const);
+const baselineRestartPathV1=(kind:string,hash:string)=>path.join(fixedRepositoryRoot(),BASELINE_RESTART_ROOT_V1,kind,"sha256",hash.slice(0,2),hash+".json");
+const baselineRestartOutboxLocatorV1=(hash:string)=>path.join(fixedRepositoryRoot(),BASELINE_RESTART_ROOT_V1,"outbox-by-operation/sha256",hash.slice(0,2),hash+".pair.json");
+const baselineRestartAuthorityLocatorV1=(hash:string)=>path.join(fixedRepositoryRoot(),BASELINE_RESTART_ROOT_V1,"authority-by-authorization/sha256",hash.slice(0,2),hash+".pair.json");
+const zeroOwnerConsumedIndexPathV1=(hash:string)=>path.join("/p4/zero-index",hash);
+const requirePair=(value:any,refKey:string,hashKey:string,prefix:string)=>{if(!value||typeof value!=="object"||typeof value[refKey]!=="string"||!value[refKey].startsWith(prefix)||!requireSha256(value[hashKey],hashKey))throw new Error("pair invalid");return value};
+const observeCurrentInternalProductionCleanSetfarmSourceBuildV1=()=>g.__p4Source;
+const observeInternalProductionServiceCensusV1=async()=>g.__p4LiveCensus;
+const resolveInternalProductionBaselineServiceRestartAuthorizationV1=async(input:any)=>{if(input.authorizationRef!==g.__p4Authorization.authorizationRef||input.authorizationHash!==g.__p4Authorization.authorizationHash)throw new Error("authorization crossed");return g.__p4Authorization};
+const resolveInternalProductionBaselineZeroOwnerMutationGuardV1=async()=>g.__p4ZeroGuard;
+const observeCompleteInternalProductionZeroOwnerCensusV1=async()=>g.__p4Zero;
+const resolveInternalProductionBaselineServiceRestartOperationV1=async(pair:any)=>pair;
+const observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1=async(pair:any)=>pair;
+const resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1=async()=>({schemaProjectionHash:"f".repeat(64)});
+const resolveInternalProductionBaselineServiceRestartAuthorityV1=async(pair:any)=>{const value=strictCanonicalRecord(readStableRegular(baselineRestartPathV1("authorities",pair.receiptHash)).bytes);const body={...value};delete body.receiptRef;delete body.receiptHash;if(hashCanonicalJson(body)!==pair.receiptHash||value.receiptRef!==pair.receiptRef)throw new Error("restart authority crossed");return recursivelyFreeze(value)};
+${receiptSource.slice(projectionStart, projectionEnd)}
+${receiptSource.slice(restartStart)}
+export const p4RuntimeProjection=task12RuntimeProjectionV1;
+export const p4ProjectionPath=(hash:string)=>baselineRestartPathV1("runtime-projections",hash);
+export const p4Reset=()=>store.clear();
+export const p4Seed=(target:string,value:any)=>store.set(target,Buffer.from(canonical(value)));
+export const p4ReadAuthority=async(pair:any)=>resolveInternalProductionBaselineServiceRestartAuthorityV1(pair);
+`, "utf8");
+    const kernel = await import(`${pathToFileURL(kernelPath).href}?production-restart=${Date.now()}`) as any;
+    const source = { sha: "1".repeat(40), buildHash: "2".repeat(64) };
+    const service = (processIdentityHash: string, loadedSourceSha = source.sha, loadedBuildHash = source.buildHash) => ({
+      pid: 100,
+      processStartTimeEpochMs: 1,
+      processIdentityHash,
+      serviceIdentityHash: "8".repeat(64),
+      generationHash: "9".repeat(64),
+      loadedSourceSha,
+      loadedBuildHash,
+    });
+    const p1 = {
+      spawner: service("a".repeat(64)),
+      dashboard: service("b".repeat(64)),
+      missionControl: service("c".repeat(64), "3".repeat(40), "4".repeat(64)),
+      openClaw: service("d".repeat(64)),
+    };
+    const p2 = { ...p1, spawner: { ...p1.spawner, pid: 200, processStartTimeEpochMs: 2, processIdentityHash: "e".repeat(64) } };
+    const zeroHash = "5".repeat(64);
+    const authorizationHash = "6".repeat(64);
+    const authorization = {
+      schema: "setfarm.internal-production-baseline-service-restart-authorization.v1",
+      service: "setfarm-spawner",
+      preparedRuntimeSourceProjectionHash: "",
+      zeroOwnerGuardRef: `setfarm://internal-production/zero-owner-mutation-guard/sha256/${"7".repeat(64)}`,
+      zeroOwnerGuardHash: "7".repeat(64),
+      completeZeroOwnerCensusHash: zeroHash,
+      migrationReceiptRef: `setfarm://internal-production/baseline-bootstrap-handoff-migration-receipt/sha256/${"8".repeat(64)}`,
+      migrationReceiptHash: "8".repeat(64),
+      authorizationRef: `${"setfarm://internal-production/baseline-service-restart-authorization/sha256/"}${authorizationHash}`,
+      authorizationHash,
+    };
+    const reset = (after: unknown) => {
+      kernel.p4Reset();
+      Object.assign(globalThis as Record<string, unknown>, {
+        __p4Source: source,
+        __p4LiveCensus: p1,
+        __p4AfterCensus: after,
+        __p4RestartAcquireCalls: 0,
+        __p4RestartInvokeCalls: 0,
+        __p4RestartReleaseCalls: 0,
+        __p4Zero: { observationRef: "setfarm://tests/zero", observationHash: zeroHash },
+        __p4ZeroGuard: { completeZeroOwnerCensusObservationRef: "setfarm://tests/zero", completeZeroOwnerCensusObservationHash: zeroHash },
+      });
+      const projection = kernel.p4RuntimeProjection(p1);
+      authorization.preparedRuntimeSourceProjectionHash = projection.projectionHash;
+      (globalThis as Record<string, unknown>).__p4Authorization = recursivelyFreeze({ ...authorization });
+      kernel.p4Seed(kernel.p4ProjectionPath(projection.projectionHash), projection);
+      return projection;
+    };
+
+    const before = reset(p2);
+    const pair = await kernel.restartInternalProductionBaselineServiceV1({ authorizationRef: authorization.authorizationRef, authorizationHash });
+    const authority = await kernel.p4ReadAuthority(pair);
+    assert.equal(authority.before.projectionHash, before.projectionHash);
+    assert.equal(authority.restart.beforeGenerationHash, p1.spawner.processIdentityHash);
+    assert.equal(authority.restart.afterGenerationHash, p2.spawner.processIdentityHash);
+    assert.equal(authority.after.dashboardServiceIdentityHash, before.dashboardServiceIdentityHash);
+    assert.equal(authority.after.missionControlServiceIdentityHash, before.missionControlServiceIdentityHash);
+    assert.equal((globalThis as Record<string, unknown>).__p4RestartInvokeCalls, 1);
+
+    (globalThis as Record<string, unknown>).__p4AfterCensus = { ...p2, dashboard: { ...p2.dashboard, processIdentityHash: "0".repeat(64) } };
+    const adopted = await kernel.restartInternalProductionBaselineServiceV1({ authorizationRef: authorization.authorizationRef, authorizationHash });
+    assert.deepEqual(adopted, pair, "terminal locator adoption precedes any live reobservation on response loss");
+    assert.equal((globalThis as Record<string, unknown>).__p4RestartAcquireCalls, 1);
+    assert.equal((globalThis as Record<string, unknown>).__p4RestartInvokeCalls, 1);
+
+    reset(p1);
+    await assert.rejects(kernel.restartInternalProductionBaselineServiceV1({ authorizationRef: authorization.authorizationRef, authorizationHash }), /did not replace exactly the target physical process/);
+    reset({ ...p2, dashboard: { ...p2.dashboard, processIdentityHash: "0".repeat(64) } });
+    await assert.rejects(kernel.restartInternalProductionBaselineServiceV1({ authorizationRef: authorization.authorizationRef, authorizationHash }), /changed an unrelated service identity/);
+  } finally {
+    for (const key of ["__p4Source", "__p4LiveCensus", "__p4AfterCensus", "__p4RestartAcquireCalls", "__p4RestartInvokeCalls", "__p4RestartReleaseCalls", "__p4Zero", "__p4ZeroGuard", "__p4Authorization"]) Reflect.deleteProperty(globalThis, key);
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 normal restart refuses missing or drifted stored-before projection before helper dispatch", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-normal-projection-refusal-"));
+  try {
+    const fixtureModulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"));
+    seedPreSchemaHelperClosure(fixture);
+    const isolated = await import(`${pathToFileURL(fixtureModulePath).href}?projection-refusal=${Date.now()}`);
+    const lease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    const authorizationHash = "4".repeat(64);
+    const authorizationRef = `setfarm://internal-production/baseline-service-restart-authorization/sha256/${authorizationHash}`;
+    const operationBody = { schema: "setfarm.internal-production-baseline-service-restart-operation.v1", service: "setfarm-spawner", actionId: "a-restart-service-setfarm-spawner-v1", authorizationRef, authorizationHash };
+    const operationHash = sha256(canonical(operationBody));
+    const operationRef = `setfarm://internal-production/baseline-service-restart-operation/sha256/${operationHash}`;
+    const operation = recursivelyFreeze({ ...operationBody, operationRef, operationHash });
+    const outboxBody = { schema: "setfarm.internal-production-baseline-service-restart-launch-outbox.v1", service: operation.service, actionId: operation.actionId, authorizationRef, authorizationHash, operationRef, operationHash, maximumDispatchCount: 1 };
+    const outboxHash = sha256(canonical(outboxBody));
+    (globalThis as Record<string, unknown>).__p4BaselineOperation = operation;
+    (globalThis as Record<string, unknown>).__p4BaselineOutbox = recursivelyFreeze({ ...outboxBody, outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${outboxHash}`, outboxHash });
+    const restartOperation = { operationRef, operationHash };
+    const journalPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-journals/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
+    (globalThis as Record<string, unknown>).__p4PreparedProjectionMissing = true;
+    await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation }), /prepared runtime projection missing/);
+    assert.equal(existsSync(journalPath), false, "missing stored-before projection refuses before helper journal/dispatch");
+    Reflect.deleteProperty(globalThis, "__p4PreparedProjectionMissing");
+    (globalThis as Record<string, unknown>).__p4PreparedProjectionDrift = true;
+    await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation }), /prepared runtime projection drifted/);
+    assert.equal(existsSync(journalPath), false, "live P1 drift refuses before helper journal/dispatch");
+    Reflect.deleteProperty(globalThis, "__p4PreparedProjectionDrift");
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+  } finally {
+    Reflect.deleteProperty(globalThis, "__p4PreparedProjectionMissing");
+    Reflect.deleteProperty(globalThis, "__p4PreparedProjectionDrift");
     rmSync(fixture, { recursive: true, force: true });
   }
 });
@@ -703,6 +907,9 @@ test("P4 retirement invoke bridges held lease to empty helper", () => {
   assert.match(source, /shell:\s*false/);
   assert.match(source, /pre-schema-spawner-rebind-helper-settlement\/sha256\//);
   assert.match(source, /currentEntryOperation,\s*restartAuthority/s);
+  const fencePorts = /async function fencePortsV1\(\)[\s\S]*?\n}\n/.exec(source)?.[0] ?? "";
+  assert.match(fencePorts, /import\("\.\.\/db-pg\.js"\)/);
+  assert.doesNotMatch(fencePorts, /owner-admission-v1\.js/);
 });
 
 test("P4 baseline helper registry closes an indeterminate journal without redispatch", async () => {
@@ -808,6 +1015,15 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
     await assert.rejects(isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: secondRestartOperation }), /pinned predecessor changed/, "registry CAS refuses a foreign inode swapped after predecessor authentication");
     unlinkSync(registryCurrentPath); renameSync(registryPredecessorBackup, registryCurrentPath); Reflect.deleteProperty(globalThis, "__p4RegistryCasSwap");
     assert.deepEqual(await isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: secondRestartOperation }), { helperSettlementRef: secondSettlementRef, helperSettlementHash: secondSettlementHash });
+    const projectionReobservationsBeforeRetry = Number((globalThis as Record<string, unknown>).__p4ProjectionReobserveCount ?? 0);
+    (globalThis as Record<string, unknown>).__p4PreparedProjectionMissing = true;
+    assert.deepEqual(
+      await isolated.invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1(lease, { restartOperation: secondRestartOperation }),
+      { helperSettlementRef: secondSettlementRef, helperSettlementHash: secondSettlementHash },
+      "response-loss retry adopts the authenticated terminal before reopening the pre-dispatch projection",
+    );
+    assert.equal((globalThis as Record<string, unknown>).__p4ProjectionReobserveCount, projectionReobservationsBeforeRetry);
+    Reflect.deleteProperty(globalThis, "__p4PreparedProjectionMissing");
     const completedCensus = await isolated.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
     assert.deepEqual([completedCensus.registeredBaselineHelperJournalCount, completedCensus.terminalBaselineHelperJournalCount, completedCensus.liveBaselineHelperJournalCount, completedCensus.ambiguousBaselineHelperJournalCount], [2, 2, 0, 1]);
     const completedHead = await isolated.resolveInternalProductionBaselineServiceRestartHelperRegistryHeadV1({ headRef: completedCensus.helperJournalRegistryHeadRef, headHash: completedCensus.helperJournalRegistryHeadHash });

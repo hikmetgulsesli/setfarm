@@ -21,6 +21,8 @@ import {
   INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
+  INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1,
+  INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1,
   assembleInternalProductionOwnerProducerRegistryV1,
   createInternalProductionBoundOwnerReservationV1,
   createInternalProductionClaimCanonicalOwnerIdentityV1,
@@ -32,6 +34,15 @@ import {
   createInternalProductionOwnerReservationCloseV1,
   createInternalProductionOwnerReservationV1,
   createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1,
+  createInternalProductionSourceRunLaunchTargetFamilyV1,
+  createInternalProductionRecoveryRestartTargetFamilyV1,
+  createInternalProductionRecoveryRestartTargetSetCloseV1,
+  createInternalProductionServiceRestartTerminalCoreV1,
+  createInternalProductionGlobalOwnerAdmissionFenceV1,
+  createInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
+  createInternalProductionGlobalOwnerAdmissionFenceTransitionV1,
+  createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
+  createInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
   createInternalProductionTerminalOwnerAuthorityV1,
   createInternalProductionTerminationCanonicalOwnerIdentityV1,
   deriveInternalProductionTerminalOwnerAuthorityPairV1,
@@ -47,6 +58,16 @@ import {
   validateInternalProductionCanonicalOwnerIdentityV1,
   validateInternalProductionTerminalOwnerAuthorityPairV1,
   validateInternalProductionTerminalOwnerAuthorityV1,
+  validateInternalProductionSourceRunLaunchTargetFamilyV1,
+  validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1,
+  validateInternalProductionRecoveryRestartTargetFamilyV1,
+  validateInternalProductionRecoveryRestartTargetSetCloseV1,
+  validateInternalProductionServiceRestartTerminalCoreV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceTransitionV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
+  validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
   type InternalProductionCanonicalOwnerIdentityV1,
   type InternalProductionOwnerProducerManifestV1,
   type InternalProductionOwnerProducerRowV1,
@@ -91,6 +112,514 @@ async function loadP4Migration32TransactionKernelV1(dependencies: Readonly<{
 function assertCanonicalTerminationRequestId(requestId: string): void {
   assert.match(requestId, TERMINATION_REQUEST_ID_PATTERN);
 }
+
+test("P4 source run launch fence authorities are exact pure values", () => {
+  const [sourceRunProducer, runProducer] = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1.slice(-2);
+  assert.equal(sourceRunProducer?.module, "src/db-pg.ts");
+  assert.equal(runProducer?.module, "src/db-pg.ts");
+  const sourceRunReservation = createInternalProductionOwnerReservationV1({
+    producer: sourceRunProducer!,
+    ownerKey: canonicalJsonStringify({ schema: "setfarm.internal-production-recovery-source-run-owner-key.v1", pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: SHA_A }),
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+  });
+  const runReservation = createInternalProductionOwnerReservationV1({
+    producer: runProducer!,
+    ownerKey: canonicalJsonStringify({ schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1", pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: SHA_A }),
+    ownerAdmissionHeadPredecessorHash: SHA_A,
+  });
+  const targetRunLaunchCompositeHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-source-run-launch-target-composite.v1",
+    pendingInputRef: "setfarm://tests/p4/pending",
+    pendingInputHash: SHA_A,
+    sourceRunOwnerKeyHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-recovery-source-run-owner-key.v1",
+      pendingInputRef: "setfarm://tests/p4/pending",
+      pendingInputHash: SHA_A,
+    }),
+    runOwnerKeyHash: hashCanonicalJson({
+      schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+      pendingInputRef: "setfarm://tests/p4/pending",
+      pendingInputHash: SHA_A,
+    }),
+  });
+  const targetFamily = createInternalProductionSourceRunLaunchTargetFamilyV1({
+    sourceRunReservation,
+    runReservation,
+    targetRunLaunchCompositeHash,
+  });
+  assert.deepEqual(Reflect.ownKeys(targetFamily), [
+    "kind", "sourceRunReservation", "runReservation",
+    "targetRunLaunchCompositeHash", "targetFamilyHash",
+  ]);
+  assert.ok(Object.isFrozen(targetFamily));
+  assert.deepEqual(validateInternalProductionSourceRunLaunchTargetFamilyV1(structuredClone(targetFamily)), targetFamily);
+
+  const fence = createInternalProductionGlobalOwnerAdmissionFenceV1({
+    purpose: "recovery-d-source-delivery-v1",
+    pendingInputRef: "setfarm://tests/p4/pending",
+    pendingInputHash: SHA_A,
+    targetFamily,
+    observedUnrelatedReservationCount: 0,
+    observedUnrelatedOwnerCount: 0,
+    ownerIdentitySetHash: hashCanonicalJson([]),
+    predecessorFenceHeadHash: SHA_A,
+    ownerAdmissionHeadHash: SHA_B,
+  });
+  assert.equal(Reflect.ownKeys(fence).length, 15);
+  assert.equal(fence.fenceRef, `setfarm://internal-production/global-owner-admission-fence/sha256/${fence.fenceHash}`);
+  assert.deepEqual(validateInternalProductionGlobalOwnerAdmissionFenceV1(structuredClone(fence)), fence);
+
+  const pairClose = createInternalProductionSourceRunLaunchTargetReservationPairCloseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    targetRunLaunchCompositeHash,
+    sourceRunReservationRef: sourceRunReservation.reservationRef,
+    sourceRunReservationHash: sourceRunReservation.reservationHash,
+    runReservationRef: runReservation.reservationRef,
+    runReservationHash: runReservation.reservationHash,
+    terminalSourceRunRef: "setfarm://tests/p4/source-terminal",
+    terminalSourceRunHash: SHA_B,
+    terminalRunLaunchRef: "setfarm://tests/p4/run-terminal",
+    terminalRunLaunchHash: SHA_C,
+    ownerAdmissionHeadPredecessorHash: SHA_B,
+    ownerAdmissionHeadSuccessorHash: SHA_C,
+    preservedFenceRef: fence.fenceRef,
+    preservedFenceHash: fence.fenceHash,
+  });
+  assert.equal(Reflect.ownKeys(pairClose).length, 18);
+  assert.deepEqual(validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(structuredClone(pairClose)), pairClose);
+
+  const releaseAuthority = Object.freeze({
+    purpose: "recovery-d-source-delivery-v1" as const,
+    targetFamilyKind: "source-run-launch" as const,
+    terminalCoreRef: null,
+    terminalCoreHash: null,
+    targetSetCloseRef: null,
+    targetSetCloseHash: null,
+    occurrenceRef: null,
+    occurrenceHash: null,
+    headRef: null,
+    headHash: null,
+    targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef,
+    targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash,
+    purposeTerminalKind: null,
+    purposeTerminalRef: null,
+    purposeTerminalHash: null,
+  });
+  const release = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+    ownerAdmissionHeadPredecessorHash: SHA_C,
+    ownerAdmissionHeadSuccessorHash: SHA_A,
+  });
+  assert.deepEqual(Reflect.ownKeys(release), [
+    "schema", "fenceRef", "fenceHash", "releaseAuthority",
+    "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
+    "releaseRef", "releaseHash",
+  ]);
+  assert.deepEqual(validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(structuredClone(release)), release);
+
+  assert.throws(
+    () => validateInternalProductionGlobalOwnerAdmissionFenceV1({ ...fence, fenceHash: SHA_C }),
+    /FENCE_DERIVATION_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1({ ...pairClose, terminalRunLaunchHash: SHA_A }),
+    /PAIR_CLOSE_DERIVATION_INVALID/,
+  );
+  assert.throws(
+    () => validateInternalProductionSourceRunLaunchTargetFamilyV1({
+      ...targetFamily,
+      sourceRunReservation: {
+        ...targetFamily.sourceRunReservation,
+        reservationRef: `setfarm://tests/p4/reservations/${sourceRunReservation.reservationHash}`,
+      },
+    }),
+    /RESERVATION_IDENTITY_REF_INVALID/,
+  );
+  assert.throws(
+    () => createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+      fenceRef: fence.fenceRef,
+      fenceHash: fence.fenceHash,
+      releaseAuthority: {
+        ...releaseAuthority,
+        purpose: "golden-launch-operation-migration-release-v1",
+        targetFamilyKind: "none",
+      } as never,
+      ownerAdmissionHeadPredecessorHash: SHA_C,
+      ownerAdmissionHeadSuccessorHash: SHA_A,
+    }),
+    /RELEASE_AUTHORITY_BRANCH_INVALID/,
+  );
+});
+
+test("P4 recovery restart forward ABI is import-free and mutation-unavailable", async () => {
+  assert.equal(hashCanonicalJson(INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1), INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1);
+  assert.equal(INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1, "c3d88ba2dc7d9e70d773d0056d2fdeaced399f63adc7fd1c37eb423fa22d08d5");
+  assert.deepEqual(Object.keys(INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1), [
+    "schema", "restartReservation", "serviceRestartOperationReservation", "launchOutboxReservation",
+    "helperProcessReservation", "dispatchChildProcessReservation", "startupListenerReservation", "replacementProcessReservation",
+  ]);
+  const coordinator = validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1({
+    kind: "recovery-active-run",
+    coordinatorAuthorityRef: "setfarm://tests/p4/coordinator",
+    coordinatorAuthorityHash: SHA_A,
+    activeTargetAuthorityRef: "setfarm://tests/p4/active-target",
+    activeTargetAuthorityHash: SHA_B,
+  });
+  for (const kind of ["source-release-barrier", "cold-rehearsal", "documentation-handoff"] as const) {
+    const value = validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1({
+      kind,
+      coordinatorAuthorityRef: `setfarm://tests/p4/${kind}`,
+      coordinatorAuthorityHash: SHA_A,
+      activeTargetAuthorityRef: null,
+      activeTargetAuthorityHash: null,
+    });
+    assert.equal(value.kind, kind);
+  }
+  assert.throws(() => validateInternalProductionRecoveryRestartCoordinatorTargetAuthorityV1({ ...coordinator, kind: "cold-rehearsal" }), /COORDINATOR_TARGET_AUTHORITY/);
+  const identity = (key: Exclude<keyof typeof INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1, "schema">, ordinal: number) => {
+    const descriptor = INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_V1[key];
+    const reservationHash = String(ordinal).repeat(64);
+    return Object.freeze({ category: descriptor.category, producerImplementationId: descriptor.producerImplementationId, ownerKeyHash: SHA_C, reservationRef: `setfarm://internal-production/owner-reservations/${reservationHash}`, reservationHash });
+  };
+  const targetFamily = createInternalProductionRecoveryRestartTargetFamilyV1({
+    authorizationOperationRef: "setfarm://tests/p4/authorization-operation",
+    authorizationOperationHash: SHA_A,
+    namespace: "recovery-active-run",
+    service: "setfarm-spawner",
+    coordinationHash: SHA_B,
+    coordinatorTargetAuthority: coordinator,
+    restartReservation: identity("restartReservation", 1),
+    serviceRestartOperationReservation: identity("serviceRestartOperationReservation", 2),
+    launchOutboxReservation: identity("launchOutboxReservation", 3),
+    helperProcessReservation: identity("helperProcessReservation", 4),
+    dispatchChildProcessReservation: identity("dispatchChildProcessReservation", 5),
+    startupListenerReservation: identity("startupListenerReservation", 6),
+    replacementProcessReservation: identity("replacementProcessReservation", 7),
+  });
+  assert.deepEqual(validateInternalProductionRecoveryRestartTargetFamilyV1(structuredClone(targetFamily)), targetFamily);
+  assert.equal(targetFamily.targetFamilyAbiHash, INTERNAL_PRODUCTION_RECOVERY_RESTART_TARGET_FAMILY_ABI_HASH_V1);
+  const terminalCore = createInternalProductionServiceRestartTerminalCoreV1({
+    namespace: targetFamily.namespace, service: targetFamily.service, coordinationHash: targetFamily.coordinationHash,
+    authorizationOperationRef: targetFamily.authorizationOperationRef, authorizationOperationHash: targetFamily.authorizationOperationHash,
+    operationRef: "setfarm://tests/p4/restart-operation", operationHash: SHA_B,
+    authorizationConsumptionRef: "setfarm://tests/p4/authorization-consumption", authorizationConsumptionHash: SHA_C,
+    restartReservationRef: targetFamily.restartReservation.reservationRef, restartReservationHash: targetFamily.restartReservation.reservationHash,
+    serviceRestartOperationReservationRef: targetFamily.serviceRestartOperationReservation.reservationRef, serviceRestartOperationReservationHash: targetFamily.serviceRestartOperationReservation.reservationHash,
+    launchOutboxReservationRef: targetFamily.launchOutboxReservation.reservationRef, launchOutboxReservationHash: targetFamily.launchOutboxReservation.reservationHash,
+    helperProcessReservationRef: targetFamily.helperProcessReservation.reservationRef, helperProcessReservationHash: targetFamily.helperProcessReservation.reservationHash,
+    dispatchChildProcessReservationRef: targetFamily.dispatchChildProcessReservation.reservationRef, dispatchChildProcessReservationHash: targetFamily.dispatchChildProcessReservation.reservationHash,
+    startupListenerReservationRef: targetFamily.startupListenerReservation.reservationRef, startupListenerReservationHash: targetFamily.startupListenerReservation.reservationHash,
+    replacementProcessReservationRef: targetFamily.replacementProcessReservation.reservationRef, replacementProcessReservationHash: targetFamily.replacementProcessReservation.reservationHash,
+    terminalOwnerAuthorities: {
+      restartReservationTerminalOwnerRef: "setfarm://tests/p4/t1", restartReservationTerminalOwnerHash: SHA_A,
+      serviceRestartOperationTerminalOwnerRef: "setfarm://tests/p4/t2", serviceRestartOperationTerminalOwnerHash: SHA_A,
+      launchOutboxTerminalOwnerRef: "setfarm://tests/p4/t3", launchOutboxTerminalOwnerHash: SHA_A,
+      helperProcessTerminalOwnerRef: "setfarm://tests/p4/t4", helperProcessTerminalOwnerHash: SHA_A,
+      dispatchChildProcessTerminalOwnerRef: "setfarm://tests/p4/t5", dispatchChildProcessTerminalOwnerHash: SHA_A,
+      startupListenerTerminalOwnerRef: "setfarm://tests/p4/t6", startupListenerTerminalOwnerHash: SHA_A,
+      replacementProcessTerminalOwnerRef: "setfarm://tests/p4/t7", replacementProcessTerminalOwnerHash: SHA_A,
+    },
+    disposition: { kind: "complete", completionKind: "executed", afterGenerationHash: SHA_C, failureCode: null, exactProcessAbsenceAuthorityHash: null },
+    targetFamilyAbiHash: targetFamily.targetFamilyAbiHash, targetFamilyHash: targetFamily.targetFamilyHash,
+  });
+  assert.deepEqual(validateInternalProductionServiceRestartTerminalCoreV1(structuredClone(terminalCore)), terminalCore);
+  const close = createInternalProductionRecoveryRestartTargetSetCloseV1({
+    fenceRef: "setfarm://tests/p4/fence", fenceHash: SHA_A,
+    authorizationOperationRef: targetFamily.authorizationOperationRef, authorizationOperationHash: targetFamily.authorizationOperationHash,
+    restartReservationRef: targetFamily.restartReservation.reservationRef, restartReservationHash: targetFamily.restartReservation.reservationHash,
+    serviceRestartOperationReservationRef: targetFamily.serviceRestartOperationReservation.reservationRef, serviceRestartOperationReservationHash: targetFamily.serviceRestartOperationReservation.reservationHash,
+    launchOutboxReservationRef: targetFamily.launchOutboxReservation.reservationRef, launchOutboxReservationHash: targetFamily.launchOutboxReservation.reservationHash,
+    helperProcessReservationRef: targetFamily.helperProcessReservation.reservationRef, helperProcessReservationHash: targetFamily.helperProcessReservation.reservationHash,
+    dispatchChildProcessReservationRef: targetFamily.dispatchChildProcessReservation.reservationRef, dispatchChildProcessReservationHash: targetFamily.dispatchChildProcessReservation.reservationHash,
+    startupListenerReservationRef: targetFamily.startupListenerReservation.reservationRef, startupListenerReservationHash: targetFamily.startupListenerReservation.reservationHash,
+    replacementProcessReservationRef: targetFamily.replacementProcessReservation.reservationRef, replacementProcessReservationHash: targetFamily.replacementProcessReservation.reservationHash,
+    terminalCoreRef: terminalCore.terminalCoreRef, terminalCoreHash: terminalCore.terminalCoreHash,
+    targetFamilyAbiHash: targetFamily.targetFamilyAbiHash, targetFamilyHash: targetFamily.targetFamilyHash,
+    ownerAdmissionHeadPredecessorHash: SHA_A, ownerAdmissionHeadSuccessorHash: SHA_B,
+    preservedFenceRef: "setfarm://tests/p4/fence", preservedFenceHash: SHA_A,
+  });
+  assert.deepEqual(validateInternalProductionRecoveryRestartTargetSetCloseV1(structuredClone(close)), close);
+
+  const database = await import(`../../src/db-pg.ts?p4-recovery-restart-unavailable=${Date.now()}-${Math.random()}`) as Record<string, (...args: any[]) => Promise<unknown>>;
+  const databaseSource = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const acquire = database.acquireInternalProductionRecoveryRestartOwnerAdmissionFenceV1;
+  const closeTargets = database.closeInternalProductionRecoveryRestartTargetsUnderFenceV1;
+  const resolveClose = database.resolveInternalProductionRecoveryRestartTargetSetCloseV1;
+  assert.deepEqual([acquire.length, closeTargets.length, resolveClose.length], [1, 1, 1]);
+  for (const input of [undefined, {}, { namespace: "recovery-active-run" }, { ...targetFamily, purpose: "recovery-d-physical-service-restart-operation-v1" }]) await assert.rejects(acquire(input), /^Error: BARRIER_AUTHORITY_UNAVAILABLE$/);
+  await assert.rejects(closeTargets({ fenceRef: "setfarm://tests/p4/fence", fenceHash: SHA_A, terminalCoreRef: terminalCore.terminalCoreRef, terminalCoreHash: terminalCore.terminalCoreHash }), /^Error: BARRIER_AUTHORITY_UNAVAILABLE$/);
+  await assert.rejects(resolveClose({ targetSetCloseRef: close.targetSetCloseRef, targetSetCloseHash: close.targetSetCloseHash }), /^Error: BARRIER_AUTHORITY_UNAVAILABLE$/);
+  for (const name of ["acquireInternalProductionRecoveryRestartOwnerAdmissionFenceV1", "closeInternalProductionRecoveryRestartTargetsUnderFenceV1", "resolveInternalProductionRecoveryRestartTargetSetCloseV1"]) {
+    const start = databaseSource.indexOf(`export async function ${name}`);
+    const end = databaseSource.indexOf("\nexport async function ", start + 1);
+    const body = databaseSource.slice(start, end);
+    assert.ok(start >= 0 && end > start);
+    assert.match(body, /throw new Error\("BARRIER_AUTHORITY_UNAVAILABLE"\)/);
+    assert.doesNotMatch(body, /getSql|lockOwnerAdmissionHead|import\(|INSERT|UPDATE|DELETE|write|link|rename/);
+  }
+});
+
+test("P4 fence head transitions bind private authority without runtime seams", () => {
+  const targetFamilyHash = SHA_A;
+  const fenceTransition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+    purpose: "recovery-d-source-delivery-v1",
+    pendingInputRef: "setfarm://tests/p4/pending",
+    pendingInputHash: SHA_B,
+    targetFamilyHash,
+    ownerIdentitySetHash: hashCanonicalJson([]),
+  });
+  assert.deepEqual(Reflect.ownKeys(fenceTransition), [
+    "schema", "purpose", "pendingInputRef", "pendingInputHash",
+    "targetFamilyHash", "ownerIdentitySetHash", "transitionRef", "transitionHash",
+  ]);
+  assert.deepEqual(
+    validateInternalProductionGlobalOwnerAdmissionFenceTransitionV1(structuredClone(fenceTransition)),
+    fenceTransition,
+  );
+  const releaseAuthority = Object.freeze({
+    purpose: "recovery-d-source-delivery-v1" as const,
+    targetFamilyKind: "source-run-launch" as const,
+    terminalCoreRef: null,
+    terminalCoreHash: null,
+    targetSetCloseRef: null,
+    targetSetCloseHash: null,
+    occurrenceRef: null,
+    occurrenceHash: null,
+    headRef: null,
+    headHash: null,
+    targetReservationPairCloseRef: "setfarm://tests/p4/pair-close",
+    targetReservationPairCloseHash: SHA_C,
+    purposeTerminalKind: null,
+    purposeTerminalRef: null,
+    purposeTerminalHash: null,
+  });
+  const releaseTransition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+    fenceRef: "setfarm://tests/p4/fence",
+    fenceHash: SHA_A,
+    releaseAuthority,
+  });
+  assert.deepEqual(Reflect.ownKeys(releaseTransition), [
+    "schema", "fenceRef", "fenceHash", "releaseAuthority", "transitionRef", "transitionHash",
+  ]);
+  assert.deepEqual(
+    validateInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1(structuredClone(releaseTransition)),
+    releaseTransition,
+  );
+  for (const forbidden of [
+    "acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1",
+    "reobserveInternalProductionGlobalOwnerAdmissionFenceV1",
+    "closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1",
+    "releaseInternalProductionGlobalOwnerAdmissionFenceV1",
+    "resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1",
+    "reserveRecoverySourceRunOwnerV1",
+    "reserveRecoverySourceBootstrapRunOwnerV1",
+  ]) assert.equal(forbidden in ownerAdmissionApi, false, `${forbidden} must remain db-pg-owned/private`);
+});
+
+test("P4 db owns exact source run fence mutation ports", async () => {
+  const source = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const database = await import(`../../src/db-pg.ts?p4-fence-ports=${Date.now()}-${Math.random()}`);
+  const ports = [
+    "acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1",
+    "reobserveInternalProductionGlobalOwnerAdmissionFenceV1",
+    "closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1",
+    "releaseInternalProductionGlobalOwnerAdmissionFenceV1",
+    "resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1",
+  ] as const;
+  for (const name of ports) {
+    assert.equal(typeof database[name], "function", `${name} must be db-pg-owned`);
+    assert.equal(database[name].length, 1, `${name} has exact arity one`);
+  }
+  assert.match(source, /states\.every\(\(\{ state \}\) => state === "pending"\)[\s\S]*states\.every\(\(\{ state \}\) => state === "bound"\)[\s\S]*states\.every\(\(\{ state \}\) => state === "closed"\)/);
+  assert.match(source, /head\.hash !== pairClose\.ownerAdmissionHeadSuccessorHash/);
+  await assert.rejects(
+    database.acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1({
+      purpose: "recovery-d-source-delivery-v1",
+      pendingInputRef: "setfarm://tests/p4/pending",
+      pendingInputHash: SHA_A,
+      sourceRunOwnerKeyHash: SHA_B,
+    } as never),
+    /SOURCE_RUN_LAUNCH_FENCE_INPUT_KEYS_INVALID/,
+  );
+  await assert.rejects(
+    database.closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1({
+      fenceRef: "setfarm://tests/p4/fence",
+      fenceHash: SHA_A,
+    } as never),
+    /SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_KEYS_INVALID/,
+  );
+});
+
+test("P4 completion bootstrap head barrier serializes target mint and atomic release", async () => {
+  const source = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const runtime = readFileSync(new URL("../../src/execution/runtime-completion.ts", import.meta.url), "utf8");
+  const database = await import(`../../src/db-pg.ts?p4-bootstrap-head-barrier=${Date.now()}-${Math.random()}`);
+  assert.equal(typeof database.lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1, "function");
+  assert.equal(database.lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1.length, 2);
+  assert.equal(typeof database.lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1, "function");
+  assert.equal(database.lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1.length, 2);
+  await assert.rejects(database.lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1({} as never, { requestId: "x", extra: true } as never), /BOOTSTRAP_TARGET_LOCK_INPUT_INVALID/);
+  await assert.rejects(database.lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1({} as never, { requestId: "x", extra: true } as never), /BOOTSTRAP_RELEASE_LOCK_INPUT_INVALID/);
+  assert.match(source, /await observeInternalProductionCompletionBootstrapHeadBarrierV1\(sql\)/, "every owner-admission head lock performs the MVCC barrier read");
+  const barrier = source.slice(source.indexOf("async function observeInternalProductionCompletionBootstrapHeadBarrierV1"), source.indexOf("async function lockOwnerAdmissionHeadV1"));
+  assert.doesNotMatch(barrier, /FOR (?:SHARE|UPDATE)/, "the assertion is a plain MVCC read and never creates head-to-request lock inversion");
+  assert.match(barrier, /createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1/);
+  assert.match(barrier, /INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TERMINAL_OWNER_CORRUPTION/);
+  const guard = runtime.slice(runtime.indexOf("async function prepareInternalProductionBaselineCompletionOwnerBootstrapTargetGuardCoreV1"), runtime.indexOf("export async function authenticateInternalProductionBaselineCompletionOwnerBootstrapTargetGuardV1"));
+  assert.ok(guard.indexOf("lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1") < guard.indexOf("SELECT request_id,claim_id,run_id"), "target lock order is head then request");
+  const release = runtime.slice(runtime.indexOf("export async function recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1"), runtime.indexOf("export async function completeInternalProductionBaselineCompletionOwnerBootstrapForSequenceV1"));
+  assert.ok(release.indexOf("lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1") < release.indexOf("SELECT * FROM runtime_completion_requests WHERE request_id=$1 FOR UPDATE", release.indexOf('context.result.state === "owner_recovered"')), "release lock order is head then request");
+  assert.match(release, /releaseDrainedRuntimeSessionInTransaction[\s\S]*state='accepted'[\s\S]*closeInternalProductionOwnerReservationV1[\s\S]*state: "owner_released"[\s\S]*owner release result CAS/, "session release, acceptance, owner close/head and lifecycle successor remain one transaction");
+});
+
+test("P4 completion bootstrap barrier executes tagged-SQL target, ordinary, source, adoption, and release races", async () => {
+  const production = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const start = production.indexOf("type InternalProductionCompletionBootstrapHeadLockModeV1");
+  const end = production.indexOf("async function lockOwnerAdmissionHeadV1", start);
+  const targetEnd = production.indexOf("export async function lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1", end);
+  assert.ok(start >= 0 && end > start && targetEnd > end);
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-c2-barrier-"));
+  try {
+    const modulePath = path.join(fixture, "barrier.ts");
+    writeFileSync(modulePath, `
+import {createHash} from "node:crypto";
+type InternalProductionPgTransactionSql=any; type OwnerAdmissionHeadRowV1=any; type OwnerAdmissionMigrationApplicationV1=any;
+const OWNER_ADMISSION_SHA256_V1=/^[a-f0-9]{64}$/;
+const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
+const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
+const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
+const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
+const createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1=({requestId}:{requestId:string})=>Object.freeze({schema:"setfarm.internal-production-canonical-owner-identity.v1",category:"completion-owner",ownerKey:requestId,ownerRef:"setfarm://runtime-completion/"+requestId,ownerHash:hashCanonicalJson({schema:"setfarm.internal-production-completion-owner.v1",requestId})});
+const validateOwnerAdmissionMigrationApplicationV1=(value:any)=>value; const validateOwnerAdmissionAncestryToGenesisV1=async()=>[];
+const resolveOwnerReservationInTransactionV1=async()=>(globalThis as any).__p4BarrierReservation;
+${production.slice(start, end)}
+${production.slice(end, targetEnd)}
+export const p4Observe=observeInternalProductionCompletionBootstrapHeadBarrierV1;
+export const p4LockHead=lockOwnerAdmissionHeadV1;
+export const p4LockTarget=lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1;
+export async function p4ObserveWithContext(sql:any,context:any){internalProductionCompletionBootstrapHeadLockContextsV1.set(sql,context);try{return await observeInternalProductionCompletionBootstrapHeadBarrierV1(sql)}finally{internalProductionCompletionBootstrapHeadLockContextsV1.delete(sql)}}
+`, "utf8");
+    const kernel = await import(`${pathToFileURL(modulePath).href}?p4=${Date.now()}`) as any;
+    const requestId = "RCR_p4-barrier-request-0001";
+    const guardHash = "a".repeat(64);
+    const operationHash = "b".repeat(64);
+    const result = Object.freeze({
+      schema: "setfarm.internal-production-baseline-spawner-bootstrap-completion-result.v1",
+      state: "guard_prepared",
+      targetGuardReceiptRef: `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/${guardHash}`,
+      targetGuardReceiptHash: guardHash,
+      operationRef: null,
+      operationHash: null,
+      targetGuardConsumptionRef: null,
+      targetGuardConsumptionHash: null,
+      recoveredOwnerGenerationHash: null,
+      targetOwnerReleaseReceiptHash: null,
+      sequenceRef: null,
+      sequenceHash: null,
+    });
+    const identity = createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1({ requestId });
+    const ownerKeyHash = hashCanonicalJson({ schema: "setfarm.internal-production-owner-key.v1", ownerKeyDerivationId: "completion-request-id-v1", ownerKey: requestId });
+    const activeRow = Object.freeze({
+      request_id: requestId,
+      request_state: "processing",
+      apply_phase: "effects_committed",
+      runtime_session_state: "drained",
+      bootstrap_result: result,
+      bootstrap_state: "guard_prepared",
+      target_guard_receipt_ref: result.targetGuardReceiptRef,
+      target_guard_receipt_hash: result.targetGuardReceiptHash,
+      operation_ref: null,
+      operation_hash: null,
+      reservation_ref: "setfarm://tests/p4/completion-reservation",
+      reservation_hash: "c".repeat(64),
+      reservation_state: "bound",
+      producer_implementation_id: "a-completion-owner-v1",
+      owner_key: requestId,
+      owner_key_hash: ownerKeyHash,
+      reservation_payload: { ownerKey: requestId, ownerKeyHash },
+      canonical_owner_identity: identity,
+    });
+    (globalThis as any).__p4BarrierReservation = Object.freeze({
+      category: "completion-owner",
+      producerImplementationId: "a-completion-owner-v1",
+      ownerKey: requestId,
+      ownerKeyHash,
+      reservationRef: activeRow.reservation_ref,
+      reservationHash: activeRow.reservation_hash,
+    });
+    const headRow = Object.freeze({
+      head_version: "0",
+      head_hash: "0".repeat(64),
+      active_fence_ref: null,
+      active_fence_hash: null,
+      active_target_family_hash: null,
+      migration_application_evidence_hash: "9".repeat(64),
+      head_payload: { schema: "setfarm.internal-production-owner-admission-head.v1", version: 0, migrationApplication: { schema: "p4-migration" } },
+    });
+    let targetHoldsHead = false;
+    const targetAcquired = p4DeferredV1<void>();
+    const targetReleased = p4DeferredV1<void>();
+    let visibleBarrierRows: readonly unknown[] = [];
+    const productionSql = (role: "target" | "ordinary") => Object.assign(async (strings: TemplateStringsArray) => {
+      const query = strings.join(" ").replace(/\s+/g, " ");
+      if (query.includes("internal_production_owner_admission_head_v1") && query.includes("FOR UPDATE")) {
+        if (role === "target") { targetHoldsHead = true; targetAcquired.resolve(); }
+        else if (targetHoldsHead) await targetReleased.promise;
+        return [headRow];
+      }
+      if (query.includes("runtime_completion_requests request")) return visibleBarrierRows;
+      if (query.includes("category='completion-owner'") && query.includes("owner_key=")) return [{ reservation_ref: activeRow.reservation_ref, reservation_hash: activeRow.reservation_hash }];
+      if (query.includes("canonical_owner_identity") && query.includes("state='bound'")) return [{ canonical_owner_identity: identity, binding_payload: {} }];
+      if (query.includes("internal_production_owner_admission_authorities_v1")) return [];
+      throw new Error(`P4_UNEXPECTED_BARRIER_SQL:${query}`);
+    }, { unsafe: async () => { throw new Error("P4_UNEXPECTED_UNSAFE_SQL"); } });
+    const productionTargetSql = productionSql("target");
+    const productionOrdinarySql = productionSql("ordinary");
+    const targetLock = kernel.p4LockTarget(productionTargetSql, { requestId });
+    await targetAcquired.promise;
+    const ordinaryLock = kernel.p4LockHead(productionOrdinarySql).then(
+      () => { throw new Error("P4_ORDINARY_HEAD_LOCK_UNEXPECTED_SUCCESS"); },
+      (error: unknown) => error,
+    );
+    await Promise.resolve();
+    const targetProof = await targetLock;
+    assert.deepEqual(targetProof, { ownerAdmissionHeadVersion: 0, ownerAdmissionHeadHash: "0".repeat(64), targetOwnerReservationRef: activeRow.reservation_ref, targetOwnerReservationHash: activeRow.reservation_hash });
+    visibleBarrierRows = [activeRow];
+    targetHoldsHead = false;
+    targetReleased.resolve();
+    assert.match(String(await ordinaryLock), /OWNER_ADMISSION_COMPLETION_BOOTSTRAP_FENCED/, "ordinary producer observes the committed target only after the production head lock releases");
+    const taggedSql = (rows: readonly unknown[], gate?: Promise<void>) => Object.assign(async (_strings: TemplateStringsArray, ..._values: unknown[]) => { if (gate) await gate; return rows; }, { unsafe: async () => rows });
+    const deferred = p4DeferredV1<void>();
+    const targetSql = taggedSql([activeRow], deferred.promise);
+    let targetSettled = false;
+    const target = kernel.p4ObserveWithContext(targetSql, { mode: "target", requestId }).then(() => { targetSettled = true; });
+    await Promise.resolve();
+    assert.equal(targetSettled, false, "target waits behind the deferred head-lock observation");
+    deferred.resolve();
+    await target;
+    assert.equal(targetSettled, true);
+    for (const mode of ["ordinary", "source", "null-fence"]) {
+      await assert.rejects(kernel.p4Observe(taggedSql([activeRow])), /OWNER_ADMISSION_COMPLETION_BOOTSTRAP_FENCED/, `${mode} producer loses after target publication`);
+    }
+    await kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-completion-owner-v1" });
+    await assert.rejects(kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-runtime-run-v1" }), /TARGET_ADOPTION_CROSSED/);
+    const operationRef = `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${operationHash}`;
+    const releaseResult = { ...result, state: "owner_recovered", operationRef, operationHash, targetGuardConsumptionRef: `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-consumption/sha256/${"d".repeat(64)}`, targetGuardConsumptionHash: "d".repeat(64), recoveredOwnerGenerationHash: "e".repeat(64) };
+    const releaseRow = { ...activeRow, request_state: "accepted", runtime_session_state: "released", bootstrap_result: releaseResult, bootstrap_state: "owner_recovered", operation_ref: operationRef, operation_hash: operationHash };
+    const releaseContext = { mode: "release", requestId, targetGuardReceiptRef: result.targetGuardReceiptRef, targetGuardReceiptHash: guardHash, operationRef, operationHash };
+    await kernel.p4ObserveWithContext(taggedSql([releaseRow]), releaseContext);
+    await assert.rejects(kernel.p4ObserveWithContext(taggedSql([{ ...releaseRow, operation_hash: "f".repeat(64) }]), releaseContext), /RELEASE_CAUSAL_CHAIN_CROSSED/);
+    await kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "target", requestId });
+    for (const malformed of [{ ...activeRow, bootstrap_result: { ...result, extra: true } }, { ...activeRow, bootstrap_state: "unknown" }, { ...activeRow, reservation_payload: null }]) {
+      await assert.rejects(kernel.p4ObserveWithContext(taggedSql([malformed]), { mode: "target", requestId }), /CORRUPTION/);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test("P4 transaction handle locks exact v31 and hides tentative result", async () => {
   const [guarded, checksumModule, digests, v31] = await Promise.all([
@@ -571,6 +1100,7 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
   for (const locator of [
     "scripts/run-isolated-postgres-tests.ts",
     "src/db-pg.ts",
+    "src/internal-production/owner-admission-v1.ts",
     "tests/execution-attempts/test-database.ts",
     "tests/internal-production/owner-admission-v1.test.ts",
   ]) {
@@ -578,7 +1108,7 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
   }
   p3TestGit(root, ["config", "user.name", "Setfarm P3 Refusal Fixture"]);
   p3TestGit(root, ["config", "user.email", "setfarm-p3-refusal@invalid"]);
-  p3TestGit(root, ["add", "scripts/run-isolated-postgres-tests.ts", "src/db-pg.ts", "tests/execution-attempts/test-database.ts", "tests/internal-production/owner-admission-v1.test.ts"]);
+  p3TestGit(root, ["add", "scripts/run-isolated-postgres-tests.ts", "src/db-pg.ts", "src/internal-production/owner-admission-v1.ts", "tests/execution-attempts/test-database.ts", "tests/internal-production/owner-admission-v1.test.ts"]);
   if (p3TestGit(root, ["diff", "--cached", "--name-only"]) !== "") {
     p3TestGit(root, ["commit", "-qm", "P3 current-byte refusal fixture"]);
   }

@@ -1478,6 +1478,10 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
     if (priorTerminal.outcome === "ambiguous") fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
     return Object.freeze({ helperSettlementRef: priorTerminal.helperSettlementRef!, helperSettlementHash: priorTerminal.helperSettlementHash! });
   }
+  const receipt = await import("./baseline-post-handoff-receipt-v1.js") as Readonly<Record<string, unknown>>;
+  const reobservePreparedProjection = receipt.reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1;
+  if (typeof reobservePreparedProjection !== "function" || reobservePreparedProjection.length !== 1) fail("baseline restart prepared runtime projection port is unavailable");
+  await (reobservePreparedProjection as (input: unknown) => Promise<unknown>)({ authorizationRef: operation.authorizationRef, authorizationHash: operation.authorizationHash });
   const operationHash = restartOperation.operationHash!;
   const held = heldLease(lease);
   const currentLockIdentity = descriptorIdentity(held.descriptor);
@@ -1661,11 +1665,11 @@ type FencePortsV1 = Readonly<{
 }>;
 
 async function fencePortsV1(): Promise<FencePortsV1> {
-  const ownerAdmission = await import("./owner-admission-v1.js") as unknown as Record<string, unknown>;
-  const acquireFence = ownerAdmission.acquireInternalProductionGlobalOwnerAdmissionFenceV1;
-  const reobserveFence = ownerAdmission.reobserveInternalProductionGlobalOwnerAdmissionFenceV1;
-  const releaseFence = ownerAdmission.releaseInternalProductionGlobalOwnerAdmissionFenceV1;
-  const resolveRelease = ownerAdmission.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1;
+  const database = await import("../db-pg.js") as unknown as Record<string, unknown>;
+  const acquireFence = database.acquireInternalProductionGlobalOwnerAdmissionFenceV1;
+  const reobserveFence = database.reobserveInternalProductionGlobalOwnerAdmissionFenceV1;
+  const releaseFence = database.releaseInternalProductionGlobalOwnerAdmissionFenceV1;
+  const resolveRelease = database.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1;
   if (typeof acquireFence !== "function" || typeof reobserveFence !== "function" || typeof releaseFence !== "function" || typeof resolveRelease !== "function") fail("global owner-admission fence ports are unavailable");
   return Object.freeze({ acquireFence, reobserveFence, releaseFence, resolveRelease } as FencePortsV1);
 }
