@@ -872,7 +872,7 @@ const WORKFLOW_RUN_TERMINAL_STATUSES_V1 = Object.freeze([
 ] as const);
 type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[number];
 const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
-  "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
+  "470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db";
 const RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1 = "./internal-production/baseline-spawner-startup-admission-v1.js";
 const RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1 = Object.freeze([
   "observeInternalProductionPreSchemaSpawnerRebindStatusV1",

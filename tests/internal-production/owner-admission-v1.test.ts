@@ -7237,6 +7237,15 @@ test("freezes and hashes the exact sixteen A producer rows", () => {
   );
 });
 
+test("pins run persistence readiness to the exact current A manifest", async () => {
+  const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const matches = [...source.matchAll(/const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =\s*"([a-f0-9]{64})";/g)];
+  assert.equal(matches.length, 1);
+  const pinned = matches[0]![1];
+  assert.equal(pinned, "470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db");
+  assert.equal(pinned, INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash);
+});
+
 test("validates the stable source pair and schema-domain-separated activation chain", () => {
   assert.equal(INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1, hashCanonicalJson({
     schema: "setfarm.internal-production-owner-category-registry.v1",
