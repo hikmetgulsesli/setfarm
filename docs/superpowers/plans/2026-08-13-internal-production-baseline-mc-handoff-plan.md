@@ -7791,12 +7791,27 @@ git -C "$SETFARM_ROOT" merge-base --is-ancestor 1d691c89760339ea905dfe17f8e9188e
 require_authenticated_clean_main_setfarm_root_v1
 npm --prefix "$SETFARM_ROOT" run check:migration-digests
 require_authenticated_clean_main_setfarm_root_v1
-node --import tsx --test \
-  "$SETFARM_ROOT/tests/execution-attempts/operational-failure-cause-v3.test.ts" \
-  "$SETFARM_ROOT/tests/execution-attempts/operational-failure-cause-migration.test.ts" \
-  "$SETFARM_ROOT/tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts" \
-  "$SETFARM_ROOT/tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts" \
-  "$SETFARM_ROOT/tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts"
+: "${SETFARM_TEST_PG_ADMIN_URL:?isolated-test PostgreSQL admin URL is required}"
+test -z "${SETFARM_PG_URL:-}"
+readonly SETFARM_TEST_PG_ADMIN_URL
+A_TASK6A_STEP1_P3_FILES=(
+  tests/execution-attempts/operational-failure-cause-v3.test.ts
+  tests/execution-attempts/operational-failure-cause-migration.test.ts
+  tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts
+  tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts
+  tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts
+)
+for A_TASK6A_STEP1_P3_FILE in "${A_TASK6A_STEP1_P3_FILES[@]}"; do
+  require_authenticated_clean_main_setfarm_root_v1
+  (
+    cd "$SETFARM_ROOT"
+    env -u SETFARM_PG_URL \
+      SETFARM_TEST_PG_ADMIN_URL="$SETFARM_TEST_PG_ADMIN_URL" \
+      node --import tsx scripts/run-isolated-postgres-tests.ts -- \
+        node --import tsx --test --test-concurrency=1 \
+          "$A_TASK6A_STEP1_P3_FILE"
+  )
+done
 require_authenticated_clean_main_setfarm_root_v1
 A_PBA_DELIVERY_EVIDENCE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- observe-product-build-authority-v2-delivery-evidence --json)"
 A_PBA_DELIVERY_EVIDENCE_REF="$(printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_JSON" | jq -er '.deliveryEvidenceRef')"
