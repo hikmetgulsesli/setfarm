@@ -116,7 +116,66 @@ type Task12P0DeliveryConstantsV1 = Readonly<{
 }>;
 
 function task12P0DeliveryConstantsV1(): Task12P0DeliveryConstantsV1 {
-  return currentEntryFail("TASK12_P0_DELIVERY_CONSTANTS_UNFILLED");
+  return recursivelyFreeze({
+    deliveryCommitSha: "72aba7c721bffb42d3f5d7cab507360d4c588ccc",
+    deliveryTreeHash: "e72a466a4db2f55015ecd3a26936b87c89d43a0e",
+    orderedPathBlobs: [
+      { path: "package.json", blobHash: "371d381e6837b04dc533b7a70f3682d6235853e1" },
+      { path: "src/db-pg.ts", blobHash: "2d1fe1a9dbf786ee2b32a29cbdaa8db98583ec72" },
+      { path: "src/execution/run-persistence.ts", blobHash: "0d563d481dd7ce4824d0d73b2aa3ad0defb7d6c3" },
+      { path: "src/execution/run-terminal-transition.ts", blobHash: "4b5694b1acc7263ea7253306d0dd9a9eaf0bf1b3" },
+      { path: "src/installer/run.ts", blobHash: "7a3ea511cfa4802431ed5c22d5be7f5a0b0b3bfe" },
+      { path: "src/internal-production/owner-admission-v1.ts", blobHash: "f51859dd3a2fbefb79c14e011cc5647386610712" },
+      { path: "src/internal-production/baseline-post-handoff-receipt-v1.ts", blobHash: "e5aa3c53d5407ad3454e88094fd7b404d9468e43" },
+      { path: "src/internal-production/baseline-restart-authority-retirement-v1.ts", blobHash: "c1cf04d6e8fa124a972d87a50ff03cb973ddbf66" },
+      { path: "src/internal-production/baseline-post-handoff-cli.ts", blobHash: "f6b8ae085ec4f21aaba992fe008cccead8ff2f97" },
+      { path: "src/internal-production/baseline-spawner-startup-admission-v1.ts", blobHash: "8bf84adf743321e0dcddf1de84fae6c21eff590e" },
+      { path: "src/internal-production/baseline-service-restart-sequence-v1.ts", blobHash: "33d2cd3750650b0645aa6a58e623770dc0f441e4" },
+      { path: "src/execution/runtime-completion.ts", blobHash: "e6956fd9f705231d991538a7bc546e4d9b49a1ef" },
+      { path: "src/spawner.ts", blobHash: "f04ba9c5c1283b0cb79b58a012952950a34421a5" },
+      { path: "tests/internal-production/baseline-post-handoff-cli.test.ts", blobHash: "177992dff1f0f554b7026844f41f3823b003227b" },
+      { path: "tests/internal-production/owner-admission-v1.test.ts", blobHash: "18cfb10973e7212e42ac452830ae59eac0fc37cd" },
+      { path: "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts", blobHash: "a232b52eb999004b2d28bf9dcdc5cee9c4a6a86c" },
+      { path: "tests/internal-production/baseline-restart-authority-retirement-v1.test.ts", blobHash: "b468f5080d955306311a31a03c810bd1b712b26f" },
+      { path: "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts", blobHash: "a23c9b3ae853f36a97efd0523824aeb844ad5970" },
+      { path: "tests/internal-production/baseline-spawner-startup-admission-v1.test.ts", blobHash: "43c3a99b49efe6cd28cfe1ad8f0ac720a4f34495" },
+      { path: "tests/internal-production/baseline-service-restart-sequence-v1.test.ts", blobHash: "e717e08df2e237fd0d2cfc9cd3abf0678ce1a39f" },
+      { path: "tests/execution-attempts/runtime-completion.test.ts", blobHash: "09856184cca940a2e8afb44e5111ac75d3571cba" },
+      { path: "tests/execution-attempts/run-protocol.test.ts", blobHash: "c6a7e8050267cfef14b53e3348b0a6ba4602a0a8" },
+      { path: "tests/execution-attempts/run-terminal-transition.test.ts", blobHash: "175a7d7870597687eaac74b522edae22c6bf367b" },
+      { path: "tests/claim-log-lifecycle.test.ts", blobHash: "7d62803475e4acf06769bd0bbc623606a7ffc39b" },
+    ],
+    orderedCommands: [[
+      "env", "-u", "SETFARM_PG_URL", "-u", "SETFARM_TEST_PG_ADMIN_URL",
+      "node", "--import", "tsx", "--test", "--test-concurrency=1", "--test-name-pattern=^P4 ",
+      "tests/internal-production/baseline-post-handoff-cli.test.ts",
+      "tests/internal-production/owner-admission-v1.test.ts",
+      "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+      "tests/internal-production/baseline-restart-authority-retirement-v1.test.ts",
+      "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
+      "tests/internal-production/baseline-spawner-startup-admission-v1.test.ts",
+      "tests/internal-production/baseline-service-restart-sequence-v1.test.ts",
+      "tests/execution-attempts/runtime-completion.test.ts",
+      "tests/execution-attempts/run-protocol.test.ts",
+      "tests/execution-attempts/run-terminal-transition.test.ts",
+      "tests/claim-log-lifecycle.test.ts",
+    ]],
+    orderedTestPathBlobs: [
+      { path: "tests/internal-production/baseline-post-handoff-cli.test.ts", blobHash: "177992dff1f0f554b7026844f41f3823b003227b" },
+      { path: "tests/internal-production/owner-admission-v1.test.ts", blobHash: "18cfb10973e7212e42ac452830ae59eac0fc37cd" },
+      { path: "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts", blobHash: "a232b52eb999004b2d28bf9dcdc5cee9c4a6a86c" },
+      { path: "tests/internal-production/baseline-restart-authority-retirement-v1.test.ts", blobHash: "b468f5080d955306311a31a03c810bd1b712b26f" },
+      { path: "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts", blobHash: "a23c9b3ae853f36a97efd0523824aeb844ad5970" },
+      { path: "tests/internal-production/baseline-spawner-startup-admission-v1.test.ts", blobHash: "43c3a99b49efe6cd28cfe1ad8f0ac720a4f34495" },
+      { path: "tests/internal-production/baseline-service-restart-sequence-v1.test.ts", blobHash: "e717e08df2e237fd0d2cfc9cd3abf0678ce1a39f" },
+      { path: "tests/execution-attempts/runtime-completion.test.ts", blobHash: "09856184cca940a2e8afb44e5111ac75d3571cba" },
+      { path: "tests/execution-attempts/run-protocol.test.ts", blobHash: "c6a7e8050267cfef14b53e3348b0a6ba4602a0a8" },
+      { path: "tests/execution-attempts/run-terminal-transition.test.ts", blobHash: "175a7d7870597687eaac74b522edae22c6bf367b" },
+      { path: "tests/claim-log-lifecycle.test.ts", blobHash: "7d62803475e4acf06769bd0bbc623606a7ffc39b" },
+    ],
+    exitCode: 0,
+    passed: true,
+  });
 }
 
 export type InternalProductionRecoverySourceBootstrapPendingInputV1 = Readonly<{
@@ -967,7 +1026,7 @@ export async function observeCurrentInternalProductionBaselineTask12P0DeliveryAu
   if (gitLine(fixedRepositoryRoot(), ["rev-parse", `${constants.deliveryCommitSha}^{tree}`], "Task12 P0 delivery tree") !== constants.deliveryTreeHash) currentEntryFail("Task12 P0 delivery tree drifted");
   if (constants.orderedPathBlobs.length !== TASK12_P0_EXACT24_PATHS_V1.length || constants.orderedPathBlobs.some((entry, index) => entry.path !== TASK12_P0_EXACT24_PATHS_V1[index] || !FULL_HASH.test(entry.blobHash) || gitLine(fixedRepositoryRoot(), ["rev-parse", `${constants.deliveryCommitSha}:${entry.path}`], `Task12 P0 delivery blob ${entry.path}`) !== entry.blobHash)) currentEntryFail("Task12 P0 exact24 path/blob set drifted");
   const exact24PathBlobSetHash = hashCanonicalJson({ schema: "setfarm.internal-production-baseline-task12-p0-path-blob-set.v1", orderedPathBlobs: constants.orderedPathBlobs });
-  if (constants.orderedCommands.length !== 1 || canonicalComparable(constants.orderedCommands[0]) !== canonicalComparable(TASK12_P0_FOCUSED_COMMAND_V1) || constants.orderedTestPathBlobs.length !== TASK12_P0_FOCUSED_TEST_PATHS_V1.length || constants.orderedTestPathBlobs.some((entry, index) => entry.path !== TASK12_P0_FOCUSED_TEST_PATHS_V1[index] || !FULL_HASH.test(entry.blobHash) || constants.orderedPathBlobs.find((candidate) => candidate.path === entry.path)?.blobHash !== entry.blobHash)) currentEntryFail("Task12 P0 focused verification inputs drifted");
+  if (constants.orderedCommands.length !== 1 || canonicalComparable(constants.orderedCommands[0]) !== canonicalComparable(TASK12_P0_FOCUSED_COMMAND_V1) || constants.orderedTestPathBlobs.length !== TASK12_P0_FOCUSED_TEST_PATHS_V1.length || constants.orderedTestPathBlobs.some((entry, index) => entry.path !== TASK12_P0_FOCUSED_TEST_PATHS_V1[index] || !FULL_HASH.test(entry.blobHash) || constants.orderedPathBlobs.find((candidate) => candidate.path === entry.path)?.blobHash !== entry.blobHash) || constants.exitCode !== 0 || constants.passed !== true) currentEntryFail("Task12 P0 focused verification inputs drifted");
   const focusedBody = { schema: "setfarm.internal-production-baseline-task12-p0-focused-verification.v1", orderedCommands: constants.orderedCommands, orderedTestPathBlobs: constants.orderedTestPathBlobs, exact24PathBlobSetHash, exitCode: constants.exitCode, passed: constants.passed };
   const focusedVerificationHash = hashCanonicalJson(focusedBody);
   const body = { schema: "setfarm.internal-production-baseline-task12-p0-delivery-authority.v1" as const, deliveryCommitSha: constants.deliveryCommitSha, deliveryTreeHash: constants.deliveryTreeHash, deliveryAncestorOfCurrentSource: true as const, currentSourceSha: source.sha, currentSourceTreeHash: source.treeHash, currentSourceBuildHash: source.buildHash, exact24PathBlobSetHash, focusedVerificationHash };

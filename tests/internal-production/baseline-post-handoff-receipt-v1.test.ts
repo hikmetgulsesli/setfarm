@@ -28,6 +28,36 @@ const observerSource = path.join(sourceRoot, "src/internal-production/baseline-p
 const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-tests.ts");
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
+const TASK12_P0_DELIVERY_COMMIT_SHA = "72aba7c721bffb42d3f5d7cab507360d4c588ccc";
+const TASK12_P0_DELIVERY_TREE_HASH = "e72a466a4db2f55015ecd3a26936b87c89d43a0e";
+const TASK12_P0_EXACT24_PATH_BLOB_SET_HASH = "e36c683184b25ecbe10e03b2eecc839213847cb82dd871b221f0813386080bbf";
+const TASK12_P0_FOCUSED_VERIFICATION_HASH = "f54b4b6c56c4a908b5d6b57a05a86bef2bdf34e07b9bfd06ec47f7c5c72bd18a";
+const TASK12_P0_ORDERED_PATH_BLOBS = Object.freeze([
+  ["package.json", "371d381e6837b04dc533b7a70f3682d6235853e1"],
+  ["src/db-pg.ts", "2d1fe1a9dbf786ee2b32a29cbdaa8db98583ec72"],
+  ["src/execution/run-persistence.ts", "0d563d481dd7ce4824d0d73b2aa3ad0defb7d6c3"],
+  ["src/execution/run-terminal-transition.ts", "4b5694b1acc7263ea7253306d0dd9a9eaf0bf1b3"],
+  ["src/installer/run.ts", "7a3ea511cfa4802431ed5c22d5be7f5a0b0b3bfe"],
+  ["src/internal-production/owner-admission-v1.ts", "f51859dd3a2fbefb79c14e011cc5647386610712"],
+  ["src/internal-production/baseline-post-handoff-receipt-v1.ts", "e5aa3c53d5407ad3454e88094fd7b404d9468e43"],
+  ["src/internal-production/baseline-restart-authority-retirement-v1.ts", "c1cf04d6e8fa124a972d87a50ff03cb973ddbf66"],
+  ["src/internal-production/baseline-post-handoff-cli.ts", "f6b8ae085ec4f21aaba992fe008cccead8ff2f97"],
+  ["src/internal-production/baseline-spawner-startup-admission-v1.ts", "8bf84adf743321e0dcddf1de84fae6c21eff590e"],
+  ["src/internal-production/baseline-service-restart-sequence-v1.ts", "33d2cd3750650b0645aa6a58e623770dc0f441e4"],
+  ["src/execution/runtime-completion.ts", "e6956fd9f705231d991538a7bc546e4d9b49a1ef"],
+  ["src/spawner.ts", "f04ba9c5c1283b0cb79b58a012952950a34421a5"],
+  ["tests/internal-production/baseline-post-handoff-cli.test.ts", "177992dff1f0f554b7026844f41f3823b003227b"],
+  ["tests/internal-production/owner-admission-v1.test.ts", "18cfb10973e7212e42ac452830ae59eac0fc37cd"],
+  ["tests/internal-production/baseline-post-handoff-receipt-v1.test.ts", "a232b52eb999004b2d28bf9dcdc5cee9c4a6a86c"],
+  ["tests/internal-production/baseline-restart-authority-retirement-v1.test.ts", "b468f5080d955306311a31a03c810bd1b712b26f"],
+  ["tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts", "a23c9b3ae853f36a97efd0523824aeb844ad5970"],
+  ["tests/internal-production/baseline-spawner-startup-admission-v1.test.ts", "43c3a99b49efe6cd28cfe1ad8f0ac720a4f34495"],
+  ["tests/internal-production/baseline-service-restart-sequence-v1.test.ts", "e717e08df2e237fd0d2cfc9cd3abf0678ce1a39f"],
+  ["tests/execution-attempts/runtime-completion.test.ts", "09856184cca940a2e8afb44e5111ac75d3571cba"],
+  ["tests/execution-attempts/run-protocol.test.ts", "c6a7e8050267cfef14b53e3348b0a6ba4602a0a8"],
+  ["tests/execution-attempts/run-terminal-transition.test.ts", "175a7d7870597687eaac74b522edae22c6bf367b"],
+  ["tests/claim-log-lifecycle.test.ts", "7d62803475e4acf06769bd0bbc623606a7ffc39b"],
+] as const);
 const EXACT_SCRIPTS = Object.freeze({
   prebuild: "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
   build: "umask 077 && tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
@@ -499,7 +529,7 @@ async function loadDatabaseOnlyForIsolatedLifecycleTest<T>(
 }
 
 describe("OA17 zero-input current Setfarm source/build observation", () => {
-  it("P4 Task12 delivery authority is pair-resolved and fail closed until reviewed constants land", async () => {
+  it("P4 Task12 delivery authority authenticates the historical exact24 delivery from a clean descendant", async () => {
     const receipt = await import(
       `../../src/internal-production/baseline-post-handoff-receipt-v1.js?p4-delivery=${Date.now()}`
     );
@@ -509,14 +539,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.equal(receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1.length, 1);
     await assert.rejects(
       receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1(),
-      /DELIVERY_CONSTANTS_UNFILLED/,
-    );
-    await assert.rejects(
-      receipt.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1({
-        deliveryAuthorityRef: `setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/${"a".repeat(64)}`,
-        deliveryAuthorityHash: "a".repeat(64),
-      }),
-      /ENOENT|not found|missing/i,
+      /INTERNAL_PRODUCTION|DELIVERY_CONSTANTS_UNFILLED|clean|build|dirty/i,
+      "the dirty feature worktree is not allowed to impersonate the clean delivered main fixture",
     );
 
     const source = readFileSync(observerSource, "utf8");
@@ -526,6 +550,125 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.match(source, /setfarm\.internal-production-baseline-task12-p0-focused-verification\.v1/);
     assert.match(source, /--test-name-pattern=\^P4 /);
     assert.doesNotMatch(source, /process\.env\.[A-Z0-9_]*TASK12.*DELIVERY/i);
+
+    const root = createFixture();
+    try {
+      const fixtureObserverPath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const fixtureBaseCommit = git(root, ["rev-parse", "HEAD"]);
+      let fixtureSource = readFileSync(fixtureObserverPath, "utf8");
+      fixtureSource = fixtureSource.replace(
+        "  const constants = task12P0DeliveryConstantsV1();",
+        "  let constants = task12P0DeliveryConstantsV1();\n  const p4Tamper = Reflect.get(globalThis, '__p4Task12DeliveryConstantsTamper');\n  if (typeof p4Tamper === 'function') constants = (p4Tamper as (value: Task12P0DeliveryConstantsV1) => Task12P0DeliveryConstantsV1)(constants);",
+      );
+      assert.notEqual(fixtureSource, readFileSync(fixtureObserverPath, "utf8"));
+      writeFileSync(fixtureObserverPath, fixtureSource);
+      const sourceObjects = realpathSync(git(sourceRoot, ["rev-parse", "--git-path", "objects"]));
+      fixtureFile(root, ".git/objects/info/alternates", `${sourceObjects}\n`);
+      git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      const constantsTree = git(root, ["write-tree"]);
+      const constantsCommit = execFileSync(
+        "/usr/bin/git",
+        ["commit-tree", constantsTree, "-p", TASK12_P0_DELIVERY_COMMIT_SHA, "-m", "fixture Task12 constants fill"],
+        { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      ).trim();
+      git(root, ["update-ref", "refs/heads/main", constantsCommit]);
+      git(root, ["update-ref", "refs/remotes/origin/main", constantsCommit]);
+      assert.equal(git(root, ["rev-parse", "HEAD"]), constantsCommit);
+      assert.equal(git(root, ["status", "--porcelain"]), "");
+      assert.equal(git(root, ["rev-parse", `${TASK12_P0_DELIVERY_COMMIT_SHA}^{tree}`]), TASK12_P0_DELIVERY_TREE_HASH);
+      for (const [locator, blobHash] of TASK12_P0_ORDERED_PATH_BLOBS) {
+        assert.equal(git(root, ["rev-parse", `${TASK12_P0_DELIVERY_COMMIT_SHA}:${locator}`]), blobHash, locator);
+      }
+      const prepared = runProducer(root, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      materializeOutputs(root);
+      const finalized = runProducer(root, "--finalize");
+      assert.equal(finalized.status, 0, finalized.stderr);
+
+      const success = runFixtureExpression(root, `(async()=>{const first=await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1();const second=await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1();const resolved=await m.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1({deliveryAuthorityRef:first.deliveryAuthorityRef,deliveryAuthorityHash:first.deliveryAuthorityHash});process.stdout.write(JSON.stringify({first,second,resolved}))})()`);
+      assert.equal(success.status, 0, success.stderr);
+      const observed = JSON.parse(success.stdout) as Readonly<{ first: Record<string, unknown>; second: Record<string, unknown>; resolved: Record<string, unknown> }>;
+      assert.deepEqual(observed.second, observed.first, "response-loss adoption returns the exact first authority");
+      assert.deepEqual(observed.resolved, observed.first, "the published authority is pair-resolvable");
+      assert.equal(observed.first.deliveryCommitSha, TASK12_P0_DELIVERY_COMMIT_SHA);
+      assert.equal(observed.first.deliveryTreeHash, TASK12_P0_DELIVERY_TREE_HASH);
+      assert.equal(observed.first.currentSourceSha, constantsCommit);
+      assert.equal(observed.first.currentSourceTreeHash, constantsTree);
+      assert.equal(observed.first.exact24PathBlobSetHash, TASK12_P0_EXACT24_PATH_BLOB_SET_HASH);
+      assert.equal(observed.first.focusedVerificationHash, TASK12_P0_FOCUSED_VERIFICATION_HASH);
+      assert.match(String(observed.first.currentSourceBuildHash), /^[0-9a-f]{64}$/);
+      const authorityHash = String(observed.first.deliveryAuthorityHash);
+      const authorityRef = String(observed.first.deliveryAuthorityRef);
+      const authorityPath = path.join(root, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", authorityHash.slice(0, 2), `${authorityHash}.json`);
+      const authorityBytes = readFileSync(authorityPath);
+      const authority = JSON.parse(authorityBytes.toString("utf8")) as Record<string, unknown>;
+      assert.equal(lstatSync(authorityPath, { bigint: true }).nlink, 1n);
+      assert.equal(Number(lstatSync(authorityPath, { bigint: true }).mode & 0o7777n), 0o600);
+
+      const tamperCases = Object.freeze([
+        ["command trailing space", `(value)=>({...value,orderedCommands:[[...value.orderedCommands[0].slice(0,-1),value.orderedCommands[0].at(-1)+' ']]})`],
+        ["command order", `(value)=>({...value,orderedCommands:[[value.orderedCommands[0][1],value.orderedCommands[0][0],...value.orderedCommands[0].slice(2)]]})`],
+        ["historical path", `(value)=>({...value,orderedPathBlobs:value.orderedPathBlobs.map((entry,index)=>index===0?{...entry,path:'package-lock.json'}:entry)})`],
+        ["historical blob", `(value)=>({...value,orderedPathBlobs:value.orderedPathBlobs.map((entry,index)=>index===0?{...entry,blobHash:'0'.repeat(40)}:entry)})`],
+        ["focused path", `(value)=>({...value,orderedTestPathBlobs:value.orderedTestPathBlobs.map((entry,index)=>index===0?{...entry,path:'tests/not-authorized.test.ts'}:entry)})`],
+        ["focused blob", `(value)=>({...value,orderedTestPathBlobs:value.orderedTestPathBlobs.map((entry,index)=>index===0?{...entry,blobHash:'0'.repeat(40)}:entry)})`],
+        ["exit code", `(value)=>({...value,exitCode:1})`],
+        ["pass bit", `(value)=>({...value,passed:false})`],
+        ["delivery tree", `(value)=>({...value,deliveryTreeHash:'0'.repeat(40)})`],
+        ["delivery ancestry", `(value)=>({...value,deliveryCommitSha:${JSON.stringify(fixtureBaseCommit)}})`],
+      ] as const);
+      const deliveryDirectory = path.dirname(authorityPath);
+      const initialAuthorityMembers = readdirSync(deliveryDirectory).sort();
+      for (const [label, mutator] of tamperCases) {
+        const result = runFixtureExpression(root, `(async()=>{globalThis.__p4Task12DeliveryConstantsTamper=${mutator};try{await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1()}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_DELIVERY_TAMPER_REJECTION')})()`);
+        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+        assert.match(result.stdout, /Task12 P0|Git command failed|delivery/i, label);
+        assert.deepEqual(readdirSync(deliveryDirectory).sort(), initialAuthorityMembers, `${label} publishes no new authority bytes`);
+      }
+
+      git(root, ["update-ref", "refs/remotes/origin/main", TASK12_P0_DELIVERY_COMMIT_SHA]);
+      const crossedOrigin = runFixtureExpression(root, `(async()=>{try{await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1()}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_ORIGIN_REJECTION')})()`);
+      assert.equal(crossedOrigin.status, 0, crossedOrigin.stderr);
+      assert.match(crossedOrigin.stdout, /origin|synchronized|source/i);
+      git(root, ["update-ref", "refs/remotes/origin/main", constantsCommit]);
+
+      const buildInfoPath = path.join(root, "dist/BUILD_INFO.json");
+      const buildInfoBytes = readFileSync(buildInfoPath);
+      chmodSync(buildInfoPath, 0o600);
+      writeFileSync(buildInfoPath, Buffer.concat([buildInfoBytes, Buffer.from(" ")]));
+      chmodSync(buildInfoPath, 0o444);
+      const crossedBuild = runFixtureExpression(root, `(async()=>{try{await m.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1()}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_BUILD_REJECTION')})()`);
+      assert.equal(crossedBuild.status, 0, crossedBuild.stderr);
+      assert.match(crossedBuild.stdout, /build|artifact|JSON|bytes/i);
+      chmodSync(buildInfoPath, 0o600);
+      writeFileSync(buildInfoPath, buildInfoBytes);
+      chmodSync(buildInfoPath, 0o444);
+
+      const resolve = () => runFixtureExpression(root, `(async()=>{try{await m.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1(${JSON.stringify({ deliveryAuthorityRef: authorityRef, deliveryAuthorityHash: authorityHash })})}catch(error){process.stdout.write(String(error));return}throw new Error('EXPECTED_RESOLVER_TAMPER_REJECTION')})()`);
+      for (const [label, changed] of [
+        ["ref", { ...authority, deliveryAuthorityRef: `setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/${"0".repeat(64)}` }],
+        ["hash", { ...authority, deliveryAuthorityHash: "0".repeat(64) }],
+      ] as const) {
+        writeFileSync(authorityPath, `${canonical(changed)}\n`, { mode: 0o600 });
+        const result = resolve();
+        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+        assert.match(result.stdout, /crossed|pair|authority/i, label);
+        writeFileSync(authorityPath, authorityBytes, { mode: 0o600 });
+      }
+      chmodSync(authorityPath, 0o4600);
+      const specialMode = resolve();
+      assert.equal(specialMode.status, 0, specialMode.stderr);
+      assert.match(specialMode.stdout, /inode|mode|record/i);
+      chmodSync(authorityPath, 0o600);
+      const alias = `${authorityPath}.alias`;
+      linkSync(authorityPath, alias);
+      const crossedLink = resolve();
+      assert.equal(crossedLink.status, 0, crossedLink.stderr);
+      assert.match(crossedLink.stdout, /inode|link|record/i);
+      unlinkSync(alias);
+    } finally {
+      removeFixture(root);
+    }
   });
 
   it("P4 Task12 public resolvers reject special-bit records and insecure store ancestors", () => {
