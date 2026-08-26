@@ -1608,6 +1608,7 @@ async function observeInternalProductionCompletionBootstrapHeadBarrierV1(
     return;
   }
   if (context.mode === "ordinary-target-adoption") {
+    if (active.length === 0) return;
     if (context.producerImplementationId !== "a-completion-owner-v1" || active.length !== 1 || active[0]!.request_id !== context.requestId) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TARGET_ADOPTION_CROSSED");
     return;
   }

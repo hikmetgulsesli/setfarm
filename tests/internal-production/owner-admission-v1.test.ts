@@ -604,6 +604,11 @@ export async function p4ObserveWithContext(sql:any,context:any){internalProducti
     for (const mode of ["ordinary", "source", "null-fence"]) {
       await assert.rejects(kernel.p4Observe(taggedSql([activeRow])), /OWNER_ADMISSION_COMPLETION_BOOTSTRAP_FENCED/, `${mode} producer loses after target publication`);
     }
+    await kernel.p4ObserveWithContext(taggedSql([]), {
+      mode: "ordinary-target-adoption",
+      requestId: "ordinary-run-with-no-bootstrap-barrier",
+      producerImplementationId: "a-runtime-run-v1",
+    });
     await kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-completion-owner-v1" });
     await assert.rejects(kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-runtime-run-v1" }), /TARGET_ADOPTION_CROSSED/);
     const operationRef = `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${operationHash}`;
