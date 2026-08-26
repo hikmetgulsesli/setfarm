@@ -37,7 +37,7 @@ test("restart sequence exposes the fixed public surface", async () => {
     mkdirSync(internal, { recursive: true });
     const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
     writeFileSync(modulePath, readFileSync(sourcePath, "utf8"));
-    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){throw new Error("absent status must not observe source")}\n`);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `throw new Error("receipt module imported eagerly");\nexport function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){throw new Error("absent status must not observe source")}\n`);
     writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), `export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return Object.freeze({})}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}\nexport async function observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1(){return Object.freeze({state:"baseline-a-active",operation:null,cutover:null})}\n`);
     const isolated = await import(`${pathToFileURL(modulePath).href}?surface=${Date.now()}`);
     for (const intentKind of ["live-rebind", "d-startup-hook-load", "documentation-rollback"] as const) {
@@ -93,6 +93,8 @@ export async function invokeInternalProductionBaselineServiceRestartHelperUnderT
 
 test("P4 restart sequence resumes every durable prefix", async () => {
   const source = readFileSync(sourcePath, "utf8");
+  assert.doesNotMatch(source, /^import[\s\S]*?from "\.\/baseline-post-handoff-receipt-v1\.js";/m, "sequence has no eager receipt-module edge");
+  assert.match(source, /await import\("\.\/baseline-post-handoff-receipt-v1\.js"\)/, "receipt authority is loaded only at an invoked function-local boundary");
   const compositePublicationAnchor = "if (!storedAuthority) publish(operationLocatorPath(intentKind, ordinal), authorityPair);";
   const crashableSource = source.replace(compositePublicationAnchor, `${compositePublicationAnchor}\n      if ((globalThis as Record<string, unknown>).__p4CrashAfterComposite && !(globalThis as Record<string, unknown>).__p4CompositeCrashed) { (globalThis as Record<string, unknown>).__p4CompositeCrashed = true; throw new Error("P4_AFTER_COMPOSITE_CRASH"); }`);
   assert.notEqual(crashableSource, source, "composite crash fixture instruments the exact post-publication boundary");

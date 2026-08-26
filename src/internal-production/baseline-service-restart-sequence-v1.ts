@@ -17,9 +17,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  observeCurrentInternalProductionCleanSetfarmSourceBuildV1,
-} from "./baseline-post-handoff-receipt-v1.js";
 
 type Sha256V1 = string;
 type CanonicalRef = string;
@@ -106,6 +103,15 @@ function canonical(value: unknown): string {
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function observeCurrentCleanSetfarmSourceBuildV1(): Promise<Readonly<Record<string, unknown>>> {
+  const module = await import("./baseline-post-handoff-receipt-v1.js") as Readonly<Record<string, unknown>>;
+  const observe = module.observeCurrentInternalProductionCleanSetfarmSourceBuildV1;
+  if (typeof observe !== "function" || observe.length !== 0) fail("clean Setfarm source/build observer is unavailable");
+  const value = await (observe as () => unknown | Promise<unknown>)();
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) fail("clean Setfarm source/build observation is invalid");
+  return value as Readonly<Record<string, unknown>>;
 }
 
 function sequenceStatusV1<T extends Readonly<Record<string, unknown>>>(body: T): InternalProductionBaselineRestartSequenceStatusV1 {
@@ -591,7 +597,7 @@ async function resolveExactTerminalMigrationReceiptV1(): Promise<TerminalMigrati
     if (key.endsWith("Hash") && typeof value === "string" && !SHA256.test(value) && key !== "migrationImplementationBlobHash") fail(`terminal migration receipt ${key} is invalid`);
     if (key.endsWith("Ref") && (typeof value !== "string" || !REF.test(value))) fail(`terminal migration receipt ${key} is invalid`);
   }
-  const currentSource = observeCurrentInternalProductionCleanSetfarmSourceBuildV1() as unknown as Readonly<Record<string, unknown>>;
+  const currentSource = await observeCurrentCleanSetfarmSourceBuildV1();
   assertCurrentSourceDescendsFromMigration(currentSource, receipt.migrationSourceSha as string);
   return recursivelyFreeze(receipt as TerminalMigrationReceiptV1);
 }
@@ -605,7 +611,7 @@ async function assertReviewedDStartupHookLoadGateV1(): Promise<void> {
   for (const key of ["setfarmSourceSha", "missionControlSourceSha"] as const) if (typeof sourceGate[key] !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sourceGate[key] as string)) fail(`reviewed D ${key} is invalid`);
   for (const key of ["setfarmBuildHash", "missionControlBuildHash", "recoveryProducerManifestActivationHash", "missionControlHandoffHash"] as const) if (typeof sourceGate[key] !== "string" || !SHA256.test(sourceGate[key] as string)) fail(`reviewed D ${key} is invalid`);
   if (sourceGate.recoveryProducerManifestActivationRef !== `setfarm://internal-production/recovery-owner-producer-manifest-activation/sha256/${sourceGate.recoveryProducerManifestActivationHash}` || sourceGate.missionControlHandoffRef !== `setfarm://internal-production/recovery-mission-control-source-handoff/sha256/${sourceGate.missionControlHandoffHash}`) fail("reviewed D activation/handoff pair is crossed");
-  const currentSource = observeCurrentInternalProductionCleanSetfarmSourceBuildV1() as unknown as Readonly<Record<string, unknown>>;
+  const currentSource = await observeCurrentCleanSetfarmSourceBuildV1();
   if ((currentSource.sha ?? currentSource.sourceSha) !== sourceGate.setfarmSourceSha || (currentSource.buildHash ?? currentSource.cleanSetfarmBuildHash) !== sourceGate.setfarmBuildHash) fail("reviewed D Setfarm source/build is not current");
   const loaded = await observeRuntimeProjectionV1();
   if (loaded.setfarmSha !== sourceGate.setfarmSourceSha || loaded.setfarmBuildInfoHash !== sourceGate.setfarmBuildHash || loaded.missionControlSha !== sourceGate.missionControlSourceSha || loaded.missionControlBuildHash !== sourceGate.missionControlBuildHash) fail("reviewed D Setfarm/Mission Control source-build gate is not loaded");
@@ -650,7 +656,7 @@ async function observeRuntimeProjectionV1(): Promise<RuntimeProjectionV1> {
   const spawner = service(census.spawner, "spawner");
   const dashboard = service(census.dashboard, "dashboard");
   const missionControl = service(census.missionControl, "mission-control");
-  const clean = observeCurrentInternalProductionCleanSetfarmSourceBuildV1() as unknown as Readonly<Record<string, unknown>>;
+  const clean = await observeCurrentCleanSetfarmSourceBuildV1();
   const setfarmSha = clean.sha ?? clean.sourceSha;
   const setfarmBuildInfoHash = clean.buildHash ?? clean.cleanSetfarmBuildHash;
   if (spawner.loadedSourceSha !== setfarmSha || dashboard.loadedSourceSha !== setfarmSha || spawner.loadedBuildHash !== setfarmBuildInfoHash || dashboard.loadedBuildHash !== setfarmBuildInfoHash) fail("loaded Setfarm source/build projection is crossed");
