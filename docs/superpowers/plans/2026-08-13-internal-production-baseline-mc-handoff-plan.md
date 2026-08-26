@@ -5130,9 +5130,130 @@ export type InternalProductionServiceRestartCutoverReadinessCandidateV1 = Readon
 
 The gate has exactly ten own enumerable string keys in the shown order. It is the strict combined Setfarm/Mission Control reviewed-source projection: the first observer freshly pair-resolves D's exact `A+B+C+D` producer-manifest activation receipt/head to derive current reviewed Setfarm source/build, invokes the D current Mission Control observer above to derive current reviewed Mission Control source/build, and returns those four identities with the activation and Mission Control handoff pairs. `recoveryProducerManifestActivationRef/recoveryProducerManifestActivationHash` are exactly the D terminal activation receipt's top-level `receiptRef/receiptHash`, never its nested successor head pair; resolving that receipt recursively authenticates its exact successor activation/head. There is no second Setfarm source-handoff port or receipt. The candidate has exactly twenty-seven own enumerable string keys in the shown order and is byte-identical to the readiness body before the derived `startupHooksReadyRef/startupHooksReadyHash` pair is appended. The second freshly reopens that exact gate and the same D activation receipt/head, plus the terminal migration-32 receipt, A epoch-one head, exact seven-entry D forward implementation registry, the three current startup-hook observations, runtime source projection, and D's still-disabled prepare state; every candidate source/build must equal the gate. Immediately before readiness publication and again immediately before the epoch visibility CAS, retirement freshly reopens the ten-key gate and the same activation receipt/head and requires byte equality plus exact equality with the candidate's four source/build members. Only A retirement may turn that unchanged exact candidate into `InternalProductionServiceRestartStartupHooksReadyV1` by deriving and appending its readiness pair; only A retirement may write readiness, retirement, activation, cutover, or epoch-two bytes.
 
-The only dependency chain is an invoked Task 11 retirement/sequence operation → Task 12 receipt-owned observers → a function-local dynamic import of D's exact observer. Task 11 never statically or dynamically imports a D module. The seven-entry forward registry remains entirely import-free; the separately audited receipt-owned D observer is the sole allowed lazy D edge. The D module or export being absent before D delivery, a missing fixed terminal locator, any unresolved/tampered/crossed receipt, unreviewed or unresolved finding, non-main/dirty/non-origin current Mission Control source, source/tree/build drift, missing D manifest activation, incomplete hook census, or enabled D prepare fails read-only before sequence intent, restart operation, reservation, outbox, helper, dispatch, readiness, cutover, or epoch mutation. There is no callback, registration, eager import, fallback, caller pair/path/root/environment/source/build/readiness body, or general/public caller-controlled writer seam. Task 11 therefore remains exact29/P4 source scope and can deliver its normal A restart machinery while `d-startup-hook-load` remains typed unavailable until Task 12 supplies the receipt bridge and D later supplies the reviewed terminal evidence.
+Task 12's same receipt module also solely owns the generic zero-owner mutation guard producer/resolver and the one dedicated physical-cutover consumption protocol. This exact ABI supersedes every earlier pre-manifest guard assumption:
 
-The exact P4 RED/GREEN matrix covers: (1) exact29/109 and plan/spec byte parity; (2) handle exposure only after exact applied-v31 row lock and rollback on absent, adopted, wrong-name, wrong-checksum, or wrong-state v31; (3) final zero reobservation and authorization consumption after the lock, with nonzero/drift/crossed-pair refusal before DDL; (4) clone, cross-process, illegal phase, repeated operation, and non-controller caller refusal; (5) private `Sql.begin` versus `TransactionSql.savepoint` dispatch with no exported SQL/callback/generic migration seam; (6) stage-result and receipt/current-audit invisibility before acknowledged outer commit; (7) callback throw, abort, process death, commit rejection, and backend loss with zero migration-32/schema/head residue and same-exact durable-consumption recovery; (8) one atomic successful migration journal/application-provenance/schema/head result; (9) ordinary and V3 publishers blocked on v31 and then failing at owner-head/admission throughout every incomplete postcommit prefix, including deterministic two-publisher interleavings; (10) guarded-32 acknowledged commit → migration-32 applied receipt/current audit → separately transacted ordinary-33 apply/exact-adopt and full verification → A activation → complete generic full verify → normal initialization → same-generation ready ordering, with crash recovery before/after the 32 receipt/audit, before/during/after the 33 transaction, after 33 before A, no duplicate DDL/journal, no second guarded transaction or restart, and no new P4 field/state/path; (11) loader acceptance of the real binding module's declared extra exports plus exact two-name/arity invocation, and rejection of missing, wrong-arity, nonfunction, or undeclared injection exports; (12) exact outer/inner readiness literals, frozen returned records, self/pair/generation/A-ancestor/activation/head relations, and tamper refusal; (13) default no-module, pending-32, pending/drifted-33, or every other incomplete startup state refusing a run byte; (14) digest/source/projector/DDL parity through 32 plus read-only compatibility verification of the source-known 33 successor without changing any migration-32 byte; (15) acyclic static/eager imports, only the explicitly inventoried invoked retirement-to-receipt/startup pair-resolution edge, Task 11-to-receipt D-gate call, receipt-to-D observer edge, and the audited receipt/source-authentication and fixed startup-readiness lazy edges, no other reverse dynamic dependency, and no import-time DB/process/store/`void` work; and (16) source-only delivery with no live database, current-entry, service, authority, canary, or run mutation. This ruling supersedes every earlier Sql-only nested-transaction assumption, whole-module two-key readiness assertion, absolute no-D-import wording that failed to distinguish the import-free forward registry from the one audited receipt-owned lazy observer, smaller P4 map, or claim that a transaction lock spans migration-33 or any later activation/readiness effect.
+```ts
+export type InternalProductionBaselineZeroOwnerMutationGuardPairV1 = Readonly<{
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+}>;
+export type InternalProductionBaselineZeroOwnerMutationGuardV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-zero-owner-mutation-guard.v1";
+  completeZeroOwnerCensusObservationRef: CanonicalRef;
+  completeZeroOwnerCensusObservationHash: Sha256V1;
+  guardNonce: Sha256V1;
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+}>;
+export function prepareInternalProductionBaselineZeroOwnerMutationGuardV1(
+): Promise<InternalProductionBaselineZeroOwnerMutationGuardPairV1>;
+export function resolveInternalProductionBaselineZeroOwnerMutationGuardV1(
+  pair: InternalProductionBaselineZeroOwnerMutationGuardPairV1,
+): Promise<InternalProductionBaselineZeroOwnerMutationGuardV1>;
+
+export type InternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardConsumptionV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-physical-service-restart-authority-cutover-zero-owner-guard-consumption.v1";
+  purpose: "recovery-d-physical-service-restart-authority-cutover-v1";
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+  completeZeroOwnerCensusObservationRef: CanonicalRef;
+  completeZeroOwnerCensusObservationHash: Sha256V1;
+  operationRef: CanonicalRef;
+  operationHash: Sha256V1;
+  guardConsumed: true;
+  consumptionRef: CanonicalRef;
+  consumptionHash: Sha256V1;
+}>;
+export function consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1(
+  input: Readonly<{
+    zeroOwnerGuardRef: CanonicalRef;
+    zeroOwnerGuardHash: Sha256V1;
+    operationRef: CanonicalRef;
+    operationHash: Sha256V1;
+  }>,
+): Promise<Readonly<{ consumptionRef: CanonicalRef; consumptionHash: Sha256V1 }>>;
+export function resolveInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardConsumptionV1(
+  input: Readonly<{ consumptionRef: CanonicalRef; consumptionHash: Sha256V1 }>,
+): Promise<InternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardConsumptionV1>;
+
+export type InternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1 = Readonly<{
+  schema: "setfarm.internal-production-physical-service-restart-authority-cutover-operation.v1";
+  pendingInputRef: CanonicalRef;
+  pendingInputHash: Sha256V1;
+  ownerAdmissionFenceRef: CanonicalRef;
+  ownerAdmissionFenceHash: Sha256V1;
+  predecessorPhysicalRestartEpochRef: CanonicalRef;
+  predecessorPhysicalRestartEpochHash: Sha256V1;
+  predecessorPhysicalRestartEpochOrdinal: 1;
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+  codeOwnedHookObservationHash: Sha256V1;
+  operationRef: CanonicalRef;
+  operationHash: Sha256V1;
+}>;
+export type InternalProductionBaselineRestartAuthorityRetirementV1 = Readonly<{
+  schema: "setfarm.internal-production-baseline-restart-authority-retirement.v1";
+  disposition: "retired-to-recovery-d";
+  predecessorEpochRef: CanonicalRef;
+  predecessorEpochHash: Sha256V1;
+  successorEpochOrdinal: 2;
+  successorAuthorityOwner: "recovery-d";
+  startupHooksReadyRef: CanonicalRef;
+  startupHooksReadyHash: Sha256V1;
+  successorActivationRef: CanonicalRef;
+  successorActivationHash: Sha256V1;
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+  zeroOwnerGuardConsumptionRef: CanonicalRef;
+  zeroOwnerGuardConsumptionHash: Sha256V1;
+  completeZeroOwnerCensusHash: Sha256V1;
+  services: readonly ["setfarm-spawner", "setfarm-dashboard", "mission-control"];
+  pendingBaselineRestartCount: 0;
+  liveBaselineRestartCount: 0;
+  activeBaselineSequenceCount: 0;
+  liveBaselineHelperCount: 0;
+  retainedHistoricalAuthoritySetHash: Sha256V1;
+  retirementRef: CanonicalRef;
+  retirementHash: Sha256V1;
+}>;
+export type InternalProductionServiceRestartAuthorityCutoverV1 = Readonly<{
+  schema: "setfarm.internal-production-service-restart-authority-cutover.v1";
+  startupHooksReadyRef: CanonicalRef;
+  startupHooksReadyHash: Sha256V1;
+  zeroOwnerGuardRef: CanonicalRef;
+  zeroOwnerGuardHash: Sha256V1;
+  zeroOwnerGuardConsumptionRef: CanonicalRef;
+  zeroOwnerGuardConsumptionHash: Sha256V1;
+  ownerAdmissionFenceRef: CanonicalRef;
+  ownerAdmissionFenceHash: Sha256V1;
+  predecessorPhysicalRestartEpochRef: CanonicalRef;
+  predecessorPhysicalRestartEpochHash: Sha256V1;
+  predecessorPhysicalRestartEpochOrdinal: 1;
+  baselineRetirementRef: CanonicalRef;
+  baselineRetirementHash: Sha256V1;
+  activationRef: CanonicalRef;
+  activationHash: Sha256V1;
+  successorPhysicalRestartEpochRef: CanonicalRef;
+  successorPhysicalRestartEpochHash: Sha256V1;
+  successorPhysicalRestartEpochOrdinal: 2;
+  cutoverRef: CanonicalRef;
+  cutoverHash: Sha256V1;
+}>;
+```
+
+The guard pair has exactly two keys, the guard body exactly six, the consumption body exactly eleven, and the corrected immutable cutover operation exactly thirteen, all in the shown order. `prepareInternalProductionBaselineZeroOwnerMutationGuardV1()` accepts no input and solely invokes Task 12's zero-input complete-zero census observer, strict-resolves and rechecks that exact pair/body, obtains 32 random bytes directly from the operating system, fixes `guardNonce = sha256(randomBytes)`, derives the code-owned guard, publishes/reopens it, and returns only its pair. The nonce has no caller, environment, clock, deterministic-test, callback, or alternate-randomness seam. `zeroOwnerGuardHash` hashes the exact ordered four-key core obtained by omitting only `zeroOwnerGuardRef/zeroOwnerGuardHash`; its ref is exactly `setfarm://internal-production/baseline-zero-owner-mutation-guard/sha256/${zeroOwnerGuardHash}`. The `zero-owner --json` command accepts no additional flag or input, calls only this producer, and prints only the exact pair; it exports no handler or writer.
+
+The fixed code-owned repository-relative root is exactly `data/internal-production-baseline/zero-owner-mutation-guard-v1`. Guard records are exactly `records/sha256/<hh>/<hash>.json`; cutover consumptions are exactly `consumptions/physical-service-restart-authority-cutover/sha256/<hh>/<hash>.json`; and the one cross-purpose consumed index is exactly `consumed-guards/sha256/<hh>/<zeroOwnerGuardHash>.json`, whose canonical body has exactly `{consumptionRef,consumptionHash}` in that order. `<hh>` is the first two lowercase hexadecimal characters of the relevant hash. Every path is derived only from a strict pair/hash; there is no scan, newest selection, caller root/path, environment override, alternate store, or deletion. The fixed root and every directory descendant are real directories with mode `0700`. Publication uses canonical JSON plus one LF, an unpredictable same-directory temporary opened with `O_CREAT|O_EXCL|O_NOFOLLOW` at mode `0600`, complete write and file fsync, atomic no-replace publication, parent-directory fsync, and final `O_RDONLY|O_NOFOLLOW` reopen/fstat/byte/hash verification of a one-link mode-`0600` regular file. Any symlink, hard link, wrong owner/type/mode, traversal, collision with different bytes, partial file, malformed canonical JSON, or pair/hash mismatch fails closed.
+
+The consumption hash covers the exact first nine ordered members of its eleven-key body and omits only derived `consumptionRef/consumptionHash`; its ref is exactly `setfarm://internal-production/baseline-physical-service-restart-authority-cutover-zero-owner-guard-consumption/sha256/${consumptionHash}`. The dedicated consumer accepts only the shown guard and operation pairs and accepts neither census nor purpose. It is callable only within invoked cutover resume while Task 11 retirement holds and has freshly authenticated the one transition lease and global owner-admission fence. It pair-resolves the guard; function-locally imports and pair-resolves the read-only Task 11 cutover operation; requires the operation's exact guard pair; zero-input freshly reobserves the complete census under that fence; and requires exact nested census pair/body equality with the guard plus all thirty-six census scalars zero. It then publishes/reopens the exact consumption and creates the shared consumed-index entry by no-replace CAS. A byte-identical index/consumption replay adopts the same pair. Any other operation, purpose, consumption pair/body, crossed guard, stale census, changed identity set, nonzero scalar, malformed existing index, or cross-purpose prior use rejects without mutation. There is no general consume callback, caller purpose/census, or caller-controlled writer.
+
+The corrected operation's canonical hash covers its exact first eleven ordered keys and omits only `operationRef/operationHash`; none of the five future startup-ready, retirement, activation, successor-epoch, or cutover pairs is in the operation, removing the former hash cycle. Retirement and cutover each place `zeroOwnerGuardConsumptionRef/zeroOwnerGuardConsumptionHash` immediately after the guard pair and include that pair in their respective canonical cores; only their own derived self pair is omitted. Their terminal resolvers must reopen and authenticate the shared consumed index and exact consumption body before returning. The existing cutover status discriminated union and exact `baseline-a-active | pending-input | prepared | resuming | recovery-d-active` status set remain unchanged. `guardConsumed` is derived only by reopening the shared index and exact consumption body: absence is false only where the existing state permits absence, while malformed, partial, crossed, or conflicting evidence fails rather than becoming false. The zero-input resume return shape remains byte-for-byte unchanged and gains no guard or consumption field.
+
+The only new cyclic-looking authority edges are invoked and lazy: Task 11 retirement function-locally imports the Task 12 dedicated consumer, and that consumer function-locally imports only Task 11's read-only operation resolver. Neither module eagerly imports the other and neither performs import-time database, store, process, callback, registration, or `void` work. D's zero-input cutover adapter function-locally imports `prepareInternalProductionBaselineZeroOwnerMutationGuardV1()`, immediately passes its pair unchanged to Task 11's `prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1(...)`, and discards the pair after the pending input is durable; a fresh resume imports only Task 11's zero-input resume. Exactly those three unaliased A mutation imports are admitted to the reviewed D adapter: Task 12 guard prepare plus Task 11 cutover prepare and resume. D accepts no guard, census, operation, purpose, root, path, or store input and owns no parallel guard/consumption store.
+
+The reviewed-D dependency chain remains an invoked Task 11 retirement/sequence operation → Task 12 receipt-owned observers → a function-local dynamic import of D's exact observer. Task 11 never statically or dynamically imports a D module. The seven-entry forward registry remains entirely import-free; the separately audited receipt-owned D observer is the sole allowed lazy D edge. The D module or export being absent before D delivery, a missing fixed terminal locator, any unresolved/tampered/crossed receipt, unreviewed or unresolved finding, non-main/dirty/non-origin current Mission Control source, source/tree/build drift, missing D manifest activation, incomplete hook census, enabled D prepare, missing guard/consumer/operation-resolver export, or absent/malformed/conflicting guard consumption fails before the next mutation. There is no callback, registration, eager import, fallback, caller pair/path/root/environment/source/build/readiness body, or general/public caller-controlled writer seam. Task 11 therefore remains exact29/P4 source scope and can deliver its normal A restart machinery while `d-startup-hook-load` remains typed unavailable until Task 12 supplies the receipt bridge and D later supplies the reviewed terminal evidence.
+
+The exact P4 RED/GREEN matrix covers: (1) exact29/109 and plan/spec byte parity; (2) handle exposure only after exact applied-v31 row lock and rollback on absent, adopted, wrong-name, wrong-checksum, or wrong-state v31; (3) final zero reobservation and authorization consumption after the lock, with nonzero/drift/crossed-pair refusal before DDL; (4) clone, cross-process, illegal phase, repeated operation, and non-controller caller refusal; (5) private `Sql.begin` versus `TransactionSql.savepoint` dispatch with no exported SQL/callback/generic migration seam; (6) stage-result and receipt/current-audit invisibility before acknowledged outer commit; (7) callback throw, abort, process death, commit rejection, and backend loss with zero migration-32/schema/head residue and same-exact durable-consumption recovery; (8) one atomic successful migration journal/application-provenance/schema/head result; (9) ordinary and V3 publishers blocked on v31 and then failing at owner-head/admission throughout every incomplete postcommit prefix, including deterministic two-publisher interleavings; (10) guarded-32 acknowledged commit → migration-32 applied receipt/current audit → separately transacted ordinary-33 apply/exact-adopt and full verification → A activation → complete generic full verify → normal initialization → same-generation ready ordering, with crash recovery before/after the 32 receipt/audit, before/during/after the 33 transaction, after 33 before A, no duplicate DDL/journal, no second guarded transaction or restart, and no new P4 field/state/path; (11) loader acceptance of the real binding module's declared extra exports plus exact two-name/arity invocation, and rejection of missing, wrong-arity, nonfunction, or undeclared injection exports; (12) exact outer/inner readiness literals, frozen returned records, self/pair/generation/A-ancestor/activation/head relations, and tamper refusal; (13) default no-module, pending-32, pending/drifted-33, or every other incomplete startup state refusing a run byte; (14) digest/source/projector/DDL parity through 32 plus read-only compatibility verification of the source-known 33 successor without changing any migration-32 byte; (15) acyclic static/eager imports, only the explicitly inventoried invoked retirement-to-receipt/startup pair-resolution edge, Task 11-to-receipt D-gate call, receipt-to-D observer edge, retirement-to-guard-consumer edge, guard-consumer-to-operation-resolver edge, and the audited receipt/source-authentication and fixed startup-readiness lazy edges, no other reverse dynamic dependency, and no import-time DB/process/store/`void` work; (16) exact ordered guard pair/body/consumption/operation key counts `2/6/11/13`, canonical hash omission sets, ref domains, nonce authority, strict resolver cloning/tamper/cross-pair refusal, and no caller mint/writer seam; (17) fixed guard/consumption/index paths, canonical bytes, `0700/0600`, no-follow/one-link checks, temp/collision/fsync/reopen behavior, byte-identical same-consumption adoption, and different-operation/cross-purpose rejection; (18) held-fence zero-input census reobservation with exact nested equality/all-zero refusal, consumption evidence inserted immediately after the guard in retirement/cutover, terminal reopen, unchanged status union, index-derived `guardConsumed`, acyclic exact-thirteen-key operation, and byte-unchanged resume output; (19) exact three unaliased D adapter mutation imports, zero D input/store, missing Task 12 export failure before mutation, and no eager cycle; and (20) source-only delivery with no live database, current-entry, service, authority, canary, or run mutation. These additions require RED tests before implementation, focused GREEN tests after the smallest implementation, independent review of the resulting source/tests, and byte/parity/File-Map verification before handoff. This ruling supersedes every earlier Sql-only nested-transaction assumption, whole-module two-key readiness assertion, absolute no-D-import wording that failed to distinguish the import-free forward registry from the one audited receipt-owned lazy observer, smaller P4 map, cyclic twenty-three-key cutover operation, pre-manifest guard authority, caller-provided census/purpose, non-shared consumption index, widened resume result, or claim that a transaction lock spans migration-33 or any later activation/readiness effect.
 The fixed Task 10 physical-path spellings above are canonical runtime results, not permitted host-specific source literals. `src/internal-production/baseline-post-handoff-receipt-v1.ts` resolves the effective-user home only through `node:os` `userInfo().homedir`, never `HOME`, another environment variable, argv, configuration, or caller input; code-owned `path.join` suffixes derive the workspace, OpenClaw, workflow, and projects roots, and on the canonical Mac mini those derived roots must equal the exact absolute paths stated above before census succeeds. This derivation changes no admitted root, depth, identity, physical predicate, File Map member, or public ABI and is required by the repository path contract.
 
 <!-- oa18-p4-migration32-transaction-readiness-rebaseline-v1:end -->
