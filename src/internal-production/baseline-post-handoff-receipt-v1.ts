@@ -2308,10 +2308,10 @@ function parsePhysicalProcessesV1(bytes: Buffer): readonly PhysicalProcessV1[] {
   const result: PhysicalProcessV1[] = [];
   const pids = new Set<number>();
   for (const line of lines) {
-    const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+[ 0-9][0-9]\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4})\s+(.+)$/.exec(line);
+    const match = /^\s*(-2|[0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+[ 0-9][0-9]\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4})\s+(.+)$/.exec(line);
     if (!match) currentEntryFail("global process row is malformed");
     const [uid, pid, ppid, pgid] = match.slice(1, 5).map(Number);
-    if (![uid, pid, ppid, pgid].every(Number.isSafeInteger) || uid! < 0 || pid! < 1 || ppid! < 0 || pgid! < 0 || pids.has(pid!)) currentEntryFail("global process identity is invalid");
+    if (![uid, pid, ppid, pgid].every(Number.isSafeInteger) || (uid! < 0 && uid !== -2) || pid! < 1 || ppid! < 0 || pgid! < 0 || pids.has(pid!)) currentEntryFail("global process identity is invalid");
     pids.add(pid!);
     result.push(Object.freeze({ uid: uid!, pid: pid!, ppid: ppid!, pgid: pgid!, stat: match[5]!, lstart: match[6]!, command: match[7]!, cwd: null }));
   }
