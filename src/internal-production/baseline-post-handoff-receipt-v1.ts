@@ -2467,14 +2467,15 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
   });
 }
 
-function boundedChildText(executable: string, args: readonly string[], label: string): string {
+function boundedChildText(executable: string, args: readonly string[], label: string, input?: Buffer): string {
   const result = spawnSync(executable, [...args], {
     env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }),
     shell: false,
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer: 1_048_576,
-    stdio: ["ignore", "pipe", "pipe"],
+    input,
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
   if (result.error || result.signal || result.status !== 0 || result.stderr !== "") {
     currentEntryFail(`${label} observation failed`);
@@ -2576,11 +2577,202 @@ async function observePhaseClosedZeroV1(
   });
 }
 
+type DetachedSetfarmServiceLabelV1 = "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard";
+
+type DetachedSetfarmServiceProfileV1 = Readonly<{
+  label: DetachedSetfarmServiceLabelV1;
+  launchArguments: readonly string[];
+  entrypoint: string;
+  daemonArguments: readonly string[];
+  port: null | 3333;
+}>;
+
+function detachedSetfarmServiceProfileV1(label: DetachedSetfarmServiceLabelV1): DetachedSetfarmServiceProfileV1 {
+  const ownerHome = userInfo().homedir;
+  const program = path.join(ownerHome, ".local", "bin", "setfarm");
+  const repository = fixedRepositoryRoot();
+  if (label === "com.setrox.setfarm-spawner") {
+    return Object.freeze({
+      label,
+      launchArguments: Object.freeze([program, "spawner", "start"]),
+      entrypoint: path.join(repository, "dist", "spawner.js"),
+      daemonArguments: Object.freeze([]),
+      port: null,
+    });
+  }
+  return Object.freeze({
+    label,
+    launchArguments: Object.freeze([program, "dashboard", "start", "--port", "3333"]),
+    entrypoint: path.join(repository, "dist", "server", "daemon.js"),
+    daemonArguments: Object.freeze(["3333"]),
+    port: 3333,
+  });
+}
+
+function oneLaunchctlScalarV1(text: string, name: string, label: string): string {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = [...text.matchAll(new RegExp(`^\\t${escaped} = (.+)$`, "gm"))];
+  if (matches.length !== 1 || !matches[0]![1]) currentEntryFail(`${label} launchctl ${name} is ambiguous`);
+  return matches[0]![1];
+}
+
+function oneLaunchctlBlockV1(text: string, name: string, label: string): readonly string[] {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = [...text.matchAll(new RegExp(`^\\t${escaped} = \\{\\n([\\s\\S]*?)^\\t\\}$`, "gm"))];
+  if (matches.length !== 1) currentEntryFail(`${label} launchctl ${name} is ambiguous`);
+  const lines = matches[0]![1]!.split("\n").filter(Boolean);
+  if (lines.some((line) => !line.startsWith("\t\t"))) currentEntryFail(`${label} launchctl ${name} is malformed`);
+  return Object.freeze(lines.map((line) => line.slice(2)));
+}
+
+function launchctlEnvironmentBlockV1(text: string, name: string, label: string): Readonly<Record<string, string>> {
+  const environment: Record<string, string> = {};
+  for (const line of oneLaunchctlBlockV1(text, name, label)) {
+    const match = /^([A-Za-z][A-Za-z0-9_]*) => (.+)$/.exec(line);
+    if (!match || Object.hasOwn(environment, match[1]!)) currentEntryFail(`${label} launchctl ${name} is malformed`);
+    environment[match[1]!] = match[2]!;
+  }
+  return Object.freeze(environment);
+}
+
+function observeDetachedLaunchProjectionV1(profile: DetachedSetfarmServiceProfileV1, uid: number): Readonly<{
+  path: string; program: string; arguments: readonly string[]; environment: Readonly<Record<string, string>>;
+  inheritedEnvironment: Readonly<Record<string, string>>; defaultEnvironment: Readonly<Record<string, string>>;
+}> {
+  const text = boundedChildText("/bin/launchctl", ["print", `gui/${uid}/${profile.label}`], `${profile.label} launchctl`);
+  if (!text.endsWith("\n") || !text.startsWith(`gui/${uid}/${profile.label} = {\n`) || !text.endsWith("}\n")) currentEntryFail(`${profile.label} launchctl envelope is invalid`);
+  const pathValue = oneLaunchctlScalarV1(text, "path", profile.label);
+  const program = oneLaunchctlScalarV1(text, "program", profile.label);
+  const state = oneLaunchctlScalarV1(text, "state", profile.label);
+  const type = oneLaunchctlScalarV1(text, "type", profile.label);
+  const pidMatches = [...text.matchAll(/^\tpid = ([0-9]+)$/gm)];
+  if (state !== "not running" || pidMatches.length !== 0 || type !== "LaunchAgent") currentEntryFail(`${profile.label} launcher is not in its stable detached state`);
+  const expectedPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${profile.label}.plist`);
+  if (pathValue !== expectedPath || program !== profile.launchArguments[0]) currentEntryFail(`${profile.label} launchctl program is crossed`);
+  const argumentsValue = oneLaunchctlBlockV1(text, "arguments", profile.label);
+  if (canonicalComparable(argumentsValue) !== canonicalComparable(profile.launchArguments)) currentEntryFail(`${profile.label} launchctl arguments are crossed`);
+  if (oneLaunchctlScalarV1(text, "run interval", profile.label) !== "60 seconds") currentEntryFail(`${profile.label} launch interval is invalid`);
+  const properties = oneLaunchctlScalarV1(text, "properties", profile.label).split(" | ");
+  if (!properties.includes("runatload")) currentEntryFail(`${profile.label} is not configured to run at load`);
+  const environment = launchctlEnvironmentBlockV1(text, "environment", profile.label);
+  const inheritedEnvironment = launchctlEnvironmentBlockV1(text, "inherited environment", profile.label);
+  const defaultEnvironment = launchctlEnvironmentBlockV1(text, "default environment", profile.label);
+  const expectedEnvironmentKeys = profile.label === "com.setrox.setfarm-dashboard"
+    ? ["OSLogRateLimit", "PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL", "XPC_SERVICE_NAME"]
+    : ["OSLogRateLimit", "PATH", "SETFARM_PG_URL", "XPC_SERVICE_NAME"];
+  if (!hasExactKeys(environment, expectedEnvironmentKeys) || environment.OSLogRateLimit !== "64" || environment.XPC_SERVICE_NAME !== profile.label) currentEntryFail(`${profile.label} loaded launch environment is invalid`);
+  const primarySetfarmScripts = path.join(userInfo().homedir, "ai", "setrox", "setfarm", "scripts");
+  if (!hasExactKeys(inheritedEnvironment, ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"]) || inheritedEnvironment.SETFARM_ENV_DIR !== primarySetfarmScripts || !/^\/var\/run\/com\.apple\.launchd\.[A-Za-z0-9]+\/Listeners$/.test(inheritedEnvironment.SSH_AUTH_SOCK ?? "")) currentEntryFail(`${profile.label} inherited launch environment is invalid`);
+  if (!hasExactKeys(defaultEnvironment, ["PATH"]) || defaultEnvironment.PATH !== "/usr/bin:/bin:/usr/sbin:/sbin") currentEntryFail(`${profile.label} default launch environment is invalid`);
+  return recursivelyFreeze({ path: pathValue, program, arguments: argumentsValue, environment, inheritedEnvironment, defaultEnvironment });
+}
+
+function observeDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1): Readonly<{ bytes: Buffer; stats: BigIntStats; environment: Readonly<Record<string, string>> }> {
+  const plistPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${profile.label}.plist`);
+  const parent = lstatSync(path.dirname(plistPath), { bigint: true });
+  const observed = readStableRegular(plistPath, CURRENT_ENTRY_MAX_BYTES, parent.dev, 1);
+  if ((Number(observed.stats.mode & 0o7777n) & 0o022) !== 0 || observed.stats.uid !== BigInt(process.getuid?.() ?? -1)) currentEntryFail(`${profile.label} plist ownership is invalid`);
+  const converted = boundedChildText("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], `${profile.label} plist`, observed.bytes);
+  let parsed: unknown;
+  try { parsed = JSON.parse(converted); } catch { currentEntryFail(`${profile.label} plist is not JSON`); }
+  if (!isPlainRecord(parsed) || !hasExactKeys(parsed, ["EnvironmentVariables", "Label", "ProgramArguments", "RunAtLoad", "StandardErrorPath", "StandardOutPath", "StartInterval"])) currentEntryFail(`${profile.label} plist keys are invalid`);
+  if (parsed.Label !== profile.label || parsed.RunAtLoad !== true || parsed.StartInterval !== 60 || canonicalComparable(parsed.ProgramArguments) !== canonicalComparable(profile.launchArguments)) currentEntryFail(`${profile.label} plist body is crossed`);
+  if (!isPlainRecord(parsed.EnvironmentVariables)) currentEntryFail(`${profile.label} plist environment is invalid`);
+  const environmentKeys = profile.label === "com.setrox.setfarm-dashboard"
+    ? ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"]
+    : ["PATH", "SETFARM_PG_URL"];
+  if (!hasExactKeys(parsed.EnvironmentVariables, environmentKeys)) currentEntryFail(`${profile.label} plist environment keys are invalid`);
+  const environment: Record<string, string> = {};
+  for (const key of environmentKeys) {
+    if (typeof parsed.EnvironmentVariables[key] !== "string" || parsed.EnvironmentVariables[key].length === 0) currentEntryFail(`${profile.label} plist environment value is invalid`);
+    environment[key] = parsed.EnvironmentVariables[key];
+  }
+  const expectedLog = path.join(userInfo().homedir, ".openclaw", "logs", profile.label === "com.setrox.setfarm-spawner" ? "setfarm-spawner.watch" : "setfarm-dashboard.watch");
+  if (parsed.StandardOutPath !== `${expectedLog}.log` || parsed.StandardErrorPath !== `${expectedLog}.err.log`) currentEntryFail(`${profile.label} plist log path is crossed`);
+  return Object.freeze({ bytes: observed.bytes, stats: observed.stats, environment: Object.freeze(environment) });
+}
+
+function sameStableRegularV1(left: Readonly<{ bytes: Buffer; stats: BigIntStats }>, right: Readonly<{ bytes: Buffer; stats: BigIntStats }>): boolean {
+  return left.bytes.equals(right.bytes) && sameRegularMetadata(left.stats, right.stats);
+}
+
+function observeDetachedServiceListenersV1(pid: number, port: null | 3333): Readonly<{
+  bytes: Buffer;
+  listeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[];
+}> {
+  const network = port === null ? "-iTCP" : `-iTCP@127.0.0.1:${port}`;
+  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), network, "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);
+  if (result.status === 1 && result.stdout.length === 0) return Object.freeze({ bytes: result.stdout, listeners: Object.freeze([]) });
+  if (result.status !== 0) currentEntryFail(`process ${pid} listener inventory is partial`);
+  return Object.freeze({ bytes: result.stdout, listeners: parseProcessListenersV1(result.stdout, pid) });
+}
+
+function observeDetachedSetfarmServiceV1(
+  label: DetachedSetfarmServiceLabelV1,
+  port: null | 3333,
+  source: Readonly<{ sha: string; treeHash: string; buildHash: string }>,
+): InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1 {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("service census UID is invalid");
+  const profile = detachedSetfarmServiceProfileV1(label);
+  if (profile.port !== port) currentEntryFail(`${label} listener profile is crossed`);
+  const nodeExecutable = realpathSync(process.execPath);
+  const cliLinkBefore = lstatSync(profile.launchArguments[0]!, { bigint: true });
+  if (!cliLinkBefore.isSymbolicLink() || cliLinkBefore.nlink !== 1n || cliLinkBefore.uid !== BigInt(uid!)) currentEntryFail(`${label} launcher link is invalid`);
+  const cliExecutable = realpathSync(profile.launchArguments[0]!);
+  const repository = fixedRepositoryRoot();
+  const expectedCli = path.join(repository, "dist", "cli", "cli.js");
+  if (cliExecutable !== expectedCli) currentEntryFail(`${label} launcher program is outside the authenticated build root`);
+  const entryParent = lstatSync(path.dirname(profile.entrypoint), { bigint: true });
+  const entryBefore = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryParent.dev, 1);
+  const plistBefore = observeDetachedLaunchPlistV1(profile);
+  const launchBefore = observeDetachedLaunchProjectionV1(profile, uid!);
+  for (const [key, value] of Object.entries(plistBefore.environment)) if (launchBefore.environment[key] !== value) currentEntryFail(`${label} loaded launch environment is crossed`);
+  const processesBefore = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  const family = processesBefore.filter((candidate) => candidate.command.split(/\s+/).includes(profile.entrypoint));
+  if (family.length !== 1) currentEntryFail(`${label} detached daemon family count is not exactly one`);
+  const candidate = family[0]!;
+  const expectedCommand = [nodeExecutable, profile.entrypoint, ...profile.daemonArguments].join(" ");
+  if (candidate.command !== expectedCommand || candidate.uid !== uid || candidate.ppid !== 1 || candidate.pgid !== candidate.pid || candidate.stat.includes("Z")) currentEntryFail(`${label} detached daemon identity is invalid`);
+  const startTime = Date.parse(candidate.lstart);
+  if (!Number.isSafeInteger(startTime) || startTime < 1) currentEntryFail(`${label} detached daemon start is invalid`);
+  const commBefore = boundedChildText("/bin/ps", ["-ww", "-p", String(candidate.pid), "-o", "comm="], `${label} executable`);
+  if (commBefore !== `${nodeExecutable}\n`) currentEntryFail(`${label} detached daemon executable is crossed`);
+  const listenersBefore = observeDetachedServiceListenersV1(candidate.pid, port);
+  if (port === null) {
+    if (listenersBefore.listeners.length !== 0) currentEntryFail(`${label} has an unexpected listener`);
+  } else if (listenersBefore.listeners.length !== 1 || listenersBefore.listeners[0]!.pid !== candidate.pid || listenersBefore.listeners[0]!.localAddress !== "127.0.0.1" || listenersBefore.listeners[0]!.port !== port) {
+    currentEntryFail(`${label} listener owner count is not exactly one`);
+  }
+  const processesAfter = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  const familyAfter = processesAfter.filter((entry) => entry.command.split(/\s+/).includes(profile.entrypoint));
+  if (familyAfter.length !== 1) currentEntryFail(`${label} detached daemon family changed during observation`);
+  const candidateAfter = familyAfter[0]!;
+  if (candidateAfter.stat.includes("Z") || candidateAfter.uid !== candidate.uid || candidateAfter.pid !== candidate.pid || candidateAfter.ppid !== candidate.ppid || candidateAfter.pgid !== candidate.pgid || candidateAfter.lstart !== candidate.lstart || candidateAfter.command !== candidate.command) currentEntryFail(`${label} detached daemon changed during observation`);
+  const commAfter = boundedChildText("/bin/ps", ["-ww", "-p", String(candidate.pid), "-o", "comm="], `${label} executable`);
+  const listenersAfter = observeDetachedServiceListenersV1(candidate.pid, port);
+  const launchAfter = observeDetachedLaunchProjectionV1(profile, uid!);
+  const plistAfter = observeDetachedLaunchPlistV1(profile);
+  const entryAfter = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryParent.dev, 1);
+  const cliLinkAfter = lstatSync(profile.launchArguments[0]!, { bigint: true });
+  if (commAfter !== commBefore || canonicalComparable(listenersAfter) !== canonicalComparable(listenersBefore) || canonicalComparable(launchAfter) !== canonicalComparable(launchBefore) || !sameStableRegularV1(plistBefore, plistAfter) || !sameStableRegularV1(entryBefore, entryAfter) || !cliLinkAfter.isSymbolicLink() || !sameRegularMetadata(cliLinkBefore, cliLinkAfter) || realpathSync(profile.launchArguments[0]!) !== cliExecutable) currentEntryFail(`${label} authority changed during observation`);
+  const processIdentityHash = sha256(`${candidate.pid}\n${candidate.lstart}\n`);
+  const serviceIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-service-identity.v1", label, command: candidate.command });
+  const generationHash = hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source });
+  const common = { pid: candidate.pid, processStartTimeEpochMs: startTime, processIdentityHash, serviceIdentityHash, generationHash, loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: 1 as const };
+  if (port === null) return recursivelyFreeze({ ...common, listener: null });
+  return recursivelyFreeze({ ...common, listenerOwnerCount: 1 as const, listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(listenersBefore.bytes) } });
+}
+
 function observeServiceProcessV1(
   label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
   port: null | 3333 | 3080 | 18789,
   source: Readonly<{ sha: string; treeHash: string; buildHash: string }> | null,
 ): InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1 {
+  if (label === "com.setrox.setfarm-spawner" || label === "com.setrox.setfarm-dashboard") {
+    if (!source) currentEntryFail(`${label} source is absent`);
+    return observeDetachedSetfarmServiceV1(label, port as null | 3333, source);
+  }
   const uid = process.getuid?.();
   if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("service census UID is invalid");
   const launchctl = boundedChildText("/bin/launchctl", ["print", `gui/${uid}/${label}`], `${label} launchctl`);
