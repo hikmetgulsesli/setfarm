@@ -443,6 +443,93 @@ function runFixtureExpressionAsync(root: string, expression: string): Promise<Re
   });
 }
 
+function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none"): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const start = source.indexOf("type DetachedSetfarmServiceLabelV1 =");
+  const end = source.indexOf("\nfunction observeServiceProcessV1(", start);
+  assert.notEqual(start, -1, "detached service production slice must exist");
+  assert.notEqual(end, -1, "detached service production slice must terminate before the direct launcher observer");
+  const slice = source.slice(start, end).replace(
+    "function observeDetachedSetfarmServiceV1(",
+    "export function observeDetachedSetfarmServiceV1(",
+  );
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-detached-census-")));
+  const harnessPath = path.join(root, "harness.ts");
+  const canonicalRoot = path.join(root, "workspace", "setfarm");
+  const fixtureHome = path.join(root, "home");
+  const launcher = path.join(fixtureHome, ".local", "bin", "setfarm");
+  for (const locator of ["dist/cli/cli.js", "dist/spawner.js", "dist/server/daemon.js"]) fixtureFile(canonicalRoot, locator, `fixture ${locator}\n`, 0o600);
+  mkdirSync(path.dirname(launcher), { recursive: true });
+  symlinkSync(path.join(canonicalRoot, "dist", "cli", "cli.js"), launcher);
+  const plistDirectory = path.join(fixtureHome, "Library", "LaunchAgents");
+  const writePlist = (serviceLabel: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", args: readonly string[], stem: string) => fixtureFile(
+    plistDirectory,
+    `${serviceLabel}.plist`,
+    JSON.stringify({
+      StandardOutPath: path.join(fixtureHome, ".openclaw", "logs", `${stem}.watch.log`),
+      EnvironmentVariables: {
+        PATH: "/usr/bin:/bin",
+        SETFARM_PG_URL: "postgresql://fixture/setfarm",
+        ...(serviceLabel.endsWith("dashboard") ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "fixture-token" } : {}),
+      },
+      StartInterval: 60,
+      ProgramArguments: args,
+      StandardErrorPath: path.join(fixtureHome, ".openclaw", "logs", `${stem}.watch.err.log`),
+      RunAtLoad: true,
+      Label: serviceLabel,
+    }),
+    0o600,
+  );
+  writePlist("com.setrox.setfarm-spawner", [launcher, "spawner", "start"], "setfarm-spawner");
+  writePlist("com.setrox.setfarm-dashboard", [launcher, "dashboard", "start", "--port", "3333"], "setfarm-dashboard");
+  const harness = String.raw`
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
+import type { BigIntStats } from "node:fs";
+import path from "node:path";
+const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432;
+type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
+type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
+const fault=process.env.FAULT??"none";
+let activeLabel="", scan=0;
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function fixedRepositoryRoot(){return process.env.CANONICAL_ROOT!}
+function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
+function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const d=Object.getOwnPropertyDescriptor(value as object,key);if(d&&"value" in d)recursivelyFreeze(d.value)}Object.freeze(value)}return value}
+function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const r=value as Record<string,unknown>;return "{"+Object.keys(r).sort().map(k=>JSON.stringify(k)+":"+canonicalComparable(r[k])).join(",")+"}"}
+function compareBytes(a:string,b:string){return Buffer.compare(Buffer.from(a),Buffer.from(b))}
+function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
+function hashCanonicalJson(value:unknown){return sha256(canonicalComparable(value))}
+function isPlainRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype}
+function hasExactKeys(value:Record<string,unknown>,keys:readonly string[]){return canonicalComparable(Object.keys(value).sort(compareBytes))===canonicalComparable([...keys].sort(compareBytes))}
+function sameRegularMetadata(a:BigIntStats,b:BigIntStats){return a.dev===b.dev&&a.ino===b.ino&&a.mode===b.mode&&a.nlink===b.nlink&&a.size===b.size&&a.mtimeNs===b.mtimeNs&&a.ctimeNs===b.ctimeNs}
+function readStableRegular(target:string,_cap:number,device:bigint,links:number){const before=lstatSync(target,{bigint:true});const bytes=readFileSync(target);const after=lstatSync(target,{bigint:true});if(!before.isFile()||before.isSymbolicLink()||before.dev!==device||before.nlink!==BigInt(links)||!sameRegularMetadata(before,after))currentEntryFail("regular file invalid");return Object.freeze({bytes,mode:Number(before.mode&0o7777n),stats:before})}
+function launchText(label:string,args:readonly string[]){const uid=process.getuid!();const home=userInfo().homedir;const running=fault==="launch_running";const actual=fault==="launch_args"?[...args,"extra"]:args;const launchPath=fault==="launch_path"?home+"/Library/LaunchAgents/crossed.plist":home+"/Library/LaunchAgents/"+label+".plist";const program=fault==="launch_program"?"/tmp/crossed":args[0];const pg=fault==="launch_environment"?"postgresql://crossed/setfarm":"postgresql://fixture/setfarm";const extra=fault==="extra_environment"?"\t\tNODE_OPTIONS => --require=/tmp/crossed.js\n":"";const inheritedExtra=fault==="inherited_preload"?"\t\tDYLD_INSERT_LIBRARIES => /tmp/crossed.dylib\n":"";const envDir=fault==="crossed_env_dir"?fixedRepositoryRoot()+"/scripts":home+"/ai/setrox/setfarm/scripts";return "gui/"+uid+"/"+label+" = {\n\tpath = "+launchPath+"\n\ttype = LaunchAgent\n\tstate = "+(running?"running":"not running")+"\n"+(running?"\tpid = 999\n":"")+"\n\tprogram = "+program+"\n\targuments = {\n"+actual.map(v=>"\t\t"+v+"\n").join("")+"\t}\n\n\tinherited environment = {\n\t\tSETFARM_ENV_DIR => "+envDir+"\n\t\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.Fixture123/Listeners\n"+inheritedExtra+"\t}\n\n\tdefault environment = {\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}\n\n\tenvironment = {\n\t\tOSLogRateLimit => 64\n\t\tPATH => /usr/bin:/bin\n\t\tSETFARM_PG_URL => "+pg+"\n"+(label.endsWith("dashboard")?"\t\tSETFARM_OPERATIONAL_WRITE_TOKEN => fixture-token\n":"")+"\t\tXPC_SERVICE_NAME => "+label+"\n"+extra+"\t}\n\trun interval = 60 seconds\n\tproperties = runatload | inferred program\n}\n"}
+function plistText(label:string,args:readonly string[]){const home=userInfo().homedir;const stem=label.endsWith("spawner")?"setfarm-spawner":"setfarm-dashboard";const actual=fault==="plist_args"?[...args,"extra"]:args;return JSON.stringify({StandardOutPath:home+"/.openclaw/logs/"+stem+".watch.log",EnvironmentVariables:{PATH:"/usr/bin:/bin",SETFARM_PG_URL:"postgresql://fixture/setfarm",
+...(label.endsWith("dashboard")?{SETFARM_OPERATIONAL_WRITE_TOKEN:"fixture-token"}:{})},StartInterval:60,ProgramArguments:actual,StandardErrorPath:home+"/.openclaw/logs/"+stem+".watch.err.log",RunAtLoad:true,Label:label})}
+function boundedChildText(executable:string,args:readonly string[],_label:string,input?:Buffer){if(executable==="/bin/launchctl"){activeLabel=args[1]!.split("/").at(-1)!;const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);return launchText(activeLabel,profile.launchArguments)}if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_args")parsed.ProgramArguments.push("extra");return JSON.stringify(parsed)}if(executable==="/bin/ps")return (fault==="wrong_comm"?"/tmp/crossed":realpathSync(process.execPath))+"\n";throw new Error("unexpected command "+executable)}
+function processRows(){const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const pid=activeLabel.endsWith("spawner")?101:102;const node=realpathSync(process.execPath);const args=[node,profile.entrypoint,...profile.daemonArguments];if(fault==="wrong_args")args.push("extra");const row={uid:fault==="wrong_uid"?process.getuid!()+1:process.getuid!(),pid,ppid:fault==="wrong_ppid"?2:1,pgid:fault==="wrong_pgid"?7:pid,stat:fault==="zombie"?"Z":fault==="stat_drift"&&scan>0?"R":"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:args.join(" "),cwd:null};const rows=fault==="zero"?[]:[Object.freeze(row)];if(fault==="multiple"||(fault==="multiple_after"&&scan>0))rows.push(Object.freeze({...row,pid:pid+20,pgid:pid+20,command:[node,profile.entrypoint,"crossed"].join(" ")}));if(fault==="drift"&&scan>0&&rows[0])rows[0]=Object.freeze({...row,lstart:"Sun Aug 16 15:42:29 2026"});if(fault==="cli_drift"&&scan>0){unlinkSync(profile.launchArguments[0]!);symlinkSync(profile.entrypoint,profile.launchArguments[0]!)}scan+=1;return Object.freeze(rows)}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
+function parsePhysicalProcessesV1(){return processRows()}
+function parseProcessListenersV1(_bytes:Buffer,pid:number){if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
+function observeProcessListenersV1(pid:number){if(activeLabel.endsWith("spawner"))return Object.freeze([]);if(fault==="listener_missing")return Object.freeze([]);if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
+${slice}
+const label=process.env.LABEL as DetachedSetfarmServiceLabelV1;
+const result=observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)}));
+process.stdout.write(JSON.stringify(result)+"\n");
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, harnessPath], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, LABEL: label, FAULT: fault, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function currentEntryStore(root: string): string {
   return path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1");
 }
@@ -1172,6 +1259,43 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "/usr/bin/git", "worktree", "--porcelain", "-z", "--porcelain=v2", "--untracked-files=all",
       "/bin/ps", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command=", "/usr/sbin/lsof", "-F0pcRfn", "+D", "-iTCP", "-sTCP:LISTEN",
     ]) assert.ok(production.includes(literal), `missing fixed physical literal ${literal}`);
+  });
+
+  it("P4 service census resolves the two fixed Setfarm launchers through detached daemon authority", () => {
+    const source = readFileSync(observerSource, "utf8");
+    assert.match(source, /observeDetachedSetfarmServiceV1/);
+    assert.match(source, /label === "com\.setrox\.setfarm-spawner"[\s\S]{0,400}path\.join\(repository, "dist", "spawner\.js"\)/);
+    assert.match(source, /path\.join\(repository, "dist", "server", "daemon\.js"\)[\s\S]{0,120}Object\.freeze\(\["3333"\]\)/);
+    assert.match(source, /ppid !== 1|ppid === 1/);
+    assert.match(source, /pgid !== candidate\.pid|pgid === candidate\.pid/);
+    assert.match(source, /\["-ww", "-p", String\(candidate\.pid\), "-o", "comm="\]/);
+    assert.match(source, /hashCanonicalJson\(\{ schema: "setfarm\.internal-production-service-identity\.v1", label, command: candidate\.command \}\)/);
+    assert.match(source, /hashCanonicalJson\(\{ schema: "setfarm\.internal-production-loaded-service-generation\.v1", label, serviceIdentityHash, source \}\)/);
+    assert.match(source, /return recursivelyFreeze\(\{ \.\.\.body, censusHash: hashCanonicalJson\(body\) \}\)/);
+    assert.doesNotMatch(source, /readFileSync\([^\n]*(?:spawner|dashboard)\.pid/);
+    assert.doesNotMatch(runDetachedServiceHarness.toString(), /setfarm-internal-production-bootstrap/);
+    for (const [label, fault] of [["com.setrox.setfarm-spawner", "none"], ["com.setrox.setfarm-dashboard", "none"], ["com.setrox.setfarm-spawner", "stat_drift"]] as const) {
+      const observed = runDetachedServiceHarness(label, fault);
+      assert.equal(observed.status, 0, observed.stderr);
+      const body = JSON.parse(observed.stdout);
+      assert.equal(body.pid, label.endsWith("spawner") ? 101 : 102);
+      assert.equal(body.processOwnerCount, 1);
+      assert.equal(body.processIdentityHash, createHash("sha256").update(`${body.pid}\nSun Aug 16 15:42:28 2026\n`).digest("hex"));
+      const sourceBody = { sha: "a".repeat(40), treeHash: "b".repeat(40), buildHash: "c".repeat(64) };
+      assert.equal(body.loadedSourceSha, sourceBody.sha);
+      assert.equal(body.loadedTreeHash, sourceBody.treeHash);
+      assert.equal(body.loadedBuildHash, sourceBody.buildHash);
+      assert.match(body.serviceIdentityHash, /^[a-f0-9]{64}$/);
+      assert.equal(body.generationHash, canonicalHash({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash: body.serviceIdentityHash, source: sourceBody }));
+      assert.equal(body.listener, label.endsWith("spawner") ? null : body.listener);
+      if (label.endsWith("dashboard")) assert.deepEqual(body.listener, { host: "127.0.0.1", port: 3333, listenerIdentityHash: createHash("sha256").update("listener:102").digest("hex") });
+    }
+    for (const fault of ["launch_running", "launch_args", "launch_path", "launch_program", "launch_environment", "extra_environment", "inherited_preload", "crossed_env_dir", "plist_args", "zero", "multiple", "multiple_after", "wrong_uid", "wrong_ppid", "wrong_pgid", "zombie", "wrong_args", "wrong_comm", "drift", "cli_drift", "partial_lsof", "listener_missing", "listener_multiple", "listener_cross"]) {
+      const label = fault.startsWith("listener_") ? "com.setrox.setfarm-dashboard" : "com.setrox.setfarm-spawner";
+      const refused = runDetachedServiceHarness(label, fault);
+      assert.notEqual(refused.status, 0, `${fault} must fail closed`);
+      assert.equal(refused.stdout, "", `${fault} must not publish a census member`);
+    }
   });
   it("receives the administrator URL only in an authenticated projection child", async () => {
     if (process.env.SETFARM_PG_URL === undefined) return;
