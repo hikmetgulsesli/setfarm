@@ -145,7 +145,11 @@ function createFullBuildFixture() {
   fixtureFile(root, "scripts/check-path-contract.mjs", "// fixture check\n");
   fixtureFile(root, "scripts/check-contract-spine-migration-digests.ts", "// fixture check\n");
   fixtureFile(root, "scripts/mission-control-contract-artifacts.ts", "// fixture check\n");
-  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", readFileSync(join(sourceRoot, "src/internal-production/baseline-post-handoff-receipt-v1.ts")));
+  fixtureFile(
+    root,
+    "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+    "export const fixtureBaselinePostHandoffReceiptV1 = true;\n",
+  );
   fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(join(sourceRoot, "src/product-compiler/canonical-json.ts")));
   fixtureFile(root, "landing/index.html", '<span class="version-badge">v9.8.7</span>\n');
   fixtureFile(root, "README.md", "fixture\n");
@@ -478,6 +482,32 @@ describe("OA17 build source and output authority", () => {
         assert.equal(mode(root, locator), 0o755, locator);
       }
       assert.equal(existsSync(join(root, "dist/stale.bin")), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reopens an indexed retained archive before the next prepare", () => {
+    const root = createFixture();
+    try {
+      mkdirSync(join(root, "dist"), { mode: 0o755 });
+      writeFileSync(join(root, "dist/stale.bin"), "stale\n", { mode: 0o600 });
+      const first = runProducer(root, "--prepare");
+      assert.equal(first.status, 0, first.stderr);
+
+      const archiveRoot = join(root, ".setfarm/build-generations-v1");
+      const firstArchive = readdirSync(archiveRoot);
+      const completionRoot = join(root, ".setfarm/build-generation-rotation-ledger-v1/completions");
+      const firstCompletionName = readdirSync(completionRoot);
+      assert.equal(firstArchive.length, 1);
+      assert.equal(firstCompletionName.length, 1);
+      const firstCompletion = JSON.parse(readFileSync(join(completionRoot, firstCompletionName[0]), "utf8"));
+      assert.equal(firstArchive[0], `${firstCompletion.buildId}.dist`);
+
+      const second = runProducer(root, "--prepare");
+      assert.equal(second.status, 0, second.stderr);
+      assert.equal(readdirSync(archiveRoot).length, 2);
+      assert.equal(readdirSync(completionRoot).length, 2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
