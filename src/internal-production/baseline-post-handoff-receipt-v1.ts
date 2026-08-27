@@ -2494,17 +2494,29 @@ function fixedMissionControlRootV1(): string {
   return root;
 }
 
-function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
-  const identityPath = path.join(fixedMissionControlRootV1(), "dist-server", "internal-production-build-identity.v1.json");
-  const value = strictCanonicalRecord(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes, "Mission Control build identity");
-  if (!hasExactKeys(value, ["schema", "sourceSha", "treeHash", "buildHash"]) || value.schema !== "mission-control.internal-production-build-identity.v1") {
+function parseMissionControlBuildIdentityV1(bytes: Buffer): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
+  if (bytes.length === 0 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("Mission Control build identity size is invalid");
+  const text = strictUtf8(bytes, "Mission Control build identity");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    currentEntryFail("Mission Control build identity is not JSON");
+  }
+  if (!isPlainRecord(parsed) || !hasExactKeys(parsed, ["schema", "sourceSha", "treeHash", "buildHash"]) || parsed.schema !== "mission-control.internal-production-build-identity.v1") {
     currentEntryFail("Mission Control build identity is invalid");
   }
-  return Object.freeze({
-    sha: requireGitHash(value.sourceSha, "Mission Control source SHA"),
-    treeHash: requireGitHash(value.treeHash, "Mission Control tree hash"),
-    buildHash: requireSha256(value.buildHash, "Mission Control build hash"),
-  });
+  const sourceSha = requireGitHash(parsed.sourceSha, "Mission Control source SHA");
+  const treeHash = requireGitHash(parsed.treeHash, "Mission Control tree hash");
+  const buildHash = requireSha256(parsed.buildHash, "Mission Control build hash");
+  const expected = { schema: "mission-control.internal-production-build-identity.v1", sourceSha, treeHash, buildHash };
+  if (text !== `${JSON.stringify(expected)}\n`) currentEntryFail("Mission Control build identity wire bytes are invalid");
+  return Object.freeze({ sha: sourceSha, treeHash, buildHash });
+}
+
+function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
+  const identityPath = path.join(fixedMissionControlRootV1(), "dist-server", "internal-production-build-identity.v1.json");
+  return parseMissionControlBuildIdentityV1(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes);
 }
 
 const PHASE_CLOSED_FUTURE_PRODUCERS_V1 = Object.freeze([

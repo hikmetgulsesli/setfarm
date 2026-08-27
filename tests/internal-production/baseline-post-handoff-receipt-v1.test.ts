@@ -1309,7 +1309,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   it("P4 service census resolves Mission Control only from the code-owned primary workspace root", () => {
     const source = readFileSync(observerSource, "utf8");
     const helperStart = source.indexOf("function fixedMissionControlRootV1(): string {");
-    const helperEnd = source.indexOf("\nfunction loadedMissionControlSourceV1(", helperStart);
+    const helperEnd = source.indexOf("\nfunction parseMissionControlBuildIdentityV1(", helperStart);
     assert.notEqual(helperStart, -1, "primary Mission Control root helper must exist");
     assert.notEqual(helperEnd, -1, "primary Mission Control root helper must be private and bounded");
     const helper = source.slice(helperStart, helperEnd)
@@ -1344,6 +1344,55 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       assert.throws(() => createObserver(fixtureHome)(), /Mission Control root is invalid/);
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("P4 service census reads the exact Mission Control build-identity wire contract", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-mc-build-identity-"));
+    let source = readFileSync(observerSource, "utf8");
+    assert.match(source, /function parseMissionControlBuildIdentityV1\(/);
+    source = source.replace("function parseMissionControlBuildIdentityV1(", "export function parseMissionControlBuildIdentityV1(");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (bytes: Buffer) => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e",
+      `import(${JSON.stringify(moduleUrl)}).then((m)=>process.stdout.write(JSON.stringify(m.parseMissionControlBuildIdentityV1(Buffer.from(process.env.P4_MC_IDENTITY,'base64')))))`,
+    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", P4_MC_IDENTITY: bytes.toString("base64") } });
+    const body = {
+      schema: "mission-control.internal-production-build-identity.v1",
+      sourceSha: "1".repeat(40),
+      treeHash: "2".repeat(40),
+      buildHash: "3".repeat(64),
+    };
+    try {
+      const valid = run(Buffer.from(`${JSON.stringify(body)}\n`, "utf8"));
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.deepEqual(JSON.parse(valid.stdout), { sha: body.sourceSha, treeHash: body.treeHash, buildHash: body.buildHash });
+      for (const bytes of [
+        Buffer.from(`${JSON.stringify({ buildHash: body.buildHash, schema: body.schema, sourceSha: body.sourceSha, treeHash: body.treeHash })}\n`),
+        Buffer.from(`${JSON.stringify(body, null, 2)}\n`),
+        Buffer.from(JSON.stringify(body)),
+        Buffer.from(`${JSON.stringify(body)}\r\n`),
+        Buffer.from(`${JSON.stringify(body)}\n\n`),
+        Buffer.from(`{"schema":"${body.schema}","schema":"${body.schema}","sourceSha":"${body.sourceSha}","treeHash":"${body.treeHash}","buildHash":"${body.buildHash}"}\n`),
+        Buffer.from(`${JSON.stringify({ ...body, unexpected: true })}\n`),
+        Buffer.from(`${JSON.stringify({ schema: body.schema, sourceSha: body.sourceSha, treeHash: body.treeHash })}\n`),
+        Buffer.from(`${JSON.stringify({ ...body, schema: "wrong" })}\n`),
+        Buffer.from(`${JSON.stringify({ ...body, sourceSha: "not-a-hash" })}\n`),
+        Buffer.from(`${JSON.stringify({ ...body, treeHash: "not-a-hash" })}\n`),
+        Buffer.from(`${JSON.stringify({ ...body, buildHash: "not-a-hash" })}\n`),
+        Buffer.from("[]\n"),
+        Buffer.from([0xff]),
+      ]) {
+        const refused = run(bytes);
+        assert.notEqual(refused.status, 0);
+        assert.equal(refused.stdout, "");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
