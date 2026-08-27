@@ -2647,6 +2647,7 @@ function launchctlEnvironmentBlockV1(text: string, name: string, label: string):
 }
 
 function observeDetachedLaunchProjectionV1(profile: DetachedSetfarmServiceProfileV1, uid: number): Readonly<{
+  state: "not running" | "spawn scheduled"; activeCount: 0;
   path: string; program: string; arguments: readonly string[]; environment: Readonly<Record<string, string>>;
   inheritedEnvironment: Readonly<Record<string, string>>; defaultEnvironment: Readonly<Record<string, string>>;
 }> {
@@ -2655,9 +2656,10 @@ function observeDetachedLaunchProjectionV1(profile: DetachedSetfarmServiceProfil
   const pathValue = oneLaunchctlScalarV1(text, "path", profile.label);
   const program = oneLaunchctlScalarV1(text, "program", profile.label);
   const state = oneLaunchctlScalarV1(text, "state", profile.label);
+  const activeCount = oneLaunchctlScalarV1(text, "active count", profile.label);
   const type = oneLaunchctlScalarV1(text, "type", profile.label);
   const pidMatches = [...text.matchAll(/^\tpid = ([0-9]+)$/gm)];
-  if (state !== "not running" || pidMatches.length !== 0 || type !== "LaunchAgent") currentEntryFail(`${profile.label} launcher is not in its stable detached state`);
+  if ((state !== "not running" && state !== "spawn scheduled") || activeCount !== "0" || pidMatches.length !== 0 || type !== "LaunchAgent") currentEntryFail(`${profile.label} launcher is not in its stable detached state`);
   const expectedPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${profile.label}.plist`);
   if (pathValue !== expectedPath || program !== profile.launchArguments[0]) currentEntryFail(`${profile.label} launchctl program is crossed`);
   const argumentsValue = oneLaunchctlBlockV1(text, "arguments", profile.label);
@@ -2675,7 +2677,7 @@ function observeDetachedLaunchProjectionV1(profile: DetachedSetfarmServiceProfil
   const primarySetfarmScripts = path.join(userInfo().homedir, "ai", "setrox", "setfarm", "scripts");
   if (!hasExactKeys(inheritedEnvironment, ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"]) || inheritedEnvironment.SETFARM_ENV_DIR !== primarySetfarmScripts || !/^\/var\/run\/com\.apple\.launchd\.[A-Za-z0-9]+\/Listeners$/.test(inheritedEnvironment.SSH_AUTH_SOCK ?? "")) currentEntryFail(`${profile.label} inherited launch environment is invalid`);
   if (!hasExactKeys(defaultEnvironment, ["PATH"]) || defaultEnvironment.PATH !== "/usr/bin:/bin:/usr/sbin:/sbin") currentEntryFail(`${profile.label} default launch environment is invalid`);
-  return recursivelyFreeze({ path: pathValue, program, arguments: argumentsValue, environment, inheritedEnvironment, defaultEnvironment });
+  return recursivelyFreeze({ state, activeCount: 0, path: pathValue, program, arguments: argumentsValue, environment, inheritedEnvironment, defaultEnvironment });
 }
 
 function observeDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1): Readonly<{ bytes: Buffer; stats: BigIntStats; environment: Readonly<Record<string, string>> }> {
