@@ -530,6 +530,82 @@ process.stdout.write(JSON.stringify(result)+"\n");
   }
 }
 
+function runMissionControlServiceHarness(fault = "none"): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const listenerParserStart = source.indexOf("function parseMissionControlListenerV1(");
+  const listenerParserEnd = source.indexOf("\nfunction observeProcessListenersV1(", listenerParserStart);
+  const launchctlHelpersStart = source.indexOf("function oneLaunchctlBlockV1(");
+  const launchctlHelpersEnd = source.indexOf("\nfunction observeDetachedLaunchProjectionV1(", launchctlHelpersStart);
+  const listenerObserverStart = source.indexOf("function requireMissionControlListenerEnvironmentV1(");
+  const listenerObserverEnd = source.indexOf("\nconst PHASE_CLOSED_FUTURE_PRODUCERS_V1", listenerObserverStart);
+  const serviceObserverStart = source.indexOf("function observeServiceProcessV1(");
+  const serviceObserverEnd = source.indexOf("\nexport async function observeInternalProductionServiceCensusV1(", serviceObserverStart);
+  for (const [label, offset] of Object.entries({ listenerParserStart, listenerParserEnd, launchctlHelpersStart, launchctlHelpersEnd, listenerObserverStart, listenerObserverEnd, serviceObserverStart, serviceObserverEnd })) {
+    assert.notEqual(offset, -1, `Mission Control production slice is missing ${label}`);
+  }
+  const fragments = [
+    source.slice(listenerParserStart, listenerParserEnd),
+    source.slice(launchctlHelpersStart, launchctlHelpersEnd),
+    source.slice(listenerObserverStart, listenerObserverEnd),
+    source.slice(serviceObserverStart, serviceObserverEnd).replace("function observeServiceProcessV1(", "export function observeServiceProcessV1("),
+  ].join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-service-")));
+  const fixtureHome = path.join(root, "home");
+  const missionControlRoot = path.join(fixtureHome, "ai", "setrox", "mission-control");
+  const plistPath = path.join(fixtureHome, "Library", "LaunchAgents", "com.setrox.mission-control.plist");
+  const environment = { MC_HOST: "0.0.0.0", MC_PORT: "3080", MC_INTERNAL_URL: "http://127.0.0.1:3080" };
+  fixtureFile(root, "home/Library/LaunchAgents/com.setrox.mission-control.plist", JSON.stringify({ EnvironmentVariables: environment }), 0o600);
+  const harness = String.raw`
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import path from "node:path";
+type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
+type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
+const CURRENT_ENTRY_MAX_BYTES=1048576;
+const fault=process.env.FAULT??"none";
+const pid=74152;
+const rawListener=Buffer.from("p74152\0cnode\0\nf14\0n*:3080\0\n");
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const text=bytes.toString("utf8");if(!Buffer.from(text,"utf8").equals(bytes))currentEntryFail(label+" is not UTF-8");return text}
+function isPlainRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype}
+function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const descriptor=Object.getOwnPropertyDescriptor(value as object,key);if(descriptor&&"value" in descriptor)recursivelyFreeze(descriptor.value)}Object.freeze(value)}return value}
+function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const record=value as Record<string,unknown>;return "{"+Object.keys(record).sort().map((key)=>JSON.stringify(key)+":"+canonicalComparable(record[key])).join(",")+"}"}
+function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
+function hashCanonicalJson(value:unknown){return sha256(canonicalComparable(value))}
+function fixedMissionControlRootV1(){return process.env.MC_ROOT!}
+function fixedRepositoryRoot(){return process.env.MC_ROOT!}
+function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
+function readStableRegular(target:string){const stats=lstatSync(target,{bigint:true});return Object.freeze({bytes:readFileSync(target),stats})}
+function boundedChildText(executable:string,args:readonly string[],label:string,input?:Buffer){
+  if(executable==="/bin/launchctl")return "gui/"+process.getuid!()+"/com.setrox.mission-control = {\n\tenvironment = {\n\t\tMC_HOST => "+(fault==="loaded_environment"?"127.0.0.1":"0.0.0.0")+"\n\t\tMC_PORT => 3080\n\t\tMC_INTERNAL_URL => http://127.0.0.1:3080\n\t}\n\tpid = "+pid+"\n}\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-p 74152 -o lstart=")return "Sun Aug 16 15:42:28 2026\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-p 74152 -o command=")return process.execPath+" "+process.env.MC_ROOT+"/dist-server/index.js\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-axo command=")return process.execPath+" "+process.env.MC_ROOT+"/dist-server/index.js\n";
+  if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_environment")parsed.EnvironmentVariables.MC_PORT="3081";return JSON.stringify(parsed)}
+  throw new Error("unexpected bounded command "+executable+" "+args.join(" ")+" "+label);
+}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){
+  const expected=["-nP","-a","-p","74152","-iTCP:3080","-sTCP:LISTEN","-F0pcfn"];
+  if(executable!=="/usr/sbin/lsof"||JSON.stringify(args)!==JSON.stringify(expected))throw new Error("crossed Mission Control lsof invocation");
+  return Object.freeze({status:0,stdout:rawListener});
+}
+${fragments}
+const source=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
+const result=observeServiceProcessV1("com.setrox.mission-control",3080,source);
+process.stdout.write(JSON.stringify(result)+"\n");
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FIXTURE_HOME: fixtureHome, MC_ROOT: missionControlRoot, PLIST_PATH: plistPath, FAULT: fault },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function currentEntryStore(root: string): string {
   return path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1");
 }
@@ -1197,6 +1273,11 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       .replace("function parseLsofReferencesV1(", "export function parseLsofReferencesV1(")
       .replace("function parseGitWorktreeListV1(", "export function parseGitWorktreeListV1(")
       .replace("function parseProcessListenersV1(", "export function parseProcessListenersV1(")
+      .replace("function observeProcessListenersV1(", "export function observeProcessListenersV1(")
+      .replace(
+        '  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);',
+        '  const result = process.env.P4_PROCESS_LISTENER_RESULT ? { status: Number(process.env.P4_PROCESS_LISTENER_STATUS), stdout: Buffer.from(process.env.P4_PROCESS_LISTENER_RESULT, "base64") } : runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);',
+      )
       .replace("function assertPhysicalInventoryPassStableV1(", "export function assertPhysicalInventoryPassStableV1(");
     fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
     fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
@@ -1257,6 +1338,15 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       for (const bytes of [Buffer.from("p43\0n127.0.0.1:4567\0\n"), Buffer.from("p42\0nmalformed\0\n"), Buffer.from("p42\0n127.0.0.1:4567\0n127.0.0.1:4567\0\n")]) {
         assert.notEqual(runPrivate("m.parseProcessListenersV1(Buffer.from(process.env.P4_BYTES,'base64'),42)", { P4_BYTES: bytes.toString("base64") }).status, 0);
       }
+      const partialListenerInventory = runPrivate(
+        "m.observeProcessListenersV1(42)",
+        {
+          P4_PROCESS_LISTENER_STATUS: "1",
+          P4_PROCESS_LISTENER_RESULT: Buffer.from("p42\0cnode\0f1\0n127.0.0.1:4567\0\n").toString("base64"),
+        },
+      );
+      assert.notEqual(partialListenerInventory.status, 0, "nonzero lsof output must never authorize a partial listener inventory");
+      assert.equal(partialListenerInventory.stdout, "");
       assert.equal(runPrivate("m.assertPhysicalInventoryPassStableV1({worktrees:[],processes:[],listeners:[],stale:[]},{worktrees:[],processes:[],listeners:[],stale:[]})").status, 0);
       assert.notEqual(runPrivate("m.assertPhysicalInventoryPassStableV1({worktrees:[],processes:[],listeners:[],stale:[]},{worktrees:[{root:'/changed',dirty:false}],processes:[],listeners:[],stale:[]})").status, 0);
     } finally {
@@ -1391,6 +1481,79 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         assert.notEqual(refused.status, 0);
         assert.equal(refused.stdout, "");
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("P4 service census authenticates the Mission Control wildcard listener as logical loopback", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-mc-listener-"));
+    let source = readFileSync(observerSource, "utf8");
+    for (const name of ["parseMissionControlListenerV1", "requireMissionControlListenerEnvironmentV1", "isExpectedPersistentListenerV1"]) {
+      assert.match(source, new RegExp(`function ${name}\\(`));
+      source = source.replace(`function ${name}(`, `export function ${name}(`);
+    }
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (expression: string, environment: Record<string, string> = {}) => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m)=>${expression})`,
+    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...environment } });
+    const listenerBytes = Buffer.from("p74152\0cnode\0\nf14\0n*:3080\0\n");
+    const parse = (bytes: Buffer, pid = 74152) => run(
+      `process.stdout.write(JSON.stringify(m.parseMissionControlListenerV1(Buffer.from(process.env.P4_MC_LISTENER,'base64'),${pid})))`,
+      { P4_MC_LISTENER: bytes.toString("base64") },
+    );
+    try {
+      const integrated = runMissionControlServiceHarness();
+      assert.equal(integrated.status, 0, integrated.stderr);
+      const integratedBody = JSON.parse(integrated.stdout);
+      assert.equal(integratedBody.pid, 74152);
+      assert.equal(integratedBody.processOwnerCount, 1);
+      assert.equal(integratedBody.listenerOwnerCount, 1);
+      assert.deepEqual(integratedBody.listener, {
+        host: "127.0.0.1",
+        port: 3080,
+        listenerIdentityHash: createHash("sha256").update(listenerBytes).digest("hex"),
+      });
+      for (const fault of ["loaded_environment", "plist_environment"]) {
+        const crossed = runMissionControlServiceHarness(fault);
+        assert.notEqual(crossed.status, 0, `${fault} must fail through the integrated Mission Control observer`);
+        assert.equal(crossed.stdout, "");
+      }
+      const valid = parse(listenerBytes);
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.deepEqual(JSON.parse(valid.stdout), { pid: 74152, command: "node", fileDescriptor: 14, endpoint: "*:3080" });
+      for (const bytes of [
+        Buffer.from("p74153\0cnode\0\nf14\0n*:3080\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n127.0.0.1:3080\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n0.0.0.0:3080\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n*:3081\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n*:3080->127.0.0.1:1\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n*:3080\0\nf15\0n*:3080\0\n"),
+        Buffer.from("p74152\0cnode\0\nn*:3080\0\nf14\0\n"),
+        Buffer.from("p74152\0cnode\0\nf14\0n*:3080\0"),
+      ]) assert.notEqual(parse(bytes).status, 0);
+      const loaded = { MC_HOST: "0.0.0.0", MC_PORT: "3080", MC_INTERNAL_URL: "http://127.0.0.1:3080", OTHER: "retained" };
+      const plist = { MC_HOST: "0.0.0.0", MC_PORT: "3080", MC_INTERNAL_URL: "http://127.0.0.1:3080" };
+      const validEnvironment = run(`{m.requireMissionControlListenerEnvironmentV1(${JSON.stringify(loaded)},${JSON.stringify(plist)});process.stdout.write('ok')}`);
+      assert.equal(validEnvironment.status, 0, validEnvironment.stderr);
+      assert.equal(validEnvironment.stdout, "ok");
+      for (const mutation of [
+        { loaded: { ...loaded, MC_HOST: "127.0.0.1" }, plist },
+        { loaded, plist: { ...plist, MC_PORT: "3081" } },
+        { loaded: { ...loaded, MC_INTERNAL_URL: "http://0.0.0.0:3080" }, plist },
+      ]) assert.notEqual(run(`m.requireMissionControlListenerEnvironmentV1(${JSON.stringify(mutation.loaded)},${JSON.stringify(mutation.plist)})`).status, 0);
+      const services = { spawner: { pid: 1 }, dashboard: { pid: 2 }, missionControl: { pid: 3 }, openClaw: { pid: 4 } };
+      const expected = (listener: Record<string, unknown>) => run(`process.stdout.write(String(m.isExpectedPersistentListenerV1(${JSON.stringify(listener)},${JSON.stringify(services)})))`);
+      assert.equal(expected({ pid: 3, protocol: "TCP", localAddress: "*", port: 3080 }).stdout, "true");
+      for (const listener of [
+        { pid: 5, protocol: "TCP", localAddress: "*", port: 3080 },
+        { pid: 3, protocol: "TCP", localAddress: "0.0.0.0", port: 3080 },
+        { pid: 3, protocol: "TCP", localAddress: "*", port: 3081 },
+      ]) assert.equal(expected(listener).stdout, "false");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -2376,10 +2376,30 @@ function parseProcessListenersV1(bytes: Buffer, pid: number): readonly Readonly<
   return Object.freeze(listeners);
 }
 
+function parseMissionControlListenerV1(bytes: Buffer, expectedPid: number): Readonly<{ pid: number; command: string; fileDescriptor: number; endpoint: "*:3080" }> {
+  const text = strictUtf8(bytes, "Mission Control listener");
+  const match = /^p([1-9][0-9]*)\0c([^\0\n]+)\0\nf(0|[1-9][0-9]*)\0n(\*:3080)\0\n$/.exec(text);
+  if (!match) currentEntryFail("Mission Control listener inventory is malformed");
+  const pid = Number(match[1]);
+  const fileDescriptor = Number(match[3]);
+  if (!Number.isSafeInteger(pid) || pid !== expectedPid || !Number.isSafeInteger(fileDescriptor) || fileDescriptor < 0) currentEntryFail("Mission Control listener identity is crossed");
+  return Object.freeze({ pid, command: match[2]!, fileDescriptor, endpoint: "*:3080" });
+}
+
 function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[] {
   const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);
   if (result.status === 1 && result.stdout.length === 0) return Object.freeze([]);
+  if (result.status !== 0) currentEntryFail(`process ${pid} listener inventory is partial`);
   return parseProcessListenersV1(result.stdout, pid);
+}
+
+function isExpectedPersistentListenerV1(
+  listener: Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>,
+  services: InternalProductionServiceCensusV1,
+): boolean {
+  return (listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
+    || (listener.pid === services.missionControl.pid && listener.localAddress === "*" && listener.port === 3080)
+    || (listener.pid === services.openClaw.pid && listener.localAddress === "127.0.0.1" && listener.port === 18789);
 }
 
 function assertPhysicalInventoryPassStableV1(first: unknown, second: unknown): void {
@@ -2446,12 +2466,7 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
   }
   const listenerPids = new Set([...persistentPids, ...owned.map((entry) => entry.pid)]);
   const listeners = [...listenerPids].sort((a, b) => a - b).flatMap((pid) => observeProcessListenersV1(pid));
-  const expectedListeners = new Set([
-    `${services.dashboard.pid}|127.0.0.1|3333`,
-    `${services.missionControl.pid}|127.0.0.1|3080`,
-    `${services.openClaw.pid}|127.0.0.1|18789`,
-  ]);
-  const extraListeners = listeners.filter((listener) => !expectedListeners.has(`${listener.pid}|${listener.localAddress}|${listener.port}`));
+  const extraListeners = listeners.filter((listener) => !isExpectedPersistentListenerV1(listener, services));
   const processesAgain = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
   assertPhysicalInventoryPassStableV1(processes, processesAgain);
   return recursivelyFreeze({
@@ -2517,6 +2532,30 @@ function parseMissionControlBuildIdentityV1(bytes: Buffer): Readonly<{ sha: stri
 function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
   const identityPath = path.join(fixedMissionControlRootV1(), "dist-server", "internal-production-build-identity.v1.json");
   return parseMissionControlBuildIdentityV1(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes);
+}
+
+function requireMissionControlListenerEnvironmentV1(loaded: Record<string, unknown>, plist: Record<string, unknown>): void {
+  const expected = Object.freeze({ MC_HOST: "0.0.0.0", MC_PORT: "3080", MC_INTERNAL_URL: "http://127.0.0.1:3080" });
+  for (const [key, value] of Object.entries(expected)) {
+    if (loaded[key] !== value || plist[key] !== value) currentEntryFail("Mission Control listener environment is crossed");
+  }
+}
+
+function observeMissionControlListenerV1(pid: number, launchctl: string): Readonly<{ bytes: Buffer; command: string; fileDescriptor: number }> {
+  const loadedEnvironment = launchctlEnvironmentBlockV1(launchctl, "environment", "com.setrox.mission-control");
+  const plistPath = path.join(userInfo().homedir, "Library", "LaunchAgents", "com.setrox.mission-control.plist");
+  const parent = lstatSync(path.dirname(plistPath), { bigint: true });
+  const observed = readStableRegular(plistPath, CURRENT_ENTRY_MAX_BYTES, parent.dev, 1);
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || observed.stats.uid !== BigInt(uid!) || (Number(observed.stats.mode & 0o7777n) & 0o022) !== 0) currentEntryFail("Mission Control listener plist ownership is invalid");
+  const converted = boundedChildText("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], "Mission Control listener plist", observed.bytes);
+  let parsed: unknown;
+  try { parsed = JSON.parse(converted); } catch { currentEntryFail("Mission Control listener plist is not JSON"); }
+  if (!isPlainRecord(parsed) || !isPlainRecord(parsed.EnvironmentVariables)) currentEntryFail("Mission Control listener plist environment is invalid");
+  requireMissionControlListenerEnvironmentV1(loadedEnvironment, parsed.EnvironmentVariables);
+  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP:3080", "-sTCP:LISTEN", "-F0pcfn"]);
+  const listener = parseMissionControlListenerV1(result.stdout, pid);
+  return Object.freeze({ bytes: result.stdout, command: listener.command, fileDescriptor: listener.fileDescriptor });
 }
 
 const PHASE_CLOSED_FUTURE_PRODUCERS_V1 = Object.freeze([
@@ -2827,6 +2866,18 @@ function observeServiceProcessV1(
   const serviceIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-service-identity.v1", label, command: command.slice(0, -1) });
   const generationHash = hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source });
   const common = { pid, processStartTimeEpochMs, processIdentityHash, serviceIdentityHash, generationHash };
+  if (label === "com.setrox.mission-control" && port === 3080) {
+    const observedListener = observeMissionControlListenerV1(pid, launchctl);
+    return recursivelyFreeze({
+      ...common,
+      loadedSourceSha: source?.sha ?? null,
+      loadedTreeHash: source?.treeHash ?? null,
+      loadedBuildHash: source?.buildHash ?? null,
+      processOwnerCount: processOwnerCount as 1,
+      listenerOwnerCount: 1 as const,
+      listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(observedListener.bytes) },
+    });
+  }
   if (port === null) {
     if (!source) currentEntryFail("spawner source is absent");
     return recursivelyFreeze({ ...common, loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: processOwnerCount as 1, listener: null });
