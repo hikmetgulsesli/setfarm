@@ -872,7 +872,7 @@ const WORKFLOW_RUN_TERMINAL_STATUSES_V1 = Object.freeze([
 ] as const);
 type WorkflowRunTerminalStatusV1 = typeof WORKFLOW_RUN_TERMINAL_STATUSES_V1[number];
 const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =
-  "6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17";
+  "470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db";
 const RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1 = "./internal-production/baseline-spawner-startup-admission-v1.js";
 const RUN_PERSISTENCE_READINESS_REQUIRED_EXPORTS_V1 = Object.freeze([
   "observeInternalProductionPreSchemaSpawnerRebindStatusV1",
@@ -1608,6 +1608,7 @@ async function observeInternalProductionCompletionBootstrapHeadBarrierV1(
     return;
   }
   if (context.mode === "ordinary-target-adoption") {
+    if (active.length === 0) return;
     if (context.producerImplementationId !== "a-completion-owner-v1" || active.length !== 1 || active[0]!.request_id !== context.requestId) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TARGET_ADOPTION_CROSSED");
     return;
   }
@@ -2284,7 +2285,7 @@ async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(
     );
     if (reservation.category !== "run" || bound.category !== "run" || bound.ownerKey !== reservation.ownerKey || !sameJsonValueV1(bound.canonicalOwnerIdentity, expectedIdentity)) throw new Error();
     if (reservation.producerImplementationId === "a-runtime-run-v1") {
-      if (bound.producerImplementationId !== "a-runtime-run-v1" || row.state !== "bound") throw new Error();
+      if (bound.producerImplementationId !== "a-runtime-run-v1") throw new Error();
     } else if (reservation.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       if (bound.producerImplementationId !== "a-recovery-source-bootstrap-run-v1" || row.state !== "closed") throw new Error();
       const runRows = await sql<Array<{ id: string; context: string; status: string }>>`
@@ -4557,7 +4558,7 @@ export async function resolveBoundInternalProductionWorkflowRunOwnerV1(input: Re
     const resolved = await resolveStoredWorkflowRunOwnerByPairInTransactionV1(
       sql,
       input,
-      ["bound", "closed"],
+      ["bound"],
     );
     if (resolved.bound.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       const runs = await sql<Array<{ status: string }>>`SELECT status FROM runs WHERE id=${resolved.bound.ownerKey} FOR SHARE`;
@@ -4579,7 +4580,7 @@ export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Re
        WHERE producer_implementation_id=ANY(${["a-runtime-run-v1", "a-recovery-source-bootstrap-run-v1"]})
          AND category='run'
          AND owner_key=${input.runId}
-         AND state=ANY(${["bound", "closed"]})
+         AND state='bound'
     `;
     if (pairs.length !== 1) {
       throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");
@@ -4587,7 +4588,7 @@ export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Re
     const resolved = await resolveStoredWorkflowRunOwnerByPairInTransactionV1(sql, {
       runOwnerReservationRef: pairs[0]!.reservation_ref,
       runOwnerReservationHash: pairs[0]!.reservation_hash,
-    }, ["bound", "closed"]);
+    }, ["bound"]);
     if (resolved.bound.producerImplementationId === "a-recovery-source-bootstrap-run-v1") {
       const runs = await sql<Array<{ status: string }>>`SELECT status FROM runs WHERE id=${input.runId} FOR SHARE`;
       if (runs.length !== 1 || runs[0]!.status !== "running") throw new Error("INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE");

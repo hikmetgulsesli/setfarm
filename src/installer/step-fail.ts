@@ -44,6 +44,8 @@ import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js"
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../execution/schemas/runtime-completion-plan-v1.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
 import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
+import { releaseReservedRuntimeSessionInTransaction } from "../execution/runtime-session-repository.js";
+import { acquireClaimMutationAuthorityInTransaction } from "../execution/claim-mutation-authority.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -686,6 +688,66 @@ async function handleSingleStepFailurePG(
   }
 
   await pgBegin(async (sql) => {
+    let platformPreclaimRuntime: Readonly<{
+      sessionId: string;
+      ownerInstanceId: string;
+    }> | undefined;
+    if (terminalPlatformPreclaim) {
+      if (!claimEnvelope) throw new Error("PLATFORM_PRECLAIM_RUNTIME_CLAIM_AUTHORITY_REQUIRED");
+      await acquireClaimMutationAuthorityInTransaction(sql, {
+        claimId: claimEnvelope.claimId,
+        runId: claimEnvelope.runId,
+        workflowStepId: claimEnvelope.workflowStepId,
+        storyId: null,
+        claimAgentId: claimEnvelope.claimAgentId,
+      });
+      const rows = await sql.unsafe<Array<{
+        session_id: string;
+        owner_instance_id: string;
+        runtime_agent_id: string;
+      }>>(
+        `SELECT runtime.session_id, runtime.owner_instance_id, runtime.runtime_agent_id
+           FROM claim_log claim
+           JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+          WHERE claim.id = $1
+            AND claim.run_id = $2
+            AND claim.step_id = $3
+            AND claim.story_id IS NULL
+            AND claim.agent_id = $4
+            AND claim.outcome IS NULL
+            AND runtime.run_id = $2
+            AND runtime.step_db_id = $5
+            AND runtime.workflow_step_id = $3
+            AND runtime.story_db_id IS NULL
+            AND runtime.story_id IS NULL
+            AND runtime.attempt_id IS NULL
+            AND runtime.claim_agent_id = $4
+            AND runtime.runtime_agent_id = $6
+            AND runtime.state = 'reserved'
+          ORDER BY runtime.session_id
+        `,
+        [
+          claimEnvelope.claimId,
+          claimEnvelope.runId,
+          claimEnvelope.workflowStepId,
+          claimEnvelope.claimAgentId,
+          claimEnvelope.stepId,
+          claimEnvelope.runtimeAgentId,
+        ],
+      );
+      if (
+        rows.length !== 1
+        || typeof rows[0]!.session_id !== "string"
+        || rows[0]!.session_id.length === 0
+        || typeof rows[0]!.owner_instance_id !== "string"
+        || rows[0]!.owner_instance_id.length === 0
+        || rows[0]!.runtime_agent_id !== claimEnvelope.runtimeAgentId
+      ) throw new Error("PLATFORM_PRECLAIM_RESERVED_RUNTIME_AUTHORITY_INVALID");
+      platformPreclaimRuntime = {
+        sessionId: rows[0]!.session_id,
+        ownerInstanceId: rows[0]!.owner_instance_id,
+      };
+    }
     let claimOutcome: SingleStepClaimOutcome;
     if (newRetryCount > step.max_retries) {
       const isCritical = CRITICAL_STEPS.has(workflowStepId);
@@ -742,7 +804,7 @@ async function handleSingleStepFailurePG(
       await sql`UPDATE steps SET status = 'pending', retry_count = ${newRetryCount}, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
     }
     if (claimEnvelope) {
-      await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
+      const committed = await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
         claimId: claimEnvelope.claimId,
         claimOutcome,
         plan: createSingleEffectCompletionPlanDescriptorV1({
@@ -755,6 +817,17 @@ async function handleSingleStepFailurePG(
             outcome: claimOutcome,
           },
         }),
+      });
+      if (terminalPlatformPreclaim && committed) {
+        throw new Error("PLATFORM_PRECLAIM_COMPLETION_OWNER_MUST_BE_ABSENT");
+      }
+    }
+    if (platformPreclaimRuntime && claimEnvelope) {
+      await releaseReservedRuntimeSessionInTransaction(sql, {
+        sessionId: platformPreclaimRuntime.sessionId,
+        claimId: claimEnvelope.claimId,
+        ownerInstanceId: platformPreclaimRuntime.ownerInstanceId,
+        diagnostic: error,
       });
     }
   });

@@ -604,6 +604,11 @@ export async function p4ObserveWithContext(sql:any,context:any){internalProducti
     for (const mode of ["ordinary", "source", "null-fence"]) {
       await assert.rejects(kernel.p4Observe(taggedSql([activeRow])), /OWNER_ADMISSION_COMPLETION_BOOTSTRAP_FENCED/, `${mode} producer loses after target publication`);
     }
+    await kernel.p4ObserveWithContext(taggedSql([]), {
+      mode: "ordinary-target-adoption",
+      requestId: "ordinary-run-with-no-bootstrap-barrier",
+      producerImplementationId: "a-runtime-run-v1",
+    });
     await kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-completion-owner-v1" });
     await assert.rejects(kernel.p4ObserveWithContext(taggedSql([activeRow]), { mode: "ordinary-target-adoption", requestId, producerImplementationId: "a-runtime-run-v1" }), /TARGET_ADOPTION_CROSSED/);
     const operationRef = `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${operationHash}`;
@@ -1097,18 +1102,28 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
     },
   });
   assert.equal(cloned.status, 0, cloned.stderr);
-  for (const locator of [
+  const currentByteLocators = [
     "scripts/run-isolated-postgres-tests.ts",
     "src/db-pg.ts",
     "src/internal-production/owner-admission-v1.ts",
+    "src/installer/step-fail.ts",
+    "src/installer/step-ops.ts",
+    "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
     "tests/execution-attempts/test-database.ts",
+    "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
     "tests/internal-production/owner-admission-v1.test.ts",
-  ]) {
+    "tests/internal-production/task-0-source-manifest.test.ts",
+  ] as const;
+  for (const locator of currentByteLocators) {
     cpSync(path.join(process.cwd(), locator), path.join(root, locator));
   }
   p3TestGit(root, ["config", "user.name", "Setfarm P3 Refusal Fixture"]);
   p3TestGit(root, ["config", "user.email", "setfarm-p3-refusal@invalid"]);
-  p3TestGit(root, ["add", "scripts/run-isolated-postgres-tests.ts", "src/db-pg.ts", "src/internal-production/owner-admission-v1.ts", "tests/execution-attempts/test-database.ts", "tests/internal-production/owner-admission-v1.test.ts"]);
+  p3TestGit(root, ["add", ...currentByteLocators]);
   if (p3TestGit(root, ["diff", "--cached", "--name-only"]) !== "") {
     p3TestGit(root, ["commit", "-qm", "P3 current-byte refusal fixture"]);
   }
@@ -1401,6 +1416,8 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   assert.match(helper, /await verifyContractSpineMigrations\(db\.getSql\(\)\)/);
   assert.doesNotMatch(helper, /migration.?33|033_v3_recovery/i);
   const activation = helperSource.slice(activationStart, activationEnd);
+  assert.match(helperSource, /prepareP3FixtureCurrentEntryOperationV1/);
+  assert.doesNotMatch(activation, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|launchctl|lsof/);
   const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
   const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");
   const activateIndex = activation.indexOf("await fixtureDb.activateInternalProductionOwnerProducerManifestSetV1");
@@ -1421,6 +1438,29 @@ test("P3 setup owns the generic successor apply and full verification slot befor
     ]);
   } finally {
     await sql.end({ timeout: 5 });
+  }
+});
+
+test("P4 unmarked P3 database authority is rejected before an administrator connection", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "setfarm-p3-unmarked-"));
+  try {
+    const helperUrl = pathToFileURL(path.join(process.cwd(), "tests/execution-attempts/test-database.ts")).href;
+    const program = `import(${JSON.stringify(`${helperUrl}?unmarked=${Date.now()}`)}).then(async(m)=>{try{const db=await m.createIsolatedTestDatabase();await db.cleanup?.();process.stdout.write('UNEXPECTED_SUCCESS')}catch(error){process.stdout.write(String(error))}})`;
+    const result = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", program], {
+      cwd,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: process.env.HOME ?? tmpdir(),
+        SETFARM_PG_URL: "postgresql://127.0.0.1:5432/setfarm_p3_0123456789abcdef01234567_primary",
+        SETFARM_TEST_PG_ADMIN_URL: "postgresql://127.0.0.1:1/postgres",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /P3_PROJECTION_MARKER_REQUIRED/);
+    assert.doesNotMatch(result.stdout, /ISOLATED_POSTGRES_UNAVAILABLE|UNEXPECTED_SUCCESS/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
 
@@ -2519,6 +2559,29 @@ function materializeActivationFixtureBuildOutputs(root: string): void {
   }
 }
 
+function activationFixtureReceiptWithOperationPublisherV1(source: string): string {
+  const start = source.indexOf("export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {");
+  const end = source.indexOf("\n\nexport async function resolveInternalProductionCurrentEntryOperationV1", start);
+  assert.ok(start >= 0 && end > start, "activation fixture operation publisher boundary must remain exact");
+  let continuationReplacements = 0;
+  const fixturePublisher = source.slice(start, end)
+    .replace(
+      "prepareInternalProductionCurrentEntryOperationV1",
+      "prepareActivationFixtureCurrentEntryOperationV1",
+    )
+    .replace(
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      () => {
+        continuationReplacements += 1;
+        return "\n    return resolved;";
+      },
+    );
+  assert.equal(continuationReplacements, 2, "activation fixture publisher must stop at both status-continuation boundaries");
+  assert.match(fixturePublisher, /export async function prepareActivationFixtureCurrentEntryOperationV1/);
+  assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
+  return `${source}\n${fixturePublisher}\n`;
+}
+
 function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; vendorCommit: string }> {
   const container = mkdtempSync(path.join(tmpdir(), "setfarm-activation-pg-"));
   const root = path.join(container, "setfarm");
@@ -2548,7 +2611,13 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   const vendorCommit = fixtureGit(root, ["rev-parse", "HEAD"]);
   const observation = completePbaObservation(vendorCommit);
   writeActivationFixtureFile(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", `const observation=${JSON.stringify(observation)}; export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(){return structuredClone(observation)} export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value){return value}\n`);
-  fixtureGit(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts"]);
+  const receiptLocator = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+  writeActivationFixtureFile(
+    root,
+    receiptLocator,
+    activationFixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8")),
+  );
+  fixtureGit(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", receiptLocator]);
   fixtureGit(root, ["commit", "-qm", "fixture controller source"]);
   fixtureGit(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   for (const entry of fixtureGit(root, ["ls-files", "-s", "-z"]).split("\0").filter(Boolean)) {
@@ -3071,7 +3140,13 @@ test("real PostgreSQL initial activation rolls back a write prefix then identica
 
     const receiptUrl = pathToFileURL(path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
     const fixtureReceipt = await import(`${receiptUrl}?prepare=${Date.now()}`);
-    const operation = await fixtureReceipt.prepareInternalProductionCurrentEntryOperationV1();
+    assert.equal(typeof fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1, "function");
+    assert.equal(fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1.length, 0);
+    const operation = await fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1();
+    assert.deepEqual(await fixtureReceipt.prepareActivationFixtureCurrentEntryOperationV1(), operation);
+    assert.deepEqual(await fixtureReceipt.observePreparedInternalProductionCurrentEntryOperationV1(), operation);
+    assert.equal(fixtureGit(fixture.root, ["status", "--porcelain=v2", "--untracked-files=all"]), "");
+    assert.equal(existsSync(path.join(fixture.root, "data")), false);
     assert.notEqual(fixture.vendorCommit, operation.controllerSource.sha);
 
     const fact = (name: string) => hashCanonicalJson({ schema: "setfarm.activation-fixture-fact.v1", name });
@@ -7129,8 +7204,8 @@ const EXPECTED_A_TUPLES = [
   ["src/recovery/v3-downstream-evidence-publication.ts", "putFindingSet", "a-finding-v3-downstream-evidence-v1", "finding", "finding-set-hash-v1", "findingOwnerCount"],
   ["src/recovery/v3-evidence-only-publication.ts", "putFindingSetInTransaction", "a-finding-v3-evidence-only-v1", "finding", "finding-set-hash-v1", "findingOwnerCount"],
   ["src/execution/operational-outbox-repository.ts", "createOperationalOutboxRepository.publish", "a-operational-delivery-v1", "operational-delivery", "operational-event-key-consumer-v1", "operationalDeliveryCount"],
-  ["src/internal-production/baseline-post-handoff-receipt-v1.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
-  ["src/internal-production/baseline-post-handoff-receipt-v1.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
+  ["src/db-pg.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
+  ["src/db-pg.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
 ] as const;
 
 test("freezes the exact 35-category registry and complete 36-counter census mapping", () => {
@@ -7170,6 +7245,15 @@ test("freezes and hashes the exact sixteen A producer rows", () => {
     ),
     INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
   );
+});
+
+test("pins run persistence readiness to the exact current A manifest", async () => {
+  const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
+  const matches = [...source.matchAll(/const WORKFLOW_RUN_MANIFEST_A_HASH_V1 =\s*"([a-f0-9]{64})";/g)];
+  assert.equal(matches.length, 1);
+  const pinned = matches[0]![1];
+  assert.equal(pinned, "470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db");
+  assert.equal(pinned, INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash);
 });
 
 test("validates the stable source pair and schema-domain-separated activation chain", () => {

@@ -13,6 +13,7 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -413,11 +414,24 @@ async function verifyP3ReadinessUnavailableV1(): Promise<void> {
 export async function createIsolatedTestDatabase(
   options: Readonly<{ migrate?: boolean }> = {},
 ) {
+  const projectionMarkerPath = path.join(realpathSync(process.cwd()), ".setfarm-p3-projection-marker.json");
+  const projectionMarkerPresent = existsSync(projectionMarkerPath);
   if (
     cachedCapabilityRoleV1 === null
-    && existsSync(path.join(realpathSync(process.cwd()), ".setfarm-p3-projection-marker.json"))
+    && projectionMarkerPresent
   ) {
     authenticateP3ProjectedReadinessTestCapabilityV1();
+  }
+  if (cachedCapabilityRoleV1 === null && !projectionMarkerPresent) {
+    const selectedDatabaseUrl = process.env.SETFARM_PG_URL;
+    if (selectedDatabaseUrl !== undefined) {
+      let selectedDatabaseName = "";
+      try {
+        const parsed = new URL(selectedDatabaseUrl);
+        selectedDatabaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+      } catch {}
+      if (P3_DATABASE_PATTERN.test(selectedDatabaseName)) throw new Error("P3_PROJECTION_MARKER_REQUIRED");
+    }
   }
   const marker = cachedCapabilityRoleV1 === "test" ? readP3MarkerV1() : null;
   const database = marker === null
@@ -747,6 +761,29 @@ function completeP3PbaObservationV1(vendorProducerCommit: string) {
   };
 }
 
+function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
+  const start = source.indexOf("export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {");
+  const end = source.indexOf("\n\nexport async function resolveInternalProductionCurrentEntryOperationV1", start);
+  assert.ok(start >= 0 && end > start, "P3 fixture current-entry operation publisher boundary must remain exact");
+  let continuationReplacements = 0;
+  const fixturePublisher = source.slice(start, end)
+    .replace(
+      "prepareInternalProductionCurrentEntryOperationV1",
+      "prepareP3FixtureCurrentEntryOperationV1",
+    )
+    .replace(
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      () => {
+        continuationReplacements += 1;
+        return "\n    return resolved;";
+      },
+    );
+  assert.equal(continuationReplacements, 2, "P3 fixture operation publisher must stop at both status-continuation boundaries");
+  assert.match(fixturePublisher, /export async function prepareP3FixtureCurrentEntryOperationV1/);
+  assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
+  return `${source}\n${fixturePublisher}\n`;
+}
+
 function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorCommit: string }> {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "setfarm-p3-activation-")), "setfarm");
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -784,7 +821,13 @@ function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorC
     "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
     `const observation=${JSON.stringify(observation)}; export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(){return structuredClone(observation)} export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value){return value}\n`,
   );
-  p3FixtureGitV1(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts"]);
+  const receiptLocator = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+  writeP3FixtureFileV1(
+    root,
+    receiptLocator,
+    p3FixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8")),
+  );
+  p3FixtureGitV1(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", receiptLocator]);
   p3FixtureGitV1(root, ["commit", "-qm", "P3 fixture controller source"]);
   p3FixtureGitV1(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   for (const entry of p3FixtureGitV1(root, ["ls-files", "-s", "-z"]).split("\0").filter(Boolean)) {
@@ -820,7 +863,20 @@ async function activateP3TemplateAndWriteReadinessV1(
       "src/internal-production/baseline-post-handoff-receipt-v1.ts",
     )).href;
     const fixtureReceipt = await import(`${receiptUrl}?p3-prepare=${Date.now()}`);
-    const operation = await fixtureReceipt.prepareInternalProductionCurrentEntryOperationV1();
+    assert.equal(typeof fixtureReceipt.prepareP3FixtureCurrentEntryOperationV1, "function");
+    assert.equal(fixtureReceipt.prepareP3FixtureCurrentEntryOperationV1.length, 0);
+    const operation = await fixtureReceipt.prepareP3FixtureCurrentEntryOperationV1();
+    const adopted = await fixtureReceipt.prepareP3FixtureCurrentEntryOperationV1();
+    assert.deepEqual(adopted, operation);
+    assert.deepEqual(await fixtureReceipt.observePreparedInternalProductionCurrentEntryOperationV1(), operation);
+    assert.equal(p3FixtureGitV1(fixture.root, ["status", "--porcelain=v2", "--untracked-files=all"]), "");
+    assert.equal(existsSync(path.join(fixture.root, "data")), false);
+    const fixtureStore = path.join(path.dirname(fixture.root), "data/internal-production-baseline/current-entry-v1");
+    assert.equal(readFileSync(path.join(fixtureStore, "current-entry-operation.json"), "utf8").includes(operation.operationHash), true);
+    assert.deepEqual(
+      ["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].sort(),
+      readdirSync(fixtureStore).sort(),
+    );
     assert.notEqual(fixture.vendorCommit, operation.controllerSource.sha);
     p3FixtureGitV1(projectionRoot, [
       "fetch", "--no-tags", fixture.root, operation.controllerSource.sha,

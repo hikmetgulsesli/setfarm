@@ -30,6 +30,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
 const recoveryPublicationMigrationId = "033_v3_recovery_claim_runtime_publication_v1";
 
+function quoteIdentifier(value: string): string {
+  assert.ok(value.length > 0 && !value.includes("\0"));
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+it("quotes projected database owners without narrowing PostgreSQL role names", () => {
+  assert.equal(quoteIdentifier('ci-user "projected"'), '"ci-user ""projected"""');
+});
+
 it("P4 guarded stage uses held savepoint without changing v32 digest", async () => {
   const [databaseSource, migrationSource, guardedSource, generatedDigests] = await Promise.all([
     readFile(path.join(repoRoot, "src/db-pg.ts"), "utf8"),
@@ -906,14 +915,18 @@ describe("contract spine migration journal", () => {
     await applyContractSpineMigrations(database.sql);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
     await applyContractSpineMigrations(database.sql);
+    const [{ ownerName }] = await database.sql<Array<{ ownerName: string }>>`
+      SELECT current_user AS "ownerName"
+    `;
+    assert.ok(ownerName);
     for (const [mutate, restore] of [
       [
         "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 OWNER TO pg_monitor",
-        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 OWNER TO postgres",
+        `ALTER TABLE internal_production_v3_recovery_claim_publications_v1 OWNER TO ${quoteIdentifier(ownerName)}`,
       ],
       [
         "ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO pg_monitor",
-        "ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO postgres",
+        `ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO ${quoteIdentifier(ownerName)}`,
       ],
       [
         "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1",
@@ -1800,6 +1813,11 @@ describe("contract spine migration journal", () => {
       {
         symbol: seamSymbols[1],
         file: "src/db/contract-spine-migrations.ts",
+        count: 1,
+      },
+      {
+        symbol: seamSymbols[0],
+        file: "src/internal-production/baseline-post-handoff-receipt-v1.ts",
         count: 1,
       },
       {

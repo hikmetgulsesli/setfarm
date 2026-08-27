@@ -75,6 +75,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "tests/execution-attempts/attempt-reconciler.test.ts",
   "tests/execution-attempts/claim-attempt-transition.test.ts",
   "tests/execution-attempts/claim-runtime-publication.test.ts",
+  "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
   "tests/execution-attempts/migration-source-digests.test.ts",
   "tests/execution-attempts/migrations.test.ts",
   "tests/execution-attempts/operational-event-delivery.test.ts",
@@ -97,8 +98,13 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "tests/execution-attempts/v3-git-revision.test.ts",
   "tests/execution-attempts/v3-implementation-attempt-v2.test.ts",
   "tests/execution-attempts/v3-normal-implementation-preclaim.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
   "tests/execution-attempts/v3-preparation-block-repository.test.ts",
   "tests/execution-attempts/v3-release-admission.test.ts",
+  "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+  "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
   "tests/execution-attempts/v3-story-claim-runtime-binding-v1-migration.test.ts",
   "tests/findings/migration-recovery-compatibility.test.ts",
   "tests/findings/migration.test.ts",
@@ -157,6 +163,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "tests/execution-attempts/attempt-reconciler.test.ts",
   "tests/execution-attempts/claim-attempt-transition.test.ts",
   "tests/execution-attempts/claim-runtime-publication.test.ts",
+  "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
   "tests/execution-attempts/migration-source-digests.test.ts",
   "tests/execution-attempts/migrations.test.ts",
   "tests/execution-attempts/operational-event-delivery.test.ts",
@@ -169,6 +176,11 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "tests/execution-attempts/runtime-session-repository.test.ts",
   "tests/execution-attempts/test-database.ts",
   "tests/execution-attempts/v3-downstream-evidence-publication.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+  "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+  "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
   "tests/findings/repository.test.ts",
   "tests/findings/v3-evidence-only-worker.test.ts",
   "tests/findings/v3-recovery-lifecycle-reconciler.test.ts",
@@ -193,6 +205,11 @@ const P3_DATABASE_EXECUTABLE_TEST_PATHS_V1 = [
   "tests/execution-attempts/runtime-hooks.test.ts",
   "tests/execution-attempts/runtime-session-repository.test.ts",
   "tests/execution-attempts/v3-downstream-evidence-publication.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+  "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+  "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+  "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
   "tests/findings/repository.test.ts",
   "tests/findings/v3-evidence-only-worker.test.ts",
   "tests/findings/v3-recovery-lifecycle-reconciler.test.ts",
@@ -201,7 +218,10 @@ const P3_DATABASE_EXECUTABLE_TEST_PATHS_V1 = [
 
 const P3_SOURCE_ONLY_EXECUTABLE_TEST_PATH_V1 =
   "tests/internal-production/task-0-source-manifest.test.ts";
-const P3_ROLE_ONLY_TEST_HELPER_PATH_V1 = "tests/execution-attempts/test-database.ts";
+const P3_ROLE_ONLY_TEST_HELPER_PATHS_V1 = [
+  "tests/execution-attempts/test-database.ts",
+  "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+] as const;
 
 function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
   assert.equal(actual.length, TASK_0_EXACT_SOURCE_PATHS_V1.length, "Task 0 source path cardinality differs");
@@ -212,19 +232,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 51, "P3 source path cardinality differs");
+  assert.equal(actual.length, 57, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen109");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen115");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen109 order");
+    "P3 source paths do not preserve frozen115 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 51, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 57, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -239,15 +259,16 @@ function assertExactP3ExecutableInventoryV1(input: Readonly<{
     "P3 database executable inventory differs");
   assert.deepEqual(input.sourceOnly, [P3_SOURCE_ONLY_EXECUTABLE_TEST_PATH_V1],
     "P3 source-only executable inventory differs");
-  assert.deepEqual(input.helperOnly, [P3_ROLE_ONLY_TEST_HELPER_PATH_V1],
+  assert.deepEqual(input.helperOnly, P3_ROLE_ONLY_TEST_HELPER_PATHS_V1,
     "P3 helper-only inventory differs");
-  assert.equal(input.database.length, 20);
+  assert.equal(input.database.length, 25);
   assert.equal(input.sourceOnly.length, 1);
-  assert.equal(input.helperOnly.length, 1);
+  assert.equal(input.helperOnly.length, 2);
   const executable = [...input.database, ...input.sourceOnly];
-  assert.equal(executable.length, 21);
-  assert.equal(executable.includes(P3_ROLE_ONLY_TEST_HELPER_PATH_V1), false,
-    "role-only helper must never be executable");
+  assert.equal(executable.length, 26);
+  for (const helper of P3_ROLE_ONLY_TEST_HELPER_PATHS_V1) {
+    assert.equal(executable.includes(helper), false, "role-only helper must never be executable");
+  }
   assert.deepEqual([...executable, ...input.helperOnly].sort(),
     P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/")).sort());
 }
@@ -259,7 +280,27 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
   const end = plan.indexOf("] as const;", start);
   assert.notEqual(end, -1, "approved plan Task 0 source tuple is unterminated");
   const block = plan.slice(start + marker.length, end);
-  return [...block.matchAll(/^  "([^"]+)",$/gm)].map((match) => match[1]!);
+  const base = [...block.matchAll(/^  "([^"]+)",$/gm)].map((match) => match[1]!);
+  const supersession = "The Task 6A projected-Step-1 fixture-owner amendment supersedes";
+  assert.equal(plan.split(supersession).length - 1, 1, "approved plan fixture-owner supersession differs");
+  const insertAfter = (paths: string[], anchor: string, additions: readonly string[]) => {
+    const ordinal = paths.indexOf(anchor);
+    assert.notEqual(ordinal, -1, `approved plan insertion anchor missing: ${anchor}`);
+    paths.splice(ordinal + 1, 0, ...additions);
+  };
+  insertAfter(base, "tests/execution-attempts/claim-runtime-publication.test.ts", [
+    "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+  ]);
+  insertAfter(base, "tests/execution-attempts/v3-normal-implementation-preclaim.test.ts", [
+    "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+  ]);
+  insertAfter(base, "tests/execution-attempts/v3-release-admission.test.ts", [
+    "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  ]);
+  return base;
 }
 
 function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
@@ -269,7 +310,23 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
   assert.notEqual(start, -1, "approved plan has no P3 source inventory");
   const end = plan.indexOf(endMarker, start);
   assert.notEqual(end, -1, "approved plan P3 source inventory is unterminated");
-  return [...plan.slice(start, end).matchAll(/`([^`]+\.ts)`/g)].map((match) => match[1]!);
+  const base = [...plan.slice(start, end).matchAll(/`([^`]+\.ts)`/g)].map((match) => match[1]!);
+  const insertAfter = (anchor: string, additions: readonly string[]) => {
+    const ordinal = base.indexOf(anchor);
+    assert.notEqual(ordinal, -1, `approved P3 insertion anchor missing: ${anchor}`);
+    base.splice(ordinal + 1, 0, ...additions);
+  };
+  insertAfter("tests/execution-attempts/claim-runtime-publication.test.ts", [
+    "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+  ]);
+  insertAfter("tests/execution-attempts/v3-downstream-evidence-publication.test.ts", [
+    "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  ]);
+  return base;
 }
 
 function assertExactInventory<Result extends string>(
@@ -323,6 +380,9 @@ const P4_TRANSACTION_ABI_SYMBOLS_V1 = [
   ["commitInternalProductionCurrentEntry", "Migration32TransactionV1"],
   ["abortInternalProductionCurrentEntry", "Migration32TransactionV1"],
 ].map((fragments) => fragments.join(""));
+const P4_TRANSACTION_ABI_DB_PG_COUNTS_V1 = [10, 1, 1, 1, 1] as const;
+const P4_TRANSACTION_ABI_BEGIN_MARKER_V1 = "// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN";
+const P4_TRANSACTION_ABI_END_MARKER_V1 = "// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:END";
 
 type P3ProductionSourcesV1 = Readonly<Record<string, string>>;
 
@@ -604,20 +664,191 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   assert.match(delivery, /closeInternalProductionOwnerReservationV1/);
   assert.match(delivery, /expiredEvents[\s\S]*closeOperationalDeliveryInTransactionV1/);
 
-  for (const symbol of P4_TRANSACTION_ABI_SYMBOLS_V1) {
+  const p4OwnerPath = "src/db-pg.ts";
+  const p4Owner = sources[p4OwnerPath]!;
+  assert.equal(p4Owner.split(P4_TRANSACTION_ABI_BEGIN_MARKER_V1).length - 1, 1,
+    "P4 transaction ABI begin marker differs");
+  assert.equal(p4Owner.split(P4_TRANSACTION_ABI_END_MARKER_V1).length - 1, 1,
+    "P4 transaction ABI end marker differs");
+  const p4Begin = p4Owner.indexOf(P4_TRANSACTION_ABI_BEGIN_MARKER_V1);
+  const p4End = p4Owner.indexOf(P4_TRANSACTION_ABI_END_MARKER_V1);
+  assert.equal(p4Begin < p4End, true, "P4 transaction ABI marker order differs");
+  const p4Region = p4Owner.slice(p4Begin, p4End + P4_TRANSACTION_ABI_END_MARKER_V1.length);
+  const p4Outside = p4Owner.slice(0, p4Begin)
+    + p4Owner.slice(p4End + P4_TRANSACTION_ABI_END_MARKER_V1.length);
+  for (const [ordinal, symbol] of P4_TRANSACTION_ABI_SYMBOLS_V1.entries()) {
     const exactSymbol = new RegExp(`(?:^|[^A-Za-z0-9_$])${symbol}(?:[^A-Za-z0-9_$]|$)`);
-    assert.equal(productionPaths.some((relativePath) => exactSymbol.test(sources[relativePath]!)), false,
-      `P4 ABI appeared during P3: ${symbol}`);
+    assert.equal(
+      countMatches(p4Region, new RegExp(symbol, "g")),
+      P4_TRANSACTION_ABI_DB_PG_COUNTS_V1[ordinal],
+      `P4 ABI region cardinality differs: ${symbol}`,
+    );
+    assert.equal(exactSymbol.test(p4Outside), false, `P4 ABI escaped its db-pg region: ${symbol}`);
+    assert.equal(productionPaths.filter((relativePath) => relativePath !== p4OwnerPath)
+      .some((relativePath) => exactSymbol.test(sources[relativePath]!)), false,
+    `P4 ABI escaped its owner path: ${symbol}`);
   }
 
   const runner = sources["scripts/run-isolated-postgres-tests.ts"]!;
-  const helper = readFileSync(`${REPOSITORY_ROOT}${P3_ROLE_ONLY_TEST_HELPER_PATH_V1}`, "utf8");
+  const dbPg = sources["src/db-pg.ts"]!;
+  const stepFail = sources["src/installer/step-fail.ts"]!;
+  const stepOps = sources["src/installer/step-ops.ts"]!;
+  const readinessHelper = readFileSync(`${REPOSITORY_ROOT}tests/execution-attempts/test-database.ts`, "utf8");
+  const compilerStoryHelper = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/helpers/compiler-story-admission-fixture.ts`,
+    "utf8",
+  );
+  const terminalFixture = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts`,
+    "utf8",
+  );
+  const terminationRaceFixture = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts`,
+    "utf8",
+  );
+  const preclaimClaimFixture = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts`,
+    "utf8",
+  );
+  const failureCauseFixture = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts`,
+    "utf8",
+  );
+  const untypedFailureFixture = readFileSync(
+    `${REPOSITORY_ROOT}tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts`,
+    "utf8",
+  );
   assert.match(runner, /new URL\("\.\.\/", import\.meta\.url\)/);
   assert.match(runner, /SETFARM_P3_PROJECTION_CAPABILITY_V1:\$\{role\}:/);
   assert.equal(countMatches(runner, /capabilityFrameV1\("setup"/g), 1);
   assert.equal(countMatches(runner, /capabilityFrameV1\("test"/g), 1);
-  assert.match(helper, /setfarm\.p3-isolated-projection-marker\.v1/);
-  const activationBody = p3FunctionBody(helper, "async function activateP3TemplateAndWriteReadinessV1(");
+  assert.match(readinessHelper, /setfarm\.p3-isolated-projection-marker\.v1/);
+  assert.match(compilerStoryHelper, /persistWorkflowRunInTransaction/);
+  assert.match(compilerStoryHelper, /publishSingleClaimRuntime/);
+  assert.match(compilerStoryHelper, /runRuntimeCompletionEffectLedger/);
+  assert.match(compilerStoryHelper, /resumeRuntimeCompletionEffects/);
+  assert.match(terminationRaceFixture, /requestRunTermination/);
+  for (const source of [compilerStoryHelper, terminalFixture, terminationRaceFixture]) {
+    assert.match(source, /persistWorkflowRunInTransaction/);
+    assert.match(source, /publishSingleClaimRuntime/);
+    assert.match(source, /activationPreflightHash:\s*hashCanonicalJson\(\{\s*fixture:\s*"v3-release-preflight",\s*releaseSha[,:]/s);
+    assert.doesNotMatch(source, /INSERT\s+INTO\s+(?:runs|workflow_steps|steps|claim_log|run_termination_requests)\b/i);
+    assert.doesNotMatch(source, /\bpersistWorkflowRun\s*\(/);
+  }
+  assert.doesNotMatch(compilerStoryHelper, /\b(?:prepareInternalProductionClaimBirthV1|insertAndBindInternalProductionClaimBirthV1)\b/);
+  assert.doesNotMatch(compilerStoryHelper, /createRuntimeSessionRepository\([^)]*\)\.reserve\s*\(/s);
+  assert.doesNotMatch(compilerStoryHelper, /UPDATE\s+steps\s+SET\s+status\s*=\s*'(?:pending|running)'/i);
+  assert.match(compilerStoryHelper, /runtimeIntent:\s*setupPublication\.runtimeIntent/);
+  assert.match(preclaimClaimFixture, /claimStep\(claimAgentId,[\s\S]*admission\.runtimeIntent\)/);
+  for (const relationField of [
+    "open_claim_count",
+    "claim_run_id",
+    "claim_step_id",
+    "claim_story_id",
+    "claim_agent_id",
+    "runtime_claim_id",
+    "runtime_run_id",
+    "runtime_step_db_id",
+    "runtime_workflow_step_id",
+    "runtime_story_db_id",
+    "runtime_story_id",
+    "runtime_attempt_id",
+    "runtime_claim_agent_id",
+    "runtime_state",
+    "session_id",
+    "runtime_agent_id",
+    "runtime_kind",
+    "owner_instance_id",
+    "session_key",
+    "worktree",
+    "runtime_path",
+    "transcript_path",
+  ]) assert.match(stepOps, new RegExp(`observed\\.${relationField}`), relationField);
+  assert.match(stepOps, /rows\.length\s*!==\s*1/);
+  assert.match(stepOps, /observed\.open_claim_count\s*!==\s*"1"/);
+  assert.match(stepOps, /return pgBegin\(async \(sql\) => \{/);
+  assert.match(stepOps, /FOR UPDATE OF claim/);
+  for (const ownerField of [
+    "reservation_payload",
+    "owner_key_hash",
+    "producer_purpose_hash",
+    "producer_implementation_hash",
+    "reservation_head_predecessor_hash",
+    "canonical_owner_identity",
+    "binding_hash",
+    "binding_payload",
+    "head_version",
+  ]) assert.match(stepOps, new RegExp(`row\\.${ownerField}`), ownerField);
+  assert.match(stepOps, /validateInternalProductionOwnerReservationV1/);
+  assert.match(stepOps, /INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1/);
+  assert.match(stepOps, /authenticateRunningSingleStepClaimReissueV1\(step, agentId, runtimeIntent\)/);
+  assert.match(stepOps, /singleStepClaimId\s*=\s*runningReissue\.claimId;[\s\S]*singleStepRuntime\s*=\s*runningReissue\.runtime;/);
+  assert.match(stepOps, /validateInternalProductionBoundOwnerReservationV1/);
+  assert.match(stepOps, /validateRunningSingleStepOwnerAncestryV1/);
+  assert.match(stepOps, /observeRunningSingleStepOwnerAncestryV1/);
+  assert.match(stepOps, /active_fence_ref !== null[\s\S]*active_fence_hash !== null[\s\S]*active_target_family_hash !== null/);
+  assert.match(stepOps, /hashCanonicalJson\(headPayload\) !== head\.head_hash/);
+  assert.match(stepOps, /internal_production_owner_admission_head_v1[\s\S]*FOR UPDATE/);
+  assert.match(stepOps, /reservationEdge\.version !== headVersion/);
+  assert.match(stepOps, /fence\.targetFamily\.kind === "source-run-launch"/);
+  assert.doesNotMatch(stepOps, /observed\.session_id\s*!==\s*runtimeIntent\.sessionId\s*\)\s*\{/,
+    "session-only running-claim reissue authentication is forbidden");
+  assert.match(stepFail, /terminalPlatformPreclaim[\s\S]*acquireClaimMutationAuthorityInTransaction\(sql,[\s\S]*runtime\.state = 'reserved'/);
+  assert.doesNotMatch(stepFail, /FOR UPDATE OF claim, runtime/,
+    "terminal preclaim must take the canonical claim-mutation lock order before its exact runtime query");
+  assert.match(stepFail, /runtime\.runtime_agent_id = \$6/);
+  assert.match(stepFail, /PLATFORM_PRECLAIM_COMPLETION_OWNER_MUST_BE_ABSENT/);
+  assert.match(stepOps, /async function terminalizeSharedV3PlatformPreclaim[\s\S]*authenticateRunningSingleStepClaimReissueV1\([\s\S]*fresh\.runtime\.state !== "reserved"[\s\S]*return false/);
+  assert.equal(stepOps.match(/terminalizeSharedV3PlatformPreclaim\(/g)?.length, 3,
+    "the private fresh-state split must own both shared handler failure sites");
+  assert.doesNotMatch(dbPg, /export async function resolveInternalProductionBoundOwnerReservationInTransactionV1/);
+  assert.match(stepFail, /releaseReservedRuntimeSessionInTransaction\(sql, \{/);
+  assert.match(preclaimClaimFixture, /v3-platform-preclaim-crossed-reservation/);
+  assert.match(preclaimClaimFixture, /\["starting", "running"\]/);
+  assert.match(preclaimClaimFixture, /v3-platform-preclaim-active-\$\{state\}/);
+  assert.match(preclaimClaimFixture, /claimStep reissues starting and running runtimes only through successful shared handling/);
+  assert.match(preclaimClaimFixture, /v3-active-runtime-success-\$\{state\}/);
+  assert.match(preclaimClaimFixture, /v3-platform-preclaim-retry-history-precedence/);
+  assert.match(terminalFixture, /TEST_PLATFORM_PRECLAIM_RUNTIME_OWNER_CLOSE_REJECTED/);
+  assert.match(terminalFixture, /v3 platform preclaim refuses an unexpected model completion owner atomically/);
+  assert.match(terminalFixture, /response-loss replay must not transition the owner head or add reservations/);
+  assert.match(terminationRaceFixture, /a drained runtime must refuse reissue before any lifecycle or owner byte changes/);
+  assert.doesNotMatch(stepOps, /releaseReservedRuntimeSessionInTransaction/,
+    "platform preclaim runtime release belongs inside failStep's atomic terminal transaction");
+  assert.doesNotMatch(terminalFixture, /releaseReservedRuntimeSessionInTransaction/,
+    "the direct terminal fixture must not reproduce a split runtime release");
+  for (const classificationFixture of [failureCauseFixture, untypedFailureFixture]) {
+    assert.match(classificationFixture, /runtime_state:\s*"reserved"/);
+    assert.match(classificationFixture, /claim_owner_state:\s*"bound"/);
+    assert.match(classificationFixture, /runtime_owner_state:\s*"bound"/);
+  }
+  for (const directFixture of [preclaimClaimFixture, terminalFixture, terminationRaceFixture,
+    failureCauseFixture, untypedFailureFixture]) {
+    assert.doesNotMatch(directFixture, /(?:commitAck|commitAcknowledgement|injectCommit|ownerSidecarMutation)/,
+      "generic producer fault seams belong only to their mapped producer tests");
+  }
+  for (const [relativePath, exactTitle, productionBoundary] of [
+    ["tests/internal-production/owner-admission-v1.test.ts", /real PostgreSQL run persistence fences before mutation and adopts an exact committed run/, /persistWorkflowRunInTransaction/],
+    ["tests/execution-attempts/claim-runtime-publication.test.ts", /replays a committed single publication from its stable runtime session[\s\S]*publishes no owner when a deferred claim commit constraint rejects/, /publishSingleClaimRuntime/],
+    ["tests/execution-attempts/runtime-session-repository.test.ts", /adopts a committed reservation with its original birth timestamps and token[\s\S]*releases an exact reserved no-spawn owner only after its claim is terminal/, /releaseReservedRuntimeSessionInTransaction/],
+    ["tests/execution-attempts/claim-attempt-transition.test.ts", /rolls both terminal rows and owner closes back when the attempt close is rejected/, /closeClaimAndBoundAttempt/],
+    ["tests/execution-attempts/run-termination.test.ts", /binds the sole termination owner at request birth and exactly adopts ACK-loss replay/, /requestRunTermination/],
+    ["tests/execution-attempts/run-terminal-transition.test.ts", /terminalizes a drained failure and rolls every owner mutation back when attempt close rejects/, /transitionRunToTerminalInTransaction/],
+  ] as const) {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.includes(relativePath as never), true, relativePath);
+    const producerTest = readFileSync(`${REPOSITORY_ROOT}${relativePath}`, "utf8");
+    assert.match(producerTest, exactTitle, relativePath);
+    assert.match(producerTest, productionBoundary, relativePath);
+  }
+  for (const required of [
+    "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+    "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  ]) assert.match(runner, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const activationBody = p3FunctionBody(readinessHelper, "async function activateP3TemplateAndWriteReadinessV1(");
   const guarded32 = activationBody.indexOf(`await ${GUARDED_MIGRATION_32_APPLY_SYMBOL_V1}`);
   const ordinary33 = activationBody.indexOf("await applyAndVerifyP3GenericSuccessorV1");
   const activation = activationBody.indexOf("await fixtureDb.activateInternalProductionOwnerProducerManifestSetV1");
@@ -626,21 +857,24 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact51 subset of frozen109", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 51);
+  it("freezes P3 as an ordered exact57 subset of frozen115", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 57);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
     assert.equal(production.length, 29);
-    assert.equal(tests.length, 22);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 51);
+    assert.equal(tests.length, 28);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 57);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
     for (const required of [
       "scripts/run-isolated-postgres-tests.ts",
       "tests/execution-attempts/test-database.ts",
+      "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+      "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+      "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
       "src/internal-production/owner-admission-v1.ts",
       "src/execution/runtime-completion-effect-runner.ts",
       "src/db/contract-spine-migrations.ts",
@@ -664,32 +898,34 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 51);
+    assert.equal(countOnly.length, 57);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
-  it("covers exact22 tests through 20 isolated DB files, one source file, and one helper-only path", () => {
+  it("covers exact28 tests through 25 isolated DB files, one source file, and two helper-only paths", () => {
     const exactTests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(exactTests.length, 22);
-    assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.length, 20);
-    assert.equal(new Set(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1).size, 20);
-    assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.includes(P3_ROLE_ONLY_TEST_HELPER_PATH_V1 as never), false);
+    assert.equal(exactTests.length, 28);
+    assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.length, 25);
+    assert.equal(new Set(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1).size, 25);
+    for (const helper of P3_ROLE_ONLY_TEST_HELPER_PATHS_V1) {
+      assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.includes(helper as never), false);
+    }
     assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.includes(P3_SOURCE_ONLY_EXECUTABLE_TEST_PATH_V1 as never), false);
     assert.deepEqual(
       [...P3_DATABASE_EXECUTABLE_TEST_PATHS_V1, P3_SOURCE_ONLY_EXECUTABLE_TEST_PATH_V1,
-        P3_ROLE_ONLY_TEST_HELPER_PATH_V1].sort(),
+        ...P3_ROLE_ONLY_TEST_HELPER_PATHS_V1].sort(),
       [...exactTests].sort(),
     );
-    assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.length + 1, 21);
+    assert.equal(P3_DATABASE_EXECUTABLE_TEST_PATHS_V1.length + 1, 26);
     const exactInventory = {
       database: P3_DATABASE_EXECUTABLE_TEST_PATHS_V1,
       sourceOnly: [P3_SOURCE_ONLY_EXECUTABLE_TEST_PATH_V1],
-      helperOnly: [P3_ROLE_ONLY_TEST_HELPER_PATH_V1],
+      helperOnly: P3_ROLE_ONLY_TEST_HELPER_PATHS_V1,
     } as const;
     assert.doesNotThrow(() => assertExactP3ExecutableInventoryV1(exactInventory));
     assert.throws(() => assertExactP3ExecutableInventoryV1({
       ...exactInventory,
-      database: [...exactInventory.database, P3_ROLE_ONLY_TEST_HELPER_PATH_V1],
+      database: [...exactInventory.database, P3_ROLE_ONLY_TEST_HELPER_PATHS_V1[0]],
     }), /database executable|role-only helper/);
     assert.throws(() => assertExactP3ExecutableInventoryV1({
       ...exactInventory,
@@ -698,7 +934,7 @@ describe("Task 0 exact source manifest", () => {
     }), /database executable|source-only executable/);
   });
 
-  it("source-grounds exact29 births, terminals, A-prime, expiry, Task 6, Task 7, and deferred P4", () => {
+  it("source-grounds exact29 births, terminals, A-prime, expiry, Task 6, Task 7, and the reviewed P4 ownership boundary", () => {
     const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const sources = Object.fromEntries(productionPaths.map((relativePath) => [
       relativePath,
@@ -780,14 +1016,37 @@ describe("Task 0 exact source manifest", () => {
         (source) => `${source}\ntype ${symbol} = never;\n`,
       )), new RegExp(symbol));
     }
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/db-pg.ts",
+      (source) => source.replace(P4_TRANSACTION_ABI_BEGIN_MARKER_V1, ""),
+    )), /P4 transaction ABI begin marker/);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/db-pg.ts",
+      (source) => `${source}\n${P4_TRANSACTION_ABI_BEGIN_MARKER_V1}\n`,
+    )), /P4 transaction ABI begin marker/);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/db-pg.ts",
+      (source) => source
+        .replace(P4_TRANSACTION_ABI_BEGIN_MARKER_V1, "P4_TRANSACTION_ABI_CROSSED")
+        .replace(P4_TRANSACTION_ABI_END_MARKER_V1, P4_TRANSACTION_ABI_BEGIN_MARKER_V1)
+        .replace("P4_TRANSACTION_ABI_CROSSED", P4_TRANSACTION_ABI_END_MARKER_V1),
+    )), /P4 transaction ABI marker order/);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/db-pg.ts",
+      (source) => source.replace("openInternalProductionCurrentEntryMigration32TransactionV1", "openCurrentEntryMigration32TransactionV1"),
+    )), /P4 ABI region cardinality differs/);
+    assert.throws(() => assertP3Task8StaticAuthorityV1(mutate(
+      "src/db-pg.ts",
+      (source) => `${source}\ntype ${P4_TRANSACTION_ABI_SYMBOLS_V1[0]} = never;\n`,
+    )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 109-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 109);
+  it("accepts the literal 115-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 115);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
-  it("matches frozen109 and every approved exact51 member exists", () => {
+  it("matches frozen115 and every approved exact57 member exists", () => {
     const approved = extractApprovedTask0SourcePathsV1(readFileSync(APPROVED_PLAN_PATH, "utf8"));
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
     const p3Approved = new Set(P3_EXACT_SOURCE_PATHS_V1);
@@ -824,11 +1083,16 @@ describe("Task 0 exact source manifest", () => {
     for (const file of [
       "tests/internal-production/owner-admission-v1.test.ts",
       "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
+      "tests/internal-production/baseline-post-handoff-cli.test.ts",
       "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+      "tests/internal-production/baseline-restart-authority-retirement-v1.test.ts",
+      "tests/internal-production/baseline-service-restart-helper-v1.test.ts",
+      "tests/internal-production/baseline-service-restart-sequence-v1.test.ts",
+      "tests/internal-production/baseline-spawner-startup-admission-v1.test.ts",
     ]) {
       assert.equal(isolated.split(file).length - 1, 1, `${file} must have one isolated invocation`);
     }
-    assert.equal(isolated.split("scripts/run-isolated-postgres-tests.ts").length - 1, 3);
+    assert.equal(isolated.split("scripts/run-isolated-postgres-tests.ts").length - 1, 8);
     assert.doesNotMatch(isolated, /\*\.test|--test[^&]*tests\/internal-production\/[^ ]+\.test\.ts [^&]*tests\/internal-production\//);
     const anchored = packageJson.scripts["test:internal-production:anchored"];
     assert.equal(typeof anchored, "string");

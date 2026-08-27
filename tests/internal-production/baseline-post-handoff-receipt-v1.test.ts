@@ -127,9 +127,11 @@ type FixtureOptions = Readonly<{
   normalizationContentionBarrier?: boolean;
   currentEntryAncestorSwapAfterGuard?: boolean;
   stopAfterCurrentEntryOperationPublication?: boolean;
+  stubServiceCensus?: boolean;
+  preparedAuthorityDirectorySwap?: string;
+  preparedAuthorityDirectoryWrongDevice?: boolean;
   preparedAccessorReobservationDrift?: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation";
   preparedAccessorByteDrift?: boolean;
-  preparedAccessorWrongDevice?: boolean;
 }>;
 
 function fixtureDatabasePortSource(options: FixtureOptions): string {
@@ -190,12 +192,6 @@ function createFixture(options: FixtureOptions = {}): string {
       'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:',
     );
   }
-  if (options.preparedAccessorWrongDevice) {
-    fixtureObserver = fixtureObserver.replace(
-      "CURRENT_ENTRY_MAX_BYTES,\n      store.device,\n      1,",
-      "CURRENT_ENTRY_MAX_BYTES,\n      store.device + 1n,\n      1,",
-    );
-  }
   if (options.currentEntryAncestorSwapAfterGuard) {
     fixtureObserver = fixtureObserver.replace(
       'const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");',
@@ -206,6 +202,55 @@ function createFixture(options: FixtureOptions = {}): string {
     fixtureObserver = fixtureObserver.replace(
       /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
       "\n  return resolved;",
+    );
+  }
+  if (options.stubServiceCensus) {
+    const censusStart = fixtureObserver.indexOf("export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {");
+    const censusEnd = fixtureObserver.indexOf("\n\nasync function observeLegacyDatabaseCensusV1", censusStart);
+    assert.notEqual(censusStart, -1, "production service census start must remain fixture-readable");
+    assert.notEqual(censusEnd, -1, "production service census end must remain fixture-readable");
+    fixtureObserver = `${fixtureObserver.slice(0, censusStart)}export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {
+  const setfarm = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const source = Object.freeze({ sha: setfarm.sha, treeHash: setfarm.treeHash, buildHash: setfarm.buildHash });
+  const service = (label: string, pid: number, port: null | 3333 | 3080 | 18789) => {
+    const common = {
+      pid,
+      processStartTimeEpochMs: 1_700_000_000_000 + pid,
+      processIdentityHash: sha256(\`fixture-process:\${label}\`),
+      serviceIdentityHash: sha256(\`fixture-service:\${label}\`),
+      generationHash: sha256(\`fixture-generation:\${label}\`),
+      loadedSourceSha: port === 18789 ? null : source.sha,
+      loadedTreeHash: port === 18789 ? null : source.treeHash,
+      loadedBuildHash: port === 18789 ? null : source.buildHash,
+      processOwnerCount: 1 as const,
+    };
+    if (port === null) return recursivelyFreeze({ ...common, listener: null });
+    return recursivelyFreeze({
+      ...common,
+      listenerOwnerCount: 1 as const,
+      listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(\`fixture-listener:\${label}:\${port}\`) },
+    });
+  };
+  const body = {
+    schema: "setfarm.internal-production-service-census.v1" as const,
+    spawner: service("com.setrox.setfarm-spawner", 1001, null) as InternalProductionServiceCensusSpawnerV1,
+    dashboard: service("com.setrox.setfarm-dashboard", 1002, 3333) as InternalProductionListeningServiceCensusV1,
+    missionControl: service("com.setrox.mission-control", 1003, 3080) as InternalProductionListeningServiceCensusV1,
+    openClaw: service("ai.openclaw.gateway", 1004, 18789) as InternalProductionListeningServiceCensusV1,
+  };
+  return recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
+}${fixtureObserver.slice(censusEnd)}`;
+  }
+  if (options.preparedAuthorityDirectorySwap) {
+    fixtureObserver = fixtureObserver.replace(
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
+      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const authorityDirectory=path.join(store.directory,${JSON.stringify(options.preparedAuthorityDirectorySwap)}); const held=path.join(path.dirname(store.directory),${JSON.stringify(`held-${options.preparedAuthorityDirectorySwap}`)}); renameSync(authorityDirectory,held); mkdirSync(authorityDirectory,{mode:0o700}); }\n  let operation:`,
+    );
+  }
+  if (options.preparedAuthorityDirectoryWrongDevice) {
+    fixtureObserver = fixtureObserver.replace(
+      'const directory = directorySnapshot(path.join(store.directory, entry), `prepared current-entry ${entry}`, store.device);',
+      'const directory = directorySnapshot(path.join(store.directory, entry), `prepared current-entry ${entry}`, store.device + 1n);',
     );
   }
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver);
@@ -544,10 +589,11 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       assert.equal(rejected.status, 0, rejected.stderr);
       assert.match(rejected.stdout, /branch|main|synchronized|source/i);
       assert.equal(
-        existsSync(path.join(featureRoot, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities")),
+        existsSync(path.join(path.dirname(featureRoot), "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities")),
         false,
         "a feature branch is rejected before delivery authority publication",
       );
+      assert.equal(existsSync(path.join(featureRoot, "data")), false, "delivery observation never writes a repository-local authority root");
     } finally {
       removeFixture(featureRoot);
     }
@@ -608,7 +654,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       assert.match(String(observed.first.currentSourceBuildHash), /^[0-9a-f]{64}$/);
       const authorityHash = String(observed.first.deliveryAuthorityHash);
       const authorityRef = String(observed.first.deliveryAuthorityRef);
-      const authorityPath = path.join(root, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", authorityHash.slice(0, 2), `${authorityHash}.json`);
+      const authorityPath = path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", authorityHash.slice(0, 2), `${authorityHash}.json`);
       const authorityBytes = readFileSync(authorityPath);
       const authority = JSON.parse(authorityBytes.toString("utf8")) as Record<string, unknown>;
       assert.equal(lstatSync(authorityPath, { bigint: true }).nlink, 1n);
@@ -697,12 +743,12 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         };
         const deliveryAuthorityHash = canonicalHash(body);
         const deliveryAuthorityRef = `setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/${deliveryAuthorityHash}`;
-        const target = path.join(root, "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", deliveryAuthorityHash.slice(0, 2), `${deliveryAuthorityHash}.json`);
+        const target = path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", deliveryAuthorityHash.slice(0, 2), `${deliveryAuthorityHash}.json`);
         const chain = ["data", "data/internal-production-baseline", "data/internal-production-baseline/current-entry-v1", "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities", "data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256", `data/internal-production-baseline/current-entry-v1/task12-p0-delivery-authorities/sha256/${deliveryAuthorityHash.slice(0, 2)}`];
-        for (const member of chain) { mkdirSync(path.join(root, member), { recursive: true, mode: 0o700 }); chmodSync(path.join(root, member), 0o700); }
+        for (const member of chain) { mkdirSync(path.join(path.dirname(root), member), { recursive: true, mode: 0o700 }); chmodSync(path.join(path.dirname(root), member), 0o700); }
         writeFileSync(target, `${canonical({ ...body, deliveryAuthorityRef, deliveryAuthorityHash })}\n`, { mode: 0o600 });
         if (fault === "record-special-bit") chmodSync(target, 0o4600);
-        else chmodSync(path.join(root, "data/internal-production-baseline/current-entry-v1"), 0o755);
+        else chmodSync(path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1"), 0o755);
         const result = runFixtureExpression(root, `m.resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1(${JSON.stringify({ deliveryAuthorityRef, deliveryAuthorityHash })})`);
         assert.notEqual(result.status, 0, `${fault} must fail through the public delivery resolver`);
         assert.match(result.stderr, /directory|mode|inode|identity|record/i);
@@ -1184,6 +1230,16 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
   });
 
+  it("P4 routes every current-entry authority store through the fixed sibling workspace root", () => {
+    const source = readFileSync(observerSource, "utf8");
+    assert.equal(
+      [...source.matchAll(/fixedWorkspaceAuthorityPathV1\(/g)].length,
+      20,
+      "one helper definition plus all nineteen authority-store call sites must remain bound",
+    );
+    assert.doesNotMatch(source, /path\.join\(fixedRepositoryRoot\(\),/);
+  });
+
   it("returns null for an absent prepared operation without creating current-entry state", () => {
     const root = createFixture();
     try {
@@ -1199,6 +1255,70 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       assert.equal(existsSync(currentEntryStore(root)), false);
     } finally {
       removeFixture(root);
+    }
+  });
+
+  it("P4 authenticates every code-owned authority directory while observing prepared current-entry state", () => {
+    const authorityDirectories = [
+      "operations",
+      "records",
+      "recovery-source-bootstrap-v1",
+      "task12-p0-delivery-authorities",
+    ] as const;
+    const prepareStore = (root: string): string => {
+      const store = currentEntryStore(root);
+      for (const directory of [
+        path.join(path.dirname(root), "data"),
+        path.join(path.dirname(root), "data/internal-production-baseline"),
+        store,
+      ]) {
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        chmodSync(directory, 0o700);
+      }
+      return store;
+    };
+    for (const members of [...authorityDirectories.map((entry) => [entry] as const), authorityDirectories]) {
+      const root = createFixture();
+      try {
+        const store = prepareStore(root);
+        for (const member of members) {
+          mkdirSync(path.join(store, member), { mode: 0o700 });
+          chmodSync(path.join(store, member), 0o700);
+        }
+        const result = runFixtureExpression(
+          root,
+          "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+        );
+        assert.equal(result.status, 0, `${members.join(",")}: ${result.stderr}`);
+        assert.equal(result.stdout, "null");
+      } finally {
+        removeFixture(root);
+      }
+    }
+
+    for (const fault of ["file", "symlink", "wrong-mode", "wrong-device", "identity-swap", "unknown"] as const) {
+      const root = createFixture({
+        preparedAuthorityDirectorySwap: fault === "identity-swap" ? "operations" : undefined,
+        preparedAuthorityDirectoryWrongDevice: fault === "wrong-device",
+      });
+      try {
+        const store = prepareStore(root);
+        if (fault === "file") writeFileSync(path.join(store, "operations"), "not a directory\n", { mode: 0o600 });
+        else if (fault === "symlink") {
+          const target = path.join(path.dirname(store), "foreign-authority-directory");
+          mkdirSync(target, { mode: 0o700 });
+          symlinkSync(target, path.join(store, "records"));
+        } else if (fault === "wrong-mode") {
+          mkdirSync(path.join(store, "recovery-source-bootstrap-v1"), { mode: 0o700 });
+          chmodSync(path.join(store, "recovery-source-bootstrap-v1"), 0o755);
+        } else if (fault === "unknown") mkdirSync(path.join(store, "unknown-authority-directory"), { mode: 0o700 });
+        else mkdirSync(path.join(store, "operations"), { mode: 0o700 });
+        const result = runFixtureExpression(root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+        assert.notEqual(result.status, 0, `${fault} must fail closed`);
+        assert.match(result.stderr, /current-entry|directory|device|identity|inventory|mode/i);
+      } finally {
+        removeFixture(root);
+      }
     }
   });
 
@@ -1234,7 +1354,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("returns the exact prepared operation and accepts valid fixed siblings as absence", () => {
-    const fixture = finalizedFixture();
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(
         fixture.root,
@@ -1276,7 +1396,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
 
   it("blocks wrong-mode, hard-linked, symlink, special, and oversized prepared members without cleanup", () => {
     for (const physical of ["mode", "link", "symlink", "special", "size"] as const) {
-      const fixture = finalizedFixture();
+      const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
       try {
         const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
         assert.equal(seeded.status, 0, seeded.stderr);
@@ -1295,7 +1415,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         const before = physical === "special" ? null : lstatSync(operation);
         const blocked = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
         assert.notEqual(blocked.status, 0);
-        assert.match(blocked.stderr, /regular|mode|link|member|current-entry|cap|symbolic/i);
+        assert.match(blocked.stderr, /regular|mode|link|inode|member|current-entry|cap|symbolic/i);
         if (before !== null) {
           const after = lstatSync(operation);
           assert.equal(after.ino, before.ino);
@@ -1311,7 +1431,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
 
   it("rejects last-instant identity drift across every prepared family after parsing exact first snapshots", () => {
     for (const family of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operation"] as const) {
-      const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family });
+      const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family, stopAfterCurrentEntryOperationPublication: true });
       try {
         const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
         assert.equal(seeded.status, 0, seeded.stderr);
@@ -1325,20 +1445,28 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("rejects a cross-device prepared member observation", () => {
-    const fixture = finalizedFixture({ preparedAccessorWrongDevice: true });
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
+      const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const drifted = source.replace(
+        "before.dev !== parent.dev || before.dev !== atPath.dev",
+        "before.dev !== parent.dev + 1n || before.dev !== atPath.dev",
+      );
+      assert.notEqual(drifted, source);
+      writeFileSync(modulePath, drifted);
       const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /device|regular|current-entry/i);
+      assert.match(result.stderr, /device|inode|regular|current-entry/i);
     } finally {
       removeFixture(fixture.root);
     }
   });
 
   it("rejects last-instant prepared operation byte drift from the retained first snapshot", () => {
-    const fixture = finalizedFixture({ preparedAccessorByteDrift: true });
+    const fixture = finalizedFixture({ preparedAccessorByteDrift: true, stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
@@ -1351,7 +1479,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   });
 
   it("does not turn a prepared store disappearance race into absence", () => {
-    const fixture = finalizedFixture();
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.equal(seeded.status, 0, seeded.stderr);
@@ -1530,15 +1658,25 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
-  it("publishes and adopts the three current-entry records in a finalized sibling-data fixture", () => {
-    const fixture = finalizedFixture();
+  it("P4 publishes and adopts the three current-entry records in a finalized sibling-data fixture", () => {
+    const fixture = finalizedFixture({ stubServiceCensus: true });
     try {
       const moduleUrl = pathToFileURL(path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
       const program = `import(${JSON.stringify(moduleUrl)}).then(async (m) => { const first=await m.prepareInternalProductionCurrentEntryOperationV1(); const second=await m.prepareInternalProductionCurrentEntryOperationV1(); process.stdout.write(JSON.stringify({first,second})); })`;
       const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(result.stdout).first, JSON.parse(result.stdout).second);
+      assert.equal(git(fixture.root, ["status", "--porcelain=v2", "--untracked-files=all"]), "");
+      assert.equal(existsSync(path.join(fixture.root, "data")), false);
       const store = path.join(path.dirname(fixture.root), "data/internal-production-baseline/current-entry-v1");
+      const operationHash = JSON.parse(result.stdout).first.operationHash as string;
+      assert.equal(existsSync(path.join(
+        store,
+        "operations/sha256",
+        operationHash.slice(0, 2),
+        operationHash,
+        "01-current-status.pair.json",
+      )), true);
       assert.deepEqual(["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].map((name) => existsSync(path.join(store, name))), [true, true, true]);
       const fixed = path.join(store, "authority-v3-migration31-audit.json");
       const responseLossTemp = path.join(store, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abc.tmp");
@@ -2036,6 +2174,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       .map((match) => match[1]);
     assert.deepEqual(runtimeExports, [
       "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
+      "resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1",
+      "observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1",
       "observeCurrentInternalProductionAuthorityV3Migration31AuditV1",
       "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1",
       "resolveInternalProductionAuthorityV3Migration31AuditV1",
@@ -2046,6 +2186,46 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       "observeInternalProductionServiceCensusV1",
       "observeInternalProductionLegacyPreManifestZeroOwnerV1",
       "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1",
+      "resolveInternalProductionCompleteZeroOwnerCensusObservationV1",
+      "observeCompleteInternalProductionZeroOwnerCensusV1",
+      "resolveInternalProductionBaselineZeroOwnerMutationGuardV1",
+      "prepareInternalProductionBaselineZeroOwnerMutationGuardV1",
+      "resolveInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardConsumptionV1",
+      "consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1",
+      "reobserveInternalProductionBaselineServiceRestartPreparedRuntimeProjectionV1",
+      "observeInternalProductionCurrentEntryAuthorityStatusV1",
+      "resolveInternalProductionCurrentEntryAuthorityStatusV1",
+      "resolveInternalProductionCurrentEntryAuthorityV1",
+      "resolveInternalProductionCurrentEntryVerificationV1",
+      "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1",
+      "resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1",
+      "resolveInternalProductionPreManifestMigration32AuthorizationStatusV1",
+      "observeInternalProductionPreManifestMigration32AuthorizationStatusV1",
+      "prepareInternalProductionPreManifestMigration32AuthorizationV1",
+      "applyInternalProductionBaselineBootstrapHandoffMigrationV1",
+      "resolveInternalProductionRecoverySourceBootstrapPendingInputV1",
+      "resolveInternalProductionRecoverySourceBootstrapOperationV1",
+      "resolveInternalProductionRecoverySourceRunTerminalAuthorityV1",
+      "resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1",
+      "resolveInternalProductionRecoverySourceBootstrapRunReceiptV1",
+      "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1",
+      "observeInternalProductionRecoverySourceBootstrapStatusV1",
+      "prepareInternalProductionRecoverySourceBootstrapRunV1",
+      "resumeActiveInternalProductionRecoverySourceBootstrapRunV1",
+      "resumeInternalProductionCurrentEntryAuthorityV1",
+      "verifyCurrentInternalProductionCurrentEntryV1",
+      "observeInternalProductionReviewedDSourceBuildGateV1",
+      "observeInternalProductionServiceRestartCutoverReadinessCandidateV1",
+      "resolveInternalProductionBaselineServiceRestartAuthorizationV1",
+      "resolveInternalProductionBaselineServiceRestartOperationV1",
+      "observePreparedInternalProductionBaselineServiceRestartLaunchOutboxV1",
+      "prepareInternalProductionBaselineServiceRestartV1",
+      "observeInternalProductionBaselineServiceRestartAuthorizationStatusV1",
+      "resolveInternalProductionBaselineServiceRestartAuthorityV1",
+      "prepareInternalProductionBaselineSpawnerBootstrapServiceRestartAuthorizationV1",
+      "restartInternalProductionBaselineServiceV1",
     ]);
     assert.match(source, /export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1\(\)/);
     assert.match(source, /export async function observePreparedInternalProductionCurrentEntryOperationV1\(\)/);

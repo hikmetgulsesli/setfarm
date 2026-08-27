@@ -1,4 +1,5 @@
 import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import type { PgTransactionSql } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
@@ -72,6 +73,7 @@ import { OperationalFailureCauseError } from "../execution/schemas/operational-f
 import { assertClaimAuthority } from "../execution/claim-authority.js";
 import { isV3OperationalStageWorkflowStepIdV1 } from "../execution/operational-failure-cause-authority-v1.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
+import { ClaimMutationAuthorityError } from "../execution/claim-mutation-authority.js";
 import {
   markRuntimeCompletionOwnerCommittedInTransaction,
 } from "../execution/runtime-completion.js";
@@ -90,7 +92,6 @@ import {
 import {
   bindRuntimeSessionAttemptInTransaction,
   parseRuntimeClaimIntentV1,
-  releaseReservedRuntimeSessionInTransaction,
   reserveRuntimeSessionInTransaction,
   type RuntimeClaimIntentV1,
 } from "../execution/runtime-session-repository.js";
@@ -117,6 +118,19 @@ import {
 import { captureV3GitCommitRevision, resolveV3GitRevision } from "../execution/v3-git-revision.js";
 import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
 import type { EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
+import {
+  INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
+  createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
+  createInternalProductionGlobalOwnerAdmissionFenceTransitionV1,
+  createInternalProductionClaimCanonicalOwnerIdentityV1,
+  createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1,
+  validateInternalProductionCanonicalOwnerIdentityV1,
+  validateInternalProductionBoundOwnerReservationV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
+  validateInternalProductionGlobalOwnerAdmissionFenceV1,
+  validateInternalProductionOwnerReservationV1,
+  validateInternalProductionOwnerReservationCloseV1,
+} from "../internal-production/owner-admission-v1.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
 import { createFindingSetFromEvidenceBundleV2 } from "../findings/evidence-finding-set.js";
 import { readDefaultGithubReview } from "../findings/github-review-source.js";
@@ -5391,6 +5405,674 @@ async function claimV3RecoveryWork(
   };
 }
 
+type RunningSingleStepClaimReissueV1 = Readonly<
+  | { status: "absent" }
+  | { status: "refused" }
+  | {
+      status: "authenticated";
+      claimId: number;
+      runtime?: RuntimeClaimOwnership & {
+        state: "reserved" | "starting" | "running";
+      };
+    }
+>;
+
+type RunningSingleStepOwnerReservationRowV1 = Readonly<{
+  reservation_ref: string;
+  reservation_hash: string;
+  category: string;
+  owner_key: string;
+  owner_key_hash: string;
+  producer_purpose_hash: string;
+  producer_implementation_id: string;
+  producer_implementation_hash: string;
+  reservation_payload: unknown;
+  reservation_head_predecessor_hash: string;
+  state: string;
+  canonical_owner_identity: unknown | null;
+  binding_hash: string | null;
+  binding_payload: unknown | null;
+  close_kind: string | null;
+  terminal_owner_ref: string | null;
+  terminal_owner_hash: string | null;
+  close_head_predecessor_hash: string | null;
+  close_head_successor_hash: string | null;
+  preserved_fence_ref: string | null;
+  preserved_fence_hash: string | null;
+  close_ref: string | null;
+  close_hash: string | null;
+  close_payload: unknown | null;
+  head_version: string | number;
+}>;
+
+type RunningSingleStepOwnerAuthorityRowV1 = Readonly<{
+  authority_ref: string;
+  authority_hash: string;
+  authority_kind: string;
+  phase_key: string;
+  predecessor_head_hash: string;
+  successor_head_hash: string;
+  authority_body: unknown;
+}>;
+
+type RunningSingleStepOwnerMigrationApplicationV1 = Readonly<{
+  schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1";
+  evidenceHash: string;
+  authorizationRef: string;
+  authorizationHash: string;
+  authorizationConsumptionRef: string;
+  authorizationConsumptionHash: string;
+  applicationHash: string;
+}>;
+
+type RunningSingleStepOwnerAdvancingAuthorityV1 = Readonly<{
+  version: number;
+  authority: RunningSingleStepOwnerAuthorityRowV1;
+}>;
+
+const RUNNING_SINGLE_STEP_OWNER_SHA256_V1 = /^[a-f0-9]{64}$/;
+const RUNNING_SINGLE_STEP_OWNER_REF_V1 = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
+
+function validateRunningSingleStepOwnerMigrationApplicationV1(
+  value: unknown,
+  evidenceHash: string,
+): RunningSingleStepOwnerMigrationApplicationV1 {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  }
+  const application = value as Record<string, unknown>;
+  const keys = Object.keys(application);
+  const expectedKeys = [
+    "schema", "evidenceHash", "authorizationRef", "authorizationHash",
+    "authorizationConsumptionRef", "authorizationConsumptionHash", "applicationHash",
+  ];
+  if (
+    keys.length !== expectedKeys.length
+    || expectedKeys.some((key) => !Object.prototype.hasOwnProperty.call(application, key))
+    || application.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"
+    || application.evidenceHash !== evidenceHash
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(evidenceHash)
+    || evidenceHash === "0".repeat(64)
+    || !RUNNING_SINGLE_STEP_OWNER_REF_V1.test(String(application.authorizationRef))
+    || !RUNNING_SINGLE_STEP_OWNER_REF_V1.test(String(application.authorizationConsumptionRef))
+    || [
+      application.authorizationHash,
+      application.authorizationConsumptionHash,
+      application.applicationHash,
+    ].some((hash) => typeof hash !== "string" || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(hash))
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  const body = {
+    schema: application.schema,
+    evidenceHash: application.evidenceHash,
+    authorizationRef: application.authorizationRef,
+    authorizationHash: application.authorizationHash,
+    authorizationConsumptionRef: application.authorizationConsumptionRef,
+    authorizationConsumptionHash: application.authorizationConsumptionHash,
+  };
+  if (application.applicationHash !== hashCanonicalJson(body)) {
+    throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  }
+  return Object.freeze({
+    ...body,
+    applicationHash: application.applicationHash,
+  }) as RunningSingleStepOwnerMigrationApplicationV1;
+}
+
+function runningSingleStepOwnerAdmissionSuccessorV1(input: Readonly<{
+  version: number;
+  predecessorHeadHash: string;
+  transitionKind: "reservation" | "close" | "fence" | "release";
+  transitionRef: string;
+  transitionHash: string;
+  migrationApplication: RunningSingleStepOwnerMigrationApplicationV1;
+}>): Readonly<{ version: number; hash: string; payload: Readonly<Record<string, unknown>> }> {
+  const payload = Object.freeze({
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: input.version + 1,
+    predecessorHeadHash: input.predecessorHeadHash,
+    transitionKind: input.transitionKind,
+    transitionRef: input.transitionRef,
+    transitionHash: input.transitionHash,
+    migrationApplication: input.migrationApplication,
+  });
+  return Object.freeze({
+    version: input.version + 1,
+    hash: hashCanonicalJson(payload),
+    payload,
+  });
+}
+
+async function validateRunningSingleStepOwnerAncestryV1(
+  sql: PgTransactionSql,
+  headHash: string,
+  version: number,
+  migrationApplication: RunningSingleStepOwnerMigrationApplicationV1,
+  seen = new Set<string>(),
+): Promise<readonly RunningSingleStepOwnerAdvancingAuthorityV1[]> {
+  if (
+    !Number.isSafeInteger(version)
+    || version < 0
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(headHash)
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  if (version === 0) {
+    if (headHash !== "0".repeat(64)) {
+      throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+    }
+    return Object.freeze([]);
+  }
+  if (seen.has(headHash)) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  seen.add(headHash);
+  const authorities = await sql.unsafe<RunningSingleStepOwnerAuthorityRowV1[]>(
+    `SELECT authority_ref,authority_hash,authority_kind,phase_key,
+            predecessor_head_hash,successor_head_hash,authority_body
+       FROM internal_production_owner_admission_authorities_v1
+      WHERE successor_head_hash=$1 AND predecessor_head_hash<>successor_head_hash`,
+    [headHash],
+  );
+  const fenceAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "fence");
+  if (fenceAuthorities.length === 1) {
+    const authority = fenceAuthorities[0]!;
+    const fence = validateInternalProductionGlobalOwnerAdmissionFenceV1(authority.authority_body);
+    const expectedCount = fence.targetFamily.kind === "source-run-launch" ? 3 : 1;
+    const transition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+      purpose: fence.purpose,
+      pendingInputRef: fence.pendingInputRef,
+      pendingInputHash: fence.pendingInputHash,
+      targetFamilyHash: fence.targetFamily.kind === "source-run-launch"
+        ? fence.targetFamily.targetFamilyHash
+        : hashCanonicalJson(fence.targetFamily),
+      ownerIdentitySetHash: fence.ownerIdentitySetHash,
+    });
+    const expectedSuccessor = runningSingleStepOwnerAdmissionSuccessorV1({
+      version: version - 1,
+      predecessorHeadHash: authority.predecessor_head_hash,
+      transitionKind: "fence",
+      transitionRef: transition.transitionRef,
+      transitionHash: transition.transitionHash,
+      migrationApplication,
+    });
+    if (
+      authorities.length !== expectedCount
+      || expectedSuccessor.hash !== headHash
+      || fence.ownerAdmissionHeadHash !== headHash
+      || authority.authority_ref !== fence.fenceRef
+      || authority.authority_hash !== fence.fenceHash
+      || authority.phase_key !== fence.pendingInputRef
+      || authority.predecessor_head_hash !== fence.predecessorFenceHeadHash
+      || canonicalJsonStringify(authority.authority_body) !== canonicalJsonStringify(fence)
+    ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+    if (fence.targetFamily.kind === "source-run-launch") {
+      const reservations = authorities.filter(({ authority_kind }) => authority_kind === "reservation");
+      const expectedPairs = [
+        fence.targetFamily.sourceRunReservation,
+        fence.targetFamily.runReservation,
+      ];
+      if (
+        reservations.length !== 2
+        || expectedPairs.some((pair) => !reservations.some((candidate) => (
+          candidate.authority_ref === pair.reservationRef
+          && candidate.authority_hash === pair.reservationHash
+          && candidate.predecessor_head_hash === authority.predecessor_head_hash
+          && candidate.successor_head_hash === headHash
+        )))
+      ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+    }
+    const predecessors = await validateRunningSingleStepOwnerAncestryV1(
+      sql,
+      authority.predecessor_head_hash,
+      version - 1,
+      migrationApplication,
+      seen,
+    );
+    return Object.freeze([
+      ...authorities.map((member) => Object.freeze({ version, authority: member })),
+      ...predecessors,
+    ]);
+  }
+  const authority = authorities[0];
+  if (authorities.length !== 1 || !authority) {
+    throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  }
+  let expectedSuccessor: ReturnType<typeof runningSingleStepOwnerAdmissionSuccessorV1>;
+  if (authority.authority_kind === "reservation") {
+    const body = authority.authority_body as Partial<{
+      producerImplementationId: string;
+    }>;
+    const producer = typeof body.producerImplementationId === "string"
+      ? INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
+        ({ implementationId }) => implementationId === body.producerImplementationId,
+      )
+      : undefined;
+    if (!producer) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+    const reservation = validateInternalProductionOwnerReservationV1(authority.authority_body, producer);
+    expectedSuccessor = runningSingleStepOwnerAdmissionSuccessorV1({
+      version: version - 1,
+      predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
+      transitionKind: "reservation",
+      transitionRef: reservation.reservationRef,
+      transitionHash: reservation.reservationHash,
+      migrationApplication,
+    });
+    if (
+      authority.authority_ref !== reservation.reservationRef
+      || authority.authority_hash !== reservation.reservationHash
+      || authority.phase_key !== reservation.reservationRef
+      || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
+      || canonicalJsonStringify(authority.authority_body) !== canonicalJsonStringify(reservation)
+    ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  } else if (authority.authority_kind === "close") {
+    const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
+    const transitionHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+      reservationRef: close.reservationRef,
+      reservationHash: close.reservationHash,
+      terminalOwnerRef: close.terminalOwnerRef,
+      terminalOwnerHash: close.terminalOwnerHash,
+    });
+    expectedSuccessor = runningSingleStepOwnerAdmissionSuccessorV1({
+      version: version - 1,
+      predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
+      transitionKind: "close",
+      transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
+      transitionHash,
+      migrationApplication,
+    });
+    if (
+      authority.authority_ref !== close.closeRef
+      || authority.authority_hash !== close.closeHash
+      || authority.phase_key !== close.reservationRef
+      || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
+      || canonicalJsonStringify(authority.authority_body) !== canonicalJsonStringify(close)
+    ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  } else if (authority.authority_kind === "release") {
+    const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(
+      authority.authority_body,
+    );
+    const transition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+      fenceRef: release.fenceRef,
+      fenceHash: release.fenceHash,
+      releaseAuthority: release.releaseAuthority,
+    });
+    expectedSuccessor = runningSingleStepOwnerAdmissionSuccessorV1({
+      version: version - 1,
+      predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
+      transitionKind: "release",
+      transitionRef: transition.transitionRef,
+      transitionHash: transition.transitionHash,
+      migrationApplication,
+    });
+    if (
+      authority.authority_ref !== release.releaseRef
+      || authority.authority_hash !== release.releaseHash
+      || authority.phase_key !== release.fenceRef
+      || authority.predecessor_head_hash !== release.ownerAdmissionHeadPredecessorHash
+      || canonicalJsonStringify(authority.authority_body) !== canonicalJsonStringify(release)
+    ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  } else {
+    throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  }
+  if (
+    expectedSuccessor.version !== version
+    || expectedSuccessor.hash !== headHash
+    || authority.successor_head_hash !== headHash
+    || authority.predecessor_head_hash !== expectedSuccessor.payload.predecessorHeadHash
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  const predecessors = await validateRunningSingleStepOwnerAncestryV1(
+    sql,
+    authority.predecessor_head_hash,
+    version - 1,
+    migrationApplication,
+    seen,
+  );
+  return Object.freeze([Object.freeze({ version, authority }), ...predecessors]);
+}
+
+async function observeRunningSingleStepOwnerAncestryV1(
+  sql: PgTransactionSql,
+): Promise<readonly RunningSingleStepOwnerAdvancingAuthorityV1[]> {
+  const heads = await sql.unsafe<Array<{
+    head_version: string | number;
+    head_hash: string;
+    active_fence_ref: string | null;
+    active_fence_hash: string | null;
+    active_target_family_hash: string | null;
+    migration_application_evidence_hash: string;
+    head_payload: unknown;
+  }>>(
+    `SELECT head_version,head_hash,active_fence_ref,active_fence_hash,
+            active_target_family_hash,migration_application_evidence_hash,head_payload
+       FROM internal_production_owner_admission_head_v1
+      WHERE singleton=TRUE
+      FOR UPDATE`,
+  );
+  const head = heads[0];
+  const version = Number(head?.head_version);
+  if (
+    heads.length !== 1
+    || !head
+    || !Number.isSafeInteger(version)
+    || version < 0
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(head.head_hash)
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(head.migration_application_evidence_hash)
+    || (head.active_fence_ref === null) !== (head.active_fence_hash === null)
+    || (head.active_target_family_hash !== null && head.active_fence_ref === null)
+    || head.active_fence_ref !== null
+    || head.active_fence_hash !== null
+    || head.active_target_family_hash !== null
+    || head.head_payload === null
+    || typeof head.head_payload !== "object"
+    || Array.isArray(head.head_payload)
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  const headPayload = head.head_payload as Record<string, unknown>;
+  const expectedPayloadKeys = version === 0
+    ? ["schema", "version", "migrationApplication"]
+    : [
+        "schema", "version", "predecessorHeadHash", "transitionKind",
+        "transitionRef", "transitionHash", "migrationApplication",
+      ];
+  const payloadKeys = Object.keys(headPayload);
+  if (
+    payloadKeys.length !== expectedPayloadKeys.length
+    || expectedPayloadKeys.some((key) => !Object.prototype.hasOwnProperty.call(headPayload, key))
+    || headPayload.schema !== "setfarm.internal-production-owner-admission-head.v1"
+    || headPayload.version !== version
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  const migrationApplication = validateRunningSingleStepOwnerMigrationApplicationV1(
+    headPayload.migrationApplication,
+    head.migration_application_evidence_hash,
+  );
+  if (version === 0) {
+    if (head.head_hash !== "0".repeat(64)) {
+      throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+    }
+  } else if (
+    typeof headPayload.predecessorHeadHash !== "string"
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(headPayload.predecessorHeadHash)
+    || !["reservation", "close", "fence", "release"].includes(String(headPayload.transitionKind))
+    || typeof headPayload.transitionRef !== "string"
+    || !RUNNING_SINGLE_STEP_OWNER_REF_V1.test(headPayload.transitionRef)
+    || typeof headPayload.transitionHash !== "string"
+    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(headPayload.transitionHash)
+    || hashCanonicalJson(headPayload) !== head.head_hash
+  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
+  return validateRunningSingleStepOwnerAncestryV1(
+    sql,
+    head.head_hash,
+    version,
+    migrationApplication,
+  );
+}
+
+async function authenticateRunningSingleStepOwnerSidecarsV1(
+  sql: PgTransactionSql,
+  expected: ReadonlyArray<Readonly<{
+    ownerKey: string;
+    category: "claim" | "runtime-session";
+    implementation: "a-claim-single-runtime-v1" | "a-runtime-session-v1";
+    identity: ReturnType<
+      typeof createInternalProductionClaimCanonicalOwnerIdentityV1
+      | typeof createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1
+    >;
+  }>>,
+): Promise<boolean> {
+  let ancestry: readonly RunningSingleStepOwnerAdvancingAuthorityV1[];
+  try {
+    ancestry = await observeRunningSingleStepOwnerAncestryV1(sql);
+  } catch {
+    return false;
+  }
+  const rows = await sql.unsafe<RunningSingleStepOwnerReservationRowV1[]>(
+    `SELECT reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+            producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+            reservation_payload,reservation_head_predecessor_hash,state,
+            canonical_owner_identity,binding_hash,binding_payload,close_kind,
+            terminal_owner_ref,terminal_owner_hash,close_head_predecessor_hash,
+            close_head_successor_hash,preserved_fence_ref,preserved_fence_hash,
+            close_ref,close_hash,close_payload,head_version
+       FROM internal_production_owner_reservations_v1
+      WHERE owner_key = ANY($1::text[])
+      ORDER BY owner_key,reservation_ref
+      FOR UPDATE`,
+    [expected.map(({ ownerKey }) => ownerKey)],
+  );
+  if (rows.length !== expected.length) return false;
+  for (const authority of expected) {
+    const matching = rows.filter((row) => row.owner_key === authority.ownerKey);
+    if (matching.length !== 1) return false;
+    const row = matching[0]!;
+    const producer = INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
+      ({ implementationId }) => implementationId === authority.implementation,
+    );
+    if (!producer) return false;
+    try {
+      const reservation = validateInternalProductionOwnerReservationV1(
+        row.reservation_payload,
+        producer,
+      );
+      const identity = validateInternalProductionCanonicalOwnerIdentityV1(
+        row.canonical_owner_identity,
+      );
+      const bound = validateInternalProductionBoundOwnerReservationV1(row.binding_payload);
+      const reservationAuthorities = await sql.unsafe<RunningSingleStepOwnerAuthorityRowV1[]>(
+        `SELECT authority_ref,authority_hash,authority_kind,phase_key,
+                predecessor_head_hash,successor_head_hash,authority_body
+           FROM internal_production_owner_admission_authorities_v1
+          WHERE authority_ref=$1 AND authority_hash=$2
+          FOR SHARE`,
+        [row.reservation_ref, row.reservation_hash],
+      );
+      const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
+      const bindingAuthorities = await sql.unsafe<RunningSingleStepOwnerAuthorityRowV1[]>(
+        `SELECT authority_ref,authority_hash,authority_kind,phase_key,
+                predecessor_head_hash,successor_head_hash,authority_body
+           FROM internal_production_owner_admission_authorities_v1
+          WHERE authority_ref=$1 AND authority_hash=$2
+          FOR SHARE`,
+        [bindingRef, bound.bindingHash],
+      );
+      const reservationAuthority = reservationAuthorities[0];
+      const bindingAuthority = bindingAuthorities[0];
+      const headVersion = Number(row.head_version);
+      const reservationEdges = ancestry.filter(({ authority: edge }) => (
+        edge.authority_kind === "reservation"
+        && edge.authority_ref === reservation.reservationRef
+        && edge.authority_hash === reservation.reservationHash
+      ));
+      const reservationEdge = reservationEdges[0];
+      if (
+        row.state !== "bound"
+        || row.category !== authority.category
+        || row.owner_key !== authority.ownerKey
+        || row.producer_implementation_id !== authority.implementation
+        || row.reservation_ref !== reservation.reservationRef
+        || row.reservation_hash !== reservation.reservationHash
+        || row.owner_key_hash !== reservation.ownerKeyHash
+        || row.producer_purpose_hash !== reservation.producerPurposeHash
+        || row.producer_implementation_hash !== reservation.producerImplementationHash
+        || row.reservation_head_predecessor_hash
+          !== reservation.ownerAdmissionHeadPredecessorHash
+        || !Number.isSafeInteger(headVersion)
+        || headVersion <= 0
+        || reservationEdges.length !== 1
+        || !reservationEdge
+        || reservationEdge.version !== headVersion
+        || ancestry.filter(({ version }) => version === headVersion).length !== 1
+        || canonicalJsonStringify(identity) !== canonicalJsonStringify(authority.identity)
+        || row.binding_hash !== bound.bindingHash
+        || bound.category !== authority.category
+        || bound.ownerKey !== authority.ownerKey
+        || bound.producerImplementationId !== authority.implementation
+        || bound.reservationRef !== reservation.reservationRef
+        || bound.reservationHash !== reservation.reservationHash
+        || canonicalJsonStringify(bound.canonicalOwnerIdentity)
+          !== canonicalJsonStringify(authority.identity)
+        || row.close_kind !== null
+        || row.terminal_owner_ref !== null
+        || row.terminal_owner_hash !== null
+        || row.close_head_predecessor_hash !== null
+        || row.close_head_successor_hash !== null
+        || row.preserved_fence_ref !== null
+        || row.preserved_fence_hash !== null
+        || row.close_ref !== null
+        || row.close_hash !== null
+        || row.close_payload !== null
+        || reservationAuthorities.length !== 1
+        || bindingAuthorities.length !== 1
+        || !reservationAuthority
+        || !bindingAuthority
+        || reservationAuthority.authority_ref !== reservation.reservationRef
+        || reservationAuthority.authority_hash !== reservation.reservationHash
+        || reservationAuthority.authority_kind !== "reservation"
+        || reservationAuthority.phase_key !== reservation.reservationRef
+        || reservationAuthority.predecessor_head_hash
+          !== reservation.ownerAdmissionHeadPredecessorHash
+        || reservationAuthority.successor_head_hash
+          !== reservationEdge.authority.successor_head_hash
+        || canonicalJsonStringify(reservationAuthority.authority_body)
+          !== canonicalJsonStringify(reservation)
+        || bindingAuthority.authority_ref !== bindingRef
+        || bindingAuthority.authority_hash !== bound.bindingHash
+        || bindingAuthority.authority_kind !== "binding"
+        || bindingAuthority.phase_key !== reservation.reservationRef
+        || bindingAuthority.predecessor_head_hash !== reservationAuthority.successor_head_hash
+        || bindingAuthority.successor_head_hash !== reservationAuthority.successor_head_hash
+        || canonicalJsonStringify(bindingAuthority.authority_body)
+          !== canonicalJsonStringify(bound)
+      ) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function authenticateRunningSingleStepClaimReissueV1(
+  step: StepRow,
+  agentId: string,
+  runtimeIntent?: RuntimeClaimIntentV1,
+): Promise<RunningSingleStepClaimReissueV1> {
+  return pgBegin(async (sql) => {
+    const rows = await sql.unsafe<Array<{
+      claim_id: string;
+      open_claim_count: string;
+      claim_run_id: string;
+      claim_step_id: string;
+      claim_story_id: string | null;
+      claim_agent_id: string;
+      session_id: string | null;
+      runtime_claim_id: string | null;
+      runtime_run_id: string | null;
+      runtime_step_db_id: string | null;
+      runtime_workflow_step_id: string | null;
+      runtime_story_db_id: string | null;
+      runtime_story_id: string | null;
+      runtime_attempt_id: string | null;
+      runtime_claim_agent_id: string | null;
+      owner_instance_id: string | null;
+      runtime_agent_id: string | null;
+      runtime_kind: string | null;
+      session_key: string | null;
+      worktree: string | null;
+      runtime_path: string | null;
+      transcript_path: string | null;
+      runtime_state: string | null;
+    }>>(
+      `SELECT claim.id::text AS claim_id,
+              (SELECT COUNT(*)::text FROM claim_log open_claim
+                WHERE open_claim.run_id=$1 AND open_claim.step_id=$2
+                  AND open_claim.story_id IS NULL AND open_claim.outcome IS NULL) AS open_claim_count,
+              claim.run_id AS claim_run_id,claim.step_id AS claim_step_id,
+              claim.story_id AS claim_story_id,claim.agent_id AS claim_agent_id,
+              runtime.session_id,runtime.claim_id::text AS runtime_claim_id,
+              runtime.run_id AS runtime_run_id,runtime.step_db_id AS runtime_step_db_id,
+              runtime.workflow_step_id AS runtime_workflow_step_id,
+              runtime.story_db_id AS runtime_story_db_id,runtime.story_id AS runtime_story_id,
+              runtime.attempt_id AS runtime_attempt_id,
+              runtime.claim_agent_id AS runtime_claim_agent_id,
+              runtime.owner_instance_id,runtime.runtime_agent_id,runtime.runtime_kind,
+              runtime.session_key,runtime.worktree,runtime.runtime_path,
+              runtime.transcript_path,runtime.state AS runtime_state
+         FROM claim_log claim
+         LEFT JOIN LATERAL (
+           SELECT * FROM runtime_sessions candidate
+            WHERE candidate.claim_id=claim.id
+            ORDER BY candidate.session_id
+            LIMIT 2
+            FOR UPDATE
+         ) runtime ON TRUE
+        WHERE claim.run_id=$1 AND claim.step_id=$2
+          AND claim.story_id IS NULL AND claim.outcome IS NULL
+        ORDER BY claim.id
+        LIMIT 2
+        FOR UPDATE OF claim`,
+      [step.run_id, step.step_id],
+    );
+    if (rows.length === 0) return { status: "absent" };
+    const observed = rows[0]!;
+    if (rows.length !== 1 || observed.open_claim_count !== "1") return { status: "refused" };
+    const claimId = Number(observed.claim_id);
+    if (!Number.isSafeInteger(claimId) || claimId <= 0 || String(claimId) !== observed.claim_id) {
+      throw new Error("SINGLE_STEP_CLAIM_ID_INVALID");
+    }
+    if (
+      observed.claim_run_id !== step.run_id
+      || observed.claim_step_id !== step.step_id
+      || observed.claim_story_id !== null
+      || observed.claim_agent_id !== agentId
+      || Boolean(observed.session_id) !== Boolean(runtimeIntent)
+    ) return { status: "refused" };
+    if (runtimeIntent && (
+      observed.runtime_claim_id !== observed.claim_id
+      || observed.runtime_run_id !== step.run_id
+      || observed.runtime_step_db_id !== step.id
+      || observed.runtime_workflow_step_id !== step.step_id
+      || observed.runtime_story_db_id !== null
+      || observed.runtime_story_id !== null
+      || observed.runtime_attempt_id !== null
+      || observed.runtime_claim_agent_id !== agentId
+      || !["reserved", "starting", "running"].includes(observed.runtime_state ?? "")
+      || observed.session_id !== runtimeIntent.sessionId
+      || observed.owner_instance_id !== runtimeIntent.ownerInstanceId
+      || observed.runtime_agent_id !== runtimeIntent.runtimeAgentId
+      || observed.runtime_kind !== runtimeIntent.runtimeKind
+      || observed.session_key !== (runtimeIntent.sessionKey ?? null)
+      || observed.worktree !== (runtimeIntent.worktree ?? null)
+      || observed.runtime_path !== (runtimeIntent.runtimePath ?? null)
+      || observed.transcript_path !== (runtimeIntent.transcriptPath ?? null)
+    )) return { status: "refused" };
+    const exactSidecars = await authenticateRunningSingleStepOwnerSidecarsV1(sql, [
+      {
+        ownerKey: observed.claim_id,
+        category: "claim",
+        implementation: "a-claim-single-runtime-v1",
+        identity: createInternalProductionClaimCanonicalOwnerIdentityV1({
+          claimIdText: observed.claim_id,
+        }),
+      },
+      ...(runtimeIntent ? [{
+        ownerKey: runtimeIntent.sessionId,
+        category: "runtime-session" as const,
+        implementation: "a-runtime-session-v1" as const,
+        identity: createInternalProductionRuntimeSessionCanonicalOwnerIdentityV1({
+          sessionId: runtimeIntent.sessionId,
+        }),
+      }] : []),
+    ]);
+    if (!exactSidecars) return { status: "refused" };
+    return {
+      status: "authenticated",
+      claimId,
+      ...(runtimeIntent ? {
+        runtime: {
+          sessionId: runtimeIntent.sessionId,
+          ownerInstanceId: runtimeIntent.ownerInstanceId,
+          state: observed.runtime_state as "reserved" | "starting" | "running",
+        },
+      } : {}),
+    };
+  });
+}
+
 async function claimSingleStep(
   step: StepRow,
   agentId: string,
@@ -5403,6 +6085,10 @@ async function claimSingleStep(
     "SELECT protocol FROM runs WHERE id = $1",
     [step.run_id],
   );
+  const runningReissue = step.step_status === "running"
+    ? await authenticateRunningSingleStepClaimReissueV1(step, agentId, runtimeIntent)
+    : undefined;
+  if (runningReissue?.status === "refused") return { found: false };
   let v3StageRetrySource: V3StageRetrySourceV1 | undefined;
   let v3PriorStageRetryDedupeKeys: ReadonlySet<string> | undefined;
   if (runProtocol?.protocol === "v3" && step.retry_count > 0) {
@@ -5578,14 +6264,34 @@ async function claimSingleStep(
           : {}),
       },
     );
-    if (singleStepRuntime) {
-      const runtime = singleStepRuntime;
-      await pgBegin((transaction) => releaseReservedRuntimeSessionInTransaction(transaction, {
-        sessionId: runtime.sessionId,
-        claimId: singleStepClaimEnvelope!.claimId,
-        ownerInstanceId: runtime.ownerInstanceId,
-        diagnostic,
-      }));
+  }
+
+  async function terminalizeSharedV3PlatformPreclaim(
+    diagnostic: string,
+    operationalFailureCause?: OperationalFailureCauseError,
+  ): Promise<boolean> {
+    const fresh = await authenticateRunningSingleStepClaimReissueV1(
+      step,
+      agentId,
+      runtimeIntent,
+    );
+    if (
+      fresh.status !== "authenticated"
+      || fresh.claimId !== singleStepClaimId
+      || !fresh.runtime
+      || fresh.runtime.state !== "reserved"
+    ) return false;
+    try {
+      await terminalizeV3PlatformPreclaim(diagnostic, operationalFailureCause);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof ClaimMutationAuthorityError
+        && error.ownerType === "runtime_session"
+        && error.ownerId === fresh.runtime.sessionId
+        && (error.ownerState === "starting" || error.ownerState === "running")
+      ) return false;
+      throw error;
     }
   }
 
@@ -5593,16 +6299,7 @@ async function claimSingleStep(
   // their claim file. If this role already owns a running non-loop step, reissue
   // the same claim instead of returning NO_WORK and orphaning the step.
   if (step.step_status === "running") {
-    const existingOpenClaim = await pgGet<{ id: number; session_id: string | null; owner_instance_id: string | null }>(
-      `SELECT cl.id, rs.session_id, rs.owner_instance_id
-         FROM claim_log cl
-         LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
-        WHERE cl.run_id = $1 AND cl.step_id = $2 AND cl.story_id IS NULL
-          AND cl.agent_id = $3 AND cl.outcome IS NULL
-        LIMIT 1`,
-      [step.run_id, step.step_id, agentId],
-    );
-    if (!existingOpenClaim) {
+    if (runningReissue?.status === "absent") {
       await pgRun(
         `UPDATE steps
          SET status = 'pending', updated_at = $1
@@ -5617,20 +6314,9 @@ async function claimSingleStep(
       logger.warn(`[claim-idempotent] Requeued orphaned running step ${step.step_id}; no open claim exists for ${agentId}`, { runId: step.run_id, stepId: step.step_id });
       return { found: false };
     }
-    singleStepClaimId = Number(existingOpenClaim.id);
-    if (!Number.isSafeInteger(singleStepClaimId) || singleStepClaimId <= 0) {
-      throw new Error("SINGLE_STEP_CLAIM_ID_INVALID");
-    }
-    if (existingOpenClaim.session_id) {
-      if (!runtimeIntent || existingOpenClaim.session_id !== runtimeIntent.sessionId) {
-        logger.warn(`[claim-idempotent] Existing runtime ${existingOpenClaim.session_id} still owns ${step.step_id}; refusing a second runtime`, { runId: step.run_id, stepId: step.step_id });
-        return { found: false };
-      }
-      singleStepRuntime = {
-        sessionId: existingOpenClaim.session_id,
-        ownerInstanceId: existingOpenClaim.owner_instance_id!,
-      };
-    }
+    if (runningReissue?.status !== "authenticated") return { found: false };
+    singleStepClaimId = runningReissue.claimId;
+    singleStepRuntime = runningReissue.runtime;
     if (runProtocol?.protocol === "v3" && step.step_id === "supervise") {
       if (!singleStepRuntime) throw new Error("V3_SUPERVISE_RUNTIME_BINDING_REQUIRED");
       authenticatedStorySubject = await getSql().begin((transaction) =>
@@ -6205,10 +6891,17 @@ async function claimSingleStep(
             );
             try {
               if (v3PlatformPreclaim) {
-                await terminalizeV3PlatformPreclaim(
+                const terminalized = await terminalizeSharedV3PlatformPreclaim(
                   ownedPreClaimError,
                   _pce instanceof OperationalFailureCauseError ? _pce : undefined,
                 );
+                if (!terminalized) {
+                  logger.warn(
+                    `[step-module] ${_stepModule.id} preClaim failed after fresh runtime authority refused terminalization; ordinary drain/recovery retains terminal authority`,
+                    { runId: step.run_id, stepId: step.step_id },
+                  );
+                  return { found: false };
+                }
               } else {
                 await failStep(step.id, ownedPreClaimError, singleStepClaimEnvelope);
               }
@@ -6240,10 +6933,11 @@ async function claimSingleStep(
     if (singleStepClaimEnvelope?.protocol === "v3" && step.step_id === "stories") {
       const diagnostic = `PLATFORM_PRECLAIM_TERMINAL [stories]: ${String(_ie).slice(0, 1_000)}`;
       try {
-        await terminalizeV3PlatformPreclaim(
+        const terminalized = await terminalizeSharedV3PlatformPreclaim(
           diagnostic,
           _ie instanceof OperationalFailureCauseError ? _ie : undefined,
         );
+        if (!terminalized) return { found: false };
       } catch (transitionError) {
         throw new V3PlatformPreclaimLifecycleError(transitionError);
       }

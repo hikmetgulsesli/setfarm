@@ -1,18 +1,29 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+import type { PgTransactionSql } from "../../../src/db-pg.js";
 import { completeSingleStepClaimAndState } from "../../../src/execution/claim-attempt-transition.js";
+import { publishSingleClaimRuntime } from "../../../src/execution/claim-runtime-publication.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../src/execution/compiler-english-admission-ledger-v1.js";
 import { publishCompilerStoryEnglishAdmissionAndCompleteV1 } from "../../../src/execution/compiler-story-english-admission-publication-v1.js";
 import { createRuntimeCompletionEffectRepository } from "../../../src/execution/runtime-completion-effect-repository.js";
+import { runRuntimeCompletionEffectLedger } from "../../../src/execution/runtime-completion-effect-runner.js";
 import { runWithRuntimeCompletionOwner } from "../../../src/execution/runtime-completion-owner-context.js";
 import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
 } from "../../../src/execution/runtime-completion.js";
-import { createRuntimeSessionRepository } from "../../../src/execution/runtime-session-repository.js";
+import {
+  createRuntimeSessionRepository,
+  type RuntimeClaimIntentV1,
+} from "../../../src/execution/runtime-session-repository.js";
 import type { ClaimEnvelopeV1 } from "../../../src/execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../../../src/execution/schemas/runtime-completion-plan-v1.js";
+import { persistWorkflowRunInTransaction } from "../../../src/execution/run-persistence.js";
+import {
+  reconcileRuntimeCompletionEffects,
+  resumeRuntimeCompletionEffects,
+} from "../../../src/installer/step-ops.js";
 import { buildV3AutoStoriesOutput } from "../../../src/installer/steps/03-stories/preclaim.js";
 import { designAuthoritySubjectHashV1 } from "../../../src/installer/steps/03-stories/guards.js";
 import {
@@ -41,6 +52,54 @@ const COMPILER_ADMISSION_DRAIN_EVIDENCE = {
   evidenceRefs: ["setfarm://test/setup-build-compiler-admission"],
 };
 
+async function publishSingleRuntimeClaimFixtureV1(
+  database: TestDatabase,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    workflowStepId: string;
+    claimAgentId: string;
+    runtimeAgentId: string;
+    ownerInstanceId: string;
+  }>,
+): Promise<Readonly<{
+  claimId: number;
+  protocol: "v3";
+  runtime: Readonly<{ sessionId: string; ownerInstanceId: string }>;
+  runtimeIntent: RuntimeClaimIntentV1;
+}>> {
+  const token = createHash("sha256")
+    .update(`${input.runId}:${input.workflowStepId}`, "utf8")
+    .digest("hex")
+    .slice(0, 24);
+  const sessionId = `RTS_${token}`;
+  const runtimeIntent = Object.freeze({
+    schema: "setfarm.runtime-claim-intent.v1" as const,
+    sessionId,
+    runtimeAgentId: input.runtimeAgentId,
+    runtimeKind: "openclaw_session" as const,
+    ownerInstanceId: input.ownerInstanceId,
+    sessionKey: `${input.workflowStepId}-fixture-session`,
+  });
+  const publication = await publishSingleClaimRuntime(database.sql, {
+    runId: input.runId,
+    stepDbId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    claimAgentId: input.claimAgentId,
+    runtimeIntent,
+    now: new Date("2026-07-15T11:58:00.000Z"),
+  });
+  assert.ok(publication?.runtime);
+  assert.equal(publication.protocol, "v3");
+  assert.deepEqual(publication.runtime, { sessionId, ownerInstanceId: input.ownerInstanceId });
+  return Object.freeze({
+    claimId: publication.claimId,
+    protocol: "v3",
+    runtime: publication.runtime,
+    runtimeIntent,
+  });
+}
+
 async function prepareCompilerAdmissionCompletion(
   database: TestDatabase,
   input: Readonly<{
@@ -57,33 +116,25 @@ async function prepareCompilerAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
-  const sessions = createRuntimeSessionRepository(database.sql);
-  const session = await sessions.reserve({
-    sessionId: `RTS_${token}`,
+  const publication = await publishSingleRuntimeClaimFixtureV1(database, {
     runId: input.runId,
     stepDbId: input.stepDbId,
     workflowStepId: input.workflowStepId,
-    claimId,
     claimAgentId,
     runtimeAgentId,
-    runtimeKind: "openclaw_session",
     ownerInstanceId,
   });
-  await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId });
+  const claimId = publication.claimId;
+  const sessions = createRuntimeSessionRepository(database.sql);
+  await sessions.markStarting({ sessionId: publication.runtime.sessionId, ownerInstanceId });
   await sessions.markRunning({
-    sessionId: session.sessionId,
+    sessionId: publication.runtime.sessionId,
     ownerInstanceId,
     sessionKey: `${input.workflowStepId}-fixture-session`,
   });
   const envelope: ClaimEnvelopeV1 = {
     schema: "setfarm.claim-envelope.v1",
-    protocol: "v3",
+    protocol: publication.protocol,
     issuedAt: "2026-07-15T11:58:00.000Z",
     stepId: input.stepDbId,
     workflowStepId: input.workflowStepId,
@@ -105,7 +156,7 @@ async function prepareCompilerAdmissionCompletion(
   const completions = createRuntimeCompletionRepository(database.sql);
   await completions.claim({ requestId: requested.request.requestId, ownerInstanceId });
   await sessions.markDrained({
-    sessionId: session.sessionId,
+    sessionId: publication.runtime.sessionId,
     ownerInstanceId,
     evidence: COMPILER_ADMISSION_DRAIN_EVIDENCE,
   });
@@ -123,6 +174,8 @@ async function prepareCompilerAdmissionCompletion(
     processing,
     requestId: requested.request.requestId,
     ownerInstanceId,
+    output: input.output,
+    runtimeSessionId: publication.runtime.sessionId,
   };
 }
 
@@ -131,32 +184,91 @@ async function settleCompilerAdmissionCompletion(
   managed: Awaited<ReturnType<typeof prepareCompilerAdmissionCompletion>>,
 ): Promise<void> {
   const effects = createRuntimeCompletionEffectRepository(database.sql);
-  const effect = await effects.claimNext({
+  const result = await runRuntimeCompletionEffectLedger({
     requestId: managed.requestId,
     ownerInstanceId: managed.ownerInstanceId,
+    repository: effects,
+    heartbeatIntervalMs: 100,
+    handler: {
+      reconcile: async ({ input: effectInput }) => {
+        const reconciled = await reconcileRuntimeCompletionEffects({
+          protocol: managed.envelope.protocol,
+          claimId: managed.claimId,
+          runtimeSessionId: managed.runtimeSessionId,
+          runId: managed.envelope.runId,
+          stepDbId: managed.envelope.stepId,
+          workflowStepId: managed.envelope.workflowStepId,
+          output: managed.output,
+          completionPlan: effectInput.plan,
+        });
+        if (!reconciled) return undefined;
+        return {
+          resolution: "reconciled" as const,
+          result: reconciled.result,
+          evidence: reconciled.evidence,
+        };
+      },
+      apply: async ({ input: effectInput, effect, assertLease }) => {
+        await assertLease();
+        const applied = await resumeRuntimeCompletionEffects({
+          protocol: managed.envelope.protocol,
+          claimId: managed.claimId,
+          runtimeSessionId: managed.runtimeSessionId,
+          runId: managed.envelope.runId,
+          stepDbId: managed.envelope.stepId,
+          workflowStepId: managed.envelope.workflowStepId,
+          output: managed.output,
+          completionPlan: effectInput.plan,
+        });
+        await assertLease();
+        return {
+          resolution: "applied" as const,
+          result: applied,
+          evidence: {
+            schema: "setfarm.test.compiler-admission-continuation-evidence.v1",
+            requestId: managed.requestId,
+            effectKey: effect.effectKey,
+          },
+        };
+      },
+    },
   });
-  assert.ok(effect?.leaseToken);
-  await effects.settle({
-    requestId: managed.requestId,
-    effectKey: effect.effectKey,
-    ownerInstanceId: managed.ownerInstanceId,
-    leaseToken: effect.leaseToken,
-    resolution: "applied",
-    result: { advanced: false, runCompleted: false },
-    evidence: { source: "setup-build-compiler-admission-fixture" },
-  });
+  assert.equal(result.advanced, true);
+  assert.equal(result.runCompleted, false);
+  const settled = await effects.listForRequest(managed.requestId);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0]!.state, "applied");
+  assert.deepEqual(settled[0]!.result, { advanced: true, runCompleted: false });
   await managed.completions.markEffectsCommitted({
     requestId: managed.requestId,
     ownerInstanceId: managed.ownerInstanceId,
     ownerAttemptCount: managed.processing.ownerAttemptCount,
-    result: { advanced: false, runCompleted: false },
+    result,
   });
   await managed.completions.acceptAndRelease({
     requestId: managed.requestId,
     ownerInstanceId: managed.ownerInstanceId,
     ownerAttemptCount: managed.processing.ownerAttemptCount,
-    result: { advanced: false, runCompleted: false },
+    result,
   });
+}
+
+async function requirePendingStepV1(database: TestDatabase, stepDbId: string): Promise<void> {
+  const rows = await database.sql<Array<{ status: string }>>`
+    SELECT status FROM steps WHERE id = ${stepDbId}
+  `;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.status, "pending");
+}
+
+async function readRunContextV1(database: TestDatabase, runId: string): Promise<Record<string, string>> {
+  const rows = await database.sql<Array<{ context: string }>>`
+    SELECT context FROM runs WHERE id = ${runId}
+  `;
+  assert.equal(rows.length, 1);
+  const parsed = JSON.parse(rows[0]!.context) as unknown;
+  assert.ok(parsed && typeof parsed === "object" && !Array.isArray(parsed));
+  return parsed as Record<string, string>;
 }
 
 export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
@@ -168,12 +280,15 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     setupBuildClaimAgentId: string;
     releaseSha: string;
     additionalContext?: Readonly<Record<string, string>>;
-  }>,
+}>,
 ): Promise<Readonly<{
   claimId: number;
+  runtimeIntent: RuntimeClaimIntentV1;
   context: Readonly<Record<string, string>>;
   task: string;
 }>> {
+  const runtimeDb = await import("../../../src/db-pg.js");
+  await runtimeDb.initializeInternalProductionCurrentEntryDatabaseV1();
   const productSpec = genuineNodeCliProductSpecV2();
   const productSpecHash = hashCanonicalJson(productSpec);
   const renderedPlan = renderProductSpecV2Compatibility(productSpec);
@@ -202,34 +317,42 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
   const planStepDbId = `${input.runId}-plan-step`;
   const designStepDbId = `${input.runId}-design-step`;
   const storiesStepDbId = `${input.runId}-stories-step`;
-  await database.sql`
-    INSERT INTO runs (
-      id, workflow_id, task, status, context, protocol, protocol_version,
-      compiler_release_sha, packet_hash, activation_preflight_hash, release_admission_hash
-    ) VALUES (
-      ${input.runId}, 'feature-dev', ${NODE_CLI_TASK}, 'running',
-      ${JSON.stringify(baseContext)}, 'v3', 1, ${input.releaseSha},
-      ${"a".repeat(64)}, ${"d".repeat(64)}, ${releaseAdmissionHash}
-    )
-  `;
-  await database.sql`
-    INSERT INTO steps (
-      id, run_id, step_id, agent_id, step_index, input_template, expects,
-      status, type, retry_count, max_retries
-    ) VALUES (
-      ${planStepDbId}, ${input.runId}, 'plan', 'feature-dev_planner', 1, '', '',
-      'running', 'single', 0, 3
-    ), (
-      ${designStepDbId}, ${input.runId}, 'design', 'feature-dev_designer', 2, '', '',
-      'waiting', 'single', 0, 3
-    ), (
-      ${storiesStepDbId}, ${input.runId}, 'stories', 'feature-dev_story-planner', 3, '', '',
-      'waiting', 'single', 0, 3
-    ), (
-      ${input.setupBuildStepDbId}, ${input.runId}, 'setup-build',
-      ${input.setupBuildClaimAgentId}, 4, '', '', 'waiting', 'single', 0, 3
-    )
-  `;
+  const runNumber = Number.parseInt(
+    createHash("sha256").update(input.runId, "utf8").digest("hex").slice(0, 7),
+    16,
+  ) + 1;
+  await database.sql.begin((transaction) => persistWorkflowRunInTransaction(
+    transaction as PgTransactionSql,
+    {
+      run: {
+        id: input.runId,
+        runNumber,
+        workflowId: "feature-dev",
+        task: NODE_CLI_TASK,
+        context: JSON.stringify(baseContext),
+        notifyUrl: null,
+        createdAt: "2026-07-15T11:57:00.000Z",
+        protocol: {
+          mode: "v3",
+          version: 1,
+          compilerReleaseSha: input.releaseSha,
+          activationPreflightHash: hashCanonicalJson({
+            fixture: "v3-release-preflight",
+            releaseSha: input.releaseSha,
+          }),
+          releaseAdmissionHash,
+          releaseAdmissionKind: "release_go",
+          canaryAdmission: null,
+        },
+      },
+      steps: [
+        { id: planStepDbId, stepId: "plan", agentId: "feature-dev_planner", stepIndex: 1, inputTemplate: "", expects: "", status: "pending", maxRetries: 3, type: "single", loopConfig: null },
+        { id: designStepDbId, stepId: "design", agentId: "feature-dev_designer", stepIndex: 2, inputTemplate: "", expects: "", status: "waiting", maxRetries: 3, type: "single", loopConfig: null },
+        { id: storiesStepDbId, stepId: "stories", agentId: "feature-dev_story-planner", stepIndex: 3, inputTemplate: "", expects: "", status: "waiting", maxRetries: 3, type: "single", loopConfig: null },
+        { id: input.setupBuildStepDbId, stepId: "setup-build", agentId: input.setupBuildClaimAgentId, stepIndex: 4, inputTemplate: "", expects: "", status: "waiting", maxRetries: 3, type: "single", loopConfig: null },
+      ],
+    },
+  ));
 
   const managedPlan = await prepareCompilerAdmissionCompletion(database, {
     runId: input.runId,
@@ -270,6 +393,8 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     }),
   }));
   await settleCompilerAdmissionCompletion(database, managedPlan);
+  await requirePendingStepV1(database, designStepDbId);
+  const advancedPlanContext = await readRunContextV1(database, input.runId);
   const durablePlanAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
     database.sql,
     { runId: input.runId },
@@ -285,12 +410,11 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
   ].join("\n");
   const designContext = {
-    ...planContext,
+    ...advancedPlanContext,
     screen_map: "[]",
     screens_generated: "0",
     design_system: "{}",
   };
-  await database.sql`UPDATE steps SET status = 'running' WHERE id = ${designStepDbId}`;
   const managedDesign = await prepareCompilerAdmissionCompletion(database, {
     runId: input.runId,
     stepDbId: designStepDbId,
@@ -307,7 +431,7 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     stepStatus: "done",
     stepOutput: designOutput,
     runContextJson: JSON.stringify(designContext),
-    expectedRunContextJson: JSON.stringify(planContext),
+    expectedRunContextJson: JSON.stringify(advancedPlanContext),
     requireRuntimeCompletionOwner: true,
     completionPlan: createSingleEffectCompletionPlanDescriptorV1({
       kind: "single_completion",
@@ -316,6 +440,8 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     }),
   }));
   await settleCompilerAdmissionCompletion(database, managedDesign);
+  await requirePendingStepV1(database, storiesStepDbId);
+  const advancedDesignContext = await readRunContextV1(database, input.runId);
 
   const storiesOutput = buildV3AutoStoriesOutput({
     repo: input.repo,
@@ -327,13 +453,12 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     line.startsWith("SCREEN_MAP: "));
   assert.ok(screenMapLine);
   const storiesContext = {
-    ...designContext,
+    ...advancedDesignContext,
     screen_map: screenMapLine.slice("SCREEN_MAP: ".length),
   };
   await database.sql`
     UPDATE runs SET context = ${JSON.stringify(storiesContext)} WHERE id = ${input.runId}
   `;
-  await database.sql`UPDATE steps SET status = 'running' WHERE id = ${storiesStepDbId}`;
   const managedStories = await prepareCompilerAdmissionCompletion(database, {
     runId: input.runId,
     stepDbId: storiesStepDbId,
@@ -389,19 +514,20 @@ export async function seedCanonicalSetupBuildCompilerStoryAdmissionFixture(
     },
   }));
   await settleCompilerAdmissionCompletion(database, managedStories);
-  const setupClaims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (
-      ${input.runId}, 'setup-build', NULL, ${input.setupBuildClaimAgentId}
-    )
-    RETURNING id::integer AS id
-  `;
-  await database.sql`
-    UPDATE steps SET status = 'running' WHERE id = ${input.setupBuildStepDbId}
-  `;
+  await requirePendingStepV1(database, input.setupBuildStepDbId);
+  const advancedStoriesContext = await readRunContextV1(database, input.runId);
+  const setupPublication = await publishSingleRuntimeClaimFixtureV1(database, {
+    runId: input.runId,
+    stepDbId: input.setupBuildStepDbId,
+    workflowStepId: "setup-build",
+    claimAgentId: input.setupBuildClaimAgentId,
+    runtimeAgentId: input.setupBuildClaimAgentId,
+    ownerInstanceId: "setup-build-fixture-owner",
+  });
   return Object.freeze({
-    claimId: setupClaims[0]!.id,
-    context: Object.freeze(admittedContext),
+    claimId: setupPublication.claimId,
+    runtimeIntent: setupPublication.runtimeIntent,
+    context: Object.freeze(advancedStoriesContext),
     task: NODE_CLI_TASK,
   });
 }
