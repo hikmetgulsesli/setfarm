@@ -1305,6 +1305,48 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       assert.equal(refused.stdout, "", `${fault} must not publish a census member`);
     }
   });
+
+  it("P4 service census resolves Mission Control only from the code-owned primary workspace root", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const helperStart = source.indexOf("function fixedMissionControlRootV1(): string {");
+    const helperEnd = source.indexOf("\nfunction loadedMissionControlSourceV1(", helperStart);
+    assert.notEqual(helperStart, -1, "primary Mission Control root helper must exist");
+    assert.notEqual(helperEnd, -1, "primary Mission Control root helper must be private and bounded");
+    const helper = source.slice(helperStart, helperEnd)
+      .replace("function fixedMissionControlRootV1(): string", "function fixedMissionControlRootV1()")
+      .replaceAll("uid!", "uid");
+    assert.equal([...source.matchAll(/fixedMissionControlRootV1\(\)/g)].length, 3);
+    assert.doesNotMatch(source, /path\.resolve\(fixedRepositoryRoot\(\), "\.\.\/mission-control/);
+    const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-primary-root-")));
+    const fixtureHome = path.join(fixtureRoot, "home");
+    const primaryRoot = path.join(fixtureHome, "ai", "setrox", "mission-control");
+    mkdirSync(primaryRoot, { recursive: true, mode: 0o700 });
+    try {
+      const createObserver = (home: string) => Function(
+        "path",
+        "userInfo",
+        "lstatSync",
+        "realpathSync",
+        "currentEntryFail",
+        `${helper}; return fixedMissionControlRootV1;`,
+      )(path, () => ({ homedir: home }), lstatSync, realpathSync, (message: string) => { throw new Error(message); }) as () => string;
+      assert.equal(createObserver(fixtureHome)(), primaryRoot);
+      chmodSync(primaryRoot, 0o722);
+      assert.throws(() => createObserver(fixtureHome)(), /Mission Control root is invalid/);
+      chmodSync(primaryRoot, 0o700);
+      rmSync(primaryRoot, { recursive: true, force: true });
+      writeFileSync(primaryRoot, "not a directory\n", { mode: 0o600 });
+      assert.throws(() => createObserver(fixtureHome)(), /Mission Control root is invalid/);
+      unlinkSync(primaryRoot);
+      const crossed = path.join(fixtureRoot, "crossed");
+      mkdirSync(crossed, { mode: 0o700 });
+      symlinkSync(crossed, primaryRoot);
+      assert.throws(() => createObserver(fixtureHome)(), /Mission Control root is invalid/);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("receives the administrator URL only in an authenticated projection child", async () => {
     if (process.env.SETFARM_PG_URL === undefined) return;
     const databaseUrl = new URL(process.env.SETFARM_PG_URL);

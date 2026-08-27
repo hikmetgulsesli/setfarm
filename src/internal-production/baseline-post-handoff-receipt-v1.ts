@@ -2483,8 +2483,19 @@ function boundedChildText(executable: string, args: readonly string[], label: st
   return result.stdout;
 }
 
+function fixedMissionControlRootV1(): string {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("Mission Control root owner is invalid");
+  const root = path.join(userInfo().homedir, "ai", "setrox", "mission-control");
+  const observed = lstatSync(root, { bigint: true });
+  if (!observed.isDirectory() || observed.isSymbolicLink() || observed.uid !== BigInt(uid!) || (Number(observed.mode & 0o7777n) & 0o022) !== 0 || realpathSync(root) !== root) {
+    currentEntryFail("Mission Control root is invalid");
+  }
+  return root;
+}
+
 function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
-  const identityPath = path.resolve(fixedRepositoryRoot(), "../mission-control/dist-server/internal-production-build-identity.v1.json");
+  const identityPath = path.join(fixedMissionControlRootV1(), "dist-server", "internal-production-build-identity.v1.json");
   const value = strictCanonicalRecord(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes, "Mission Control build identity");
   if (!hasExactKeys(value, ["schema", "sourceSha", "treeHash", "buildHash"]) || value.schema !== "mission-control.internal-production-build-identity.v1") {
     currentEntryFail("Mission Control build identity is invalid");
@@ -2792,7 +2803,7 @@ function observeServiceProcessV1(
   if (processOwnerCount !== 1) currentEntryFail(`${label} process owner count is not exactly one`);
   if (source !== null) {
     const expectedRoot = label === "com.setrox.mission-control"
-      ? path.resolve(fixedRepositoryRoot(), "../mission-control")
+      ? fixedMissionControlRootV1()
       : fixedRepositoryRoot();
     const expectedPrefixes = label === "com.setrox.mission-control"
       ? [`${expectedRoot}/dist-server/`, `${expectedRoot}/dist/`]
