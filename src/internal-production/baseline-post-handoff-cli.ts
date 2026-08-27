@@ -8,7 +8,11 @@ type CommandV1 =
   | "verify-current-entry"
   | "prepare-recovery-source-bootstrap"
   | "resume-recovery-source-bootstrap"
-  | "recovery-source-bootstrap-status";
+  | "recovery-source-bootstrap-status"
+  | "observe-product-build-authority-v2-delivery-evidence"
+  | "audit-authority-v3-migration31"
+  | "inspect-pending-bootstrap-handoff-successor"
+  | "service-census";
 
 const COMMANDS = new Set<CommandV1>([
   "prepare-current-entry",
@@ -18,6 +22,10 @@ const COMMANDS = new Set<CommandV1>([
   "prepare-recovery-source-bootstrap",
   "resume-recovery-source-bootstrap",
   "recovery-source-bootstrap-status",
+  "observe-product-build-authority-v2-delivery-evidence",
+  "audit-authority-v3-migration31",
+  "inspect-pending-bootstrap-handoff-successor",
+  "service-census",
 ]);
 
 function parseCommand(argv: readonly string[]): CommandV1 {
@@ -28,6 +36,11 @@ function parseCommand(argv: readonly string[]): CommandV1 {
 }
 
 async function run(command: CommandV1): Promise<unknown> {
+  if (command === "observe-product-build-authority-v2-delivery-evidence") {
+    const observer = await import("./product-build-authority-v2-delivery-evidence-v1.js");
+    const observation = await observer.observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();
+    return Object.freeze({ ...observation.response, observationTransport: observation.observationTransport });
+  }
   const controller = await import("./baseline-post-handoff-receipt-v1.js");
   if (command === "prepare-current-entry") {
     const operation = await controller.prepareInternalProductionCurrentEntryOperationV1();
@@ -38,6 +51,9 @@ async function run(command: CommandV1): Promise<unknown> {
   if (command === "prepare-recovery-source-bootstrap") return controller.prepareInternalProductionRecoverySourceBootstrapRunV1();
   if (command === "resume-recovery-source-bootstrap") return controller.resumeActiveInternalProductionRecoverySourceBootstrapRunV1();
   if (command === "recovery-source-bootstrap-status") return controller.observeInternalProductionRecoverySourceBootstrapStatusV1();
+  if (command === "audit-authority-v3-migration31") return controller.observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
+  if (command === "inspect-pending-bootstrap-handoff-successor") return controller.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+  if (command === "service-census") return controller.observeInternalProductionServiceCensusV1();
   return controller.verifyCurrentInternalProductionCurrentEntryV1();
 }
 
