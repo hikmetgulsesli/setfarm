@@ -92,6 +92,38 @@ test("v3 setup-build converter reads its machine result instead of classifying p
       setupBuildClaimAgentId: claimAgentId,
       releaseSha,
     });
+    assert.deepEqual(admission.runtimeIntent, {
+      schema: "setfarm.runtime-claim-intent.v1",
+      sessionId: `RTS_${createHash("sha256").update(`${runId}:setup-build`, "utf8").digest("hex").slice(0, 24)}`,
+      runtimeAgentId: claimAgentId,
+      runtimeKind: "openclaw_session",
+      ownerInstanceId: "setup-build-fixture-owner",
+      sessionKey: "setup-build-fixture-session",
+    });
+    assert.equal(Object.isFrozen(admission.runtimeIntent), true);
+    const ownerRows = await database.sql<Array<{
+      runtime_state: string;
+      claim_owner_count: number;
+      claim_owner_state: string;
+      runtime_owner_count: number;
+      runtime_owner_state: string;
+    }>>`
+      SELECT runtime.state AS runtime_state,
+             (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 owner WHERE owner.category='claim' AND owner.owner_key=claim.id::text AND owner.producer_implementation_id='a-claim-single-runtime-v1') AS claim_owner_count,
+             (SELECT MIN(owner.state) FROM internal_production_owner_reservations_v1 owner WHERE owner.category='claim' AND owner.owner_key=claim.id::text AND owner.producer_implementation_id='a-claim-single-runtime-v1') AS claim_owner_state,
+             (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 owner WHERE owner.category='runtime-session' AND owner.owner_key=runtime.session_id AND owner.producer_implementation_id='a-runtime-session-v1') AS runtime_owner_count,
+             (SELECT MIN(owner.state) FROM internal_production_owner_reservations_v1 owner WHERE owner.category='runtime-session' AND owner.owner_key=runtime.session_id AND owner.producer_implementation_id='a-runtime-session-v1') AS runtime_owner_state
+        FROM claim_log claim
+        JOIN runtime_sessions runtime ON runtime.claim_id=claim.id
+       WHERE claim.id=${admission.claimId}
+    `;
+    assert.deepEqual(ownerRows.map((row) => ({ ...row })), [{
+      runtime_state: "reserved",
+      claim_owner_count: 1,
+      claim_owner_state: "bound",
+      runtime_owner_count: 1,
+      runtime_owner_state: "bound",
+    }]);
     fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
     fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
     fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({

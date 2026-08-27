@@ -1102,18 +1102,28 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
     },
   });
   assert.equal(cloned.status, 0, cloned.stderr);
-  for (const locator of [
+  const currentByteLocators = [
     "scripts/run-isolated-postgres-tests.ts",
     "src/db-pg.ts",
     "src/internal-production/owner-admission-v1.ts",
+    "src/installer/step-fail.ts",
+    "src/installer/step-ops.ts",
+    "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
     "tests/execution-attempts/test-database.ts",
+    "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
+    "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
+    "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
     "tests/internal-production/owner-admission-v1.test.ts",
-  ]) {
+    "tests/internal-production/task-0-source-manifest.test.ts",
+  ] as const;
+  for (const locator of currentByteLocators) {
     cpSync(path.join(process.cwd(), locator), path.join(root, locator));
   }
   p3TestGit(root, ["config", "user.name", "Setfarm P3 Refusal Fixture"]);
   p3TestGit(root, ["config", "user.email", "setfarm-p3-refusal@invalid"]);
-  p3TestGit(root, ["add", "scripts/run-isolated-postgres-tests.ts", "src/db-pg.ts", "src/internal-production/owner-admission-v1.ts", "tests/execution-attempts/test-database.ts", "tests/internal-production/owner-admission-v1.test.ts"]);
+  p3TestGit(root, ["add", ...currentByteLocators]);
   if (p3TestGit(root, ["diff", "--cached", "--name-only"]) !== "") {
     p3TestGit(root, ["commit", "-qm", "P3 current-byte refusal fixture"]);
   }
