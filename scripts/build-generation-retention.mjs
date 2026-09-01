@@ -1310,8 +1310,20 @@ export function inspectBuildGenerationRetentionV1() {
 
 function ensureRetentionStoreV1() {
   const parent = path.dirname(RETENTION_STORE_ROOT_V1);
-  const parentIdentity = directoryIdentity(parent);
-  const device = BigInt(parentIdentity.devDecimal);
+  const dataRoot = path.dirname(parent);
+  const dataRootIdentity = directoryIdentity(dataRoot);
+  if (dataRootIdentity.mode !== 0o700) fail("retention authority data root must have mode 0o700");
+  const device = BigInt(dataRootIdentity.devDecimal);
+  const parentIdentity = !optionalLstat(parent)
+    ? ensureDirectory(parent, 0o700, dataRoot, device)
+    : directoryIdentity(parent, device);
+  if (parentIdentity.mode !== 0o700) fail("retention authority parent must have mode 0o700");
+  fsyncDirectory(dataRoot);
+  const dataRootAfter = directoryIdentity(dataRoot, device);
+  const parentAfter = directoryIdentity(parent, device);
+  if (!sameDirectoryObject(dataRootIdentity, dataRootAfter) || !sameDirectoryIdentity(parentIdentity, parentAfter)) {
+    fail("retention authority parent changed while adopting it");
+  }
   if (!optionalLstat(RETENTION_STORE_ROOT_V1)) ensureDirectory(RETENTION_STORE_ROOT_V1, 0o700, parent, device);
   else if (directoryIdentity(RETENTION_STORE_ROOT_V1, device).mode !== 0o700) fail("retention store must have mode 0o700");
   const directories = { root: RETENTION_STORE_ROOT_V1 };
