@@ -1727,7 +1727,7 @@ function currentEntryPrerequisiteRecordPathV1(
   );
 }
 
-function readCurrentEntryAuthorityRecordIfPresentV1(target: string): Buffer | null {
+function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(target: string): FileSnapshot | null {
   const store = readCurrentEntryStore(true);
   if (store === null) return null;
   const relative = path.relative(store.directory, path.resolve(target));
@@ -1781,20 +1781,35 @@ function readCurrentEntryAuthorityRecordIfPresentV1(target: string): Buffer | nu
   } finally {
     guard.close();
   }
-  return readTask12ReceiptStoreBytesV1(record);
+  return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });
 }
+
+function readCurrentEntryAuthorityRecordIfPresentV1(target: string): Buffer | null {
+  return readCurrentEntryAuthorityRecordSnapshotIfPresentV1(target)?.observed.bytes ?? null;
+}
+
+type CurrentEntryPrerequisiteSnapshotV1 = Readonly<{
+  source: FileSnapshot;
+  absentContentLocator: string | null;
+}>;
 
 function readCurrentEntryPrerequisiteRecordV1(
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
   hash: string,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Buffer {
   const contentPath = currentEntryPrerequisiteRecordPathV1(kind, hash);
-  const content = readCurrentEntryAuthorityRecordIfPresentV1(contentPath);
-  if (content !== null) return content;
+  const content = readCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath);
+  if (content !== null) {
+    retained?.push(Object.freeze({ source: content, absentContentLocator: null }));
+    return content.observed.bytes;
+  }
   const legacy = fixedCurrentEntryPath(kind);
-  const legacyBytes = readCurrentEntryRecord(legacy.directory, legacy.basename, legacy.device);
-  if (readCurrentEntryAuthorityRecordIfPresentV1(contentPath) !== null) currentEntryFail("content record appeared during legacy fallback");
-  return legacyBytes;
+  const legacyLocator = path.join(legacy.directory, legacy.basename);
+  const legacySnapshot = Object.freeze({ locator: legacyLocator, observed: readTask12ReceiptStoreSnapshotV1(legacyLocator) });
+  if (readCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath) !== null) currentEntryFail("content record appeared during legacy fallback");
+  retained?.push(Object.freeze({ source: legacySnapshot, absentContentLocator: contentPath }));
+  return legacySnapshot.observed.bytes;
 }
 
 async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Promise<void> {
@@ -1946,9 +1961,16 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
 export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  return resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(pair);
+}
+
+async function resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(
+  pair: InternalProductionAuthorityV3Migration31AuditPairV1,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!),
+    readCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, retained),
     "v31 audit",
   );
   return parseAuthorityV3Migration31AuditBody(body, expected);
@@ -1990,9 +2012,16 @@ async function parseAuthorityV3Migration31AuditBody(
 export async function resolveInternalProductionPendingBootstrapHandoffMigrationV1(
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  return resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(pair);
+}
+
+async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(
+  pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
   const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!),
+    readCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, retained),
     "pending migration",
   );
   return parsePendingBootstrapHandoffMigrationBody(body, expected);
@@ -2082,6 +2111,7 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
     if (snapshot) await validateCurrentEntryRecordBytes(kind, snapshot.bytes);
   }
   let operation: InternalProductionCurrentEntryOperationV1 | null = null;
+  const prerequisiteSnapshots: CurrentEntryPrerequisiteSnapshotV1[] = [];
   if (entries.includes(CURRENT_ENTRY_FILES.operation)) {
     const operationSnapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.operation);
     if (!operationSnapshot) currentEntryFail("prepared current-entry operation snapshot is absent");
@@ -2092,7 +2122,8 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
       "operationHash",
       "setfarm://internal-production/current-entry-operation/sha256/",
     ) as InternalProductionCurrentEntryOperationPairV1;
-    operation = await parseCurrentEntryOperationBody(body, pair);
+    operation = await parseCurrentEntryOperationBody(body, pair, prerequisiteSnapshots);
+    if (prerequisiteSnapshots.length !== 2) currentEntryFail("prepared current-entry prerequisite snapshots are incomplete");
   }
   const finalEntries = readdirSync(store.directory).sort(compareBytes);
   assertDirectory(store.directory, storeBefore, "prepared current-entry store");
@@ -2108,6 +2139,15 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
     const final = readTask12ReceiptStoreSnapshotV1(path.join(store.directory, entry));
     if (final.mode !== 0o600 || !sameRegularMetadata(first.stats, final.stats) || !first.bytes.equals(final.bytes)) {
       currentEntryFail(`prepared current-entry member ${entry} changed after validation`);
+    }
+  }
+  for (const retained of prerequisiteSnapshots) {
+    const final = readTask12ReceiptStoreSnapshotV1(retained.source.locator);
+    if (final.mode !== 0o600 || !sameRegularMetadata(retained.source.observed.stats, final.stats) || !retained.source.observed.bytes.equals(final.bytes)) {
+      currentEntryFail("prepared current-entry prerequisite changed after validation");
+    }
+    if (retained.absentContentLocator !== null && readCurrentEntryAuthorityRecordSnapshotIfPresentV1(retained.absentContentLocator) !== null) {
+      currentEntryFail("prepared current-entry content appeared after legacy fallback");
     }
   }
   assertDirectory(store.directory, storeBefore, "prepared current-entry store");
@@ -2177,6 +2217,7 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
 async function parseCurrentEntryOperationBody(
   body: Record<string, unknown>,
   expected: Readonly<Record<string, string>>,
+  retainedPrerequisites?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionCurrentEntryOperationV1> {
   if (!hasExactKeys(body, ["schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence", "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operationRef", "operationHash"])) currentEntryFail("current-entry operation fields are invalid");
   if (body.schema !== "setfarm.internal-production-current-entry-operation.v1" || body.purpose !== "task6a-internal-production-current-entry-v1") currentEntryFail("current-entry operation discriminator is invalid");
@@ -2186,8 +2227,8 @@ async function parseCurrentEntryOperationBody(
   const hash = requireSha256(body.operationHash, "current-entry operation hash");
   if (hashCanonicalJson(projection) !== hash || body.operationRef !== `setfarm://internal-production/current-entry-operation/sha256/${hash}` || expected.operationHash !== hash || expected.operationRef !== body.operationRef) currentEntryFail("current-entry operation pair/hash is invalid");
   const source = requireSource(body.controllerSource);
-  const v31 = await resolveInternalProductionAuthorityV3Migration31AuditV1(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1);
-  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationV1(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1);
+  const v31 = await resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1, retainedPrerequisites);
+  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1, retainedPrerequisites);
   if (canonicalComparable(v31.controllerSource) !== canonicalComparable(source) || canonicalComparable(pending.controllerSource) !== canonicalComparable(source)) currentEntryFail("current-entry nested source is crossed");
   const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{ parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (value: unknown) => Readonly<Record<string, unknown>> }>;
   if (!isPlainRecord(body.productBuildAuthorityV2Observation) || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"]) || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli" || typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("stored PBA observation is invalid");
