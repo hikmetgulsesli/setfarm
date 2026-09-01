@@ -707,6 +707,7 @@ function readStableRegular(filePath, maxBytes, options = {}) {
       before.dev !== after.dev
       || before.ino !== after.ino
       || before.mode !== after.mode
+      || before.uid !== after.uid
       || before.nlink !== after.nlink
       || before.size !== after.size
       || before.mtimeNs !== after.mtimeNs
@@ -714,7 +715,10 @@ function readStableRegular(filePath, maxBytes, options = {}) {
       || BigInt(bytes.length) !== after.size
     ) fail(`${filePath} changed while being read`);
     const reopened = lstatSync(filePath, { bigint: true });
-    if (reopened.isSymbolicLink() || !reopened.isFile() || reopened.dev !== after.dev || reopened.ino !== after.ino) {
+    if (
+      reopened.isSymbolicLink() || !reopened.isFile() || reopened.dev !== after.dev
+      || reopened.ino !== after.ino || reopened.uid !== after.uid
+    ) {
       fail(`${filePath} changed before reopen`);
     }
     assertDirectoryIdentity(parentPath, parentBefore, `parent of ${filePath}`);
@@ -724,6 +728,7 @@ function readStableRegular(filePath, maxBytes, options = {}) {
       const sameMetadata = (left, right) => left.dev === right.dev
         && left.ino === right.ino
         && left.mode === right.mode
+        && left.uid === right.uid
         && left.nlink === right.nlink
         && left.size === right.size
         && left.mtimeNs === right.mtimeNs
@@ -754,6 +759,7 @@ function sameRegularMetadata(left, right) {
   return left.dev === right.dev
     && left.ino === right.ino
     && left.mode === right.mode
+    && left.uid === right.uid
     && left.nlink === right.nlink
     && left.size === right.size
     && left.mtimeNs === right.mtimeNs
@@ -946,13 +952,26 @@ function derivePinnedInputSet(root) {
   });
 }
 
+function isAcceptedPinnedGitPhysicalModeV1(gitMode, physicalMode) {
+  if (gitMode !== "100644" && gitMode !== "100755") return false;
+  const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+  const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+  return Number.isSafeInteger(physicalMode)
+    && physicalMode >= 0
+    && physicalMode <= 0o7777
+    && (physicalMode & (0o7777 ^ declaredMode)) === 0
+    && (physicalMode & requiredMode) === requiredMode;
+}
+
 function verifyLivePinnedInputs(root, pinned, rootDevice) {
   for (const entry of pinned.entries) {
     const filePath = path.join(root, ...entry.locator.split("/"));
     if (!filePath.startsWith(`${root}${path.sep}`)) fail("Pinned input escaped the repository");
     const observed = readStableRegular(filePath, MAX_BUILD_FILE_BYTES_V1, { device: rootDevice, nlink: 1 });
-    const expectedMode = entry.gitMode === "100755" ? 0o755 : 0o644;
-    if (observed.mode !== expectedMode) fail(`live tracked mode differs from pinned Git mode: ${entry.locator}`);
+    const physicalMode = Number(observed.stats.mode & 0o7777n);
+    if (observed.stats.uid !== BigInt(process.getuid()) || !isAcceptedPinnedGitPhysicalModeV1(entry.gitMode, physicalMode)) {
+      fail(`live tracked mode differs from pinned Git mode: ${entry.locator}`);
+    }
     if (!observed.bytes.equals(pinned.blobs.get(entry.gitBlobHash))) {
       fail(`live tracked bytes do not match pinned Git blob: ${entry.locator}`);
     }

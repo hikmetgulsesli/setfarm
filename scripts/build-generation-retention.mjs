@@ -270,10 +270,13 @@ function readStableRegular(file, { device, mode, linkCounts = [1], maxBytes = MA
     const named = lstatSync(file, { bigint: true });
     if (
       before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
+      || before.uid !== after.uid
       || before.nlink !== after.nlink || before.size !== after.size
       || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
       || after.dev !== named.dev || after.ino !== named.ino || after.mode !== named.mode
+      || after.uid !== named.uid
       || after.nlink !== named.nlink || after.size !== named.size
+      || after.mtimeNs !== named.mtimeNs || after.ctimeNs !== named.ctimeNs
       || BigInt(bytes.length) !== after.size
     ) fail(`${file} changed while being read`);
     return Object.freeze({ bytes, stats: after, mode: modeOf(after) });
@@ -1411,6 +1414,17 @@ function requireFixedGitLineV2(root, argv, purpose) {
   return value;
 }
 
+function isAcceptedPinnedGitPhysicalModeV1(gitMode, physicalMode) {
+  if (gitMode !== "100644" && gitMode !== "100755") return false;
+  const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+  const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+  return Number.isSafeInteger(physicalMode)
+    && physicalMode >= 0
+    && physicalMode <= 0o7777
+    && (physicalMode & (0o7777 ^ declaredMode)) === 0
+    && (physicalMode & requiredMode) === requiredMode;
+}
+
 function observeCurrentRetentionControllerSourcePassV2(root) {
   if (root !== repositoryRootV1() || realpathSync(root) !== root) fail("retention controller repository root is invalid");
   const include = fixedGitResultV2(root, ["config", "--local", "--no-includes", "--name-only", "--get-regexp", "^include"]);
@@ -1434,14 +1448,29 @@ function observeCurrentRetentionControllerSourcePassV2(root) {
   ) fail("retention controller source is not clean synchronized main");
   const historical = historicalGitInputSetV2(root, sourceSha, sourceTreeHash);
   const repository = directoryIdentity(root);
+  const liveInputPhysicalProjection = [];
   for (const entry of historical.entries) {
     const target = path.join(root, ...entry.locator.split("/"));
     if (!isWithinLocator(root, target) || realpathSync(target) !== target) fail("retention controller live input escaped the repository");
     const observed = readStableRegular(target, { device: BigInt(repository.devDecimal), linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
-    const expectedMode = entry.gitMode === "100755" ? 0o755 : 0o644;
-    if (observed.mode !== expectedMode || !observed.bytes.equals(historical.blobs.get(entry.gitBlobHash))) {
+    const physicalMode = Number(observed.stats.mode & 0o7777n);
+    if (
+      observed.stats.uid !== BigInt(process.getuid())
+      || !isAcceptedPinnedGitPhysicalModeV1(entry.gitMode, physicalMode)
+      || !observed.bytes.equals(historical.blobs.get(entry.gitBlobHash))
+    ) {
       fail(`retention controller live input differs from Git: ${entry.locator}`);
     }
+    liveInputPhysicalProjection.push(Object.freeze({
+      locator: entry.locator,
+      physicalMode,
+      uidDecimal: observed.stats.uid.toString(10),
+      devDecimal: observed.stats.dev.toString(10),
+      inoDecimal: observed.stats.ino.toString(10),
+      linkCount: Number(observed.stats.nlink),
+      byteLength: observed.bytes.length,
+      sha256: sha256(observed.bytes),
+    }));
   }
   return Object.freeze({
     branch: "main",
@@ -1450,6 +1479,10 @@ function observeCurrentRetentionControllerSourcePassV2(root) {
     sourceTreeHash,
     originMainSha: sourceSha,
     buildInputSetHash: historical.buildInputSetHash,
+    controllerPhysicalInputSetHash: sha256(canonicalJsonV1(Object.freeze({
+      schema: "setfarm.platform-build-generation-retention-controller-physical-input-set.v1",
+      entries: Object.freeze(liveInputPhysicalProjection),
+    }))),
   });
 }
 
@@ -1461,7 +1494,8 @@ function observeCurrentRetentionControllerSourceV2(root) {
   const before = observeCurrentRetentionControllerSourcePassV2(root);
   const after = observeCurrentRetentionControllerSourcePassV2(root);
   if (canonicalJsonV1(before) !== canonicalJsonV1(after)) fail("retention controller source changed during observation");
-  return before;
+  const { controllerPhysicalInputSetHash: _privateObservation, ...controllerSource } = before;
+  return Object.freeze(controllerSource);
 }
 
 function assertRetainedCurrentBuildV1(value) {

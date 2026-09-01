@@ -2663,6 +2663,75 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
+  it("accepts only secure physical subsets of tracked Git modes for current source", async (context) => {
+    const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+    const predicateMatch = /function isAcceptedPinnedGitPhysicalModeV1\(gitMode: [^,]+, physicalMode: number\): boolean \{[\s\S]*?\n\}/.exec(source);
+    assert.ok(predicateMatch, "receipt private physical-mode predicate must remain source-visible");
+    const executablePredicate = predicateMatch[0].replace(
+      /\(gitMode: [^,]+, physicalMode: number\): boolean/,
+      "(gitMode, physicalMode)",
+    );
+    const predicate = Function(`${executablePredicate}; return isAcceptedPinnedGitPhysicalModeV1;`)() as (
+      gitMode: string,
+      physicalMode: number,
+    ) => boolean;
+    for (const gitMode of ["100644", "100755"] as const) {
+      const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+      const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+      for (let physicalMode = 0; physicalMode <= 0o7777; physicalMode += 1) {
+        const expected = (physicalMode & (0o7777 ^ declaredMode)) === 0
+          && (physicalMode & requiredMode) === requiredMode;
+        assert.equal(predicate(gitMode, physicalMode), expected, `${gitMode}:${physicalMode.toString(8)}`);
+      }
+    }
+    assert.equal(predicate("100600", 0o600), false);
+
+    for (const [label, locator, physicalMode] of [
+      ["owner-read-only non-executable", "package.json", 0o400],
+      ["read-only non-executable", "package.json", 0o444],
+      ["restrictive non-executable", "package.json", 0o600],
+      ["group-readable non-executable", "package.json", 0o640],
+      ["ordinary non-executable", "package.json", 0o644],
+      ["owner-only executable", "scripts/copy-step-assets.mjs", 0o500],
+      ["restrictive executable", "scripts/copy-step-assets.mjs", 0o700],
+      ["ordinary executable", "scripts/copy-step-assets.mjs", 0o755],
+    ] as const) {
+      await context.test(`accepts ${label}`, () => {
+        const fixture = finalizedFixture();
+        try {
+          chmodSync(path.join(fixture.root, locator), physicalMode);
+          const observed = runObserver(fixture.root);
+          assert.equal(observed.status, 0, observed.stderr);
+          assert.equal(JSON.parse(observed.stdout.trim()).sha, git(fixture.root, ["rev-parse", "HEAD"]));
+        } finally {
+          removeFixture(fixture.root);
+        }
+      });
+    }
+
+    for (const [label, locator, physicalMode] of [
+      ["unreadable non-executable", "package.json", 0o200],
+      ["group-writable non-executable", "package.json", 0o660],
+      ["unexpected execute bit", "package.json", 0o601],
+      ["special-bit non-executable", "package.json", 0o4600],
+      ["world-writable non-executable", "package.json", 0o602],
+      ["missing owner-execute executable", "scripts/copy-step-assets.mjs", 0o644],
+      ["group-writable executable", "scripts/copy-step-assets.mjs", 0o770],
+    ] as const) {
+      await context.test(`rejects ${label}`, () => {
+        const fixture = finalizedFixture();
+        try {
+          chmodSync(path.join(fixture.root, locator), physicalMode);
+          const observed = runObserver(fixture.root);
+          assert.notEqual(observed.status, 0);
+          assert.match(observed.stderr, /live tracked mode|clean synchronized main|worktree is dirty|EACCES|permission denied/i);
+        } finally {
+          removeFixture(fixture.root);
+        }
+      });
+    }
+  });
+
   it("excludes valid builtAt metadata from controller build identity", () => {
     const fixture = finalizedFixture();
     try {
