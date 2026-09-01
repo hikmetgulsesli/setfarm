@@ -337,6 +337,28 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
       chmodSync(target, observation.projectedMode);
     }
 
+    for (const [locator, observation] of observations) {
+      const reopened = readStableIndexedMemberV1(
+        locator,
+        observation.projectedMode === 0o755 ? "100755" : "100644",
+        sourceDevice,
+      );
+      if (!reopened.bytes.equals(observation.bytes) || reopened.physicalMode !== observation.sourcePhysicalMode) {
+        throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
+      }
+    }
+    if (
+      git(["rev-parse", "HEAD"]).trim() !== sourceHead
+      || git(["ls-files", "--stage", "-z"]) !== sourceIndex
+    ) {
+      throw new Error("P3_PROJECTION_SOURCE_CHANGED");
+    }
+    try {
+      assertSourceScopeV1();
+    } catch {
+      throw new Error("P3_PROJECTION_SOURCE_CHANGED");
+    }
+
     git(["init", "-q"], { cwd: projectionRoot });
     git(["config", "user.name", "Setfarm P3 Isolated Projection"], { cwd: projectionRoot });
     git(["config", "user.email", "setfarm-p3-projection@invalid"], { cwd: projectionRoot });
