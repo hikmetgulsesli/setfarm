@@ -307,6 +307,7 @@ function installPrivateRetentionObservers(root) {
     git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
   }
   const fixturePhysicalRoot = realpathSync(root);
+  mkdirSync(join(fixturePhysicalRoot, ".fixture-authority-data"), { mode: 0o700 });
   const launcherProgram = join(fixturePhysicalRoot, ".local/bin/setfarm");
   mkdirSync(dirname(launcherProgram), { recursive: true });
   symlinkSync(join(realpathSync(root), "dist/cli/cli.js"), launcherProgram);
@@ -347,7 +348,7 @@ function installPrivateRetentionObservers(root) {
   fixtureFile(root, ".fixture-hostile-node", "#!/bin/sh\n/bin/cat > .fixture-hostile-secret-received\nexit 97\n", 0o755);
   source = source.replace(
     'const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");',
-    'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-retention-v1");',
+    'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");',
   );
   source = source.replace(
     "const CODE_OWNER_HOME_V1 = userInfo().homedir;",
@@ -810,7 +811,7 @@ function requireSuccessfulChild`,
   const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;
   // OA18_PRIVATE_FIXTURE_PBA_V2_END`,
   );
-  assert.equal(source.includes(".fixture-retention-v1"), true);
+  assert.equal(source.includes(".fixture-authority-data/internal-production-baseline/.fixture-retention-v1"), true);
   assert.equal(source.includes("const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;"), true);
   writeFileSync(modulePath, source);
   fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n.fixture*\n.local/\nLibrary/\ndist-server/\n");
@@ -928,10 +929,10 @@ function retentionPublicationSnapshot(root) {
     return entries;
   };
   return {
-    operations: snapshot(join(root, ".fixture-retention-v1/operations/sha256")),
-    operationCandidates: snapshot(join(root, ".fixture-retention-v1/operation-candidates/sha256")),
-    eraseSteps: snapshot(join(root, ".fixture-retention-v1/erase-steps/sha256")),
-    receipts: snapshot(join(root, ".fixture-retention-v1/receipts/sha256")),
+    operations: snapshot(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256")),
+    operationCandidates: snapshot(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operation-candidates/sha256")),
+    eraseSteps: snapshot(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256")),
+    receipts: snapshot(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")),
     dispositions: snapshot(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")),
     archives: tree(join(root, ".setfarm/build-generations-v1")),
     quarantine: tree(join(root, ".setfarm/build-generation-quarantine-v1")),
@@ -1184,7 +1185,7 @@ async function importStaleBuildAuthorityFixture(root) {
 function task1AuthorityStoreSnapshot(root) {
   return {
     setfarm: existsSync(join(root, ".setfarm")),
-    retention: existsSync(join(root, ".fixture-retention-v1")),
+    retention: existsSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1")),
   };
 }
 
@@ -1233,7 +1234,7 @@ function assertNoDetachedPrepareAuthority(root, expectedArchives = 8) {
   assertNoGenerationDisposition(root, expectedArchives);
   assert.equal(existsSync(join(root, ".setfarm/build-generation-maintenance-lock-v1.json")), false);
   for (const locator of ["operations/sha256", "operation-candidates/sha256", "receipts/sha256"]) {
-    const directory = join(root, ".fixture-retention-v1", locator);
+    const directory = join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1", locator);
     if (existsSync(directory)) assert.deepEqual(readdirSync(directory), []);
   }
 }
@@ -1934,7 +1935,7 @@ describe("OA18 build-generation retention authority", () => {
       const prepared = prepareRetentionOperation(root);
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v2");
       assert.equal(operation.operationCore.candidateOrdinal, 1);
       assert.equal(operation.operationCore.controllerSource.sourceSha, fixture.controllerSourceSha);
@@ -2066,7 +2067,7 @@ describe("OA18 build-generation retention authority", () => {
           const result = prepareRetentionOperation(fixture.root);
           assert.notEqual(result.status, 0);
           assertNoGenerationDisposition(fixture.root, name.startsWith("nine") ? 9 : name.startsWith("seven") ? 7 : 8);
-          const store = join(fixture.root, ".fixture-retention-v1");
+          const store = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");
           if (existsSync(store)) {
             assert.equal(readdirSync(join(store, "operations/sha256")).length, 0);
             assert.equal(readdirSync(join(store, "operation-candidates/sha256")).length, 0);
@@ -2083,7 +2084,7 @@ describe("OA18 build-generation retention authority", () => {
         const result = prepareRetentionOperation(fixture.root);
         assert.equal(result.status, 0, result.stderr);
         const pair = JSON.parse(result.stdout);
-        const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+        const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
         assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v1");
         assertNoGenerationDisposition(fixture.root, 8);
       } finally {
@@ -2143,8 +2144,8 @@ describe("OA18 build-generation retention authority", () => {
           assert.deepEqual(capturedCores[1], capturedCores[0]);
           assert.equal(second.status, 0, second.stderr);
           const pair = JSON.parse(second.stdout);
-          const operationNames = readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
-          const indexNames = readdirSync(join(fixture.root, ".fixture-retention-v1/operation-candidates/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+          const operationNames = readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+          const indexNames = readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operation-candidates/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
           assert.deepEqual(operationNames, [`${pair.operationHash}.json`]);
           assert.equal(indexNames.length, 1);
           assertNoGenerationDisposition(fixture.root, 8);
@@ -2238,10 +2239,10 @@ describe("OA18 build-generation retention authority", () => {
           assert.notEqual(capturedCores[1].prepareZeroReferenceProofHash, capturedCores[0].prepareZeroReferenceProofHash);
           const pair = JSON.parse(second.stdout);
           assert.deepEqual(
-            readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)),
+            readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)),
             [`${pair.operationHash}.json`],
           );
-          assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/operation-candidates/sha256")).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operation-candidates/sha256")).length, 1);
           assertNoGenerationDisposition(fixture.root, 8);
         } finally {
           rmSync(fixture.root, { recursive: true, force: true });
@@ -2312,7 +2313,7 @@ describe("OA18 build-generation retention authority", () => {
       const prepared = prepareRetentionOperation(root);
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v1");
       const crashed = resumeRetentionOperation(root, pair);
       assert.equal(crashed.status, 91, crashed.stderr);
@@ -2350,7 +2351,7 @@ describe("OA18 build-generation retention authority", () => {
           const replay = resumeRetentionOperation(fixture.root, pair);
           assert.equal(replay.status, 0, replay.stderr);
           assert.equal(replay.stdout, resumed.stdout);
-          assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)).length, 1);
           assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
           assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((entry) => entry.endsWith(".dist")).length, 7);
         } finally {
@@ -2452,15 +2453,15 @@ describe("OA18 build-generation retention authority", () => {
       const prepared = prepareRetentionOperation(fixture.root);
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v2");
       const nonRootCount = operation.operationCore.candidateInventory.entries.length;
       for (let ordinal = 0; ordinal < nonRootCount; ordinal += 1) {
         for (const expectedStatus of [91, 92]) {
           const crashed = resumeRetentionOperation(fixture.root, pair);
           assert.equal(crashed.status, expectedStatus, crashed.stderr);
-          const records = readdirSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256"))
-            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256", name), "utf8")))
+          const records = readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256"))
+            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256", name), "utf8")))
             .filter((record) => record.recordKind === "intent" || record.recordKind === "completion");
           assert.equal(new Set(records.map((record) => `${record.recordKind}:${record.ordinal}`)).size, records.length);
           assert.equal(records.filter((record) => record.recordKind === "intent").length, ordinal + 1);
@@ -2472,12 +2473,12 @@ describe("OA18 build-generation retention authority", () => {
       const replay = resumeRetentionOperation(fixture.root, pair);
       assert.equal(replay.status, 0, replay.stderr);
       assert.equal(replay.stdout, resumed.stdout);
-      const terminalRecords = readdirSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256"))
-        .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256", name), "utf8")))
+      const terminalRecords = readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256"))
+        .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256", name), "utf8")))
         .filter((record) => record.recordKind === "intent" || record.recordKind === "completion");
       assert.equal(terminalRecords.filter((record) => record.recordKind === "intent").length, nonRootCount + 1);
       assert.equal(terminalRecords.filter((record) => record.recordKind === "completion").length, nonRootCount + 1);
-      assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).length, 1);
+      assert.equal(readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")).length, 1);
       assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
       assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, 7);
     } finally {
@@ -2496,12 +2497,12 @@ describe("OA18 build-generation retention authority", () => {
       git(fixture.root, ["add", "scripts/build-generation-retention.mjs"]);
       git(fixture.root, ["commit", "-qm", "install incompatible controller"]);
       git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
-      const beforeOperations = readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256"));
+      const beforeOperations = readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256"));
       const resumed = resumeRetentionOperation(fixture.root, pair);
       assert.notEqual(resumed.status, 0);
       assert.match(resumed.stderr, /executing (?:closure changed|bytes differ from Git)/i);
-      assert.deepEqual(readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")), beforeOperations);
-      assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).length, 0);
+      assert.deepEqual(readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256")), beforeOperations);
+      assert.equal(readdirSync(join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")).length, 0);
       assertNoGenerationDisposition(fixture.root, 8);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
@@ -2514,7 +2515,7 @@ describe("OA18 build-generation retention authority", () => {
       const prepared = prepareRetentionOperation(fixture.root);
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const stored = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const stored = JSON.parse(readFileSync(join(fixture.root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       const { parseRetentionOperationV2, hashCanonicalJsonV1 } = await importFixtureInternals(fixture.root, ["parseRetentionOperationV2"]);
       const crossedOperation = (mutate, { preservePair = true } = {}) => {
         const value = structuredClone(stored);
@@ -2555,7 +2556,7 @@ describe("OA18 build-generation retention authority", () => {
       const prepared = prepareRetentionOperation(fixture.root);
       assert.notEqual(prepared.status, 0);
       assert.match(prepared.stderr, /loaded Setfarm|source\/build|BUILD_INFO|finalized/i);
-      const store = join(fixture.root, ".fixture-retention-v1");
+      const store = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");
       if (existsSync(store)) {
         assert.equal(readdirSync(join(store, "operations/sha256")).length, 0);
         assert.equal(readdirSync(join(store, "operation-candidates/sha256")).length, 0);
@@ -2706,7 +2707,7 @@ describe("OA18 build-generation retention authority", () => {
       });
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       const { assertZeroReferenceProofV1, hashCanonicalJsonV1 } = await importFixtureInternals(root, ["assertZeroReferenceProofV1"]);
       const proof = operation.operationCore.prepareZeroReferenceProof;
       const expected = operation.operationCore.expectedRuntimeSources;
@@ -2755,7 +2756,7 @@ describe("OA18 build-generation retention authority", () => {
       });
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       const { assertZeroReferenceProofV1, hashCanonicalJsonV1 } = await importFixtureInternals(root, ["assertZeroReferenceProofV1"]);
       const crossed = structuredClone(operation.operationCore.prepareZeroReferenceProof);
       const expected = operation.operationCore.expectedRuntimeSources;
@@ -2799,7 +2800,7 @@ describe("OA18 build-generation retention authority", () => {
       });
       assert.equal(prepared.status, 0, prepared.stderr);
       const pair = JSON.parse(prepared.stdout);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       const { assertZeroReferenceProofV1, hashCanonicalJsonV1 } = await importFixtureInternals(root, ["assertZeroReferenceProofV1"]);
       const crossed = structuredClone(operation.operationCore.prepareZeroReferenceProof);
       const expected = operation.operationCore.expectedRuntimeSources;
@@ -3001,7 +3002,7 @@ describe("OA18 build-generation retention authority", () => {
       const pair = JSON.parse(prepared.stdout);
       assert.match(pair.operationRef, /^setfarm:\/\/internal-production\/build-generation-retention-operation\/sha256\/[0-9a-f]{64}$/);
       assert.match(pair.operationHash, /^[0-9a-f]{64}$/);
-      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
       const proof = operation.operationCore.prepareZeroReferenceProof;
       assert.equal(proof.launchAgentConfigs.length, 3);
       for (const config of proof.launchAgentConfigs) {
@@ -3222,7 +3223,7 @@ describe("OA18 build-generation retention authority", () => {
       assert.deepEqual(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")), [
         `00000000000000000001-${BUILD_ID}.json`,
       ]);
-      assert.equal(readdirSync(join(root, ".fixture-retention-v1/receipts/sha256")).length, 1);
+      assert.equal(readdirSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")).length, 1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -3334,8 +3335,8 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(crashed.status, 91, crashed.stderr);
       const resumed = spawnSync(process.execPath, argv, { cwd: root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
       assert.equal(resumed.status, 0, resumed.stderr);
-      const [receiptName] = readdirSync(join(root, ".fixture-retention-v1/receipts/sha256"));
-      const receipt = JSON.parse(readFileSync(join(root, ".fixture-retention-v1/receipts/sha256", receiptName), "utf8"));
+      const [receiptName] = readdirSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256"));
+      const receipt = JSON.parse(readFileSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256", receiptName), "utf8"));
       assert.equal(receipt.preDispositionZeroReferenceProof.candidate.locator, join(realpathSync(root), `.setfarm/build-generations-v1/${BUILD_ID}.dist`));
       assert.equal(receipt.postQuarantineZeroReferenceProof.candidate.locator, join(realpathSync(root), `.setfarm/build-generation-quarantine-v1/${pair.operationHash}.dist`));
     } finally {
@@ -3784,7 +3785,7 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(firstResume.status, 0, firstResume.stderr);
       const stores = ["operations", "operation-candidates", "erase-steps", "receipts"];
       for (const store of stores) {
-        const directory = join(root, `.fixture-retention-v1/${store}/sha256`);
+        const directory = join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/${store}/sha256`);
         const fixed = readdirSync(directory).sort()[0];
         linkSync(join(directory, fixed), join(directory, `.${fixed}.90000000-0000-4000-8000-000000000009.tmp`));
       }
@@ -3793,7 +3794,7 @@ describe("OA18 build-generation retention authority", () => {
       const secondPrepared = prepare();
       assert.equal(secondPrepared.status, 0, secondPrepared.stderr);
       for (const store of stores) {
-        const directory = join(root, `.fixture-retention-v1/${store}/sha256`);
+        const directory = join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/${store}/sha256`);
         assert.equal(readdirSync(directory).some((name) => name.endsWith(".tmp")), false);
       }
     } finally {
@@ -3824,14 +3825,14 @@ describe("OA18 build-generation retention authority", () => {
       ]);
       assert.equal(firstResume.status, 0, firstResume.stderr);
       for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
-        const directory = join(root, `.fixture-retention-v1/${store}/sha256`);
+        const directory = join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/${store}/sha256`);
         const fixed = readdirSync(directory).sort()[0];
         renameSync(join(directory, fixed), join(directory, `.${fixed}.90000000-0000-4000-8000-000000000009.tmp`));
       }
       const secondPrepared = command(["scripts/build-generation-retention.mjs", "prepare"]);
       assert.equal(secondPrepared.status, 0, secondPrepared.stderr);
       for (const store of ["operations", "operation-candidates", "erase-steps", "receipts"]) {
-        const names = readdirSync(join(root, `.fixture-retention-v1/${store}/sha256`));
+        const names = readdirSync(join(root, `.fixture-authority-data/internal-production-baseline/.fixture-retention-v1/${store}/sha256`));
         assert.equal(names.some((name) => name.endsWith(".tmp")), false);
       }
     } finally {
@@ -3862,7 +3863,7 @@ describe("OA18 build-generation retention authority", () => {
 
       const modulePath = join(root, "scripts/build-generation-retention.mjs");
       const authority = await import(`${pathToFileURL(modulePath).href}?crossed=${Date.now()}`);
-      const eraseDirectory = join(root, ".fixture-retention-v1/erase-steps/sha256");
+      const eraseDirectory = join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256");
       const completions = readdirSync(eraseDirectory)
         .map((name) => JSON.parse(readFileSync(join(eraseDirectory, name), "utf8")))
         .filter((record) => record.recordKind === "completion")
@@ -3870,7 +3871,7 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(completions.length >= 2, true);
       const crossedCompletion = completions[0];
 
-      const receiptDirectory = join(root, ".fixture-retention-v1/receipts/sha256");
+      const receiptDirectory = join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256");
       const oldReceiptName = readdirSync(receiptDirectory)[0];
       const oldReceiptFile = join(receiptDirectory, oldReceiptName);
       const receipt = JSON.parse(readFileSync(oldReceiptFile, "utf8"));
@@ -3942,8 +3943,8 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(readdirSync(join(root, ".setfarm/build-generations-v1")).length, 8);
       assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/completions")).length, 10);
       assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 2);
-      assert.equal(readdirSync(join(root, ".fixture-retention-v1/operation-candidates/sha256")).length, 2);
-      assert.equal(readdirSync(join(root, ".fixture-retention-v1/receipts/sha256")).length, 2);
+      assert.equal(readdirSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operation-candidates/sha256")).length, 2);
+      assert.equal(readdirSync(join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256")).length, 2);
       assert.deepEqual(readdirSync(join(root, ".setfarm/build-generation-quarantine-v1")), []);
       const inspected = spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "inspect"], {
         cwd: root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
