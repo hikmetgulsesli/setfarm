@@ -888,6 +888,19 @@ function installV2PrepareCrash(root, phase) {
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
 }
 
+function installV1OnlyPrepareRegression(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  let source = readFileSync(modulePath, "utf8");
+  const v2Branch = `      operationVersion = 2;
+      authorities = observeOperationAuthoritiesV2(root, inspectionBefore);`;
+  assert.equal(source.includes(v2Branch), true);
+  source = source.replace(v2Branch, "      authorities = observeOperationAuthoritiesV1(root);");
+  writeFileSync(modulePath, source);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "-qm", "restore v1-only prepare"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
 describe("OA18 build-generation retention authority", () => {
   it("imports the operator module without executing its CLI", async () => {
     const authority = await import("../build-generation-retention.mjs");
@@ -908,6 +921,32 @@ describe("OA18 build-generation retention authority", () => {
     assert.equal(typeof authority.planNoReplacePublisherRecoveryV1, "function");
     assert.equal(authority.inspectBuildGenerationRotationLedgerV1.length, 0);
     assert.equal(authority.inspectBuildGenerationRetentionV1.length, 0);
+  });
+
+  it("OA18 v2 freezes the private schema dispatcher and source boundary", () => {
+    const source = readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs"), "utf8");
+    assert.deepEqual([...new Set(source.match(/setfarm\.platform-build-generation-retention-operation\.v[0-9]+/g))].sort(), [
+      "setfarm.platform-build-generation-retention-operation.v1",
+      "setfarm.platform-build-generation-retention-operation.v2",
+    ]);
+    for (const name of [
+      "observeCurrentRetentionControllerSourceV2",
+      "observeRetainedCurrentBuildV1",
+      "observeOperationAuthoritiesV2",
+      "parseRetentionOperationV1",
+      "parseRetentionOperationV2",
+      "parseRetentionOperationV1OrV2",
+      "validateHistoricalClosureV1",
+      "validateHistoricalClosureV2",
+    ]) {
+      assert.equal((source.match(new RegExp(`function ${name}\\(`, "g")) ?? []).length, 1, name);
+      assert.equal(new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\(`).test(source), false, name);
+    }
+    assert.equal((source.match(/\["merge-base", "--is-ancestor", buildInfo\.sha, controllerSource\.sourceSha\]/g) ?? []).length, 1);
+    assert.equal((source.match(/operation_retained_current_setfarm_build/g) ?? []).length >= 4, true);
+    assert.equal(source.includes("process.env"), false);
+    assert.equal(source.includes("rmSync("), false);
+    assert.equal(source.includes('from "./write-build-info.mjs"'), false);
   });
 
   it("OA18 v2 separates current controller source from the retained finalized build", async () => {
@@ -1345,6 +1384,24 @@ describe("OA18 build-generation retention authority", () => {
       for (const [name, mutate, options] of rows) {
         assert.throws(() => parseRetentionOperationV2(crossedOperation(mutate, options)), /retention|runtime|closure|candidate|operation|crossed|invalid/i, name);
       }
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 stale eight-generation success is impossible with the v1-only prepare branch", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      installV1OnlyPrepareRegression(fixture.root);
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.notEqual(prepared.status, 0);
+      assert.match(prepared.stderr, /loaded Setfarm|source\/build|BUILD_INFO|finalized/i);
+      const store = join(fixture.root, ".fixture-retention-v1");
+      if (existsSync(store)) {
+        assert.equal(readdirSync(join(store, "operations/sha256")).length, 0);
+        assert.equal(readdirSync(join(store, "operation-candidates/sha256")).length, 0);
+      }
+      assertNoGenerationDisposition(fixture.root, 8);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
