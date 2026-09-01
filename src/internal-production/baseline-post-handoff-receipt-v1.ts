@@ -59,6 +59,8 @@ const GIT_PREFIX = Object.freeze([
   "-c", "core.hooksPath=/dev/null",
   "-c", "core.fsmonitor=false",
 ]);
+const CODE_OWNER_HOME_V1 = userInfo().homedir;
+const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
 const EXACT_SCRIPTS = Object.freeze({
   prebuild: "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
   build: "umask 077 && tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
@@ -449,7 +451,7 @@ function fixedWorkspaceAuthorityPathV1(...segments: string[]): string {
     || relative.split("/").some((segment) => segment.length === 0 || segment === "." || segment === ".." || !/^[A-Za-z0-9._-]+$/.test(segment))
   ) fail("workspace authority locator is not code-owned");
   const repository = fixedRepositoryRoot();
-  const workspace = path.dirname(repository);
+  const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const target = path.resolve(workspace, ...segments);
   const workspaceRelative = path.relative(workspace, target);
   const repositoryRelative = path.relative(repository, target);
@@ -1177,6 +1179,10 @@ const CURRENT_ENTRY_FILES = Object.freeze({
   pendingBootstrapHandoffMigration: "pending-bootstrap-handoff-migration.json",
   operation: "current-entry-operation.json",
 });
+const CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1 = Object.freeze({
+  authorityV3Migration31Audit: "authority-v3-migration31-audits",
+  pendingBootstrapHandoffMigration: "pending-bootstrap-handoff-migrations",
+} as const);
 const CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1 = Object.freeze([
   "operations",
   "records",
@@ -1351,7 +1357,7 @@ async function currentEntryPublisherPlannerV1(): Promise<NoReplacePlannerV1> {
 
 function ensureCurrentEntryStore(): Readonly<{ directory: string; device: bigint }> {
   const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
-  const workspace = path.dirname(fixedRepositoryRoot());
+  const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const workspaceSnapshot = directorySnapshot(workspace, "Setfarm workspace", repository.device);
   const segments = CURRENT_ENTRY_STORE_DIRECTORY.split("/");
   let directory = workspace;
@@ -1372,7 +1378,7 @@ function readCurrentEntryStore(): Readonly<{ directory: string; device: bigint }
 function readCurrentEntryStore(allowAbsent: true): Readonly<{ directory: string; device: bigint }> | null;
 function readCurrentEntryStore(allowAbsent = false): Readonly<{ directory: string; device: bigint }> | null {
   const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
-  const workspace = path.dirname(fixedRepositoryRoot());
+  const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const workspaceSnapshot = directorySnapshot(workspace, "Setfarm workspace", repository.device);
   let directory = workspace;
   let parentDirectory = workspace;
@@ -1516,9 +1522,8 @@ function normalizeExistingCurrentEntryFamily(
 
 async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promise<void> {
   if (bytes.length === 0 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("record bytes exceed the cap");
-  const targetKind = (Object.entries(CURRENT_ENTRY_FILES) as readonly ["authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation", string][]).find(([, fixedName]) => fixedName === basename)?.[0];
-  if (!targetKind) currentEntryFail("publisher target family is invalid");
-  await validateCurrentEntryRecordBytes(targetKind, bytes);
+  if (basename !== CURRENT_ENTRY_FILES.operation) currentEntryFail("publisher target family is invalid");
+  await validateCurrentEntryRecordBytes("operation", bytes);
   const store = ensureCurrentEntryStore();
   const planner = await currentEntryPublisherPlannerV1();
   const directoryGuard = authenticateTask12ReceiptDirectoryChainV1(store.directory);
@@ -1529,7 +1534,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
    directoryGuard.assertStable();
    for (let attempt = 0; attempt < 4; attempt += 1) {
     const tempPattern = new RegExp(`^\\.${basename.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$`);
-    const families = (Object.entries(CURRENT_ENTRY_FILES) as readonly ["authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation", string][]).map(([kind, fixedName]) => Object.freeze({
+    const families = ([(["operation", CURRENT_ENTRY_FILES.operation] as const)] as const).map(([kind, fixedName]) => Object.freeze({
       kind,
       fixedName,
       pattern: new RegExp(`^(?:${fixedName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}|\\.${fixedName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp)$`),
@@ -1542,7 +1547,16 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
       const observed = directorySnapshot(path.join(store.directory, name), `current-entry authority directory ${name}`, store.device);
       if (observed.identity.mode !== 0o700) currentEntryFail(`current-entry authority directory ${name} has wrong mode`);
     }
-    const publisherInventory = inventory.filter((name) => !authorityDirectories.has(name));
+    const legacyKinds = ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const;
+    const legacyNames = new Set<string>(legacyKinds.map((kind) => CURRENT_ENTRY_FILES[kind]));
+    const unclassifiedInventory = inventory.filter((name) => !authorityDirectories.has(name));
+    for (const kind of legacyKinds) {
+      if (!unclassifiedInventory.includes(CURRENT_ENTRY_FILES[kind])) continue;
+      const legacy = publisherEntry(store.directory, CURRENT_ENTRY_FILES[kind], store.device);
+      if (legacy.linkCount !== 1) currentEntryFail(`legacy current-entry record ${CURRENT_ENTRY_FILES[kind]} has invalid identity`);
+      await validateCurrentEntryRecordBytes(kind, legacy.bytes);
+    }
+    const publisherInventory = unclassifiedInventory.filter((name) => !legacyNames.has(name));
     if (publisherInventory.some((name) => !families.some((family) => family.pattern.test(name)))) currentEntryFail("current-entry store has an unknown or foreign dirent");
     const familyStates = families.map((family) => {
       const entries = publisherInventory.filter((name) => family.pattern.test(name)).map((name) => publisherEntry(store.directory, name, store.device));
@@ -1554,13 +1568,10 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
       return Object.freeze({ family, entries, bytes: familyBytes, topology });
     });
     const invalidSoleTemps: Array<Readonly<{ name: string; bytes: Buffer; mode: number; linkCount: number; devDecimal: string; inoDecimal: string }>> = [];
-    const parsedDependencies: Partial<{ v31Body: Record<string, unknown>; pendingBody: Record<string, unknown> }> = {};
     for (const state of familyStates.filter((candidate) => candidate.family.kind !== "operation")) {
       for (const entry of state.entries) {
         try {
           await validateCurrentEntryRecordBytes(state.family.kind, entry.bytes);
-          if (state.family.kind === "authorityV3Migration31Audit") parsedDependencies.v31Body = strictCanonicalRecord(entry.bytes, "publisher v31 dependency");
-          else parsedDependencies.pendingBody = strictCanonicalRecord(entry.bytes, "publisher pending dependency");
         } catch (error) {
           const invalidAuthenticatedSoleTemp = entry.name !== state.family.fixedName && state.entries.length === 1 && entry.linkCount === 1;
           if (!invalidAuthenticatedSoleTemp) throw error;
@@ -1572,10 +1583,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     if (operationState) {
       for (const entry of operationState.entries) {
         try {
-          const dependencies = parsedDependencies.v31Body && parsedDependencies.pendingBody
-            ? Object.freeze({ v31Body: parsedDependencies.v31Body, pendingBody: parsedDependencies.pendingBody })
-            : undefined;
-          await validateCurrentEntryRecordBytes("operation", entry.bytes, dependencies);
+          await validateCurrentEntryRecordBytes("operation", entry.bytes);
         } catch (error) {
           const invalidAuthenticatedSoleTemp = entry.name !== operationState.family.fixedName && operationState.entries.length === 1 && entry.linkCount === 1;
           if (!invalidAuthenticatedSoleTemp) throw error;
@@ -1594,9 +1602,9 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
       }
     }
     if (normalizedExistingFamily) continue;
-    const names = inventory.filter((name) => name === basename || name.startsWith(`.${basename}.`));
-    if (names.some((name) => name !== basename && !tempPattern.test(name))) currentEntryFail("unknown publisher-like dirent");
-    const entries = names.map((name) => publisherEntry(store.directory, name, store.device));
+    const names: string[] = inventory.filter((name: string) => name === basename || name.startsWith(`.${basename}.`));
+    if (names.some((name: string) => name !== basename && !tempPattern.test(name))) currentEntryFail("unknown publisher-like dirent");
+    const entries: Array<ReturnType<typeof publisherEntry>> = names.map((name: string) => publisherEntry(store.directory, name, store.device));
     if (entries.length === 1 && entries[0]!.name !== basename && !entries[0]!.bytes.equals(bytes)) {
       unlinkPlannedPublisherEntry(store.directory, entries[0]!, store.device);
       continue;
@@ -1609,7 +1617,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     }
     if (plan.state === "cleanup" && plan.selectedTempName === null) {
       for (const name of plan.cleanupTempNames) {
-        const entry = entries.find((candidate) => candidate.name === name);
+        const entry = entries.find((candidate: ReturnType<typeof publisherEntry>) => candidate.name === name);
         if (!entry) currentEntryFail("no-replace publisher cleanup record is absent");
         unlinkPlannedPublisherEntry(store.directory, entry, store.device);
       }
@@ -1652,7 +1660,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     ) currentEntryFail("no-replace publisher link publication is not one authenticated inode pair");
     for (const name of [...plan.cleanupTempNames, selected]) {
       try {
-        const entry = name === selected ? selectedAfterLink : entries.find((candidate) => candidate.name === name);
+        const entry = name === selected ? selectedAfterLink : entries.find((candidate: ReturnType<typeof publisherEntry>) => candidate.name === name);
         if (!entry) currentEntryFail("no-replace publisher cleanup record is absent");
         unlinkPlannedPublisherEntry(
           store.directory,
@@ -1704,6 +1712,91 @@ function fixedCurrentEntryPath(kind: "authorityV3Migration31Audit" | "pendingBoo
   return Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES[kind] });
 }
 
+function currentEntryPrerequisiteRecordPathV1(
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  hash: string,
+): string {
+  const exactHash = requireSha256(hash, `current-entry ${kind} record hash`);
+  return fixedWorkspaceAuthorityPathV1(
+    CURRENT_ENTRY_STORE_DIRECTORY,
+    "records",
+    CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1[kind],
+    "sha256",
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
+  );
+}
+
+function readCurrentEntryAuthorityRecordIfPresentV1(target: string): Buffer | null {
+  const store = readCurrentEntryStore(true);
+  if (store === null) return null;
+  const relative = path.relative(store.directory, path.resolve(target));
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) currentEntryFail("current-entry authority record escaped its store");
+  const segments = relative.split(path.sep);
+  const basename = segments.pop();
+  if (!basename || segments.some((segment) => !segment || segment === "." || segment === "..")) currentEntryFail("current-entry authority record path is invalid");
+  let directory = store.directory;
+  let directoryState = directorySnapshot(directory, "current-entry authority store", store.device);
+  for (const segment of segments) {
+    const child = path.join(directory, segment);
+    try {
+      lstatSync(child, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      assertDirectory(directory, directoryState, `parent of absent current-entry authority ${segment}`);
+      try {
+        lstatSync(child, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        assertDirectory(directory, directoryState, `parent of absent current-entry authority ${segment}`);
+        return null;
+      }
+      currentEntryFail(`absent current-entry authority ${segment} appeared while observed`);
+    }
+    const observed = directorySnapshot(child, `current-entry authority ${segment}`, store.device);
+    if (observed.identity.mode !== 0o700) currentEntryFail(`current-entry authority ${segment} has wrong mode`);
+    assertDirectory(directory, directoryState, `parent of current-entry authority ${segment}`);
+    directory = child;
+    directoryState = observed;
+  }
+  const record = path.join(directory, basename);
+  const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
+  try {
+    guard.assertStable();
+    try {
+      lstatSync(record, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      guard.assertStable();
+      try {
+        lstatSync(record, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        guard.assertStable();
+        return null;
+      }
+      currentEntryFail("absent current-entry authority record appeared while observed");
+    }
+    guard.assertStable();
+  } finally {
+    guard.close();
+  }
+  return readTask12ReceiptStoreBytesV1(record);
+}
+
+function readCurrentEntryPrerequisiteRecordV1(
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  hash: string,
+): Buffer {
+  const contentPath = currentEntryPrerequisiteRecordPathV1(kind, hash);
+  const content = readCurrentEntryAuthorityRecordIfPresentV1(contentPath);
+  if (content !== null) return content;
+  const legacy = fixedCurrentEntryPath(kind);
+  const legacyBytes = readCurrentEntryRecord(legacy.directory, legacy.basename, legacy.device);
+  if (readCurrentEntryAuthorityRecordIfPresentV1(contentPath) !== null) currentEntryFail("content record appeared during legacy fallback");
+  return legacyBytes;
+}
+
 async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Promise<void> {
   const target = fixedCurrentEntryPath(kind);
   let body: Record<string, unknown>;
@@ -1714,11 +1807,13 @@ async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Aud
     throw error;
   }
   if (kind === "authorityV3Migration31Audit") {
-    await resolveInternalProductionAuthorityV3Migration31AuditV1(requirePair(Object.freeze({ authorityV3Migration31AuditRef: body.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: body.authorityV3Migration31AuditHash }), "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/") as InternalProductionAuthorityV3Migration31AuditPairV1);
+    const expected = requirePair(Object.freeze({ authorityV3Migration31AuditRef: body.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: body.authorityV3Migration31AuditHash }), "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+    await parseAuthorityV3Migration31AuditBody(body, expected);
     return;
   }
   if (kind === "pendingBootstrapHandoffMigration") {
-    await resolveInternalProductionPendingBootstrapHandoffMigrationV1(requirePair(Object.freeze({ pendingBootstrapHandoffMigrationRef: body.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: body.pendingBootstrapHandoffMigrationHash }), "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/") as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1);
+    const expected = requirePair(Object.freeze({ pendingBootstrapHandoffMigrationRef: body.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: body.pendingBootstrapHandoffMigrationHash }), "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+    parsePendingBootstrapHandoffMigrationBody(body, expected);
     return;
   }
   await resolveInternalProductionCurrentEntryOperationV1(requirePair(Object.freeze({ operationRef: body.operationRef, operationHash: body.operationHash }), "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1);
@@ -1727,7 +1822,6 @@ async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Aud
 async function validateCurrentEntryRecordBytes(
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation",
   bytes: Buffer,
-  publisherDependencies?: Readonly<{ v31Body: Record<string, unknown>; pendingBody: Record<string, unknown> }>,
 ): Promise<void> {
   const body = strictCanonicalRecord(bytes, `current-entry ${kind}`);
   if (kind === "authorityV3Migration31Audit") {
@@ -1741,7 +1835,7 @@ async function validateCurrentEntryRecordBytes(
     return;
   }
   const expected = requirePair(Object.freeze({ operationRef: body.operationRef, operationHash: body.operationHash }), "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
-  await parseCurrentEntryOperationBody(body, expected, true, publisherDependencies);
+  await parseCurrentEntryOperationBody(body, expected);
 }
 
 function v31Pair(value: InternalProductionAuthorityV3Migration31AuditV1): InternalProductionAuthorityV3Migration31AuditPairV1 {
@@ -1809,7 +1903,13 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
     authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${authorityV3Migration31AuditHash}`,
     authorityV3Migration31AuditHash,
   });
-  await publishCurrentEntryRecord(CURRENT_ENTRY_FILES.authorityV3Migration31Audit, await canonicalRecordBytes(value));
+  const bytes = await canonicalRecordBytes(value);
+  await validateCurrentEntryRecordBytes("authorityV3Migration31Audit", bytes);
+  publishLegacyZeroRecordV1(
+    currentEntryPrerequisiteRecordPathV1("authorityV3Migration31Audit", authorityV3Migration31AuditHash),
+    bytes,
+    true,
+  );
   return resolveInternalProductionAuthorityV3Migration31AuditV1(v31Pair(value));
 }
 
@@ -1833,7 +1933,13 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
     pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${pendingBootstrapHandoffMigrationHash}`,
     pendingBootstrapHandoffMigrationHash,
   });
-  await publishCurrentEntryRecord(CURRENT_ENTRY_FILES.pendingBootstrapHandoffMigration, await canonicalRecordBytes(value));
+  const bytes = await canonicalRecordBytes(value);
+  await validateCurrentEntryRecordBytes("pendingBootstrapHandoffMigration", bytes);
+  publishLegacyZeroRecordV1(
+    currentEntryPrerequisiteRecordPathV1("pendingBootstrapHandoffMigration", pendingBootstrapHandoffMigrationHash),
+    bytes,
+    true,
+  );
   return resolveInternalProductionPendingBootstrapHandoffMigrationV1(pendingPair(value));
 }
 
@@ -1841,8 +1947,10 @@ export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
-  const target = fixedCurrentEntryPath("authorityV3Migration31Audit");
-  const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "v31 audit");
+  const body = strictCanonicalRecord(
+    readCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!),
+    "v31 audit",
+  );
   return parseAuthorityV3Migration31AuditBody(body, expected);
 }
 
@@ -1883,8 +1991,10 @@ export async function resolveInternalProductionPendingBootstrapHandoffMigrationV
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
   const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
-  const target = fixedCurrentEntryPath("pendingBootstrapHandoffMigration");
-  const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "pending migration");
+  const body = strictCanonicalRecord(
+    readCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!),
+    "pending migration",
+  );
   return parsePendingBootstrapHandoffMigrationBody(body, expected);
 }
 
@@ -1967,13 +2077,12 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
     firstSnapshots.set(entry, observed);
   }
   assertDirectory(store.directory, storeBefore, "prepared current-entry store");
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    const snapshot = firstSnapshots.get(CURRENT_ENTRY_FILES[kind]);
+    if (snapshot) await validateCurrentEntryRecordBytes(kind, snapshot.bytes);
+  }
   let operation: InternalProductionCurrentEntryOperationV1 | null = null;
-  if (!entries.includes(CURRENT_ENTRY_FILES.operation)) {
-    for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
-      const snapshot = firstSnapshots.get(CURRENT_ENTRY_FILES[kind]);
-      if (snapshot) await validateCurrentEntryRecordBytes(kind, snapshot.bytes);
-    }
-  } else {
+  if (entries.includes(CURRENT_ENTRY_FILES.operation)) {
     const operationSnapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.operation);
     if (!operationSnapshot) currentEntryFail("prepared current-entry operation snapshot is absent");
     const body = strictCanonicalRecord(operationSnapshot.bytes, "prepared current-entry operation");
@@ -1983,13 +2092,7 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
       "operationHash",
       "setfarm://internal-production/current-entry-operation/sha256/",
     ) as InternalProductionCurrentEntryOperationPairV1;
-    const v31Snapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.authorityV3Migration31Audit);
-    const pendingSnapshot = firstSnapshots.get(CURRENT_ENTRY_FILES.pendingBootstrapHandoffMigration);
-    if (!v31Snapshot || !pendingSnapshot) currentEntryFail("prepared current-entry operation dependencies are absent");
-    operation = await parseCurrentEntryOperationBody(body, pair, true, {
-      v31Body: strictCanonicalRecord(v31Snapshot.bytes, "prepared v31 audit"),
-      pendingBody: strictCanonicalRecord(pendingSnapshot.bytes, "prepared pending migration"),
-    });
+    operation = await parseCurrentEntryOperationBody(body, pair);
   }
   const finalEntries = readdirSync(store.directory).sort(compareBytes);
   assertDirectory(store.directory, storeBefore, "prepared current-entry store");
@@ -2012,10 +2115,9 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
 }
 
 export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {
-  try {
-    const store = readCurrentEntryStore();
-    const target = Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES.operation });
-    const existing = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "current-entry operation");
+  const existingBytes = readCurrentEntryAuthorityRecordIfPresentV1(fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, CURRENT_ENTRY_FILES.operation));
+  if (existingBytes !== null) {
+    const existing = strictCanonicalRecord(existingBytes, "current-entry operation");
     const existingPair = Object.freeze({ operationRef: existing.operationRef, operationHash: existing.operationHash });
     const resolved = await resolveInternalProductionCurrentEntryOperationV1(
       requirePair(existingPair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1,
@@ -2023,8 +2125,6 @@ export async function prepareInternalProductionCurrentEntryOperationV1(): Promis
     const controllerLock = await acquireTask12ControllerLockV1(resolved.operationHash);
     try { return await ensureTask12PreparedCurrentEntryStatusV1(resolved); }
     finally { releaseTask12ControllerLockV1(controllerLock); }
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
   }
   const s0 = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const pba0 = await observeCurrentPba();
@@ -2077,8 +2177,6 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
 async function parseCurrentEntryOperationBody(
   body: Record<string, unknown>,
   expected: Readonly<Record<string, string>>,
-  publisherValidation = false,
-  publisherDependencies?: Readonly<{ v31Body: Record<string, unknown>; pendingBody: Record<string, unknown> }>,
 ): Promise<InternalProductionCurrentEntryOperationV1> {
   if (!hasExactKeys(body, ["schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence", "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operationRef", "operationHash"])) currentEntryFail("current-entry operation fields are invalid");
   if (body.schema !== "setfarm.internal-production-current-entry-operation.v1" || body.purpose !== "task6a-internal-production-current-entry-v1") currentEntryFail("current-entry operation discriminator is invalid");
@@ -2088,25 +2186,8 @@ async function parseCurrentEntryOperationBody(
   const hash = requireSha256(body.operationHash, "current-entry operation hash");
   if (hashCanonicalJson(projection) !== hash || body.operationRef !== `setfarm://internal-production/current-entry-operation/sha256/${hash}` || expected.operationHash !== hash || expected.operationRef !== body.operationRef) currentEntryFail("current-entry operation pair/hash is invalid");
   const source = requireSource(body.controllerSource);
-  let v31: InternalProductionAuthorityV3Migration31AuditV1;
-  let pending: InternalProductionPendingBootstrapHandoffMigrationProjectionV1;
-  if (publisherValidation) {
-    const v31Expected = requirePair(body.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
-    const v31Body = publisherDependencies?.v31Body ?? (() => {
-      const target = fixedCurrentEntryPath("authorityV3Migration31Audit");
-      return strictCanonicalRecord(publisherEntry(target.directory, target.basename, target.device).bytes, "publisher v31 audit");
-    })();
-    v31 = await parseAuthorityV3Migration31AuditBody(v31Body, v31Expected);
-    const pendingExpected = requirePair(body.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
-    const pendingBody = publisherDependencies?.pendingBody ?? (() => {
-      const target = fixedCurrentEntryPath("pendingBootstrapHandoffMigration");
-      return strictCanonicalRecord(publisherEntry(target.directory, target.basename, target.device).bytes, "publisher pending migration");
-    })();
-    pending = parsePendingBootstrapHandoffMigrationBody(pendingBody, pendingExpected);
-  } else {
-    v31 = await resolveInternalProductionAuthorityV3Migration31AuditV1(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1);
-    pending = await resolveInternalProductionPendingBootstrapHandoffMigrationV1(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1);
-  }
+  const v31 = await resolveInternalProductionAuthorityV3Migration31AuditV1(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1);
+  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationV1(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1);
   if (canonicalComparable(v31.controllerSource) !== canonicalComparable(source) || canonicalComparable(pending.controllerSource) !== canonicalComparable(source)) currentEntryFail("current-entry nested source is crossed");
   const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{ parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (value: unknown) => Readonly<Record<string, unknown>> }>;
   if (!isPlainRecord(body.productBuildAuthorityV2Observation) || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"]) || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli" || typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("stored PBA observation is invalid");
@@ -2207,8 +2288,8 @@ const PHYSICAL_ENV_V1 = Object.freeze({
   GIT_OPTIONAL_LOCKS: "0",
   GIT_TERMINAL_PROMPT: "0",
 });
-const PHYSICAL_OWNER_HOME_V1 = userInfo().homedir;
-const PHYSICAL_WORKSPACE_BASE_V1 = path.join(PHYSICAL_OWNER_HOME_V1, "ai", "setrox");
+const PHYSICAL_OWNER_HOME_V1 = CODE_OWNER_HOME_V1;
+const PHYSICAL_WORKSPACE_BASE_V1 = CODE_OWNED_WORKSPACE_ROOT_V1;
 const FIXED_WORKTREE_BASES_V1 = Object.freeze([
   path.join(PHYSICAL_WORKSPACE_BASE_V1, ".worktrees"),
   path.join(PHYSICAL_WORKSPACE_BASE_V1, "setfarm", ".worktrees"),
@@ -3205,7 +3286,7 @@ type Task12ReceiptDirectoryGuardV1 = Readonly<{ assertStable: () => void; close:
 
 function task12ReceiptStoreAnchorV1(target: string): string {
   const repository = path.resolve(fixedRepositoryRoot());
-  const workspace = path.dirname(repository);
+  const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const resolved = path.resolve(target);
   const within = (anchor: string): boolean => {
     const relative = path.relative(anchor, resolved);
@@ -3438,7 +3519,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ close: 
   }
 }
 
-function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
+function publishLegacyZeroRecordV1(target: string, bytes: Buffer, allowUnequalIncompleteTempCleanup = false): void {
   if (bytes.length < 1 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("Task12 receipt publication size is invalid");
   const directory = path.dirname(target);
   const guard = ensureTask12ReceiptPrivateDirectoryV1(directory);
@@ -3453,17 +3534,25 @@ function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
     const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
     const candidates = readdirSync(directory).filter((entry) => entry.startsWith(prefix)).sort(compareBytes);
     if (candidates.length > 8) currentEntryFail("Task12 receipt publication temp cap exceeded");
-    const pinned: Array<{ path: string; descriptor: number; identity: BigIntStats; bytes: Buffer }> = [];
+    const pinned: Array<{ path: string; descriptor: number; identity: BigIntStats; bytes: Buffer; matches: boolean }> = [];
     try {
       for (const entry of candidates) {
         if (!pattern.test(entry)) currentEntryFail("Task12 receipt publication temp name is invalid");
         const candidate = path.join(directory, entry); const descriptor = openSync(candidate, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); const identity = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(candidate, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
-        if (!identity.isFile() || identity.dev !== atPath.dev || identity.ino !== atPath.ino || (identity.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(identity.nlink) || !observed.equals(bytes)) currentEntryFail("Task12 receipt publication temp is invalid");
-        pinned.push({ path: candidate, descriptor, identity, bytes: observed });
+        if (!identity.isFile() || identity.dev !== atPath.dev || identity.ino !== atPath.ino || (identity.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(identity.nlink)) currentEntryFail("Task12 receipt publication temp is invalid");
+        pinned.push({ path: candidate, descriptor, identity, bytes: observed, matches: observed.equals(bytes) });
       }
       let finalStats: BigIntStats | null = null;
       try { finalStats = lstatSync(target, { bigint: true }); } catch (error) { if (!isEnoent(error)) throw error; }
-      if (finalStats === null && pinned.length > 0) {
+      const unequal = pinned.filter((item) => !item.matches);
+      let removedIncomplete = false;
+      if (unequal.length > 0) {
+        if (!allowUnequalIncompleteTempCleanup || finalStats !== null || pinned.length !== 1 || unequal[0]!.identity.nlink !== 1n) currentEntryFail("Task12 receipt publication has competing unequal bytes");
+        const item = unequal[0]!; const now = fstatSync(item.descriptor, { bigint: true }); const atPath = lstatSync(item.path, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(item.descriptor, now.size);
+        if (!now.isFile() || now.dev !== item.identity.dev || now.ino !== item.identity.ino || now.mode !== item.identity.mode || now.nlink !== 1n || atPath.dev !== item.identity.dev || atPath.ino !== item.identity.ino || atPath.mode !== item.identity.mode || atPath.nlink !== 1n || !observed.equals(item.bytes)) currentEntryFail("Task12 receipt incomplete temp changed before cleanup");
+        unlinkSync(item.path); fsyncCurrentEntryDirectory(directory); guard.assertStable(); removedIncomplete = true;
+      }
+      if (!removedIncomplete && finalStats === null && pinned.length > 0) {
         const selected = pinned.find(({ identity }) => identity.nlink === 1n);
         if (!selected) currentEntryFail("Task12 receipt publication crash prefix is invalid");
         linkSync(selected.path, target); fsyncCurrentEntryDirectory(directory); finalStats = lstatSync(target, { bigint: true });
@@ -3471,7 +3560,7 @@ function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
       const finalIsPinned = finalStats !== null && pinned.some(({ identity }) => identity.dev === finalStats!.dev && identity.ino === finalStats!.ino);
       const finalIsIndependent = finalStats !== null && finalStats.nlink === 1n && readTask12ReceiptStoreBytesV1(target).equals(bytes);
       if (finalStats !== null && (!finalStats.isFile() || finalStats.isSymbolicLink() || (!finalIsPinned && !finalIsIndependent))) currentEntryFail("Task12 receipt publication final is crossed");
-      for (const item of pinned) {
+      for (const item of removedIncomplete ? [] : pinned) {
         const now = fstatSync(item.descriptor, { bigint: true }); const atPath = lstatSync(item.path, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(item.descriptor, now.size);
         const linked = finalStats !== null && finalStats.dev === now.dev && finalStats.ino === now.ino && now.nlink === 2n;
         const stale = finalIsIndependent && finalStats !== null && (finalStats.dev !== now.dev || finalStats.ino !== now.ino) && now.nlink === 1n;
@@ -3482,7 +3571,11 @@ function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
       }
     } finally { for (const item of pinned) closeSync(item.descriptor); }
     try {
-      if (readTask12ReceiptStoreBytesV1(target).equals(bytes)) return;
+      if (readTask12ReceiptStoreBytesV1(target).equals(bytes)) {
+        fsyncCurrentEntryDirectory(directory);
+        guard.assertStable();
+        if (readTask12ReceiptStoreBytesV1(target).equals(bytes)) return;
+      }
       currentEntryFail("Task12 receipt immutable collision is crossed");
     } catch (error) { if (!isEnoent(error)) throw error; }
     const remaining = readdirSync(directory).filter((entry) => entry.startsWith(prefix));
