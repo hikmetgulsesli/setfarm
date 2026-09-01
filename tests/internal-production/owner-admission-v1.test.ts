@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -2031,6 +2031,34 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
   }
 });
 
+test("P3 runner freezes the complete secure physical-mode domain before projection", () => {
+  const runner = readFileSync(path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"), "utf8");
+  const match = /function isAcceptedPinnedGitPhysicalModeV1\(gitMode: string, physicalMode: number\): boolean \{[\s\S]*?\n\}/.exec(runner);
+  assert.ok(match, "runner private physical-mode predicate must remain source-visible");
+  const executablePredicate = match[0].replace(
+    "(gitMode: string, physicalMode: number): boolean",
+    "(gitMode, physicalMode)",
+  );
+  const predicate = Function(`${executablePredicate}; return isAcceptedPinnedGitPhysicalModeV1;`)() as (
+    gitMode: string,
+    physicalMode: number,
+  ) => boolean;
+  for (const gitMode of ["100644", "100755"]) {
+    const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+    const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+    for (let physicalMode = 0; physicalMode <= 0o7777; physicalMode += 1) {
+      const expected = (physicalMode & (0o7777 ^ declaredMode)) === 0
+        && (physicalMode & requiredMode) === requiredMode;
+      assert.equal(predicate(gitMode, physicalMode), expected, `${gitMode}:${physicalMode.toString(8)}`);
+    }
+  }
+  assert.equal(predicate("100600", 0o600), false);
+  assert.match(runner, /sourcePhysicalMode: observed\.physicalMode/);
+  assert.match(runner, /reopened\.physicalMode !== observation\.sourcePhysicalMode/);
+  assert.match(runner, /writeFileSync\(target, bytes, \{ mode: expectedMode \}\)/);
+  assert.match(runner, /chmodSync\(target, expectedMode\)/);
+});
+
 test("P3 runner refuses every constructible indexed and physical projection drift before child spawn", async () => {
   if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
   const member = "src/execution/attempt-repository.ts";
@@ -2082,9 +2110,67 @@ test("P3 runner refuses every constructible indexed and physical projection drif
       },
     },
     {
+      label: "multiply-linked worktree member",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => linkSync(path.join(root, member), path.join(root, ".git/p3-hardlink-member")),
+    },
+    {
+      label: "fixture-private wrong source uid",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        const runnerPath = path.join(root, "scripts/run-isolated-postgres-tests.ts");
+        const source = readFileSync(runnerPath, "utf8");
+        const boundary = "const currentUid = process.getuid?.();";
+        assert.equal(source.includes(boundary), true);
+        writeFileSync(runnerPath, source.replace(boundary, "const currentUid = (process.getuid?.() ?? 0) + 1;"));
+      },
+    },
+    {
+      label: "fixture-private wrong source device",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        const runnerPath = path.join(root, "scripts/run-isolated-postgres-tests.ts");
+        const source = readFileSync(runnerPath, "utf8");
+        const boundary = "const sourceDevice = lstatSync(SOURCE_ROOT, { bigint: true }).dev;";
+        assert.equal(source.includes(boundary), true);
+        writeFileSync(runnerPath, source.replace(boundary, `${boundary.slice(0, -1)} + 1n;`));
+      },
+    },
+    {
       label: "executable bit drift",
       expected: /P3_PROJECTION_MEMBER_INVALID/,
       mutate: (root) => chmodSync(path.join(root, member), 0o755),
+    },
+    {
+      label: "group-writable non-executable member",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => chmodSync(path.join(root, member), 0o660),
+    },
+    {
+      label: "world-writable non-executable member",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => chmodSync(path.join(root, member), 0o602),
+    },
+    {
+      label: "special-bit non-executable member",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => chmodSync(path.join(root, member), 0o4600),
+    },
+    {
+      label: "indexed executable missing owner execute",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        p3TestGit(root, ["update-index", "--chmod=+x", member]);
+        chmodSync(path.join(root, member), 0o644);
+      },
+    },
+    {
+      label: "indexed executable with world write",
+      expected: /P3_PROJECTION_MEMBER_INVALID/,
+      mutate: (root) => {
+        p3TestGit(root, ["update-index", "--chmod=+x", member]);
+        chmodSync(path.join(root, member), 0o757);
+      },
     },
     {
       label: "120000 index symlink",
@@ -2160,6 +2246,51 @@ test("P3 runner refuses every constructible indexed and physical projection drif
   assert.match(runner, /path\.isAbsolute\(locator\) \|\| locator\.split\("\/"\)\.includes\("\.\."\)/);
   assert.match(runner, /!first\.isFile\(\)/);
   assert.match(runner, /O_RDONLY \| fsConstants\.O_NOFOLLOW/);
+  assert.match(runner, /sourcePhysicalMode: observed\.physicalMode/);
+  assert.match(runner, /reopened\.physicalMode !== observation\.sourcePhysicalMode/);
+  assert.doesNotMatch(runner, /chmodSync\(source[,)]/);
+  for (const locator of [
+    "scripts/build-generation-retention.mjs",
+    "scripts/run-isolated-postgres-tests.ts",
+    "scripts/write-build-info.mjs",
+    "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+  ]) {
+    const consumer = readFileSync(path.join(process.cwd(), locator), "utf8");
+    assert.equal((consumer.match(/function isAcceptedPinnedGitPhysicalModeV1\(/g) ?? []).length, 1, locator);
+    const predicateMatch = /function isAcceptedPinnedGitPhysicalModeV1\([^)]*\)(?:: boolean)? \{[\s\S]*?\n\}/.exec(consumer);
+    assert.ok(predicateMatch, `${locator}: private physical-mode predicate must remain source-visible`);
+    const executablePredicate = predicateMatch[0].replace(
+      /function isAcceptedPinnedGitPhysicalModeV1\([^)]*\)(?:: boolean)? \{/,
+      "function isAcceptedPinnedGitPhysicalModeV1(gitMode, physicalMode) {",
+    );
+    const predicate = Function(`${executablePredicate}; return isAcceptedPinnedGitPhysicalModeV1;`)() as (
+      gitMode: string,
+      physicalMode: number,
+    ) => boolean;
+    for (const gitMode of ["100644", "100755"] as const) {
+      const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+      const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+      for (let physicalMode = 0; physicalMode <= 0o7777; physicalMode += 1) {
+        const expected = (physicalMode & (0o7777 ^ declaredMode)) === 0
+          && (physicalMode & requiredMode) === requiredMode;
+        assert.equal(predicate(gitMode, physicalMode), expected, `${locator}:${gitMode}:${physicalMode.toString(8)}`);
+      }
+    }
+    assert.equal(predicate("100600", 0o600), false, locator);
+    assert.match(consumer, /0o7777 \^ (?:declaredMode|expectedMode)/, locator);
+    assert.match(consumer, /requiredMode = .*0o500.*0o400/, locator);
+    assert.match(consumer, /(?:observed\.stats|first)\.uid !== BigInt\((?:process\.getuid\(\)|currentUid)\)/, locator);
+    assert.match(consumer, /process\.getuid/, locator);
+    assert.match(consumer, /O_NOFOLLOW/, locator);
+    assert.match(consumer, /(?:nlink|linkCounts|expectedLinkCount)/, locator);
+    assert.match(consumer, /(?:device|expectedDevice|rootDevice)/, locator);
+    assert.match(consumer, /\.ino|inoDecimal/, locator);
+    assert.match(consumer, /\.size|byteLength/, locator);
+    assert.match(consumer, /mtimeNs/, locator);
+    assert.match(consumer, /ctimeNs/, locator);
+    assert.doesNotMatch(consumer, /export\s+function isAcceptedPinnedGitPhysicalModeV1\(/, locator);
+    assert.doesNotMatch(consumer, /process\.env\.[A-Z0-9_]*MODE|physicalMode\s*=\s*process\.env/, locator);
+  }
 });
 
 test("P3 runner independently projects each new exact51 overlay after scope expansion", () => {
@@ -2318,6 +2449,32 @@ test("P3 runner refuses primary readiness tamper and projection-time source drif
     assert.match(result.output, /P3_PROJECTION_SOURCE_CHANGED/);
   } finally {
     driftingSource.cleanup();
+  }
+
+  const driftingMode = createP3RunnerRefusalFixture();
+  try {
+    const ballast = path.join(driftingMode.root, "tests/steps/harness.ts");
+    writeFileSync(ballast, `${readFileSync(ballast, "utf8")}\n${"x".repeat(32 * 1024 * 1024)}\n`);
+    p3TestGit(driftingMode.root, ["add", ballast]);
+    p3TestGit(driftingMode.root, ["commit", "-qm", "slow projection mode observation"]);
+    const late = path.join(driftingMode.root, "package.json");
+    chmodSync(late, 0o600);
+    const running = spawnP3NestedRunner(driftingMode.root);
+    await waitForP3ConditionV1(
+      () => {
+        const parent = readdirSync(running.temporaryRoot).find((name) => name.startsWith("setfarm-p3-projection-"));
+        if (!parent) return null;
+        const projected = path.join(running.temporaryRoot, parent, "setfarm", "package.json");
+        return existsSync(projected) ? projected : null;
+      },
+      "projected package after first source mode observation",
+    );
+    chmodSync(late, 0o640);
+    const result = await running.completed;
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /P3_PROJECTION_SOURCE_CHANGED/);
+  } finally {
+    driftingMode.cleanup();
   }
 });
 

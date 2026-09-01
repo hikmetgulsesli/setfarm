@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1077,7 +1078,7 @@ async function importFixtureInternals(root, names) {
 function installStaleBuildAuthorityProbe(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   const source = readFileSync(modulePath, "utf8");
-  writeFileSync(modulePath, `${source}\nexport { observeCurrentRetentionControllerSourceV2, observeRetainedCurrentBuildV1 };\n`);
+  writeFileSync(modulePath, `${source}\nexport { observeCurrentRetentionControllerSourcePassV2, observeCurrentRetentionControllerSourceV2, observeRetainedCurrentBuildV1 };\n`);
   git(root, ["add", "scripts/build-generation-retention.mjs"]);
   git(root, ["commit", "--amend", "--no-edit", "-q"]);
   git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
@@ -1293,6 +1294,13 @@ describe("OA18 build-generation retention authority", () => {
       '["-a", "-p", String(pid), "-d", "txt", "-F0pn", authenticatedExecutableRealpath]',
       '["-nP", "-a", "-p", String(pid), network, "-sTCP:LISTEN", "-F0pcfn"]',
       "loadedArgumentsHash: hashCanonicalJsonV1(profile.launchArguments)",
+      'schema: "setfarm.platform-build-generation-retention-controller-physical-input-set.v1"',
+      "const physicalMode = Number(observed.stats.mode & 0o7777n)",
+      "physicalMode,",
+      "controllerPhysicalInputSetHash: sha256(canonicalJsonV1(Object.freeze({",
+      "const { controllerPhysicalInputSetHash: _privateObservation, ...controllerSource } = before;",
+      "after.mtimeNs !== named.mtimeNs",
+      "after.ctimeNs !== named.ctimeNs",
     ]) assert.equal(source.includes(contract), true, contract);
   });
 
@@ -1303,7 +1311,40 @@ describe("OA18 build-generation retention authority", () => {
       const authority = await importStaleBuildAuthorityFixture(root);
       const repositoryRoot = realpathSync(root);
       const controllerSource = authority.observeCurrentRetentionControllerSourceV2(repositoryRoot);
+      const controllerPass = authority.observeCurrentRetentionControllerSourcePassV2(repositoryRoot);
       const retainedCurrentBuild = authority.observeRetainedCurrentBuildV1(repositoryRoot, controllerSource);
+
+      const physicalEntries = fixture.controllerPinned.entries.map((entry) => {
+        const target = join(root, ...entry.locator.split("/"));
+        const stats = lstatSync(target, { bigint: true });
+        const bytes = readFileSync(target);
+        return {
+          locator: entry.locator,
+          physicalMode: Number(stats.mode & 0o7777n),
+          uidDecimal: stats.uid.toString(10),
+          devDecimal: stats.dev.toString(10),
+          inoDecimal: stats.ino.toString(10),
+          linkCount: Number(stats.nlink),
+          byteLength: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        };
+      });
+      assert.deepEqual(Object.keys(controllerPass), [
+        "branch",
+        "clean",
+        "sourceSha",
+        "sourceTreeHash",
+        "originMainSha",
+        "buildInputSetHash",
+        "controllerPhysicalInputSetHash",
+      ]);
+      assert.equal(
+        controllerPass.controllerPhysicalInputSetHash,
+        hashCanonicalFixture({
+          schema: "setfarm.platform-build-generation-retention-controller-physical-input-set.v1",
+          entries: physicalEntries,
+        }),
+      );
 
       assert.deepEqual(controllerSource, {
         branch: "main",
@@ -1328,6 +1369,138 @@ describe("OA18 build-generation retention authority", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("OA18 v2 admits only secure physical subsets of tracked Git modes", async (context) => {
+    await context.test("rejects a named reopen timestamp drift after the descriptor read", async () => {
+      const root = createFixture();
+      try {
+        const modulePath = join(root, "scripts/build-generation-retention.mjs");
+        let source = readFileSync(modulePath, "utf8");
+        source = source.replace("  writeFileSync,", "  utimesSync,\n  writeFileSync,");
+        const boundary = "    const named = lstatSync(file, { bigint: true });";
+        assert.equal(source.includes(boundary), true);
+        source = source.replace(boundary, [
+          "    utimesSync(file, new Date(), new Date(Date.now() + 2_000));",
+          boundary,
+        ].join("\n"));
+        writeFileSync(modulePath, source);
+        const authority = await importFixtureInternals(root, ["readStableRegular"]);
+        const target = join(root, "package.json");
+        const device = lstatSync(root, { bigint: true }).dev;
+        assert.throws(
+          () => authority.readStableRegular(target, { device }),
+          /changed while being read/,
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("the private predicate covers the complete physical mode domain", async () => {
+      const root = createFixture();
+      try {
+        const authority = await importFixtureInternals(root, ["isAcceptedPinnedGitPhysicalModeV1"]);
+        for (const gitMode of ["100644", "100755"]) {
+          for (let mode = 0; mode <= 0o7777; mode += 1) {
+            const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+            const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+            const expected = (mode & (0o7777 ^ declaredMode)) === 0
+              && (mode & requiredMode) === requiredMode;
+            assert.equal(authority.isAcceptedPinnedGitPhysicalModeV1(gitMode, mode), expected, `${gitMode}:${mode.toString(8)}`);
+          }
+        }
+        assert.equal(authority.isAcceptedPinnedGitPhysicalModeV1("100600", 0o600), false);
+        assert.equal(authority.isAcceptedPinnedGitPhysicalModeV1("100644", -1), false);
+        assert.equal(authority.isAcceptedPinnedGitPhysicalModeV1("100644", 0o10000), false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    for (const [label, locator, mode] of [
+      ["owner-read-only non-executable", "tracked.txt", 0o400],
+      ["read-only non-executable", "tracked.txt", 0o444],
+      ["restrictive umask non-executable", "tracked.txt", 0o600],
+      ["group-readable non-executable", "tracked.txt", 0o640],
+      ["ordinary non-executable", "tracked.txt", 0o644],
+      ["owner-only executable", "scripts/build-generation-retention.mjs", 0o500],
+      ["restrictive executable", "scripts/build-generation-retention.mjs", 0o700],
+      ["ordinary executable", "scripts/build-generation-retention.mjs", 0o755],
+    ]) {
+      await context.test(`accepts ${label}`, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          chmodSync(join(fixture.root, locator), mode);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          const observed = authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root));
+          assert.equal(observed.sourceSha, fixture.controllerSourceSha);
+          assert.equal(observed.sourceTreeHash, fixture.controllerSourceTreeHash);
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    for (const [label, locator, mode] of [
+      ["unreadable non-executable", "tracked.txt", 0o200],
+      ["group-writable non-executable", "tracked.txt", 0o660],
+      ["unexpected execute bit", "tracked.txt", 0o601],
+      ["special-bit non-executable", "tracked.txt", 0o4600],
+      ["world-writable non-executable", "tracked.txt", 0o602],
+      ["missing owner-execute executable", "scripts/build-generation-retention.mjs", 0o644],
+      ["group-writable executable", "scripts/build-generation-retention.mjs", 0o770],
+    ]) {
+      await context.test(`rejects ${label}`, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          chmodSync(join(fixture.root, locator), mode);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          assert.throws(
+            () => authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root)),
+            /live input differs from Git|source is not clean synchronized main/,
+          );
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    await context.test("rejects an allowed physical mode swap between complete controller passes", async () => {
+      const fixture = prepareStaleBuildAuthorityFixture();
+      try {
+        const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+        const source = readFileSync(modulePath, "utf8");
+        const boundary = [
+          "  const before = observeCurrentRetentionControllerSourcePassV2(root);",
+          "  const after = observeCurrentRetentionControllerSourcePassV2(root);",
+        ].join("\n");
+        assert.equal(source.includes(boundary), true);
+        writeFileSync(modulePath, source.replace(boundary, [
+          "  const before = observeCurrentRetentionControllerSourcePassV2(root);",
+          '  chmodSync(path.join(root, "tracked.txt"), 0o640);',
+          "  const after = observeCurrentRetentionControllerSourcePassV2(root);",
+        ].join("\n")));
+        git(fixture.root, ["add", "scripts/build-generation-retention.mjs"]);
+        git(fixture.root, ["commit", "--amend", "--no-edit", "-q"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        chmodSync(join(fixture.root, "tracked.txt"), 0o600);
+        const before = task1AuthorityStoreSnapshot(fixture.root);
+        const authority = await importStaleBuildAuthorityFixture(fixture.root);
+
+        assert.throws(
+          () => authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root)),
+          /source changed during observation/,
+        );
+        assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
   });
 
   it("OA18 v2 pins Git configuration, replacement objects, and exact line output", async (context) => {

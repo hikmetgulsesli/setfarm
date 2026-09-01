@@ -187,19 +187,36 @@ function assertSourceScopeV1(): void {
   }
 }
 
+function isAcceptedPinnedGitPhysicalModeV1(gitMode: string, physicalMode: number): boolean {
+  if (gitMode !== "100644" && gitMode !== "100755") return false;
+  const declaredMode = gitMode === "100755" ? 0o755 : 0o644;
+  const requiredMode = gitMode === "100755" ? 0o500 : 0o400;
+  return Number.isSafeInteger(physicalMode)
+    && physicalMode >= 0
+    && physicalMode <= 0o7777
+    && (physicalMode & (0o7777 ^ declaredMode)) === 0
+    && (physicalMode & requiredMode) === requiredMode;
+}
+
 function readStableIndexedMemberV1(
   locator: string,
-  expectedMode: number,
+  gitMode: string,
   expectedDevice: bigint,
-): Buffer {
+): Readonly<{ bytes: Buffer; physicalMode: number }> {
+  const currentUid = process.getuid?.();
+  if (typeof currentUid !== "number" || !Number.isSafeInteger(currentUid) || currentUid < 0) {
+    throw new Error(`P3_PROJECTION_MEMBER_INVALID:${locator}`);
+  }
   const source = path.join(SOURCE_ROOT, locator);
   const first = lstatSync(source, { bigint: true });
+  const physicalMode = Number(first.mode & 0o7777n);
   if (
     !first.isFile()
     || first.isSymbolicLink()
     || first.dev !== expectedDevice
     || first.nlink !== 1n
-    || (first.mode & 0o111n) !== BigInt(expectedMode & 0o111)
+    || first.uid !== BigInt(currentUid)
+    || !isAcceptedPinnedGitPhysicalModeV1(gitMode, physicalMode)
   ) {
     throw new Error(`P3_PROJECTION_MEMBER_INVALID:${locator}`);
   }
@@ -215,6 +232,7 @@ function readStableIndexedMemberV1(
         || observed.dev !== first.dev
         || observed.ino !== first.ino
         || observed.mode !== first.mode
+        || observed.uid !== first.uid
         || observed.nlink !== first.nlink
         || observed.size !== first.size
         || observed.mtimeNs !== first.mtimeNs
@@ -226,7 +244,7 @@ function readStableIndexedMemberV1(
     if (BigInt(bytes.length) !== first.size) {
       throw new Error(`P3_PROJECTION_MEMBER_CHANGED:${locator}`);
     }
-    return bytes;
+    return Object.freeze({ bytes, physicalMode });
   } finally {
     closeSync(descriptor);
   }
@@ -242,7 +260,11 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
     mkdirSync(projectionRoot, { mode: 0o700 });
     const sourceDevice = lstatSync(SOURCE_ROOT, { bigint: true }).dev;
     const entries = sourceIndex.split("\0").filter(Boolean);
-    const observations = new Map<string, Readonly<{ bytes: Buffer; mode: number }>>();
+    const observations = new Map<string, Readonly<{
+      bytes: Buffer;
+      sourcePhysicalMode: number;
+      projectedMode: number;
+    }>>();
     for (const entry of entries) {
       const match = /^(100644|100755) ([a-f0-9]{40,64}) 0\t(.+)$/.exec(entry);
       if (!match) throw new Error(`P3_PROJECTION_INDEX_ENTRY_INVALID:${entry}`);
@@ -251,11 +273,16 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
         throw new Error(`P3_PROJECTION_LOCATOR_INVALID:${locator}`);
       }
       const expectedMode = match[1] === "100755" ? 0o755 : 0o644;
-      const bytes = readStableIndexedMemberV1(locator, expectedMode, sourceDevice);
+      const observed = readStableIndexedMemberV1(locator, match[1]!, sourceDevice);
+      const bytes = observed.bytes;
       if (!P3_TRACKED_SCOPE.has(locator) && !bytes.equals(gitBytes(["cat-file", "blob", match[2]!])) ) {
         throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
       }
-      observations.set(locator, Object.freeze({ bytes, mode: expectedMode }));
+      observations.set(locator, Object.freeze({
+        bytes,
+        sourcePhysicalMode: observed.physicalMode,
+        projectedMode: expectedMode,
+      }));
       const target = path.join(projectionRoot, locator);
       mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
       writeFileSync(target, bytes, { mode: expectedMode });
@@ -263,7 +290,12 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
     }
 
     for (const [locator, observation] of observations) {
-      if (!readStableIndexedMemberV1(locator, observation.mode, sourceDevice).equals(observation.bytes)) {
+      const reopened = readStableIndexedMemberV1(
+        locator,
+        observation.projectedMode === 0o755 ? "100755" : "100644",
+        sourceDevice,
+      );
+      if (!reopened.bytes.equals(observation.bytes) || reopened.physicalMode !== observation.sourcePhysicalMode) {
         throw new Error(`P3_PROJECTION_SOURCE_CHANGED:${locator}`);
       }
     }

@@ -102,6 +102,22 @@ function createFixture() {
   return root;
 }
 
+function cloneFixtureUnderUmask(source, mask) {
+  const container = mkdtempSync(join(tmpdir(), "setfarm-oa17-umask-clone-"));
+  const root = join(container, "setfarm");
+  const previousMask = process.umask(mask);
+  try {
+    execFileSync("/usr/bin/git", ["clone", "-q", source, root], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } finally {
+    process.umask(previousMask);
+  }
+  git(root, ["remote", "set-url", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  return Object.freeze({ root, cleanup: () => rmSync(container, { recursive: true, force: true }) });
+}
+
 function runProducer(root, phase) {
   return spawnSync(process.execPath, ["scripts/write-build-info.mjs", phase], {
     cwd: root,
@@ -233,6 +249,80 @@ describe("OA17 build source and output authority", () => {
     assert.doesNotMatch(producer, /\bexport\s+(?:function|const|class)\b/);
     assert.doesNotMatch(producer, /runBuildGenerationWriterPrepareV1|Symbol\.for|globalThis/);
     assert.doesNotMatch(producer, /withBuildGenerationWriterMaintenanceLockV1|runBuildGenerationWriterRotationV1/);
+  });
+
+  it("accepts only secure physical subsets of tracked Git modes before publication", async (context) => {
+    await context.test("accepts an actual fresh checkout inherited from parent umask 077", () => {
+      const source = createFixture();
+      const clone = cloneFixtureUnderUmask(source, 0o077);
+      try {
+        assert.equal(mode(clone.root, "package.json"), 0o600);
+        assert.equal(mode(clone.root, "scripts/build-generation-retention.mjs"), 0o700);
+        fixtureFile(source, "freshly-updated.txt", "fresh under restrictive checkout\n");
+        git(source, ["add", "freshly-updated.txt"]);
+        git(source, ["commit", "-qm", "add restrictive update member"]);
+        const previousMask = process.umask(0o077);
+        try {
+          execFileSync("/usr/bin/git", ["fetch", "-q", source, "main"], { cwd: clone.root });
+          execFileSync("/usr/bin/git", ["merge", "-q", "--ff-only", "FETCH_HEAD"], { cwd: clone.root });
+        } finally {
+          process.umask(previousMask);
+        }
+        git(clone.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert.equal(mode(clone.root, "freshly-updated.txt"), 0o600);
+        const prepared = runProducer(clone.root, "--prepare");
+        assert.equal(prepared.status, 0, prepared.stderr);
+      } finally {
+        clone.cleanup();
+        rmSync(source, { recursive: true, force: true });
+      }
+    });
+
+    for (const [label, locator, physicalMode] of [
+      ["owner-read-only non-executable", "package.json", 0o400],
+      ["read-only non-executable", "package.json", 0o444],
+      ["restrictive non-executable", "package.json", 0o600],
+      ["group-readable non-executable", "package.json", 0o640],
+      ["ordinary non-executable", "package.json", 0o644],
+      ["owner-only executable", "scripts/build-generation-retention.mjs", 0o500],
+      ["restrictive executable", "scripts/build-generation-retention.mjs", 0o700],
+      ["ordinary executable", "scripts/build-generation-retention.mjs", 0o755],
+    ]) {
+      await context.test(`accepts ${label}`, () => {
+        const root = createFixture();
+        try {
+          chmodSync(join(root, locator), physicalMode);
+          const prepared = runProducer(root, "--prepare");
+          assert.equal(prepared.status, 0, prepared.stderr);
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    for (const [label, locator, physicalMode] of [
+      ["unreadable non-executable", "package.json", 0o200],
+      ["group-writable non-executable", "package.json", 0o660],
+      ["unexpected execute bit", "package.json", 0o601],
+      ["special-bit non-executable", "package.json", 0o4600],
+      ["world-writable non-executable", "package.json", 0o602],
+      ["missing owner-execute executable", "scripts/build-generation-retention.mjs", 0o644],
+      ["group-writable executable", "scripts/build-generation-retention.mjs", 0o770],
+    ]) {
+      await context.test(`rejects ${label}`, () => {
+        const root = createFixture();
+        try {
+          chmodSync(join(root, locator), physicalMode);
+          const prepared = runProducer(root, "--prepare");
+          assert.notEqual(prepared.status, 0);
+          assert.match(prepared.stderr, /live tracked mode|clean synchronized main|working tree is dirty/i);
+          assert.equal(existsSync(join(root, ".setfarm")), false);
+          assert.equal(existsSync(join(root, "dist")), false);
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+    }
   });
 
   it("runs two literal full npm builds under hostile and restrictive parent umasks", () => {
