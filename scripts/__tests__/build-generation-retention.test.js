@@ -25,6 +25,10 @@ const BUILD_ID = "10000000-0000-4000-8000-000000000001";
 const BUILD_ID_2 = "20000000-0000-4000-8000-000000000002";
 const BUILD_ID_3 = "30000000-0000-4000-8000-000000000003";
 
+function fixtureBuildId(ordinal) {
+  return `10000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`;
+}
+
 function git(root, args) {
   return execFileSync("/usr/bin/git", args, {
     cwd: root,
@@ -50,21 +54,26 @@ function hashCanonicalFixture(value) {
   return createHash("sha256").update(canonicalFixtureJson(value)).digest("hex");
 }
 
-function writeFinalizedRuntimeDist(root) {
-  const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
-  const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+function fixturePinnedInputSet(root, sourceSha) {
+  const sourceTreeHash = git(root, ["rev-parse", `${sourceSha}^{tree}`]);
   const listing = execFileSync("/usr/bin/git", ["ls-tree", "-r", "-z", "--full-tree", sourceSha], { cwd: root });
   const entries = listing.toString("utf8").split("\0").filter(Boolean).map((record) => {
     const match = /^(100644|100755) blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/.exec(record);
     assert.ok(match, `invalid fixture Git entry: ${record}`);
     return { locator: match[3], gitMode: match[1], gitBlobHash: match[2] };
   }).sort((left, right) => Buffer.compare(Buffer.from(left.locator), Buffer.from(right.locator)));
-  const buildInputSetHash = hashCanonicalFixture({
+  const body = {
     schema: "setfarm.internal-production-pinned-build-input-set.v1",
     sourceSha,
     sourceTreeHash,
     entries,
-  });
+  };
+  return { ...body, buildInputSetHash: hashCanonicalFixture(body) };
+}
+
+function writeFinalizedRuntimeDist(root) {
+  const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const { sourceTreeHash, entries, buildInputSetHash } = fixturePinnedInputSet(root, sourceSha);
   const serviceBytes = Buffer.from("export const fixtureRuntime = true;\n", "utf8");
   const outputEntries = [{
     locator: "dist/service.js",
@@ -277,6 +286,9 @@ function rotateFixtureGeneration(root, buildId, digit) {
 function installPrivateRetentionObservers(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
+  if (!git(root, ["remote"]).split("\n").includes("origin")) {
+    git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
+  }
   for (const label of ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard", "com.setrox.mission-control"]) {
     fixtureFile(root, `Library/LaunchAgents/${label}.plist`, `fixture plist for ${label}\n`, 0o644);
   }
@@ -337,7 +349,8 @@ function observeOperationAuthoritiesV1(root) {`,
   );
   source = source.replace(
     /function fixedChildResult\(executable, argv, options = \{\}\) \{[\s\S]*?\n\}\n\nfunction requireSuccessfulChild/,
-    `let fixtureMissionControlLaunchctlCallsV1 = 0;
+    `const fixtureLoadedServicePidV1 = ${process.pid};
+let fixtureMissionControlLaunchctlCallsV1 = 0;
 let fixtureMissionControlListenerCallsV1 = 0;
 function fixedChildResult(executable, argv, options = {}) {
   const success = (stdout) => ({ error: null, signal: null, status: 0, stdout: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout), stderr: Buffer.alloc(0) });
@@ -360,7 +373,7 @@ function fixedChildResult(executable, argv, options = {}) {
   })[name];
   if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && canonicalJsonV1(argv) === canonicalJsonV1(["-nP", "-iTCP:3080", "-sTCP:LISTEN", "-F0pcfn"])) {
     fixtureMissionControlListenerCallsV1 += 1;
-    const listenerPid = optionalLstat(path.join(repositoryRootV1(), ".fixture-listener-pid-mismatch")) ? process.pid + 1 : process.pid;
+    const listenerPid = optionalLstat(path.join(repositoryRootV1(), ".fixture-listener-pid-mismatch")) ? fixtureLoadedServicePidV1 + 1 : fixtureLoadedServicePidV1;
     const command = optionalLstat(path.join(repositoryRootV1(), ".fixture-listener-drift")) && fixtureMissionControlListenerCallsV1 > 1 ? "node-drift" : "node";
     const record = \`p\${listenerPid}\\0c\${command}\\0\\nf20\\0n127.0.0.1:3080\\0\\n\`;
     const extra = optionalLstat(path.join(repositoryRootV1(), ".fixture-listener-extra-record")) ? \`p\${listenerPid}\\0cnode\\0\\nf21\\0n127.0.0.1:3080\\0\\n\` : "";
@@ -403,7 +416,7 @@ function fixedChildResult(executable, argv, options = {}) {
       lines.push(\`\\t\\t\${name} => \${driftToken ? "fixture-operational-token-00000002" : environmentValue(name)}\`);
     }
     const loadedPid = label === "com.setrox.mission-control" && optionalLstat(path.join(repositoryRootV1(), ".fixture-launchctl-drift")) && fixtureMissionControlLaunchctlCallsV1 > 1
-      ? process.pid + 1 : process.pid;
+      ? fixtureLoadedServicePidV1 + 1 : fixtureLoadedServicePidV1;
     lines.push("\\t\\tOSLogRateLimit => 64", \`\\t\\tXPC_SERVICE_NAME => \${label}\`, "\\t}", \`\\tpid = \${loadedPid}\`, "}", "");
     return success(Buffer.from(lines.join("\\n"), "utf8"));
   }
@@ -424,8 +437,11 @@ function fixedChildResult(executable, argv, options = {}) {
       return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
     const response = JSON.parse(readFileSync(path.join(repositoryRootV1(), ".fixture-loaded-response.json"), "utf8"));
-    response.startupInstance.pid = process.pid;
-    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-startup-stale"))) response.startupInstance.pid = process.pid + 1;
+    response.startupInstance.pid = fixtureLoadedServicePidV1;
+    if (optionalLstat(path.join(repositoryRootV1(), ".setfarm", ".fixture-loaded-instance-drift"))) {
+      response.startupInstance.instanceId = "20000000-0000-4000-8000-000000000002";
+    }
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-startup-stale"))) response.startupInstance.pid = fixtureLoadedServicePidV1 + 1;
     if (optionalLstat(path.join(repositoryRootV1(), ".fixture-crossed-loaded-source"))) {
       response.loadedBuild.buildIdentity.sourceSha = "f".repeat(40);
       response.loadedBuild.buildIdentity.treeHash = "e".repeat(40);
@@ -541,9 +557,17 @@ function requireSuccessfulChild`,
   const observed = { sourceBuild: fixtureSourceBuild, productBuildAuthorityV2Observation };
   // OA18_PRIVATE_FIXTURE_AUTHORITIES_END`,
   );
+  source = source.replace(
+    /  \/\/ OA18_PRIVATE_FIXTURE_PBA_V2_START\n[\s\S]*?  \/\/ OA18_PRIVATE_FIXTURE_PBA_V2_END/,
+    `  // OA18_PRIVATE_FIXTURE_PBA_V2_START
+  const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;
+  // OA18_PRIVATE_FIXTURE_PBA_V2_END`,
+  );
   assert.equal(source.includes(".fixture-retention-v1"), true);
+  assert.equal(source.includes("const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;"), true);
   writeFileSync(modulePath, source);
-  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n.fixture*\nLibrary/\ndist-server/\n");
+  git(root, ["add", ".gitignore", "scripts/build-generation-retention.mjs"]);
   git(root, ["commit", "--amend", "--no-edit", "-q"]);
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
 }
@@ -592,6 +616,13 @@ function prepareRetentionOperation(root) {
   });
 }
 
+function resumeRetentionOperation(root, pair) {
+  return spawnSync(process.execPath, [
+    "scripts/build-generation-retention.mjs", "resume", "--operation-ref", pair.operationRef,
+    "--operation-hash", pair.operationHash, "--json",
+  ], { cwd: root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+}
+
 function installTerminalCrashSequence(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
@@ -617,6 +648,72 @@ function installTerminalCrashSequence(root) {
     }
 ${dispositionBoundary}`);
   writeFileSync(modulePath, source);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "--amend", "--no-edit", "-q"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function retentionPublicationSnapshot(root) {
+  const snapshot = (directory) => existsSync(directory)
+    ? readdirSync(directory).sort().map((name) => {
+      const file = join(directory, name);
+      return [name, createHash("sha256").update(readFileSync(file)).digest("hex")];
+    })
+    : null;
+  return {
+    operations: snapshot(join(root, ".fixture-retention-v1/operations/sha256")),
+    operationCandidates: snapshot(join(root, ".fixture-retention-v1/operation-candidates/sha256")),
+    eraseSteps: snapshot(join(root, ".fixture-retention-v1/erase-steps/sha256")),
+    receipts: snapshot(join(root, ".fixture-retention-v1/receipts/sha256")),
+    dispositions: snapshot(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")),
+    quarantine: existsSync(join(root, ".setfarm/build-generation-quarantine-v1")),
+  };
+}
+
+function installEveryNonRootErasePublicationCrash(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  let source = readFileSync(modulePath, "utf8");
+  const intentBoundary = `        });
+      }
+      const target = step.locator === "." ? quarantine : path.join(quarantine, step.locator);`;
+  assert.equal(source.includes(intentBoundary), true);
+  source = source.replace(intentBoundary, `        });
+        if (step.locator !== ".") {
+          const marker = path.join(root, ".fixture-v2-erase-intent-crash-" + chain.nextOrdinal);
+          if (!optionalLstat(marker)) {
+            writeFileSync(marker, "crashed\\n");
+            process.exit(91);
+          }
+        }
+      }
+      const target = step.locator === "." ? quarantine : path.join(quarantine, step.locator);`);
+  const completionBoundary = `      });
+      chain = Object.freeze({ nextOrdinal: chain.nextOrdinal + 1, predecessorCompletion: eraseRecordPairV1(completion, "completion"), unmatchedIntent: null, finalCompletion: eraseRecordPairV1(completion, "completion") });`;
+  assert.equal(source.includes(completionBoundary), true);
+  source = source.replace(completionBoundary, `      });
+      if (step.locator !== ".") {
+        const marker = path.join(root, ".fixture-v2-erase-completion-crash-" + chain.nextOrdinal);
+        if (!optionalLstat(marker)) {
+          writeFileSync(marker, "crashed\\n");
+          process.exit(92);
+        }
+      }
+      chain = Object.freeze({ nextOrdinal: chain.nextOrdinal + 1, predecessorCompletion: eraseRecordPairV1(completion, "completion"), unmatchedIntent: null, finalCompletion: eraseRecordPairV1(completion, "completion") });`);
+  writeFileSync(modulePath, source);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "--amend", "--no-edit", "-q"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function installFixedGitLineOutputFault(root, output) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  const source = readFileSync(modulePath, "utf8");
+  const boundary = "function fixedGitResultV2(root, argv) {";
+  assert.equal(source.includes(boundary), true);
+  writeFileSync(modulePath, source.replace(boundary, `${boundary}
+  if (argv[0] === "branch" && argv[1] === "--show-current") {
+    return { error: null, signal: null, status: 0, stdout: Buffer.from(${JSON.stringify(output)}, "utf8"), stderr: Buffer.alloc(0) };
+  }`));
   git(root, ["add", "scripts/build-generation-retention.mjs"]);
   git(root, ["commit", "--amend", "--no-edit", "-q"]);
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -748,6 +845,137 @@ async function importFixtureInternals(root, names) {
   return import(`${pathToFileURL(modulePath).href}?fixture=${Date.now()}-${Math.random()}`);
 }
 
+function installStaleBuildAuthorityProbe(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  const source = readFileSync(modulePath, "utf8");
+  writeFileSync(modulePath, `${source}\nexport { observeCurrentRetentionControllerSourceV2, observeRetainedCurrentBuildV1 };\n`);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "--amend", "--no-edit", "-q"]);
+  git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function prepareStaleBuildAuthorityFixture() {
+  const root = createFixture();
+  installStaleBuildAuthorityProbe(root);
+  const retainedSourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const retainedSourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+  const retainedPinned = fixturePinnedInputSet(root, retainedSourceSha);
+  const retainedBuildHash = writeFinalizedRuntimeDist(root);
+  const buildInfoBytes = readFileSync(join(root, "dist/BUILD_INFO.json"));
+  const outputTree = JSON.parse(readFileSync(join(root, "dist/PLATFORM_BUILD_OUTPUT_TREE.json"), "utf8"));
+  const releaseManifest = JSON.parse(readFileSync(join(root, "dist/PLATFORM_RELEASE_MANIFEST.json"), "utf8"));
+  fixtureFile(root, "tracked.txt", "current controller source\n");
+  git(root, ["add", "tracked.txt"]);
+  git(root, ["commit", "-qm", "advance controller source"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const controllerSourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const controllerSourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+  const controllerPinned = fixturePinnedInputSet(root, controllerSourceSha);
+  return {
+    root,
+    retainedSourceSha,
+    retainedSourceTreeHash,
+    retainedPinned,
+    retainedBuildHash,
+    buildInfoBytes,
+    outputTree,
+    releaseManifest,
+    controllerSourceSha,
+    controllerSourceTreeHash,
+    controllerPinned,
+  };
+}
+
+async function importStaleBuildAuthorityFixture(root) {
+  return import(`${pathToFileURL(join(root, "scripts/build-generation-retention.mjs")).href}?stale-build-authority=${Date.now()}-${Math.random()}`);
+}
+
+function task1AuthorityStoreSnapshot(root) {
+  return {
+    setfarm: existsSync(join(root, ".setfarm")),
+    retention: existsSync(join(root, ".fixture-retention-v1")),
+  };
+}
+
+function rewriteFinalizedFixtureJson(root, locator, transform, pretty = false) {
+  const target = join(root, "dist", locator);
+  const value = transform(JSON.parse(readFileSync(target, "utf8")));
+  chmodSync(target, 0o644);
+  writeFileSync(target, `${JSON.stringify(value, null, pretty ? 2 : undefined)}\n`);
+  chmodSync(target, 0o444);
+}
+
+function prepareGenerationBoundFixture(count, { advance = true, writerCap = 8 } = {}) {
+  const root = createFixture();
+  if (writerCap !== 8) {
+    const modulePath = join(root, "scripts/build-generation-retention.mjs");
+    const source = readFileSync(modulePath, "utf8");
+    const boundary = "if (inspection.generations.filter((generation) => generation.disposition === null).length >= 8)";
+    assert.equal(source.includes(boundary), true);
+    writeFileSync(modulePath, source.replace(boundary, `if (inspection.generations.filter((generation) => generation.disposition === null).length >= ${writerCap})`));
+    git(root, ["add", "scripts/build-generation-retention.mjs"]);
+    git(root, ["commit", "--amend", "--no-edit", "-q"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  }
+  installPrivateRetentionObservers(root);
+  for (let ordinal = 1; ordinal <= count; ordinal += 1) {
+    rotateFixtureGeneration(root, fixtureBuildId(ordinal), String(ordinal));
+  }
+  const retainedSourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const retainedBuildHash = writeFinalizedRuntimeDist(root);
+  if (advance) {
+    fixtureFile(root, "tracked.txt", "post-build controller source\n");
+    git(root, ["add", "tracked.txt"]);
+    git(root, ["commit", "-qm", "advance after retained build"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  }
+  return { root, retainedSourceSha, retainedBuildHash, controllerSourceSha: git(root, ["rev-parse", "HEAD^{commit}"]) };
+}
+
+function assertNoGenerationDisposition(root, expectedArchives) {
+  assert.equal(readdirSync(join(root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, expectedArchives);
+  assert.equal(existsSync(join(root, ".setfarm/build-generation-quarantine-v1")), false);
+  assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
+}
+
+function installV2PrepareCrash(root, phase) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  let source = readFileSync(modulePath, "utf8");
+  const boundary = phase === "operation"
+    ? '    publishNoReplaceFileV1(stores.operations, `${operation.operationHash}.json`, canonicalRecordBytes(operation), 0o600);'
+    : "    publishNoReplaceFileV1(stores.operationCandidates, candidateIndexNameV1(candidateCompletion), canonicalRecordBytes(index), 0o600);";
+  assert.equal(source.includes(boundary), true);
+  source = source.replace(boundary, `${boundary}
+    if (!optionalLstat(path.join(root, ".setfarm", ".fixture-v2-${phase}-crash"))) {
+      writeFileSync(path.join(root, ".setfarm", ".fixture-v2-${phase}-crash"), "crashed\\n");
+      process.exit(${phase === "operation" ? 91 : 92});
+    }`);
+  const captureBoundary = "    const indexFile = path.join(stores.operationCandidates, candidateIndexNameV1(candidateCompletion));";
+  assert.equal(source.includes(captureBoundary), true);
+  source = source.replace(captureBoundary, `    const fixtureCaptureRoot = path.join(root, ".setfarm");
+    const fixtureCaptures = readdirSync(fixtureCaptureRoot).filter((name) => /^\\.fixture-v2-prepare-core-[0-9]+\\.json$/.test(name));
+    writeFileSync(path.join(fixtureCaptureRoot, ".fixture-v2-prepare-core-" + fixtureCaptures.length + ".json"), JSON.stringify(publicationOperationCore));
+${captureBoundary}`);
+  writeFileSync(modulePath, source);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "-qm", `inject ${phase} response loss`]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function installV1OnlyPrepareRegression(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  let source = readFileSync(modulePath, "utf8");
+  const v2Branch = `      operationVersion = 2;
+      authorities = observeOperationAuthoritiesV2(root, inspectionBefore);`;
+  assert.equal(source.includes(v2Branch), true);
+  source = source.replace(v2Branch, "      authorities = observeOperationAuthoritiesV1(root);");
+  writeFileSync(modulePath, source);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "-qm", "restore v1-only prepare"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
 describe("OA18 build-generation retention authority", () => {
   it("imports the operator module without executing its CLI", async () => {
     const authority = await import("../build-generation-retention.mjs");
@@ -768,6 +996,781 @@ describe("OA18 build-generation retention authority", () => {
     assert.equal(typeof authority.planNoReplacePublisherRecoveryV1, "function");
     assert.equal(authority.inspectBuildGenerationRotationLedgerV1.length, 0);
     assert.equal(authority.inspectBuildGenerationRetentionV1.length, 0);
+  });
+
+  it("OA18 v2 freezes the private schema dispatcher and source boundary", () => {
+    const source = readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs"), "utf8");
+    assert.deepEqual([...new Set(source.match(/setfarm\.platform-build-generation-retention-operation\.v[0-9]+/g))].sort(), [
+      "setfarm.platform-build-generation-retention-operation.v1",
+      "setfarm.platform-build-generation-retention-operation.v2",
+    ]);
+    for (const name of [
+      "observeCurrentRetentionControllerSourceV2",
+      "observeRetainedCurrentBuildV1",
+      "observeOperationAuthoritiesV2",
+      "parseRetentionOperationV1",
+      "parseRetentionOperationV2",
+      "parseRetentionOperationV1OrV2",
+      "validateHistoricalClosureV1",
+      "validateHistoricalClosureV2",
+    ]) {
+      assert.equal((source.match(new RegExp(`function ${name}\\(`, "g")) ?? []).length, 1, name);
+      assert.equal(new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\(`).test(source), false, name);
+    }
+    assert.equal((source.match(/\["merge-base", "--is-ancestor", buildInfo\.sha, controllerSource\.sourceSha\]/g) ?? []).length, 1);
+    assert.equal((source.match(/operation_retained_current_setfarm_build/g) ?? []).length >= 4, true);
+    for (const field of [
+      'PATH: "/usr/bin:/bin"',
+      'GIT_CONFIG_NOSYSTEM: "1"',
+      'GIT_CONFIG_GLOBAL: "/dev/null"',
+      'GIT_NO_REPLACE_OBJECTS: "1"',
+      'GIT_OPTIONAL_LOCKS: "0"',
+      'GIT_TERMINAL_PROMPT: "0"',
+      '"-c", "core.hooksPath=/dev/null"',
+      '"-c", "core.fsmonitor=false"',
+    ]) assert.equal(source.includes(field), true, field);
+    assert.match(source, /function gitBytes\(root, args, purpose\) \{\n  return requireSuccessfulChild\(fixedGitResultV2\(root, args\), purpose\);\n\}/);
+    assert.equal(source.includes("process.env"), false);
+    assert.equal(source.includes("rmSync("), false);
+    assert.equal(source.includes('from "./write-build-info.mjs"'), false);
+  });
+
+  it("OA18 v2 separates current controller source from the retained finalized build", async () => {
+    const fixture = prepareStaleBuildAuthorityFixture();
+    const { root } = fixture;
+    try {
+      const authority = await importStaleBuildAuthorityFixture(root);
+      const repositoryRoot = realpathSync(root);
+      const controllerSource = authority.observeCurrentRetentionControllerSourceV2(repositoryRoot);
+      const retainedCurrentBuild = authority.observeRetainedCurrentBuildV1(repositoryRoot, controllerSource);
+
+      assert.deepEqual(controllerSource, {
+        branch: "main",
+        clean: true,
+        sourceSha: fixture.controllerSourceSha,
+        sourceTreeHash: fixture.controllerSourceTreeHash,
+        originMainSha: fixture.controllerSourceSha,
+        buildInputSetHash: fixture.controllerPinned.buildInputSetHash,
+      });
+      assert.deepEqual(retainedCurrentBuild, {
+        schema: "setfarm.platform-build-generation-retained-current-build.v1",
+        sourceSha: fixture.retainedSourceSha,
+        sourceTreeHash: fixture.retainedSourceTreeHash,
+        buildHash: fixture.retainedBuildHash,
+        buildInputSetHash: fixture.retainedPinned.buildInputSetHash,
+        buildInfoHash: createHash("sha256").update(fixture.buildInfoBytes).digest("hex"),
+        outputTreeHash: fixture.outputTree.outputTreeHash,
+        releaseManifestHash: hashCanonicalFixture(fixture.releaseManifest),
+      });
+      assert.notEqual(retainedCurrentBuild.sourceSha, controllerSource.sourceSha);
+      assert.deepEqual(task1AuthorityStoreSnapshot(root), { setfarm: false, retention: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 pins Git configuration, replacement objects, and exact line output", async (context) => {
+    await context.test("hostile local fsmonitor and replacement objects are ignored", async () => {
+      const fixture = prepareStaleBuildAuthorityFixture();
+      try {
+        const marker = join(fixture.root, ".git", "fixture-fsmonitor-called");
+        const monitor = join(fixture.root, ".git", "fixture-fsmonitor");
+        writeFileSync(monitor, `#!/bin/sh\nprintf called > ${JSON.stringify(marker)}\n`);
+        chmodSync(monitor, 0o755);
+        git(fixture.root, ["config", "core.fsmonitor", monitor]);
+        git(fixture.root, ["replace", fixture.controllerSourceSha, fixture.retainedSourceSha]);
+        const authority = await importStaleBuildAuthorityFixture(fixture.root);
+        const observed = authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root));
+        assert.equal(observed.sourceSha, fixture.controllerSourceSha);
+        assert.equal(observed.sourceTreeHash, fixture.controllerSourceTreeHash);
+        assert.equal(existsSync(marker), false);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("caller global Git configuration is ignored", async () => {
+      const fixture = prepareStaleBuildAuthorityFixture();
+      try {
+        const marker = join(fixture.root, ".git", "fixture-global-fsmonitor-called");
+        const monitor = join(fixture.root, ".git", "fixture-global-fsmonitor");
+        const globalConfig = join(fixture.root, ".git", "fixture-global-config");
+        writeFileSync(monitor, `#!/bin/sh\nprintf called > ${JSON.stringify(marker)}\n`);
+        chmodSync(monitor, 0o755);
+        writeFileSync(globalConfig, `[core]\n\tfsmonitor = ${monitor}\n`);
+        const names = ["GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_NO_REPLACE_OBJECTS", "GIT_OPTIONAL_LOCKS", "GIT_TERMINAL_PROMPT"];
+        const prior = new Map(names.map((name) => [name, process.env[name]]));
+        Object.assign(process.env, {
+          GIT_CONFIG_NOSYSTEM: "0",
+          GIT_CONFIG_GLOBAL: globalConfig,
+          GIT_NO_REPLACE_OBJECTS: "0",
+          GIT_OPTIONAL_LOCKS: "1",
+          GIT_TERMINAL_PROMPT: "1",
+        });
+        try {
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          const observed = authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root));
+          assert.equal(observed.sourceSha, fixture.controllerSourceSha);
+          assert.equal(observed.sourceTreeHash, fixture.controllerSourceTreeHash);
+          assert.equal(existsSync(marker), false);
+        } finally {
+          for (const [name, value] of prior) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          }
+        }
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    for (const output of ["main \\n", "\\nmain\\n", "main\\n\\n"]) {
+      await context.test(`rejects non-exact Git line ${JSON.stringify(output)}`, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          installFixedGitLineOutputFault(fixture.root, output);
+          const authority = await importFixtureInternals(fixture.root, ["requireFixedGitLineV2"]);
+          assert.throws(
+            () => authority.requireFixedGitLineV2(realpathSync(fixture.root), ["branch", "--show-current"], "fixture exact Git line"),
+            /Git|output|line|invalid/i,
+          );
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 refuses crossed controller and retained-build authorities before store mutation", async (context) => {
+    const controllerRows = [
+      ["dirty worktree", (fixture) => fixtureFile(fixture.root, "tracked.txt", "dirty\n")],
+      ["wrong branch", (fixture) => git(fixture.root, ["checkout", "-qb", "not-main"])],
+      ["stale origin", (fixture) => git(fixture.root, ["update-ref", "refs/remotes/origin/main", fixture.retainedSourceSha])],
+    ];
+    for (const [name, mutate] of controllerRows) {
+      await context.test(name, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          mutate(fixture);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          assert.throws(
+            () => authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root)),
+            /controller|clean|branch|origin|source/i,
+          );
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    const retainedRows = [
+      ["equal source", (fixture) => { writeFinalizedRuntimeDist(fixture.root); }],
+      ["nonancestor source", (fixture) => {
+        const tree = git(fixture.root, ["rev-parse", "HEAD^{tree}"]);
+        const result = spawnSync("/usr/bin/git", ["commit-tree", tree], {
+          cwd: fixture.root,
+          encoding: "utf8",
+          input: "divergent controller\n",
+          env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const divergent = result.stdout.trim();
+        git(fixture.root, ["update-ref", "refs/heads/main", divergent]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", divergent]);
+      }],
+      ["missing historical object", (fixture) => {
+        const objectPath = join(fixture.root, ".git", "objects", fixture.retainedSourceSha.slice(0, 2), fixture.retainedSourceSha.slice(2));
+        rmSync(objectPath);
+      }],
+      ["malformed terminal JSON", (fixture) => {
+        const target = join(fixture.root, "dist/BUILD_INFO.json");
+        chmodSync(target, 0o644);
+        writeFileSync(target, "{\n");
+        chmodSync(target, 0o444);
+      }],
+      ["wrong terminal mode", (fixture) => chmodSync(join(fixture.root, "dist/BUILD_INFO.json"), 0o644)],
+      ["hardlinked terminal authority", (fixture) => linkSync(join(fixture.root, "dist/BUILD_INFO.json"), join(fixture.root, "dist/BUILD_INFO.link"))],
+      ["crossed output source", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_BUILD_OUTPUT_TREE.json", (value) => ({ ...value, sourceSha: fixture.controllerSourceSha }))],
+      ["ordinary output drift", (fixture) => fixtureFile(fixture.root, "dist/service.js", "export const fixtureRuntime = false;\n")],
+      ["build-info byte drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "BUILD_INFO.json", (value) => value, false)],
+      ["manifest drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_RELEASE_MANIFEST.json", (value) => ({
+        ...value,
+        stitchConverter: { ...value.stitchConverter, converterId: "crossed.converter" },
+      }))],
+      ["controller-build hash drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_BUILD_OUTPUT_TREE.json", (value) => ({ ...value, outputTreeHash: "f".repeat(64) }))],
+    ];
+    for (const [name, mutate] of retainedRows) {
+      await context.test(name, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          const repositoryRoot = realpathSync(fixture.root);
+          if (name === "nonancestor source") mutate(fixture);
+          const controller = authority.observeCurrentRetentionControllerSourceV2(repositoryRoot);
+          if (name !== "nonancestor source") mutate(fixture);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          assert.throws(
+            () => authority.observeRetainedCurrentBuildV1(repositoryRoot, controller),
+            /retained|loaded Setfarm|historical|finalized|authority|ancestor|build|mode|link|Git/i,
+          );
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 prepares the lowest generation under the exact eight-generation stale-build deadlock", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    const { root } = fixture;
+    try {
+      const prepared = prepareRetentionOperation(root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v2");
+      assert.equal(operation.operationCore.candidateOrdinal, 1);
+      assert.equal(operation.operationCore.controllerSource.sourceSha, fixture.controllerSourceSha);
+      assert.equal(operation.operationCore.retainedCurrentBuild.sourceSha, fixture.retainedSourceSha);
+      assert.equal(operation.operationCore.retainedCurrentBuild.buildHash, fixture.retainedBuildHash);
+      for (const expected of operation.operationCore.expectedRuntimeSources.slice(0, 2)) {
+        assert.equal(expected.provenance, "operation_retained_current_setfarm_build");
+        assert.deepEqual(expected.sourcePair, {
+          sourceSha: operation.operationCore.retainedCurrentBuild.sourceSha,
+          sourceTreeHash: operation.operationCore.retainedCurrentBuild.sourceTreeHash,
+          controllerBuildHash: operation.operationCore.retainedCurrentBuild.buildHash,
+        });
+        assert.deepEqual(expected.sourceBody, operation.operationCore.retainedCurrentBuild);
+      }
+      assertNoGenerationDisposition(root, 8);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 refuses ineligible or crossed prepare prefixes without disposition", async (context) => {
+    for (const [name, create, mutate] of [
+      ["seven active stale generations", () => prepareGenerationBoundFixture(7), () => {}],
+      ["nine active stale generations", () => prepareGenerationBoundFixture(9, { writerCap: 9 }), () => {}],
+      ["missing finalized dist", () => prepareGenerationBoundFixture(8), ({ root }) => rmSync(join(root, "dist"), { recursive: true })],
+      ["nonancestor retained build", () => prepareGenerationBoundFixture(8), ({ root }) => {
+        const tree = git(root, ["rev-parse", "HEAD^{tree}"]);
+        const result = spawnSync("/usr/bin/git", ["commit-tree", tree], { cwd: root, encoding: "utf8", input: "divergent\n" });
+        assert.equal(result.status, 0, result.stderr);
+        const divergent = result.stdout.trim();
+        git(root, ["update-ref", "refs/heads/main", divergent]);
+        git(root, ["update-ref", "refs/remotes/origin/main", divergent]);
+      }],
+      ["crossed current PBA", () => prepareGenerationBoundFixture(8), ({ root }) => fixtureFile(root, ".fixture-crossed-loaded-source", "crossed\n")],
+    ]) {
+      await context.test(name, () => {
+        const fixture = create();
+        try {
+          mutate(fixture);
+          const result = prepareRetentionOperation(fixture.root);
+          assert.notEqual(result.status, 0);
+          assertNoGenerationDisposition(fixture.root, name.startsWith("nine") ? 9 : name.startsWith("seven") ? 7 : 8);
+          const store = join(fixture.root, ".fixture-retention-v1");
+          if (existsSync(store)) {
+            assert.equal(readdirSync(join(store, "operations/sha256")).length, 0);
+            assert.equal(readdirSync(join(store, "operation-candidates/sha256")).length, 0);
+          }
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    await context.test("equal source remains the v1 operation", () => {
+      const fixture = prepareGenerationBoundFixture(8, { advance: false });
+      try {
+        const result = prepareRetentionOperation(fixture.root);
+        assert.equal(result.status, 0, result.stderr);
+        const pair = JSON.parse(result.stdout);
+        const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+        assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v1");
+        assertNoGenerationDisposition(fixture.root, 8);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("pre-existing v1 candidate index cannot be relabelled v2", () => {
+      const fixture = prepareGenerationBoundFixture(8, { advance: false });
+      try {
+        const first = prepareRetentionOperation(fixture.root);
+        assert.equal(first.status, 0, first.stderr);
+        fixtureFile(fixture.root, "tracked.txt", "post-v1 controller\n");
+        git(fixture.root, ["add", "tracked.txt"]);
+        git(fixture.root, ["commit", "-qm", "advance after v1 operation"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const second = prepareRetentionOperation(fixture.root);
+        assert.notEqual(second.status, 0);
+        assertNoGenerationDisposition(fixture.root, 8);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("pre-existing v2 candidate index cannot be relabelled v1", () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const first = prepareRetentionOperation(fixture.root);
+        assert.equal(first.status, 0, first.stderr);
+        const before = retentionPublicationSnapshot(fixture.root);
+        writeFinalizedRuntimeDist(fixture.root);
+        const second = prepareRetentionOperation(fixture.root);
+        assert.notEqual(second.status, 0);
+        assert.match(second.stderr, /schema|v1|v2|operation|crossed|differs/i);
+        assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+        assertNoGenerationDisposition(fixture.root, 8);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("OA18 v2 adopts operation and index publication response loss", async (context) => {
+    for (const phase of ["operation", "index"]) {
+      await context.test(phase, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          installV2PrepareCrash(fixture.root, phase);
+          const first = prepareRetentionOperation(fixture.root);
+          assert.equal(first.status, phase === "operation" ? 91 : 92, first.stderr);
+          const second = prepareRetentionOperation(fixture.root);
+          const capturedCores = readdirSync(join(fixture.root, ".setfarm"))
+            .filter((name) => /^\.fixture-v2-prepare-core-[0-9]+\.json$/.test(name))
+            .sort()
+            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".setfarm", name), "utf8")));
+          assert.equal(capturedCores.length, 2);
+          assert.deepEqual(capturedCores[1], capturedCores[0]);
+          assert.equal(second.status, 0, second.stderr);
+          const pair = JSON.parse(second.stdout);
+          const operationNames = readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+          const indexNames = readdirSync(join(fixture.root, ".fixture-retention-v1/operation-candidates/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+          assert.deepEqual(operationNames, [`${pair.operationHash}.json`]);
+          assert.equal(indexNames.length, 1);
+          assertNoGenerationDisposition(fixture.root, 8);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v1 and v2 operation-only recovery rejects crossed classifier schemas", async (context) => {
+    for (const [name, advanceBefore, transition] of [
+      ["v2 to v1", true, (fixture) => writeFinalizedRuntimeDist(fixture.root)],
+      ["v1 to v2", false, (fixture) => {
+        fixtureFile(fixture.root, "tracked.txt", "controller advanced after v1 operation-only crash\n");
+        git(fixture.root, ["add", "tracked.txt"]);
+        git(fixture.root, ["commit", "-qm", "advance after v1 operation-only crash"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      }],
+    ]) {
+      await context.test(name, () => {
+        const fixture = prepareGenerationBoundFixture(8, { advance: advanceBefore });
+        try {
+          installV2PrepareCrash(fixture.root, "operation");
+          const first = prepareRetentionOperation(fixture.root);
+          assert.equal(first.status, 91, first.stderr);
+          const before = retentionPublicationSnapshot(fixture.root);
+          transition(fixture);
+          const second = prepareRetentionOperation(fixture.root);
+          assert.notEqual(second.status, 0);
+          assert.match(second.stderr, /schema|v1|v2|operation|crossed|differs/i);
+          assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+          assertNoGenerationDisposition(fixture.root, 8);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 response-loss adoption requires the exact complete prepare proof", async (context) => {
+    for (const phase of ["operation", "index"]) {
+      await context.test(phase, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          installV2PrepareCrash(fixture.root, phase);
+          const first = prepareRetentionOperation(fixture.root);
+          assert.equal(first.status, phase === "operation" ? 91 : 92, first.stderr);
+          const before = retentionPublicationSnapshot(fixture.root);
+          writeFileSync(join(fixture.root, ".setfarm", ".fixture-loaded-instance-drift"), "drifted\n");
+          const second = prepareRetentionOperation(fixture.root);
+          const capturedCores = readdirSync(join(fixture.root, ".setfarm"))
+            .filter((name) => /^\.fixture-v2-prepare-core-[0-9]+\.json$/.test(name))
+            .sort()
+            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".setfarm", name), "utf8")));
+          assert.equal(capturedCores.length, 2);
+          const startupInstance = (core) => core.prepareZeroReferenceProof.launchAgentConfigs[2]
+            .loadedJobProjection.loadedProcess.missionControlLoadedBuildProof.response.startupInstance;
+          assert.equal(startupInstance(capturedCores[0]).instanceId, "10000000-0000-4000-8000-000000000001");
+          assert.equal(startupInstance(capturedCores[1]).instanceId, "20000000-0000-4000-8000-000000000002");
+          assert.notEqual(capturedCores[1].prepareZeroReferenceProofHash, capturedCores[0].prepareZeroReferenceProofHash);
+          assert.notEqual(second.status, 0);
+          assert.match(second.stderr, /proof|operation|authority|differs|startup/i);
+          assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+          assertNoGenerationDisposition(fixture.root, 8);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v1 preserves response-loss adoption across a fresh zero-reference proof", async (context) => {
+    for (const phase of ["operation", "index"]) {
+      await context.test(phase, () => {
+        const fixture = prepareGenerationBoundFixture(8, { advance: false });
+        try {
+          installV2PrepareCrash(fixture.root, phase);
+          writeFinalizedRuntimeDist(fixture.root);
+          const first = prepareRetentionOperation(fixture.root);
+          assert.equal(first.status, phase === "operation" ? 91 : 92, first.stderr);
+          writeFileSync(join(fixture.root, ".setfarm", ".fixture-loaded-instance-drift"), "drifted\n");
+          const second = prepareRetentionOperation(fixture.root);
+          assert.equal(second.status, 0, second.stderr);
+          const capturedCores = readdirSync(join(fixture.root, ".setfarm"))
+            .filter((name) => /^\.fixture-v2-prepare-core-[0-9]+\.json$/.test(name))
+            .sort()
+            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".setfarm", name), "utf8")));
+          assert.equal(capturedCores.length, 2);
+          assert.equal(capturedCores.every((core) => core.schema === "setfarm.platform-build-generation-retention-operation.v1"), true);
+          assert.notEqual(capturedCores[1].prepareZeroReferenceProofHash, capturedCores[0].prepareZeroReferenceProofHash);
+          const pair = JSON.parse(second.stdout);
+          assert.deepEqual(
+            readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)),
+            [`${pair.operationHash}.json`],
+          );
+          assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/operation-candidates/sha256")).length, 1);
+          assertNoGenerationDisposition(fixture.root, 8);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 resumes pair-only and permanently disposes only the selected retained generation", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const receiptPair = JSON.parse(resumed.stdout);
+      assert.match(receiptPair.receiptRef, /^setfarm:\/\/internal-production\/build-generation-retention-receipt\/sha256\/[0-9a-f]{64}$/);
+      assert.match(receiptPair.receiptHash, /^[0-9a-f]{64}$/);
+      assert.equal(existsSync(join(fixture.root, `.setfarm/build-generations-v1/${fixtureBuildId(1)}.dist`)), false);
+      assert.equal(existsSync(join(fixture.root, `.setfarm/build-generation-quarantine-v1/${pair.operationHash}.dist`)), false);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, 7);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+      const replay = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, resumed.stdout);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 historical v1 records remain terminally resolvable after the controller source advances", () => {
+    const root = createFixture();
+    try {
+      prepareThreeGenerationFixture(root);
+      const prepared = prepareRetentionOperation(root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const receiptPair = JSON.parse(resumed.stdout);
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// later controller source\n`);
+      git(root, ["add", "scripts/build-generation-retention.mjs"]);
+      git(root, ["commit", "-qm", "advance retention controller"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const inspected = spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "inspect"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      assert.equal(inspected.status, 0, inspected.stderr);
+      const body = JSON.parse(inspected.stdout);
+      assert.deepEqual(body.receipts, [receiptPair]);
+      assert.equal(body.rotation.generations.filter((generation) => generation.disposition === null).length, 2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 post-v2 v1 resume adopts a quarantine-rename crash under equal source", () => {
+    const root = createFixture();
+    try {
+      installPrivateRetentionObservers(root);
+      for (let ordinal = 1; ordinal <= 8; ordinal += 1) rotateFixtureGeneration(root, fixtureBuildId(ordinal), String(ordinal));
+      installQuarantineRenameCrash(root);
+      writeFinalizedRuntimeDist(root);
+      const prepared = prepareRetentionOperation(root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v1");
+      const crashed = resumeRetentionOperation(root, pair);
+      assert.equal(crashed.status, 91, crashed.stderr);
+      const resumed = resumeRetentionOperation(root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const replay = resumeRetentionOperation(root, pair);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, resumed.stdout);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generations-v1")).filter((entry) => entry.endsWith(".dist")).length, 7);
+      assert.equal(existsSync(join(root, ".setfarm/build-generation-quarantine-v1", `${pair.operationHash}.dist`)), false);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 resume recovers quarantine, terminal receipt, and disposition response loss", async (context) => {
+    for (const [name, install, expectedCrashes] of [
+      ["quarantine rename", installQuarantineRenameCrash, [91]],
+      ["root receipt disposition", installTerminalCrashSequence, [91, 92, 93]],
+    ]) {
+      await context.test(name, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          install(fixture.root);
+          const prepared = prepareRetentionOperation(fixture.root);
+          assert.equal(prepared.status, 0, prepared.stderr);
+          const pair = JSON.parse(prepared.stdout);
+          for (const expected of expectedCrashes) {
+            const crashed = resumeRetentionOperation(fixture.root, pair);
+            assert.equal(crashed.status, expected, crashed.stderr);
+          }
+          const resumed = resumeRetentionOperation(fixture.root, pair);
+          assert.equal(resumed.status, 0, resumed.stderr);
+          const replay = resumeRetentionOperation(fixture.root, pair);
+          assert.equal(replay.status, 0, replay.stderr);
+          assert.equal(replay.stdout, resumed.stdout);
+          assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((entry) => entry.endsWith(".dist")).length, 7);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 resume adopts an unchanged controller closure and refuses changed controller bytes", async (context) => {
+    await context.test("HEAD-only advance", () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const prepared = prepareRetentionOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        fixtureFile(fixture.root, "tracked.txt", "later unrelated controller commit\n");
+        git(fixture.root, ["add", "tracked.txt"]);
+        git(fixture.root, ["commit", "-qm", "advance unrelated controller input"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.equal(resumed.status, 0, resumed.stderr);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+    await context.test("changed executing byte", () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const prepared = prepareRetentionOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+        writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// crossed executing byte\n`);
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.notEqual(resumed.status, 0);
+        assert.match(resumed.stderr, /executing (?:closure changed|bytes differ from Git)/i);
+        assertNoGenerationDisposition(fixture.root, 8);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("OA18 v2 resume reopens the exact retained build and ancestry before mutation", async (context) => {
+    const rows = [
+      ["builtAt-only byte drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "BUILD_INFO.json", (value) => ({
+        ...value,
+        builtAt: value.builtAt === "2026-01-01T00:00:00.000Z" ? "2026-01-02T00:00:00.000Z" : "2026-01-01T00:00:00.000Z",
+      }), true)],
+      ["terminal authority drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_RELEASE_MANIFEST.json", (value) => ({
+        ...value,
+        stitchConverter: { ...value.stitchConverter, converterId: "crossed.retained.converter" },
+      }))],
+      ["missing retained Git object", (fixture) => {
+        const objectPath = join(fixture.root, ".git", "objects", fixture.retainedSourceSha.slice(0, 2), fixture.retainedSourceSha.slice(2));
+        rmSync(objectPath);
+      }],
+      ["nonancestor finalized source", (fixture) => {
+        const tree = git(fixture.root, ["rev-parse", "HEAD^{tree}"]);
+        const result = spawnSync("/usr/bin/git", ["commit-tree", tree], {
+          cwd: fixture.root,
+          encoding: "utf8",
+          input: "divergent finalized source\n",
+          env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const divergent = result.stdout.trim();
+        git(fixture.root, ["update-ref", "refs/heads/main", divergent]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", divergent]);
+        writeFinalizedRuntimeDist(fixture.root);
+      }],
+    ];
+    for (const [name, mutate] of rows) {
+      await context.test(name, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          const prepared = prepareRetentionOperation(fixture.root);
+          assert.equal(prepared.status, 0, prepared.stderr);
+          const pair = JSON.parse(prepared.stdout);
+          const before = retentionPublicationSnapshot(fixture.root);
+          mutate(fixture);
+          const resumed = resumeRetentionOperation(fixture.root, pair);
+          assert.notEqual(resumed.status, 0);
+          assert.match(resumed.stderr, /retained|historical|ancestor|Git|build|authority|finalized/i);
+          assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+          assertNoGenerationDisposition(fixture.root, 8);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 resumes every non-root erase intent and completion response loss exactly once", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      installEveryNonRootErasePublicationCrash(fixture.root);
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const operation = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v2");
+      const nonRootCount = operation.operationCore.candidateInventory.entries.length;
+      for (let ordinal = 0; ordinal < nonRootCount; ordinal += 1) {
+        for (const expectedStatus of [91, 92]) {
+          const crashed = resumeRetentionOperation(fixture.root, pair);
+          assert.equal(crashed.status, expectedStatus, crashed.stderr);
+          const records = readdirSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256"))
+            .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256", name), "utf8")))
+            .filter((record) => record.recordKind === "intent" || record.recordKind === "completion");
+          assert.equal(new Set(records.map((record) => `${record.recordKind}:${record.ordinal}`)).size, records.length);
+          assert.equal(records.filter((record) => record.recordKind === "intent").length, ordinal + 1);
+          assert.equal(records.filter((record) => record.recordKind === "completion").length, ordinal + (expectedStatus === 92 ? 1 : 0));
+        }
+      }
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const replay = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, resumed.stdout);
+      const terminalRecords = readdirSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256"))
+        .map((name) => JSON.parse(readFileSync(join(fixture.root, ".fixture-retention-v1/erase-steps/sha256", name), "utf8")))
+        .filter((record) => record.recordKind === "intent" || record.recordKind === "completion");
+      assert.equal(terminalRecords.filter((record) => record.recordKind === "intent").length, nonRootCount + 1);
+      assert.equal(terminalRecords.filter((record) => record.recordKind === "completion").length, nonRootCount + 1);
+      assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).length, 1);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, 7);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 post-v2 v1 resume refuses a nonterminal operation from changed executing bytes", () => {
+    const fixture = prepareGenerationBoundFixture(8, { advance: false });
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// incompatible later controller\n`);
+      git(fixture.root, ["add", "scripts/build-generation-retention.mjs"]);
+      git(fixture.root, ["commit", "-qm", "install incompatible controller"]);
+      git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const beforeOperations = readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256"));
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.notEqual(resumed.status, 0);
+      assert.match(resumed.stderr, /executing (?:closure changed|bytes differ from Git)/i);
+      assert.deepEqual(readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")), beforeOperations);
+      assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).length, 0);
+      assertNoGenerationDisposition(fixture.root, 8);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 parser rejects crossed controller, retained build, runtime, closure, and candidate bodies", async () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const stored = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const { parseRetentionOperationV2, hashCanonicalJsonV1 } = await importFixtureInternals(fixture.root, ["parseRetentionOperationV2"]);
+      const crossedOperation = (mutate, { preservePair = true } = {}) => {
+        const value = structuredClone(stored);
+        mutate(value);
+        if (!preservePair) {
+          const digest = hashCanonicalJsonV1(value.operationCore);
+          value.operationHash = digest;
+          value.operationRef = `setfarm://internal-production/build-generation-retention-operation/sha256/${digest}`;
+          value.expectedQuarantineLocator = `.setfarm/build-generation-quarantine-v1/${digest}.dist`;
+        }
+        return value;
+      };
+      const rows = [
+        ["controller", (value) => { value.operationCore.controllerSource.buildInputSetHash = "f".repeat(64); }],
+        ["retained build", (value) => { value.operationCore.retainedCurrentBuild.buildInfoHash = "f".repeat(64); }],
+        ["retained output", (value) => { value.operationCore.retainedCurrentBuild.outputTreeHash = "f".repeat(64); }],
+        ["retained manifest", (value) => { value.operationCore.retainedCurrentBuild.releaseManifestHash = "f".repeat(64); }],
+        ["runtime provenance", (value) => { value.operationCore.expectedRuntimeSources[0].provenance = "operation_current_oa17_setfarm_source_build"; }],
+        ["runtime pair", (value) => { value.operationCore.expectedRuntimeSources[0].sourcePair.sourceSha = value.operationCore.controllerSource.sourceSha; }],
+        ["runtime body", (value) => { value.operationCore.expectedRuntimeSources[1].sourceBody.buildHash = "f".repeat(64); }],
+        ["closure entry", (value) => { value.operationCore.executingImplementationClosure.entries[0].sha256 = "f".repeat(64); }],
+        ["closure builtin", (value) => { value.operationCore.executingImplementationClosure.nodeBuiltinSpecifiers.push("node:fs"); }],
+        ["candidate identity", (value) => { value.operationCore.candidateArchiveIdentity.inoDecimal = "999"; }],
+        ["operation pair", (value) => { value.operationRef = `${value.operationRef}-crossed`; }, { preservePair: true }],
+      ];
+      for (const [name, mutate, options] of rows) {
+        assert.throws(() => parseRetentionOperationV2(crossedOperation(mutate, options)), /retention|runtime|closure|candidate|operation|crossed|invalid/i, name);
+      }
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 stale eight-generation success is impossible with the v1-only prepare branch", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      installV1OnlyPrepareRegression(fixture.root);
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.notEqual(prepared.status, 0);
+      assert.match(prepared.stderr, /loaded Setfarm|source\/build|BUILD_INFO|finalized/i);
+      const store = join(fixture.root, ".fixture-retention-v1");
+      if (existsSync(store)) {
+        assert.equal(readdirSync(join(store, "operations/sha256")).length, 0);
+        assert.equal(readdirSync(join(store, "operation-candidates/sha256")).length, 0);
+      }
+      assertNoGenerationDisposition(fixture.root, 8);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
   });
 
   it("classifies semantic-invalid publisher bytes for every retention store family", async () => {
