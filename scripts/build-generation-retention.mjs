@@ -1386,6 +1386,20 @@ function fixedGitResultV2(root, argv) {
   });
 }
 
+function requireFixedGitBlobV2(root, blobHash, purpose) {
+  if (!GIT_HASH.test(blobHash)) fail(`${purpose} object hash is invalid`);
+  const bytes = requireSuccessfulChild(spawnSync("/usr/bin/git", [...GIT_PREFIX_V2, "cat-file", "blob", blobHash], {
+    shell: false,
+    cwd: root,
+    env: GIT_ENV_V2,
+    timeout: RUNTIME_OBSERVER_TIMEOUT_MS_V1,
+    maxBuffer: MAX_FILE_BYTES_V1,
+    stdio: ["ignore", "pipe", "pipe"],
+  }), purpose);
+  if (bytes.length > MAX_FILE_BYTES_V1) fail(`${purpose} exceeds the file byte cap`);
+  return bytes;
+}
+
 function requireFixedGitLineV2(root, argv, purpose) {
   const bytes = requireSuccessfulChild(fixedGitResultV2(root, argv), purpose);
   if (
@@ -2161,7 +2175,7 @@ function historicalGitInputSetV2(root, sourceSha, sourceTreeHash) {
   for (const entry of entries) {
     if (prior !== null && compareBytes(prior, entry.locator) >= 0) fail("loaded Setfarm historical tree has duplicate locators");
     prior = entry.locator;
-    if (!blobs.has(entry.gitBlobHash)) blobs.set(entry.gitBlobHash, gitBytes(root, ["cat-file", "blob", entry.gitBlobHash], `loaded Setfarm Git blob ${entry.locator}`));
+    if (!blobs.has(entry.gitBlobHash)) blobs.set(entry.gitBlobHash, requireFixedGitBlobV2(root, entry.gitBlobHash, `loaded Setfarm Git blob ${entry.locator}`));
     totalBytes += blobs.get(entry.gitBlobHash).length;
     if (totalBytes > MAX_TOTAL_BYTES_V1) fail("loaded Setfarm historical blobs exceed the byte cap");
   }

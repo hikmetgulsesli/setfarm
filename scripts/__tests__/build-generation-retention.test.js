@@ -1030,6 +1030,10 @@ describe("OA18 build-generation retention authority", () => {
       '"-c", "core.fsmonitor=false"',
     ]) assert.equal(source.includes(field), true, field);
     assert.match(source, /function gitBytes\(root, args, purpose\) \{\n  return requireSuccessfulChild\(fixedGitResultV2\(root, args\), purpose\);\n\}/);
+    assert.match(source, /function requireFixedGitBlobV2\(root, blobHash, purpose\) \{/);
+    assert.match(source, /maxBuffer: MAX_FILE_BYTES_V1,/);
+    assert.match(source, /requireFixedGitBlobV2\(root, entry\.gitBlobHash, `loaded Setfarm Git blob \$\{entry\.locator\}`\)/);
+    assert.equal(/export\s+(?:async\s+)?function\s+requireFixedGitBlobV2\(/.test(source), false);
     assert.equal(source.includes("process.env"), false);
     assert.equal(source.includes("rmSync("), false);
     assert.equal(source.includes('from "./write-build-info.mjs"'), false);
@@ -1070,6 +1074,48 @@ describe("OA18 build-generation retention authority", () => {
   });
 
   it("OA18 v2 pins Git configuration, replacement objects, and exact line output", async (context) => {
+    await context.test("accepts a bounded historical Git blob larger than the observer buffer", async () => {
+      const root = createFixture();
+      try {
+        const bytes = Buffer.alloc(1_048_577, 0x61);
+        fixtureFile(root, "assets/bounded-large.bin", bytes);
+        git(root, ["add", "assets/bounded-large.bin"]);
+        git(root, ["commit", "-qm", "add bounded large historical input"]);
+        const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+        const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+        const authority = await importFixtureInternals(root, ["historicalGitInputSetV2"]);
+
+        const observed = authority.historicalGitInputSetV2(realpathSync(root), sourceSha, sourceTreeHash);
+
+        const entry = observed.entries.find((candidate) => candidate.locator === "assets/bounded-large.bin");
+        assert.ok(entry);
+        assert.deepEqual(observed.blobs.get(entry.gitBlobHash), bytes);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("rejects a historical Git blob above the file byte cap", async () => {
+      const root = createFixture();
+      try {
+        fixtureFile(root, "assets/oversized.bin", Buffer.alloc(33_554_433, 0x62));
+        git(root, ["add", "assets/oversized.bin"]);
+        git(root, ["commit", "-qm", "add oversized historical input"]);
+        const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+        const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+        const authority = await importFixtureInternals(root, ["historicalGitInputSetV2"]);
+        const before = task1AuthorityStoreSnapshot(root);
+
+        assert.throws(
+          () => authority.historicalGitInputSetV2(realpathSync(root), sourceSha, sourceTreeHash),
+          /Git blob|byte cap|failed/i,
+        );
+        assert.deepEqual(task1AuthorityStoreSnapshot(root), before);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     await context.test("hostile local fsmonitor and replacement objects are ignored", async () => {
       const fixture = prepareStaleBuildAuthorityFixture();
       try {
