@@ -50,21 +50,26 @@ function hashCanonicalFixture(value) {
   return createHash("sha256").update(canonicalFixtureJson(value)).digest("hex");
 }
 
-function writeFinalizedRuntimeDist(root) {
-  const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
-  const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+function fixturePinnedInputSet(root, sourceSha) {
+  const sourceTreeHash = git(root, ["rev-parse", `${sourceSha}^{tree}`]);
   const listing = execFileSync("/usr/bin/git", ["ls-tree", "-r", "-z", "--full-tree", sourceSha], { cwd: root });
   const entries = listing.toString("utf8").split("\0").filter(Boolean).map((record) => {
     const match = /^(100644|100755) blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/.exec(record);
     assert.ok(match, `invalid fixture Git entry: ${record}`);
     return { locator: match[3], gitMode: match[1], gitBlobHash: match[2] };
   }).sort((left, right) => Buffer.compare(Buffer.from(left.locator), Buffer.from(right.locator)));
-  const buildInputSetHash = hashCanonicalFixture({
+  const body = {
     schema: "setfarm.internal-production-pinned-build-input-set.v1",
     sourceSha,
     sourceTreeHash,
     entries,
-  });
+  };
+  return { ...body, buildInputSetHash: hashCanonicalFixture(body) };
+}
+
+function writeFinalizedRuntimeDist(root) {
+  const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const { sourceTreeHash, entries, buildInputSetHash } = fixturePinnedInputSet(root, sourceSha);
   const serviceBytes = Buffer.from("export const fixtureRuntime = true;\n", "utf8");
   const outputEntries = [{
     locator: "dist/service.js",
@@ -748,6 +753,67 @@ async function importFixtureInternals(root, names) {
   return import(`${pathToFileURL(modulePath).href}?fixture=${Date.now()}-${Math.random()}`);
 }
 
+function installStaleBuildAuthorityProbe(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  const source = readFileSync(modulePath, "utf8");
+  writeFileSync(modulePath, `${source}\nexport { observeCurrentRetentionControllerSourceV2, observeRetainedCurrentBuildV1 };\n`);
+  git(root, ["add", "scripts/build-generation-retention.mjs"]);
+  git(root, ["commit", "--amend", "--no-edit", "-q"]);
+  git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
+function prepareStaleBuildAuthorityFixture() {
+  const root = createFixture();
+  installStaleBuildAuthorityProbe(root);
+  const retainedSourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const retainedSourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+  const retainedPinned = fixturePinnedInputSet(root, retainedSourceSha);
+  const retainedBuildHash = writeFinalizedRuntimeDist(root);
+  const buildInfoBytes = readFileSync(join(root, "dist/BUILD_INFO.json"));
+  const outputTree = JSON.parse(readFileSync(join(root, "dist/PLATFORM_BUILD_OUTPUT_TREE.json"), "utf8"));
+  const releaseManifest = JSON.parse(readFileSync(join(root, "dist/PLATFORM_RELEASE_MANIFEST.json"), "utf8"));
+  fixtureFile(root, "tracked.txt", "current controller source\n");
+  git(root, ["add", "tracked.txt"]);
+  git(root, ["commit", "-qm", "advance controller source"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const controllerSourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+  const controllerSourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+  const controllerPinned = fixturePinnedInputSet(root, controllerSourceSha);
+  return {
+    root,
+    retainedSourceSha,
+    retainedSourceTreeHash,
+    retainedPinned,
+    retainedBuildHash,
+    buildInfoBytes,
+    outputTree,
+    releaseManifest,
+    controllerSourceSha,
+    controllerSourceTreeHash,
+    controllerPinned,
+  };
+}
+
+async function importStaleBuildAuthorityFixture(root) {
+  return import(`${pathToFileURL(join(root, "scripts/build-generation-retention.mjs")).href}?stale-build-authority=${Date.now()}-${Math.random()}`);
+}
+
+function task1AuthorityStoreSnapshot(root) {
+  return {
+    setfarm: existsSync(join(root, ".setfarm")),
+    retention: existsSync(join(root, ".fixture-retention-v1")),
+  };
+}
+
+function rewriteFinalizedFixtureJson(root, locator, transform, pretty = false) {
+  const target = join(root, "dist", locator);
+  const value = transform(JSON.parse(readFileSync(target, "utf8")));
+  chmodSync(target, 0o644);
+  writeFileSync(target, `${JSON.stringify(value, null, pretty ? 2 : undefined)}\n`);
+  chmodSync(target, 0o444);
+}
+
 describe("OA18 build-generation retention authority", () => {
   it("imports the operator module without executing its CLI", async () => {
     const authority = await import("../build-generation-retention.mjs");
@@ -768,6 +834,122 @@ describe("OA18 build-generation retention authority", () => {
     assert.equal(typeof authority.planNoReplacePublisherRecoveryV1, "function");
     assert.equal(authority.inspectBuildGenerationRotationLedgerV1.length, 0);
     assert.equal(authority.inspectBuildGenerationRetentionV1.length, 0);
+  });
+
+  it("OA18 v2 separates current controller source from the retained finalized build", async () => {
+    const fixture = prepareStaleBuildAuthorityFixture();
+    const { root } = fixture;
+    try {
+      const authority = await importStaleBuildAuthorityFixture(root);
+      const repositoryRoot = realpathSync(root);
+      const controllerSource = authority.observeCurrentRetentionControllerSourceV2(repositoryRoot);
+      const retainedCurrentBuild = authority.observeRetainedCurrentBuildV1(repositoryRoot, controllerSource);
+
+      assert.deepEqual(controllerSource, {
+        branch: "main",
+        clean: true,
+        sourceSha: fixture.controllerSourceSha,
+        sourceTreeHash: fixture.controllerSourceTreeHash,
+        originMainSha: fixture.controllerSourceSha,
+        buildInputSetHash: fixture.controllerPinned.buildInputSetHash,
+      });
+      assert.deepEqual(retainedCurrentBuild, {
+        schema: "setfarm.platform-build-generation-retained-current-build.v1",
+        sourceSha: fixture.retainedSourceSha,
+        sourceTreeHash: fixture.retainedSourceTreeHash,
+        buildHash: fixture.retainedBuildHash,
+        buildInputSetHash: fixture.retainedPinned.buildInputSetHash,
+        buildInfoHash: createHash("sha256").update(fixture.buildInfoBytes).digest("hex"),
+        outputTreeHash: fixture.outputTree.outputTreeHash,
+        releaseManifestHash: hashCanonicalFixture(fixture.releaseManifest),
+      });
+      assert.notEqual(retainedCurrentBuild.sourceSha, controllerSource.sourceSha);
+      assert.deepEqual(task1AuthorityStoreSnapshot(root), { setfarm: false, retention: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 refuses crossed controller and retained-build authorities before store mutation", async (context) => {
+    const controllerRows = [
+      ["dirty worktree", (fixture) => fixtureFile(fixture.root, "tracked.txt", "dirty\n")],
+      ["wrong branch", (fixture) => git(fixture.root, ["checkout", "-qb", "not-main"])],
+      ["stale origin", (fixture) => git(fixture.root, ["update-ref", "refs/remotes/origin/main", fixture.retainedSourceSha])],
+    ];
+    for (const [name, mutate] of controllerRows) {
+      await context.test(name, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          mutate(fixture);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          assert.throws(
+            () => authority.observeCurrentRetentionControllerSourceV2(realpathSync(fixture.root)),
+            /controller|clean|branch|origin|source/i,
+          );
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+
+    const retainedRows = [
+      ["equal source", (fixture) => { writeFinalizedRuntimeDist(fixture.root); }],
+      ["nonancestor source", (fixture) => {
+        const tree = git(fixture.root, ["rev-parse", "HEAD^{tree}"]);
+        const result = spawnSync("/usr/bin/git", ["commit-tree", tree], {
+          cwd: fixture.root,
+          encoding: "utf8",
+          input: "divergent controller\n",
+          env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const divergent = result.stdout.trim();
+        git(fixture.root, ["update-ref", "refs/heads/main", divergent]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", divergent]);
+      }],
+      ["missing historical object", (fixture) => {
+        const objectPath = join(fixture.root, ".git", "objects", fixture.retainedSourceSha.slice(0, 2), fixture.retainedSourceSha.slice(2));
+        rmSync(objectPath);
+      }],
+      ["malformed terminal JSON", (fixture) => {
+        const target = join(fixture.root, "dist/BUILD_INFO.json");
+        chmodSync(target, 0o644);
+        writeFileSync(target, "{\n");
+        chmodSync(target, 0o444);
+      }],
+      ["wrong terminal mode", (fixture) => chmodSync(join(fixture.root, "dist/BUILD_INFO.json"), 0o644)],
+      ["hardlinked terminal authority", (fixture) => linkSync(join(fixture.root, "dist/BUILD_INFO.json"), join(fixture.root, "dist/BUILD_INFO.link"))],
+      ["crossed output source", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_BUILD_OUTPUT_TREE.json", (value) => ({ ...value, sourceSha: fixture.controllerSourceSha }))],
+      ["ordinary output drift", (fixture) => fixtureFile(fixture.root, "dist/service.js", "export const fixtureRuntime = false;\n")],
+      ["build-info byte drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "BUILD_INFO.json", (value) => value, false)],
+      ["manifest drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_RELEASE_MANIFEST.json", (value) => ({
+        ...value,
+        stitchConverter: { ...value.stitchConverter, converterId: "crossed.converter" },
+      }))],
+      ["controller-build hash drift", (fixture) => rewriteFinalizedFixtureJson(fixture.root, "PLATFORM_BUILD_OUTPUT_TREE.json", (value) => ({ ...value, outputTreeHash: "f".repeat(64) }))],
+    ];
+    for (const [name, mutate] of retainedRows) {
+      await context.test(name, async () => {
+        const fixture = prepareStaleBuildAuthorityFixture();
+        try {
+          const authority = await importStaleBuildAuthorityFixture(fixture.root);
+          const repositoryRoot = realpathSync(fixture.root);
+          if (name === "nonancestor source") mutate(fixture);
+          const controller = authority.observeCurrentRetentionControllerSourceV2(repositoryRoot);
+          if (name !== "nonancestor source") mutate(fixture);
+          const before = task1AuthorityStoreSnapshot(fixture.root);
+          assert.throws(
+            () => authority.observeRetainedCurrentBuildV1(repositoryRoot, controller),
+            /retained|loaded Setfarm|historical|finalized|authority|ancestor|build|mode|link|Git/i,
+          );
+          assert.deepEqual(task1AuthorityStoreSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
   });
 
   it("classifies semantic-invalid publisher bytes for every retention store family", async () => {

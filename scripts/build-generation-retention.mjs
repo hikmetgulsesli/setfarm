@@ -1361,6 +1361,169 @@ function parsePlutilJsonV1(bytes, purpose) {
   return value;
 }
 
+function fixedGitResultV2(root, argv) {
+  return fixedChildResult("/usr/bin/git", argv, { cwd: root });
+}
+
+function requireFixedGitLineV2(root, argv, purpose) {
+  return strictUtf8V1(requireSuccessfulChild(fixedGitResultV2(root, argv), purpose), purpose).trim();
+}
+
+function observeCurrentRetentionControllerSourcePassV2(root) {
+  if (root !== repositoryRootV1() || realpathSync(root) !== root) fail("retention controller repository root is invalid");
+  const include = fixedGitResultV2(root, ["config", "--local", "--no-includes", "--name-only", "--get-regexp", "^include"]);
+  if (include.error || include.signal !== null || include.status !== 1 || include.stdout.length !== 0 || include.stderr.length !== 0) {
+    fail("retention controller local Git includes are forbidden");
+  }
+  const origin = fixedGitResultV2(root, ["config", "--local", "--no-includes", "--get-all", "remote.origin.url"]);
+  if (
+    origin.error || origin.signal !== null || origin.status !== 0 || origin.stderr.length !== 0
+    || !origin.stdout.equals(Buffer.from("https://github.com/hikmetgulsesli/setfarm.git\n", "utf8"))
+  ) fail("retention controller canonical origin is invalid");
+  const branch = requireFixedGitLineV2(root, ["branch", "--show-current"], "retention controller branch");
+  const sourceSha = requireFixedGitLineV2(root, ["rev-parse", "--verify", "HEAD^{commit}"], "retention controller commit");
+  const sourceTreeHash = requireFixedGitLineV2(root, ["rev-parse", "--verify", "HEAD^{tree}"], "retention controller tree");
+  const originMainSha = requireFixedGitLineV2(root, ["rev-parse", "--verify", "refs/remotes/origin/main^{commit}"], "retention controller origin/main");
+  const status = fixedGitResultV2(root, ["status", "--porcelain=v2", "--untracked-files=all"]);
+  if (
+    branch !== "main" || !GIT_HASH.test(sourceSha) || !GIT_HASH.test(sourceTreeHash)
+    || sourceSha.length !== sourceTreeHash.length || originMainSha !== sourceSha
+    || status.error || status.signal !== null || status.status !== 0 || status.stdout.length !== 0 || status.stderr.length !== 0
+  ) fail("retention controller source is not clean synchronized main");
+  const historical = historicalGitInputSetV2(root, sourceSha, sourceTreeHash);
+  const repository = directoryIdentity(root);
+  for (const entry of historical.entries) {
+    const target = path.join(root, ...entry.locator.split("/"));
+    if (!isWithinLocator(root, target) || realpathSync(target) !== target) fail("retention controller live input escaped the repository");
+    const observed = readStableRegular(target, { device: BigInt(repository.devDecimal), linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
+    const expectedMode = entry.gitMode === "100755" ? 0o755 : 0o644;
+    if (observed.mode !== expectedMode || !observed.bytes.equals(historical.blobs.get(entry.gitBlobHash))) {
+      fail(`retention controller live input differs from Git: ${entry.locator}`);
+    }
+  }
+  return Object.freeze({
+    branch: "main",
+    clean: true,
+    sourceSha,
+    sourceTreeHash,
+    originMainSha: sourceSha,
+    buildInputSetHash: historical.buildInputSetHash,
+  });
+}
+
+function assertRetentionControllerSourceV2(value) {
+  assertRotationControllerSource(value);
+}
+
+function observeCurrentRetentionControllerSourceV2(root) {
+  const before = observeCurrentRetentionControllerSourcePassV2(root);
+  const after = observeCurrentRetentionControllerSourcePassV2(root);
+  if (canonicalJsonV1(before) !== canonicalJsonV1(after)) fail("retention controller source changed during observation");
+  return before;
+}
+
+function assertRetainedCurrentBuildV1(value) {
+  if (
+    !value || !hasExactKeys(value, [
+      "schema", "sourceSha", "sourceTreeHash", "buildHash", "buildInputSetHash", "buildInfoHash", "outputTreeHash", "releaseManifestHash",
+    ])
+    || value.schema !== "setfarm.platform-build-generation-retained-current-build.v1"
+    || !GIT_HASH.test(value.sourceSha) || !GIT_HASH.test(value.sourceTreeHash) || value.sourceSha.length !== value.sourceTreeHash.length
+    || !SHA256.test(value.buildHash) || !SHA256.test(value.buildInputSetHash) || !SHA256.test(value.buildInfoHash)
+    || !SHA256.test(value.outputTreeHash) || !SHA256.test(value.releaseManifestHash)
+  ) fail("retained current build authority is invalid");
+}
+
+function observeRetainedCurrentBuildV1(root, controllerSource) {
+  assertRetentionControllerSourceV2(controllerSource);
+  if (root !== repositoryRootV1() || realpathSync(root) !== root) fail("retained current build repository root is invalid");
+  const dist = path.join(root, "dist");
+  const distIdentity = directoryIdentity(dist);
+  if (distIdentity.mode !== 0o755) fail("retained current build dist mode is invalid");
+  const buildInfoObserved = readStableRegular(path.join(dist, "BUILD_INFO.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  if (buildInfoObserved.mode !== 0o444) fail("retained current build BUILD_INFO mode is invalid");
+  const buildInfo = parseFinalizedJsonV1(buildInfoObserved, [
+    "sha", "shortSha", "branch", "dirty", "packageVersion", "displayVersion", "builtAt",
+  ], "retained current build BUILD_INFO", true);
+  if (!GIT_HASH.test(buildInfo.sha)) fail("retained current build source SHA is invalid");
+  const sourceTreeHash = requireFixedGitLineV2(root, ["rev-parse", "--verify", `${buildInfo.sha}^{tree}`], "retained current build tree");
+  const historical = historicalGitInputSetV2(root, buildInfo.sha, sourceTreeHash);
+  const outputTreeObserved = readStableRegular(path.join(dist, "PLATFORM_BUILD_OUTPUT_TREE.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  const manifestObserved = readStableRegular(path.join(dist, "PLATFORM_RELEASE_MANIFEST.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  if (outputTreeObserved.mode !== 0o444 || manifestObserved.mode !== 0o444) fail("retained current build terminal authority mode is invalid");
+  const outputTree = parseFinalizedJsonV1(outputTreeObserved, [
+    "schema", "sourceSha", "sourceTreeHash", "entries", "outputTreeHash",
+  ], "retained current build output tree", false);
+  const manifest = parseFinalizedJsonV1(manifestObserved, [
+    "schema", "releaseSha", "branch", "dirty", "stitchConverter",
+  ], "retained current build release manifest", false);
+  const stableBuildInfo = {
+    schema: "setfarm.internal-production-stable-setfarm-build-info.v1",
+    sha: buildInfo.sha,
+    shortSha: buildInfo.shortSha,
+    branch: buildInfo.branch,
+    dirty: buildInfo.dirty,
+    packageVersion: buildInfo.packageVersion,
+    displayVersion: buildInfo.displayVersion,
+  };
+  const buildHash = hashCanonicalJsonV1({
+    schema: "setfarm.internal-production-controller-build.v1",
+    stableBuildInfo,
+    buildInputSetHash: historical.buildInputSetHash,
+    outputTreeHash: outputTree.outputTreeHash,
+    releaseManifestHash: hashCanonicalJsonV1(manifest),
+  });
+  const expectedSourceBuild = Object.freeze({
+    branch: "main",
+    clean: true,
+    sha: buildInfo.sha,
+    treeHash: sourceTreeHash,
+    buildHash,
+    originMainSha: buildInfo.sha,
+  });
+  const entrypoint = realpathSync(path.join(root, historical.outputs[0]));
+  const actual = observeActualSetfarmRuntimeSourceV1(entrypoint, expectedSourceBuild);
+  if (actual.sha !== buildInfo.sha || actual.treeHash !== sourceTreeHash || actual.buildHash !== buildHash) {
+    fail("retained current build finalized source is crossed");
+  }
+  const ancestry = fixedGitResultV2(root, ["merge-base", "--is-ancestor", buildInfo.sha, controllerSource.sourceSha]);
+  if (
+    buildInfo.sha === controllerSource.sourceSha || ancestry.error || ancestry.signal !== null || ancestry.status !== 0
+    || ancestry.stdout.length !== 0 || ancestry.stderr.length !== 0
+  ) fail("retained current build is not a strict ancestor of the retention controller");
+  const buildInfoAfter = readStableRegular(path.join(dist, "BUILD_INFO.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  const outputTreeAfter = readStableRegular(path.join(dist, "PLATFORM_BUILD_OUTPUT_TREE.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  const manifestAfter = readStableRegular(path.join(dist, "PLATFORM_RELEASE_MANIFEST.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  if (
+    !buildInfoAfter.bytes.equals(buildInfoObserved.bytes) || !outputTreeAfter.bytes.equals(outputTreeObserved.bytes)
+    || !manifestAfter.bytes.equals(manifestObserved.bytes)
+  ) fail("retained current build authority changed during observation");
+  const value = Object.freeze({
+    schema: "setfarm.platform-build-generation-retained-current-build.v1",
+    sourceSha: buildInfo.sha,
+    sourceTreeHash,
+    buildHash,
+    buildInputSetHash: historical.buildInputSetHash,
+    buildInfoHash: sha256(buildInfoObserved.bytes),
+    outputTreeHash: outputTree.outputTreeHash,
+    releaseManifestHash: hashCanonicalJsonV1(manifest),
+  });
+  assertRetainedCurrentBuildV1(value);
+  return value;
+}
+
 function observeOperationAuthoritiesV1(root) {
   // OA18_PRIVATE_FIXTURE_AUTHORITIES_START
   const program = [
@@ -1883,8 +2046,11 @@ function parseFinalizedJsonV1(observed, keys, label, pretty) {
   return value;
 }
 
-function historicalBuildInputsV1(root, expectedSourceBuild) {
-  assertSourceBuildBodyV1(expectedSourceBuild, "loaded Setfarm expected source/build");
+function historicalGitInputSetV2(root, sourceSha, sourceTreeHash) {
+  if (!GIT_HASH.test(sourceSha) || !GIT_HASH.test(sourceTreeHash) || sourceSha.length !== sourceTreeHash.length) {
+    fail("historical Setfarm source/tree authority is invalid");
+  }
+  const expectedSourceBuild = Object.freeze({ sha: sourceSha, treeHash: sourceTreeHash });
   const commit = gitBytes(root, ["rev-parse", "--verify", `${expectedSourceBuild.sha}^{commit}`], "loaded Setfarm historical commit").toString("utf8").trim();
   const treeHash = gitBytes(root, ["rev-parse", "--verify", `${expectedSourceBuild.sha}^{tree}`], "loaded Setfarm historical tree").toString("utf8").trim();
   if (commit !== expectedSourceBuild.sha || treeHash !== expectedSourceBuild.treeHash) fail("loaded Setfarm historical commit/tree is crossed");
@@ -1950,6 +2116,11 @@ function historicalBuildInputsV1(root, expectedSourceBuild) {
     outputs: Object.freeze(outputs),
     directories: Object.freeze([...directories].sort(compareBytes)),
   });
+}
+
+function historicalBuildInputsV1(root, expectedSourceBuild) {
+  assertSourceBuildBodyV1(expectedSourceBuild, "loaded Setfarm expected source/build");
+  return historicalGitInputSetV2(root, expectedSourceBuild.sha, expectedSourceBuild.treeHash);
 }
 
 function observeActualSetfarmRuntimeSourceV1(entrypointRealpath, expectedSourceBuild) {
