@@ -198,6 +198,28 @@ function isAcceptedPinnedGitPhysicalModeV1(gitMode: string, physicalMode: number
     && (physicalMode & requiredMode) === requiredMode;
 }
 
+const P3_CURRENT_ENTRY_WORKSPACE_SOURCE_V1 =
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
+const P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1 =
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+
+function projectP3CurrentEntryWorkspaceAuthorityV1(locator: string, bytes: Buffer): Buffer {
+  if (locator !== "src/internal-production/baseline-post-handoff-receipt-v1.ts") return bytes;
+  const source = bytes.toString("utf8");
+  if (!Buffer.from(source, "utf8").equals(bytes)) {
+    throw new Error("P3_PROJECTION_CURRENT_ENTRY_SOURCE_INVALID");
+  }
+  const sourceParts = source.split(P3_CURRENT_ENTRY_WORKSPACE_SOURCE_V1);
+  if (sourceParts.length !== 2 || source.includes(P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1)) {
+    throw new Error("P3_PROJECTION_CURRENT_ENTRY_WORKSPACE_AUTHORITY_INVALID");
+  }
+  const projected = sourceParts.join(P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1);
+  if (projected.split(P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1).length !== 2) {
+    throw new Error("P3_PROJECTION_CURRENT_ENTRY_WORKSPACE_AUTHORITY_INVALID");
+  }
+  return Buffer.from(projected, "utf8");
+}
+
 function readStableIndexedMemberV1(
   locator: string,
   gitMode: string,
@@ -283,9 +305,10 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
         sourcePhysicalMode: observed.physicalMode,
         projectedMode: expectedMode,
       }));
+      const projectedBytes = projectP3CurrentEntryWorkspaceAuthorityV1(locator, bytes);
       const target = path.join(projectionRoot, locator);
       mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-      writeFileSync(target, bytes, { mode: expectedMode });
+      writeFileSync(target, projectedBytes, { mode: expectedMode });
       chmodSync(target, expectedMode);
     }
 

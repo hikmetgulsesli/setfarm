@@ -1417,6 +1417,26 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   assert.doesNotMatch(helper, /migration.?33|033_v3_recovery/i);
   const activation = helperSource.slice(activationStart, activationEnd);
   assert.match(helperSource, /prepareP3FixtureCurrentEntryOperationV1/);
+  assert.match(
+    helperSource,
+    /P3 activation fixture must inherit exactly one projected workspace authority/,
+  );
+  assert.match(
+    helperSource,
+    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.dirname\(fixedRepositoryRoot\(\)\);/,
+  );
+  const runnerSource = readFileSync(
+    path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
+    "utf8",
+  );
+  const projectionStart = runnerSource.indexOf("function projectP3CurrentEntryWorkspaceAuthorityV1");
+  const projectionEnd = runnerSource.indexOf("\n\nfunction readStableIndexedMemberV1", projectionStart);
+  assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
+  const projectionAuthority = runnerSource.slice(projectionStart, projectionEnd);
+  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-post-handoff-receipt-v1\.ts"/);
+  assert.match(projectionAuthority, /sourceParts\.length !== 2/);
+  assert.match(projectionAuthority, /P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1/);
+  assert.doesNotMatch(projectionAuthority, /process\.env|callback|options|caller|HOME/);
   assert.doesNotMatch(activation, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|launchctl|lsof/);
   const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
   const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");

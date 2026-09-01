@@ -762,11 +762,24 @@ function completeP3PbaObservationV1(vendorProducerCommit: string) {
 }
 
 function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
-  const start = source.indexOf("export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {");
-  const end = source.indexOf("\n\nexport async function resolveInternalProductionCurrentEntryOperationV1", start);
+  const fixtureWorkspaceAuthority =
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+  assert.equal(
+    source.split(fixtureWorkspaceAuthority).length,
+    2,
+    "P3 activation fixture must inherit exactly one projected workspace authority",
+  );
+  assert.equal(
+    source.includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");'),
+    false,
+    "P3 activation fixture must not inherit the production workspace authority",
+  );
+  const fixtureBoundSource = source;
+  const start = fixtureBoundSource.indexOf("export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {");
+  const end = fixtureBoundSource.indexOf("\n\nexport async function resolveInternalProductionCurrentEntryOperationV1", start);
   assert.ok(start >= 0 && end > start, "P3 fixture current-entry operation publisher boundary must remain exact");
   let continuationReplacements = 0;
-  const fixturePublisher = source.slice(start, end)
+  const fixturePublisher = fixtureBoundSource.slice(start, end)
     .replace(
       "prepareInternalProductionCurrentEntryOperationV1",
       "prepareP3FixtureCurrentEntryOperationV1",
@@ -781,7 +794,7 @@ function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
   assert.equal(continuationReplacements, 2, "P3 fixture operation publisher must stop at both status-continuation boundaries");
   assert.match(fixturePublisher, /export async function prepareP3FixtureCurrentEntryOperationV1/);
   assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
-  return `${source}\n${fixturePublisher}\n`;
+  return `${fixtureBoundSource}\n${fixturePublisher}\n`;
 }
 
 function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorCommit: string }> {
@@ -874,9 +887,26 @@ async function activateP3TemplateAndWriteReadinessV1(
     const fixtureStore = path.join(path.dirname(fixture.root), "data/internal-production-baseline/current-entry-v1");
     assert.equal(readFileSync(path.join(fixtureStore, "current-entry-operation.json"), "utf8").includes(operation.operationHash), true);
     assert.deepEqual(
-      ["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].sort(),
+      ["current-entry-operation.json", "records"],
       readdirSync(fixtureStore).sort(),
     );
+    const exactPrerequisiteLocators = [
+      path.join(
+        fixtureStore,
+        "records/authority-v3-migration31-audits/sha256",
+        operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash.slice(0, 2),
+        `${operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash}.json`,
+      ),
+      path.join(
+        fixtureStore,
+        "records/pending-bootstrap-handoff-migrations/sha256",
+        operation.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash.slice(0, 2),
+        `${operation.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash}.json`,
+      ),
+    ];
+    for (const locator of exactPrerequisiteLocators) {
+      assert.equal(existsSync(locator), true, `P3 fixture prerequisite must remain fixture-local: ${locator}`);
+    }
     assert.notEqual(fixture.vendorCommit, operation.controllerSource.sha);
     p3FixtureGitV1(projectionRoot, [
       "fetch", "--no-tags", fixture.root, operation.controllerSource.sha,
