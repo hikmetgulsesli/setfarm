@@ -2407,6 +2407,78 @@ function parseMissionControlListenerV1(bytes: Buffer, expectedPid: number): Read
   return Object.freeze({ pid, command: match[2]!, fileDescriptor, endpoint: "*:3080" });
 }
 
+type OpenClawListenerInventoryV1 = Readonly<{
+  pid: number;
+  command: string;
+  fileDescriptors: readonly number[];
+  listeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[];
+}>;
+
+function parseOpenClawListenerInventoryV1(bytes: Buffer, expectedPid: number): OpenClawListenerInventoryV1 {
+  const text = strictUtf8(bytes, "OpenClaw listener inventory");
+  const match = /^p([1-9][0-9]*)\0c([^\0\n]+)\0\nf(0|[1-9][0-9]*)\0n127\.0\.0\.1:18789\0\n(?:f(0|[1-9][0-9]*)\0n\[::1\]:18789\0\n)?$/.exec(text);
+  if (!match) currentEntryFail("OpenClaw listener inventory is malformed");
+  const pid = Number(match[1]);
+  const firstDescriptor = Number(match[3]);
+  const secondDescriptor = match[4] === undefined ? null : Number(match[4]);
+  if (!Number.isSafeInteger(pid) || pid !== expectedPid || !Number.isSafeInteger(firstDescriptor) || firstDescriptor < 0) {
+    currentEntryFail("OpenClaw listener identity is crossed");
+  }
+  if (secondDescriptor !== null && (!Number.isSafeInteger(secondDescriptor) || secondDescriptor <= firstDescriptor)) {
+    currentEntryFail("OpenClaw listener descriptor identity is crossed");
+  }
+  const listeners = [
+    Object.freeze({ pid, protocol: "TCP" as const, localAddress: "127.0.0.1" as const, port: 18789 as const }),
+    ...(secondDescriptor === null ? [] : [Object.freeze({ pid, protocol: "TCP" as const, localAddress: "[::1]" as const, port: 18789 as const })]),
+  ];
+  return recursivelyFreeze({
+    pid,
+    command: match[2]!,
+    fileDescriptors: secondDescriptor === null ? [firstDescriptor] : [firstDescriptor, secondDescriptor],
+    listeners,
+  });
+}
+
+function observeOpenClawListenerInventoryV1(pid: number): Readonly<{ bytes: Buffer; inventory: OpenClawListenerInventoryV1 }> {
+  const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP:18789", "-sTCP:LISTEN", "-F0pcfn"]);
+  return Object.freeze({ bytes: result.stdout, inventory: parseOpenClawListenerInventoryV1(result.stdout, pid) });
+}
+
+function requireServiceBoundOpenClawListenersV1(
+  service: InternalProductionListeningServiceCensusV1,
+  observed: Readonly<{ bytes: Buffer; inventory: OpenClawListenerInventoryV1 }>,
+): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[] {
+  if (observed.inventory.pid !== service.pid
+    || service.loadedSourceSha !== null
+    || service.loadedTreeHash !== null
+    || service.loadedBuildHash !== null
+    || service.processOwnerCount !== 1
+    || service.listenerOwnerCount !== 1
+    || service.listener.host !== "127.0.0.1"
+    || service.listener.port !== 18789
+    || sha256(observed.bytes) !== service.listener.listenerIdentityHash) {
+    currentEntryFail("OpenClaw listener inventory is not bound to the service census");
+  }
+  return observed.inventory.listeners;
+}
+
+function requireCompleteServiceBoundOpenClawListenersV1(
+  service: InternalProductionListeningServiceCensusV1,
+  observed: Readonly<{ bytes: Buffer; inventory: OpenClawListenerInventoryV1 }>,
+  complete: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[],
+): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[] {
+  const expected = requireServiceBoundOpenClawListenersV1(service, observed);
+  const observedPortListeners = complete
+    .filter((listener) => listener.port === 18789)
+    .map((listener) => canonicalComparable(listener))
+    .sort(compareBytes);
+  const expectedPortListeners = expected.map((listener) => canonicalComparable(listener)).sort(compareBytes);
+  if (canonicalComparable(observedPortListeners) !== canonicalComparable(expectedPortListeners)) {
+    currentEntryFail("OpenClaw complete listener inventory is crossed");
+  }
+  return expected;
+}
+
 function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[] {
   const result = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-F0pcfn"], [0, 1]);
   if (result.status === 1 && result.stdout.length === 0) return Object.freeze([]);
@@ -2417,10 +2489,15 @@ function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number
 function isExpectedPersistentListenerV1(
   listener: Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>,
   services: InternalProductionServiceCensusV1,
+  serviceBoundOpenClawListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[],
 ): boolean {
   return (listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
     || (listener.pid === services.missionControl.pid && listener.localAddress === "*" && listener.port === 3080)
-    || (listener.pid === services.openClaw.pid && listener.localAddress === "127.0.0.1" && listener.port === 18789);
+    || serviceBoundOpenClawListeners.some((expected) => canonicalComparable(expected) === canonicalComparable(listener));
+}
+
+function assertServiceCensusPassStableV1(first: InternalProductionServiceCensusV1, second: InternalProductionServiceCensusV1, label: string): void {
+  if (canonicalComparable(first) !== canonicalComparable(second)) currentEntryFail(label);
 }
 
 function assertPhysicalInventoryPassStableV1(first: unknown, second: unknown): void {
@@ -2437,6 +2514,8 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
     const row = byPid.get(service.pid);
     if (!row || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
   }
+  const observedOpenClawListeners = observeOpenClawListenerInventoryV1(services.openClaw.pid);
+  const serviceBoundOpenClawListeners = requireServiceBoundOpenClawListenersV1(services.openClaw, observedOpenClawListeners);
   const managedRoots = physicalManagedBasesV1();
   const immediateProjects = physicalImmediateProjectsV1();
   const referencePids = new Set<number>();
@@ -2486,8 +2565,14 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
     if ((orphanPattern.test(row.command) && activeRunCount === 0) || row.stat.includes("Z") || cwd.endsWith(" (deleted)") || deletedPids.has(row.pid) || unresolvedStoryWorktree) stale.add(row.pid);
   }
   const listenerPids = new Set([...persistentPids, ...owned.map((entry) => entry.pid)]);
-  const listeners = [...listenerPids].sort((a, b) => a - b).flatMap((pid) => observeProcessListenersV1(pid));
-  const extraListeners = listeners.filter((listener) => !isExpectedPersistentListenerV1(listener, services));
+  const listeners = [...listenerPids].sort((a, b) => a - b).flatMap((pid) => {
+    const complete = observeProcessListenersV1(pid);
+    if (pid === services.openClaw.pid) {
+      requireCompleteServiceBoundOpenClawListenersV1(services.openClaw, observedOpenClawListeners, complete);
+    }
+    return complete;
+  });
+  const extraListeners = listeners.filter((listener) => !isExpectedPersistentListenerV1(listener, services, serviceBoundOpenClawListeners));
   const processesAgain = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
   assertPhysicalInventoryPassStableV1(processes, processesAgain);
   return recursivelyFreeze({
@@ -2902,6 +2987,19 @@ function observeServiceProcessV1(
   if (port === null) {
     if (!source) currentEntryFail("spawner source is absent");
     return recursivelyFreeze({ ...common, loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: processOwnerCount as 1, listener: null });
+  }
+  if (label === "ai.openclaw.gateway") {
+    if (port !== 18789 || source !== null) currentEntryFail("OpenClaw listener profile is crossed");
+    const observedListener = observeOpenClawListenerInventoryV1(pid);
+    return recursivelyFreeze({
+      ...common,
+      loadedSourceSha: null,
+      loadedTreeHash: null,
+      loadedBuildHash: null,
+      processOwnerCount: processOwnerCount as 1,
+      listenerOwnerCount: 1 as const,
+      listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(observedListener.bytes) },
+    });
   }
   const lsof = boundedChildText("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), `-iTCP@127.0.0.1:${port}`, "-sTCP:LISTEN", "-F0pcfn"], `${label} listener`);
   const listenerPids = [...lsof.matchAll(/(?:^|\0\n?)p([0-9]+)\0/g)].map((match) => Number(match[1]));
@@ -3515,9 +3613,9 @@ export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): P
   const phaseB = await observePhaseClosedZeroV1(source);
   const auditAgain = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
   await reobserveStoredMigration31AuditV1(auditAgain);
+  assertServiceCensusPassStableV1(servicesA, servicesB, "legacy zero-owner observation changed across its database snapshot");
   if (
-    canonicalComparable(servicesA) !== canonicalComparable(servicesB)
-    || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
+    canonicalComparable(phaseA) !== canonicalComparable(phaseB)
     || canonicalComparable(audit) !== canonicalComparable(auditAgain)
   ) currentEntryFail("legacy zero-owner observation changed across its database snapshot");
   assertPhysicalInventoryPassStableV1(physicalA, physicalB);
@@ -3637,7 +3735,7 @@ export async function observeCompleteInternalProductionZeroOwnerCensusV1(
   }
   const servicesB = await observeInternalProductionServiceCensusV1();
   const physicalB = observePhysicalInventoryV1(servicesB, database.activeRunCount as number);
-  if (canonicalComparable(servicesA) !== canonicalComparable(servicesB)) currentEntryFail("complete zero-owner service census drifted");
+  assertServiceCensusPassStableV1(servicesA, servicesB, "complete zero-owner service census drifted");
   assertPhysicalInventoryPassStableV1(physicalA, physicalB);
   const census = recursivelyFreeze({
     ...database,
