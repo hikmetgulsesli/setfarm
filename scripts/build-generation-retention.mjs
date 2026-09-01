@@ -2406,21 +2406,28 @@ function observeMissionControlListenerV1(expectedPid) {
   return Object.freeze({ ...parseMissionControlListenerV1(bytes, expectedPid), bytesHash: sha256(bytes) });
 }
 
+function observeLoadedExecutableTextV1(pid, authenticatedExecutableRealpath, label) {
+  if (!Number.isSafeInteger(pid) || pid < 1 || typeof authenticatedExecutableRealpath !== "string" || !path.isAbsolute(authenticatedExecutableRealpath)
+    || realpathSync(authenticatedExecutableRealpath) !== authenticatedExecutableRealpath) {
+    fail(`${label} executable authority is invalid`);
+  }
+  const bytes = requireSuccessfulChild(fixedChildResult(
+    LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1,
+    ["-a", "-p", String(pid), "-d", "txt", "-F0pn", authenticatedExecutableRealpath],
+  ), `${label} executable observation`);
+  const expected = Buffer.from(`p${pid}\0\nftxt\0n${authenticatedExecutableRealpath}\0\n`, "utf8");
+  if (!bytes.equals(expected)) fail(`${label} executable observation is crossed`);
+  return bytes;
+}
+
 function observeLoadedProcessV1(pid, loadedArguments, expectedIdentity, deferAfter = false) {
   if (!Array.isArray(loadedArguments) || loadedArguments.length === 0 || loadedArguments.some((argument) => typeof argument !== "string" || argument === "" || /[\0\r\n]/.test(argument))) {
     fail("loaded process arguments are invalid");
   }
   const before = observeProcessIdentityV1(pid, expectedIdentity);
   if (before.state !== "live_match") fail("loaded process identity is unavailable");
-  const lsofBytes = requireSuccessfulChild(fixedChildResult(
-    LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1,
-    ["-a", "-p", String(pid), "-d", "txt", "-F0pn"],
-  ), "loaded process executable observation");
-  const lsofText = lsofBytes.toString("utf8");
-  if (!Buffer.from(lsofText, "utf8").equals(lsofBytes)) fail("loaded process executable output is not strict UTF-8");
-  const executableMatch = new RegExp(`^p${pid}\\0\\nftxt\\0n([^\\0\\n]+)\\0\\n$`).exec(lsofText);
-  if (!executableMatch || !path.isAbsolute(executableMatch[1])) fail("loaded process executable output is ambiguous");
-  const executableRealpath = realpathSync(executableMatch[1]);
+  const executableRealpath = realpathSync(loadedArguments[0]);
+  const lsofBytes = observeLoadedExecutableTextV1(pid, executableRealpath, "loaded process");
   const commBytes = requireSuccessfulChild(fixedChildResult(
     PROCESS_IDENTITY_EXECUTABLE_V1,
     ["-ww", "-p", String(pid), "-o", "comm="],
@@ -2466,12 +2473,364 @@ function observeLoadedProcessV1(pid, loadedArguments, expectedIdentity, deferAft
     commHash: sha256(commBytes),
     commandHash: sha256(commandBytes),
     lsofHash: sha256(lsofBytes),
+    lsofBytes,
     processBeforeHash: before.observationHash,
     processAfterHash: deferAfter ? null : after.observationHash,
   });
 }
 
+function detachedSetfarmServiceProfileV1(label) {
+  const program = path.join(CODE_OWNER_HOME_V1, ".local", "bin", "setfarm");
+  const root = repositoryRootV1();
+  if (label === "com.setrox.setfarm-spawner") {
+    return Object.freeze({
+      label,
+      launchArguments: Object.freeze([program, "spawner", "start"]),
+      entrypoint: path.join(root, "dist", "spawner.js"),
+      daemonArguments: Object.freeze([]),
+      port: null,
+    });
+  }
+  if (label === "com.setrox.setfarm-dashboard") {
+    return Object.freeze({
+      label,
+      launchArguments: Object.freeze([program, "dashboard", "start", "--port", "3333"]),
+      entrypoint: path.join(root, "dist", "server", "daemon.js"),
+      daemonArguments: Object.freeze(["3333"]),
+      port: 3333,
+    });
+  }
+  fail("detached Setfarm service label is invalid");
+}
+
+function oneDetachedLaunchctlScalarV1(text, name, label) {
+  const matches = [...text.matchAll(new RegExp(`^\\t${escapeRegex(name)} = (.+)$`, "gm"))];
+  if (matches.length !== 1 || !matches[0][1]) fail(`${label} launchctl ${name} is ambiguous`);
+  return matches[0][1];
+}
+
+function oneDetachedLaunchctlBlockV1(text, name, label) {
+  const matches = [...text.matchAll(new RegExp(`^\\t${escapeRegex(name)} = \\{\\n([\\s\\S]*?)^\\t\\}$`, "gm"))];
+  if (matches.length !== 1) fail(`${label} launchctl ${name} is ambiguous`);
+  const lines = matches[0][1].split("\n");
+  if (lines.pop() !== "" || lines.length === 0 || lines.some((line) => line === "" || !line.startsWith("\t\t"))) fail(`${label} launchctl ${name} is malformed`);
+  return Object.freeze(lines.map((line) => line.slice(2)));
+}
+
+function detachedLaunchctlEnvironmentBlockV1(text, name, label, expectedNames) {
+  const environment = {};
+  for (const line of oneDetachedLaunchctlBlockV1(text, name, label)) {
+    const match = /^([A-Za-z][A-Za-z0-9_]*) => (.+)$/.exec(line);
+    if (!match || Object.prototype.hasOwnProperty.call(environment, match[1])) fail(`${label} launchctl ${name} is malformed`);
+    environment[match[1]] = match[2];
+  }
+  if (canonicalJsonV1(Object.keys(environment)) !== canonicalJsonV1(expectedNames)) fail(`${label} launchctl ${name} order is invalid`);
+  return Object.freeze(environment);
+}
+
+function observeDetachedLaunchProjectionV1(profile, config, uid) {
+  const bytes = requireSuccessfulChild(fixedChildResult(
+    LAUNCHCTL_EXECUTABLE_V1,
+    ["print", `gui/${uid}/${profile.label}`],
+  ), `launchctl ${profile.label}`);
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > RUNTIME_OBSERVER_MAX_BUFFER_BYTES_V1 || bytes.includes(0) || bytes.at(-1) !== 0x0a) {
+    fail(`${profile.label} launchctl output bytes are invalid`);
+  }
+  const text = strictUtf8V1(bytes, `${profile.label} launchctl`);
+  if (!text.startsWith(`gui/${uid}/${profile.label} = {\n`) || !text.endsWith("}\n")) fail(`${profile.label} launchctl envelope is invalid`);
+  const selectedRecords = [
+    ["scalar", "active count"], ["scalar", "path"], ["scalar", "type"], ["scalar", "state"], ["scalar", "program"],
+    ["block", "arguments"], ["scalar", "stdout path"], ["scalar", "stderr path"], ["block", "inherited environment"],
+    ["block", "default environment"], ["block", "environment"], ["scalar", "run interval"], ["scalar", "properties"],
+  ];
+  let selectedOffset = -1;
+  for (const [kind, name] of selectedRecords) {
+    const pattern = kind === "scalar"
+      ? new RegExp(`^\\t${escapeRegex(name)} = .+$`, "gm")
+      : new RegExp(`^\\t${escapeRegex(name)} = \\{$`, "gm");
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length !== 1 || matches[0].index <= selectedOffset) fail(`${profile.label} launchctl selected record order is invalid`);
+    selectedOffset = matches[0].index;
+  }
+  const state = oneDetachedLaunchctlScalarV1(text, "state", profile.label);
+  const activeCount = oneDetachedLaunchctlScalarV1(text, "active count", profile.label);
+  const type = oneDetachedLaunchctlScalarV1(text, "type", profile.label);
+  if ((state !== "not running" && state !== "spawn scheduled") || activeCount !== "0" || type !== "LaunchAgent" || /^\tpid = /m.test(text)) {
+    fail(`${profile.label} launcher is not in its stable detached state`);
+  }
+  if (oneDetachedLaunchctlScalarV1(text, "path", profile.label) !== config.locator
+    || oneDetachedLaunchctlScalarV1(text, "program", profile.label) !== profile.launchArguments[0]
+    || oneDetachedLaunchctlScalarV1(text, "stdout path", profile.label) !== profile.stdoutPath
+    || oneDetachedLaunchctlScalarV1(text, "stderr path", profile.label) !== profile.stderrPath
+    || oneDetachedLaunchctlScalarV1(text, "run interval", profile.label) !== "60 seconds"
+    || !["runatload | inferred program", "runatload | penalty box | inferred program"].includes(oneDetachedLaunchctlScalarV1(text, "properties", profile.label))
+    || /^\tworking directory = /m.test(text)) {
+    fail(`${profile.label} loaded launcher projection is crossed`);
+  }
+  const programArguments = oneDetachedLaunchctlBlockV1(text, "arguments", profile.label);
+  if (canonicalJsonV1(programArguments) !== canonicalJsonV1(profile.launchArguments)) fail(`${profile.label} loaded arguments differ from the fixed launcher profile`);
+  const environmentOrder = profile.label === "com.setrox.setfarm-dashboard"
+    ? ["OSLogRateLimit", "SETFARM_OPERATIONAL_WRITE_TOKEN", "PATH", "SETFARM_PG_URL", "XPC_SERVICE_NAME"]
+    : ["OSLogRateLimit", "PATH", "SETFARM_PG_URL", "XPC_SERVICE_NAME"];
+  const environmentRecord = detachedLaunchctlEnvironmentBlockV1(text, "environment", profile.label, environmentOrder);
+  if (!hasExactKeys(environmentRecord, environmentOrder)
+    || environmentRecord.OSLogRateLimit !== "64" || environmentRecord.XPC_SERVICE_NAME !== profile.label) {
+    fail(`${profile.label} loaded launch environment is invalid`);
+  }
+  const inheritedEnvironment = detachedLaunchctlEnvironmentBlockV1(text, "inherited environment", profile.label, ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"]);
+  const expectedScripts = path.join(CODE_OWNER_HOME_V1, "ai", "setrox", "setfarm", "scripts");
+  if (!hasExactKeys(inheritedEnvironment, ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"])
+    || inheritedEnvironment.SETFARM_ENV_DIR !== expectedScripts
+    || !/^\/var\/run\/com\.apple\.launchd\.[A-Za-z0-9]+\/Listeners$/.test(inheritedEnvironment.SSH_AUTH_SOCK ?? "")) {
+    fail(`${profile.label} inherited launch environment is invalid`);
+  }
+  const defaultEnvironment = detachedLaunchctlEnvironmentBlockV1(text, "default environment", profile.label, ["PATH"]);
+  if (!hasExactKeys(defaultEnvironment, ["PATH"]) || defaultEnvironment.PATH !== PROCESS_ENV_V1.PATH) fail(`${profile.label} default launch environment is invalid`);
+  const environment = Object.freeze(config.environmentNames.map((name) => {
+    if (typeof environmentRecord[name] !== "string" || environmentRecord[name] === "") fail(`${profile.label} loaded environment is missing ${name}`);
+    return Object.freeze([name, environmentRecord[name]]);
+  }));
+  return Object.freeze({ bytes, state, activeCount: 0, programArguments, environment });
+}
+
+function observeDetachedLaunchPlistV1(profile, config) {
+  const observed = readStableRegular(config.locator, { linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1 });
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || observed.stats.uid !== BigInt(uid) || (modeOf(observed.stats) & 0o022) !== 0) fail(`${profile.label} plist ownership is invalid`);
+  const plist = parsePlutilJsonV1(
+    requireSuccessfulChild(fixedChildResult(PLUTIL_EXECUTABLE_V1, ["-convert", "json", "-o", "-", "-"], { input: observed.bytes }), `plist ${profile.label}`),
+    `plist ${profile.label}`,
+  );
+  if (!hasExactKeys(plist, ["EnvironmentVariables", "Label", "ProgramArguments", "RunAtLoad", "StandardErrorPath", "StandardOutPath", "StartInterval"])) fail(`${profile.label} plist keys are invalid`);
+  if (plist.Label !== profile.label || Object.prototype.hasOwnProperty.call(plist, "Program")) fail(`${profile.label} plist label/program is crossed`);
+  if (canonicalJsonV1(plist.ProgramArguments) !== canonicalJsonV1(profile.launchArguments)) fail(`${profile.label} plist arguments are crossed`);
+  if (plist.RunAtLoad !== true || plist.StartInterval !== 60) fail(`${profile.label} plist schedule is crossed`);
+  if (plist.StandardOutPath !== profile.stdoutPath || plist.StandardErrorPath !== profile.stderrPath) fail(`${profile.label} plist log paths are crossed`);
+  if (!plist.EnvironmentVariables || Object.getPrototypeOf(plist.EnvironmentVariables) !== Object.prototype
+    || !hasExactKeys(plist.EnvironmentVariables, config.environmentNames)) fail(`${profile.label} plist environment is invalid`);
+  for (const name of config.environmentNames) if (typeof plist.EnvironmentVariables[name] !== "string" || plist.EnvironmentVariables[name] === "") fail(`${profile.label} plist environment value is invalid`);
+  return Object.freeze({ observed, plist });
+}
+
+function sameObservedRegularV1(left, right) {
+  return left.bytes.equals(right.bytes)
+    && left.stats.dev === right.stats.dev && left.stats.ino === right.stats.ino && left.stats.mode === right.stats.mode
+    && left.stats.nlink === right.stats.nlink && left.stats.size === right.stats.size
+    && left.stats.mtimeNs === right.stats.mtimeNs && left.stats.ctimeNs === right.stats.ctimeNs;
+}
+
+function observeDetachedCliLinkV1(profile, uid) {
+  const stats = lstatSync(profile.launchArguments[0], { bigint: true });
+  if (!stats.isSymbolicLink() || stats.nlink !== 1n || stats.uid !== BigInt(uid)) fail(`${profile.label} launcher link is invalid`);
+  const target = readlinkSync(profile.launchArguments[0]);
+  const realpath = realpathSync(profile.launchArguments[0]);
+  if (realpath !== path.join(repositoryRootV1(), "dist", "cli", "cli.js")) fail(`${profile.label} launcher link target is crossed`);
+  const targetObserved = readStableRegular(realpath, { linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
+  return Object.freeze({ stats, target, realpath, targetObserved });
+}
+
+function sameDetachedCliLinkV1(left, right) {
+  return left.target === right.target && left.realpath === right.realpath && sameObservedRegularV1(left.targetObserved, right.targetObserved)
+    && left.stats.dev === right.stats.dev && left.stats.ino === right.stats.ino && left.stats.mode === right.stats.mode
+    && left.stats.nlink === right.stats.nlink && left.stats.uid === right.stats.uid && left.stats.size === right.stats.size
+    && left.stats.mtimeNs === right.stats.mtimeNs && left.stats.ctimeNs === right.stats.ctimeNs;
+}
+
+function parseDetachedPhysicalProcessesV1(bytes) {
+  const text = strictUtf8V1(bytes, "detached Setfarm process inventory");
+  if (!text.endsWith("\n") || text.includes("\0")) fail("detached Setfarm process inventory is malformed");
+  const lines = text.slice(0, -1).split("\n");
+  if (lines.some((line) => line === "")) fail("detached Setfarm process inventory contains a blank row");
+  if (lines.length > MAX_LEDGER_ORDINALS_V1) fail("detached Setfarm process inventory exceeds its row cap");
+  const pids = new Set();
+  const processes = lines.map((line) => {
+    const match = /^\s*(-2|[0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+[ 0-9][0-9]\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4})\s+(.+)$/.exec(line);
+    if (!match) fail("detached Setfarm process row is malformed");
+    const [uid, pid, ppid, pgid] = match.slice(1, 5).map(Number);
+    if (![uid, pid, ppid, pgid].every(Number.isSafeInteger) || (uid < 0 && uid !== -2) || pid < 1 || ppid < 0 || pgid < 0 || pids.has(pid)) {
+      fail("detached Setfarm process identity is invalid");
+    }
+    pids.add(pid);
+    return Object.freeze({ uid, pid, ppid, pgid, stat: match[5], lstart: match[6], command: match[7] });
+  });
+  return Object.freeze(processes.sort((left, right) => left.pid - right.pid));
+}
+
+function observeDetachedListenersV1(profile, pid) {
+  const network = profile.port === null ? "-iTCP" : `-iTCP@127.0.0.1:${profile.port}`;
+  const result = fixedChildResult(LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1, ["-nP", "-a", "-p", String(pid), network, "-sTCP:LISTEN", "-F0pcfn"]);
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
+  const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? "");
+  if (result.error || result.signal !== null || ![0, 1].includes(result.status) || stderr.length !== 0) fail(`${profile.label} listener observation failed`);
+  if (result.status === 1) {
+    if (stdout.length !== 0) fail(`${profile.label} empty listener observation has output`);
+    return Object.freeze({ status: 1, bytes: stdout, listeners: Object.freeze([]) });
+  }
+  const text = strictUtf8V1(stdout, `${profile.label} listener`, true);
+  const matches = [...text.matchAll(/(?:^|\n)p([1-9][0-9]*)\0c([^\0\n]+)\0\n(?:f(?:0|[1-9][0-9]*)\0n([^\0\n]+)\0\n)+/g)];
+  if (matches.length !== 1 || matches[0][0].length !== text.length || Number(matches[0][1]) !== pid) fail(`${profile.label} listener inventory is ambiguous`);
+  const endpoints = [...text.matchAll(/f(?:0|[1-9][0-9]*)\0n([^\0\n]+)\0\n/g)].map((match) => match[1]);
+  return Object.freeze({ status: 0, bytes: stdout, listeners: Object.freeze(endpoints) });
+}
+
+function observeDetachedSetfarmProcessV1(profile, expectedSetfarmSourceBuild, candidate, quarantine) {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || uid < 0) fail("runtime UID is invalid");
+  const nodeExecutable = realpathSync(process.execPath);
+  const expectedCommand = [nodeExecutable, profile.entrypoint, ...profile.daemonArguments].join(" ");
+  const inventoryBeforeBytes = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]), `${profile.label} process inventory`);
+  const inventoryBefore = parseDetachedPhysicalProcessesV1(inventoryBeforeBytes);
+  const familyBefore = inventoryBefore.filter((item) => item.command.split(" ").includes(profile.entrypoint));
+  if (familyBefore.length !== 1) fail(`${profile.label} detached daemon family count is not exactly one`);
+  const processBefore = familyBefore[0];
+  if (processBefore.uid !== uid || processBefore.ppid !== 1 || processBefore.pgid !== processBefore.pid || processBefore.stat.includes("Z") || processBefore.command !== expectedCommand) {
+    fail(`${profile.label} detached daemon identity is invalid`);
+  }
+  if (!Number.isSafeInteger(Date.parse(processBefore.lstart)) || Date.parse(processBefore.lstart) < 1) fail(`${profile.label} detached daemon start is invalid`);
+  const commBefore = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-ww", "-p", String(processBefore.pid), "-o", "comm="]), `${profile.label} daemon executable`);
+  if (!commBefore.equals(Buffer.from(`${nodeExecutable}\n`, "utf8"))) fail(`${profile.label} detached daemon executable is crossed`);
+  const commandBefore = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-ww", "-p", String(processBefore.pid), "-o", "command="]), `${profile.label} daemon command`);
+  if (!commandBefore.equals(Buffer.from(`${expectedCommand}\n`, "utf8"))) fail(`${profile.label} detached daemon command is crossed`);
+  const txtBefore = observeLoadedExecutableTextV1(processBefore.pid, nodeExecutable, `${profile.label} daemon`);
+  const listenersBefore = observeDetachedListenersV1(profile, processBefore.pid);
+  if (profile.port === null
+    ? listenersBefore.status !== 1 || listenersBefore.listeners.length !== 0
+    : listenersBefore.status !== 0 || listenersBefore.listeners.length !== 1 || listenersBefore.listeners[0] !== `127.0.0.1:${profile.port}`) {
+    fail(`${profile.label} detached daemon listener identity is invalid`);
+  }
+  if (isWithinLocator(candidate, nodeExecutable) || isWithinLocator(quarantine, nodeExecutable)
+    || isWithinLocator(candidate, profile.entrypoint) || isWithinLocator(quarantine, profile.entrypoint)) fail(`${profile.label} actual process references the retained generation`);
+  const loadedSource = observeActualSetfarmRuntimeSourceV1(profile.entrypoint, expectedSetfarmSourceBuild);
+  const inventoryAfterBytes = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]), `${profile.label} process inventory after source`);
+  const inventoryAfter = parseDetachedPhysicalProcessesV1(inventoryAfterBytes);
+  const familyAfter = inventoryAfter.filter((item) => item.command.split(" ").includes(profile.entrypoint));
+  if (familyAfter.length !== 1 || canonicalJsonV1(familyAfter[0]) !== canonicalJsonV1(processBefore)) fail(`${profile.label} detached daemon changed during observation`);
+  const commAfter = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-ww", "-p", String(processBefore.pid), "-o", "comm="]), `${profile.label} daemon executable after source`);
+  const commandAfter = requireSuccessfulChild(fixedChildResult(PROCESS_IDENTITY_EXECUTABLE_V1, ["-ww", "-p", String(processBefore.pid), "-o", "command="]), `${profile.label} daemon command after source`);
+  const txtAfter = observeLoadedExecutableTextV1(processBefore.pid, nodeExecutable, `${profile.label} daemon after source`);
+  const listenersAfter = observeDetachedListenersV1(profile, processBefore.pid);
+  if (!commAfter.equals(commBefore) || !commandAfter.equals(commandBefore) || !txtAfter.equals(txtBefore)
+    || !listenersAfter.bytes.equals(listenersBefore.bytes) || canonicalJsonV1(listenersAfter.listeners) !== canonicalJsonV1(listenersBefore.listeners)
+  ) {
+    fail(`${profile.label} detached daemon authority changed during observation`);
+  }
+  return Object.freeze({
+    pid: processBefore.pid,
+    processLstart: processBefore.lstart,
+    processGroupId: processBefore.pgid,
+    executableRealpath: nodeExecutable,
+    entrypointRealpath: profile.entrypoint,
+    commHash: sha256(commBefore),
+    commandHash: sha256(commandBefore),
+    lsofHash: sha256(txtBefore),
+    loadedSource,
+  });
+}
+
+function observeDetachedLaunchAgentConfigBodyV1(config, expectedRuntimeSource, candidate, quarantine) {
+  const profileBase = detachedSetfarmServiceProfileV1(config.label);
+  const logBase = path.join(CODE_OWNER_HOME_V1, ".openclaw", "logs", config.label === "com.setrox.setfarm-spawner" ? "setfarm-spawner.watch" : "setfarm-dashboard.watch");
+  const profile = Object.freeze({ ...profileBase, stdoutPath: `${logBase}.log`, stderrPath: `${logBase}.err.log` });
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || uid < 0) fail("runtime UID is invalid");
+  const plistBefore = observeDetachedLaunchPlistV1(profile, config);
+  const cliBefore = observeDetachedCliLinkV1(profile, uid);
+  const entryBefore = readStableRegular(profile.entrypoint, { linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
+  const launchBefore = observeDetachedLaunchProjectionV1(profile, config, uid);
+  for (const [name, value] of launchBefore.environment) if (value !== plistBefore.plist.EnvironmentVariables[name]) fail(`${config.label} loaded environment differs from plist`);
+  const environment = Object.freeze(config.environmentNames.map((name, ordinal) => redactedEnvironmentEntryV1(name, plistBefore.plist.EnvironmentVariables[name], ordinal, "/", candidate, quarantine)));
+  const pathResolutionCommitments = Object.freeze([
+    nonsecretCommitmentV1("effective_program", null, 0, profile.launchArguments[0], "/", candidate, quarantine),
+    ...profile.launchArguments.map((argument, ordinal) => nonsecretCommitmentV1("argument", null, ordinal, argument, "/", candidate, quarantine)),
+    ...environment.map((entry) => entry.classificationCommitment),
+  ]);
+  const loadedEnvironment = Object.freeze(launchBefore.environment.map(([name, value], ordinal) => redactedEnvironmentEntryV1(name, value, ordinal, "/", candidate, quarantine)));
+  const loadedPathResolutionCommitments = Object.freeze([
+    nonsecretCommitmentV1("effective_program", null, 0, profile.launchArguments[0], "/", candidate, quarantine),
+    ...profile.launchArguments.map((argument, ordinal) => nonsecretCommitmentV1("argument", null, ordinal, argument, "/", candidate, quarantine)),
+    ...loadedEnvironment.map((entry) => entry.classificationCommitment),
+  ]);
+  let expectedSetfarmSourceBuild = expectedRuntimeSource.sourceBody;
+  if (expectedRuntimeSource.provenance === "operation_retained_current_setfarm_build") {
+    assertRetainedCurrentBuildV1(expectedRuntimeSource.sourceBody);
+    expectedSetfarmSourceBuild = Object.freeze({
+      branch: "main", clean: true, sha: expectedRuntimeSource.sourceBody.sourceSha,
+      treeHash: expectedRuntimeSource.sourceBody.sourceTreeHash, buildHash: expectedRuntimeSource.sourceBody.buildHash,
+      originMainSha: expectedRuntimeSource.sourceBody.sourceSha,
+    });
+  }
+  const actualProcess = observeDetachedSetfarmProcessV1(profile, expectedSetfarmSourceBuild, candidate, quarantine);
+  const expectedLoadedSource = { sha: expectedRuntimeSource.sourcePair.sourceSha, treeHash: expectedRuntimeSource.sourcePair.sourceTreeHash, buildHash: expectedRuntimeSource.sourcePair.controllerBuildHash };
+  if (canonicalJsonV1(actualProcess.loadedSource) !== canonicalJsonV1(expectedLoadedSource)) fail(`${config.label} actual source/build differs from expected authority`);
+  const launchAfter = observeDetachedLaunchProjectionV1(profile, config, uid);
+  const plistAfter = observeDetachedLaunchPlistV1(profile, config);
+  const cliAfter = observeDetachedCliLinkV1(profile, uid);
+  const entryAfter = readStableRegular(profile.entrypoint, { linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
+  const selectedLaunchProjection = (value) => ({
+    state: value.state, activeCount: value.activeCount, programArguments: value.programArguments, environment: value.environment,
+  });
+  if (!launchAfter.bytes.equals(launchBefore.bytes) || canonicalJsonV1(selectedLaunchProjection(launchAfter)) !== canonicalJsonV1(selectedLaunchProjection(launchBefore))
+    || !sameObservedRegularV1(plistBefore.observed, plistAfter.observed) || !sameDetachedCliLinkV1(cliBefore, cliAfter)
+    || !sameObservedRegularV1(entryBefore, entryAfter)) fail(`${config.label} launcher authority changed during observation`);
+  const loadedProcessBase = {
+    pid: actualProcess.pid,
+    processLstart: actualProcess.processLstart,
+    processGroupId: actualProcess.processGroupId,
+    processIdentityHash: hashCanonicalJsonV1({ pid: actualProcess.pid, processLstart: actualProcess.processLstart, processGroupId: actualProcess.processGroupId }),
+    executableRealpathHash: sha256(Buffer.from(actualProcess.executableRealpath, "utf8")),
+    entrypointRealpathHash: sha256(Buffer.from(actualProcess.entrypointRealpath, "utf8")),
+    commHash: actualProcess.commHash,
+    commandHash: actualProcess.commandHash,
+    lsofHash: actualProcess.lsofHash,
+    sourceSha: actualProcess.loadedSource.sha,
+    sourceTreeHash: actualProcess.loadedSource.treeHash,
+    controllerBuildHash: actualProcess.loadedSource.buildHash,
+    missionControlLoadedBuildProof: null,
+    serviceGenerationHash: hashCanonicalJsonV1({
+      schema: "setfarm.platform-build-generation-loaded-service-generation.v1",
+      label: config.label,
+      pid: actualProcess.pid,
+      processLstart: actualProcess.processLstart,
+      processGroupId: actualProcess.processGroupId,
+      executableRealpathHash: sha256(Buffer.from(actualProcess.executableRealpath, "utf8")),
+      loadedArgumentsHash: hashCanonicalJsonV1(profile.launchArguments),
+      entrypointRealpathHash: sha256(Buffer.from(actualProcess.entrypointRealpath, "utf8")),
+      commHash: actualProcess.commHash,
+      commandHash: actualProcess.commandHash,
+      lsofHash: actualProcess.lsofHash,
+      sourceSha: actualProcess.loadedSource.sha,
+      sourceTreeHash: actualProcess.loadedSource.treeHash,
+      controllerBuildHash: actualProcess.loadedSource.buildHash,
+    }),
+    actualGenerationAuthenticated: true,
+  };
+  const expectedObservedFieldEqualityHash = hashCanonicalJsonV1({
+    schema: "setfarm.platform-build-generation-expected-observed-field-equality.v1",
+    label: config.label,
+    expectedRuntimeSource,
+    loadedProcessObservation: loadedProcessBase,
+  });
+  const plistProjection = Object.freeze({ program: null, effectiveProgram: profile.launchArguments[0], workingDirectory: null, programArguments: profile.launchArguments, environment, pathResolutionCommitments });
+  const loadedJobProjection = Object.freeze({
+    program: Object.freeze({ kind: "explicit", reported: profile.launchArguments[0], effective: profile.launchArguments[0] }),
+    workingDirectory: Object.freeze({ kind: "absent_launchd_default", reported: null, effective: "/" }),
+    programArguments: profile.launchArguments,
+    environment: loadedEnvironment,
+    pathResolutionCommitments: loadedPathResolutionCommitments,
+    loadedProcess: Object.freeze({ ...loadedProcessBase, expectedObservedFieldEqualityHash }),
+  });
+  const projectionBase = {
+    locator: config.locator, label: config.label, launchctlExecutable: LAUNCHCTL_EXECUTABLE_V1, launchctlDomain: `gui/${uid}`,
+    expectedRuntimeSource, plistProjection, loadedJobProjection, plistBytesHash: sha256(plistBefore.observed.bytes),
+    launchctlBytesHash: sha256(launchBefore.bytes), noCandidateReference: true,
+  };
+  return Object.freeze({ ...projectionBase, projectionHash: hashCanonicalJsonV1(projectionBase) });
+}
+
 function observeLaunchAgentConfigBodyV1(config, expectedRuntimeSource, candidate, quarantine) {
+  if (config.label === "com.setrox.setfarm-spawner" || config.label === "com.setrox.setfarm-dashboard") {
+    return observeDetachedLaunchAgentConfigBodyV1(config, expectedRuntimeSource, candidate, quarantine);
+  }
   const plistObserved = readStableRegular(config.locator, { linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1 });
   const plist = parsePlutilJsonV1(
     requireSuccessfulChild(fixedChildResult(PLUTIL_EXECUTABLE_V1, ["-convert", "json", "-o", "-", config.locator]), `plist ${config.label}`),
@@ -2578,6 +2937,15 @@ function observeLaunchAgentConfigBodyV1(config, expectedRuntimeSource, candidate
     if (processAfter.state !== "live_match") fail("Mission Control process identity drifted", "BUILD_GENERATION_LOADED_MISSION_CONTROL_PROOF_REQUIRED");
     if (processAfter.observationHash !== actualProcess.processBeforeHash) {
       fail("Mission Control process observation bytes drifted", "BUILD_GENERATION_LOADED_MISSION_CONTROL_PROOF_REQUIRED");
+    }
+    let executableAfterBytes;
+    try {
+      executableAfterBytes = observeLoadedExecutableTextV1(loaded.pid, actualProcess.executableRealpath, "Mission Control loaded process after endpoint");
+    } catch {
+      fail("Mission Control executable observation drifted", "BUILD_GENERATION_LOADED_MISSION_CONTROL_PROOF_REQUIRED");
+    }
+    if (!executableAfterBytes.equals(actualProcess.lsofBytes)) {
+      fail("Mission Control executable observation bytes drifted", "BUILD_GENERATION_LOADED_MISSION_CONTROL_PROOF_REQUIRED");
     }
     const listenerAfter = observeMissionControlListenerV1(loaded.pid);
     if (canonicalJsonV1(listenerAfter) !== canonicalJsonV1(listenerBefore)) {
