@@ -132,6 +132,10 @@ type FixtureOptions = Readonly<{
   preparedAuthorityDirectoryWrongDevice?: boolean;
   preparedAccessorReobservationDrift?: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation";
   preparedAccessorByteDrift?: boolean;
+  preparedPrerequisiteContentDrift?: Readonly<{
+    kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+    fault: "unlink" | "replace";
+  }>;
 }>;
 
 function fixtureDatabasePortSource(options: FixtureOptions): string {
@@ -198,6 +202,14 @@ function createFixture(options: FixtureOptions = {}): string {
     fixtureObserver = fixtureObserver.replace(
       'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
       'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
+    );
+  }
+  if (options.preparedPrerequisiteContentDrift) {
+    const { kind, fault } = options.preparedPrerequisiteContentDrift;
+    const hashKey = `${kind}Hash`;
+    fixtureObserver = fixtureObserver.replace(
+      "    operation = await parseCurrentEntryOperationBody(body, pair, prerequisiteSnapshots);",
+      `    operation = await parseCurrentEntryOperationBody(body, pair, prerequisiteSnapshots); { const nestedPair=operation.${kind}; const driftPath=currentEntryPrerequisiteRecordPathV1(${JSON.stringify(kind)},nestedPair[${JSON.stringify(hashKey)}]); const driftBytes=readFileSync(driftPath); ${fault === "unlink" ? "unlinkSync(driftPath);" : 'renameSync(driftPath,`${driftPath}.held`); writeFileSync(driftPath,driftBytes,{mode:0o600});'} }`,
     );
   }
   if (options.stopAfterCurrentEntryOperationPublication) {
@@ -2109,7 +2121,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "\nasync function validateStoredCurrentEntryFamily(",
     );
     assert.doesNotMatch(prerequisiteResolverRegion, /readdirSync|mtime|ctime|latest/i);
-    assert.match(prerequisiteResolverRegion, /readCurrentEntryAuthorityRecordIfPresentV1\(contentPath\)/);
+    assert.equal(
+      [...prerequisiteResolverRegion.matchAll(/readCurrentEntryAuthorityRecordSnapshotIfPresentV1\(contentPath\)/g)].length,
+      2,
+      "content-first resolution and legacy fallback must each bind exact stable content absence/presence",
+    );
     assert.doesNotMatch(source, /process\.env\.(?:HOME|SETFARM_[A-Z_]*(?:ROOT|PATH))/);
     assert.doesNotMatch(source, /path\.join\(fixedRepositoryRoot\(\),/);
   });
@@ -2427,6 +2443,29 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("rejects nested prerequisite disappearance or replacement after operation parsing", () => {
+    for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+      for (const fault of ["unlink", "replace"] as const) {
+        const fixture = finalizedFixture({
+          preparedPrerequisiteContentDrift: { kind, fault },
+          stopAfterCurrentEntryOperationPublication: true,
+        });
+        try {
+          const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+          assert.equal(seeded.status, 0, seeded.stderr);
+          const operationPath = path.join(currentEntryStore(fixture.root), "current-entry-operation.json");
+          const operationBefore = readFileSync(operationPath);
+          const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+          assert.notEqual(result.status, 0, `${kind}:${fault} must fail closed`);
+          assert.match(result.stderr, /prerequisite|record|changed|inode|absent|ENOENT/i);
+          assert.equal(readFileSync(operationPath).equals(operationBefore), true);
+        } finally {
+          removeFixture(fixture.root);
+        }
+      }
+    }
+  });
+
   it("does not turn a prepared store disappearance race into absence", () => {
     const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
@@ -2667,8 +2706,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
       const source = readFileSync(modulePath, "utf8");
       const drifted = source.replace(
-        "return readTask12ReceiptStoreBytesV1(record);",
-        "unlinkSync(record); return readTask12ReceiptStoreBytesV1(record);",
+        "return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });",
+        "unlinkSync(record); return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });",
       );
       assert.notEqual(drifted, source);
       writeFileSync(modulePath, drifted);
