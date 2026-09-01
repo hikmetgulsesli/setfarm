@@ -1216,7 +1216,7 @@ export function inspectBuildGenerationRetentionV1() {
   const receipts = [];
   if (stores) {
     const operationNames = inspectImmutablePublisherDirectoryV1(stores.operations, (name) => /^[0-9a-f]{64}\.json$/.test(name), (name, value) => {
-      const operation = parseRetentionOperationV1(value);
+      const operation = parseRetentionOperationV1OrV2(value);
       if (name !== `${operation.operationHash}.json`) fail("retention operation inspection filename mismatch");
     });
     const candidateNames = inspectImmutablePublisherDirectoryV1(stores.operationCandidates, (name) => /^[0-9a-f]{64}\.json$/.test(name), (name, value) => assertCandidateIndexBodyV1(value, name));
@@ -1225,7 +1225,7 @@ export function inspectBuildGenerationRetentionV1() {
     for (const name of operationNames) {
       const match = /^([0-9a-f]{64})\.json$/.exec(name);
       if (!match) fail("retention operation store has an invalid dirent");
-      const operation = parseRetentionOperationV1(parseCanonicalRecord(path.join(stores.operations, name), 0o600, [1, 2]).value);
+      const operation = parseRetentionOperationV1OrV2(parseCanonicalRecord(path.join(stores.operations, name), 0o600, [1, 2]).value);
       if (operation.operationHash !== match[1]) fail("retention operation inspection filename mismatch");
       operations.push(operation);
     }
@@ -1577,6 +1577,70 @@ function observeOperationAuthoritiesV1(root) {
     Object.freeze({ label: "com.setrox.mission-control", provenance: "operation_embedded_current_pba_v2_delivery_evidence", sourcePair: pbaPair, sourceBody: pba }),
   ]);
   return Object.freeze({ sourceBuild, productBuildAuthorityV2Observation: pba, productBuildAuthorityV2DeliveryEvidence: pbaPair, expectedRuntimeSources });
+}
+
+function observeCurrentProductBuildAuthorityForRetentionV2(root) {
+  // OA18_PRIVATE_FIXTURE_PBA_V2_START
+  const program = [
+    'import { observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1 } from "./src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts";',
+    "const productBuildAuthorityV2Observation = await observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();",
+    "process.stdout.write(`${JSON.stringify(productBuildAuthorityV2Observation)}\\n`);",
+  ].join("\n");
+  const pba = parseCanonicalChildJsonLine(requireSuccessfulChild(fixedChildResult(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "--eval", program],
+    { cwd: root },
+  ), "current retention PBA authority"), "current retention PBA authority");
+  // OA18_PRIVATE_FIXTURE_PBA_V2_END
+  assertProductBuildAuthorityV2ObservationV1(pba);
+  const response = pba?.response;
+  if (
+    pba?.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1"
+    || pba.observationTransport !== "source-cli"
+    || response?.schema !== "mission-control.product-build-authority-v2-delivery-evidence-response.v1"
+    || response.currentStatus !== "current"
+    || typeof response.deliveryEvidenceRef !== "string" || !SHA256.test(response.deliveryEvidenceHash)
+    || response.evidence?.deliveryEvidenceRef !== response.deliveryEvidenceRef
+    || response.evidence?.deliveryEvidenceHash !== response.deliveryEvidenceHash
+    || response.deliveryEvidenceRef !== `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${response.deliveryEvidenceHash}`
+    || !GIT_HASH.test(response.evidence?.currentSource?.sha)
+    || !GIT_HASH.test(response.evidence?.currentSource?.treeHash)
+    || !SHA256.test(response.evidence?.currentSource?.buildHash)
+  ) fail("current Mission Control delivery authority is invalid");
+  return Object.freeze({
+    body: pba,
+    pair: Object.freeze({
+      deliveryEvidenceRef: response.deliveryEvidenceRef,
+      deliveryEvidenceHash: response.deliveryEvidenceHash,
+    }),
+  });
+}
+
+function observeOperationAuthoritiesV2(root, inspection) {
+  if (inspection.danglingIntent) fail("retention v2 cannot cross a dangling rotation intent");
+  const active = inspection.generations.filter((generation) => generation.disposition === null);
+  if (active.length !== 8) fail("retention v2 requires exactly eight active completed generations");
+  const controllerSource = observeCurrentRetentionControllerSourceV2(root);
+  const retainedCurrentBuild = observeRetainedCurrentBuildV1(root, controllerSource);
+  const pba = observeCurrentProductBuildAuthorityForRetentionV2(root);
+  const setfarmPair = Object.freeze({
+    sourceSha: retainedCurrentBuild.sourceSha,
+    sourceTreeHash: retainedCurrentBuild.sourceTreeHash,
+    controllerBuildHash: retainedCurrentBuild.buildHash,
+  });
+  const expectedRuntimeSources = Object.freeze([
+    Object.freeze({ label: "com.setrox.setfarm-spawner", provenance: "operation_retained_current_setfarm_build", sourcePair: setfarmPair, sourceBody: retainedCurrentBuild }),
+    Object.freeze({ label: "com.setrox.setfarm-dashboard", provenance: "operation_retained_current_setfarm_build", sourcePair: setfarmPair, sourceBody: retainedCurrentBuild }),
+    Object.freeze({ label: "com.setrox.mission-control", provenance: "operation_embedded_current_pba_v2_delivery_evidence", sourcePair: pba.pair, sourceBody: pba.body }),
+  ]);
+  assertExpectedRuntimeSourcesV2(expectedRuntimeSources, retainedCurrentBuild, pba.pair, pba.body);
+  return Object.freeze({
+    controllerSource,
+    retainedCurrentBuild,
+    productBuildAuthorityV2Observation: pba.body,
+    productBuildAuthorityV2DeliveryEvidence: pba.pair,
+    expectedRuntimeSources,
+  });
 }
 
 function gitBytes(root, args, purpose) {
@@ -2505,7 +2569,19 @@ function observeLaunchAgentConfigBodyV1(config, expectedRuntimeSource, candidate
       response: actualMissionControl.response,
     });
   }
-  const loadedSource = actualMissionControl?.source ?? observeActualSetfarmRuntimeSourceV1(entrypointRealpath, expectedRuntimeSource.sourceBody);
+  let expectedSetfarmSourceBuild = expectedRuntimeSource.sourceBody;
+  if (expectedRuntimeSource.provenance === "operation_retained_current_setfarm_build") {
+    assertRetainedCurrentBuildV1(expectedRuntimeSource.sourceBody);
+    expectedSetfarmSourceBuild = Object.freeze({
+      branch: "main",
+      clean: true,
+      sha: expectedRuntimeSource.sourceBody.sourceSha,
+      treeHash: expectedRuntimeSource.sourceBody.sourceTreeHash,
+      buildHash: expectedRuntimeSource.sourceBody.buildHash,
+      originMainSha: expectedRuntimeSource.sourceBody.sourceSha,
+    });
+  }
+  const loadedSource = actualMissionControl?.source ?? observeActualSetfarmRuntimeSourceV1(entrypointRealpath, expectedSetfarmSourceBuild);
   if (canonicalJsonV1(loadedSource) !== canonicalJsonV1(expectedLoadedSource)) fail(`${config.label} actual source/build differs from expected authority`);
   if (config.label !== "com.setrox.mission-control" && observeProcessIdentityV1(loaded.pid, actualProcess).state !== "live_match") fail(`${config.label} process changed after generation observation`);
   const loadedProcessBase = {
@@ -2983,6 +3059,32 @@ function assertExpectedRuntimeSourcesV1(value, sourceBuild, pbaPair, pbaBody) {
   }
 }
 
+function assertExpectedRuntimeSourcesV2(value, retainedCurrentBuild, pbaPair, pbaBody) {
+  assertRetainedCurrentBuildV1(retainedCurrentBuild);
+  if (!Array.isArray(value) || value.length !== 3) fail("expected runtime source v2 tuple is invalid");
+  const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard", "com.setrox.mission-control"];
+  for (let ordinal = 0; ordinal < value.length; ordinal += 1) {
+    const entry = value[ordinal];
+    if (!entry || !hasExactKeys(entry, ["label", "provenance", "sourcePair", "sourceBody"]) || entry.label !== labels[ordinal]) {
+      fail("expected runtime source v2 entry is invalid");
+    }
+    if (ordinal < 2) {
+      if (
+        entry.provenance !== "operation_retained_current_setfarm_build"
+        || canonicalJsonV1(entry.sourceBody) !== canonicalJsonV1(retainedCurrentBuild)
+        || !entry.sourcePair || !hasExactKeys(entry.sourcePair, ["sourceSha", "sourceTreeHash", "controllerBuildHash"])
+        || entry.sourcePair.sourceSha !== retainedCurrentBuild.sourceSha
+        || entry.sourcePair.sourceTreeHash !== retainedCurrentBuild.sourceTreeHash
+        || entry.sourcePair.controllerBuildHash !== retainedCurrentBuild.buildHash
+      ) fail("expected retained Setfarm runtime source is crossed");
+    } else if (
+      entry.provenance !== "operation_embedded_current_pba_v2_delivery_evidence"
+      || canonicalJsonV1(entry.sourceBody) !== canonicalJsonV1(pbaBody)
+      || canonicalJsonV1(entry.sourcePair) !== canonicalJsonV1(pbaPair)
+    ) fail("expected Mission Control runtime source v2 is crossed");
+  }
+}
+
 function assertExecutingClosureV1(value) {
   const projectionKeys = [
     "schema", "moduleRootKind", "moduleRootRepositoryLocator", "entryLocator", "maxModuleCount", "maxImportEdgeCount",
@@ -3077,13 +3179,70 @@ function parseRetentionOperationV1(value) {
   return value;
 }
 
+function parseRetentionOperationV2(value) {
+  if (!value || !hasExactKeys(value, ["operationCore", "expectedQuarantineLocator", "operationRef", "operationHash"])) fail("retention operation v2 shape is invalid");
+  const digest = hashCanonicalJsonV1(value.operationCore);
+  if (
+    value.operationHash !== digest || value.operationRef !== operationRefV1(digest)
+    || value.expectedQuarantineLocator !== `${QUARANTINE_DIRECTORY_V1}/${digest}.dist`
+    || value.operationCore?.schema !== "setfarm.platform-build-generation-retention-operation.v2"
+    || value.operationCore?.purpose !== "permanently-dispose-lowest-completed-build-generation-v1"
+    || !Number.isSafeInteger(value.operationCore?.candidateOrdinal) || value.operationCore.candidateOrdinal < 1
+    || value.operationCore?.prepareZeroReferenceProofHash !== value.operationCore?.prepareZeroReferenceProof?.proofHash
+    || value.operationCore?.prepareZeroReferenceProof?.phase !== "prepare"
+    || value.operationCore?.prepareZeroReferenceProof?.operation !== null
+  ) fail("retention operation v2 pair/body is invalid");
+  const core = value.operationCore;
+  if (!hasExactKeys(core, [
+    "schema", "purpose", "candidateCompletion", "candidateOrdinal", "controllerSource", "retainedCurrentBuild",
+    "productBuildAuthorityV2DeliveryEvidence", "productBuildAuthorityV2Observation", "expectedRuntimeSources",
+    "executingImplementationClosure", "candidateArchiveLocator", "candidateArchiveIdentity", "candidateInventory",
+    "prepareZeroReferenceProof", "prepareZeroReferenceProofHash",
+  ])) fail("retention operation v2 core shape is invalid");
+  assertRecordPairV1(core.candidateCompletion, "completion");
+  assertRetentionControllerSourceV2(core.controllerSource);
+  assertRetainedCurrentBuildV1(core.retainedCurrentBuild);
+  if (core.controllerSource.sourceSha === core.retainedCurrentBuild.sourceSha) fail("retention operation v2 sources are not distinct");
+  assertRecordPairV1(core.productBuildAuthorityV2DeliveryEvidence, "deliveryEvidence");
+  const pba = core.productBuildAuthorityV2Observation;
+  assertProductBuildAuthorityV2ObservationV1(pba);
+  if (
+    !pba || !hasExactKeys(pba, ["schema", "observationTransport", "response"])
+    || pba.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || pba.observationTransport !== "source-cli"
+    || pba.response?.schema !== "mission-control.product-build-authority-v2-delivery-evidence-response.v1"
+    || pba.response.currentStatus !== "current"
+    || pba.response.deliveryEvidenceRef !== core.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceRef
+    || pba.response.deliveryEvidenceHash !== core.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceHash
+    || pba.response.evidence?.deliveryEvidenceRef !== pba.response.deliveryEvidenceRef
+    || pba.response.evidence?.deliveryEvidenceHash !== pba.response.deliveryEvidenceHash
+  ) fail("retention operation v2 PBA authority is invalid");
+  assertExpectedRuntimeSourcesV2(core.expectedRuntimeSources, core.retainedCurrentBuild, core.productBuildAuthorityV2DeliveryEvidence, pba);
+  assertExecutingClosureV1(core.executingImplementationClosure);
+  if (!/^\.setfarm\/build-generations-v1\/[0-9a-f-]{36}\.dist$/.test(core.candidateArchiveLocator)) fail("retention v2 candidate archive locator is invalid");
+  assertDirectoryIdentityBodyV1(core.candidateArchiveIdentity, "retention v2 candidate archive");
+  assertInventoryBodyV1(core.candidateInventory, "retention v2 candidate inventory");
+  if (
+    core.candidateArchiveIdentity.devDecimal !== core.candidateInventory.rootPhysicalIdentity.devDecimal
+    || core.candidateArchiveIdentity.inoDecimal !== core.candidateInventory.rootPhysicalIdentity.inoDecimal
+    || core.candidateArchiveIdentity.mode !== core.candidateInventory.rootPhysicalIdentity.mode
+  ) fail("retention v2 archive identity/inventory is crossed");
+  assertZeroReferenceProofV1(core.prepareZeroReferenceProof, "prepare", null, core.candidateCompletion, core.expectedRuntimeSources);
+  return value;
+}
+
+function parseRetentionOperationV1OrV2(value) {
+  if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v1") return parseRetentionOperationV1(value);
+  if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v2") return parseRetentionOperationV2(value);
+  fail("retention operation schema is invalid");
+}
+
 function readRetentionOperationPairV1(stores, pair) {
   if (
     !pair || !hasExactKeys(pair, ["operationRef", "operationHash"])
     || !SHA256.test(pair.operationHash) || pair.operationRef !== operationRefV1(pair.operationHash)
   ) fail("retention operation pair is invalid");
   const file = path.join(stores.operations, `${pair.operationHash}.json`);
-  const operation = parseRetentionOperationV1(parseCanonicalRecord(file, 0o600, [1, 2]).value);
+  const operation = parseRetentionOperationV1OrV2(parseCanonicalRecord(file, 0o600, [1, 2]).value);
   if (operation.operationRef !== pair.operationRef || operation.operationHash !== pair.operationHash) fail("retention operation lookup mismatch");
   return operation;
 }
@@ -3211,7 +3370,7 @@ export function classifyBuildGenerationRetentionPublisherRecordV1(input) {
   try {
     const value = parseCanonicalRecordBytesV1(input.bytes, input.basename);
     if (input.store === "operations") {
-      const operation = parseRetentionOperationV1(value);
+      const operation = parseRetentionOperationV1OrV2(value);
       if (input.basename !== `${operation.operationHash}.json`) fail("retention operation filename/hash mismatch");
     } else if (input.store === "operation-candidates") {
       assertCandidateIndexBodyV1(value, input.basename);
@@ -3228,7 +3387,7 @@ export function classifyBuildGenerationRetentionPublisherRecordV1(input) {
 
 function normalizeRetentionPublisherStoresV1(stores) {
   inspectImmutablePublisherDirectoryV1(stores.operations, (name) => /^[0-9a-f]{64}\.json$/.test(name), (name, value) => {
-    const operation = parseRetentionOperationV1(value);
+    const operation = parseRetentionOperationV1OrV2(value);
     if (name !== `${operation.operationHash}.json`) fail("retention operation filename/hash mismatch");
   }, true);
   inspectImmutablePublisherDirectoryV1(stores.operationCandidates, (name) => /^[0-9a-f]{64}\.json$/.test(name), (name, value) => assertCandidateIndexBodyV1(value, name), true);
@@ -3266,12 +3425,48 @@ function findUnindexedOperationForCandidateV1(stores, candidateCompletion) {
   for (const name of names) {
     const match = /^([0-9a-f]{64})\.json$/.exec(name);
     if (!match) fail("retention operation store has an invalid dirent");
-    const operation = parseRetentionOperationV1(parseCanonicalRecord(path.join(stores.operations, name)).value);
+    const operation = parseRetentionOperationV1OrV2(parseCanonicalRecord(path.join(stores.operations, name)).value);
     if (operation.operationHash !== match[1]) fail("retention operation filename/hash mismatch");
     if (canonicalJsonV1(operation.operationCore.candidateCompletion) === canonicalJsonV1(candidateCompletion)) matches.push(operation);
   }
   if (matches.length > 1) fail("retention candidate operation fork");
   return matches[0] ?? null;
+}
+
+function finalizedBuildSourceShaForClassifierV2(root) {
+  const dist = path.join(root, "dist");
+  const distIdentity = directoryIdentity(dist);
+  if (distIdentity.mode !== 0o755) fail("retention classifier dist mode is invalid");
+  const observed = readStableRegular(path.join(dist, "BUILD_INFO.json"), {
+    device: BigInt(distIdentity.devDecimal), linkCounts: [1], maxBytes: MAX_AUTHORITY_BYTES_V1,
+  });
+  if (observed.mode !== 0o444) fail("retention classifier BUILD_INFO mode is invalid");
+  const value = parseFinalizedJsonV1(observed, [
+    "sha", "shortSha", "branch", "dirty", "packageVersion", "displayVersion", "builtAt",
+  ], "retention classifier BUILD_INFO", true);
+  if (!GIT_HASH.test(value.sha)) fail("retention classifier source SHA is invalid");
+  return value.sha;
+}
+
+function firstAuthorityDifferencePathV2(left, right, locator = "$") {
+  if (left === right) return null;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return locator;
+  if (Array.isArray(left) !== Array.isArray(right)) return locator;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (canonicalJsonV1([...leftKeys].sort(compareBytes)) !== canonicalJsonV1([...rightKeys].sort(compareBytes))) return `${locator}.[keys]`;
+  for (const key of leftKeys) {
+    const difference = firstAuthorityDifferencePathV2(left[key], right[key], `${locator}.${key}`);
+    if (difference) return difference;
+  }
+  return null;
+}
+
+function retentionOperationV2ImmutablePrepareProjection(core) {
+  const projection = { ...core };
+  delete projection.prepareZeroReferenceProof;
+  delete projection.prepareZeroReferenceProofHash;
+  return projection;
 }
 
 function prepareBuildGenerationRetentionV1() {
@@ -3280,8 +3475,26 @@ function prepareBuildGenerationRetentionV1() {
   const inspectionBefore = scanRotationLedgerFromRoots(roots, { deferDisposedClosure: true });
   const candidate = currentActiveCandidateV1(inspectionBefore);
   const candidateCompletion = pairOf(candidate.completion, "completion");
-  const authorities = observeOperationAuthoritiesV1(root);
-  const closure = executingImplementationClosureV1(root, authorities.sourceBuild);
+  const activeBefore = inspectionBefore.generations.filter((generation) => generation.disposition === null);
+  if (activeBefore.length > 8) fail("retention active generation bound is invalid");
+  let operationVersion = 1;
+  let authorities;
+  if (activeBefore.length === 8) {
+    const controllerSource = observeCurrentRetentionControllerSourceV2(root);
+    const finalizedSourceSha = finalizedBuildSourceShaForClassifierV2(root);
+    if (finalizedSourceSha === controllerSource.sourceSha) {
+      authorities = observeOperationAuthoritiesV1(root);
+    } else {
+      operationVersion = 2;
+      authorities = observeOperationAuthoritiesV2(root, inspectionBefore);
+    }
+  } else {
+    authorities = observeOperationAuthoritiesV1(root);
+  }
+  const closureSource = operationVersion === 2
+    ? Object.freeze({ sha: authorities.controllerSource.sourceSha })
+    : authorities.sourceBuild;
+  const closure = executingImplementationClosureV1(root, closureSource);
   const archive = path.join(root, candidate.completion.archiveLocator);
   const inventory = inventoryBuildGenerationV1(archive);
   if (
@@ -3295,7 +3508,23 @@ function prepareBuildGenerationRetentionV1() {
     candidate: { locator: archive, inventory },
     expectedRuntimeSources: authorities.expectedRuntimeSources,
   });
-  const operationCore = Object.freeze({
+  const operationCore = operationVersion === 2 ? Object.freeze({
+    schema: "setfarm.platform-build-generation-retention-operation.v2",
+    purpose: "permanently-dispose-lowest-completed-build-generation-v1",
+    candidateCompletion,
+    candidateOrdinal: candidate.ordinal,
+    controllerSource: authorities.controllerSource,
+    retainedCurrentBuild: authorities.retainedCurrentBuild,
+    productBuildAuthorityV2DeliveryEvidence: authorities.productBuildAuthorityV2DeliveryEvidence,
+    productBuildAuthorityV2Observation: authorities.productBuildAuthorityV2Observation,
+    expectedRuntimeSources: authorities.expectedRuntimeSources,
+    executingImplementationClosure: closure,
+    candidateArchiveLocator: candidate.completion.archiveLocator,
+    candidateArchiveIdentity: candidate.completion.archiveIdentity,
+    candidateInventory: inventory,
+    prepareZeroReferenceProof: prepareProof,
+    prepareZeroReferenceProofHash: prepareProof.proofHash,
+  }) : Object.freeze({
     schema: "setfarm.platform-build-generation-retention-operation.v1",
     purpose: "permanently-dispose-lowest-completed-build-generation-v1",
     candidateCompletion,
@@ -3325,21 +3554,65 @@ function prepareBuildGenerationRetentionV1() {
     const inspection = scanRotationLedgerFromRoots(roots, { recoverPublisherTemps: true });
     const lockedCandidate = currentActiveCandidateV1(inspection);
     if (canonicalJsonV1(pairOf(lockedCandidate.completion, "completion")) !== canonicalJsonV1(candidateCompletion)) fail("retention candidate changed before publication");
+    let publicationOperationCore = operationCore;
+    let publicationProposed = proposed;
+    if (operationVersion === 2) {
+      const lockedAuthorities = observeOperationAuthoritiesV2(root, inspection);
+      const lockedClosure = executingImplementationClosureV1(root, Object.freeze({ sha: lockedAuthorities.controllerSource.sourceSha }));
+      const lockedInventory = inventoryBuildGenerationV1(path.join(root, lockedCandidate.completion.archiveLocator));
+      const lockedProof = observeZeroReferenceProofV1({
+        phase: "prepare",
+        operation: null,
+        candidateCompletion,
+        candidate: { locator: path.join(root, lockedCandidate.completion.archiveLocator), inventory: lockedInventory },
+        expectedRuntimeSources: lockedAuthorities.expectedRuntimeSources,
+      });
+      for (const [label, before, after] of [
+        ["controller source", authorities.controllerSource, lockedAuthorities.controllerSource],
+        ["retained build", authorities.retainedCurrentBuild, lockedAuthorities.retainedCurrentBuild],
+        ["PBA", authorities.productBuildAuthorityV2Observation, lockedAuthorities.productBuildAuthorityV2Observation],
+        ["expected runtime", authorities.expectedRuntimeSources, lockedAuthorities.expectedRuntimeSources],
+        ["executing closure", closure, lockedClosure],
+        ["candidate inventory", inventory, lockedInventory],
+      ]) {
+        if (canonicalJsonV1(before) !== canonicalJsonV1(after)) {
+          fail(`retention v2 ${label} changed before publication at ${firstAuthorityDifferencePathV2(before, after)}`);
+        }
+      }
+      publicationOperationCore = Object.freeze({
+        ...operationCore,
+        prepareZeroReferenceProof: lockedProof,
+        prepareZeroReferenceProofHash: lockedProof.proofHash,
+      });
+      const lockedOperationHash = hashCanonicalJsonV1(publicationOperationCore);
+      publicationProposed = Object.freeze({
+        operationCore: publicationOperationCore,
+        expectedQuarantineLocator: `${QUARANTINE_DIRECTORY_V1}/${lockedOperationHash}.dist`,
+        operationRef: operationRefV1(lockedOperationHash),
+        operationHash: lockedOperationHash,
+      });
+    }
     const indexFile = path.join(stores.operationCandidates, candidateIndexNameV1(candidateCompletion));
     if (optionalLstat(indexFile)) {
       const index = parseCandidateIndexV1(indexFile, candidateCompletion);
-      readRetentionOperationPairV1(stores, index.operation);
+      const indexed = readRetentionOperationPairV1(stores, index.operation);
+      if (operationVersion === 2 && canonicalJsonV1(retentionOperationV2ImmutablePrepareProjection(indexed.operationCore)) !== canonicalJsonV1(retentionOperationV2ImmutablePrepareProjection(publicationOperationCore))) {
+        fail(`indexed retention operation differs from current immutable v2 authorities at ${firstAuthorityDifferencePathV2(retentionOperationV2ImmutablePrepareProjection(indexed.operationCore), retentionOperationV2ImmutablePrepareProjection(publicationOperationCore))}`);
+      }
       return index.operation;
     }
     const recovered = findUnindexedOperationForCandidateV1(stores, candidateCompletion);
-    const operation = recovered ?? proposed;
-    if (recovered && (
-      canonicalJsonV1(recovered.operationCore.sourceBuild) !== canonicalJsonV1(operationCore.sourceBuild)
-      || canonicalJsonV1(recovered.operationCore.productBuildAuthorityV2Observation) !== canonicalJsonV1(operationCore.productBuildAuthorityV2Observation)
-      || canonicalJsonV1(recovered.operationCore.expectedRuntimeSources) !== canonicalJsonV1(operationCore.expectedRuntimeSources)
-      || canonicalJsonV1(recovered.operationCore.executingImplementationClosure) !== canonicalJsonV1(operationCore.executingImplementationClosure)
-      || canonicalJsonV1(recovered.operationCore.candidateInventory) !== canonicalJsonV1(operationCore.candidateInventory)
-    )) fail("unindexed retention operation differs from current immutable authorities");
+    const operation = recovered ?? publicationProposed;
+    if (recovered && (operationVersion === 2
+      ? canonicalJsonV1(retentionOperationV2ImmutablePrepareProjection(recovered.operationCore)) !== canonicalJsonV1(retentionOperationV2ImmutablePrepareProjection(publicationOperationCore))
+      : (
+        canonicalJsonV1(recovered.operationCore.sourceBuild) !== canonicalJsonV1(operationCore.sourceBuild)
+        || canonicalJsonV1(recovered.operationCore.productBuildAuthorityV2Observation) !== canonicalJsonV1(operationCore.productBuildAuthorityV2Observation)
+        || canonicalJsonV1(recovered.operationCore.expectedRuntimeSources) !== canonicalJsonV1(operationCore.expectedRuntimeSources)
+        || canonicalJsonV1(recovered.operationCore.executingImplementationClosure) !== canonicalJsonV1(operationCore.executingImplementationClosure)
+        || canonicalJsonV1(recovered.operationCore.candidateInventory) !== canonicalJsonV1(operationCore.candidateInventory)
+      )
+    )) fail(`unindexed retention operation differs from current immutable authorities at ${firstAuthorityDifferencePathV2(retentionOperationV2ImmutablePrepareProjection(recovered?.operationCore), retentionOperationV2ImmutablePrepareProjection(publicationOperationCore))}`);
     publishNoReplaceFileV1(stores.operations, `${operation.operationHash}.json`, canonicalRecordBytes(operation), 0o600);
     const pair = operationPairV1(operation);
     const index = Object.freeze({ schema: "setfarm.platform-build-generation-retention-candidate-index.v1", candidateCompletion, operation: pair });
