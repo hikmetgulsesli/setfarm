@@ -1119,6 +1119,22 @@ async function importFixtureInternals(root, names) {
   return import(`${pathToFileURL(modulePath).href}?fixture=${Date.now()}-${Math.random()}`);
 }
 
+function installNestedRetentionStoreRoot(root) {
+  const modulePath = join(root, "scripts/build-generation-retention.mjs");
+  const physicalRoot = realpathSync(root);
+  const authorityData = join(physicalRoot, ".fixture-authority-data");
+  const authorityParent = join(authorityData, "internal-production-baseline");
+  const retentionRoot = join(authorityParent, "build-generation-retention-v1");
+  const source = readFileSync(modulePath, "utf8");
+  const boundary = 'const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");';
+  assert.equal(source.includes(boundary), true);
+  writeFileSync(modulePath, source.replace(
+    boundary,
+    'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-authority-data", "internal-production-baseline", "build-generation-retention-v1");',
+  ));
+  return { authorityData, authorityParent, retentionRoot };
+}
+
 function installStaleBuildAuthorityProbe(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   const source = readFileSync(modulePath, "utf8");
@@ -1791,6 +1807,109 @@ describe("OA18 build-generation retention authority", () => {
           .map((label) => join(expectedOwnerHome, "Library", "LaunchAgents", `${label}.plist`)),
       );
       assert.notEqual(loaded.CODE_OWNER_HOME_V1, dirname(dirname(dirname(nestedRepository))));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("bootstraps an absent retention authority parent before the immutable stores", async () => {
+    const root = createFixture();
+    try {
+      const { authorityData, authorityParent, retentionRoot } = installNestedRetentionStoreRoot(root);
+      mkdirSync(authorityData, { mode: 0o700 });
+      const { ensureRetentionStoreV1 } = await importFixtureInternals(root, ["ensureRetentionStoreV1"]);
+      assert.equal(existsSync(authorityParent), false);
+      const first = ensureRetentionStoreV1();
+      assert.deepEqual(Object.keys(first), ["root", "operations", "operationCandidates", "eraseSteps", "receipts"]);
+      const expectedDirectories = [
+        authorityParent,
+        retentionRoot,
+        ...["operations", "operation-candidates", "erase-steps", "receipts"].flatMap((name) => [
+          join(retentionRoot, name),
+          join(retentionRoot, name, "sha256"),
+        ]),
+      ];
+      const observe = () => expectedDirectories.map((directory) => {
+        const stats = lstatSync(directory, { bigint: true });
+        return {
+          directory,
+          realpath: realpathSync(directory),
+          directoryKind: stats.isDirectory(),
+          symlink: stats.isSymbolicLink(),
+          mode: Number(stats.mode & 0o777n),
+          devDecimal: stats.dev.toString(10),
+          inoDecimal: stats.ino.toString(10),
+          entries: readdirSync(directory).sort(),
+        };
+      });
+      const before = observe();
+      assert.equal(before.every((entry) => entry.realpath === entry.directory && entry.directoryKind && !entry.symlink && entry.mode === 0o700), true);
+      assert.equal(new Set(before.map((entry) => entry.devDecimal)).size, 1);
+      assert.deepEqual(before.slice(-8).filter((_, index) => index % 2 === 1).map((entry) => entry.entries), [[], [], [], []]);
+      assert.deepEqual(ensureRetentionStoreV1(), first);
+      assert.deepEqual(observe(), before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses invalid retention authority ancestors without publishing a store", async () => {
+    const cases = [
+      ["absent data root", () => {}],
+      ["wrong-mode data root", ({ authorityData }) => {
+        mkdirSync(authorityData, { mode: 0o700 });
+        chmodSync(authorityData, 0o755);
+      }],
+      ["file data root", ({ authorityData }) => writeFileSync(authorityData, "crossed\n")],
+      ["symlink data root", ({ authorityData, physicalRoot }) => symlinkSync(physicalRoot, authorityData)],
+      ["wrong-mode authority parent", ({ authorityData, authorityParent }) => {
+        mkdirSync(authorityData, { mode: 0o700 });
+        mkdirSync(authorityParent, { mode: 0o700 });
+        chmodSync(authorityParent, 0o755);
+      }],
+      ["file authority parent", ({ authorityData, authorityParent }) => {
+        mkdirSync(authorityData, { mode: 0o700 });
+        writeFileSync(authorityParent, "crossed\n");
+      }],
+      ["symlink authority parent", ({ authorityData, authorityParent, physicalRoot }) => {
+        mkdirSync(authorityData, { mode: 0o700 });
+        symlinkSync(physicalRoot, authorityParent);
+      }],
+    ];
+    for (const [name, setup] of cases) {
+      const root = createFixture();
+      try {
+        const paths = { ...installNestedRetentionStoreRoot(root), physicalRoot: realpathSync(root) };
+        setup(paths);
+        const { ensureRetentionStoreV1 } = await importFixtureInternals(root, ["ensureRetentionStoreV1"]);
+        assert.throws(() => ensureRetentionStoreV1(), /retention|directory|real|mode|ENOENT|ENOTDIR/i, name);
+        assert.equal(existsSync(paths.retentionRoot), false, name);
+        assert.equal(existsSync(join(root, ".setfarm")), false, name);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("adopts a valid partial empty retention store prefix", async () => {
+    const root = createFixture();
+    try {
+      const { authorityData, authorityParent, retentionRoot } = installNestedRetentionStoreRoot(root);
+      mkdirSync(authorityData, { mode: 0o700 });
+      mkdirSync(authorityParent, { mode: 0o700 });
+      mkdirSync(retentionRoot, { mode: 0o700 });
+      mkdirSync(join(retentionRoot, "operations"), { mode: 0o700 });
+      const { ensureRetentionStoreV1 } = await importFixtureInternals(root, ["ensureRetentionStoreV1"]);
+      const stores = ensureRetentionStoreV1();
+      assert.equal(stores.root, retentionRoot);
+      for (const directory of Object.values(stores)) {
+        const stats = lstatSync(directory, { bigint: true });
+        assert.equal(stats.isDirectory() && !stats.isSymbolicLink() && Number(stats.mode & 0o777n) === 0o700, true);
+      }
+      assert.deepEqual(readdirSync(stores.operations), []);
+      assert.deepEqual(readdirSync(stores.operationCandidates), []);
+      assert.deepEqual(readdirSync(stores.eraseSteps), []);
+      assert.deepEqual(readdirSync(stores.receipts), []);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
