@@ -3923,6 +3923,17 @@ function validateHistoricalClosureV1(root, operation) {
   if (canonicalJsonV1(current) !== canonicalJsonV1(operation.operationCore.executingImplementationClosure)) fail("historical retention executing closure changed");
 }
 
+function validateHistoricalClosureV2(root, operation) {
+  const current = executingImplementationClosureV1(root, Object.freeze({ sha: operation.operationCore.controllerSource.sourceSha }));
+  if (canonicalJsonV1(current) !== canonicalJsonV1(operation.operationCore.executingImplementationClosure)) fail("historical retention executing closure changed");
+}
+
+function validateHistoricalOperationClosureV1(root, operation) {
+  if (operation.operationCore.schema === "setfarm.platform-build-generation-retention-operation.v1") return validateHistoricalClosureV1(root, operation);
+  if (operation.operationCore.schema === "setfarm.platform-build-generation-retention-operation.v2") return validateHistoricalClosureV2(root, operation);
+  fail("historical retention operation schema is invalid");
+}
+
 function resolveCandidateGenerationV1(inspection, operation) {
   const generation = inspection.generations.find((entry) => entry.ordinal === operation.operationCore.candidateOrdinal);
   if (!generation || canonicalJsonV1(pairOf(generation.completion, "completion")) !== canonicalJsonV1(operation.operationCore.candidateCompletion)) {
@@ -4013,7 +4024,7 @@ function resumeBuildGenerationRetentionV1(pair) {
   const operationPair = operationPairV1(operation);
   const index = parseCandidateIndexV1(path.join(stores.operationCandidates, candidateIndexNameV1(operation.operationCore.candidateCompletion)), operation.operationCore.candidateCompletion);
   if (canonicalJsonV1(index.operation) !== canonicalJsonV1(operationPair)) fail("retention candidate index/operation mismatch");
-  validateHistoricalClosureV1(root, operation);
+  validateHistoricalOperationClosureV1(root, operation);
   const lockKey = hashCanonicalJsonV1({ candidateCompletion: operation.operationCore.candidateCompletion, operation: operationPair });
   return withRetentionMaintenanceLockV1(roots, "retention_resume", lockKey, () => {
     normalizeRetentionPublisherStoresV1(stores);
@@ -4032,7 +4043,7 @@ function resumeBuildGenerationRetentionV1(pair) {
       ) fail("terminal retention receipt/disposition is invalid");
       return Object.freeze({ receiptRef: receipt.receiptRef, receiptHash: receipt.receiptHash });
     }
-    validateHistoricalClosureV1(root, operation);
+    validateHistoricalOperationClosureV1(root, operation);
     const archive = path.join(root, operation.operationCore.candidateArchiveLocator);
     const quarantineRoot = path.join(root, QUARANTINE_DIRECTORY_V1);
     if (!optionalLstat(quarantineRoot)) ensureDirectory(quarantineRoot, 0o700, roots.setfarm, roots.device);

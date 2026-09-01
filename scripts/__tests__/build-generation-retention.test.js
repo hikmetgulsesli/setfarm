@@ -613,6 +613,13 @@ function prepareRetentionOperation(root) {
   });
 }
 
+function resumeRetentionOperation(root, pair) {
+  return spawnSync(process.execPath, [
+    "scripts/build-generation-retention.mjs", "resume", "--operation-ref", pair.operationRef,
+    "--operation-hash", pair.operationHash, "--json",
+  ], { cwd: root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+}
+
 function installTerminalCrashSequence(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
@@ -1132,6 +1139,214 @@ describe("OA18 build-generation retention authority", () => {
           rmSync(fixture.root, { recursive: true, force: true });
         }
       });
+    }
+  });
+
+  it("OA18 v2 resumes pair-only and permanently disposes only the selected retained generation", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const receiptPair = JSON.parse(resumed.stdout);
+      assert.match(receiptPair.receiptRef, /^setfarm:\/\/internal-production\/build-generation-retention-receipt\/sha256\/[0-9a-f]{64}$/);
+      assert.match(receiptPair.receiptHash, /^[0-9a-f]{64}$/);
+      assert.equal(existsSync(join(fixture.root, `.setfarm/build-generations-v1/${fixtureBuildId(1)}.dist`)), false);
+      assert.equal(existsSync(join(fixture.root, `.setfarm/build-generation-quarantine-v1/${pair.operationHash}.dist`)), false);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, 7);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+      const replay = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, resumed.stdout);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 historical v1 records remain terminally resolvable after the controller source advances", () => {
+    const root = createFixture();
+    try {
+      prepareThreeGenerationFixture(root);
+      const prepared = prepareRetentionOperation(root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const receiptPair = JSON.parse(resumed.stdout);
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// later controller source\n`);
+      git(root, ["add", "scripts/build-generation-retention.mjs"]);
+      git(root, ["commit", "-qm", "advance retention controller"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const inspected = spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "inspect"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      assert.equal(inspected.status, 0, inspected.stderr);
+      const body = JSON.parse(inspected.stdout);
+      assert.deepEqual(body.receipts, [receiptPair]);
+      assert.equal(body.rotation.generations.filter((generation) => generation.disposition === null).length, 2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 post-v2 v1 resume adopts a quarantine-rename crash under equal source", () => {
+    const root = createFixture();
+    try {
+      installPrivateRetentionObservers(root);
+      for (let ordinal = 1; ordinal <= 8; ordinal += 1) rotateFixtureGeneration(root, fixtureBuildId(ordinal), String(ordinal));
+      installQuarantineRenameCrash(root);
+      writeFinalizedRuntimeDist(root);
+      const prepared = prepareRetentionOperation(root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const operation = JSON.parse(readFileSync(join(root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      assert.equal(operation.operationCore.schema, "setfarm.platform-build-generation-retention-operation.v1");
+      const crashed = resumeRetentionOperation(root, pair);
+      assert.equal(crashed.status, 91, crashed.stderr);
+      const resumed = resumeRetentionOperation(root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const replay = resumeRetentionOperation(root, pair);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, resumed.stdout);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generations-v1")).filter((entry) => entry.endsWith(".dist")).length, 7);
+      assert.equal(existsSync(join(root, ".setfarm/build-generation-quarantine-v1", `${pair.operationHash}.dist`)), false);
+      assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 resume recovers quarantine, terminal receipt, and disposition response loss", async (context) => {
+    for (const [name, install, expectedCrashes] of [
+      ["quarantine rename", installQuarantineRenameCrash, [91]],
+      ["root receipt disposition", installTerminalCrashSequence, [91, 92, 93]],
+    ]) {
+      await context.test(name, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          install(fixture.root);
+          const prepared = prepareRetentionOperation(fixture.root);
+          assert.equal(prepared.status, 0, prepared.stderr);
+          const pair = JSON.parse(prepared.stdout);
+          for (const expected of expectedCrashes) {
+            const crashed = resumeRetentionOperation(fixture.root, pair);
+            assert.equal(crashed.status, expected, crashed.stderr);
+          }
+          const resumed = resumeRetentionOperation(fixture.root, pair);
+          assert.equal(resumed.status, 0, resumed.stderr);
+          const replay = resumeRetentionOperation(fixture.root, pair);
+          assert.equal(replay.status, 0, replay.stderr);
+          assert.equal(replay.stdout, resumed.stdout);
+          assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).filter((name) => /^[0-9a-f]{64}\.json$/.test(name)).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+          assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((entry) => entry.endsWith(".dist")).length, 7);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  it("OA18 v2 resume adopts an unchanged controller closure and refuses changed controller bytes", async (context) => {
+    await context.test("HEAD-only advance", () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const prepared = prepareRetentionOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        fixtureFile(fixture.root, "tracked.txt", "later unrelated controller commit\n");
+        git(fixture.root, ["add", "tracked.txt"]);
+        git(fixture.root, ["commit", "-qm", "advance unrelated controller input"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.equal(resumed.status, 0, resumed.stderr);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+    await context.test("changed executing byte", () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const prepared = prepareRetentionOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+        writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// crossed executing byte\n`);
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.notEqual(resumed.status, 0);
+        assert.match(resumed.stderr, /executing (?:closure changed|bytes differ from Git)/i);
+        assertNoGenerationDisposition(fixture.root, 8);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("OA18 post-v2 v1 resume refuses a nonterminal operation from changed executing bytes", () => {
+    const fixture = prepareGenerationBoundFixture(8, { advance: false });
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      writeFileSync(modulePath, `${readFileSync(modulePath, "utf8")}\n// incompatible later controller\n`);
+      git(fixture.root, ["add", "scripts/build-generation-retention.mjs"]);
+      git(fixture.root, ["commit", "-qm", "install incompatible controller"]);
+      git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const beforeOperations = readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256"));
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.notEqual(resumed.status, 0);
+      assert.match(resumed.stderr, /executing (?:closure changed|bytes differ from Git)/i);
+      assert.deepEqual(readdirSync(join(fixture.root, ".fixture-retention-v1/operations/sha256")), beforeOperations);
+      assert.equal(readdirSync(join(fixture.root, ".fixture-retention-v1/receipts/sha256")).length, 0);
+      assertNoGenerationDisposition(fixture.root, 8);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 parser rejects crossed controller, retained build, runtime, closure, and candidate bodies", async () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const stored = JSON.parse(readFileSync(join(fixture.root, `.fixture-retention-v1/operations/sha256/${pair.operationHash}.json`), "utf8"));
+      const { parseRetentionOperationV2, hashCanonicalJsonV1 } = await importFixtureInternals(fixture.root, ["parseRetentionOperationV2"]);
+      const crossedOperation = (mutate, { preservePair = true } = {}) => {
+        const value = structuredClone(stored);
+        mutate(value);
+        if (!preservePair) {
+          const digest = hashCanonicalJsonV1(value.operationCore);
+          value.operationHash = digest;
+          value.operationRef = `setfarm://internal-production/build-generation-retention-operation/sha256/${digest}`;
+          value.expectedQuarantineLocator = `.setfarm/build-generation-quarantine-v1/${digest}.dist`;
+        }
+        return value;
+      };
+      const rows = [
+        ["controller", (value) => { value.operationCore.controllerSource.buildInputSetHash = "f".repeat(64); }],
+        ["retained build", (value) => { value.operationCore.retainedCurrentBuild.buildInfoHash = "f".repeat(64); }],
+        ["retained output", (value) => { value.operationCore.retainedCurrentBuild.outputTreeHash = "f".repeat(64); }],
+        ["retained manifest", (value) => { value.operationCore.retainedCurrentBuild.releaseManifestHash = "f".repeat(64); }],
+        ["runtime provenance", (value) => { value.operationCore.expectedRuntimeSources[0].provenance = "operation_current_oa17_setfarm_source_build"; }],
+        ["runtime pair", (value) => { value.operationCore.expectedRuntimeSources[0].sourcePair.sourceSha = value.operationCore.controllerSource.sourceSha; }],
+        ["runtime body", (value) => { value.operationCore.expectedRuntimeSources[1].sourceBody.buildHash = "f".repeat(64); }],
+        ["closure entry", (value) => { value.operationCore.executingImplementationClosure.entries[0].sha256 = "f".repeat(64); }],
+        ["closure builtin", (value) => { value.operationCore.executingImplementationClosure.nodeBuiltinSpecifiers.push("node:fs"); }],
+        ["candidate identity", (value) => { value.operationCore.candidateArchiveIdentity.inoDecimal = "999"; }],
+        ["operation pair", (value) => { value.operationRef = `${value.operationRef}-crossed`; }, { preservePair: true }],
+      ];
+      for (const [name, mutate, options] of rows) {
+        assert.throws(() => parseRetentionOperationV2(crossedOperation(mutate, options)), /retention|runtime|closure|candidate|operation|crossed|invalid/i, name);
+      }
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
