@@ -22,6 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { userInfo } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_LEDGER_ORDINALS_V1 = 4_096;
@@ -40,8 +41,8 @@ const ROTATION_LEDGER_DIRECTORY = ".setfarm/build-generation-rotation-ledger-v1"
 const ARCHIVE_DIRECTORY = ".setfarm/build-generations-v1";
 const MAINTENANCE_LOCK_FILE = "build-generation-maintenance-lock-v1.json";
 const CODE_OWNED_REPOSITORY_ROOT_V1 = repositoryRootV1();
-const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(CODE_OWNED_REPOSITORY_ROOT_V1);
-const CODE_OWNER_HOME_V1 = path.dirname(path.dirname(CODE_OWNED_WORKSPACE_ROOT_V1));
+const CODE_OWNER_HOME_V1 = userInfo().homedir;
+const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
 const MISSION_CONTROL_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "mission-control");
 const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");
 const QUARANTINE_DIRECTORY_V1 = ".setfarm/build-generation-quarantine-v1";

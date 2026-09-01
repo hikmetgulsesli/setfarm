@@ -16,7 +16,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -350,7 +350,7 @@ function installPrivateRetentionObservers(root) {
     'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-retention-v1");',
   );
   source = source.replace(
-    "const CODE_OWNER_HOME_V1 = path.dirname(path.dirname(CODE_OWNED_WORKSPACE_ROOT_V1));",
+    "const CODE_OWNER_HOME_V1 = userInfo().homedir;",
     "const CODE_OWNER_HOME_V1 = repositoryRootV1();",
   );
   source = source.replace(
@@ -1696,6 +1696,59 @@ describe("OA18 build-generation retention authority", () => {
           rmSync(fixture.root, { recursive: true, force: true });
         }
       });
+    }
+  });
+
+  it("OA18 detached launcher derives the code-owner home only from authenticated OS identity", async () => {
+    const source = readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs"), "utf8");
+    assert.match(source, /import \{ userInfo \} from "node:os";/);
+    assert.match(source, /const CODE_OWNER_HOME_V1 = userInfo\(\)\.homedir;/);
+    assert.match(source, /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.join\(CODE_OWNER_HOME_V1, "ai", "setrox"\);/);
+    assert.doesNotMatch(source, /CODE_OWNER_HOME_V1 = path\.dirname\(path\.dirname\(CODE_OWNED_WORKSPACE_ROOT_V1\)\)/);
+    assert.doesNotMatch(source, /CODE_OWNED_WORKSPACE_ROOT_V1 = path\.dirname\(CODE_OWNED_REPOSITORY_ROOT_V1\)/);
+    assert.doesNotMatch(source, /process\.env\.HOME|\bhomedir\(\)/);
+    const root = mkdtempSync(join(tmpdir(), "setfarm-oa18-code-owner-home-"));
+    const nestedRepository = join(root, "ai/setrox/.worktrees/fixture");
+    const modulePath = join(nestedRepository, "scripts/build-generation-retention.mjs");
+    const expectedOwnerHome = userInfo().homedir;
+    const expectedWorkspaceRoot = join(expectedOwnerHome, "ai", "setrox");
+    const originalHome = process.env.HOME;
+    try {
+      fixtureFile(
+        nestedRepository,
+        "scripts/build-generation-retention.mjs",
+        source
+          .replace("const CODE_OWNED_REPOSITORY_ROOT_V1 = repositoryRootV1();", "export const CODE_OWNED_REPOSITORY_ROOT_V1 = repositoryRootV1();")
+          .replace("const CODE_OWNER_HOME_V1 = userInfo().homedir;", "export const CODE_OWNER_HOME_V1 = userInfo().homedir;")
+          .replace('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");', 'export const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");')
+          .replace('const MISSION_CONTROL_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "mission-control");', 'export const MISSION_CONTROL_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "mission-control");')
+          .replace('const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");', 'export const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");')
+          .replace("const LAUNCH_AGENT_CONFIGS_V1 = Object.freeze([", "export const LAUNCH_AGENT_CONFIGS_V1 = Object.freeze(["),
+      );
+      process.env.HOME = join(root, "hostile-home");
+      let loaded;
+      try {
+        loaded = await import(`${pathToFileURL(modulePath).href}?fixture=${Date.now()}`);
+      } finally {
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+      }
+      assert.equal(loaded.CODE_OWNED_REPOSITORY_ROOT_V1, realpathSync(nestedRepository));
+      assert.equal(loaded.CODE_OWNER_HOME_V1, expectedOwnerHome);
+      assert.equal(loaded.CODE_OWNED_WORKSPACE_ROOT_V1, expectedWorkspaceRoot);
+      assert.equal(loaded.MISSION_CONTROL_ROOT_V1, join(expectedWorkspaceRoot, "mission-control"));
+      assert.equal(loaded.RETENTION_STORE_ROOT_V1, join(expectedWorkspaceRoot, "data", "internal-production-baseline", "build-generation-retention-v1"));
+      assert.deepEqual(
+        loaded.LAUNCH_AGENT_CONFIGS_V1.map((config) => config.locator),
+        ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard", "com.setrox.mission-control"]
+          .map((label) => join(expectedOwnerHome, "Library", "LaunchAgents", `${label}.plist`)),
+      );
+      assert.notEqual(loaded.CODE_OWNER_HOME_V1, dirname(dirname(dirname(nestedRepository))));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
