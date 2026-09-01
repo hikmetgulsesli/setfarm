@@ -2086,6 +2086,7 @@ function parseLaunchctlPrintV1(bytes, { uid, label, expectedPath, environmentNam
   const blocks = new Map();
   for (let index = 1; index < lines.length - 1; index += 1) {
     const line = lines[index];
+    if (line === "") continue;
     const block = /^\t([^=\t]+) = \{$/.exec(line);
     if (block) {
       const key = block[1];
@@ -2110,8 +2111,8 @@ function parseLaunchctlPrintV1(bytes, { uid, label, expectedPath, environmentNam
     if (scalars.has(scalar[1]) || blocks.has(scalar[1])) fail(`${label} launchctl duplicates ${scalar[1]}`);
     scalars.set(scalar[1], scalar[2]);
   }
-  const scalarNames = [...scalars.keys()].sort(compareBytes);
-  const blockNames = [...blocks.keys()].sort(compareBytes);
+  const scalarNames = [...scalars.keys()].filter((name) => ["path", "pid", "program", "working directory"].includes(name)).sort(compareBytes);
+  const blockNames = [...blocks.keys()].filter((name) => ["arguments", "environment"].includes(name)).sort(compareBytes);
   const allowedScalars = ["path", "pid", ...(scalars.has("program") ? ["program"] : []), ...(scalars.has("working directory") ? ["working directory"] : [])].sort(compareBytes);
   if (canonicalJsonV1(scalarNames) !== canonicalJsonV1(allowedScalars) || canonicalJsonV1(blockNames) !== canonicalJsonV1(["arguments", "environment"])) {
     fail(`${label} launchctl top-level selected fields are invalid`);
@@ -2136,8 +2137,9 @@ function parseLaunchctlPrintV1(bytes, { uid, label, expectedPath, environmentNam
     ["OSLogRateLimit", "64"],
     ["XPC_SERVICE_NAME", label],
   ]);
-  if (canonicalJsonV1([...rawEnvironment.keys()]) !== canonicalJsonV1([...environmentNames, ...allowedLaunchd.keys()])) {
-    fail(`${label} launchctl environment order or cardinality is invalid`);
+  const expectedEnvironmentNames = [...environmentNames, ...allowedLaunchd.keys()].sort(compareBytes);
+  if (canonicalJsonV1([...rawEnvironment.keys()].sort(compareBytes)) !== canonicalJsonV1(expectedEnvironmentNames)) {
+    fail(`${label} launchctl environment names or cardinality are invalid`);
   }
   for (const [name, rawValue] of rawEnvironment) {
     if (environmentNames.includes(name)) continue;

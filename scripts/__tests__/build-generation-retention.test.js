@@ -575,17 +575,61 @@ function fixedChildResult(executable, argv, options = {}) {
       return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
     const uid = process.getuid();
-    const lines = [\`gui/\${uid}/\${label} = {\`, \`\\tpath = \${config.locator}\`];
+    const lines = [
+      \`gui/\${uid}/\${label} = {\`,
+      "\\tactive count = 1",
+      \`\\tpath = \${config.locator}\`,
+      "\\ttype = LaunchAgent",
+      "\\tstate = running",
+      "",
+      \`\\tprogram = \${loadedExecutable}\`,
+      "\\targuments = {",
+      \`\\t\\t\${loadedExecutable}\`,
+      \`\\t\\t\${serviceEntrypoint}\`,
+      "\\t}",
+    ];
     if (config.workingDirectory !== null) lines.push(\`\\tworking directory = \${config.workingDirectory}\`);
-    lines.push("\\targuments = {", \`\\t\\t\${loadedExecutable}\`, \`\\t\\t\${serviceEntrypoint}\`, "\\t}", "\\tenvironment = {");
-    for (const name of config.environmentNames) {
+    lines.push(
+      "",
+      "\\tstdout path = /tmp/mission-control.stdout.log",
+      "\\tstderr path = /tmp/mission-control.stderr.log",
+      "\\tinherited environment = {",
+      "\\t\\tSSH_AUTH_SOCK => /private/tmp/com.apple.launchd.fixture/Listeners",
+      "\\t}",
+      "",
+      "\\tdefault environment = {",
+      "\\t\\tPATH => /usr/bin:/bin:/usr/sbin:/sbin",
+      "\\t}",
+      "",
+      "\\tenvironment = {",
+      "\\t\\tOSLogRateLimit => 64",
+    );
+    for (const name of [...config.environmentNames].reverse()) {
       const driftToken = label === "com.setrox.mission-control" && name === "SETFARM_OPERATIONAL_WRITE_TOKEN"
         && optionalLstat(path.join(repositoryRootV1(), ".fixture-loaded-token-drift")) && fixtureMissionControlLaunchctlCallsV1 > 1;
       lines.push(\`\\t\\t\${name} => \${driftToken ? "fixture-operational-token-00000002" : environmentValue(name)}\`);
     }
     const loadedPid = label === "com.setrox.mission-control" && optionalLstat(path.join(repositoryRootV1(), ".fixture-launchctl-drift")) && fixtureMissionControlLaunchctlCallsV1 > 1
       ? fixtureLoadedServicePidV1 + 1 : fixtureLoadedServicePidV1;
-    lines.push("\\t\\tOSLogRateLimit => 64", \`\\t\\tXPC_SERVICE_NAME => \${label}\`, "\\t}", \`\\tpid = \${loadedPid}\`, "}", "");
+    lines.push(
+      \`\\t\\tXPC_SERVICE_NAME => \${label}\`,
+      "\\t}",
+      "",
+      "\\tdomain = gui/501 [100000]",
+      "\\tasid = 100000",
+      "\\tminimum runtime = 10",
+      "\\truns = 1",
+      \`\\tpid = \${loadedPid}\`,
+      "\\tresource coalition = {",
+      "\\t\\tID = 123",
+      "\\t\\ttype = resource",
+      "\\t}",
+      "\\tproperties = {",
+      "\\t\\trunatload = true",
+      "\\t}",
+      "}",
+      "",
+    );
     return success(Buffer.from(lines.join("\\n"), "utf8"));
   }
   if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && canonicalJsonV1(argv) === canonicalJsonV1(["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])) {
@@ -3199,7 +3243,7 @@ describe("OA18 build-generation retention authority", () => {
       const { parseLaunchctlPrintV1 } = await importFixtureInternals(root, ["parseLaunchctlPrintV1"]);
       const label = "com.setrox.setfarm-dashboard";
       const expectedPath = `/tmp/${label}.plist`;
-      const text = `gui/501/${label} = {\n\tpath = /tmp/${label}.plist\n\tprogram = /usr/bin/node\n\targuments = {\n\t\t/usr/bin/node\n\t\t/tmp/dashboard.js\n\t}\n\tenvironment = {\n\t\tPATH => /usr/bin:/bin\n\t\tSETFARM_OPERATIONAL_WRITE_TOKEN => redacted-value\n\t\tSETFARM_PG_URL => postgresql://localhost/test\n\t\tOSLogRateLimit => 64\n\t\tXPC_SERVICE_NAME => ${label}\n\t}\n\tpid = 123\n}\n`;
+      const text = `gui/501/${label} = {\n\tactive count = 1\n\tpath = /tmp/${label}.plist\n\ttype = LaunchAgent\n\tstate = running\n\n\tprogram = /usr/bin/node\n\targuments = {\n\t\t/usr/bin/node\n\t\t/tmp/dashboard.js\n\t}\n\n\tstdout path = /tmp/dashboard.stdout.log\n\tstderr path = /tmp/dashboard.stderr.log\n\tinherited environment = {\n\t\tSSH_AUTH_SOCK => /private/tmp/com.apple.launchd.fixture/Listeners\n\t}\n\n\tdefault environment = {\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}\n\n\tenvironment = {\n\t\tOSLogRateLimit => 64\n\t\tSETFARM_PG_URL => postgresql://localhost/test\n\t\tPATH => /usr/bin:/bin\n\t\tSETFARM_OPERATIONAL_WRITE_TOKEN => redacted-value\n\t\tXPC_SERVICE_NAME => ${label}\n\t}\n\n\tdomain = gui/501 [100000]\n\tasid = 100000\n\tminimum runtime = 10\n\truns = 1\n\tpid = 123\n\tresource coalition = {\n\t\tID = 123\n\t\ttype = resource\n\t}\n\tproperties = {\n\t\trunatload = true\n\t}\n}\n`;
       const parsed = parseLaunchctlPrintV1(Buffer.from(text), {
         uid: 501,
         label,
@@ -3208,15 +3252,49 @@ describe("OA18 build-generation retention authority", () => {
       });
       assert.deepEqual(parsed.programArguments, ["/usr/bin/node", "/tmp/dashboard.js"]);
       assert.deepEqual(parsed.environment.map(([name]) => name), ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"]);
+      const permutedEnvironment = text.replace(
+        "\t\tSETFARM_PG_URL => postgresql://localhost/test\n\t\tPATH => /usr/bin:/bin\n\t\tSETFARM_OPERATIONAL_WRITE_TOKEN => redacted-value",
+        "\t\tSETFARM_OPERATIONAL_WRITE_TOKEN => redacted-value\n\t\tPATH => /usr/bin:/bin\n\t\tSETFARM_PG_URL => postgresql://localhost/test",
+      );
+      assert.deepEqual(parseLaunchctlPrintV1(Buffer.from(permutedEnvironment), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), parsed);
       assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\tXPC_SERVICE_NAME", "\t\tUNKNOWN")), {
         uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
       }), /environment/);
       assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\tSETFARM_PG_URL =>", "\t\tPATH =>")), {
         uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
       }), /environment/);
-      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\tpid = 123", "\tstate = running\n\tpid = 123")), {
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("OSLogRateLimit => 64", "OSLogRateLimit => 65")), {
         uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
-      }), /top-level|selected|field|state|launchctl/i);
+      }), /environment/);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace(`XPC_SERVICE_NAME => ${label}`, "XPC_SERVICE_NAME => crossed.label")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /environment/);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\tSETFARM_PG_URL => postgresql://localhost/test\n", "")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /environment/);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\tXPC_SERVICE_NAME", "\t\tUNEXPECTED_NAME => unexpected\n\t\tXPC_SERVICE_NAME")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /environment/);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\t/tmp/dashboard.js\n", "\t\t/tmp/dashboard.js\n\n")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /arguments|launchctl/i);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\n\tprogram = /usr/bin/node", "\n \n\tprogram = /usr/bin/node")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /top-level|ambiguous|launchctl/i);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\tpid = 123", "\tpid = 123\n\tpid = 124")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /duplicates|pid|launchctl/i);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\tpid = 123", "")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /pid|launchctl/i);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\t\tID = 123", "\t\tpid = 123").replace("\tpid = 123", "")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /pid|launchctl/i);
+      assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace("\tdomain = gui/501 [100000]", "\tmalformed diagnostic")), {
+        uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
+      }), /top-level|ambiguous|launchctl/i);
       assert.throws(() => parseLaunchctlPrintV1(Buffer.from(text.replace(expectedPath, `${expectedPath}.crossed`)), {
         uid: 501, label, expectedPath, environmentNames: ["PATH", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL"],
       }), /path|launchctl/i);
