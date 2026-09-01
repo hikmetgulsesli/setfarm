@@ -5034,6 +5034,104 @@ Resume dispatches by the strict stored operation schema. Historical v1 operation
 The executable RED/GREEN matrix is owned only by `scripts/__tests__/build-generation-retention.test.js` and production only by `scripts/build-generation-retention.mjs`. It proves the deterministic eight-archive stale-build deadlock under v1, then v2 prepare/resume success and response-loss adoption; exact controller-current versus retained-loaded separation; strict ancestry; complete terminal-artifact and historical-Git recomputation; controller closure binding; unchanged lowest-ordinal selection/newest-two preservation; loaded spawner/dashboard acceptance only at the retained build; unchanged v1 selection and recovery when current source equals the finalized build; nonancestor/crossed/tampered build, output, manifest, source, closure, process, listener, reference, candidate, and pair refusal before mutation; crash recovery after each erase prefix; and byte-compatible v1 parse/resume. Tests also prove that no manual archive deletion, `dist` relocation, unindexed backfill, build-writer change, CLI/env override, or new public helper exists.
 
 The canonical tracked design amendment is exact two files, this plan and its byte-identical marker counterpart in the closure design. The later implementation is exact two existing paths, `scripts/build-generation-retention.mjs` and `scripts/__tests__/build-generation-retention.test.js`; together the approved causal scope is exact four and adds no Task 0 File-Map member or package/build-writer/receipt/service path. No live archive disposition occurs until the docs lineage and test-first implementation lineage are independently reviewed, merged, synchronized to clean `main`, and the exact operation pair is captured. Only then may the already authorized OA18 prepare/resume permanently dispose the selected oldest generation, after which a clean build and Task 6A retry re-establish current source/build equality.
+
+Implementation is executed as the following four reviewable TDD tasks. Every task modifies only `scripts/build-generation-retention.mjs` and `scripts/__tests__/build-generation-retention.test.js`, preserves all existing exports and CLI grammar, runs from an isolated branch rooted at the merged docs commit, and ends in one conventional commit. No task invokes live prepare/resume, moves `dist`, changes package scripts, or touches the authority store.
+
+### OA18 v2 Task 1: split and authenticate controller versus retained-build authority
+
+**Interfaces:** consume existing `repositoryRootV1`, fixed-child Git execution, `historicalBuildInputsV1`, finalized JSON readers, canonical hashing, source/build validation, and the exact fixture repository. Produce only private `observeCurrentRetentionControllerSourceV2(root)`, `observeRetainedCurrentBuildV1(root, controllerSource)`, `assertRetentionControllerSourceV2(value)`, and `assertRetainedCurrentBuildV1(value)`. The first returns the exact existing six-key rotation-controller body; the second returns the exact eight-key retained-build body. Neither function accepts an option, observer, bytes, path, command, source, or build argument other than the code-derived `root` and the first function's already authenticated controller body.
+
+- [ ] Add one fixture helper that finalizes build A, creates a descendant clean-main commit B without rebuilding, retains exact terminal artifact bytes for A, and exposes the four private functions only in the copied fixture module. Add a test named `OA18 v2 separates current controller source from the retained finalized build` that requires controller source B, retained source A, exact key order, exact hashes, and zero store/lock/operation mutation.
+- [ ] Run `node --test --test-name-pattern='^OA18 v2 separates current controller source' scripts/__tests__/build-generation-retention.test.js`; require failure because the v2 private functions/schema do not exist, not because fixture setup or Git history is invalid.
+- [ ] Factor the existing historical Git input derivation so it accepts an exact commit/tree without requiring a current build body. Implement current controller observation with fixed no-shell Git branch/status/HEAD/origin/tree commands and the existing pinned input-set projection. Implement retained-build observation by strict-reopening complete finalized `dist`, exact terminal files, historical outputs, modes/links, and build hashes, followed by fixed `git merge-base --is-ancestor`; require A differs from B.
+- [ ] Add table rows for dirty/wrong branch, stale origin, missing/changed Git object, equal source, nonancestor source, malformed terminal JSON, wrong mode/link, crossed source/tree, output/member drift, build-info bytes drift, manifest drift, and controller-build hash drift. Snapshot `.setfarm` plus the sibling retention store before and after every refusal and require byte identity.
+- [ ] Run the focused test pattern again and require every Task 1 row to pass; then run `node --check scripts/build-generation-retention.mjs` and `git diff --check`.
+- [ ] Commit only the exact source/test files with `test(retention): freeze stale-build authorities` after verifying the staged diff contains no public export, argv, environment, package, or path seam.
+
+The minimum implementation boundary is equivalent to:
+
+```javascript
+function observeCurrentRetentionControllerSourceV2(root) {
+  const source = observeCleanSynchronizedMainSourceV2(root);
+  const historical = historicalGitInputSetV2(root, source.sourceSha, source.sourceTreeHash);
+  return Object.freeze({ branch: "main", clean: true, sourceSha: source.sourceSha,
+    sourceTreeHash: source.sourceTreeHash, originMainSha: source.sourceSha,
+    buildInputSetHash: historical.buildInputSetHash });
+}
+
+function observeRetainedCurrentBuildV1(root, controllerSource) {
+  const finalized = observeExactFinalizedSetfarmBuildV1(root);
+  requireStrictAncestorV1(root, finalized.sourceSha, controllerSource.sourceSha);
+  return Object.freeze({ schema: "setfarm.platform-build-generation-retained-current-build.v1",
+    sourceSha: finalized.sourceSha, sourceTreeHash: finalized.sourceTreeHash,
+    buildHash: finalized.buildHash, buildInputSetHash: finalized.buildInputSetHash,
+    buildInfoHash: finalized.buildInfoHash, outputTreeHash: finalized.outputTreeHash,
+    releaseManifestHash: finalized.releaseManifestHash });
+}
+```
+
+### OA18 v2 Task 2: publish or adopt the exact candidate-keyed v2 operation
+
+**Interfaces:** consume Task 1's two frozen bodies and the existing ledger scan, candidate selector, PBA observation, expected-runtime construction, executing closure, zero-reference proof, maintenance lock, no-replace operation store, and candidate index. Produce private `observeOperationAuthoritiesV2(root, inspection)`, `assertExpectedRuntimeSourcesV2(...)`, `parseRetentionOperationV2(value)`, and an internal schema dispatcher; keep `prepareRetentionOperationV1()` and every CLI/export name unchanged.
+
+- [ ] Add a RED test named `OA18 v2 prepares the lowest generation under the exact eight-generation stale-build deadlock`. Create exactly eight completed active generations plus finalized A, advance clean main to B, assert the existing v1 authority observation fails for stale current build, then invoke the real `prepare` CLI and require one v2 operation for ordinal one, newest-two preservation, and no quarantine/disposition.
+- [ ] Run `node --test --test-name-pattern='^OA18 v2 prepares the lowest generation' scripts/__tests__/build-generation-retention.test.js`; require the current stale-source/build failure and no operation/index publication.
+- [ ] Implement the automatic classifier after the complete ledger scan: v2 only for eight active completed generations, exact finalized `dist`, strict A-before-B ancestry, no dangling rotation intent, and no unrelated/crossed retention prefix; equal A/B continues through unchanged v1. Build the v2 operation core with `controllerSource,retainedCurrentBuild` replacing only `sourceBuild`, compute the executing closure at B, and derive spawner/dashboard expected sources only from A.
+- [ ] Under the existing maintenance lock, reopen candidate, both authorities, closure, finalized build, runtime proof, and zero-reference proof before no-replace operation/index publication. An existing candidate index may adopt only the exact same v2 pair/body; a v1/v2 cross or second body is a fork.
+- [ ] Add RED/GREEN rows for seven/nine active generations, absent dist, equal source v1, nonancestor, changed candidate, changed closure, changed finalized build, loaded Setfarm at B instead of A, crossed PBA, pre-existing v1 index, pre-existing unequal v2 operation, response loss after operation publication, and response loss after index publication. Require zero destructive prefix and no second authority file for every refusal/retry.
+- [ ] Run all Task 2 rows, `node --check scripts/build-generation-retention.mjs`, and `git diff --check`; commit exact source/test as `feat(retention): add stale-build operation v2`.
+
+The operation builder must have this literal relative shape:
+
+```javascript
+const operationCore = Object.freeze({
+  schema: "setfarm.platform-build-generation-retention-operation.v2",
+  purpose: "permanently-dispose-lowest-completed-build-generation-v1",
+  candidateCompletion, candidateOrdinal: candidate.ordinal,
+  controllerSource, retainedCurrentBuild,
+  productBuildAuthorityV2DeliveryEvidence, productBuildAuthorityV2Observation,
+  expectedRuntimeSources, executingImplementationClosure,
+  candidateArchiveLocator, candidateArchiveIdentity, candidateInventory,
+  prepareZeroReferenceProof, prepareZeroReferenceProofHash,
+});
+```
+
+### OA18 v2 Task 3: resume v2 without weakening historical v1 recovery
+
+**Interfaces:** consume the Task 2 strict dispatcher and all existing quarantine, erase-step, reference-proof, receipt, disposition, and candidate-resolution functions. Produce private `validateHistoricalClosureV2(root, operation)` and schema-dispatched historical runtime-source resolution; preserve the v1 parser body, v1 operation hash/ref domain, erase/receipt schemas, resume arguments, and terminal output.
+
+- [ ] Add a fixture that captures one v1 operation before installing v2 source, then reopens/resumes it with the new module. Add a v2 fixture that crashes after quarantine rename, after successive erase intent/completion prefixes, after terminal receipt publication, and after disposition publication.
+- [ ] Run `node --test --test-name-pattern='^OA18 (v1 recovery remains|v2 resume)' scripts/__tests__/build-generation-retention.test.js`; require v2 failure at strict dispatch/recovery while the pre-existing v1 fixture still identifies the old parser path.
+- [ ] Dispatch `parseRetentionOperationV1|V2` solely by the exact stored core schema. For v2, validate current executing bytes against the stored B closure and historical B Git objects, validate loaded Setfarm only against embedded retained A, and never replace either from current HEAD/build/PBA. Reuse unchanged candidate, quarantine, erase, receipt, and disposition machinery.
+- [ ] Add tamper rows for both source authorities, every retained terminal hash, controller closure entry/edge/builtin/hash, expected runtime provenance/body/pair, operation pair, candidate index, candidate archive, quarantine identity/inventory, erase predecessor, receipt, and disposition. Add a HEAD-advance-with-identical-controller-closure adoption row and a changed-controller-byte refusal row.
+- [ ] For every crash point, run resume twice and require one candidate, one quarantine lineage, exact post-order erasure, one receipt/disposition, source/quarantine absence, and no duplicate erase completion. Require the historical v1 fixture to finish with byte-identical v1 terminal evidence.
+- [ ] Run the Task 3 patterns plus `node --check` and `git diff --check`; commit exact source/test as `fix(retention): recover stale-build operations`.
+
+The strict dispatch remains closed and finite:
+
+```javascript
+function parseRetentionOperation(value) {
+  if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v1") {
+    return parseRetentionOperationV1(value);
+  }
+  if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v2") {
+    return parseRetentionOperationV2(value);
+  }
+  fail("retention operation schema is invalid");
+}
+```
+
+### OA18 v2 Task 4: close adversarial evidence and delivery gates
+
+**Interfaces:** no new production function. This task completes only missing adversarial rows in the existing test, removes any temporary fixture-only export or hook that escaped copied-module instrumentation, and freezes the exact two-file implementation boundary.
+
+- [ ] Add one source-boundary inventory assertion requiring exactly the two operation schema literals, both strict parsers, the single internal dispatcher, controller-versus-retained provenance literals, fixed ancestry command, and zero new production exports/options/environment members. Reject manual `rm|rename` bypasses outside the existing authenticated erase/quarantine machinery and reject any writer/package import or mutation.
+- [ ] Prove RED honesty by temporarily restoring the v1-only source in the disposable fixture: the stale eight-generation success row must fail specifically before operation publication. Restore v2 and require the same row plus the full tamper/crash matrix to pass.
+- [ ] Run `node --test scripts/__tests__/build-generation-retention.test.js`; require zero fail/skip/cancel. Then run `node --check scripts/build-generation-retention.mjs`, `npm run check:english`, `npm run check:paths`, and `git diff --check`.
+- [ ] Authenticate branch base/remote, clean index, exact two-path diff, no untracked file, no authority-store change, and stable live retention inspect with eight active generations and zero lock/operation/index/receipt/quarantine. Do not run build because OA17 correctly remains blocked until reviewed v2 disposition; record that as the expected pre-rollout state rather than bypassing it.
+- [ ] Commit only final source/test corrections as `test(retention): close stale-build recovery matrix`, obtain independent C0/I0/M0 review of committed bytes, and deliver through a non-draft PR with required checks. After merge, synchronize the canonical Setfarm root to clean `main`, rerun the full focused test and retention inspect, then capture the exact prepare pair before the separately authorized live resume.
+
+Implementation is complete only when all four task commits remain a linear descendant of the reviewed docs merge, the PR net diff is exact two implementation paths, historical v1 recovery and v2 stale-build recovery are both executable, and the live authority store is still unchanged. The later operational disposition/build/Task 6A sequence is a separate postmerge execution gate, not an implementation test shortcut.
 <!-- oa18-stale-current-build-rollover-v2:end -->
 
 The earlier `data/internal-production-baseline/current-entry-v1` exact-three declaration names exactly three fixed prerequisite-prefix files, not the complete current-entry persistence topology; their names, canonical bytes, modes, and no-replace semantics remain unchanged. Under that same root, Task 12 adds only immutable content stores `records/pre-mutation-loaded-runtime-service-authorities/sha256/<hh>/<hash>.json`, `records/statuses/sha256/<hh>/<statusHash>.json`, `records/entry-authorities/sha256/<hh>/<entryAuthorityHash>.json`, `records/fresh-runtime-and-owner-observations/sha256/<hh>/<hash>.json`, and `records/verifications/sha256/<hh>/<hash>.json`, plus operation-derived locators `operations/sha256/<hh>/<operationHash>/00-pre-mutation-loaded-runtime-service-authority.pair.json`, `01-current-status.pair.json`, and `02-entry-authority.pair.json`. The `00` and `02` locators are no-replace; `01` alone is expected-predecessor CAS. Every pair retains its already frozen key order. Immutable ref domains are exactly `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/<hash>`, `setfarm://internal-production/current-entry-authority-status/sha256/<hash>`, `setfarm://internal-production/current-entry-authority/sha256/<hash>`, `setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/<hash>`, and `setfarm://internal-production/current-entry-verification/sha256/<hash>`; each body hash omits only its own ref/hash pair.
