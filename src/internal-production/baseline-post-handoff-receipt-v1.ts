@@ -1908,6 +1908,7 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1("authorityV3Migration31Audit", authorityV3Migration31AuditHash),
     bytes,
+    true,
   );
   return resolveInternalProductionAuthorityV3Migration31AuditV1(v31Pair(value));
 }
@@ -1937,6 +1938,7 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1("pendingBootstrapHandoffMigration", pendingBootstrapHandoffMigrationHash),
     bytes,
+    true,
   );
   return resolveInternalProductionPendingBootstrapHandoffMigrationV1(pendingPair(value));
 }
@@ -3517,7 +3519,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ close: 
   }
 }
 
-function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
+function publishLegacyZeroRecordV1(target: string, bytes: Buffer, allowUnequalIncompleteTempCleanup = false): void {
   if (bytes.length < 1 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("Task12 receipt publication size is invalid");
   const directory = path.dirname(target);
   const guard = ensureTask12ReceiptPrivateDirectoryV1(directory);
@@ -3545,7 +3547,7 @@ function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {
       const unequal = pinned.filter((item) => !item.matches);
       let removedIncomplete = false;
       if (unequal.length > 0) {
-        if (finalStats !== null || pinned.length !== 1 || unequal[0]!.identity.nlink !== 1n) currentEntryFail("Task12 receipt publication has competing unequal bytes");
+        if (!allowUnequalIncompleteTempCleanup || finalStats !== null || pinned.length !== 1 || unequal[0]!.identity.nlink !== 1n) currentEntryFail("Task12 receipt publication has competing unequal bytes");
         const item = unequal[0]!; const now = fstatSync(item.descriptor, { bigint: true }); const atPath = lstatSync(item.path, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(item.descriptor, now.size);
         if (!now.isFile() || now.dev !== item.identity.dev || now.ino !== item.identity.ino || now.mode !== item.identity.mode || now.nlink !== 1n || atPath.dev !== item.identity.dev || atPath.ino !== item.identity.ino || atPath.mode !== item.identity.mode || atPath.nlink !== 1n || !observed.equals(item.bytes)) currentEntryFail("Task12 receipt incomplete temp changed before cleanup");
         unlinkSync(item.path); fsyncCurrentEntryDirectory(directory); guard.assertStable(); removedIncomplete = true;

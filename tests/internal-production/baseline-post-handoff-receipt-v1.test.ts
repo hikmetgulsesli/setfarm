@@ -813,8 +813,8 @@ function installCurrentEntryContentPublisherFaultHooks(root: string): void {
   const original = readFileSync(modulePath, "utf8");
   const hooked = original
     .replace(
-      "function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {",
-      'function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void { const p4Fault=(label:string)=>{if(Reflect.get(globalThis,"__p4CurrentEntryContentFault")===label){Reflect.deleteProperty(globalThis,"__p4CurrentEntryContentFault");throw new Error(`P4_CURRENT_ENTRY_CONTENT_FAULT:${label}`)}};',
+      "function publishLegacyZeroRecordV1(target: string, bytes: Buffer, allowUnequalIncompleteTempCleanup = false): void {",
+      'function publishLegacyZeroRecordV1(target: string, bytes: Buffer, allowUnequalIncompleteTempCleanup = false): void { const p4Fault=(label:string)=>{if(Reflect.get(globalThis,"__p4CurrentEntryContentFault")===label){Reflect.deleteProperty(globalThis,"__p4CurrentEntryContentFault");throw new Error(`P4_CURRENT_ENTRY_CONTENT_FAULT:${label}`)}};',
     )
     .replace(
       "    tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
@@ -1224,6 +1224,36 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       } finally {
         removeFixture(root);
       }
+    }
+  });
+
+  it("P4 Task12 fixed locators preserve a sole unequal durable temp", () => {
+    const root = createFixture();
+    try {
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8").replace("function publishLegacyZeroRecordV1(", "export function publishLegacyZeroRecordV1(");
+      assert.notEqual(source, readFileSync(modulePath, "utf8"));
+      writeFileSync(modulePath, source);
+      const canonicalRoot = realpathSync(root);
+      const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-unequal-fixed");
+      for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) {
+        mkdirSync(member, { recursive: true, mode: 0o700 });
+        chmodSync(member, 0o700);
+      }
+      const target = path.join(directory, "current-status.pair.json");
+      const oldBytes = `${canonical({ schema: "setfarm.tests.task12-fixed-record.v1", version: 1 })}\n`;
+      const newBytes = `${canonical({ schema: "setfarm.tests.task12-fixed-record.v1", version: 2 })}\n`;
+      const temp = `${target}.tmp-${process.pid}-82345678-1234-4123-8123-123456789abc`;
+      writeFileSync(temp, oldBytes, { mode: 0o600 });
+      const before = lstatSync(temp, { bigint: true });
+      const result = runFixtureExpression(root, `m.publishLegacyZeroRecordV1(${JSON.stringify(target)},Buffer.from(${JSON.stringify(newBytes)}))`);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /competing unequal bytes/i);
+      assert.equal(existsSync(target), false);
+      assert.equal(lstatSync(temp, { bigint: true }).ino, before.ino);
+      assert.equal(readFileSync(temp, "utf8"), oldBytes);
+    } finally {
+      removeFixture(root);
     }
   });
 
