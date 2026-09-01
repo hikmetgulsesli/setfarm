@@ -530,6 +530,146 @@ process.stdout.write(JSON.stringify(result)+"\n");
   }
 }
 
+function runOpenClawServiceHarness(listenerBytes: Buffer): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const listenerStart = source.indexOf("type OpenClawListenerInventoryV1 =");
+  const listenerEnd = source.indexOf("\nfunction observeProcessListenersV1(", listenerStart);
+  const serviceStart = source.indexOf("function observeServiceProcessV1(");
+  const serviceEnd = source.indexOf("\nexport async function observeInternalProductionServiceCensusV1(", serviceStart);
+  for (const [label, offset] of Object.entries({ listenerStart, listenerEnd, serviceStart, serviceEnd })) {
+    assert.notEqual(offset, -1, `OpenClaw production slice is missing ${label}`);
+  }
+  const fragments = [
+    source.slice(listenerStart, listenerEnd),
+    source.slice(serviceStart, serviceEnd).replace("function observeServiceProcessV1(", "export function observeServiceProcessV1("),
+  ].join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-openclaw-service-")));
+  const harness = String.raw`
+import { createHash } from "node:crypto";
+type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
+type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const text=bytes.toString("utf8");if(!Buffer.from(text,"utf8").equals(bytes))currentEntryFail(label+" is not UTF-8");return text}
+function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const descriptor=Object.getOwnPropertyDescriptor(value as object,key);if(descriptor&&"value" in descriptor)recursivelyFreeze(descriptor.value)}Object.freeze(value)}return value}
+function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const record=value as Record<string,unknown>;return "{"+Object.keys(record).sort().map((key)=>JSON.stringify(key)+":"+canonicalComparable(record[key])).join(",")+"}"}
+function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
+function hashCanonicalJson(value:unknown){return sha256(canonicalComparable(value))}
+function observeDetachedSetfarmServiceV1():never{throw new Error("detached observer must not be called")}
+function observeMissionControlListenerV1():never{throw new Error("Mission Control observer must not be called")}
+function fixedMissionControlRootV1(){throw new Error("Mission Control root must not be called")}
+function fixedRepositoryRoot(){throw new Error("Setfarm root must not be called")}
+function boundedChildText(executable:string,args:readonly string[]){
+  if(executable==="/bin/launchctl")return "gui/"+process.getuid!()+"/ai.openclaw.gateway = {\n\tpid = 94886\n}\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-p 94886 -o lstart=")return "Sun Aug 16 15:42:28 2026\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-p 94886 -o command=")return "/usr/local/bin/node /fixture/openclaw.mjs\n";
+  if(executable==="/bin/ps"&&args.join(" ")==="-axo command=")return "/usr/local/bin/node /fixture/openclaw.mjs\n";
+  throw new Error("unexpected bounded command "+executable+" "+args.join(" "));
+}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){
+  const expected=["-nP","-a","-p","94886","-iTCP:18789","-sTCP:LISTEN","-F0pcfn"];
+  if(executable!=="/usr/sbin/lsof"||JSON.stringify(args)!==JSON.stringify(expected))throw new Error("crossed OpenClaw lsof invocation");
+  return Object.freeze({status:0,stdout:Buffer.from(process.env.OPENCLAW_LISTENER!,"base64")});
+}
+${fragments}
+const result=observeServiceProcessV1("ai.openclaw.gateway",18789,null);
+process.stdout.write(JSON.stringify(result)+"\n");
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", OPENCLAW_LISTENER: listenerBytes.toString("base64") },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function runOpenClawPhysicalInventoryHarness(
+  serviceBytes: Buffer,
+  physicalBytes: Buffer,
+  openClawBroadListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[],
+): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const listenerStart = source.indexOf("type OpenClawListenerInventoryV1 =");
+  const listenerEnd = source.indexOf("\nfunction observeProcessListenersV1(", listenerStart);
+  const predicateStart = source.indexOf("function isExpectedPersistentListenerV1(");
+  const predicateEnd = source.indexOf("\nfunction assertPhysicalInventoryPassStableV1(", predicateStart);
+  const physicalStart = source.indexOf("function observePhysicalInventoryV1(");
+  const physicalEnd = source.indexOf("\nfunction boundedChildText(", physicalStart);
+  for (const [label, offset] of Object.entries({ listenerStart, listenerEnd, predicateStart, predicateEnd, physicalStart, physicalEnd })) {
+    assert.notEqual(offset, -1, `OpenClaw physical production slice is missing ${label}`);
+  }
+  const fragments = [
+    source.slice(listenerStart, listenerEnd),
+    source.slice(predicateStart, predicateEnd),
+    source.slice(physicalStart, physicalEnd).replace("function observePhysicalInventoryV1(", "export function observePhysicalInventoryV1("),
+  ].join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-openclaw-physical-integrated-")));
+  const harness = String.raw`
+import { createHash } from "node:crypto";
+type InternalProductionListeningServiceCensusV1=Readonly<Record<string,any>>;
+type InternalProductionServiceCensusV1=Readonly<Record<string,any>>;
+type PhysicalProcessV1=Readonly<{uid:number;pid:number;ppid:number;pgid:number;stat:string;lstart:string;command:string;cwd:string|null}>;
+type PhysicalInventoryV1=Readonly<Record<string,unknown>>;
+const serviceBytes=Buffer.from(process.env.SERVICE_BYTES!,"base64");
+const physicalBytes=Buffer.from(process.env.PHYSICAL_BYTES!,"base64");
+const openClawBroad=JSON.parse(process.env.OPENCLAW_BROAD!);
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const text=bytes.toString("utf8");if(!Buffer.from(text,"utf8").equals(bytes))currentEntryFail(label+" is not UTF-8");return text}
+function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const descriptor=Object.getOwnPropertyDescriptor(value as object,key);if(descriptor&&"value" in descriptor)recursivelyFreeze(descriptor.value)}Object.freeze(value)}return value}
+function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const record=value as Record<string,unknown>;return "{"+Object.keys(record).sort().map((key)=>JSON.stringify(key)+":"+canonicalComparable(record[key])).join(",")+"}"}
+function compareBytes(left:string,right:string){return Buffer.compare(Buffer.from(left),Buffer.from(right))}
+function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
+const lstart="Sun Aug 16 15:42:28 2026";
+const rows=[1,2,3,94886].map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
+function parsePhysicalProcessesV1(){return Object.freeze(rows)}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){
+  if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789"))return Object.freeze({status:0,stdout:physicalBytes});
+  if(executable==="/bin/ps")return Object.freeze({status:0,stdout:Buffer.from("fixture\n")});
+  throw new Error("unexpected physical command "+executable+" "+args.join(" "));
+}
+function observeManagedWorktreesV1(){return Object.freeze([])}
+function physicalManagedBasesV1(){return Object.freeze([])}
+function physicalImmediateProjectsV1(){return Object.freeze([])}
+function lsofReferencedPidsV1(){return Object.freeze({pids:Object.freeze([]),deleted:Object.freeze([])})}
+function observeProcessCwdV1(){throw new Error("no owned process may request cwd")}
+function observeProcessListenersV1(pid:number){
+  if(pid===1)return Object.freeze([]);
+  if(pid===2)return Object.freeze([{pid:2,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);
+  if(pid===3)return Object.freeze([{pid:3,protocol:"TCP" as const,localAddress:"*",port:3080}]);
+  if(pid===94886)return Object.freeze(openClawBroad);
+  throw new Error("unexpected listener pid "+pid);
+}
+function assertPhysicalInventoryPassStableV1(first:unknown,second:unknown){if(canonicalComparable(first)!==canonicalComparable(second))currentEntryFail("physical inventory changed across observation passes")}
+${fragments}
+const common=(pid:number)=>({pid,processStartTimeEpochMs:Date.parse(lstart),processIdentityHash:sha256(pid+"\n"+lstart+"\n"),processOwnerCount:1});
+const services:any={
+  spawner:{...common(1),listener:null},
+  dashboard:{...common(2),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3333,listenerIdentityHash:"a".repeat(64)}},
+  missionControl:{...common(3),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3080,listenerIdentityHash:"b".repeat(64)}},
+  openClaw:{...common(94886),loadedSourceSha:null,loadedTreeHash:null,loadedBuildHash:null,listenerOwnerCount:1,listener:{host:"127.0.0.1",port:18789,listenerIdentityHash:sha256(serviceBytes)}},
+};
+process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n");
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        SERVICE_BYTES: serviceBytes.toString("base64"),
+        PHYSICAL_BYTES: physicalBytes.toString("base64"),
+        OPENCLAW_BROAD: JSON.stringify(openClawBroadListeners),
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function runMissionControlServiceHarness(fault = "none"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const listenerParserStart = source.indexOf("function parseMissionControlListenerV1(");
@@ -1359,6 +1499,46 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     ]) assert.ok(production.includes(literal), `missing fixed physical literal ${literal}`);
   });
 
+  it("P4 OpenClaw listener observation inherits the exact physical command fence", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-physical-command-"));
+    let source = readFileSync(observerSource, "utf8");
+    source = source
+      .replace(
+        'import { spawnSync } from "node:child_process";',
+        `import { spawnSync as realSpawnSync } from "node:child_process";
+function spawnSync(executable: string, args: readonly string[], options: Record<string, any>): any {
+  if (executable !== "/fixture") return realSpawnSync(executable, [...args], options as any);
+  const expectedEnvironment = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" };
+  if (JSON.stringify(args) !== JSON.stringify(["arg"]) || options.shell !== false || options.encoding !== "buffer" || options.timeout !== 10000 || options.maxBuffer !== 1048576 || options.stdio?.join(",") !== "ignore,pipe,pipe" || JSON.stringify(options.env) !== JSON.stringify(expectedEnvironment)) throw new Error("physical command options are crossed");
+  const fault = process.env.P4_PHYSICAL_FAULT ?? "none";
+  const error = fault === "error" || fault === "timeout" || fault === "overflow" ? Object.assign(new Error(fault), { code: fault === "timeout" ? "ETIMEDOUT" : fault === "overflow" ? "ENOBUFS" : "EIO" }) : undefined;
+  return { error, signal: fault === "signal" ? "SIGTERM" : null, status: fault === "status" ? 1 : fault === "signal" ? null : 0, stdout: fault === "oversized" ? Buffer.alloc(1048577) : Buffer.from("ok"), stderr: fault === "stderr" ? Buffer.from("bad") : Buffer.alloc(0) };
+}`,
+      )
+      .replace("function runPhysicalCommandV1(", "export function runPhysicalCommandV1(");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (fault = "none") => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e",
+      `import(${JSON.stringify(moduleUrl)}).then((m)=>process.stdout.write(m.runPhysicalCommandV1('/fixture',['arg']).stdout.toString()))`,
+    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", P4_PHYSICAL_FAULT: fault } });
+    try {
+      const valid = run();
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.equal(valid.stdout, "ok");
+      for (const fault of ["status", "stderr", "error", "signal", "timeout", "overflow", "oversized"]) {
+        const refused = run(fault);
+        assert.notEqual(refused.status, 0, `${fault} physical result must fail closed`);
+        assert.equal(refused.stdout, "");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("P4 service census resolves the two fixed Setfarm launchers through detached daemon authority", () => {
     const source = readFileSync(observerSource, "utf8");
     assert.match(source, /observeDetachedSetfarmServiceV1/);
@@ -1486,6 +1666,173 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
+  it("P4 service census authenticates the complete OpenClaw same-PID loopback listener inventory", () => {
+    const source = readFileSync(observerSource, "utf8");
+    for (const name of ["parseOpenClawListenerInventoryV1", "requireServiceBoundOpenClawListenersV1", "requireCompleteServiceBoundOpenClawListenersV1", "isExpectedPersistentListenerV1", "assertServiceCensusPassStableV1"]) {
+      assert.match(source, new RegExp(`function ${name}\\(`));
+    }
+    const ipv4 = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const dual = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::1]:18789\0\n");
+    for (const bytes of [ipv4, dual]) {
+      const observed = runOpenClawServiceHarness(bytes);
+      assert.equal(observed.status, 0, observed.stderr);
+      const body = JSON.parse(observed.stdout);
+      assert.deepEqual(Object.keys(body), [
+        "pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash",
+        "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listenerOwnerCount", "listener",
+      ]);
+      assert.equal(body.pid, 94886);
+      assert.equal(body.processOwnerCount, 1);
+      assert.equal(body.listenerOwnerCount, 1);
+      assert.equal(body.loadedSourceSha, null);
+      assert.equal(body.loadedTreeHash, null);
+      assert.equal(body.loadedBuildHash, null);
+      assert.deepEqual(body.listener, {
+        host: "127.0.0.1",
+        port: 18789,
+        listenerIdentityHash: createHash("sha256").update(bytes).digest("hex"),
+      });
+    }
+    for (const bytes of [
+      Buffer.from("p94886\0cnode\0\nf18\0n[::1]:18789\0\n"),
+      Buffer.from("p0\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p094886\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p9007199254740992\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0nlocalhost:18789\0\n"),
+      Buffer.from("p94887\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\np94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0cnode\0\nf18\0n127.0.0.1:18789\0\n"),
+      Buffer.from("f18\0n127.0.0.1:18789\0\np94886\0cnode\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n*:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n0.0.0.0:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18790\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789->127.0.0.1:1\0\n"),
+      Buffer.from("p94886\0cnode\0\nf018\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf9007199254740992\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf18\0n[::1]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf19\0n127.0.0.1:18789\0\nf18\0n[::1]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::ffff:127.0.0.1]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::1%lo0]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::1]:18789\0\nf20\0n[::1]:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n[::1]:18789\0\nf19\0n127.0.0.1:18789\0\n"),
+      Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0"),
+      Buffer.from([0xff]),
+    ]) {
+      const refused = runOpenClawServiceHarness(bytes);
+      assert.notEqual(refused.status, 0);
+      assert.equal(refused.stdout, "");
+    }
+  });
+
+  it("P4 physical census binds OpenClaw raw listener bytes before endpoint exemption", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-openclaw-physical-"));
+    let source = readFileSync(observerSource, "utf8");
+    for (const name of ["parseOpenClawListenerInventoryV1", "requireServiceBoundOpenClawListenersV1", "requireCompleteServiceBoundOpenClawListenersV1", "isExpectedPersistentListenerV1", "assertServiceCensusPassStableV1"]) {
+      source = source.replace(`function ${name}(`, `export function ${name}(`);
+    }
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
+    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+    const run = (expression: string, environment: Record<string, string> = {}) => spawnSync(process.execPath, [
+      "--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m)=>${expression})`,
+    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...environment } });
+    const ipv4 = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const dual = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\nf19\0n[::1]:18789\0\n");
+    const ipv4Listeners = [{ pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18789 }];
+    const dualListeners = [...ipv4Listeners, { pid: 94886, protocol: "TCP" as const, localAddress: "[::1]", port: 18789 }];
+    for (const [bytes, broad] of [[ipv4, ipv4Listeners], [dual, dualListeners]] as const) {
+      const integrated = runOpenClawPhysicalInventoryHarness(bytes, bytes, broad);
+      assert.equal(integrated.status, 0, integrated.stderr);
+      const body = JSON.parse(integrated.stdout);
+      assert.equal(body.ownedListenerCount, 0);
+      assert.deepEqual(body.listeners, []);
+    }
+    const otherPort = { pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18790 };
+    const integratedExtra = runOpenClawPhysicalInventoryHarness(dual, dual, [...dualListeners, otherPort]);
+    assert.equal(integratedExtra.status, 0, integratedExtra.stderr);
+    assert.equal(JSON.parse(integratedExtra.stdout).ownedListenerCount, 1);
+    assert.deepEqual(JSON.parse(integratedExtra.stdout).listeners, [otherPort]);
+    assert.notEqual(runOpenClawPhysicalInventoryHarness(dual, ipv4, dualListeners).status, 0, "raw service/physical listener drift must fail");
+    assert.notEqual(runOpenClawPhysicalInventoryHarness(dual, dual, ipv4Listeners).status, 0, "broad listener loss must fail");
+    assert.notEqual(runOpenClawPhysicalInventoryHarness(ipv4, dual, dualListeners).status, 0, "broad listener appearance must fail");
+    const services = {
+      spawner: { pid: 1 }, dashboard: { pid: 2 }, missionControl: { pid: 3 },
+      openClaw: {
+        pid: 94886, loadedSourceSha: null, loadedTreeHash: null, loadedBuildHash: null,
+        processOwnerCount: 1, listenerOwnerCount: 1,
+        listener: { host: "127.0.0.1", port: 18789, listenerIdentityHash: createHash("sha256").update(dual).digest("hex") },
+      },
+    };
+    const bind = (bytes: Buffer, body = services.openClaw) => run(
+      `{const observed={bytes:Buffer.from(process.env.P4_BYTES,'base64'),inventory:m.parseOpenClawListenerInventoryV1(Buffer.from(process.env.P4_BYTES,'base64'),94886)};process.stdout.write(JSON.stringify(m.requireServiceBoundOpenClawListenersV1(${JSON.stringify(body)},observed)))}`,
+      { P4_BYTES: bytes.toString("base64") },
+    );
+    try {
+      const bound = bind(dual);
+      assert.equal(bound.status, 0, bound.stderr);
+      const listeners = JSON.parse(bound.stdout);
+      assert.deepEqual(listeners, [
+        { pid: 94886, protocol: "TCP", localAddress: "127.0.0.1", port: 18789 },
+        { pid: 94886, protocol: "TCP", localAddress: "[::1]", port: 18789 },
+      ]);
+      const ipv4Body = {
+        ...services.openClaw,
+        listener: { ...services.openClaw.listener, listenerIdentityHash: createHash("sha256").update(ipv4).digest("hex") },
+      };
+      const ipv4Bound = bind(ipv4, ipv4Body);
+      assert.equal(ipv4Bound.status, 0, ipv4Bound.stderr);
+      assert.deepEqual(JSON.parse(ipv4Bound.stdout), ipv4Listeners);
+      const ipv4Classified = run(
+        `{const bytes=Buffer.from(process.env.P4_BYTES,'base64');const observed={bytes,inventory:m.parseOpenClawListenerInventoryV1(bytes,94886)};process.stdout.write(JSON.stringify(m.requireCompleteServiceBoundOpenClawListenersV1(${JSON.stringify(ipv4Body)},observed,${JSON.stringify(ipv4Listeners)})))}`,
+        { P4_BYTES: ipv4.toString("base64") },
+      );
+      assert.equal(ipv4Classified.status, 0, ipv4Classified.stderr);
+      const classify = (complete: readonly Record<string, unknown>[]) => run(
+        `{const bytes=Buffer.from(process.env.P4_BYTES,'base64');const observed={bytes,inventory:m.parseOpenClawListenerInventoryV1(bytes,94886)};process.stdout.write(JSON.stringify(m.requireCompleteServiceBoundOpenClawListenersV1(${JSON.stringify(services.openClaw)},observed,${JSON.stringify(complete)})))}`,
+        { P4_BYTES: dual.toString("base64") },
+      );
+      assert.equal(classify(listeners).status, 0);
+      for (const crossed of [
+        listeners.slice(0, 1),
+        [...listeners, { pid: 94886, protocol: "TCP", localAddress: "*", port: 18789 }],
+      ]) assert.notEqual(classify(crossed).status, 0);
+      const withAnotherPort = classify([...listeners, { pid: 94886, protocol: "TCP", localAddress: "127.0.0.1", port: 18790 }]);
+      assert.equal(withAnotherPort.status, 0, withAnotherPort.stderr);
+      for (const listener of listeners) {
+        const expected = run(`process.stdout.write(String(m.isExpectedPersistentListenerV1(${JSON.stringify(listener)},${JSON.stringify(services)},${JSON.stringify(listeners)})))`);
+        assert.equal(expected.status, 0, expected.stderr);
+        assert.equal(expected.stdout, "true");
+      }
+      assert.notEqual(bind(ipv4).status, 0, "valid listener bytes with a different complete raw hash must be refused");
+      for (const listener of [
+        { pid: 94887, protocol: "TCP", localAddress: "[::1]", port: 18789 },
+        { pid: 94886, protocol: "TCP", localAddress: "*", port: 18789 },
+        { pid: 94886, protocol: "TCP", localAddress: "127.0.0.1", port: 18790 },
+        { pid: 94886, protocol: "TCP", localAddress: "[::1]", port: 18790 },
+      ]) {
+        const unexpected = run(`process.stdout.write(String(m.isExpectedPersistentListenerV1(${JSON.stringify(listener)},${JSON.stringify(services)},${JSON.stringify(listeners)})))`);
+        assert.equal(unexpected.stdout, "false");
+      }
+      for (const address of ["127.0.0.1", "[::1]"]) {
+        const unbound = run(`process.stdout.write(String(m.isExpectedPersistentListenerV1({pid:94886,protocol:'TCP',localAddress:${JSON.stringify(address)},port:18789},${JSON.stringify(services)},[])))`);
+        assert.equal(unbound.stdout, "false");
+      }
+      const serviceCensusA = { schema: "setfarm.internal-production-service-census.v1", ...services, censusHash: "a".repeat(64) };
+      const serviceCensusB = { ...serviceCensusA, openClaw: { ...serviceCensusA.openClaw, listener: { ...serviceCensusA.openClaw.listener, listenerIdentityHash: "b".repeat(64) } } };
+      assert.equal(run(`m.assertServiceCensusPassStableV1(${JSON.stringify(serviceCensusA)},${JSON.stringify(serviceCensusA)},'drift')`).status, 0);
+      assert.notEqual(run(`m.assertServiceCensusPassStableV1(${JSON.stringify(serviceCensusA)},${JSON.stringify(serviceCensusB)},'drift')`).status, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    assert.match(source, /\["-nP", "-a", "-p", String\(pid\), "-iTCP:18789", "-sTCP:LISTEN", "-F0pcfn"\]/);
+    assert.match(source, /sha256\(observed\.bytes\)[\s\S]{0,180}listenerIdentityHash/);
+    assert.match(source, /const complete = observeProcessListenersV1\(pid\);[\s\S]{0,260}requireCompleteServiceBoundOpenClawListenersV1/);
+  });
+
   it("P4 service census authenticates the Mission Control wildcard listener as logical loopback", () => {
     const root = mkdtempSync(path.join(tmpdir(), "setfarm-mc-listener-"));
     let source = readFileSync(observerSource, "utf8");
@@ -1547,7 +1894,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         { loaded: { ...loaded, MC_INTERNAL_URL: "http://0.0.0.0:3080" }, plist },
       ]) assert.notEqual(run(`m.requireMissionControlListenerEnvironmentV1(${JSON.stringify(mutation.loaded)},${JSON.stringify(mutation.plist)})`).status, 0);
       const services = { spawner: { pid: 1 }, dashboard: { pid: 2 }, missionControl: { pid: 3 }, openClaw: { pid: 4 } };
-      const expected = (listener: Record<string, unknown>) => run(`process.stdout.write(String(m.isExpectedPersistentListenerV1(${JSON.stringify(listener)},${JSON.stringify(services)})))`);
+      const expected = (listener: Record<string, unknown>) => run(`process.stdout.write(String(m.isExpectedPersistentListenerV1(${JSON.stringify(listener)},${JSON.stringify(services)},[])))`);
       assert.equal(expected({ pid: 3, protocol: "TCP", localAddress: "*", port: 3080 }).stdout, "true");
       for (const listener of [
         { pid: 5, protocol: "TCP", localAddress: "*", port: 3080 },
