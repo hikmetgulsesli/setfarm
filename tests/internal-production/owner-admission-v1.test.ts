@@ -1437,6 +1437,15 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   assert.match(projectionAuthority, /sourceParts\.length !== 2/);
   assert.match(projectionAuthority, /P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1/);
   assert.doesNotMatch(projectionAuthority, /process\.env|callback|options|caller|HOME/);
+  const projectStart = runnerSource.indexOf("function projectCurrentBytesV1");
+  const projectEnd = runnerSource.indexOf("\n\nfunction markerPathV1", projectStart);
+  assert.ok(projectStart >= 0 && projectEnd > projectStart);
+  const projectOwner = runnerSource.slice(projectStart, projectEnd);
+  const sourceReopen = projectOwner.indexOf("for (const [locator, observation] of observations)");
+  const projectionWrite = projectOwner.lastIndexOf("for (const [locator, observation] of observations)");
+  const gitInitialization = projectOwner.indexOf('git(["init", "-q"]');
+  assert.ok(sourceReopen >= 0 && projectionWrite > sourceReopen && gitInitialization > projectionWrite);
+  assert.ok(projectOwner.indexOf("projectP3CurrentEntryWorkspaceAuthorityV1", projectionWrite) > projectionWrite);
   assert.doesNotMatch(activation, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|launchctl|lsof/);
   const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
   const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");

@@ -305,11 +305,6 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
         sourcePhysicalMode: observed.physicalMode,
         projectedMode: expectedMode,
       }));
-      const projectedBytes = projectP3CurrentEntryWorkspaceAuthorityV1(locator, bytes);
-      const target = path.join(projectionRoot, locator);
-      mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-      writeFileSync(target, projectedBytes, { mode: expectedMode });
-      chmodSync(target, expectedMode);
     }
 
     for (const [locator, observation] of observations) {
@@ -332,6 +327,14 @@ function projectCurrentBytesV1(): Readonly<{ root: string; head: string }> {
       assertSourceScopeV1();
     } catch {
       throw new Error("P3_PROJECTION_SOURCE_CHANGED");
+    }
+
+    for (const [locator, observation] of observations) {
+      const projectedBytes = projectP3CurrentEntryWorkspaceAuthorityV1(locator, observation.bytes);
+      const target = path.join(projectionRoot, locator);
+      mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, projectedBytes, { mode: observation.projectedMode });
+      chmodSync(target, observation.projectedMode);
     }
 
     git(["init", "-q"], { cwd: projectionRoot });
