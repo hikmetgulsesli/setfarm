@@ -18,7 +18,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
@@ -118,6 +118,7 @@ function fixtureV31Migrations(): readonly (readonly [string, string])[] {
 }
 
 type FixtureOptions = Readonly<{
+  preserveCodeOwnedWorkspaceRoot?: boolean;
   v31ReobservationDrift?: boolean;
   v31AuditExtra?: boolean;
   pendingExtra?: boolean;
@@ -125,7 +126,6 @@ type FixtureOptions = Readonly<{
   pbaObservationExtra?: boolean;
   pbaResponseExtra?: boolean;
   normalizationContentionBarrier?: boolean;
-  currentEntryAncestorSwapAfterGuard?: boolean;
   stopAfterCurrentEntryOperationPublication?: boolean;
   stubServiceCensus?: boolean;
   preparedAuthorityDirectorySwap?: string;
@@ -175,6 +175,14 @@ function createFixture(options: FixtureOptions = {}): string {
       'if (plan.state === "block" || plan.fixedName !== basename) currentEntryFail(`publisher family ${basename} cannot normalize`); const barrier=path.join(store.directory,"..","normalization-contention-barrier"); try{mkdirSync(barrier,{mode:0o700})}catch(error){if(!(error instanceof Error)||!("code" in error)||error.code!=="EEXIST")throw error} try{writeFileSync(path.join(barrier,String(process.pid)),"ready\\n",{flag:"wx",mode:0o600})}catch(error){if(!(error instanceof Error)||!("code" in error)||error.code!=="EEXIST")throw error} const wait=new Int32Array(new SharedArrayBuffer(4)); while(readdirSync(barrier).length<2)Atomics.wait(wait,0,0,5);',
     )
     : observerBytes;
+  if (!options.preserveCodeOwnedWorkspaceRoot) {
+    const fixtureBoundObserver = fixtureObserver.replace(
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());',
+    );
+    assert.notEqual(fixtureBoundObserver, fixtureObserver, "fixture must replace only the code-owned workspace root");
+    fixtureObserver = fixtureBoundObserver;
+  }
   if (options.preparedAccessorReobservationDrift) {
     const driftedBasename = {
       authorityV3Migration31Audit: "authority-v3-migration31-audit.json",
@@ -182,20 +190,14 @@ function createFixture(options: FixtureOptions = {}): string {
       operation: "current-entry-operation.json",
     }[options.preparedAccessorReobservationDrift];
     fixtureObserver = fixtureObserver.replace(
-      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
-      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,${JSON.stringify(driftedBasename)}); const driftBytes=readFileSync(driftPath); renameSync(driftPath,path.join(store.directory,"..",${JSON.stringify(`held-${driftedBasename}`)})); writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:`,
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
+      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,${JSON.stringify(driftedBasename)}); const driftBytes=readFileSync(driftPath); renameSync(driftPath,path.join(store.directory,"..",${JSON.stringify(`held-${driftedBasename}`)})); writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {`,
     );
   }
   if (options.preparedAccessorByteDrift) {
     fixtureObserver = fixtureObserver.replace(
-      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
-      'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  let operation:',
-    );
-  }
-  if (options.currentEntryAncestorSwapAfterGuard) {
-    fixtureObserver = fixtureObserver.replace(
-      'const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");',
-      'if(basename===CURRENT_ENTRY_FILES.pendingBootstrapHandoffMigration){const heldStore=path.join(path.dirname(store.directory),`held-current-entry-${process.pid}`);renameSync(store.directory,heldStore);mkdirSync(store.directory,{mode:0o700})} const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");',
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const driftPath=path.join(store.directory,CURRENT_ENTRY_FILES.operation); const driftBytes=readFileSync(driftPath); driftBytes[0]=driftBytes[0]===0x7b?0x5b:0x7b; writeFileSync(driftPath,driftBytes,{mode:0o600}); }\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
     );
   }
   if (options.stopAfterCurrentEntryOperationPublication) {
@@ -243,8 +245,8 @@ function createFixture(options: FixtureOptions = {}): string {
   }
   if (options.preparedAuthorityDirectorySwap) {
     fixtureObserver = fixtureObserver.replace(
-      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  let operation:',
-      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const authorityDirectory=path.join(store.directory,${JSON.stringify(options.preparedAuthorityDirectorySwap)}); const held=path.join(path.dirname(store.directory),${JSON.stringify(`held-${options.preparedAuthorityDirectorySwap}`)}); renameSync(authorityDirectory,held); mkdirSync(authorityDirectory,{mode:0o700}); }\n  let operation:`,
+      'assertDirectory(store.directory, storeBefore, "prepared current-entry store");\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {',
+      `assertDirectory(store.directory, storeBefore, "prepared current-entry store"); { const authorityDirectory=path.join(store.directory,${JSON.stringify(options.preparedAuthorityDirectorySwap)}); const held=path.join(path.dirname(store.directory),${JSON.stringify(`held-${options.preparedAuthorityDirectorySwap}`)}); renameSync(authorityDirectory,held); mkdirSync(authorityDirectory,{mode:0o700}); }\n  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {`,
     );
   }
   if (options.preparedAuthorityDirectoryWrongDevice) {
@@ -396,6 +398,21 @@ function materializeOutputs(root: string): void {
 
 function finalizedFixture(options: FixtureOptions = {}): Readonly<{ root: string; buildInputSetHash: string }> {
   const root = createFixture(options);
+  const prepared = runProducer(root, "--prepare");
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const receipt = JSON.parse(readFileSync(path.join(root, "dist/PLATFORM_BUILD_PREPARE.json"), "utf8"));
+  materializeOutputs(root);
+  const finalized = runProducer(root, "--finalize");
+  assert.equal(finalized.status, 0, finalized.stderr);
+  return Object.freeze({ root, buildInputSetHash: receipt.buildInputSetHash });
+}
+
+function finalizedCurrentEntryContentFaultFixture(): Readonly<{ root: string; buildInputSetHash: string }> {
+  const root = createFixture();
+  installCurrentEntryContentPublisherFaultHooks(root);
+  git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+  git(root, ["commit", "-qm", "fixture content publisher fault hooks"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   const prepared = runProducer(root, "--prepare");
   assert.equal(prepared.status, 0, prepared.stderr);
   const receipt = JSON.parse(readFileSync(path.join(root, "dist/PLATFORM_BUILD_PREPARE.json"), "utf8"));
@@ -754,6 +771,76 @@ function currentEntryMembers(store: string, basename: string): readonly string[]
   return existsSync(store)
     ? readdirSync(store).filter((name) => name === basename || name.startsWith(`.${basename}.`)).sort()
     : [];
+}
+
+function currentEntryPrerequisiteRecord(
+  root: string,
+  kind: "authority-v3-migration31-audits" | "pending-bootstrap-handoff-migrations",
+  hash: string,
+): string {
+  return path.join(currentEntryStore(root), "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+}
+
+function filesystemTreeSnapshot(root: string): readonly Readonly<Record<string, string | number>>[] {
+  const entries: Readonly<Record<string, string | number>>[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const locator = prefix === "" ? name : `${prefix}/${name}`;
+      const target = path.join(directory, name);
+      const stats = lstatSync(target);
+      entries.push(Object.freeze({
+        locator,
+        kind: stats.isDirectory() ? "directory" : stats.isFile() ? "file" : "other",
+        mode: stats.mode & 0o7777,
+        inode: String(stats.ino),
+        size: stats.size,
+        sha256: stats.isFile() ? createHash("sha256").update(readFileSync(target)).digest("hex") : "",
+      }));
+      if (stats.isDirectory()) visit(target, locator);
+    }
+  };
+  visit(root, "");
+  return Object.freeze(entries);
+}
+
+function disableCurrentEntryPrerequisiteObservers(root: string): void {
+  fixtureFile(root, "src/db-pg.ts", 'export async function auditCurrentInternalProductionAuthorityV3Migration31V1(){throw new Error("CURRENT_OBSERVER_CALLED:v31")} export async function inspectCurrentInternalProductionPendingBootstrapHandoffMigrationV1(){throw new Error("CURRENT_OBSERVER_CALLED:pending")}\n');
+  fixtureFile(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", 'export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(){throw new Error("CURRENT_OBSERVER_CALLED:pba")} export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value: unknown){return value as Record<string, unknown>}\n');
+}
+
+function installCurrentEntryContentPublisherFaultHooks(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const original = readFileSync(modulePath, "utf8");
+  const hooked = original
+    .replace(
+      "function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void {",
+      'function publishLegacyZeroRecordV1(target: string, bytes: Buffer): void { const p4Fault=(label:string)=>{if(Reflect.get(globalThis,"__p4CurrentEntryContentFault")===label){Reflect.deleteProperty(globalThis,"__p4CurrentEntryContentFault");throw new Error(`P4_CURRENT_ENTRY_CONTENT_FAULT:${label}`)}};',
+    )
+    .replace(
+      "    tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+      '    tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); p4Fault("after-open");',
+    )
+    .replace(
+      "    writeFileSync(tempDescriptor, bytes); fsyncSync(tempDescriptor);",
+      '    writeFileSync(tempDescriptor, bytes); p4Fault("after-write"); fsyncSync(tempDescriptor); p4Fault("after-file-fsync");',
+    )
+    .replace(
+      "    linkSync(temp, target); fsyncCurrentEntryDirectory(directory);",
+      '    p4Fault("before-link"); linkSync(temp, target); p4Fault("after-link"); fsyncCurrentEntryDirectory(directory); p4Fault("after-first-parent-fsync");',
+    )
+    .replace(
+      "    unlinkSync(temp); fsyncCurrentEntryDirectory(directory);",
+      '    p4Fault("before-temp-unlink"); unlinkSync(temp); p4Fault("after-temp-unlink"); fsyncCurrentEntryDirectory(directory); p4Fault("after-second-parent-fsync");',
+    )
+    .replace(
+      '    if (!readTask12ReceiptStoreBytesV1(target).equals(bytes)) currentEntryFail("Task12 receipt publication did not reopen");',
+      '    p4Fault("before-final-reopen"); if (!readTask12ReceiptStoreBytesV1(target).equals(bytes)) currentEntryFail("Task12 receipt publication did not reopen"); p4Fault("after-final-reopen");',
+    );
+  assert.notEqual(hooked, original, "content publisher fault hooks must instrument the copied module");
+  for (const label of ["after-open", "after-write", "after-file-fsync", "before-link", "after-link", "after-first-parent-fsync", "before-temp-unlink", "after-temp-unlink", "after-second-parent-fsync", "before-final-reopen", "after-final-reopen"]) {
+    assert.match(hooked, new RegExp(`P4_CURRENT_ENTRY_CONTENT_FAULT|${label}`));
+  }
+  writeFileSync(modulePath, hooked);
 }
 
 function legacyDatabaseCensusRow(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
@@ -1963,14 +2050,70 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
   });
 
-  it("P4 routes every current-entry authority store through the fixed sibling workspace root", () => {
+  it("P4 routes every current-entry authority store through the code-owned account workspace", () => {
     const source = readFileSync(observerSource, "utf8");
     assert.equal(
       [...source.matchAll(/fixedWorkspaceAuthorityPathV1\(/g)].length,
-      20,
-      "one helper definition plus all nineteen authority-store call sites must remain bound",
+      22,
+      "one helper definition plus all twenty-one authority-store call sites must remain bound",
     );
+    assert.match(source, /const CODE_OWNER_HOME_V1 = userInfo\(\)\.homedir;/);
+    assert.match(source, /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.join\(CODE_OWNER_HOME_V1, "ai", "setrox"\);/);
+    const functionRegion = (startMarker: string, endMarker: string): string => {
+      const start = source.indexOf(startMarker);
+      const end = source.indexOf(endMarker, start + startMarker.length);
+      assert.ok(start >= 0 && end > start, `${startMarker} must have an exact source boundary`);
+      return source.slice(start, end);
+    };
+    for (const region of [
+      functionRegion("function fixedWorkspaceAuthorityPathV1(", "\nfunction readStableRegular("),
+      functionRegion("function ensureCurrentEntryStore(", "\nfunction readCurrentEntryStore()"),
+      functionRegion("function readCurrentEntryStore()", "\nfunction publisherEntry("),
+      functionRegion("function task12ReceiptStoreAnchorV1(", "\nfunction authenticateTask12ReceiptDirectoryChainV1("),
+    ]) {
+      assert.equal([...region.matchAll(/const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;/g)].length, 1);
+      assert.doesNotMatch(region, /path\.dirname\((?:fixedRepositoryRoot\(\)|repository)\)/);
+    }
+    const prerequisiteResolverRegion = functionRegion(
+      "function currentEntryPrerequisiteRecordPathV1(",
+      "\nasync function validateStoredCurrentEntryFamily(",
+    );
+    assert.doesNotMatch(prerequisiteResolverRegion, /readdirSync|mtime|ctime|latest/i);
+    assert.match(prerequisiteResolverRegion, /readCurrentEntryAuthorityRecordIfPresentV1\(contentPath\)/);
+    assert.doesNotMatch(source, /process\.env\.(?:HOME|SETFARM_[A-Z_]*(?:ROOT|PATH))/);
     assert.doesNotMatch(source, /path\.join\(fixedRepositoryRoot\(\),/);
+  });
+
+  it("binds current-entry authorities to the code-owned account workspace from a linked worktree", () => {
+    const root = createFixture({ preserveCodeOwnedWorkspaceRoot: true });
+    try {
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const exposed = source.replace(
+        "function fixedWorkspaceAuthorityPathV1(",
+        "export function fixedWorkspaceAuthorityPathV1(",
+      ).replace(
+        "function task12ReceiptStoreAnchorV1(",
+        "export function task12ReceiptStoreAnchorV1(",
+      );
+      assert.notEqual(exposed, source);
+      writeFileSync(modulePath, exposed);
+      const moduleUrl = pathToFileURL(modulePath).href;
+      const program = `import(${JSON.stringify(moduleUrl)}).then((m) => { const target=m.fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1", "probe.json"); process.stdout.write(JSON.stringify({target,anchor:m.task12ReceiptStoreAnchorV1(target)})); })`;
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, HOME: path.join(path.dirname(root), "crossed-home") },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string }>;
+      const expectedWorkspace = path.join(userInfo().homedir, "ai", "setrox");
+      assert.equal(observed.target, path.join(expectedWorkspace, "data/internal-production-baseline/current-entry-v1/probe.json"));
+      assert.equal(observed.anchor, expectedWorkspace);
+      assert.notEqual(observed.target, path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1/probe.json"));
+    } finally {
+      removeFixture(root);
+    }
   });
 
   it("returns null for an absent prepared operation without creating current-entry state", () => {
@@ -2086,7 +2229,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("returns the exact prepared operation and accepts valid fixed siblings as absence", () => {
+  it("returns the exact prepared operation and accepts valid content plus legacy siblings as absence", () => {
     const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
     try {
       const seeded = runFixtureExpression(
@@ -2108,20 +2251,47 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.equal(frozen.stdout, "true");
 
       const store = currentEntryStore(fixture.root);
+      const operation = JSON.parse(seeded.stdout) as Record<string, Record<string, string>>;
+      for (const [kind, pairKey, legacyBasename] of [
+        ["authority-v3-migration31-audits", "authorityV3Migration31Audit", "authority-v3-migration31-audit.json"],
+        ["pending-bootstrap-handoff-migrations", "pendingBootstrapHandoffMigration", "pending-bootstrap-handoff-migration.json"],
+      ] as const) {
+        const pair = operation[pairKey]!;
+        const hashKey = `${pairKey}Hash`;
+        copyFileSync(currentEntryPrerequisiteRecord(fixture.root, kind, pair[hashKey]!), path.join(store, legacyBasename));
+        chmodSync(path.join(store, legacyBasename), 0o600);
+      }
       unlinkSync(path.join(store, "current-entry-operation.json"));
-      const siblingNames = readdirSync(store).sort();
-      const siblingBytes = siblingNames.map((name) => readFileSync(path.join(store, name)));
+      const siblingSnapshot = filesystemTreeSnapshot(store);
       const absent = runFixtureExpression(
         fixture.root,
         "m.observePreparedInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
       );
       assert.equal(absent.status, 0, absent.stderr);
       assert.equal(absent.stdout, "null");
-      assert.deepEqual(readdirSync(store).sort(), siblingNames);
-      siblingNames.forEach((name, index) => assert.equal(
-        readFileSync(path.join(store, name)).equals(siblingBytes[index]!),
-        true,
-      ));
+      assert.deepEqual(filesystemTreeSnapshot(store), siblingSnapshot);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("rejects a malformed legacy sibling even when the operation resolves from exact content", () => {
+    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
+    try {
+      const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const operationPath = path.join(currentEntryStore(fixture.root), "current-entry-operation.json");
+      const operationBefore = readFileSync(operationPath);
+      const legacyPath = path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json");
+      writeFileSync(legacyPath, "{}\n", { mode: 0o600 });
+      chmodSync(legacyPath, 0o600);
+      const legacyBefore = Object.freeze({ bytes: readFileSync(legacyPath), stats: lstatSync(legacyPath) });
+      const blocked = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
+      assert.notEqual(blocked.status, 0);
+      assert.match(blocked.stderr, /pending|fields|legacy|current-entry|record/i);
+      assert.equal(readFileSync(operationPath).equals(operationBefore), true);
+      assert.equal(lstatSync(legacyPath).ino, legacyBefore.stats.ino);
+      assert.equal(readFileSync(legacyPath).equals(legacyBefore.bytes), true);
     } finally {
       removeFixture(fixture.root);
     }
@@ -2166,8 +2336,24 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     for (const family of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operation"] as const) {
       const fixture = finalizedFixture({ preparedAccessorReobservationDrift: family, stopAfterCurrentEntryOperationPublication: true });
       try {
-        const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+        const seeded = runFixtureExpression(
+          fixture.root,
+          "m.prepareInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+        );
         assert.equal(seeded.status, 0, seeded.stderr);
+        if (family !== "operation") {
+          const operation = JSON.parse(seeded.stdout) as Record<string, Record<string, string>>;
+          const pair = operation[family]!;
+          const hash = pair[`${family}Hash`]!;
+          const kind = family === "authorityV3Migration31Audit"
+            ? "authority-v3-migration31-audits"
+            : "pending-bootstrap-handoff-migrations";
+          const legacyBasename = family === "authorityV3Migration31Audit"
+            ? "authority-v3-migration31-audit.json"
+            : "pending-bootstrap-handoff-migration.json";
+          copyFileSync(currentEntryPrerequisiteRecord(fixture.root, kind, hash), path.join(currentEntryStore(fixture.root), legacyBasename));
+          chmodSync(path.join(currentEntryStore(fixture.root), legacyBasename), 0o600);
+        }
         const result = runFixtureExpression(fixture.root, "m.observePreparedInternalProductionCurrentEntryOperationV1()");
         assert.notEqual(result.status, 0, family);
         assert.match(result.stderr, /changed|identity|mode|prepared current-entry/i);
@@ -2361,6 +2547,45 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const valid = runResolver(pair);
       assert.equal(valid.status, 0, valid.stderr);
       assert.equal(JSON.parse(valid.stdout).pendingBootstrapHandoffMigrationHash, pendingBootstrapHandoffMigrationHash);
+      const contentPath = currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", pendingBootstrapHandoffMigrationHash);
+      mkdirSync(path.dirname(contentPath), { recursive: true, mode: 0o700 });
+      writeFileSync(contentPath, "{}\n", { mode: 0o600 });
+      chmodSync(contentPath, 0o600);
+      const corruptedContent = runResolver(pair);
+      assert.notEqual(corruptedContent.status, 0, "an existing corrupted hash record must not fall back to valid legacy bytes");
+      assert.match(corruptedContent.stderr, /fields|canonical|pending|record/i);
+      writeFileSync(contentPath, `${canonical(record)}\n`, { mode: 0o600 });
+      chmodSync(contentPath, 0o600);
+      writeFileSync(recordPath, "{}\n", { mode: 0o600 });
+      chmodSync(recordPath, 0o600);
+      const contentWins = runResolver(pair);
+      assert.equal(contentWins.status, 0, contentWins.stderr);
+      assert.equal(JSON.parse(contentWins.stdout).pendingBootstrapHandoffMigrationHash, pendingBootstrapHandoffMigrationHash);
+      writeFileSync(recordPath, `${canonical(record)}\n`, { mode: 0o600 });
+      chmodSync(recordPath, 0o600);
+      const legacyBefore = Object.freeze({ bytes: readFileSync(recordPath), stats: lstatSync(recordPath) });
+      for (const physical of ["mode", "symlink", "hardlink"] as const) {
+        unlinkSync(contentPath);
+        const other = path.join(store, `pending-content-${physical}`);
+        if (physical === "mode") {
+          writeFileSync(contentPath, `${canonical(record)}\n`, { mode: 0o644 });
+          chmodSync(contentPath, 0o644);
+        } else {
+          writeFileSync(other, `${canonical(record)}\n`, { mode: 0o600 });
+          chmodSync(other, 0o600);
+          if (physical === "symlink") symlinkSync(other, contentPath);
+          else linkSync(other, contentPath);
+        }
+        const blocked = runResolver(pair);
+        assert.notEqual(blocked.status, 0, `${physical} content must not fall back to valid legacy bytes`);
+        assert.match(blocked.stderr, /record|inode|link|mode|symbolic|current-entry/i);
+        assert.equal(lstatSync(recordPath).ino, legacyBefore.stats.ino);
+        assert.equal(readFileSync(recordPath).equals(legacyBefore.bytes), true);
+        unlinkSync(contentPath);
+        if (existsSync(other)) unlinkSync(other);
+        writeFileSync(contentPath, `${canonical(record)}\n`, { mode: 0o600 });
+        chmodSync(contentPath, 0o600);
+      }
       const tampered = runResolver({ ...pair, pendingBootstrapHandoffMigrationHash: "2".repeat(64) });
       assert.notEqual(tampered.status, 0);
       assert.match(tampered.stderr, /pair|hash/i);
@@ -2391,18 +2616,313 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P4 publishes and adopts the three current-entry records in a finalized sibling-data fixture", () => {
+  it("never falls back to legacy after an exact content record was observed present", () => {
+    const fixture = finalizedFixture();
+    try {
+      const seeded = runFixtureExpression(
+        fixture.root,
+        "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const pending = JSON.parse(seeded.stdout) as Record<string, string>;
+      const contentPath = currentEntryPrerequisiteRecord(
+        fixture.root,
+        "pending-bootstrap-handoff-migrations",
+        pending.pendingBootstrapHandoffMigrationHash,
+      );
+      const legacyPath = path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json");
+      copyFileSync(contentPath, legacyPath);
+      chmodSync(legacyPath, 0o600);
+      const legacyBefore = Object.freeze({ bytes: readFileSync(legacyPath), stats: lstatSync(legacyPath) });
+      const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      const drifted = source.replace(
+        "return readTask12ReceiptStoreBytesV1(record);",
+        "unlinkSync(record); return readTask12ReceiptStoreBytesV1(record);",
+      );
+      assert.notEqual(drifted, source);
+      writeFileSync(modulePath, drifted);
+      const pair = {
+        pendingBootstrapHandoffMigrationRef: pending.pendingBootstrapHandoffMigrationRef,
+        pendingBootstrapHandoffMigrationHash: pending.pendingBootstrapHandoffMigrationHash,
+      };
+      const blocked = runFixtureExpression(
+        fixture.root,
+        `m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(pair)})`,
+      );
+      assert.notEqual(blocked.status, 0);
+      assert.match(blocked.stderr, /ENOENT|record|authority|changed/i);
+      assert.equal(existsSync(contentPath), false);
+      assert.equal(lstatSync(legacyPath).ino, legacyBefore.stats.ino);
+      assert.equal(readFileSync(legacyPath).equals(legacyBefore.bytes), true);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("rejects unequal, crossed, and wrong-device exact content without legacy fallback", () => {
+    for (const fault of ["unequal", "crossed", "wrong-device"] as const) {
+      const fixture = finalizedFixture();
+      try {
+        const seeded = runFixtureExpression(
+          fixture.root,
+          "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+        );
+        assert.equal(seeded.status, 0, seeded.stderr);
+        const pending = JSON.parse(seeded.stdout) as Record<string, any>;
+        const pair = {
+          pendingBootstrapHandoffMigrationRef: pending.pendingBootstrapHandoffMigrationRef,
+          pendingBootstrapHandoffMigrationHash: pending.pendingBootstrapHandoffMigrationHash,
+        };
+        const target = currentEntryPrerequisiteRecord(
+          fixture.root,
+          "pending-bootstrap-handoff-migrations",
+          pending.pendingBootstrapHandoffMigrationHash,
+        );
+        const legacy = path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json");
+        copyFileSync(target, legacy);
+        chmodSync(legacy, 0o600);
+        const legacyBefore = Object.freeze({ bytes: readFileSync(legacy), stats: lstatSync(legacy) });
+        if (fault === "unequal") writeFileSync(target, "{}\n", { mode: 0o600 });
+        else if (fault === "crossed") {
+          const crossed = structuredClone(pending);
+          crossed.controllerSource.buildHash = "d".repeat(64);
+          delete crossed.pendingBootstrapHandoffMigrationRef;
+          delete crossed.pendingBootstrapHandoffMigrationHash;
+          const crossedHash = canonicalHash(crossed);
+          writeFileSync(target, `${canonical({ ...crossed, pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${crossedHash}`, pendingBootstrapHandoffMigrationHash: crossedHash })}\n`, { mode: 0o600 });
+        } else {
+          const modulePath = path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+          const source = readFileSync(modulePath, "utf8");
+          const drifted = source.replace(
+            "before.dev !== parent.dev || before.dev !== atPath.dev",
+            "before.dev !== parent.dev + 1n || before.dev !== atPath.dev",
+          );
+          assert.notEqual(drifted, source);
+          writeFileSync(modulePath, drifted);
+        }
+        chmodSync(target, 0o600);
+        const targetBefore = readFileSync(target);
+        const resolved = runFixtureExpression(
+          fixture.root,
+          `m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(pair)})`,
+        );
+        assert.notEqual(resolved.status, 0, `${fault} content must fail closed`);
+        assert.match(resolved.stderr, /pair|hash|fields|record|device|inode|authority|current-entry/i);
+        assert.equal(readFileSync(target).equals(targetBefore), true);
+        assert.equal(lstatSync(legacy).ino, legacyBefore.stats.ino);
+        assert.equal(readFileSync(legacy).equals(legacyBefore.bytes), true);
+        if (fault === "unequal") {
+          const republish = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+          assert.notEqual(republish.status, 0, "same hash path with unequal bytes must be an immutable publisher collision");
+          assert.equal(readFileSync(target).equals(targetBefore), true);
+        }
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
+  it("enforces the content publisher temp cap and deterministically adopts equal contenders", () => {
+    const fixture = finalizedFixture();
+    try {
+      const seeded = runFixtureExpression(
+        fixture.root,
+        "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const pending = JSON.parse(seeded.stdout) as Record<string, string>;
+      const contentPath = currentEntryPrerequisiteRecord(
+        fixture.root,
+        "pending-bootstrap-handoff-migrations",
+        pending.pendingBootstrapHandoffMigrationHash,
+      );
+      const bytes = readFileSync(contentPath);
+      unlinkSync(contentPath);
+      const temps = Array.from({ length: 9 }, (_, index) => `${contentPath}.tmp-${index + 1}-12345678-1234-4123-8123-${String(index + 1).padStart(12, "0")}`);
+      for (const temp of temps) {
+        writeFileSync(temp, bytes, { mode: 0o600 });
+        chmodSync(temp, 0o600);
+      }
+      const capped = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+      assert.notEqual(capped.status, 0);
+      assert.match(capped.stderr, /temp cap|capacity|publication/i);
+      assert.equal(existsSync(contentPath), false);
+      assert.equal(temps.every((temp) => existsSync(temp)), true);
+      for (const temp of temps.slice(2)) unlinkSync(temp);
+      const adopted = runFixtureExpression(
+        fixture.root,
+        "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(adopted.status, 0, adopted.stderr);
+      assert.equal(JSON.parse(adopted.stdout).pendingBootstrapHandoffMigrationHash, pending.pendingBootstrapHandoffMigrationHash);
+      assert.equal(readFileSync(contentPath).equals(bytes), true);
+      assert.equal(temps.some((temp) => existsSync(temp)), false);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("recovers content publication response loss at every write, fsync, link, unlink, and reopen boundary", () => {
+    const faultPoints = [
+      "after-open",
+      "after-write",
+      "after-file-fsync",
+      "before-link",
+      "after-link",
+      "after-first-parent-fsync",
+      "before-temp-unlink",
+      "after-temp-unlink",
+      "after-second-parent-fsync",
+      "before-final-reopen",
+      "after-final-reopen",
+    ] as const;
+    for (const fault of faultPoints) {
+      const fixture = finalizedCurrentEntryContentFaultFixture();
+      try {
+        const first = runFixtureExpression(
+          fixture.root,
+          `(async()=>{globalThis.__p4CurrentEntryContentFault=${JSON.stringify(fault)};await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()})()`,
+        );
+        assert.notEqual(first.status, 0, `${fault} must interrupt publication`);
+        assert.match(first.stderr, new RegExp(`P4_CURRENT_ENTRY_CONTENT_FAULT:${fault}`));
+        const recovered = runFixtureExpression(
+          fixture.root,
+          "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+        );
+        assert.equal(recovered.status, 0, `${fault}: ${recovered.stderr}`);
+        const pending = JSON.parse(recovered.stdout) as Record<string, string>;
+        const target = currentEntryPrerequisiteRecord(
+          fixture.root,
+          "pending-bootstrap-handoff-migrations",
+          pending.pendingBootstrapHandoffMigrationHash,
+        );
+        assert.equal(Number(lstatSync(target, { bigint: true }).nlink), 1);
+        assert.equal(readdirSync(path.dirname(target)).some((name) => name.startsWith(`${path.basename(target)}.tmp-`)), false);
+        assert.equal(existsSync(path.join(currentEntryStore(fixture.root), "current-entry-operation.json")), false);
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
+  it("converges two real concurrent content publishers on one immutable record", async () => {
+    const fixture = finalizedFixture();
+    try {
+      const expression = "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))";
+      const results = await Promise.all([
+        runFixtureExpressionAsync(fixture.root, expression),
+        runFixtureExpressionAsync(fixture.root, expression),
+      ]);
+      for (const result of results) assert.equal(result.status, 0, result.stderr);
+      const values = results.map((result) => JSON.parse(result.stdout) as Record<string, string>);
+      assert.deepEqual(values[1], values[0]);
+      const target = currentEntryPrerequisiteRecord(
+        fixture.root,
+        "pending-bootstrap-handoff-migrations",
+        values[0]!.pendingBootstrapHandoffMigrationHash,
+      );
+      assert.equal(Number(lstatSync(target, { bigint: true }).nlink), 1);
+      assert.equal(readdirSync(path.dirname(target)).some((name) => name.startsWith(`${path.basename(target)}.tmp-`)), false);
+      assert.equal(existsSync(path.join(currentEntryStore(fixture.root), "current-entry-operation.json")), false);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("publishes successive source-bound prerequisite records without replacing history", () => {
     const fixture = finalizedFixture({ stubServiceCensus: true });
     try {
+      const observe = () => runFixtureExpression(
+        fixture.root,
+        "Promise.all([m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1(),m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()]).then(([v31,pending])=>process.stdout.write(JSON.stringify({v31,pending})))",
+      );
+      const firstResult = observe();
+      assert.equal(firstResult.status, 0, firstResult.stderr);
+      const first = JSON.parse(firstResult.stdout) as Readonly<{ v31: Record<string, string>; pending: Record<string, string> }>;
+
+      fixtureFile(fixture.root, "src/cli/cli.ts", 'console.log("fixture source successor");\n');
+      git(fixture.root, ["add", "src/cli/cli.ts"]);
+      git(fixture.root, ["commit", "-qm", "fixture source successor"]);
+      git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const prepared = runProducer(fixture.root, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      materializeOutputs(fixture.root);
+      const finalized = runProducer(fixture.root, "--finalize");
+      assert.equal(finalized.status, 0, finalized.stderr);
+
+      const secondResult = observe();
+      assert.equal(secondResult.status, 0, secondResult.stderr);
+      const second = JSON.parse(secondResult.stdout) as Readonly<{ v31: Record<string, string>; pending: Record<string, string> }>;
+      assert.notEqual(second.v31.authorityV3Migration31AuditHash, first.v31.authorityV3Migration31AuditHash);
+      assert.notEqual(second.pending.pendingBootstrapHandoffMigrationHash, first.pending.pendingBootstrapHandoffMigrationHash);
+
+      for (const [kind, hash] of [
+        ["authority-v3-migration31-audits", first.v31.authorityV3Migration31AuditHash],
+        ["authority-v3-migration31-audits", second.v31.authorityV3Migration31AuditHash],
+        ["pending-bootstrap-handoff-migrations", first.pending.pendingBootstrapHandoffMigrationHash],
+        ["pending-bootstrap-handoff-migrations", second.pending.pendingBootstrapHandoffMigrationHash],
+      ] as const) assert.equal(existsSync(currentEntryPrerequisiteRecord(fixture.root, kind, hash)), true);
+      assert.deepEqual(
+        ["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].map((name) => existsSync(path.join(currentEntryStore(fixture.root), name))),
+        [false, false, false],
+      );
+
       const moduleUrl = pathToFileURL(path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
-      const program = `import(${JSON.stringify(moduleUrl)}).then(async (m) => { const first=await m.prepareInternalProductionCurrentEntryOperationV1(); const second=await m.prepareInternalProductionCurrentEntryOperationV1(); process.stdout.write(JSON.stringify({first,second})); })`;
-      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
-      assert.equal(result.status, 0, result.stderr);
-      assert.deepEqual(JSON.parse(result.stdout).first, JSON.parse(result.stdout).second);
+      const replay = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then(async(m)=>process.stdout.write(JSON.stringify({v31:await m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify({ authorityV3Migration31AuditRef: first.v31.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: first.v31.authorityV3Migration31AuditHash })}),pending:await m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify({ pendingBootstrapHandoffMigrationRef: first.pending.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: first.pending.pendingBootstrapHandoffMigrationHash })})})))`], {
+        cwd: fixture.root,
+        encoding: "utf8",
+        env: { ...process.env },
+      });
+      assert.equal(replay.status, 0, replay.stderr);
+      const historical = JSON.parse(replay.stdout) as Readonly<{ v31: Record<string, string>; pending: Record<string, string> }>;
+      assert.equal(historical.v31.authorityV3Migration31AuditHash, first.v31.authorityV3Migration31AuditHash);
+      assert.equal(historical.pending.pendingBootstrapHandoffMigrationHash, first.pending.pendingBootstrapHandoffMigrationHash);
+
+      const preparedOperation = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(preparedOperation.status, 0, preparedOperation.stderr);
+      const operation = JSON.parse(preparedOperation.stdout) as Record<string, any>;
+      assert.equal(operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash, second.v31.authorityV3Migration31AuditHash);
+      assert.equal(operation.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash, second.pending.pendingBootstrapHandoffMigrationHash);
+      const beforeAdoption = filesystemTreeSnapshot(currentEntryStore(fixture.root));
+      disableCurrentEntryPrerequisiteObservers(fixture.root);
+      const adopted = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value)=>process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(adopted.status, 0, adopted.stderr);
+      assert.doesNotMatch(adopted.stderr, /CURRENT_OBSERVER_CALLED/);
+      assert.deepEqual(JSON.parse(adopted.stdout), operation);
+      assert.deepEqual(filesystemTreeSnapshot(currentEntryStore(fixture.root)), beforeAdoption);
+      unlinkSync(currentEntryPrerequisiteRecord(fixture.root, "authority-v3-migration31-audits", first.v31.authorityV3Migration31AuditHash));
+      const missingHistorical = runFixtureExpression(
+        fixture.root,
+        `m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify({ authorityV3Migration31AuditRef: first.v31.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: first.v31.authorityV3Migration31AuditHash })})`,
+      );
+      assert.notEqual(missingHistorical.status, 0, "another generation must never be selected by scan, mtime, or latest");
+      assert.doesNotMatch(missingHistorical.stderr, /CURRENT_OBSERVER_CALLED/);
+      assert.equal(existsSync(currentEntryPrerequisiteRecord(fixture.root, "authority-v3-migration31-audits", second.v31.authorityV3Migration31AuditHash)), true);
+    } finally {
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("P4 publishes content-addressed prerequisites and adopts one fixed current-entry operation", () => {
+      const fixture = finalizedFixture({ stubServiceCensus: true });
+      try {
+      const firstResult = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(firstResult.status, 0, firstResult.stderr);
+      const first = JSON.parse(firstResult.stdout) as Record<string, any>;
       assert.equal(git(fixture.root, ["status", "--porcelain=v2", "--untracked-files=all"]), "");
       assert.equal(existsSync(path.join(fixture.root, "data")), false);
       const store = path.join(path.dirname(fixture.root), "data/internal-production-baseline/current-entry-v1");
-      const operationHash = JSON.parse(result.stdout).first.operationHash as string;
+      const operationHash = first.operationHash as string;
       assert.equal(existsSync(path.join(
         store,
         "operations/sha256",
@@ -2410,85 +2930,89 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         operationHash,
         "01-current-status.pair.json",
       )), true);
-      assert.deepEqual(["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].map((name) => existsSync(path.join(store, name))), [true, true, true]);
-      const fixed = path.join(store, "authority-v3-migration31-audit.json");
-      const responseLossTemp = path.join(store, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abc.tmp");
-      linkSync(fixed, responseLossTemp);
-      const adopt = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m) => m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1())`], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
+      assert.deepEqual(["authority-v3-migration31-audit.json", "pending-bootstrap-handoff-migration.json", "current-entry-operation.json"].map((name) => existsSync(path.join(store, name))), [false, false, true]);
+      const v31 = currentEntryPrerequisiteRecord(fixture.root, "authority-v3-migration31-audits", first.authorityV3Migration31Audit.authorityV3Migration31AuditHash);
+      const pending = currentEntryPrerequisiteRecord(fixture.root, "pending-bootstrap-handoff-migrations", first.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash);
+      const before = [v31, pending].map((locator) => Object.freeze({ bytes: readFileSync(locator), stats: lstatSync(locator) }));
+      disableCurrentEntryPrerequisiteObservers(fixture.root);
+      const adopt = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
       assert.equal(adopt.status, 0, adopt.stderr);
-      assert.equal(existsSync(responseLossTemp), false);
-      assert.equal(lstatSync(fixed).nlink, 1);
-      const blockedTemp = path.join(store, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abd.tmp");
-      linkSync(fixed, blockedTemp);
-      const foreign = path.join(store, "foreign-current-entry-record");
-      writeFileSync(foreign, "foreign\n", { mode: 0o600 });
-      chmodSync(foreign, 0o600);
-      const blocked = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m) => m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1())`], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
-      assert.notEqual(blocked.status, 0);
-      assert.match(blocked.stderr, /foreign|unknown/i);
-      assert.equal(existsSync(blockedTemp), true);
-      unlinkSync(foreign);
-      unlinkSync(blockedTemp);
-      const pendingFixed = path.join(store, "pending-bootstrap-handoff-migration.json");
-      const v31BeforeInvalidFixed = readFileSync(fixed);
-      writeFileSync(pendingFixed, "{}\n", { mode: 0o600 });
-      chmodSync(pendingFixed, 0o600);
-      const invalidFixed = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m) => m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1())`], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
-      assert.notEqual(invalidFixed.status, 0);
-      assert.equal(readFileSync(fixed).equals(v31BeforeInvalidFixed), true);
+      assert.doesNotMatch(adopt.stderr, /CURRENT_OBSERVER_CALLED/);
+      assert.deepEqual(JSON.parse(adopt.stdout), first);
+      for (const [index, locator] of [v31, pending].entries()) {
+        const after = lstatSync(locator);
+        assert.equal(after.ino, before[index]!.stats.ino);
+        assert.equal(after.nlink, 1);
+        assert.equal(readFileSync(locator).equals(before[index]!.bytes), true);
+      }
     } finally {
       removeFixture(fixture.root);
     }
   });
 
-  it("cleans a semantic-invalid sole temp in a non-target family but preserves a physical-invalid temp", () => {
-    const semanticFixture = finalizedFixture();
-    const physicalFixture = finalizedFixture();
+  it("never treats an existing operation with a missing historical prerequisite as a fresh prepare", () => {
+    const fixture = finalizedFixture({ stubServiceCensus: true });
     try {
-      const runV31Observer = (root: string) => {
-        const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
-        return spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `import(${JSON.stringify(moduleUrl)}).then((m) => m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1())`], {
-          cwd: root,
-          encoding: "utf8",
-          env: { ...process.env },
-        });
-      };
-      const createStore = (root: string) => {
-        const workspace = path.dirname(root);
-        const directories = [
-          path.join(workspace, "data"),
-          path.join(workspace, "data/internal-production-baseline"),
-          path.join(workspace, "data/internal-production-baseline/current-entry-v1"),
-        ];
-        for (const directory of directories) {
-          mkdirSync(directory, { mode: 0o700 });
-          chmodSync(directory, 0o700);
-        }
-        return directories[2]!;
-      };
-
-      const semanticStore = createStore(semanticFixture.root);
-      const semanticTemp = path.join(semanticStore, ".pending-bootstrap-handoff-migration.json.12345678-1234-4123-8123-123456789abc.tmp");
-      writeFileSync(semanticTemp, "{}\n", { mode: 0o600 });
-      chmodSync(semanticTemp, 0o600);
-      const recovered = runV31Observer(semanticFixture.root);
-      assert.equal(recovered.status, 0, recovered.stderr);
-      assert.equal(existsSync(semanticTemp), false);
-      assert.equal(existsSync(path.join(semanticStore, "pending-bootstrap-handoff-migration.json")), false);
-      assert.equal(existsSync(path.join(semanticStore, "authority-v3-migration31-audit.json")), true);
-
-      const physicalStore = createStore(physicalFixture.root);
-      const physicalTemp = path.join(physicalStore, ".pending-bootstrap-handoff-migration.json.12345678-1234-4123-8123-123456789abd.tmp");
-      writeFileSync(physicalTemp, "{}\n", { mode: 0o644 });
-      chmodSync(physicalTemp, 0o644);
-      const blocked = runV31Observer(physicalFixture.root);
+      const seeded = runFixtureExpression(
+        fixture.root,
+        "m.prepareInternalProductionCurrentEntryOperationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(seeded.status, 0, seeded.stderr);
+      const operation = JSON.parse(seeded.stdout) as Record<string, any>;
+      const operationPath = path.join(currentEntryStore(fixture.root), "current-entry-operation.json");
+      const operationBytes = readFileSync(operationPath);
+      const missing = currentEntryPrerequisiteRecord(
+        fixture.root,
+        "authority-v3-migration31-audits",
+        operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash,
+      );
+      unlinkSync(missing);
+      disableCurrentEntryPrerequisiteObservers(fixture.root);
+      const blocked = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
       assert.notEqual(blocked.status, 0);
-      assert.match(blocked.stderr, /identity|mode|publisher/i);
-      assert.equal(existsSync(physicalTemp), true);
-      assert.equal(existsSync(path.join(physicalStore, "authority-v3-migration31-audit.json")), false);
+      assert.doesNotMatch(blocked.stderr, /CURRENT_OBSERVER_CALLED/);
+      assert.match(blocked.stderr, /ENOENT|absent|prerequisite|authority|record/i);
+      assert.equal(readFileSync(operationPath).equals(operationBytes), true);
+      assert.equal(existsSync(missing), false);
     } finally {
-      removeFixture(semanticFixture.root);
-      removeFixture(physicalFixture.root);
+      removeFixture(fixture.root);
+    }
+  });
+
+  it("keeps every legacy prerequisite temp read-only while publishing the sole fixed operation", () => {
+    const fixture = finalizedFixture({ stubServiceCensus: true });
+    try {
+      const pendingResult = runFixtureExpression(
+        fixture.root,
+        "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value) => process.stdout.write(JSON.stringify(value)))",
+      );
+      assert.equal(pendingResult.status, 0, pendingResult.stderr);
+      const pending = JSON.parse(pendingResult.stdout) as Record<string, string>;
+      const source = currentEntryPrerequisiteRecord(
+        fixture.root,
+        "pending-bootstrap-handoff-migrations",
+        pending.pendingBootstrapHandoffMigrationHash,
+      );
+      const legacyTemp = path.join(
+        currentEntryStore(fixture.root),
+        ".pending-bootstrap-handoff-migration.json.12345678-1234-4123-8123-123456789abc.tmp",
+      );
+      copyFileSync(source, legacyTemp);
+      chmodSync(legacyTemp, 0o600);
+      const before = Object.freeze({ bytes: readFileSync(legacyTemp), stats: lstatSync(legacyTemp) });
+      const blocked = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
+      assert.notEqual(blocked.status, 0);
+      assert.match(blocked.stderr, /unknown|foreign|inventory|legacy|current-entry/i);
+      const after = lstatSync(legacyTemp);
+      assert.equal(after.ino, before.stats.ino);
+      assert.equal(after.nlink, before.stats.nlink);
+      assert.equal(readFileSync(legacyTemp).equals(before.bytes), true);
+      assert.equal(existsSync(path.join(currentEntryStore(fixture.root), "current-entry-operation.json")), false);
+    } finally {
+      removeFixture(fixture.root);
     }
   });
 
@@ -2528,76 +3052,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("classifies every non-target family topology before publishing another family", () => {
-    const fixedLinkFixture = finalizedFixture();
-    const soleTempLinkFixture = finalizedFixture();
-    const forkFixture = finalizedFixture();
-    try {
-      for (const fixture of [fixedLinkFixture, soleTempLinkFixture, forkFixture]) {
-        const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-        assert.equal(seeded.status, 0, seeded.stderr);
-      }
-      const v31Name = "authority-v3-migration31-audit.json";
-      const pendingName = "pending-bootstrap-handoff-migration.json";
-
-      const fixedLinkStore = currentEntryStore(fixedLinkFixture.root);
-      linkSync(path.join(fixedLinkStore, v31Name), path.join(path.dirname(fixedLinkFixture.root), "unmatched-v31-link"));
-      const fixedLinkBlocked = runFixtureExpression(fixedLinkFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(fixedLinkBlocked.status, 0);
-      assert.deepEqual(currentEntryMembers(fixedLinkStore, pendingName), []);
-
-      const soleTempStore = currentEntryStore(soleTempLinkFixture.root);
-      const soleTemp = path.join(soleTempStore, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abc.tmp");
-      renameSync(path.join(soleTempStore, v31Name), soleTemp);
-      linkSync(soleTemp, path.join(path.dirname(soleTempLinkFixture.root), "unmatched-v31-temp-link"));
-      const soleTempBlocked = runFixtureExpression(soleTempLinkFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(soleTempBlocked.status, 0);
-      assert.deepEqual(currentEntryMembers(soleTempStore, pendingName), []);
-
-      const forkStore = currentEntryStore(forkFixture.root);
-      const fixed = JSON.parse(readFileSync(path.join(forkStore, v31Name), "utf8"));
-      fixed.currentAuthorityAudit.artifactPublicationAuthorityLedger.batchPlanCount = 1;
-      fixed.currentAuthorityAuditHash = canonicalHash(fixed.currentAuthorityAudit);
-      const forkProjection = { ...fixed };
-      delete forkProjection.authorityV3Migration31AuditRef;
-      delete forkProjection.authorityV3Migration31AuditHash;
-      fixed.authorityV3Migration31AuditHash = canonicalHash(forkProjection);
-      fixed.authorityV3Migration31AuditRef = `setfarm://internal-production/authority-v3-migration31-audit/sha256/${fixed.authorityV3Migration31AuditHash}`;
-      const forkTemp = path.join(forkStore, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abd.tmp");
-      writeFileSync(forkTemp, `${canonical(fixed)}\n`, { mode: 0o600 });
-      chmodSync(forkTemp, 0o600);
-      const forkBlocked = runFixtureExpression(forkFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(forkBlocked.status, 0);
-      assert.deepEqual(currentEntryMembers(forkStore, pendingName), []);
-      assert.equal(existsSync(forkTemp), true);
-    } finally {
-      removeFixture(fixedLinkFixture.root);
-      removeFixture(soleTempLinkFixture.root);
-      removeFixture(forkFixture.root);
-    }
-  });
-
-  it("does not clean a semantic-invalid sole temp with link count two", () => {
-    const fixture = finalizedFixture();
-    try {
-      const store = currentEntryStore(fixture.root);
-      for (const directory of [path.join(path.dirname(fixture.root), "data"), path.dirname(store), store]) {
-        mkdirSync(directory, { mode: 0o700 });
-        chmodSync(directory, 0o700);
-      }
-      const temp = path.join(store, ".pending-bootstrap-handoff-migration.json.12345678-1234-4123-8123-123456789abc.tmp");
-      writeFileSync(temp, "{}\n", { mode: 0o600 });
-      chmodSync(temp, 0o600);
-      linkSync(temp, path.join(path.dirname(fixture.root), "invalid-temp-second-link"));
-      const result = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-      assert.notEqual(result.status, 0);
-      assert.equal(existsSync(temp), true);
-      assert.deepEqual(currentEntryMembers(store, "authority-v3-migration31-audit.json"), []);
-    } finally {
-      removeFixture(fixture.root);
-    }
-  });
-
   it("strict-validates complete observer candidates before creating fixed or temp records", () => {
     const cases = [
       { options: { v31AuditExtra: true }, basename: "authority-v3-migration31-audit.json", expression: "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()" },
@@ -2611,6 +3065,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const result = runFixtureExpression(fixture.root, testCase.expression);
         assert.notEqual(result.status, 0, testCase.basename);
         assert.deepEqual(currentEntryMembers(currentEntryStore(fixture.root), testCase.basename), [], testCase.basename);
+        assert.equal(existsSync(currentEntryStore(fixture.root)), false, `${testCase.basename} must fail before any content or temp record`);
       } finally {
         removeFixture(fixture.root);
       }
@@ -2620,9 +3075,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   it("rejects every v1-through-v31 identity/checksum tamper and nested full-audit extra/type tamper", () => {
     const fixture = finalizedFixture();
     try {
-      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
+      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1().then((value)=>process.stdout.write(JSON.stringify(value)))");
       assert.equal(seeded.status, 0, seeded.stderr);
-      const recordPath = path.join(currentEntryStore(fixture.root), "authority-v3-migration31-audit.json");
+      const seededBody = JSON.parse(seeded.stdout || "null") as Record<string, any> | null;
+      const recordPath = currentEntryPrerequisiteRecord(fixture.root, "authority-v3-migration31-audits", String(seededBody!.authorityV3Migration31AuditHash));
+      const legacyRecordPath = path.join(currentEntryStore(fixture.root), "authority-v3-migration31-audit.json");
       const original = JSON.parse(readFileSync(recordPath, "utf8"));
       const mutations: Array<Record<string, unknown>> = [];
       const finalize = (record: Record<string, any>) => {
@@ -2659,7 +3116,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           authorityV3Migration31AuditHash: record.authorityV3Migration31AuditHash,
         },
       }));
-      const program = `import{writeFileSync,chmodSync}from"node:fs";import(${JSON.stringify(moduleUrl)}).then(async(m)=>{let rejected=0;for(const c of ${JSON.stringify(cases)}){writeFileSync(${JSON.stringify(recordPath)},c.bytes);chmodSync(${JSON.stringify(recordPath)},0o600);try{await m.resolveInternalProductionAuthorityV3Migration31AuditV1(c.pair)}catch{rejected+=1}}process.stdout.write(String(rejected))})`;
+      const program = `import{writeFileSync,chmodSync}from"node:fs";import(${JSON.stringify(moduleUrl)}).then(async(m)=>{let rejected=0;for(const c of ${JSON.stringify(cases)}){writeFileSync(${JSON.stringify(legacyRecordPath)},c.bytes);chmodSync(${JSON.stringify(legacyRecordPath)},0o600);try{await m.resolveInternalProductionAuthorityV3Migration31AuditV1(c.pair)}catch{rejected+=1}}process.stdout.write(String(rejected))})`;
       const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(Number(result.stdout), cases.length);
@@ -2672,9 +3129,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   it("rejects each crossed pending-v32 derived commitment", () => {
     const fixture = finalizedFixture();
     try {
-      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
+      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1().then((value)=>process.stdout.write(JSON.stringify(value)))");
       assert.equal(seeded.status, 0, seeded.stderr);
-      const recordPath = path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json");
+      const seededBody = JSON.parse(seeded.stdout || "null") as Record<string, any> | null;
+      const recordPath = currentEntryPrerequisiteRecord(fixture.root, "pending-bootstrap-handoff-migrations", String(seededBody!.pendingBootstrapHandoffMigrationHash));
+      const legacyRecordPath = path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json");
       const original = JSON.parse(readFileSync(recordPath, "utf8"));
       const mutations = ["checksum", "migrationDigest", "namedMigrationDigestEntryHash", "orderedStatementsHash", "expectedSchemaProjectionHash"].map((field) => {
         const record = structuredClone(original);
@@ -2690,165 +3149,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       });
       const moduleUrl = pathToFileURL(path.join(fixture.root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
       const cases = mutations.map((record) => ({ bytes: `${canonical(record)}\n`, pair: { pendingBootstrapHandoffMigrationRef: record.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: record.pendingBootstrapHandoffMigrationHash } }));
-      const program = `import{writeFileSync,chmodSync}from"node:fs";import(${JSON.stringify(moduleUrl)}).then(async(m)=>{let rejected=0;for(const c of ${JSON.stringify(cases)}){writeFileSync(${JSON.stringify(recordPath)},c.bytes);chmodSync(${JSON.stringify(recordPath)},0o600);try{await m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(c.pair)}catch{rejected+=1}}process.stdout.write(String(rejected))})`;
+      const program = `import{writeFileSync,chmodSync}from"node:fs";import(${JSON.stringify(moduleUrl)}).then(async(m)=>{let rejected=0;for(const c of ${JSON.stringify(cases)}){writeFileSync(${JSON.stringify(legacyRecordPath)},c.bytes);chmodSync(${JSON.stringify(legacyRecordPath)},0o600);try{await m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(c.pair)}catch{rejected+=1}}process.stdout.write(String(rejected))})`;
       const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], { cwd: fixture.root, encoding: "utf8", env: { ...process.env } });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(Number(result.stdout), 5);
     } finally {
       removeFixture(fixture.root);
-    }
-  });
-
-  it("P4 recovers complete v31 and pending temp-only crash states before publishing the operation", () => {
-    const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
-    try {
-      const v31 = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-      const pending = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.equal(v31.status, 0, v31.stderr);
-      assert.equal(pending.status, 0, pending.stderr);
-      const store = currentEntryStore(fixture.root);
-      const v31Temp = ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abc.tmp";
-      const pendingTemp = ".pending-bootstrap-handoff-migration.json.12345678-1234-4123-8123-123456789abd.tmp";
-      renameSync(path.join(store, "authority-v3-migration31-audit.json"), path.join(store, v31Temp));
-      renameSync(path.join(store, "pending-bootstrap-handoff-migration.json"), path.join(store, pendingTemp));
-      const recovered = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
-      assert.equal(recovered.status, 0, recovered.stderr);
-      assert.deepEqual(readdirSync(store).sort(), ["authority-v3-migration31-audit.json", "current-entry-operation.json", "pending-bootstrap-handoff-migration.json"]);
-    } finally {
-      removeFixture(fixture.root);
-    }
-  });
-
-  it("P4 normalizes every non-target family pre-link and response-loss state before unrelated publication", () => {
-    const families = [
-      { basename: "authority-v3-migration31-audit.json", publish: "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()" },
-      { basename: "pending-bootstrap-handoff-migration.json", publish: "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()" },
-      { basename: "current-entry-operation.json", publish: "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()" },
-    ] as const;
-    const expected = ["authority-v3-migration31-audit.json", "current-entry-operation.json", "pending-bootstrap-handoff-migration.json"];
-    const failures: string[] = [];
-    for (const family of families) {
-      for (const state of ["pre-link", "response-loss"] as const) {
-        const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
-        try {
-          const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
-          assert.equal(seeded.status, 0, seeded.stderr);
-          const store = currentEntryStore(fixture.root);
-          const fixed = path.join(store, family.basename);
-          const tempName = `.${family.basename}.12345678-1234-4123-8123-123456789abc.tmp`;
-          const temp = path.join(store, tempName);
-          if (state === "pre-link") renameSync(fixed, temp);
-          else linkSync(fixed, temp);
-          const published = runFixtureExpression(fixture.root, family.publish);
-          if (published.status !== 0 || canonical(readdirSync(store).sort()) !== canonical(expected)) {
-            failures.push(`${family.basename}:${state}:${published.status}:${published.stderr}`);
-          }
-        } finally {
-          removeFixture(fixture.root);
-        }
-      }
-    }
-    assert.deepEqual(failures, []);
-  });
-
-  it("P4 resnapshots when two publishers contend on non-target pre-link and response-loss normalization", async () => {
-    for (const state of ["pre-link", "response-loss"] as const) {
-      const fixture = finalizedFixture({ stopAfterCurrentEntryOperationPublication: true });
-      try {
-        const seeded = runFixtureExpression(fixture.root, "m.prepareInternalProductionCurrentEntryOperationV1()");
-        assert.equal(seeded.status, 0, seeded.stderr);
-        const store = currentEntryStore(fixture.root);
-        const fixed = path.join(store, "authority-v3-migration31-audit.json");
-        const temp = path.join(store, ".authority-v3-migration31-audit.json.12345678-1234-4123-8123-123456789abc.tmp");
-        if (state === "pre-link") renameSync(fixed, temp);
-        else linkSync(fixed, temp);
-        const results = await Promise.all([
-          runFixtureExpressionAsync(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()"),
-          runFixtureExpressionAsync(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()"),
-        ]);
-        assert.deepEqual(results.map((result) => result.status), [0, 0], results.map((result) => result.stderr).join("\n"));
-        assert.deepEqual(readdirSync(store).sort(), ["authority-v3-migration31-audit.json", "current-entry-operation.json", "pending-bootstrap-handoff-migration.json"]);
-      } finally {
-        removeFixture(fixture.root);
-      }
-    }
-  });
-
-  it("P4 rejects special-bit directories and records on public current-entry publication paths", () => {
-    const directoryFixture = finalizedFixture();
-    const recordFixture = finalizedFixture();
-    try {
-      const directoryStore = currentEntryStore(directoryFixture.root);
-      const seededDirectory = runFixtureExpression(directoryFixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-      assert.equal(seededDirectory.status, 0, seededDirectory.stderr);
-      chmodSync(directoryStore, 0o4700);
-      const directoryBlocked = runFixtureExpression(directoryFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(directoryBlocked.status, 0);
-      assert.equal(existsSync(path.join(directoryStore, "pending-bootstrap-handoff-migration.json")), false);
-      chmodSync(directoryStore, 0o700);
-
-      const recordStore = currentEntryStore(recordFixture.root);
-      const seededRecord = runFixtureExpression(recordFixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-      assert.equal(seededRecord.status, 0, seededRecord.stderr);
-      const v31 = path.join(recordStore, "authority-v3-migration31-audit.json");
-      chmodSync(v31, 0o4600);
-      const recordBlocked = runFixtureExpression(recordFixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(recordBlocked.status, 0);
-      assert.equal(existsSync(path.join(recordStore, "pending-bootstrap-handoff-migration.json")), false);
-      chmodSync(v31, 0o600);
-    } finally {
-      removeFixture(directoryFixture.root);
-      removeFixture(recordFixture.root);
-    }
-  });
-
-  it("P4 detects a current-entry ancestor replacement after the descriptor chain is pinned", () => {
-    const fixture = finalizedFixture({ currentEntryAncestorSwapAfterGuard: true });
-    try {
-      const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-      assert.equal(seeded.status, 0, seeded.stderr);
-      const original = readFileSync(path.join(currentEntryStore(fixture.root), "authority-v3-migration31-audit.json"));
-      const blocked = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-      assert.notEqual(blocked.status, 0);
-      assert.match(blocked.stderr, /directory chain changed|identity/i);
-      const heldDirectories = readdirSync(path.dirname(currentEntryStore(fixture.root))).filter((name) => name.startsWith("held-current-entry-"));
-      assert.equal(heldDirectories.length, 1);
-      assert.equal(readFileSync(path.join(path.dirname(currentEntryStore(fixture.root)), heldDirectories[0]!, "authority-v3-migration31-audit.json")).equals(original), true);
-      assert.equal(existsSync(path.join(currentEntryStore(fixture.root), "pending-bootstrap-handoff-migration.json")), false);
-    } finally {
-      removeFixture(fixture.root);
-    }
-  });
-
-  it("P4 adopts at most eight authenticated current-entry crash temps and refuses the ninth untouched", () => {
-    for (const count of [8, 9]) {
-      const fixture = finalizedFixture();
-      try {
-        const seeded = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()");
-        assert.equal(seeded.status, 0, seeded.stderr);
-        const store = currentEntryStore(fixture.root);
-        const fixed = path.join(store, "authority-v3-migration31-audit.json");
-        const bytes = readFileSync(fixed);
-        unlinkSync(fixed);
-        const tempNames = Array.from({ length: count }, (_, index) => `.authority-v3-migration31-audit.json.12345678-1234-4123-8123-${String(index + 1).padStart(12, "0")}.tmp`);
-        for (const name of tempNames) {
-          writeFileSync(path.join(store, name), bytes, { mode: 0o600 });
-          chmodSync(path.join(store, name), 0o600);
-        }
-        const result = runFixtureExpression(fixture.root, "m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()");
-        if (count === 8) {
-          assert.equal(result.status, 0, result.stderr);
-          assert.equal(readFileSync(fixed).equals(bytes), true);
-          assert.equal(tempNames.some((name) => existsSync(path.join(store, name))), false);
-        } else {
-          assert.notEqual(result.status, 0);
-          assert.equal(existsSync(fixed), false);
-          assert.deepEqual(tempNames.filter((name) => existsSync(path.join(store, name))), tempNames);
-          assert.equal(existsSync(path.join(store, "pending-bootstrap-handoff-migration.json")), false);
-        }
-      } finally {
-        removeFixture(fixture.root);
-      }
     }
   });
 
