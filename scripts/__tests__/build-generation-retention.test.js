@@ -75,12 +75,20 @@ function writeFinalizedRuntimeDist(root) {
   const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
   const { sourceTreeHash, entries, buildInputSetHash } = fixturePinnedInputSet(root, sourceSha);
   const serviceBytes = Buffer.from("export const fixtureRuntime = true;\n", "utf8");
-  const outputEntries = [{
-    locator: "dist/service.js",
-    mode: 0o644,
-    byteLength: serviceBytes.length,
-    sha256: createHash("sha256").update(serviceBytes).digest("hex"),
-  }];
+  const spawnerBytes = Buffer.from("export const fixtureSpawner = true;\n", "utf8");
+  const dashboardBytes = Buffer.from("export const fixtureDashboard = true;\n", "utf8");
+  const cliBytes = Buffer.from("export const fixtureCli = true;\n", "utf8");
+  const outputEntries = [
+    ["dist/cli/cli.js", 0o755, cliBytes],
+    ["dist/server/daemon.js", 0o644, dashboardBytes],
+    ["dist/service.js", 0o644, serviceBytes],
+    ["dist/spawner.js", 0o644, spawnerBytes],
+  ].map(([locator, mode, bytes]) => ({
+    locator,
+    mode,
+    byteLength: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  }));
   const outputProjection = {
     schema: "setfarm.platform-build-output-tree.v1",
     sourceSha,
@@ -131,11 +139,16 @@ function writeFinalizedRuntimeDist(root) {
     releaseManifestHash: hashCanonicalFixture(releaseManifest),
   });
   rmSync(join(root, "dist"), { recursive: true, force: true });
+  fixtureFile(root, "dist/cli/cli.js", cliBytes, 0o755);
+  fixtureFile(root, "dist/server/daemon.js", dashboardBytes, 0o644);
   fixtureFile(root, "dist/service.js", serviceBytes, 0o644);
+  fixtureFile(root, "dist/spawner.js", spawnerBytes, 0o644);
   fixtureFile(root, "dist/BUILD_INFO.json", `${JSON.stringify(buildInfo, null, 2)}\n`, 0o444);
   fixtureFile(root, "dist/PLATFORM_BUILD_OUTPUT_TREE.json", `${JSON.stringify(outputTree)}\n`, 0o444);
   fixtureFile(root, "dist/PLATFORM_RELEASE_MANIFEST.json", `${JSON.stringify(releaseManifest)}\n`, 0o444);
   chmodSync(join(root, "dist"), 0o755);
+  chmodSync(join(root, "dist/cli"), 0o755);
+  chmodSync(join(root, "dist/server"), 0o755);
   return buildHash;
 }
 
@@ -230,7 +243,10 @@ function createFixture() {
   fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n");
   fixtureFile(root, "package.json", '{"name":"setfarm-oa18-fixture","version":"1.0.0","type":"module"}\n');
   fixtureFile(root, "scripts/stitch-to-jsx.mjs", "export const stitchFixture = true;\n");
+  fixtureFile(root, "src/cli/cli.ts", "export const fixtureCli: boolean = true;\n");
+  fixtureFile(root, "src/server/daemon.ts", "export const fixtureDashboard: boolean = true;\n");
   fixtureFile(root, "src/service.ts", "export const fixtureRuntime: boolean = true;\n");
+  fixtureFile(root, "src/spawner.ts", "export const fixtureSpawner: boolean = true;\n");
   fixtureFile(root, "tracked.txt", "tracked\n");
   fixtureFile(root, "dist/nested/artifact.txt", "artifact\n");
   chmodSync(join(root, "dist"), 0o755);
@@ -289,8 +305,42 @@ function installPrivateRetentionObservers(root) {
   if (!git(root, ["remote"]).split("\n").includes("origin")) {
     git(root, ["remote", "add", "origin", "https://github.com/hikmetgulsesli/setfarm.git"]);
   }
+  const fixturePhysicalRoot = realpathSync(root);
+  const launcherProgram = join(fixturePhysicalRoot, ".local/bin/setfarm");
+  mkdirSync(dirname(launcherProgram), { recursive: true });
+  symlinkSync(join(realpathSync(root), "dist/cli/cli.js"), launcherProgram);
+  symlinkSync(join(realpathSync(root), "dist/service.js"), join(root, ".fixture-crossed-cli-link"));
   for (const label of ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard", "com.setrox.mission-control"]) {
-    fixtureFile(root, `Library/LaunchAgents/${label}.plist`, `fixture plist for ${label}\n`, 0o644);
+    const detached = label !== "com.setrox.mission-control";
+    const environment = detached
+      ? {
+          PATH: "/usr/bin:/bin",
+          ...(label === "com.setrox.setfarm-dashboard" ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "fixture-operational-token-00000001" } : {}),
+          SETFARM_PG_URL: "postgresql://localhost/fixture",
+        }
+      : {
+          CLI_PATH: join(fixturePhysicalRoot, "dist/service.js"), MC_HOST: "localhost", MC_INTERNAL_URL: "http://127.0.0.1:3080", MC_PORT: "3080",
+          PATH: "/usr/bin:/bin", PROJECTS_DIR: fixturePhysicalRoot, PROJECTS_JSON: join(fixturePhysicalRoot, "package.json"), SETFARM_DIR: fixturePhysicalRoot,
+          SETFARM_OPERATIONAL_WRITE_TOKEN: "fixture-operational-token-00000001", SETFARM_PG_URL: "postgresql://localhost/fixture",
+          SETFARM_REPO_DIR: fixturePhysicalRoot, SETFARM_URL: "http://127.0.0.1:3333",
+        };
+    const programArguments = label === "com.setrox.setfarm-spawner"
+      ? [launcherProgram, "spawner", "start"]
+      : label === "com.setrox.setfarm-dashboard"
+        ? [launcherProgram, "dashboard", "start", "--port", "3333"]
+        : [process.execPath, join(fixturePhysicalRoot, "dist/service.js")];
+    fixtureFile(root, `Library/LaunchAgents/${label}.plist`, `${JSON.stringify({
+      Label: label,
+      ProgramArguments: programArguments,
+      ...(detached ? {} : { WorkingDirectory: fixturePhysicalRoot }),
+      EnvironmentVariables: environment,
+      RunAtLoad: true,
+      StartInterval: 60,
+      ...(detached ? {
+        StandardOutPath: join(realpathSync(root), ".openclaw/logs", label === "com.setrox.setfarm-spawner" ? "setfarm-spawner.watch.log" : "setfarm-dashboard.watch.log"),
+        StandardErrorPath: join(realpathSync(root), ".openclaw/logs", label === "com.setrox.setfarm-spawner" ? "setfarm-spawner.watch.err.log" : "setfarm-dashboard.watch.err.log"),
+      } : {}),
+    })}\n`, 0o644);
   }
   fixtureFile(root, "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js", "// fixed source-CLI boundary fixture\n", 0o644);
   fixtureFile(root, ".fixture-hostile-node", "#!/bin/sh\n/bin/cat > .fixture-hostile-secret-received\nexit 97\n", 0o755);
@@ -314,13 +364,13 @@ function installPrivateRetentionObservers(root) {
     "    const identity = parseProcessIdentityRow(stdout);\n    if (identity) {",
     `    const identity = parseProcessIdentityRow(stdout);
     fixtureProcessIdentityCallsV1 += 1;
-    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-drift")) && fixtureProcessIdentityCallsV1 === 8) {
+    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-drift")) && fixtureProcessIdentityCallsV1 === 2) {
       return Object.freeze({ state: "live_pid_reused", processLstart: identity.processLstart, processGroupId: identity.processGroupId + 1 });
     }
-    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-initial-error")) && fixtureProcessIdentityCallsV1 === 7) {
+    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-initial-error")) && fixtureProcessIdentityCallsV1 === 1) {
       return Object.freeze({ state: "ambiguous" });
     }
-    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-bytes-drift")) && fixtureProcessIdentityCallsV1 === 8) {
+    if (identity && optionalLstat(path.join(repositoryRootV1(), ".fixture-process-bytes-drift")) && fixtureProcessIdentityCallsV1 === 2) {
       return Object.freeze({ state: "live_match", ...identity, observationHash: "f".repeat(64) });
     }
     if (identity) {`,
@@ -352,9 +402,20 @@ function observeOperationAuthoritiesV1(root) {`,
     `const fixtureLoadedServicePidV1 = ${process.pid};
 let fixtureMissionControlLaunchctlCallsV1 = 0;
 let fixtureMissionControlListenerCallsV1 = 0;
+const fixtureDetachedLaunchctlCallsV1 = new Map();
+let fixtureDetachedInventoryCallsV1 = 0;
+const fixtureDetachedListenerCallsV1 = new Map();
+const fixtureLoadedExecutableLsofCallsV1 = new Map();
 function fixedChildResult(executable, argv, options = {}) {
   const success = (stdout) => ({ error: null, signal: null, status: 0, stdout: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout), stderr: Buffer.alloc(0) });
+  const exactArgv = (expected) => canonicalJsonV1(argv) === canonicalJsonV1(expected);
   const serviceEntrypoint = path.join(repositoryRootV1(), "dist", "service.js");
+  const launcherProgram = path.join(CODE_OWNER_HOME_V1, ".local", "bin", "setfarm");
+  const detachedProfiles = {
+    "com.setrox.setfarm-spawner": { pid: 101, arguments: [launcherProgram, "spawner", "start"], entrypoint: path.join(repositoryRootV1(), "dist", "spawner.js"), daemonArguments: [] },
+    "com.setrox.setfarm-dashboard": { pid: 102, arguments: [launcherProgram, "dashboard", "start", "--port", "3333"], entrypoint: path.join(repositoryRootV1(), "dist", "server", "daemon.js"), daemonArguments: ["3333"] },
+  };
+  const nodeExecutable = realpathSync(process.execPath);
   const loadedExecutable = optionalLstat(path.join(repositoryRootV1(), ".fixture-hostile-loaded-executable"))
     ? path.join(repositoryRootV1(), ".fixture-hostile-node") : process.execPath;
   const environmentValue = (name) => ({
@@ -379,29 +440,135 @@ function fixedChildResult(executable, argv, options = {}) {
     const extra = optionalLstat(path.join(repositoryRootV1(), ".fixture-listener-extra-record")) ? \`p\${listenerPid}\\0cnode\\0\\nf21\\0n127.0.0.1:3080\\0\\n\` : "";
     return success(Buffer.from(record + extra, "utf8"));
   }
+  if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && exactArgv(["-nP", "-a", "-p", "102", "-iTCP@127.0.0.1:3333", "-sTCP:LISTEN", "-F0pcfn"])) {
+    const calls = (fixtureDetachedListenerCallsV1.get("dashboard") ?? 0) + 1;
+    fixtureDetachedListenerCallsV1.set("dashboard", calls);
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-dashboard-listener-missing"))) {
+      return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-dashboard-listener-partial"))) {
+      return success(Buffer.from("p102\\0cnode\\0\\n", "utf8"));
+    }
+    const pid = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-dashboard-listener-crossed")) ? 101 : 102;
+    const endpoint = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-dashboard-listener-drift")) && calls > 1 ? "127.0.0.1:3334" : "127.0.0.1:3333";
+    return success(Buffer.from(\`p\${pid}\\0cnode\\0\\nf20\\0n\${endpoint}\\0\\n\`, "utf8"));
+  }
+  if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && exactArgv(["-nP", "-a", "-p", "101", "-iTCP", "-sTCP:LISTEN", "-F0pcfn"])) {
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-spawner-listener"))) {
+      return success(Buffer.from("p101\\0cnode\\0\\nf20\\0n127.0.0.1:4444\\0\\n", "utf8"));
+    }
+    return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+  }
   if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-nP") {
     return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
   }
   if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-a") {
-    return success(Buffer.from(\`p\${argv[2]}\\0\\nftxt\\0n\${loadedExecutable}\\0\\n\`, "utf8"));
+    const executablePath = argv[2] === "101" || argv[2] === "102" ? nodeExecutable : realpathSync(loadedExecutable);
+    if (!exactArgv(["-a", "-p", String(argv[2]), "-d", "txt", "-F0pn", executablePath])) return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const calls = (fixtureLoadedExecutableLsofCallsV1.get(argv[2]) ?? 0) + 1;
+    fixtureLoadedExecutableLsofCallsV1.set(argv[2], calls);
+    if (argv[2] !== "101" && argv[2] !== "102") writeFileSync(path.join(repositoryRootV1(), ".fixture-loaded-executable-lsof-call-count"), \`\${calls}\\n\`);
+    const crossedPath = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-txt-drift")) && argv[2] === "101"
+      || optionalLstat(path.join(repositoryRootV1(), ".fixture-loaded-executable-lsof-drift")) && argv[2] !== "101" && argv[2] !== "102" && calls > 1
+      ? path.join(repositoryRootV1(), ".fixture-hostile-node") : executablePath;
+    const extra = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-txt-extra")) && argv[2] === "101"
+      ? \`ftxt\\0n\${executablePath}\\0\\n\` : "";
+    return success(Buffer.from(\`p\${argv[2]}\\0\\nftxt\\0n\${crossedPath}\\0\\n\${extra}\`, "utf8"));
   }
   if (executable === PLUTIL_EXECUTABLE_V1) {
-    const config = LAUNCH_AGENT_CONFIGS_V1.find((entry) => entry.locator === argv[4]);
+    const inputBytes = argv.at(-1) === "-" && Buffer.isBuffer(options.input) ? options.input : null;
+    const config = inputBytes
+      ? LAUNCH_AGENT_CONFIGS_V1.find((entry) => readFileSync(entry.locator).equals(inputBytes))
+      : LAUNCH_AGENT_CONFIGS_V1.find((entry) => entry.locator === argv[4]);
     if (!config) return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-    const plist = {
+    if (config.label !== "com.setrox.mission-control" && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plutil-error"))) {
+      return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    if (config.label === "com.setrox.mission-control"
+      ? !exactArgv(["-convert", "json", "-o", "-", config.locator]) || options.input !== undefined
+      : !exactArgv(["-convert", "json", "-o", "-", "-"]) || inputBytes === null) {
+      return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    const plist = config.label === "com.setrox.mission-control" ? {
       Label: config.label,
       ProgramArguments: [loadedExecutable, serviceEntrypoint],
-      ...(config.workingDirectory === null ? {} : { WorkingDirectory: config.workingDirectory }),
+      WorkingDirectory: config.workingDirectory,
       EnvironmentVariables: Object.fromEntries(config.environmentNames.map((name) => [name, environmentValue(name)])),
-    };
+    } : JSON.parse((inputBytes ?? readFileSync(config.locator)).toString("utf8"));
     if (config.label === "com.setrox.mission-control" && optionalLstat(path.join(repositoryRootV1(), ".fixture-plist-token-mismatch"))) {
       plist.EnvironmentVariables.SETFARM_OPERATIONAL_WRITE_TOKEN = "fixture-operational-token-00000002";
+    }
+    if (config.label !== "com.setrox.mission-control") {
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-extra-key"))) plist.KeepAlive = true;
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-missing-key"))) delete plist.StartInterval;
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-arguments"))) plist.ProgramArguments = [...plist.ProgramArguments, "--crossed"];
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-schedule"))) plist.StartInterval = 61;
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-log"))) plist.StandardOutPath += ".crossed";
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-environment"))) plist.EnvironmentVariables.NODE_OPTIONS = "--require=/tmp/crossed.js";
     }
     return success(Buffer.from(JSON.stringify(plist), "utf8"));
   }
   if (executable === LAUNCHCTL_EXECUTABLE_V1) {
     const label = argv[1].slice(argv[1].lastIndexOf("/") + 1);
     const config = LAUNCH_AGENT_CONFIGS_V1.find((entry) => entry.label === label);
+    if (!config || !exactArgv(["print", \`gui/\${process.getuid()}/\${label}\`])) return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const detached = detachedProfiles[label];
+    if (detached) {
+      const uid = process.getuid();
+      const calls = (fixtureDetachedLaunchctlCallsV1.get(label) ?? 0) + 1;
+      fixtureDetachedLaunchctlCallsV1.set(label, calls);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launchctl-status"))) {
+        return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launchctl-stderr"))) {
+        return { error: null, signal: null, status: 0, stdout: Buffer.alloc(0), stderr: Buffer.from("crossed\\n") };
+      }
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launchctl-timeout"))) {
+        return { error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }), signal: null, status: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launchctl-overflow"))) {
+        return { error: Object.assign(new Error("overflow"), { code: "ENOBUFS" }), signal: null, status: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      const environment = Object.fromEntries(config.environmentNames.map((name) => [name, environmentValue(name)]));
+      const logBase = path.join(CODE_OWNER_HOME_V1, ".openclaw", "logs", label === "com.setrox.setfarm-spawner" ? "setfarm-spawner.watch" : "setfarm-dashboard.watch");
+      const state = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-running")) ? "running"
+        : optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-not-running"))
+          || optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-state-drift")) && calls > 1 ? "not running" : "spawn scheduled";
+      const activeCount = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-active-count"))
+        || optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-active-count-drift")) && calls > 1 ? 1 : 0;
+      const loadedPath = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-path")) ? \`\${config.locator}.crossed\` : config.locator;
+      const loadedArguments = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-arguments")) ? [...detached.arguments, "--crossed"] : detached.arguments;
+      const type = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-type")) ? "Daemon" : "LaunchAgent";
+      const program = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-program")) ? \`\${launcherProgram}.crossed\` : launcherProgram;
+      const lines = [\`gui/\${uid}/\${label} = {\`, \`\\tactive count = \${activeCount}\`, \`\\tpath = \${loadedPath}\`, \`\\ttype = \${type}\`, \`\\tstate = \${state}\`, \`\\tprogram = \${program}\`, "\\targuments = {", ...loadedArguments.map((value) => \`\\t\\t\${value}\`), "\\t}", "", \`\\tstdout path = \${logBase}.log\`, \`\\tstderr path = \${logBase}.err.log\`, "\\tinherited environment = {", \`\\t\\tSETFARM_ENV_DIR => \${path.join(CODE_OWNER_HOME_V1, "ai", "setrox", "setfarm", "scripts")}\`, "\\t\\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.Fixture123/Listeners", "\\t}", "", "\\tdefault environment = {", "\\t\\tPATH => /usr/bin:/bin:/usr/sbin:/sbin", "\\t}", "", "\\tenvironment = {", "\\t\\tOSLogRateLimit => 64"];
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-active-count-missing"))) lines.splice(1, 1);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-active-count-duplicate"))) lines.splice(2, 0, \`\\tactive count = \${activeCount}\`);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-working-directory"))) lines.splice(6, 0, \`\\tworking directory = \${repositoryRootV1()}\`);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-selected-order"))) [lines[3], lines[4]] = [lines[4], lines[3]];
+      const loadedEnvironmentNames = label === "com.setrox.setfarm-dashboard"
+        ? ["SETFARM_OPERATIONAL_WRITE_TOKEN", "PATH", "SETFARM_PG_URL"] : ["PATH", "SETFARM_PG_URL"];
+      const emittedEnvironmentNames = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-environment-order"))
+        ? [...loadedEnvironmentNames].reverse() : loadedEnvironmentNames;
+      for (const name of emittedEnvironmentNames) lines.push(\`\\t\\t\${name} => \${environment[name]}\`);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-environment"))) lines.push("\\t\\tNODE_OPTIONS => --require=/tmp/crossed.js");
+      const interval = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-interval")) ? "61 seconds" : "60 seconds";
+      const properties = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-properties"))
+        ? "runatload | keepalive" : "runatload | penalty box | inferred program";
+      lines.push(\`\\t\\tXPC_SERVICE_NAME => \${label}\`, "\\t}", \`\\trun interval = \${interval}\`, \`\\tproperties = \${properties}\`, "}", "");
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-pid"))) lines.splice(5, 0, "\\tpid = 999");
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launcher-raw-drift")) && calls > 1) lines.splice(-2, 0, "\\truns = 2");
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-launchctl-partial"))) lines.pop();
+      if (calls > 1 && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-plist-drift"))) {
+        writeFileSync(config.locator, \`\${readFileSync(config.locator, "utf8")} \`);
+      }
+      if (calls > 1 && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-cli-target-drift"))) {
+        renameSync(path.join(repositoryRootV1(), ".fixture-crossed-cli-link"), launcherProgram);
+      }
+      if (calls > 1 && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-entrypoint-drift"))) {
+        writeFileSync(detached.entrypoint, \`\${readFileSync(detached.entrypoint, "utf8")} // drift\\n\`);
+      }
+      return success(Buffer.from(lines.join("\\n"), "utf8"));
+    }
     if (label === "com.setrox.mission-control") fixtureMissionControlLaunchctlCallsV1 += 1;
     if (label === "com.setrox.mission-control" && optionalLstat(path.join(repositoryRootV1(), ".fixture-launchctl-initial-error")) && fixtureMissionControlLaunchctlCallsV1 === 1) {
       return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
@@ -420,8 +587,43 @@ function fixedChildResult(executable, argv, options = {}) {
     lines.push("\\t\\tOSLogRateLimit => 64", \`\\t\\tXPC_SERVICE_NAME => \${label}\`, "\\t}", \`\\tpid = \${loadedPid}\`, "}", "");
     return success(Buffer.from(lines.join("\\n"), "utf8"));
   }
-  if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && argv.at(-1) === "comm=") return success(Buffer.from(\`\${loadedExecutable}\\n\`, "utf8"));
-  if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && argv.at(-1) === "command=") return success(Buffer.from(\`\${loadedExecutable} \${serviceEntrypoint}\\n\`, "utf8"));
+  if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && canonicalJsonV1(argv) === canonicalJsonV1(["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])) {
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-inventory-error"))) {
+      return { error: null, signal: null, status: 97, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    fixtureDetachedInventoryCallsV1 += 1;
+    const uid = process.getuid();
+    const rows = Object.values(detachedProfiles).map((profile) => {
+      const spawner = profile.pid === 101;
+      const rowUid = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-selected-nobody")) ? -2 : uid;
+      const ppid = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-wrong-ppid")) ? 2 : 1;
+      const pgid = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-wrong-pgid")) ? 999 : profile.pid;
+      const stat = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-zombie")) ? "Z" : "Ss";
+      const extra = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-extra-argv")) ? ["--crossed"] : [];
+      const start = spawner && optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-inventory-drift")) && fixtureDetachedInventoryCallsV1 === 2
+        ? "Sun Aug 16 15:42:29 2026" : "Sun Aug 16 15:42:28 2026";
+      return \`\${rowUid} \${profile.pid} \${ppid} \${pgid} \${stat} \${start} \${[nodeExecutable, profile.entrypoint, ...profile.daemonArguments, ...extra].join(" ")}\`;
+    });
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-zero-family"))) rows.shift();
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-multiple-family"))) rows.push(\`\${uid} 103 1 103 Ss Sun Aug 16 15:42:28 2026 \${nodeExecutable} \${detachedProfiles["com.setrox.setfarm-spawner"].entrypoint} --crossed\`);
+    if (optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-inventory-blank"))) rows.splice(1, 0, "");
+    return success(Buffer.from(\`\${rows.join("\\n")}\\n\`, "utf8"));
+  }
+  if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && argv.at(-1) === "comm=") {
+    if (!exactArgv(["-ww", "-p", String(argv[2]), "-o", "comm="])) return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const detachedExecutable = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-wrong-node")) && argv[2] === "101"
+      ? path.join(repositoryRootV1(), ".fixture-hostile-node") : nodeExecutable;
+    const observedExecutable = argv[2] === "101" || argv[2] === "102" ? detachedExecutable : loadedExecutable;
+    const drift = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-comm-drift")) && argv[2] === "101" ? ".crossed" : "";
+    return success(Buffer.from(\`\${observedExecutable}\${drift}\\n\`, "utf8"));
+  }
+  if (executable === PROCESS_IDENTITY_EXECUTABLE_V1 && argv.at(-1) === "command=") {
+    if (!exactArgv(["-ww", "-p", String(argv[2]), "-o", "command="])) return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const profile = Object.values(detachedProfiles).find((candidate) => String(candidate.pid) === argv[2]);
+    const command = profile ? [nodeExecutable, profile.entrypoint, ...profile.daemonArguments].join(" ") : \`\${loadedExecutable} \${serviceEntrypoint}\`;
+    const drift = optionalLstat(path.join(repositoryRootV1(), ".fixture-detached-command-drift")) && argv[2] === "101" ? " --crossed" : "";
+    return success(Buffer.from(\`\${command}\${drift}\\n\`, "utf8"));
+  }
   if (executable === process.execPath && argv[0] === "--input-type=module" && argv[1] === "--eval") {
     if (argv.length !== 3 || argv[2] !== MISSION_CONTROL_LOADED_BUILD_OBSERVER_PROGRAM_V1
       || options.timeout !== undefined || options.maxBuffer !== undefined || options.cwd !== undefined) {
@@ -566,7 +768,7 @@ function requireSuccessfulChild`,
   assert.equal(source.includes(".fixture-retention-v1"), true);
   assert.equal(source.includes("const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;"), true);
   writeFileSync(modulePath, source);
-  fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n.fixture*\nLibrary/\ndist-server/\n");
+  fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n.fixture*\n.local/\nLibrary/\ndist-server/\n");
   git(root, ["add", ".gitignore", "scripts/build-generation-retention.mjs"]);
   git(root, ["commit", "--amend", "--no-edit", "-q"]);
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -660,13 +862,34 @@ function retentionPublicationSnapshot(root) {
       return [name, createHash("sha256").update(readFileSync(file)).digest("hex")];
     })
     : null;
+  const tree = (directory) => {
+    if (!existsSync(directory)) return null;
+    const entries = [];
+    const visit = (current, relative) => {
+      for (const entry of readdirSync(current, { withFileTypes: true }).sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)))) {
+        const locator = relative === "" ? entry.name : `${relative}/${entry.name}`;
+        const target = join(current, entry.name);
+        if (entry.isDirectory()) {
+          entries.push(["directory", locator]);
+          visit(target, locator);
+        } else if (entry.isFile()) {
+          entries.push(["file", locator, createHash("sha256").update(readFileSync(target)).digest("hex")]);
+        } else {
+          entries.push(["other", locator]);
+        }
+      }
+    };
+    visit(directory, "");
+    return entries;
+  };
   return {
     operations: snapshot(join(root, ".fixture-retention-v1/operations/sha256")),
     operationCandidates: snapshot(join(root, ".fixture-retention-v1/operation-candidates/sha256")),
     eraseSteps: snapshot(join(root, ".fixture-retention-v1/erase-steps/sha256")),
     receipts: snapshot(join(root, ".fixture-retention-v1/receipts/sha256")),
     dispositions: snapshot(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")),
-    quarantine: existsSync(join(root, ".setfarm/build-generation-quarantine-v1")),
+    archives: tree(join(root, ".setfarm/build-generations-v1")),
+    quarantine: tree(join(root, ".setfarm/build-generation-quarantine-v1")),
   };
 }
 
@@ -821,7 +1044,10 @@ function installExtraLoadedLsofRecord(root) {
   assert.equal(source.includes(boundary), true);
   writeFileSync(modulePath, source.replace(boundary, `${boundary}
   if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-a") {
-    const bytes = Buffer.from("p" + argv[2] + "\\0\\nftxt\\0n" + process.execPath + "\\0\\nftxt\\0n" + process.execPath + "\\0\\n", "utf8");
+    if (canonicalJsonV1(argv) !== canonicalJsonV1(["-a", "-p", String(argv[2]), "-d", "txt", "-F0pn", realpathSync(process.execPath)])) {
+      return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    const bytes = Buffer.from("p" + argv[2] + "\\0\\nftxt\\0n" + realpathSync(process.execPath) + "\\0\\nftxt\\0n" + realpathSync(process.execPath) + "\\0\\n", "utf8");
     return { error: null, signal: null, status: 0, stdout: bytes, stderr: Buffer.alloc(0) };
   }`));
 }
@@ -833,7 +1059,10 @@ function installSingleLoadedLsofRecord(root) {
   assert.equal(source.includes(boundary), true);
   writeFileSync(modulePath, source.replace(boundary, `${boundary}
   if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-a") {
-    const bytes = Buffer.from("p" + argv[2] + "\\0\\nftxt\\0n" + process.execPath + "\\0\\n", "utf8");
+    if (canonicalJsonV1(argv) !== canonicalJsonV1(["-a", "-p", String(argv[2]), "-d", "txt", "-F0pn", realpathSync(process.execPath)])) {
+      return { error: null, signal: null, status: 96, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    const bytes = Buffer.from("p" + argv[2] + "\\0\\nftxt\\0n" + realpathSync(process.execPath) + "\\0\\n", "utf8");
     return { error: null, signal: null, status: 0, stdout: bytes, stderr: Buffer.alloc(0) };
   }`));
 }
@@ -939,6 +1168,15 @@ function assertNoGenerationDisposition(root, expectedArchives) {
   assert.equal(readdirSync(join(root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
 }
 
+function assertNoDetachedPrepareAuthority(root, expectedArchives = 8) {
+  assertNoGenerationDisposition(root, expectedArchives);
+  assert.equal(existsSync(join(root, ".setfarm/build-generation-maintenance-lock-v1.json")), false);
+  for (const locator of ["operations/sha256", "operation-candidates/sha256", "receipts/sha256"]) {
+    const directory = join(root, ".fixture-retention-v1", locator);
+    if (existsSync(directory)) assert.deepEqual(readdirSync(directory), []);
+  }
+}
+
 function installV2PrepareCrash(root, phase) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
@@ -1013,6 +1251,13 @@ describe("OA18 build-generation retention authority", () => {
       "parseRetentionOperationV1OrV2",
       "validateHistoricalClosureV1",
       "validateHistoricalClosureV2",
+      "detachedSetfarmServiceProfileV1",
+      "observeDetachedLaunchProjectionV1",
+      "observeDetachedLaunchPlistV1",
+      "observeLoadedExecutableTextV1",
+      "parseDetachedPhysicalProcessesV1",
+      "observeDetachedSetfarmProcessV1",
+      "observeDetachedLaunchAgentConfigBodyV1",
     ]) {
       assert.equal((source.match(new RegExp(`function ${name}\\(`, "g")) ?? []).length, 1, name);
       assert.equal(new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\(`).test(source), false, name);
@@ -1030,9 +1275,25 @@ describe("OA18 build-generation retention authority", () => {
       '"-c", "core.fsmonitor=false"',
     ]) assert.equal(source.includes(field), true, field);
     assert.match(source, /function gitBytes\(root, args, purpose\) \{\n  return requireSuccessfulChild\(fixedGitResultV2\(root, args\), purpose\);\n\}/);
+    assert.match(source, /function requireFixedGitBlobV2\(root, blobHash, purpose\) \{/);
+    assert.match(source, /maxBuffer: MAX_FILE_BYTES_V1,/);
+    assert.match(source, /requireFixedGitBlobV2\(root, entry\.gitBlobHash, `loaded Setfarm Git blob \$\{entry\.locator\}`\)/);
+    assert.equal(/export\s+(?:async\s+)?function\s+requireFixedGitBlobV2\(/.test(source), false);
     assert.equal(source.includes("process.env"), false);
     assert.equal(source.includes("rmSync("), false);
     assert.equal(source.includes('from "./write-build-info.mjs"'), false);
+    assert.equal((source.match(/baseline-post-handoff-receipt-v1/g) ?? []).length, 1);
+    assert.equal(source.includes('observeCurrentInternalProductionCleanSetfarmSourceBuildV1 } from "./src/internal-production/baseline-post-handoff-receipt-v1.ts"'), true);
+    assert.equal(source.includes("observeInternalProductionServiceCensusV1"), false);
+    for (const contract of [
+      '["-convert", "json", "-o", "-", "-"]',
+      '["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]',
+      '["-ww", "-p", String(processBefore.pid), "-o", "comm="]',
+      '["-ww", "-p", String(processBefore.pid), "-o", "command="]',
+      '["-a", "-p", String(pid), "-d", "txt", "-F0pn", authenticatedExecutableRealpath]',
+      '["-nP", "-a", "-p", String(pid), network, "-sTCP:LISTEN", "-F0pcfn"]',
+      "loadedArgumentsHash: hashCanonicalJsonV1(profile.launchArguments)",
+    ]) assert.equal(source.includes(contract), true, contract);
   });
 
   it("OA18 v2 separates current controller source from the retained finalized build", async () => {
@@ -1070,6 +1331,48 @@ describe("OA18 build-generation retention authority", () => {
   });
 
   it("OA18 v2 pins Git configuration, replacement objects, and exact line output", async (context) => {
+    await context.test("accepts a bounded historical Git blob larger than the observer buffer", async () => {
+      const root = createFixture();
+      try {
+        const bytes = Buffer.alloc(1_048_577, 0x61);
+        fixtureFile(root, "assets/bounded-large.bin", bytes);
+        git(root, ["add", "assets/bounded-large.bin"]);
+        git(root, ["commit", "-qm", "add bounded large historical input"]);
+        const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+        const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+        const authority = await importFixtureInternals(root, ["historicalGitInputSetV2"]);
+
+        const observed = authority.historicalGitInputSetV2(realpathSync(root), sourceSha, sourceTreeHash);
+
+        const entry = observed.entries.find((candidate) => candidate.locator === "assets/bounded-large.bin");
+        assert.ok(entry);
+        assert.deepEqual(observed.blobs.get(entry.gitBlobHash), bytes);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    await context.test("rejects a historical Git blob above the file byte cap", async () => {
+      const root = createFixture();
+      try {
+        fixtureFile(root, "assets/oversized.bin", Buffer.alloc(33_554_433, 0x62));
+        git(root, ["add", "assets/oversized.bin"]);
+        git(root, ["commit", "-qm", "add oversized historical input"]);
+        const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
+        const sourceTreeHash = git(root, ["rev-parse", "HEAD^{tree}"]);
+        const authority = await importFixtureInternals(root, ["historicalGitInputSetV2"]);
+        const before = task1AuthorityStoreSnapshot(root);
+
+        assert.throws(
+          () => authority.historicalGitInputSetV2(realpathSync(root), sourceSha, sourceTreeHash),
+          /Git blob|byte cap|failed/i,
+        );
+        assert.deepEqual(task1AuthorityStoreSnapshot(root), before);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     await context.test("hostile local fsmonitor and replacement objects are ignored", async () => {
       const fixture = prepareStaleBuildAuthorityFixture();
       try {
@@ -1248,6 +1551,95 @@ describe("OA18 build-generation retention authority", () => {
       assertNoGenerationDisposition(root, 8);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 accepts both exact quiescent detached launcher states", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      fixtureFile(fixture.root, ".fixture-detached-launcher-not-running", "state\n");
+      const prepared = prepareRetentionOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      assert.match(pair.operationRef, /build-generation-retention-operation/);
+      assert.match(pair.operationHash, /^[0-9a-f]{64}$/);
+      assertNoGenerationDisposition(fixture.root, 8);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("OA18 v2 refuses crossed detached launcher, daemon, and listener authority before publication", async (context) => {
+    const rows = [
+      ["running launcher", ".fixture-detached-launcher-running"],
+      ["launcher PID", ".fixture-detached-launcher-pid"],
+      ["nonzero active count", ".fixture-detached-active-count"],
+      ["missing active count", ".fixture-detached-active-count-missing"],
+      ["duplicate active count", ".fixture-detached-active-count-duplicate"],
+      ["launcher state drift", ".fixture-detached-launcher-state-drift"],
+      ["active count drift", ".fixture-detached-active-count-drift"],
+      ["crossed launcher path", ".fixture-detached-launcher-path"],
+      ["crossed launcher type", ".fixture-detached-launcher-type"],
+      ["crossed launcher program", ".fixture-detached-launcher-program"],
+      ["crossed launcher arguments", ".fixture-detached-launcher-arguments"],
+      ["unexpected launcher working directory", ".fixture-detached-launcher-working-directory"],
+      ["reordered selected launcher fields", ".fixture-detached-launcher-selected-order"],
+      ["reordered loaded environment", ".fixture-detached-launcher-environment-order"],
+      ["crossed launcher interval", ".fixture-detached-launcher-interval"],
+      ["crossed launcher properties", ".fixture-detached-launcher-properties"],
+      ["loader environment injection", ".fixture-detached-launcher-environment"],
+      ["raw launchctl drift", ".fixture-detached-launcher-raw-drift"],
+      ["partial launchctl output", ".fixture-detached-launchctl-partial"],
+      ["launchctl status", ".fixture-detached-launchctl-status"],
+      ["launchctl stderr", ".fixture-detached-launchctl-stderr"],
+      ["launchctl timeout", ".fixture-detached-launchctl-timeout"],
+      ["launchctl overflow", ".fixture-detached-launchctl-overflow"],
+      ["plutil failure", ".fixture-detached-plutil-error"],
+      ["extra plist key", ".fixture-detached-plist-extra-key"],
+      ["missing plist key", ".fixture-detached-plist-missing-key"],
+      ["crossed plist arguments", ".fixture-detached-plist-arguments"],
+      ["crossed plist schedule", ".fixture-detached-plist-schedule"],
+      ["crossed plist log", ".fixture-detached-plist-log"],
+      ["crossed plist environment", ".fixture-detached-plist-environment"],
+      ["plist bracket drift", ".fixture-detached-plist-drift"],
+      ["CLI target bracket drift", ".fixture-detached-cli-target-drift"],
+      ["entrypoint bracket drift", ".fixture-detached-entrypoint-drift"],
+      ["process inventory failure", ".fixture-detached-inventory-error"],
+      ["blank process inventory row", ".fixture-detached-inventory-blank"],
+      ["zero daemon family", ".fixture-detached-zero-family"],
+      ["multiple daemon family", ".fixture-detached-multiple-family"],
+      ["selected nobody UID", ".fixture-detached-selected-nobody"],
+      ["wrong daemon PPID", ".fixture-detached-wrong-ppid"],
+      ["wrong daemon PGID", ".fixture-detached-wrong-pgid"],
+      ["zombie daemon", ".fixture-detached-zombie"],
+      ["extra daemon argv", ".fixture-detached-extra-argv"],
+      ["wrong Node executable", ".fixture-detached-wrong-node"],
+      ["daemon inventory drift", ".fixture-detached-inventory-drift"],
+      ["daemon comm drift", ".fixture-detached-comm-drift"],
+      ["daemon command drift", ".fixture-detached-command-drift"],
+      ["daemon executable path drift", ".fixture-detached-txt-drift"],
+      ["duplicate daemon executable record", ".fixture-detached-txt-extra"],
+      ["spawner listener", ".fixture-detached-spawner-listener"],
+      ["missing dashboard listener", ".fixture-detached-dashboard-listener-missing"],
+      ["partial dashboard listener", ".fixture-detached-dashboard-listener-partial"],
+      ["crossed dashboard listener", ".fixture-detached-dashboard-listener-crossed"],
+      ["dashboard listener drift", ".fixture-detached-dashboard-listener-drift"],
+    ];
+    for (const [name, marker] of rows) {
+      await context.test(name, () => {
+        const fixture = prepareGenerationBoundFixture(8);
+        try {
+          const before = retentionPublicationSnapshot(fixture.root);
+          fixtureFile(fixture.root, marker, "crossed\n");
+          const prepared = prepareRetentionOperation(fixture.root);
+          assert.notEqual(prepared.status, 0, `${name} unexpectedly prepared`);
+          assert.match(prepared.stderr, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+          assertNoDetachedPrepareAuthority(fixture.root);
+          assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+        } finally {
+          rmSync(fixture.root, { recursive: true, force: true });
+        }
+      });
     }
   });
 
@@ -2232,6 +2624,7 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(serialized.includes("fixture-operational-token-00000001"), false);
       assert.equal(serialized.includes("postgresql://localhost/fixture"), false);
       assert.equal(readFileSync(join(root, ".fixture-loaded-endpoint-call-count"), "utf8"), "1\n");
+      assert.equal(readFileSync(join(root, ".fixture-loaded-executable-lsof-call-count"), "utf8"), "2\n");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2296,6 +2689,7 @@ describe("OA18 build-generation retention authority", () => {
   for (const [name, marker] of [
     ["rejects launchctl identity drift across the Mission Control endpoint fence", ".fixture-launchctl-drift"],
     ["rejects process identity drift across the Mission Control endpoint fence", ".fixture-process-drift"],
+    ["rejects executable identity drift across the Mission Control endpoint fence", ".fixture-loaded-executable-lsof-drift"],
     ["rejects listener identity drift across the Mission Control endpoint fence", ".fixture-listener-drift"],
     ["rejects a missing Mission Control startup endpoint", ".fixture-endpoint-missing"],
     ["rejects a stale Mission Control startup instance", ".fixture-startup-stale"],
@@ -2802,6 +3196,8 @@ describe("OA18 build-generation retention authority", () => {
     try {
       rmSync(join(root, "dist"), { recursive: true, force: true });
       rmSync(join(root, "src/service.ts"));
+      rmSync(join(root, "src/server/daemon.ts"));
+      rmSync(join(root, "src/spawner.ts"));
       fixtureFile(root, "src/cli/cli.ts", 'console.log("fixture");\n');
       fixtureFile(root, "scripts/stitch-to-jsx.mjs", 'process.stdout.write("fixture");\n');
       const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
