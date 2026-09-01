@@ -1899,8 +1899,20 @@ describe("OA18 build-generation retention authority", () => {
       mkdirSync(authorityParent, { mode: 0o700 });
       mkdirSync(retentionRoot, { mode: 0o700 });
       mkdirSync(join(retentionRoot, "operations"), { mode: 0o700 });
-      const { ensureRetentionStoreV1 } = await importFixtureInternals(root, ["ensureRetentionStoreV1"]);
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const fsyncBoundary = "function fsyncDirectory(directory) {";
+      assert.equal(source.includes(fsyncBoundary), true);
+      writeFileSync(modulePath, source.replace(
+        fsyncBoundary,
+        `${fsyncBoundary}\n  fixtureFsyncDirectoriesV1.push(realpathSync(directory));`,
+      ).replace(
+        "function modeOf(stats) {",
+        "const fixtureFsyncDirectoriesV1 = [];\nfunction modeOf(stats) {",
+      ));
+      const { ensureRetentionStoreV1, fixtureFsyncDirectoriesV1 } = await importFixtureInternals(root, ["ensureRetentionStoreV1", "fixtureFsyncDirectoriesV1"]);
       const stores = ensureRetentionStoreV1();
+      assert.equal(fixtureFsyncDirectoriesV1[0], authorityData);
       assert.equal(stores.root, retentionRoot);
       for (const directory of Object.values(stores)) {
         const stats = lstatSync(directory, { bigint: true });
