@@ -3396,6 +3396,419 @@ type Phase5cPreparedPublicationTargetsFixtureV1 = Readonly<{
   currentStatus: string;
 }>;
 
+type Phase5cExpectedPredecessorCasStateFixtureV1 =
+  | "Q0"
+  | "Q1"
+  | "Q2"
+  | "Q3";
+
+type Phase5cExpectedPredecessorCasFaultFixtureV1 = Readonly<{
+  boundary:
+    | "before-temp-create"
+    | "after-temp-create"
+    | "after-temp-partial-write"
+    | "after-temp-complete-write"
+    | "after-temp-file-fsync"
+    | "after-temp-close"
+    | "before-selected-file-fsync"
+    | "after-selected-file-fsync"
+    | "before-rename"
+    | "after-rename"
+    | "before-extra-unlink"
+    | "after-extra-unlink"
+    | "after-extra-parent-fsync"
+    | "after-fresh-smaller-enumeration"
+    | "before-final-parent-fsync"
+    | "after-final-parent-fsync"
+    | "before-final-reopen"
+    | "after-final-reopen"
+    | "before-q1-unlink"
+    | "after-q1-unlink"
+    | "after-q1-parent-fsync"
+    | "after-q1-fresh-absence"
+    | "before-capability-transfer"
+    | "after-capability-transfer"
+    | "after-capability-claim"
+    | "after-capability-consume";
+  occurrence: number;
+  action?: "throw" | "kill" | "replace-target" | "replace-writer" | "replace-q1" | "replace-parent" | "add-q1";
+  target?: string;
+  backup?: string;
+}>;
+
+const PHASE5C_Q_STATUS_PREFIX_V1 = "setfarm://internal-production/current-entry-authority-status/sha256/";
+
+function phase5cExpectedPredecessorCasPairBytesV1(hashByte: "a" | "b" | "d"): Buffer {
+  const statusHash = hashByte.repeat(64);
+  return Buffer.from(`${canonical({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${statusHash}`, statusHash })}\n`, "utf8");
+}
+
+function phase5cExpectedPredecessorCasPathsV1(root: string, operationHash = "c".repeat(64)): Readonly<{
+  directory: string;
+  target: string;
+  writerTarget: string;
+  writerFixed: string;
+}> {
+  const physicalRoot = realpathSync(root);
+  const directory = path.join(physicalRoot, ".setfarm", "internal-production", "task12-current-entry", "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  let current = path.join(physicalRoot, ".setfarm");
+  for (const segment of ["internal-production", "task12-current-entry", "operations", "sha256", operationHash.slice(0, 2), operationHash]) {
+    chmodSync(current, 0o700);
+    current = path.join(current, segment);
+  }
+  chmodSync(directory, 0o700);
+  const target = path.join(directory, "01-current-status.pair.json");
+  return Object.freeze({
+    directory,
+    target,
+    writerTarget: target,
+    writerFixed: path.join(directory, ".01-current-status.pair.json.writer.lock"),
+  });
+}
+
+function phase5cExpectedPredecessorCasTempV1(
+  target: string,
+  ordinal: number,
+  pid = process.pid,
+): string {
+  const prefix = String(ordinal).padStart(8, "0");
+  return `${target}.tmp-${pid}-${prefix}-0000-4000-8000-${String(ordinal).padStart(12, "0")}`;
+}
+
+function phase5cExpectedPredecessorCasWriterPathsV1(
+  seeded: ReturnType<typeof seedPhase5cExpectedPredecessorCasStateV1>,
+): ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1> {
+  return Object.freeze({
+    target: seeded.paths.writerTarget,
+    lockPath: seeded.paths.writerFixed,
+    tempPrefix: `${path.basename(seeded.paths.writerFixed)}.tmp-`,
+  });
+}
+
+function seedPhase5cExpectedPredecessorCasStateV1(
+  root: string,
+  state: Phase5cExpectedPredecessorCasStateFixtureV1,
+  temporaryCount = state === "Q1" || state === "Q2" || state === "Q3" ? 1 : 0,
+  operationHash = "c".repeat(64),
+): Readonly<{
+  paths: ReturnType<typeof phase5cExpectedPredecessorCasPathsV1>;
+  predecessorBytes: Buffer;
+  successorBytes: Buffer;
+  temporaries: readonly string[];
+}> {
+  const paths = phase5cExpectedPredecessorCasPathsV1(root, operationHash);
+  const predecessorBytes = phase5cExpectedPredecessorCasPairBytesV1("a");
+  const successorBytes = phase5cExpectedPredecessorCasPairBytesV1("b");
+  writeFileSync(paths.target, state === "Q3" ? successorBytes : predecessorBytes, { mode: 0o600 });
+  const temporaries = Array.from({ length: temporaryCount }, (_, index) => {
+    const target = phase5cExpectedPredecessorCasTempV1(paths.target, index + 1);
+    writeFileSync(target, state === "Q1" ? Buffer.from("{\n", "utf8") : successorBytes, { mode: 0o600 });
+    return target;
+  });
+  return Object.freeze({ paths, predecessorBytes, successorBytes, temporaries: Object.freeze(temporaries) });
+}
+
+function instrumentPhase5cExpectedPredecessorCasFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const hasCurrentStatusNormalizer = source.includes("function normalizeTask12CurrentStatusCasV1(");
+  const selectedFunctionName = hasCurrentStatusNormalizer
+    ? "normalizeTask12CurrentStatusCasV1"
+    : "task12ReceiptExpectedPredecessorCasV1";
+  const selectedMarker = `function ${selectedFunctionName}(`;
+  const casStart = source.indexOf(selectedMarker);
+  const nextFunction = /\n(?=(?:export\s+)?(?:async\s+)?function\s+|(?:const|type|interface)\s+[A-Za-z0-9_]+)/g;
+  nextFunction.lastIndex = casStart + 1;
+  const casEnd = nextFunction.exec(source)?.index ?? -1;
+  assert.ok(casStart >= 0 && casEnd > casStart, `P5c-Q bounds the exact private ${selectedFunctionName} implementation`);
+  let cas = source.slice(casStart, casEnd);
+  cas = cas.replace(
+    selectedMarker,
+    `export ${selectedMarker}`,
+  );
+  const signatureEnd = cas.indexOf("): void {");
+  assert.ok(signatureEnd > 0, "P5c-Q instruments one exact synchronous CAS entry");
+  const entryEnd = signatureEnd + "): void {".length;
+  const probeEntry = `
+  const p5cQProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {controllerHeld:boolean;casCalls:number;events:string[];fault:null | {boundary:string;occurrence:number;action?:string;target?:string;backup?:string};faults?:Array<{boundary:string;occurrence:number;action?:string;target?:string;backup?:string}>;faultIndex?:number;boundaryMatches?:Record<string,number>;target?:string;createdEvidence?:unknown;matches:number};
+  if (p5cQProbe) p5cQProbe.casCalls += 1;`;
+  if (!hasCurrentStatusNormalizer) cas = `${cas.slice(0, entryEnd)}${probeEntry}
+  const p5cQBoundary = (boundary: string): void => {
+    if (!p5cQProbe) return;
+    p5cQProbe.events.push(boundary);
+    if (boundary === "after-temp-create" && p5cQProbe.target) {
+      const directory = path.dirname(p5cQProbe.target); const prefix = path.basename(p5cQProbe.target) + ".tmp-";
+      const temporaries = readdirSync(directory).filter((entry) => entry.startsWith(prefix));
+      let owner: unknown = null; try { owner = JSON.parse(readFileSync(path.join(directory, "." + path.basename(p5cQProbe.target) + ".writer.lock"), "utf8")); } catch {}
+      p5cQProbe.createdEvidence = { temporaries, owner };
+    }
+    const activeFault = p5cQProbe.faults?.[p5cQProbe.faultIndex ?? 0] ?? p5cQProbe.fault;
+    if (activeFault?.boundary !== boundary) return;
+    const count = (p5cQProbe.boundaryMatches?.[boundary] ?? 0) + 1;
+    p5cQProbe.boundaryMatches = { ...(p5cQProbe.boundaryMatches ?? {}), [boundary]: count }; p5cQProbe.matches += 1;
+    if (count !== activeFault.occurrence) return;
+    if (p5cQProbe.faults) p5cQProbe.faultIndex = (p5cQProbe.faultIndex ?? 0) + 1;
+    if (activeFault.action === "kill") process.kill(process.pid, "SIGKILL");
+    if (activeFault.action === "add-q1" && p5cQProbe.target) {
+      writeFileSync(p5cQProbe.target + ".tmp-" + process.pid + "-75000000-0000-4000-8000-000000000007", Buffer.from("[\\n", "utf8"), { flag: "wx", mode: 0o600 });
+      return;
+    }
+    if (activeFault.action === "replace-parent" && p5cQProbe.target && activeFault.backup) {
+      const directory = path.dirname(p5cQProbe.target); renameSync(directory, activeFault.backup); mkdirSync(directory, { mode: 0o700 });
+      for (const entry of readdirSync(activeFault.backup)) { const source = path.join(activeFault.backup, entry); const stats = lstatSync(source); if (stats.isFile()) writeFileSync(path.join(directory, entry), readFileSync(source), { flag: "wx", mode: Number(stats.mode & 0o777) }); }
+      return;
+    }
+    if ((activeFault.action === "replace-writer" || activeFault.action === "replace-q1") && p5cQProbe.target && activeFault.backup) {
+      const directory = path.dirname(p5cQProbe.target); const replacementTarget = activeFault.action === "replace-writer"
+        ? path.join(directory, "." + path.basename(p5cQProbe.target) + ".writer.lock")
+        : path.join(directory, readdirSync(directory).find((entry) => entry.startsWith(path.basename(p5cQProbe.target) + ".tmp-"))!);
+      const bytes = readFileSync(replacementTarget); renameSync(replacementTarget, activeFault.backup); writeFileSync(replacementTarget, bytes, { flag: "wx", mode: 0o600 });
+      return;
+    }
+    if (activeFault.action === "replace-target" && activeFault.target && activeFault.backup) {
+      const bytes = readFileSync(activeFault.target);
+      renameSync(activeFault.target, activeFault.backup);
+      writeFileSync(activeFault.target, bytes, { flag: "wx", mode: 0o600 });
+      return;
+    }
+    throw new Error(\`P5C_Q_FAULT:\${boundary}:\${count}\`);
+  };${cas.slice(entryEnd)}`;
+  const legacyReplacements = [
+    [
+      "const candidate = `${target}.tmp-${process.pid}-${randomUUID()}`; const descriptor = openSync(candidate, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+      "const candidate = `${target}.tmp-${process.pid}-${randomUUID()}`; const descriptor = openSync(candidate, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); p5cQBoundary(\"after-temp-create\");",
+    ],
+    [
+      "writeFileSync(descriptor, successorBytes); fsyncSync(descriptor);",
+      "writeFileSync(descriptor, successorBytes); p5cQBoundary(\"after-temp-complete-write\"); fsyncSync(descriptor); p5cQBoundary(\"after-temp-file-fsync\");",
+    ],
+    [
+      "renameSync(selected.path, target);",
+      "p5cQBoundary(\"before-rename\"); renameSync(selected.path, target); p5cQBoundary(\"after-rename\");",
+    ],
+    [
+      "unlinkSync(candidate.path);",
+      "p5cQBoundary(\"before-extra-unlink\"); unlinkSync(candidate.path); p5cQBoundary(\"after-extra-unlink\");",
+    ],
+    [
+      "fsyncCurrentEntryDirectory(directory);",
+      "p5cQBoundary(\"before-final-parent-fsync\"); fsyncCurrentEntryDirectory(directory); p5cQBoundary(\"after-final-parent-fsync\");",
+    ],
+    [
+      "if (!readTask12ReceiptStoreBytesV1(target).equals(successorBytes)) currentEntryFail(\"Task12 receipt CAS successor did not reopen\");",
+      "p5cQBoundary(\"before-final-reopen\"); if (!readTask12ReceiptStoreBytesV1(target).equals(successorBytes)) currentEntryFail(\"Task12 receipt CAS successor did not reopen\"); p5cQBoundary(\"after-final-reopen\");",
+    ],
+  ] as const;
+  if (!hasCurrentStatusNormalizer) {
+    for (const [before, after] of legacyReplacements) {
+      assert.ok(cas.includes(before), `P5c-Q legacy copied CAS retains ${before}`);
+      cas = cas.split(before).join(after);
+    }
+  } else {
+    cas = `${cas.slice(0, entryEnd)}${probeEntry}${cas.slice(entryEnd)}`;
+  }
+  source = source.slice(0, casStart) + cas + source.slice(casEnd);
+  if (hasCurrentStatusNormalizer) {
+    const faultStart = source.indexOf("function task12CurrentStatusCasFaultV1(");
+    const faultBoundary = /\n(?=(?:export\s+)?(?:async\s+)?function\s+|(?:const|type|interface)\s+[A-Za-z0-9_]+)/g;
+    faultBoundary.lastIndex = faultStart + 1;
+    const faultEnd = faultBoundary.exec(source)?.index ?? -1;
+    assert.ok(faultStart >= 0 && faultEnd > faultStart, "P5c-Q GREEN exposes one private inert fault boundary function");
+    const faultRegion = source.slice(faultStart, faultEnd);
+    assert.match(faultRegion, /\{\s*\}/, "the production Q fault boundary remains inert");
+    const faultParameter = /function task12CurrentStatusCasFaultV1\(([_A-Za-z][_A-Za-z0-9]*):/.exec(faultRegion)?.[1];
+    assert.notEqual(faultParameter, undefined, "P5c-Q captures the inert fault function's typed boundary parameter");
+    const hookedFault = faultRegion.replace(/\{\s*\}/, `{
+  const boundary = ${faultParameter};
+  const probe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];fault:null | {boundary:string;occurrence:number;action?:string;target?:string;backup?:string};faults?:Array<{boundary:string;occurrence:number;action?:string;target?:string;backup?:string}>;faultIndex?:number;boundaryMatches?:Record<string,number>;target?:string;createdEvidence?:unknown;matches:number};
+  if (!probe) return;
+  probe.events.push(boundary);
+  if (boundary === "after-temp-create" && probe.target) {
+    const directory = path.dirname(probe.target); const prefix = path.basename(probe.target) + ".tmp-";
+    const temporaries = readdirSync(directory).filter((entry) => entry.startsWith(prefix));
+    let owner: unknown = null; try { owner = JSON.parse(readFileSync(path.join(directory, "." + path.basename(probe.target) + ".writer.lock"), "utf8")); } catch {}
+    probe.createdEvidence = { temporaries, owner };
+  }
+  const activeFault = probe.faults?.[probe.faultIndex ?? 0] ?? probe.fault;
+  if (activeFault?.boundary !== boundary) return;
+  const count = (probe.boundaryMatches?.[boundary] ?? 0) + 1;
+  probe.boundaryMatches = { ...(probe.boundaryMatches ?? {}), [boundary]: count }; probe.matches += 1;
+  if (count !== activeFault.occurrence) return;
+  if (probe.faults) probe.faultIndex = (probe.faultIndex ?? 0) + 1;
+  if (activeFault.action === "kill") process.kill(process.pid, "SIGKILL");
+  if (activeFault.action === "add-q1" && probe.target) {
+    writeFileSync(probe.target + ".tmp-" + process.pid + "-75000000-0000-4000-8000-000000000007", Buffer.from("[\\n", "utf8"), { flag: "wx", mode: 0o600 });
+    return;
+  }
+  if (activeFault.action === "replace-parent" && probe.target && activeFault.backup) {
+    const directory = path.dirname(probe.target); renameSync(directory, activeFault.backup); mkdirSync(directory, { mode: 0o700 });
+    for (const entry of readdirSync(activeFault.backup)) { const source = path.join(activeFault.backup, entry); const stats = lstatSync(source); if (stats.isFile()) writeFileSync(path.join(directory, entry), readFileSync(source), { flag: "wx", mode: Number(stats.mode & 0o777) }); }
+    return;
+  }
+  if ((activeFault.action === "replace-writer" || activeFault.action === "replace-q1") && probe.target && activeFault.backup) {
+    const directory = path.dirname(probe.target); const replacementTarget = activeFault.action === "replace-writer"
+      ? path.join(directory, "." + path.basename(probe.target) + ".writer.lock")
+      : path.join(directory, readdirSync(directory).find((entry) => entry.startsWith(path.basename(probe.target) + ".tmp-"))!);
+    const bytes = readFileSync(replacementTarget); renameSync(replacementTarget, activeFault.backup); writeFileSync(replacementTarget, bytes, { flag: "wx", mode: 0o600 });
+    return;
+  }
+  if (activeFault.action === "replace-target" && activeFault.target && activeFault.backup) {
+    const bytes = readFileSync(activeFault.target);
+    renameSync(activeFault.target, activeFault.backup);
+    writeFileSync(activeFault.target, bytes, { flag: "wx", mode: 0o600 });
+    return;
+  }
+  throw new Error(\`P5C_Q_FAULT:\${boundary}:\${count}\`);
+}`);
+    source = source.slice(0, faultStart) + hookedFault + source.slice(faultEnd);
+  }
+  for (const functionName of [
+    "observeTask12CurrentStatusCasNoWriteV1",
+    "normalizeTask12CurrentStatusCasV1",
+    "claimTask12CurrentStatusCasCleanupCapabilityV1",
+    "task12ReceiptExpectedPredecessorCasV1",
+  ]) {
+    if (functionName === selectedFunctionName) continue;
+    const marker = `function ${functionName}(`;
+    const declaration = new RegExp(`^function ${functionName}\\(`, "m");
+    if (declaration.test(source)) source = source.replace(declaration, `export function ${functionName}(`);
+  }
+  const acquireStart = source.indexOf("function acquireTask12ReceiptLocatorWriterV1(");
+  const acquireDirectory = "  const directory = path.dirname(target);";
+  const acquireDirectoryIndex = source.indexOf(acquireDirectory, acquireStart);
+  assert.ok(acquireStart >= 0 && acquireDirectoryIndex > acquireStart, "P5c-Q instruments the exact target-writer acquisition entry");
+  source = `${source.slice(0, acquireDirectoryIndex)}  const p5cQAcquireProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];targetWriterAcquireCalls?:number};
+  if (p5cQAcquireProbe && path.basename(target) === "01-current-status.pair.json") { p5cQAcquireProbe.targetWriterAcquireCalls = (p5cQAcquireProbe.targetWriterAcquireCalls ?? 0) + 1; p5cQAcquireProbe.events.push("target-writer-acquire"); }
+${source.slice(acquireDirectoryIndex)}`;
+  const unlinkPinnedBody = "  const unlinkPinned = (member: string, descriptor: number, identity: BigIntStats, bytes: Buffer, expectedLinkCount = 1n): void => {";
+  const unlinkPinnedIndex = source.indexOf(unlinkPinnedBody, acquireStart);
+  assert.ok(unlinkPinnedIndex > acquireStart, "P5c-Q records generic writer mutation only at the pinned unlink primitive");
+  const unlinkPinnedInsertion = unlinkPinnedIndex + unlinkPinnedBody.length;
+  source = `${source.slice(0, unlinkPinnedInsertion)}
+    const p5cQMutationProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];target?:string};
+    if (p5cQMutationProbe?.target === target && path.basename(target) === "01-current-status.pair.json") p5cQMutationProbe.events.push("writer-family-mutation:" + path.basename(member));${source.slice(unlinkPinnedInsertion)}`;
+  const writerFreshCreate = "      temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`);";
+  assert.equal(source.split(writerFreshCreate).length - 1, 1, "P5c-Q records the fresh writer acquisition boundary once");
+  source = source.replace(writerFreshCreate, `      const p5cQFreshWriterProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];target?:string};
+      if (p5cQFreshWriterProbe?.target === target && path.basename(target) === "01-current-status.pair.json") p5cQFreshWriterProbe.events.push("writer-fresh-create:" + path.basename(target));
+${writerFreshCreate}`);
+  const processResult = "  const result = spawnSync(\"/bin/ps\", [\"-p\", String(pid), \"-o\", \"lstart=\", \"-o\", \"command=\"], { env: Object.freeze({ PATH: \"/usr/bin:/bin\", LANG: \"C\", LC_ALL: \"C\" }), shell: false, encoding: \"utf8\", timeout: 2_000, maxBuffer: 65_536, stdio: [\"ignore\", \"pipe\", \"pipe\"] });";
+  assert.equal(source.split(processResult).length - 1, 1, "P5c-Q instruments the shared writer process observation once");
+  source = source.replace(processResult, `  const p5cQProcessProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {ambiguousPid?:number};
+  if (p5cQProcessProbe?.ambiguousPid === pid) return Object.freeze({ state: "ambiguous" as const });
+${processResult}`);
+  const writerCloseTail = "            guard.close();\n          }\n        },";
+  assert.equal(source.split(writerCloseTail).length - 1, 1, "P5c-Q instruments the owned target-writer close after its internal guard closes");
+  source = source.replace(writerCloseTail, `            guard.close();
+            const p5cQCloseProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];writerCloseThrow?:boolean};
+            if (p5cQCloseProbe && path.basename(target) === "01-current-status.pair.json") p5cQCloseProbe.events.push("target-writer-close");
+            if (p5cQCloseProbe?.writerCloseThrow && path.basename(target) === "01-current-status.pair.json") throw new Error("P5C_Q_WRITER_CLOSE_FAULT");
+          }
+        },`);
+  const capabilityDeclaration = "const task12CurrentStatusCasCleanupCapabilitiesV1 = new Map<string, Task12CurrentStatusCasCleanupCapabilityV1>();";
+  if (source.includes(capabilityDeclaration)) source = source.replace(capabilityDeclaration, `${capabilityDeclaration}
+export function p5cQFixtureCleanupCapabilitySizeV1(): number { return task12CurrentStatusCasCleanupCapabilitiesV1.size; }`);
+  const capabilityCreatorEntry = "): Task12CurrentStatusCasCleanupCapabilityV1 {";
+  assert.equal(source.split(capabilityCreatorEntry).length - 1, 1, "P5c-Q instruments the exact cleanup-capability creator entry");
+  source = source.replace(capabilityCreatorEntry, `${capabilityCreatorEntry}
+  const p5cQCreatorProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {capabilityCreatorFault?:boolean;capabilityCreatorBackup?:string;capabilityCreatorApplied?:boolean;capabilityCreatorEvidence?:unknown;events:string[]};
+  if (p5cQCreatorProbe?.capabilityCreatorFault) {
+    if (!p5cQCreatorProbe.capabilityCreatorBackup) throw new Error("P5C_Q_CAPABILITY_CREATOR_BACKUP_MISSING");
+    const directory = path.dirname(target);
+    renameSync(directory, p5cQCreatorProbe.capabilityCreatorBackup);
+    mkdirSync(directory, { mode: 0o700 });
+    for (const entry of readdirSync(p5cQCreatorProbe.capabilityCreatorBackup)) {
+      const sourceTarget = path.join(p5cQCreatorProbe.capabilityCreatorBackup, entry);
+      const stats = lstatSync(sourceTarget);
+      if (stats.isFile()) writeFileSync(path.join(directory, entry), readFileSync(sourceTarget), { flag: "wx", mode: Number(stats.mode & 0o777) });
+    }
+    const temporaryPrefix = path.basename(target) + ".tmp-";
+    p5cQCreatorProbe.capabilityCreatorEvidence = {
+      fixedBytes: readFileSync(target).toString("base64"),
+      temporaries: readdirSync(directory).filter((entry) => entry.startsWith(temporaryPrefix)).map((entry) => ({name:entry,bytes:readFileSync(path.join(directory, entry)).toString("base64")})),
+    };
+    p5cQCreatorProbe.capabilityCreatorApplied = true;
+    p5cQCreatorProbe.events.push("capability-creator-parent-swap");
+    throw new Error("P5C_Q_CAPABILITY_CREATOR_FAULT");
+  }`);
+  const controllerWrapperMarker = "async function advanceTask12CurrentStatusV1(";
+  assert.equal(source.split(controllerWrapperMarker).length - 1, 1, "P5c-Q has one copied controller wrapper insertion point");
+  const normalizedCall = hasCurrentStatusNormalizer
+    ? "normalizeTask12CurrentStatusCasV1(target, predecessorBytes, successorBytes);"
+    : "task12ReceiptExpectedPredecessorCasV1(target, predecessorBytes, successorBytes);";
+  source = source.replace(controllerWrapperMarker, `export function p5cRunTask12CurrentStatusCasWithControllerV1(target: string, predecessorBytes: Buffer, successorBytes: Buffer): void {
+  const operationHash = path.basename(path.dirname(target));
+  const probe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {controllerHeld:boolean};
+  const controllerWriter = acquireTask12ReceiptLocatorWriterV1(path.join(path.dirname(target), "current-entry-controller.lock"));
+  activeTask12ControllerOperationsV1.add(operationHash);
+  if (probe) probe.controllerHeld = true;
+  try { controllerWriter.assertStable(); ${normalizedCall} controllerWriter.assertStable(); }
+  finally {
+    try { controllerWriter.close(); }
+    finally {
+      activeTask12ControllerOperationsV1.delete(operationHash);
+      if (probe) probe.controllerHeld = false;
+    }
+  }
+}
+
+${controllerWrapperMarker}`);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5cExpectedPredecessorCasFixtureV1(
+  root: string,
+  seeded: ReturnType<typeof seedPhase5cExpectedPredecessorCasStateV1>,
+  action: "classify" | "normalize-held" | "normalize-unheld",
+  fault: Phase5cExpectedPredecessorCasFaultFixtureV1 | null = null,
+  probeOverrides: Readonly<Record<string, unknown>> = Object.freeze({}),
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  const predecessorBase64 = seeded.predecessorBytes.toString("base64");
+  const successorBase64 = seeded.successorBytes.toString("base64");
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={controllerHeld:false,casCalls:0,events:[],fault:${JSON.stringify(fault)},faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null,...${JSON.stringify(probeOverrides)}};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);const predecessor=Buffer.from(${JSON.stringify(predecessorBase64)},"base64");const successor=Buffer.from(${JSON.stringify(successorBase64)},"base64");let outcome="returned",message=null,value=null;try{if(${JSON.stringify(action)}==="classify"){const observe=Reflect.get(m,"observeTask12CurrentStatusCasNoWriteV1");if(typeof observe!=="function")throw new Error("P5C_Q_CLASSIFIER_UNAVAILABLE");const observed=observe(${JSON.stringify(seeded.paths.target)},predecessor,successor);value={state:observed.state,route:observed.route,temporaryCount:observed.temporaries?.length??observed.temporaryTargets?.length??0};observed.close?.()}else if(${JSON.stringify(action)}==="normalize-held"){m.p5cRunTask12CurrentStatusCasWithControllerV1(${JSON.stringify(seeded.paths.target)},predecessor,successor)}else{const normalize=Reflect.get(m,"normalizeTask12CurrentStatusCasV1");if(typeof normalize!=="function")throw new Error("P5C_Q_NORMALIZER_UNAVAILABLE");normalize(${JSON.stringify(seeded.paths.target)},predecessor,successor)}}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const capabilitySize=typeof m.p5cQFixtureCleanupCapabilitySizeV1==="function"?m.p5cQFixtureCleanupCapabilitySizeV1():0;process.stdout.write(JSON.stringify({outcome,message,value,...probe,capabilitySize,descriptorDelta:after-before}))})()`);
+}
+
+function runPhase5cExpectedPredecessorCasSameProcessFixtureV1(
+  root: string,
+  seeded: ReturnType<typeof seedPhase5cExpectedPredecessorCasStateV1>,
+  faultsByCall: readonly (readonly Phase5cExpectedPredecessorCasFaultFixtureV1[])[],
+  callOverrides: readonly Readonly<{ target?: string; predecessorBytes?: Buffer; successorBytes?: Buffer }>[] = Object.freeze([]),
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  const predecessorBase64 = seeded.predecessorBytes.toString("base64");
+  const successorBase64 = seeded.successorBytes.toString("base64");
+  const callFixtures = faultsByCall.map((faults, index) => Object.freeze({
+    faults,
+    target: callOverrides[index]?.target ?? seeded.paths.target,
+    predecessorBase64: (callOverrides[index]?.predecessorBytes ?? seeded.predecessorBytes).toString("base64"),
+    successorBase64: (callOverrides[index]?.successorBytes ?? seeded.successorBytes).toString("base64"),
+  }));
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const baseline=count();const probe={controllerHeld:false,casCalls:0,events:[],fault:null,faults:[],faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);const calls=[];for(const call of ${JSON.stringify(callFixtures)}){probe.faults=call.faults;probe.faultIndex=0;probe.boundaryMatches={};probe.target=call.target;const predecessor=Buffer.from(call.predecessorBase64,"base64"),successor=Buffer.from(call.successorBase64,"base64");let outcome="returned",message=null,overlay=null;try{m.p5cRunTask12CurrentStatusCasWithControllerV1(call.target,predecessor,successor)}catch(error){outcome="threw";message=String(error)}const observe=Reflect.get(m,"observeTask12CurrentStatusCasNoWriteV1");if(typeof observe==="function"){try{const observed=observe(call.target,predecessor,successor);overlay={state:observed.state,route:observed.route,temporaryCount:observed.temporaries?.length??observed.temporaryTargets?.length??0};observed.close?.()}catch(error){overlay={error:String(error)}}}calls.push({outcome,message,overlay,descriptorDelta:count()-baseline,capabilitySize:typeof m.p5cQFixtureCleanupCapabilitySizeV1==="function"?m.p5cQFixtureCleanupCapabilitySizeV1():0,eventCount:probe.events.length,targetWriterAcquireCalls:probe.targetWriterAcquireCalls})}process.stdout.write(JSON.stringify({calls,events:probe.events,casCalls:probe.casCalls,targetWriterAcquireCalls:probe.targetWriterAcquireCalls,createdEvidence:probe.createdEvidence,finalDescriptorDelta:count()-baseline}))})()`);
+}
+
+function crashPhase5cExpectedPredecessorCasAfterCapabilityTransferV1(
+  root: string,
+  seeded: ReturnType<typeof seedPhase5cExpectedPredecessorCasStateV1>,
+  retained: "path-present" | "unlinked-parent-uncertain",
+): ReturnType<typeof spawnSync> {
+  const cleanupBoundary = retained === "path-present" ? "before-q1-unlink" : "after-q1-parent-fsync";
+  const faults = [
+    Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+    Object.freeze({ boundary: cleanupBoundary, occurrence: 1 }),
+    Object.freeze({ boundary: "after-capability-transfer", occurrence: 1, action: "kill" }),
+  ];
+  return runFixtureExpression(root, `(async()=>{const probe={controllerHeld:false,casCalls:0,events:[],fault:null,faults:${JSON.stringify(faults)},faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);m.p5cRunTask12CurrentStatusCasWithControllerV1(${JSON.stringify(seeded.paths.target)},Buffer.from(${JSON.stringify(seeded.predecessorBytes.toString("base64"))},"base64"),Buffer.from(${JSON.stringify(seeded.successorBytes.toString("base64"))},"base64"))})()`);
+}
+
+function crashPhase5cExpectedPredecessorCasAtBoundaryV1(
+  root: string,
+  seeded: ReturnType<typeof seedPhase5cExpectedPredecessorCasStateV1>,
+  boundary: "after-temp-close" | "after-rename",
+): ReturnType<typeof spawnSync> {
+  const fault = Object.freeze({ boundary, occurrence: 1, action: "kill" as const });
+  return runFixtureExpression(root, `(()=>{const probe={controllerHeld:false,casCalls:0,events:[],fault:${JSON.stringify(fault)},faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);m.p5cRunTask12CurrentStatusCasWithControllerV1(${JSON.stringify(seeded.paths.target)},Buffer.from(${JSON.stringify(seeded.predecessorBytes.toString("base64"))},"base64"),Buffer.from(${JSON.stringify(seeded.successorBytes.toString("base64"))},"base64"))})()`);
+}
+
 function phase5cPreparedPublicationTargetsV1(
   original: ExactOriginalPoisonStoreFixtureV1,
   chain: ExactPoisonStrictChainFixtureV1,
@@ -4048,11 +4461,12 @@ function instrumentExactPoisonRecoveryWriterFixtureV1(
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
   const targetMarker = "function exactPoisonRecoveryWriterTargetV1(): string {";
-  const acquireMarker = "function acquireTask12ReceiptLocatorWriterV1(target: string):";
+  const acquireMarker = "function acquireTask12ReceiptLocatorWriterV1(";
+  const acquireDeclaration = /^function acquireTask12ReceiptLocatorWriterV1\(/gm;
   assert.equal(source.split(targetMarker).length - 1, 1, "production must retain one private H-derived virtual writer target");
-  assert.equal(source.split(acquireMarker).length - 1, 1, "production must retain one private Task12 receipt locator writer acquisition");
+  assert.equal([...source.matchAll(acquireDeclaration)].length, 1, "production must retain one private Task12 receipt locator writer acquisition");
   source = source.replace(targetMarker, `export ${targetMarker}`);
-  source = source.replace(acquireMarker, `export ${acquireMarker}`);
+  source = source.replace(/^function acquireTask12ReceiptLocatorWriterV1\(/m, `export ${acquireMarker}`);
   const hook = `const P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1 = ${JSON.stringify(fault)} as null | Readonly<{ action: "kill" | "throw" | "latch" | "record"; boundary: string; occurrence: number; readyPath?: string; releasePath?: string; eventLogPath?: string; ambiguousPid?: number; secondReadyPath?: string; secondReleasePath?: string }>;
 let p4bExactPoisonRecoveryWriterMatchCountV1 = 0;
 let p4bExactPoisonRecoveryWriterSecondTempCreateLatchedV1 = false;
@@ -10551,6 +10965,1327 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       } finally {
         removeFixture(root);
       }
+    });
+  }
+
+  it("P5c-Q-A freezes the private fixed-01 read-only classifier and controller-owned normalizer", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const stateStart = source.indexOf("type Task12CurrentStatusCasStateV1 =");
+    const stateEnd = source.indexOf(";", stateStart) + 1;
+    assert.ok(stateStart >= 0 && stateEnd > stateStart, "Q exposes one private literal state union");
+    const state = source.slice(stateStart, stateEnd);
+    for (const literal of ["Q0", "Q1", "Q2", "Q3", "Q4"]) assert.match(state, new RegExp(`"${literal}"`));
+    assert.equal([...state.matchAll(/"Q[0-4]"/g)].length, 5, "Q has no sixth durable state");
+
+    const handleStart = source.indexOf("type Task12ReceiptLocatorWriterHandleV1 = Readonly<{");
+    const handleEnd = source.indexOf("}>;", handleStart) + 3;
+    assert.ok(handleStart >= 0 && handleEnd > handleStart, "the target writer exposes one private owned-handle type");
+    const handle = source.slice(handleStart, handleEnd);
+    for (const field of ["target: string", "targetHash: string", "owner: Task12ReceiptWriterOwnerV1", "assertStable: () => void", "close: () => void"]) {
+      assert.match(handle, new RegExp(field.replace(/[()]/g, "\\$&")), `writer handle retains ${field}`);
+    }
+    const acquire = topLevelFunctionRegionV1(source, "acquireTask12ReceiptLocatorWriterV1");
+    assert.match(acquire, /targetHash[\s\S]*owner[\s\S]*assertStable[\s\S]*close/);
+
+    const observationStart = source.indexOf("type Task12CurrentStatusCasObservationV1 = Readonly<{");
+    const observationEnd = source.indexOf("}>;", observationStart) + 3;
+    assert.ok(observationStart >= 0 && observationEnd > observationStart, "Q has one private pinned observation");
+    const observation = source.slice(observationStart, observationEnd);
+    for (const field of ["state: Task12CurrentStatusCasStateV1", "parent", "fixed", "temporaries", "writer", "assertStable", "close"]) assert.match(observation, new RegExp(`\\b${field}`));
+
+    const pairReader = topLevelFunctionRegionV1(source, "requireTask12CurrentStatusPairBytesV1");
+    assert.match(pairReader, /\(bytes:\s*Buffer,\s*label:\s*string\):\s*InternalProductionCurrentEntryAuthorityStatusPairV1/,
+      "one private reader validates each caller-supplied current-status pair before it becomes CAS authority");
+    assert.match(pairReader, /strictCanonicalRecord\(bytes,\s*label\)/,
+      "strict JSON parsing freezes canonical UTF-8 bytes with exactly one trailing LF");
+    assert.match(pairReader, /hasExactKeys\([^,]+,\s*\["statusRef",\s*"statusHash"\]\)/);
+    assert.match(pairReader, /typeof\s+[^.]+\.statusRef\s*===\s*"string"/);
+    assert.match(pairReader, /typeof\s+[^.]+\.statusHash\s*===\s*"string"[\s\S]*SHA256\.test\([^)]*\.statusHash\)/);
+    assert.match(pairReader, /\.statusRef\s*===\s*`\$\{TASK12_STATUS_PREFIX_V1\}\$\{[^}]+\.statusHash\}`/,
+      "the exact lowercase SHA-256 binds its current-status ref");
+    assert.doesNotMatch(pairReader, /openSync|readFileSync|acquireTask12|fsync|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "pair validation is pure and cannot touch filesystem authority");
+
+    const classifier = topLevelFunctionRegionV1(source, "observeTask12CurrentStatusCasNoWriteV1");
+    assert.match(classifier, /path\.basename\(target\)\s*!==\s*"01-current-status\.pair\.json"/);
+    assert.match(classifier, /\.tmp-\$\{decimalPid\}|\[1-9\]\[0-9\]\*/);
+    assert.match(classifier, /4\[0-9a-f\]\{3\}/, "Q accepts only lowercase UUID v4 temporaries");
+    assert.match(classifier, /temporar(?:y|ies)[\s\S]*\.sort\(compareBytes\)/, "all candidates are pinned and ordered by unsigned UTF-8 basename");
+    assert.match(classifier, /length\s*>\s*8/);
+    for (const physical of ["isFile", "isSymbolicLink", "dev", "uid", "mode", "nlink", "ino", "size", "mtime", "ctime"]) assert.match(classifier, new RegExp(`\\b${physical}\\b`), `Q pins ${physical}`);
+    assert.match(classifier, /predecessorBytes[\s\S]*successorBytes/);
+    assert.equal([...classifier.matchAll(/requireTask12CurrentStatusPairBytesV1\(/g)].length, 2,
+      "the read-only classifier strictly validates both supplied pair byte strings");
+    assert.match(classifier, /requireTask12CurrentStatusPairBytesV1\(predecessorBytes,/);
+    assert.match(classifier, /requireTask12CurrentStatusPairBytesV1\(successorBytes,/);
+    assert.match(classifier, /state:\s*"Q0"[\s\S]*state:\s*"Q1"[\s\S]*state:\s*"Q2"[\s\S]*state:\s*"Q3"/);
+    assert.doesNotMatch(classifier, /state:\s*"Q4"/, "a read-only disk observation cannot manufacture the Q4 durability result");
+    assert.doesNotMatch(classifier, /ensureTask12|acquireTask12|task12ReceiptExpectedPredecessorCasV1|normalizeTask12CurrentStatusCasV1|selectCurrentEntryStoreContextV1|revalidatePostVisible|fsyncSync|fsyncCurrentEntryDirectory|Atomics\.wait|setTimeout|process\.env|globalThis|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "the classifier is read-only and cannot select, repair, wait, or mutate");
+
+    const normalize = topLevelFunctionRegionV1(source, "normalizeTask12CurrentStatusCasV1");
+    const controllerCheck = normalize.indexOf("activeTask12ControllerOperationsV1");
+    const predecessorInputCheck = normalize.indexOf("requireTask12CurrentStatusPairBytesV1(predecessorBytes,");
+    const successorInputCheck = normalize.indexOf("requireTask12CurrentStatusPairBytesV1(successorBytes,");
+    const writerAcquire = normalize.indexOf("acquireTask12ReceiptLocatorWriterV1(");
+    const firstMutation = Math.min(...["openSync(", "writeFileSync(", "renameSync(", "unlinkSync("].map((marker) => {
+      const index = normalize.indexOf(marker);
+      return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+    }));
+    assert.ok(controllerCheck >= 0 && controllerCheck < predecessorInputCheck && predecessorInputCheck < writerAcquire
+      && controllerCheck < successorInputCheck && successorInputCheck < writerAcquire && writerAcquire < firstMutation,
+    "real controller ownership and both strict pair-input checks precede the target writer and every Q mutation");
+    assert.match(normalize, /path\.basename\(target\)\s*!==\s*"01-current-status\.pair\.json"/);
+    assert.match(normalize, /observeTask12CurrentStatusCasNoWriteV1\(target,\s*predecessorBytes,\s*successorBytes\)/);
+    assert.match(normalize, /observation\.state\s*===\s*"Q2"[\s\S]*const selected\s*=\s*current\.temporaries\[0\]!/,
+      "Q2 consumes the first member of the observer's frozen unsigned-byte ordering");
+    assert.match(normalize, /observation\.state\s*===\s*"Q3"[\s\S]*const candidate\s*=\s*current\.temporaries\[0\]!/,
+      "Q3 consumes the first member of the observer's frozen unsigned-byte ordering");
+    assert.match(normalize, /fsyncSync\([^)]*selected[^)]*descriptor[^)]*\)[\s\S]*renameSync\(/,
+      "selected complete Q2 evidence is freshly file-fsynced while pinned before rename");
+    assert.match(normalize, /renameSync\([\s\S]*nlink\s*!==\s*0n[\s\S]*nlink\s*!==\s*1n[\s\S]*sameRegularMetadata/,
+      "Q2 rename retains predecessor and selected pins through the Q3 transition");
+    assert.match(normalize, /unlinkSync\([\s\S]*fsyncCurrentEntryDirectory\([\s\S]*observeTask12CurrentStatusCasNoWriteV1\(/,
+      "each sorted Q3 extra cleanup is parent-durable and freshly re-enumerated");
+    assert.match(normalize, /fsyncCurrentEntryDirectory\([\s\S]*(?:observeTask12CurrentStatusCasNoWriteV1|readTask12ReceiptStoreSnapshotV1|openSync\([\s\S]*fstatSync)/,
+      "successor-alone becomes logical Q4 only after parent fsync and stable fixed/path/parent reopen");
+    assert.match(normalize, /try\s*\{[\s\S]*writer\.close\(\)[\s\S]*\}\s*finally\s*\{[\s\S]*(?:observation|parent|guard)\.close\(\)/,
+      "a throwing target-writer close cannot skip the CAS parent guard and remaining pin cleanup");
+
+    const generic = topLevelFunctionRegionV1(source, "task12ReceiptExpectedPredecessorCasV1");
+    assert.match(generic, /path\.basename\(target\)\s*===\s*"01-current-status\.pair\.json"[\s\S]*normalizeTask12CurrentStatusCasV1\(target,\s*predecessorBytes,\s*successorBytes\)/,
+      "only exact fixed 01 delegates to the Q normalizer");
+    assert.match(generic, /else|return/, "non-01 visibility CAS retains its existing generic branch");
+
+    const controllerAcquire = topLevelFunctionRegionV1(source, "acquireTask12ControllerLockV1");
+    const controllerRelease = topLevelFunctionRegionV1(source, "releaseTask12ControllerLockV1");
+    assert.match(controllerAcquire, /acquireTask12ReceiptLocatorWriterV1\([\s\S]*activeTask12ControllerOperationsV1\.add/);
+    assert.match(controllerRelease, /writer\.close\(\)[\s\S]*activeTask12ControllerOperationsV1\.delete/);
+    const progressValidator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreProgressV1");
+    assert.match(progressValidator, /context\.assertStable\(\);\s*currentEntryFail\("post-visible current-entry progress validation is unavailable"\);/,
+      "Q does not widen the frozen fail-closed progress placeholder into Phase5c-S");
+    assert.doesNotMatch(progressValidator, /normalizeTask12CurrentStatusCasV1|task12ReceiptExpectedPredecessorCasV1|acquireTask12|task12CurrentStatusCasCleanupCapabilitiesV1/,
+      "the selector-side progress validator observes Q but never repairs it");
+
+    const faultTypeStart = source.indexOf("type Task12CurrentStatusCasFaultBoundaryV1 =");
+    const faultTypeEnd = source.indexOf(";", faultTypeStart) + 1;
+    assert.ok(faultTypeStart >= 0 && faultTypeEnd > faultTypeStart);
+    const faultType = source.slice(faultTypeStart, faultTypeEnd);
+    const boundaries = [
+      "before-temp-create", "after-temp-create", "after-temp-partial-write", "after-temp-complete-write", "after-temp-file-fsync", "after-temp-close",
+      "before-selected-file-fsync", "after-selected-file-fsync", "before-rename", "after-rename", "before-extra-unlink", "after-extra-unlink",
+      "after-extra-parent-fsync", "after-fresh-smaller-enumeration", "before-final-parent-fsync", "after-final-parent-fsync", "before-final-reopen", "after-final-reopen",
+      "before-q1-unlink", "after-q1-unlink", "after-q1-parent-fsync", "after-q1-fresh-absence", "before-capability-transfer", "after-capability-transfer", "after-capability-claim", "after-capability-consume",
+    ] as const;
+    for (const boundary of boundaries) assert.match(faultType, new RegExp(`"${boundary}"`), `${boundary}: typed response-loss boundary`);
+    const boundaryOwners = [
+      normalize,
+      topLevelFunctionRegionV1(source, "transferTask12CurrentStatusCasCleanupCapabilityV1"),
+      topLevelFunctionRegionV1(source, "claimTask12CurrentStatusCasCleanupCapabilityV1"),
+      topLevelFunctionRegionV1(source, "consumeTask12CurrentStatusCasCleanupCapabilityV1"),
+      topLevelFunctionRegionV1(source, "cleanupPinnedTask12CurrentStatusCasQ1V1"),
+      topLevelFunctionRegionV1(source, "cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1"),
+    ];
+    for (const boundary of boundaries) {
+      const calls = boundaryOwners.reduce((count, owner) => count + [...owner.matchAll(new RegExp(`task12CurrentStatusCasFaultV1\\("${boundary}"\\)`, "g"))].length, 0);
+      assert.equal(calls, 1, `${boundary}: exactly one fault boundary belongs to the normalizer or its Q1 ownership helpers`);
+    }
+    const fault = topLevelFunctionRegionV1(source, "task12CurrentStatusCasFaultV1");
+    assert.match(fault, /\{\s*\}/, "the private production fault boundary is inert");
+    assert.doesNotMatch(source, /^export[^\n]*(?:Task12CurrentStatusCas|task12CurrentStatusCas|normalizeTask12CurrentStatusCas|observeTask12CurrentStatusCas)/gm,
+      "Q adds no public type, observer, capability, normalizer, or fault seam");
+    assert.equal([...source.matchAll(/requireTask12CurrentStatusPairBytesV1\(/g)].length, 5,
+      "the private pair reader has one definition and exactly two classifier plus two pre-acquisition normalizer calls");
+  });
+
+  it("P5c-Q-B freezes one-use cleanup capability and the pre-stale-writer Q1 hook", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const capabilityStart = source.indexOf("type Task12CurrentStatusCasCleanupCapabilityV1 = Readonly<{");
+    const capabilityEnd = source.indexOf("}>;", capabilityStart) + 3;
+    assert.ok(capabilityStart >= 0 && capabilityEnd > capabilityStart, "Q has one private cleanup capability type");
+    const capability = source.slice(capabilityStart, capabilityEnd);
+    for (const field of ["targetHash", "writer", "predecessor", "temporary", "parent", "owner", "claimed"]) assert.match(capability, new RegExp(`\\b${field}\\b`));
+    assert.match(capability, /Task12ReceiptLocatorWriterHandleV1/);
+    const declaration = /const task12CurrentStatusCasCleanupCapabilitiesV1 = new Map<string, Task12CurrentStatusCasCleanupCapabilityV1>\(\);/g;
+    assert.equal([...source.matchAll(declaration)].length, 1, "there is exactly one targetHash-keyed capability map");
+    const withoutAuthorizedCapability = source.replace(declaration, "");
+    assert.doesNotMatch(withoutAuthorizedCapability, /new (?:Weak)?Map<[^>]*(?:CurrentStatusCasCleanup|CasProvenance)/g, "no second capability or provenance map exists");
+
+    const allowed = new Set([
+      "transferTask12CurrentStatusCasCleanupCapabilityV1",
+      "claimTask12CurrentStatusCasCleanupCapabilityV1",
+      "consumeTask12CurrentStatusCasCleanupCapabilityV1",
+      "observeTask12CurrentStatusCasNoWriteV1",
+    ]);
+    const accessors = [...source.matchAll(/^(?:async\s+)?function\s+([A-Za-z0-9_]+)\(/gm)]
+      .map((match) => match[1]!)
+      .filter((name) => topLevelFunctionRegionV1(source, name).includes("task12CurrentStatusCasCleanupCapabilitiesV1"));
+    assert.deepEqual(new Set(accessors), allowed, "only Q1 transfer/claim/consume and read-only equality observation access the sole map");
+    let outsideAllowedCapabilityAccess = source.replace(declaration, "");
+    for (const name of allowed) outsideAllowedCapabilityAccess = outsideAllowedCapabilityAccess.replace(topLevelFunctionRegionV1(source, name), "");
+    assert.doesNotMatch(outsideAllowedCapabilityAccess, /task12CurrentStatusCasCleanupCapabilitiesV1/,
+      "const/arrow helpers cannot hide a fifth cleanup-capability access");
+    const transfer = topLevelFunctionRegionV1(source, "transferTask12CurrentStatusCasCleanupCapabilityV1");
+    const claim = topLevelFunctionRegionV1(source, "claimTask12CurrentStatusCasCleanupCapabilityV1");
+    const consume = topLevelFunctionRegionV1(source, "consumeTask12CurrentStatusCasCleanupCapabilityV1");
+    const cleanupPinnedQ1 = topLevelFunctionRegionV1(source, "cleanupPinnedTask12CurrentStatusCasQ1V1");
+    assert.match(transfer, /\.size\s*!==\s*0|\.size\s*>?=\s*1/);
+    assert.match(transfer, /targetHash[\s\S]*\.set\(targetHash,\s*capability\)/);
+    assert.doesNotMatch(transfer, /writer\.close|temporary\.close|parent\.close/, "uncertain cleanup transfers every live pin without closing it");
+    assert.match(claim, /targetHash[\s\S]*claimed[\s\S]*predecessor/);
+    assert.match(cleanupPinnedQ1, /(?:unlinkSync|ENOENT|absence)[\s\S]*fsyncCurrentEntryDirectory[\s\S]*(?:fresh|ENOENT|absence)/i,
+      "disk-Q0 plus a live capability remains dirty until parent durability and then fresh absence are proved");
+    assert.match(consume, /cleanupPinnedTask12CurrentStatusCasQ1V1\([\s\S]*\.delete\(targetHash\)/,
+      "capability consumption uses the shared pinned Q1 cleanup before deleting authority");
+
+    const stale = topLevelFunctionRegionV1(source, "cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1");
+    for (const binding of ["fixedOwner", "processObservation", "predecessorBytes", "successorBytes", "targetHash", "pid", "nonce"]) assert.match(stale, new RegExp(`\\b${binding}\\b`));
+    assert.match(stale, /01-current-status\.pair\.json/);
+    assert.match(stale, /definitely dead|pid-reused|state\s*===\s*"dead"|state\s*===\s*"reused"/i);
+    assert.match(stale, /temporar(?:y|ies)[\s\S]*(?:length\s*!==\s*1|length\s*>\s*1)[\s\S]*currentEntryFail/);
+    assert.match(stale, /cleanupPinnedTask12CurrentStatusCasQ1V1\(/, "stale-owner recovery shares the same pinned Q1 cleanup primitive");
+
+    const acquire = topLevelFunctionRegionV1(source, "acquireTask12ReceiptLocatorWriterV1");
+    assert.match(acquire, /beforeStaleMutation\?:\s*\(snapshot:\s*Task12ReceiptLocatorWriterStaleSnapshotV1\)\s*=>\s*void/,
+      "the writer exposes one private acquisition-owned pinned stale snapshot callback");
+    assert.match(acquire, /const staleSnapshot:\s*Task12ReceiptLocatorWriterStaleSnapshotV1\s*=\s*Object\.freeze\(\{[\s\S]*fixed[\s\S]*fixedOwner[\s\S]*processObservation[\s\S]*acquisitionCandidates[\s\S]*guard[\s\S]*\}\)/,
+      "the acquisition owner constructs the complete pinned stale snapshot exactly once");
+    const callbackFence = /staleSnapshot\.assertStable\(\);\s*beforeStaleMutation\?\.\(staleSnapshot\);\s*staleSnapshot\.assertStable\(\);/;
+    assert.match(acquire, callbackFence, "the callback is bracketed by the final coherent stale snapshot fence");
+    const callback = acquire.search(callbackFence);
+    const definitelyStale = Math.max(acquire.lastIndexOf('state === "dead"', callback), acquire.lastIndexOf('state === "reused"', callback));
+    const possibleOwner = Math.max(acquire.lastIndexOf('state === "live"', callback), acquire.lastIndexOf('state === "ambiguous"', callback));
+    const firstWriterMutation = Math.min(...["unlinkPinned(", "unlinkSync(", "renameSync("].map((marker) => {
+      const index = acquire.indexOf(marker, callback);
+      return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+    }));
+    assert.ok(definitelyStale >= 0 && possibleOwner >= 0 && definitelyStale < callback && possibleOwner < callback && callback < firstWriterMutation,
+      "definite-dead/reuse classification and live/ambiguous refusal precede the callback and every writer-family mutation");
+    const normalizer = topLevelFunctionRegionV1(source, "normalizeTask12CurrentStatusCasV1");
+    assert.match(normalizer, /acquireTask12ReceiptLocatorWriterV1\([^,]+,\s*\(snapshot\)\s*=>\s*cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1\(snapshot,\s*predecessorBytes,\s*successorBytes\)/,
+      "fixed-01 supplies predecessor/successor evidence through a private callback, not a global registry");
+    const twoArgumentAcquisition = /acquireTask12ReceiptLocatorWriterV1\(\s*[A-Za-z0-9_.]+\s*,/g;
+    assert.equal([...normalizer.matchAll(twoArgumentAcquisition)].length, 1, "the Q normalizer has the sole two-argument target-writer call");
+    const outsideAcquireAndNormalizer = source.replace(acquire, "").replace(normalizer, "");
+    assert.equal([...outsideAcquireAndNormalizer.matchAll(twoArgumentAcquisition)].length, 0, "every non-Q target-writer call remains one-argument");
+    assert.doesNotMatch(source, /export[^\n]*(?:CleanupCapability|cleanupTask12CurrentStatusCasQ1|task12CurrentStatusCasCleanupCapabilities)/);
+    assert.doesNotMatch(source, /schema[^\n]*(?:cleanup-capability|current-status-cas-cleanup)/,
+      "cleanup capability is never serialized as a durable authority");
+    const qPrivateAuthorityRegions = [
+      capability,
+      transfer,
+      claim,
+      consume,
+      cleanupPinnedQ1,
+      stale,
+      normalizer,
+      topLevelFunctionRegionV1(source, "observeTask12CurrentStatusCasNoWriteV1"),
+    ].join("\n");
+    assert.doesNotMatch(qPrivateAuthorityRegions, /process(?:\.env|\[\s*["']env["']\s*\])|globalThis|AsyncLocalStorage/,
+      "Q capability and normalization helpers cannot recover authority from ambient state");
+  });
+
+  for (const [state, temporaryCount, expectedState, expectedRoute] of [
+    ["Q0", 0, "Q0", "prior"],
+    ["Q2", 1, "Q2", "prior"],
+    ["Q2", 8, "Q2", "prior"],
+    ["Q3", 1, "Q3", "next"],
+    ["Q3", 7, "Q3", "next"],
+    ["Q3", 0, "Q3", "next"],
+  ] as const) {
+    it(`P5c-Q-A classifies ${state} with ${temporaryCount} candidates as ${expectedRoute}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, state, temporaryCount);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const before = filesystemTreeSnapshot(seeded.paths.directory);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "classify");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        assert.deepEqual(observed.value, { state: expectedState, route: expectedRoute, temporaryCount });
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(observed.targetWriterAcquireCalls, 0, "read-only Q routing neither acquires nor repairs the target writer");
+        assert.deepEqual(observed.events, [], "read-only Q3 routing cannot claim logical Q4 through fsync or cleanup");
+        assert.deepEqual(filesystemTreeSnapshot(seeded.paths.directory), before, "classification is read-only");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-A rejects a sole incomplete PID-only Q1 temporary without a live capability", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 1);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const before = filesystemTreeSnapshot(seeded.paths.directory);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "classify");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /Q1|capability|writer|PID|unbound/i);
+      assert.equal(observed.descriptorDelta, 0);
+      assert.deepEqual(filesystemTreeSnapshot(seeded.paths.directory), before);
+    } finally { removeFixture(root); }
+  });
+
+  for (const inputCase of [
+    Object.freeze({ name: "canonical wrong-key predecessor equal to the fixed bytes", input: "predecessor" as const }),
+    Object.freeze({ name: "canonical ref/hash-crossed successor", input: "successor" as const }),
+  ] as const) {
+    it(`P5c-Q-A rejects ${inputCase.name} before target-writer acquisition`, async () => {
+      const root = createFixture();
+      try {
+        const base = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        const badBytes = inputCase.input === "predecessor"
+          ? Buffer.from("{}\n", "utf8")
+          : Buffer.from(`${canonical({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${"d".repeat(64)}`, statusHash: "b".repeat(64) })}\n`, "utf8");
+        if (inputCase.input === "predecessor") writeFileSync(base.paths.target, badBytes);
+        const seeded = Object.freeze({
+          ...base,
+          predecessorBytes: inputCase.input === "predecessor" ? badBytes : base.predecessorBytes,
+          successorBytes: inputCase.input === "successor" ? badBytes : base.successorBytes,
+        });
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const before = filesystemTreeSnapshot(seeded.paths.directory);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /canonical|current-status|pair|statusRef|statusHash|SHA-256|crossed|Q|CAS/i);
+        assert.equal(observed.targetWriterAcquireCalls, 0, "invalid caller bytes are rejected before target-writer authority");
+        assert.deepEqual(observed.events, [], "invalid caller bytes reach no Q mutation or capability boundary");
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(observed.controllerHeld, false);
+        assert.deepEqual(filesystemTreeSnapshot(seeded.paths.directory), before, "invalid caller bytes cannot alter fixed or temporary evidence");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const [state, temporaryCount] of [["Q0", 0], ["Q2", 1], ["Q2", 8], ["Q3", 0], ["Q3", 7]] as const) {
+    it(`P5c-Q-A normalizes controller-held ${state}/${temporaryCount} monotonically to Q4`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, state, temporaryCount);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+        assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-")), []);
+        assert.equal(readdirSync(seeded.paths.directory).some((name) => name.includes("current-entry-controller.lock.writer.lock")), false, "controller ownership releases after Q4");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-A closes the CAS parent guard when the owned target-writer close throws after Q4", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q3", 0);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", null, Object.freeze({ writerCloseThrow: true }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /P5C_Q_WRITER_CLOSE_FAULT/);
+      assert.equal(observed.descriptorDelta, 0, "writer, CAS parent guard, fixed pin, and controller close through nested finally");
+      assert.equal((observed.events as readonly string[]).filter((event) => event === "target-writer-close").length, 1);
+      assert.equal(readdirSync(seeded.paths.directory).some((name) => name.includes("writer.lock")), false);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-A rejects direct normalization without the real operation controller before filesystem effects", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const before = filesystemTreeSnapshot(seeded.paths.directory);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-unheld");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /controller|held|authenticated/i);
+      assert.equal(observed.descriptorDelta, 0);
+      assert.deepEqual(filesystemTreeSnapshot(seeded.paths.directory), before);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-A leaves non-01 recovery-source visibility CAS on the generic retry path", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      const target = path.join(seeded.paths.directory, "recovery-source-bootstrap-visibility-head.json");
+      writeFileSync(target, seeded.predecessorBytes, { mode: 0o600 });
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const probe={controllerHeld:false,casCalls:0,events:[],fault:null,faultIndex:0,boundaryMatches:{},target:${JSON.stringify(target)},matches:0,targetWriterAcquireCalls:0};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);m.task12ReceiptExpectedPredecessorCasV1(${JSON.stringify(target)},Buffer.from(${JSON.stringify(seeded.predecessorBytes.toString("base64"))},"base64"),Buffer.from(${JSON.stringify(seeded.successorBytes.toString("base64"))},"base64"));process.stdout.write(JSON.stringify({...probe,bytes:fs.readFileSync(${JSON.stringify(target)}).toString("base64")}))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.bytes, seeded.successorBytes.toString("base64"));
+      assert.equal(observed.targetWriterAcquireCalls, 0, "the Q target writer is not used for another basename");
+      assert.deepEqual(observed.events, [], "non-01 CAS invokes no Q fault/classifier/capability seam");
+      assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-")), []);
+    } finally { removeFixture(root); }
+  });
+
+  for (const boundary of [
+    "before-temp-create",
+    "after-temp-create",
+    "after-temp-partial-write",
+    "after-temp-complete-write",
+    "after-temp-file-fsync",
+    "after-temp-close",
+    "before-selected-file-fsync",
+    "after-selected-file-fsync",
+    "before-rename",
+    "after-rename",
+    "before-extra-unlink",
+    "after-extra-unlink",
+    "after-extra-parent-fsync",
+    "after-fresh-smaller-enumeration",
+    "before-final-parent-fsync",
+    "after-final-parent-fsync",
+    "before-final-reopen",
+    "after-final-reopen",
+  ] as const) {
+    it(`P5c-Q-A converges after ${boundary} response loss without a second status`, async () => {
+      const root = createFixture();
+      try {
+        const state = boundary.includes("temp-") && !boundary.includes("selected") ? "Q0" : boundary.includes("extra") ? "Q3" : "Q2";
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, state, state === "Q3" ? 2 : state === "Q2" ? 2 : 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const first = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", Object.freeze({ boundary, occurrence: 1 }));
+        assert.equal(first.status, 0, first.stderr);
+        const firstObserved = JSON.parse(first.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(firstObserved.outcome, "threw", `${boundary}: injected loss must interrupt the first call`);
+        assert.match(String(firstObserved.message), new RegExp(`P5C_Q_FAULT:${boundary}`));
+        assert.equal(firstObserved.descriptorDelta, 0, `${boundary}: interrupted call closes every untransferred descriptor`);
+        if (boundary === "after-temp-create" || boundary === "after-temp-partial-write") {
+          const events = firstObserved.events as readonly string[];
+          const parentDurable = events.indexOf("after-q1-parent-fsync");
+          const freshAbsent = events.indexOf("after-q1-fresh-absence");
+          const writerClose = events.indexOf("target-writer-close");
+          assert.ok(parentDurable >= 0 && parentDurable < freshAbsent && freshAbsent < writerClose,
+            `${boundary}: normal error cleanup makes Q1 absence parent-durable before releasing its writer`);
+          assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-")), [],
+            `${boundary}: normal cleanup leaves no unowned Q1 evidence`);
+        }
+        if (boundary === "after-extra-unlink") {
+          const ordered = [...seeded.temporaries].sort((left, right) => Buffer.from(path.basename(left)).compare(Buffer.from(path.basename(right))));
+          assert.equal(existsSync(ordered[0]!), false, "Q3 cleanup removes the unsigned-first pinned extra only");
+          assert.equal(existsSync(ordered[1]!), true, "later pinned Q3 evidence remains for the next monotonic iteration");
+        }
+        if (boundary === "after-temp-create") {
+          const created = firstObserved.createdEvidence as Readonly<{ temporaries: readonly string[]; owner: Readonly<Record<string, unknown>> }>;
+          assert.equal(created.temporaries.length, 1, "Q0 creates one exact Q1 temporary before any write");
+          assert.equal(created.temporaries[0], `01-current-status.pair.json.tmp-${String(created.owner.pid)}-${String(created.owner.nonce)}`,
+            "new Q1 evidence is bound to the held writer owner PID and nonce");
+          const physicalTarget = path.join(realpathSync(path.dirname(seeded.paths.target)), path.basename(seeded.paths.target));
+          const authorityTarget = process.platform === "darwin" && physicalTarget.startsWith("/private/var/") ? physicalTarget.slice("/private".length) : physicalTarget;
+          assert.equal(created.owner.targetHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget }));
+        }
+        const retry = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(retry.status, 0, retry.stderr);
+        const retryObserved = JSON.parse(retry.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(retryObserved.outcome, "returned", `${boundary}: ${String(retryObserved.message)}`);
+        assert.equal(retryObserved.descriptorDelta, 0);
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+        assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-")), []);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const frontier of [
+    Object.freeze({
+      name: "Q2 after the complete temporary is file-fsynced and closed",
+      initialState: "Q0" as const,
+      initialTemporaryCount: 0,
+      boundary: "after-temp-close" as const,
+      nextMutationBoundary: "before-selected-file-fsync" as const,
+    }),
+    Object.freeze({
+      name: "Q3 after rename with one complete extra",
+      initialState: "Q2" as const,
+      initialTemporaryCount: 2,
+      boundary: "after-rename" as const,
+      nextMutationBoundary: "before-extra-unlink" as const,
+    }),
+  ] as const) {
+    it(`P5c-Q-B recovers a real owner death at ${frontier.name} without stale-hook Q mutation`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, frontier.initialState, frontier.initialTemporaryCount);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const crashed = crashPhase5cExpectedPredecessorCasAtBoundaryV1(root, seeded, frontier.boundary);
+        assert.equal(crashed.signal, "SIGKILL", `${frontier.boundary}: the real Q owner dies at the exact fault boundary`);
+        assert.equal(existsSync(seeded.paths.writerFixed), true, "the dead target writer remains as stale ownership evidence");
+        const controllerFixed = path.join(seeded.paths.directory, ".current-entry-controller.lock.writer.lock");
+        assert.equal(existsSync(controllerFixed), true, "the killed operation held the real controller writer");
+
+        const frontierTemporaries = readdirSync(seeded.paths.directory)
+          .filter((name) => name.startsWith(`${path.basename(seeded.paths.target)}.tmp-`))
+          .sort((left, right) => Buffer.from(left).compare(Buffer.from(right)))
+          .map((name) => path.join(seeded.paths.directory, name));
+        assert.equal(frontierTemporaries.length, 1, `${frontier.name}: process death leaves one complete Q publication temporary`);
+        assert.equal(readFileSync(frontierTemporaries[0]!).equals(seeded.successorBytes), true);
+        assert.equal(lstatSync(frontierTemporaries[0]!, { bigint: true }).nlink, 1n);
+        const temporaryInode = lstatSync(frontierTemporaries[0]!, { bigint: true }).ino;
+        const fixedInode = lstatSync(seeded.paths.target, { bigint: true }).ino;
+        if (frontier.boundary === "after-temp-close") {
+          assert.equal(readFileSync(seeded.paths.target).equals(seeded.predecessorBytes), true, "Q2 retains the exact predecessor");
+          const owner = JSON.parse(readFileSync(seeded.paths.writerFixed, "utf8")) as Readonly<Record<string, unknown>>;
+          assert.equal(path.basename(frontierTemporaries[0]!), `${path.basename(seeded.paths.target)}.tmp-${String(owner.pid)}-${String(owner.nonce)}`,
+            "the complete Q2 temporary is bound to the killed target-writer PID and nonce");
+        } else {
+          assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true, "Q3 retains the exact renamed successor");
+        }
+
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", `${frontier.name}: ${String(observed.message)}`);
+        assert.equal(observed.casCalls, 1, "the fresh process enters only the private Q normalizer");
+        assert.equal(observed.targetWriterAcquireCalls, 1, "the fresh process performs one target-writer acquisition");
+        assert.equal(observed.controllerHeld, false);
+        assert.equal(observed.descriptorDelta, 0);
+        const events = observed.events as readonly string[];
+        const fixedRemoval = events.indexOf(`writer-family-mutation:${path.basename(seeded.paths.writerFixed)}`);
+        const freshWriter = events.indexOf(`writer-fresh-create:${path.basename(seeded.paths.target)}`);
+        const firstQMutation = events.indexOf(frontier.nextMutationBoundary);
+        assert.ok(fixedRemoval >= 0 && fixedRemoval < freshWriter && freshWriter < firstQMutation,
+          "Q2/Q3 is validated read-only before generic stale-lock convergence, then normalized under the fresh writer");
+        for (const staleQ1Mutation of ["before-q1-unlink", "after-q1-unlink", "after-q1-parent-fsync", "after-q1-fresh-absence"] as const) {
+          const index = events.indexOf(staleQ1Mutation);
+          assert.ok(index < 0 || index > fixedRemoval, `${staleQ1Mutation}: the stale callback cannot clean valid Q2/Q3 evidence`);
+        }
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+        assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith(`${path.basename(seeded.paths.target)}.tmp-`)), []);
+        assert.equal(readdirSync(seeded.paths.directory).some((name) => name.includes("writer.lock")), false);
+        if (frontier.boundary === "after-temp-close") {
+          assert.equal(lstatSync(seeded.paths.target, { bigint: true }).ino, temporaryInode, "Q2 adopts the exact killed owner's complete temporary");
+        } else {
+          assert.equal(lstatSync(seeded.paths.target, { bigint: true }).ino, fixedInode, "Q3 preserves the exact killed owner's successor inode");
+        }
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const mutation of [
+    Object.freeze({
+      name: "original fixed predecessor before temporary creation",
+      boundary: "before-temp-create" as const,
+      action: "replace-target" as const,
+      targetKind: "fixed" as const,
+      nextBoundary: "after-temp-create" as const,
+    }),
+    Object.freeze({
+      name: "operation parent after temporary creation",
+      boundary: "after-temp-create" as const,
+      action: "replace-parent" as const,
+      targetKind: "parent" as const,
+      nextBoundary: "after-temp-partial-write" as const,
+    }),
+    Object.freeze({
+      name: "held target-writer fixed member after partial write",
+      boundary: "after-temp-partial-write" as const,
+      action: "replace-writer" as const,
+      targetKind: "writer" as const,
+      nextBoundary: "after-temp-complete-write" as const,
+    }),
+    Object.freeze({
+      name: "owned temporary after its file fsync",
+      boundary: "after-temp-file-fsync" as const,
+      action: "replace-q1" as const,
+      targetKind: "temporary" as const,
+      nextBoundary: "after-temp-close" as const,
+    }),
+    Object.freeze({
+      name: "owned temporary immediately after close",
+      boundary: "after-temp-close" as const,
+      action: "replace-q1" as const,
+      targetKind: "temporary" as const,
+      nextBoundary: "before-selected-file-fsync" as const,
+    }),
+  ] as const) {
+    it(`P5c-Q-A refuses Q0 creation-window ABA of the ${mutation.name}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        const backup = mutation.targetKind === "parent"
+          ? path.join(path.dirname(seeded.paths.directory), `${path.basename(seeded.paths.directory)}.q0-creation-parent-backup`)
+          : path.join(root, `.q0-creation-${mutation.targetKind}-${mutation.boundary}-backup`);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(
+          root,
+          seeded,
+          "normalize-held",
+          Object.freeze({
+            boundary: mutation.boundary,
+            occurrence: 1,
+            action: mutation.action,
+            target: mutation.targetKind === "fixed" ? seeded.paths.target : undefined,
+            backup,
+          }),
+        );
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.ok(Number(observed.matches) >= 1, `${mutation.boundary}: the ABA executes inside the real Q0 mutation window`);
+        assert.equal(observed.outcome, "threw", `${mutation.boundary}: Q0 cannot continue across a same-path inode replacement`);
+        assert.match(String(observed.message), /changed|identity|inode|parent|writer|temporary|path|Q|CAS/i);
+        assert.equal(observed.descriptorDelta, 0, `${mutation.boundary}: every nontransferred descriptor closes`);
+        assert.equal(observed.controllerHeld, false, "the controller handle closes on the Q0 refusal path");
+        assert.equal(existsSync(backup), true, "the originally authenticated inode remains retained as evidence");
+        assert.equal((observed.events as readonly string[]).includes(mutation.nextBoundary), false,
+          `${mutation.boundary}: no later write, fsync, close, or normalization crosses the failed authority fence`);
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.predecessorBytes), true, "the predecessor is never replaced by successor bytes");
+
+        const qTemporaries = readdirSync(seeded.paths.directory)
+          .filter((name) => name.startsWith(`${path.basename(seeded.paths.target)}.tmp-`));
+        if (mutation.boundary === "before-temp-create") {
+          assert.deepEqual(qTemporaries, [], "pre-create fixed drift cannot create Q1 evidence");
+        } else {
+          assert.equal(qTemporaries.length, 1, "an interrupted created temporary is never silently lost or duplicated");
+          if (mutation.targetKind === "parent" || mutation.targetKind === "writer") {
+            assert.equal(existsSync(seeded.paths.writerFixed), true, "incomplete retained Q1 evidence remains physically bound to its stale writer");
+            const owner = JSON.parse(readFileSync(seeded.paths.writerFixed, "utf8")) as Readonly<Record<string, unknown>>;
+            assert.equal(qTemporaries[0], `${path.basename(seeded.paths.target)}.tmp-${String(owner.pid)}-${String(owner.nonce)}`,
+              "the sole retained Q1 member is bound to the held writer owner PID and nonce");
+          } else {
+            assert.equal(existsSync(seeded.paths.writerFixed), false, "a complete replacement Q2 does not require leaking the old writer handle");
+            const completeTarget = path.join(seeded.paths.directory, qTemporaries[0]!);
+            const completeInode = lstatSync(completeTarget, { bigint: true }).ino;
+            assert.equal(readFileSync(completeTarget).equals(seeded.successorBytes), true, "the complete replacement is retained as Q2 evidence");
+            const retry = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+            assert.equal(retry.status, 0, retry.stderr);
+            const retried = JSON.parse(retry.stdout) as Readonly<Record<string, unknown>>;
+            assert.equal(retried.outcome, "returned", `${mutation.boundary}: ${String(retried.message)}`);
+            assert.equal(retried.descriptorDelta, 0);
+            assert.equal(lstatSync(seeded.paths.target, { bigint: true }).ino, completeInode, "retry adopts the exact retained Q2 inode");
+            assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith(`${path.basename(seeded.paths.target)}.tmp-`)), []);
+          }
+        }
+        if (mutation.targetKind === "parent") {
+          assert.equal(existsSync(path.join(backup, path.basename(seeded.paths.target))), true);
+          assert.equal(existsSync(path.join(backup, path.basename(seeded.paths.writerFixed))), true);
+        }
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-B closes the incomplete temporary when cleanup-capability creation faults before ownership transfer", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      const backup = path.join(path.dirname(seeded.paths.directory), `${path.basename(seeded.paths.directory)}.q-capability-creator-backup`);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(
+        root,
+        seeded,
+        "normalize-held",
+        Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+        Object.freeze({ capabilityCreatorFault: true, capabilityCreatorBackup: backup }),
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.capabilityCreatorApplied, true, "the fault runs at the real creator entry after the incomplete member is pinned");
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /P5C_Q_CAPABILITY_CREATOR_FAULT|parent|directory|identity|changed/i);
+      assert.equal(observed.targetWriterAcquireCalls, 1);
+      assert.equal(observed.capabilitySize, 0, "a creator that never returned cannot publish a cleanup capability");
+      assert.equal(observed.descriptorDelta, 0, "temporary, predecessor, parent, target writer, and controller ownership all close");
+      assert.equal(observed.controllerHeld, false);
+      const events = observed.events as readonly string[];
+      const capabilityCreatorParentSwap = events.indexOf("capability-creator-parent-swap");
+      assert.ok(capabilityCreatorParentSwap >= 0, "the creator fault swaps the authenticated parent before it throws");
+      assert.equal(events.includes("after-temp-complete-write"), false, "the creator fault cannot resume writing through crossed authority");
+      assert.equal(events.slice(capabilityCreatorParentSwap + 1).some((event) => event.startsWith("writer-family-mutation:")), false,
+        "the creator fault cannot clean physical Q evidence through the replaced parent");
+
+      const evidence = observed.capabilityCreatorEvidence as Readonly<{
+        fixedBytes: string;
+        temporaries: readonly Readonly<{ name: string; bytes: string }>[];
+      }>;
+      assert.equal(evidence.fixedBytes, seeded.predecessorBytes.toString("base64"));
+      assert.equal(evidence.temporaries.length, 1);
+      assert.equal(evidence.temporaries[0]!.bytes, seeded.successorBytes.subarray(0, 2).toString("base64"));
+      const currentTemporary = path.join(seeded.paths.directory, evidence.temporaries[0]!.name);
+      assert.equal(readFileSync(seeded.paths.target).toString("base64"), evidence.fixedBytes, "replacement-generation predecessor bytes remain exact");
+      assert.equal(readFileSync(currentTemporary).toString("base64"), evidence.temporaries[0]!.bytes, "replacement-generation incomplete bytes remain exact");
+      assert.equal(existsSync(seeded.paths.writerFixed), true, "physical incomplete Q1 remains bound to the copied stale writer");
+      const owner = JSON.parse(readFileSync(seeded.paths.writerFixed, "utf8")) as Readonly<Record<string, unknown>>;
+      assert.equal(evidence.temporaries[0]!.name, `${path.basename(seeded.paths.target)}.tmp-${String(owner.pid)}-${String(owner.nonce)}`);
+      assert.equal(existsSync(backup), true, "the original pinned parent generation remains retained as evidence");
+      assert.equal(readFileSync(path.join(backup, path.basename(seeded.paths.target))).equals(seeded.predecessorBytes), true);
+      assert.equal(readFileSync(path.join(backup, evidence.temporaries[0]!.name)).toString("base64"), evidence.temporaries[0]!.bytes);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-B transfers uncertain Q1 ownership and claims it in the same module before a second target writer", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+        [
+          Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+          Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 }),
+        ],
+        [],
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; events: readonly string[]; targetWriterAcquireCalls: number; finalDescriptorDelta: number }>;
+      assert.equal(observed.calls[0]!.outcome, "threw");
+      assert.equal(observed.calls[0]!.capabilitySize, 1, "uncertain absence transfers the sole live cleanup capability");
+      assert.ok(Number(observed.calls[0]!.descriptorDelta) > 0, "the transferred writer, predecessor, temporary, and parent pins remain owned");
+      assert.deepEqual(observed.calls[0]!.overlay, { state: "Q1", route: "prior", temporaryCount: 0 }, "disk Q0 plus a live uncertain capability remains logical Q1");
+      assert.deepEqual({ outcome: observed.calls[1]!.outcome, capabilitySize: observed.calls[1]!.capabilitySize, descriptorDelta: observed.calls[1]!.descriptorDelta }, { outcome: "returned", capabilitySize: 0, descriptorDelta: 0 });
+      const claims = observed.events.indexOf("after-capability-claim");
+      const acquisitions = observed.events.map((event, index) => event === "target-writer-acquire" ? index : -1).filter((index) => index >= 0);
+      assert.equal(acquisitions.length, 2, "retry claims the old writer first and makes only the later ordinary acquisition");
+      assert.ok(acquisitions[0]! < claims && claims < acquisitions[1]!, "claim happens before any second target-writer acquisition");
+      assert.ok(observed.events.indexOf("after-q1-parent-fsync") < observed.events.indexOf("after-q1-fresh-absence"));
+      assert.ok(observed.events.indexOf("after-q1-fresh-absence") < observed.events.indexOf("after-capability-consume"));
+      assert.equal(observed.finalDescriptorDelta, 0);
+      assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+    } finally { removeFixture(root); }
+  });
+
+  for (const retained of ["path-present", "unlinked-parent-uncertain"] as const) {
+    it(`P5c-Q-B recovers ${retained} capability frontier after real process death`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const crashed = crashPhase5cExpectedPredecessorCasAfterCapabilityTransferV1(root, seeded, retained);
+        assert.equal(crashed.status, null, `${retained}: capability owner must die before in-memory cleanup`);
+        assert.equal(crashed.signal, "SIGKILL");
+        assert.equal(existsSync(seeded.paths.writerFixed), true, "the transferred target writer becomes pinned stale evidence");
+        const qTemps = readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-"));
+        assert.equal(qTemps.length, retained === "path-present" ? 1 : 0, "process death preserves the exact disk frontier");
+        const retry = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(retry.status, 0, retry.stderr);
+        const observed = JSON.parse(retry.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+        assert.deepEqual(readdirSync(seeded.paths.directory).filter((name) => name.startsWith("01-current-status.pair.json.tmp-")), []);
+        assert.equal(existsSync(seeded.paths.writerFixed), false);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const [name, cleanupBoundary, retained] of [
+    ["before unlink", "before-q1-unlink", true],
+    ["after unlink", "after-q1-unlink", true],
+    ["after parent fsync", "after-q1-parent-fsync", true],
+    ["after fresh absence", "after-q1-fresh-absence", false],
+  ] as const) {
+    it(`P5c-Q-B accounts for Q1 ownership ${name} response loss`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: cleanupBoundary, occurrence: 1 })],
+          [],
+        ]);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; finalDescriptorDelta: number }>;
+        assert.equal(observed.calls[0]!.outcome, "threw");
+        assert.equal(Number(observed.calls[0]!.capabilitySize), retained ? 1 : 0);
+        assert.equal(Number(observed.calls[0]!.descriptorDelta) > 0, retained, `${name}: live pins exist iff cleanup uncertainty was transferred`);
+        assert.equal(observed.calls[1]!.outcome, "returned");
+        assert.equal(observed.finalDescriptorDelta, 0);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const [boundary, retainedAfterFault] of [
+    ["before-capability-transfer", false],
+    ["after-capability-transfer", true],
+  ] as const) {
+    it(`P5c-Q-B closes or retains all pins at ${boundary}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+          [
+            Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+            Object.freeze({ boundary: boundary === "before-capability-transfer" ? "before-q1-unlink" : "after-q1-parent-fsync", occurrence: 1 }),
+            Object.freeze({ boundary, occurrence: 1 }),
+          ],
+          [],
+        ]);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; finalDescriptorDelta: number }>;
+        assert.equal(observed.calls[0]!.outcome, "threw");
+        assert.equal(Number(observed.calls[0]!.capabilitySize), retainedAfterFault ? 1 : 0);
+        assert.equal(Number(observed.calls[0]!.descriptorDelta) > 0, retainedAfterFault);
+        assert.deepEqual(observed.calls[0]!.overlay, retainedAfterFault
+          ? { state: "Q1", route: "prior", temporaryCount: 0 }
+          : { state: "Q0", route: "prior", temporaryCount: 0 },
+        `${boundary}: target writer is never released beside unbound incomplete Q1 evidence`);
+        assert.equal(observed.calls[1]!.outcome, "returned");
+        assert.equal(observed.finalDescriptorDelta, 0);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const [boundary, retainedAfterFault] of [["after-capability-claim", true], ["after-capability-consume", false]] as const) {
+    it(`P5c-Q-B retries safely after ${boundary}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 })],
+          [Object.freeze({ boundary, occurrence: 1 })],
+          [],
+        ]);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; finalDescriptorDelta: number }>;
+        assert.equal(observed.calls[1]!.outcome, "threw");
+        assert.equal(Number(observed.calls[1]!.capabilitySize), retainedAfterFault ? 1 : 0);
+        assert.equal(Number(observed.calls[1]!.descriptorDelta) > 0, retainedAfterFault);
+        assert.equal(observed.calls[2]!.outcome, "returned");
+        assert.equal(observed.finalDescriptorDelta, 0);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-B rejects a changed predecessor claim and preserves the one live capability for its exact retry", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(
+        root,
+        seeded,
+        [
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 })],
+          [],
+          [],
+        ],
+        [
+          Object.freeze({}),
+          Object.freeze({ predecessorBytes: phase5cExpectedPredecessorCasPairBytesV1("d") }),
+          Object.freeze({}),
+        ],
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; targetWriterAcquireCalls: number; finalDescriptorDelta: number }>;
+      assert.equal(observed.calls[1]!.outcome, "threw");
+      assert.match(String(observed.calls[1]!.message), /capability|predecessor|cross|changed/i);
+      assert.equal(observed.calls[1]!.capabilitySize, 1);
+      assert.equal(observed.calls[1]!.targetWriterAcquireCalls, 1, "changed pair is rejected during claim before any second writer acquisition");
+      assert.equal(observed.calls[2]!.outcome, "returned");
+      assert.equal(observed.finalDescriptorDelta, 0);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-B rejects changed successor arguments before claiming or reacquiring", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(
+        root,
+        seeded,
+        [
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 })],
+          [],
+          [],
+        ],
+        [
+          Object.freeze({}),
+          Object.freeze({ successorBytes: phase5cExpectedPredecessorCasPairBytesV1("d") }),
+          Object.freeze({}),
+        ],
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; targetWriterAcquireCalls: number; finalDescriptorDelta: number }>;
+      assert.equal(observed.calls[1]!.outcome, "threw");
+      assert.match(String(observed.calls[1]!.message), /capability|successor|cross|changed/i);
+      assert.equal(observed.calls[1]!.capabilitySize, 1);
+      assert.equal(observed.calls[1]!.targetWriterAcquireCalls, 1, "changed successor is rejected during claim before any second writer acquisition");
+      assert.equal(observed.calls[2]!.outcome, "returned");
+      assert.equal(observed.finalDescriptorDelta, 0);
+    } finally { removeFixture(root); }
+  });
+
+  for (const mutation of ["replace-writer", "replace-q1", "add-q1"] as const) {
+    it(`P5c-Q-B refuses ${mutation} between live-capability transfer and claim`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+        const backup = path.join(root, `q-capability-${mutation}-backup`);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+          [
+            Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+            Object.freeze({ boundary: "before-q1-unlink", occurrence: 1 }),
+            Object.freeze({ boundary: "after-capability-transfer", occurrence: 1, action: mutation, backup }),
+          ],
+          [],
+        ]);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; targetWriterAcquireCalls: number; finalDescriptorDelta: number }>;
+        assert.equal(observed.calls[0]!.capabilitySize, 1);
+        assert.equal(observed.calls[1]!.outcome, "threw");
+        assert.match(String(observed.calls[1]!.message), /capability|identity|second|temporary|writer|changed|cross/i);
+        assert.equal(observed.calls[1]!.capabilitySize, 1, "terminal claim refusal preserves the sole evidence-owning capability");
+        assert.equal(observed.targetWriterAcquireCalls, 1, "claim authentication fails before a second target writer acquisition");
+        assert.ok(observed.finalDescriptorDelta > 0, "the terminal capability retains its evidence pins until process teardown");
+        if (mutation !== "add-q1") assert.equal(existsSync(backup), true);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-B rejects a cross-target capability collision before touching the second target", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0, "c".repeat(64));
+      const other = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0, "e".repeat(64));
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const otherBefore = filesystemTreeSnapshot(other.paths.directory);
+      const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(
+        root,
+        seeded,
+        [
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 })],
+          [Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }), Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 })],
+          [],
+        ],
+        [Object.freeze({}), Object.freeze({ target: other.paths.target }), Object.freeze({})],
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; finalDescriptorDelta: number }>;
+      assert.equal(observed.calls[1]!.outcome, "threw");
+      assert.match(String(observed.calls[1]!.message), /capability|collision|target|cross/i);
+      assert.equal(observed.calls[1]!.capabilitySize, 1);
+      assert.equal(observed.calls[1]!.targetWriterAcquireCalls, 1, "cross-target collision is rejected before touching the second target writer");
+      assert.deepEqual(filesystemTreeSnapshot(other.paths.directory), otherBefore, "cross-target claim and second transfer perform zero mutation");
+      assert.equal(observed.calls[2]!.outcome, "returned");
+      assert.equal(observed.finalDescriptorDelta, 0);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-B rejects a same-byte replaced predecessor retained by a cleanup capability", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      const backup = path.join(root, "q-capability-predecessor-backup");
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasSameProcessFixtureV1(root, seeded, [
+        [
+          Object.freeze({ boundary: "after-temp-partial-write", occurrence: 1 }),
+          Object.freeze({ boundary: "after-q1-parent-fsync", occurrence: 1 }),
+          Object.freeze({ boundary: "after-capability-transfer", occurrence: 1, action: "replace-target", target: seeded.paths.target, backup }),
+        ],
+        [],
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ calls: readonly Readonly<Record<string, unknown>>[]; finalDescriptorDelta: number }>;
+      assert.equal(observed.calls[1]!.outcome, "threw");
+      assert.match(String(observed.calls[1]!.message), /identity|predecessor|capability|changed/i);
+      assert.equal(observed.calls[1]!.capabilitySize, 1);
+      assert.equal(existsSync(backup), true);
+      assert.equal(readFileSync(seeded.paths.target).equals(seeded.predecessorBytes), true);
+      assert.ok(observed.finalDescriptorDelta > 0, "terminal refusal preserves the exact evidence-owning capability until process teardown");
+    } finally { removeFixture(root); }
+  });
+
+  for (const invalid of ["uuid-v1", "uppercase-uuid", "pid-only", "mixed", "second-incomplete", "unequal", "q3-unequal", "q3-incomplete", "fixed-wrong", "wrong-mode", "symlink", "linked", "over-cap", "q3-eight"] as const) {
+    it(`P5c-Q-A refuses ${invalid} evidence with zero cleanup`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(
+          root,
+          invalid === "q3-eight" || invalid === "q3-unequal" || invalid === "q3-incomplete" ? "Q3" : invalid === "pid-only" || invalid === "second-incomplete" ? "Q1" : "Q2",
+          invalid === "over-cap" ? 9 : invalid === "q3-eight" ? 8 : invalid === "pid-only" ? 1 : 2,
+        );
+        if (invalid === "uuid-v1") {
+          const replacement = `${seeded.paths.target}.tmp-${process.pid}-00000001-0000-1000-8000-000000000001`;
+          renameSync(seeded.temporaries[0]!, replacement);
+        } else if (invalid === "uppercase-uuid") {
+          const replacement = `${seeded.paths.target}.tmp-${process.pid}-A0000001-0000-4000-8000-000000000001`;
+          renameSync(seeded.temporaries[0]!, replacement);
+        } else if (invalid === "mixed" || invalid === "second-incomplete" || invalid === "q3-incomplete") {
+          writeFileSync(seeded.temporaries[0]!, Buffer.from("{\n", "utf8"));
+          if (invalid === "second-incomplete") writeFileSync(seeded.temporaries[1]!, Buffer.from("[\n", "utf8"));
+        } else if (invalid === "unequal" || invalid === "q3-unequal") {
+          writeFileSync(seeded.temporaries[0]!, phase5cExpectedPredecessorCasPairBytesV1("d"));
+        } else if (invalid === "fixed-wrong") {
+          writeFileSync(seeded.paths.target, phase5cExpectedPredecessorCasPairBytesV1("d"));
+        } else if (invalid === "wrong-mode") {
+          chmodSync(seeded.temporaries[0]!, 0o640);
+        } else if (invalid === "symlink") {
+          const source = path.join(root, "q-symlink-source");
+          writeFileSync(source, seeded.successorBytes, { mode: 0o600 });
+          unlinkSync(seeded.temporaries[0]!);
+          symlinkSync(source, seeded.temporaries[0]!);
+        } else if (invalid === "linked") {
+          linkSync(seeded.temporaries[0]!, path.join(root, "q-hardlink-alias-outside-operation"));
+        }
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const before = filesystemTreeSnapshot(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.casCalls, 1, `${invalid}: refusal reaches the real Q normalizer`);
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /Q|CAS|temp|candidate|grammar|mode|link|mixed|unequal|cap/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual(filesystemTreeSnapshot(root), before, `${invalid}: invalid evidence is immutable`);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-A chooses the first unsigned-UTF-8 Q2 basename before rename", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q2", 0);
+      const later = phase5cExpectedPredecessorCasTempV1(seeded.paths.target, 8);
+      const first = phase5cExpectedPredecessorCasTempV1(seeded.paths.target, 1);
+      writeFileSync(later, seeded.successorBytes, { mode: 0o600 });
+      writeFileSync(first, seeded.successorBytes, { mode: 0o600 });
+      const firstInode = lstatSync(first, { bigint: true }).ino;
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", Object.freeze({ boundary: "after-rename", occurrence: 1 }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.equal(lstatSync(seeded.paths.target, { bigint: true }).ino, firstInode, "unsigned UTF-8 first basename is the sole rename authority");
+      assert.equal(existsSync(later), true, "later complete evidence remains for Q3 cleanup after retry");
+      assert.equal(observed.descriptorDelta, 0);
+    } finally { removeFixture(root); }
+  });
+
+  for (const boundary of ["after-rename", "after-extra-unlink", "before-final-reopen"] as const) {
+    it(`P5c-Q-A rejects a same-byte authority replacement ${boundary}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, boundary === "after-rename" ? "Q2" : "Q3", boundary === "before-final-reopen" ? 0 : 2);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const backup = path.join(seeded.paths.directory, `.q-aba-${boundary}`);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", Object.freeze({ boundary, occurrence: 1, action: "replace-target", target: seeded.paths.target, backup }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw", `${boundary}: fresh semantic equality cannot replace retained inode authority`);
+        assert.match(String(observed.message), /changed|identity|inode|pin|Q|CAS/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(existsSync(backup), true, "the prior pinned inode remains available as evidence");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-A rejects a same-byte operation-parent generation replacement before Q2 file fsync", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q2", 2);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const backup = path.join(path.dirname(seeded.paths.directory), `${path.basename(seeded.paths.directory)}.q-parent-backup`);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", Object.freeze({ boundary: "before-selected-file-fsync", occurrence: 1, action: "replace-parent", backup }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /parent|directory|identity|changed|writer|Q|CAS/i);
+      assert.equal(existsSync(backup), true);
+      assert.equal(observed.descriptorDelta, 0);
+      assert.equal(existsSync(path.join(backup, path.basename(seeded.paths.target))), true, "the prior generation remains intact as evidence");
+    } finally { removeFixture(root); }
+  });
+
+  for (const testCase of [
+    Object.freeze({
+      name: "selected Q2 temporary before its file fsync",
+      state: "Q2" as const,
+      temporaryCount: 2,
+      boundary: "before-selected-file-fsync" as const,
+      targetKind: "selected" as const,
+    }),
+    Object.freeze({
+      name: "fixed Q2 predecessor before rename",
+      state: "Q2" as const,
+      temporaryCount: 1,
+      boundary: "before-rename" as const,
+      targetKind: "fixed" as const,
+    }),
+    Object.freeze({
+      name: "unsigned-first Q3 extra before unlink",
+      state: "Q3" as const,
+      temporaryCount: 2,
+      boundary: "before-extra-unlink" as const,
+      targetKind: "selected" as const,
+    }),
+  ] as const) {
+    it(`P5c-Q-A refuses pathname ABA of the ${testCase.name}`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, testCase.state, testCase.temporaryCount);
+        const mutationTarget = testCase.targetKind === "fixed" ? seeded.paths.target : seeded.temporaries[0]!;
+        const otherTemporary = seeded.temporaries[1] ?? null;
+        const fixedBefore = lstatSync(seeded.paths.target, { bigint: true });
+        const mutationBefore = lstatSync(mutationTarget, { bigint: true });
+        const expectedMutationBytes = readFileSync(mutationTarget);
+        const backup = path.join(seeded.paths.directory, `.q-mutation-target-aba-${testCase.boundary}`);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(
+          root,
+          seeded,
+          "normalize-held",
+          Object.freeze({ boundary: testCase.boundary, occurrence: 1, action: "replace-target", target: mutationTarget, backup }),
+        );
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.ok(Number(observed.matches) >= 1, `${testCase.boundary}: the replacement occurs at the requested mutation boundary`);
+        assert.equal(observed.outcome, "threw", `${testCase.boundary}: an fd pin cannot authorize a same-path replacement`);
+        assert.match(String(observed.message), /changed|identity|inode|pin|path|Q|CAS/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(observed.controllerHeld, false, "the real controller writer is released on refusal");
+        assert.equal(existsSync(backup), true, "the originally pinned inode remains retained as evidence");
+        assert.equal(lstatSync(backup, { bigint: true }).ino, mutationBefore.ino);
+        assert.equal(readFileSync(backup).equals(expectedMutationBytes), true);
+        assert.equal(existsSync(mutationTarget), true, "the replacement pathname is not renamed or unlinked");
+        assert.notEqual(lstatSync(mutationTarget, { bigint: true }).ino, mutationBefore.ino);
+        assert.equal(readFileSync(mutationTarget).equals(expectedMutationBytes), true);
+        if (testCase.targetKind !== "fixed") {
+          assert.equal(lstatSync(seeded.paths.target, { bigint: true }).ino, fixedBefore.ino, "the fixed endpoint remains untouched");
+          assert.equal(readFileSync(seeded.paths.target).equals(testCase.state === "Q3" ? seeded.successorBytes : seeded.predecessorBytes), true);
+        }
+        if (otherTemporary !== null) assert.equal(existsSync(otherTemporary), true, "later pinned evidence is retained without further cleanup");
+        const writerArtifacts = readdirSync(seeded.paths.directory).filter((entry) => entry.includes("writer.lock"));
+        assert.deepEqual(writerArtifacts, [], "target and controller writer artifacts close on refusal");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-Q-B recovers exact stale-writer Q1 before removing the fixed writer", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 0);
+      const nonce = "70000000-0000-4000-8000-000000000007";
+      const writerPaths = phase5cExpectedPredecessorCasWriterPathsV1(seeded);
+      const staleSource = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(writerPaths, nonce, "complete");
+      const owner = JSON.parse(readFileSync(staleSource, "utf8")) as Readonly<Record<string, unknown>>;
+      const pid = Number(owner.pid);
+      renameSync(staleSource, seeded.paths.writerFixed);
+      const q1 = `${seeded.paths.target}.tmp-${pid}-${nonce}`;
+      writeFileSync(q1, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.equal(observed.descriptorDelta, 0);
+      assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true);
+      assert.equal(existsSync(q1), false);
+      assert.equal(existsSync(seeded.paths.writerFixed), false);
+      const events = observed.events as readonly string[];
+      const q1Absent = events.indexOf("after-q1-fresh-absence");
+      const fixedRemoval = events.findIndex((event) => event === `writer-family-mutation:${path.basename(seeded.paths.writerFixed)}`);
+      const freshAcquire = events.indexOf(`writer-fresh-create:${path.basename(seeded.paths.target)}`);
+      assert.ok(q1Absent >= 0 && q1Absent < fixedRemoval && fixedRemoval < freshAcquire,
+        "stale Q1 absence is parent-durable before fixed-lock removal and fresh writer creation");
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-B makes stale-lock-alone Q-temp absence parent-durable before fixed-lock removal", async () => {
+    const root = createFixture();
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q0", 0);
+      const writerPaths = phase5cExpectedPredecessorCasWriterPathsV1(seeded);
+      const staleSource = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(writerPaths, "73000000-0000-4000-8000-000000000007", "complete");
+      renameSync(staleSource, seeded.paths.writerFixed);
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      const events = observed.events as readonly string[];
+      const absent = events.indexOf("after-q1-fresh-absence");
+      const fixedRemoval = events.findIndex((event) => event === `writer-family-mutation:${path.basename(seeded.paths.writerFixed)}`);
+      assert.ok(absent >= 0 && absent < fixedRemoval, "stale-lock-alone absence is durable before generic fixed-lock cleanup");
+      assert.equal(observed.descriptorDelta, 0);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-B accepts a definitely PID-reused fixed owner only with its exact bound Q1 temp", async () => {
+    const root = createFixture();
+    let reused: ReturnType<typeof spawn> | null = null;
+    try {
+      const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 0);
+      reused = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+      assert.notEqual(reused.pid, undefined);
+      const nonce = "73500000-0000-4000-8000-000000000007";
+      writeFileSync(seeded.paths.writerFixed, exactPoisonRecoveryWriterOwnerBytesFixtureV1(seeded.paths.writerTarget, reused.pid!, nonce), { mode: 0o600 });
+      const q1 = `${seeded.paths.target}.tmp-${reused.pid!}-${nonce}`;
+      writeFileSync(q1, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+      instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+      const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      const events = observed.events as readonly string[];
+      const absent = events.indexOf("after-q1-fresh-absence");
+      const firstWriterMutation = events.findIndex((event) => event.startsWith("writer-family-mutation:"));
+      assert.ok(absent >= 0 && absent < firstWriterMutation);
+      assert.equal(existsSync(q1), false);
+      assert.equal(observed.descriptorDelta, 0);
+    } finally {
+      if (reused?.pid) reused.kill("SIGKILL");
+      removeFixture(root);
+    }
+  });
+
+  for (const acquisitionTemps of [1, 8] as const) {
+    it(`P5c-Q-B cleans bound stale Q1 before converging ${acquisitionTemps} coherent writer-acquisition temps`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 0);
+        const writerPaths = phase5cExpectedPredecessorCasWriterPathsV1(seeded);
+        const fixedNonce = "73600000-0000-4000-8000-000000000007";
+        const fixedSource = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(writerPaths, fixedNonce, "complete");
+        const fixedOwner = JSON.parse(readFileSync(fixedSource, "utf8")) as Readonly<Record<string, unknown>>;
+        renameSync(fixedSource, seeded.paths.writerFixed);
+        const q1 = `${seeded.paths.target}.tmp-${String(fixedOwner.pid)}-${fixedNonce}`;
+        writeFileSync(q1, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+        for (let index = 0; index < acquisitionTemps; index += 1) {
+          crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+            writerPaths,
+            `73700000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            "complete",
+          );
+        }
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        const events = observed.events as readonly string[];
+        const absent = events.indexOf("after-q1-fresh-absence");
+        const firstWriterMutation = events.findIndex((event) => event.startsWith("writer-family-mutation:"));
+        assert.ok(absent >= 0 && absent < firstWriterMutation, "Q callback completes before generic writer-family convergence");
+        assert.equal(observed.descriptorDelta, 0);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const staleInvalid of ["nonce-mismatch", "canonical-unequal", "second-temp", "malformed-owner", "wrong-target-hash", "wrong-owner-identity", "live", "ambiguous", "reuse-mismatch", "fixed-replaced"] as const) {
+    it(`P5c-Q-B leaves stale writer and Q evidence unchanged for ${staleInvalid}`, async () => {
+      const root = createFixture();
+      let live: ReturnType<typeof spawn> | null = null;
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 0);
+        if (staleInvalid === "live" || staleInvalid === "reuse-mismatch") {
+          live = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+          assert.notEqual(live.pid, undefined);
+        }
+        const pid = live?.pid ?? 2_147_483_646;
+        const ownerNonce = "71000000-0000-4000-8000-000000000007";
+        const tempNonce = staleInvalid === "nonce-mismatch" || staleInvalid === "reuse-mismatch" ? "72000000-0000-4000-8000-000000000007" : ownerNonce;
+        const q1 = `${seeded.paths.target}.tmp-${pid}-${tempNonce}`;
+        writeFileSync(q1, staleInvalid === "canonical-unequal" ? phase5cExpectedPredecessorCasPairBytesV1("a") : Buffer.from("{\n", "utf8"), { mode: 0o600 });
+        if (staleInvalid === "second-temp") writeFileSync(phase5cExpectedPredecessorCasTempV1(seeded.paths.target, 9, pid), Buffer.from("[\n", "utf8"), { mode: 0o600 });
+        const ownerBytes = staleInvalid === "malformed-owner"
+          ? Buffer.from("{}\n", "utf8")
+          : staleInvalid === "live"
+            ? exactLiveWriterOwnerFixtureV1(seeded.paths.writerTarget, pid, ownerNonce)
+            : exactPoisonRecoveryWriterOwnerBytesFixtureV1(seeded.paths.writerTarget, pid, ownerNonce,
+              staleInvalid === "wrong-target-hash" ? { targetHash: "f".repeat(64) }
+                : staleInvalid === "wrong-owner-identity" ? { identityHash: "e".repeat(64) }
+                  : Object.freeze({}));
+        writeFileSync(seeded.paths.writerFixed, ownerBytes, { mode: 0o600 });
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const before = filesystemTreeSnapshot(seeded.paths.directory);
+        const replacementBackup = path.join(root, "q-fixed-writer-replaced-backup");
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(
+          root,
+          seeded,
+          "normalize-held",
+          staleInvalid === "fixed-replaced" ? Object.freeze({ boundary: "before-q1-unlink", occurrence: 1, action: "replace-target", target: seeded.paths.writerFixed, backup: replacementBackup }) : null,
+          staleInvalid === "ambiguous" ? Object.freeze({ ambiguousPid: pid }) : Object.freeze({}),
+        );
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.casCalls, 1, `${staleInvalid}: stale refusal reaches the Q normalizer before writer cleanup`);
+        assert.equal(observed.outcome, "threw");
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal((observed.events as readonly string[]).some((event) => event.startsWith("writer-family-mutation:")), false,
+          `${staleInvalid}: Q refusal precedes every generic writer-family mutation`);
+        if (staleInvalid === "fixed-replaced") {
+          assert.equal(existsSync(replacementBackup), true, "the intentionally replaced pinned writer remains evidence");
+          assert.equal(existsSync(q1), true);
+        } else {
+          assert.deepEqual(filesystemTreeSnapshot(seeded.paths.directory), before, `${staleInvalid}: stale hook precedes every generic writer cleanup`);
+        }
+      } finally {
+        if (live?.pid) live.kill("SIGKILL");
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const mutation of ["fixed-predecessor", "bound-q1", "operation-parent"] as const) {
+    it(`P5c-Q-B refuses same-byte stale-hook ABA of the ${mutation} before Q1 cleanup`, async () => {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q1", 0);
+        const nonce = "74000000-0000-4000-8000-000000000007";
+        const writerPaths = phase5cExpectedPredecessorCasWriterPathsV1(seeded);
+        const staleSource = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(writerPaths, nonce, "complete");
+        const owner = JSON.parse(readFileSync(staleSource, "utf8")) as Readonly<Record<string, unknown>>;
+        renameSync(staleSource, seeded.paths.writerFixed);
+        const q1 = `${seeded.paths.target}.tmp-${String(owner.pid)}-${nonce}`;
+        writeFileSync(q1, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+        const fixedBefore = lstatSync(seeded.paths.target, { bigint: true });
+        const q1Before = lstatSync(q1, { bigint: true });
+        const fixedBytesBefore = readFileSync(seeded.paths.target);
+        const q1BytesBefore = readFileSync(q1);
+        const mutationTarget = mutation === "fixed-predecessor" ? seeded.paths.target : q1;
+        const mutationBefore = lstatSync(mutation === "operation-parent" ? seeded.paths.directory : mutationTarget, { bigint: true });
+        const backup = mutation === "operation-parent"
+          ? path.join(path.dirname(seeded.paths.directory), `${path.basename(seeded.paths.directory)}.q-stale-parent-backup`)
+          : path.join(root, `.q-stale-${mutation}-backup`);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(
+          root,
+          seeded,
+          "normalize-held",
+          mutation === "operation-parent"
+            ? Object.freeze({ boundary: "before-q1-unlink", occurrence: 1, action: "replace-parent", backup })
+            : Object.freeze({ boundary: "before-q1-unlink", occurrence: 1, action: "replace-target", target: mutationTarget, backup }),
+        );
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw", `${mutation}: stale snapshot authority cannot cross a same-path inode swap`);
+        assert.match(String(observed.message), /changed|identity|inode|parent|path|writer|Q|CAS/i);
+        assert.equal((observed.events as readonly string[]).some((event) => event.startsWith("writer-family-mutation:")), false,
+          `${mutation}: the stale callback refuses before generic writer-family cleanup`);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(observed.controllerHeld, false, "the outer controller releases even when the stale hook refuses");
+        assert.equal(existsSync(backup), true, "the prior generation remains retained as causal evidence");
+        assert.equal(lstatSync(backup, { bigint: true }).ino, mutationBefore.ino);
+        if (mutation === "operation-parent") {
+          assert.equal(existsSync(path.join(backup, path.basename(seeded.paths.target))), true);
+          assert.equal(existsSync(path.join(backup, path.basename(q1))), true);
+          assert.equal(existsSync(seeded.paths.target), true, "the replacement generation's fixed predecessor remains untouched");
+          assert.equal(existsSync(q1), true, "the replacement generation's bound Q1 evidence is not unlinked through an old parent pin");
+          assert.notEqual(lstatSync(seeded.paths.target, { bigint: true }).ino, fixedBefore.ino);
+          assert.notEqual(lstatSync(q1, { bigint: true }).ino, q1Before.ino);
+          assert.equal(readFileSync(seeded.paths.target).equals(fixedBytesBefore), true);
+          assert.equal(readFileSync(q1).equals(q1BytesBefore), true);
+          for (const forbidden of ["after-q1-unlink", "after-q1-parent-fsync", "after-q1-fresh-absence"] as const) {
+            assert.equal((observed.events as readonly string[]).includes(forbidden), false,
+              `parent-generation drift is terminal before ${forbidden}`);
+          }
+        } else {
+          assert.equal(existsSync(mutationTarget), true, "the replacement remains and is not cleaned through the stale pin");
+          assert.notEqual(lstatSync(mutationTarget, { bigint: true }).ino, mutationBefore.ino);
+          assert.equal(existsSync(mutation === "fixed-predecessor" ? q1 : seeded.paths.target), true, "the other bound Q evidence remains");
+        }
+      } finally { removeFixture(root); }
     });
   }
 

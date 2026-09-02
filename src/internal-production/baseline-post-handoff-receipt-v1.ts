@@ -3397,6 +3397,38 @@ type Task12ReceiptWriterOwnerV1 = Readonly<{
   nonce: string;
 }>;
 
+type Task12ReceiptLocatorWriterHandleV1 = Readonly<{
+  target: string;
+  targetHash: string;
+  owner: Task12ReceiptWriterOwnerV1;
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+type Task12ReceiptLocatorWriterPinnedMemberV1 = Readonly<{
+  member: string;
+  descriptor: number;
+  identity: BigIntStats;
+  bytes: Buffer;
+  pid?: number;
+  nonce?: string;
+}>;
+
+type Task12ReceiptLocatorWriterStaleSnapshotV1 = Readonly<{
+  target: string;
+  targetHash: string;
+  lockPath: string;
+  fixed: Task12ReceiptLocatorWriterPinnedMemberV1;
+  fixedOwner: Task12ReceiptWriterOwnerV1;
+  processObservation: Readonly<
+    | { state: "dead" }
+    | { state: "reused"; observed: Extract<Task12ReceiptWriterProcessObservationV1, { state: "live" }> }
+  >;
+  acquisitionCandidates: readonly Task12ReceiptLocatorWriterPinnedMemberV1[];
+  guard: Task12ReceiptDirectoryGuardV1;
+  assertStable: () => void;
+}>;
+
 const TASK12_RECEIPT_WRITER_OWNER_KEYS_V1 = Object.freeze([
   "schema", "targetHash", "pid", "start", "commandHash", "identityHash", "nonce",
 ] as const);
@@ -7240,7 +7272,10 @@ function readTask12ReceiptStoreBytesV1(target: string, expectedLinkCount = 1): B
   return readTask12ReceiptStoreSnapshotV1(target, expectedLinkCount).bytes;
 }
 
-function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertStable: () => void; close: () => void }> {
+function acquireTask12ReceiptLocatorWriterV1(
+  target: string,
+  beforeStaleMutation?: (snapshot: Task12ReceiptLocatorWriterStaleSnapshotV1) => void,
+): Task12ReceiptLocatorWriterHandleV1 {
   const directory = path.dirname(target);
   const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
@@ -7273,14 +7308,6 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
     if (!observed.equals(bytes)) throw retryPinnedSnapshot;
     unlinkSync(member);
   };
-  type PinnedWriterMemberV1 = {
-    member: string;
-    descriptor: number;
-    identity: BigIntStats;
-    bytes: Buffer;
-    pid?: number;
-    nonce?: string;
-  };
   const escapedPrefix = tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const tempPattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
   const deadline = Date.now() + 10_000;
@@ -7297,12 +7324,12 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
     let identity: BigIntStats | null = null;
     let bytes: Buffer | null = null;
     let linked = false;
-    const pinned: PinnedWriterMemberV1[] = [];
+    const pinned: Task12ReceiptLocatorWriterPinnedMemberV1[] = [];
     try {
       guard.assertStable();
       const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
       if (candidates.length > 8) currentEntryFail("Task12 receipt writer lock temp cap exceeded");
-      const openPinned = (member: string, pid?: number, nonce?: string): PinnedWriterMemberV1 => {
+      const openPinned = (member: string, pid?: number, nonce?: string): Task12ReceiptLocatorWriterPinnedMemberV1 => {
         const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         try {
           const memberIdentity = fstatSync(memberDescriptor, { bigint: true });
@@ -7344,7 +7371,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         catch (error) { waitForMovingSnapshot(error); movingSnapshot = true; break; }
       }
       if (movingSnapshot) continue;
-      let fixed: PinnedWriterMemberV1 | null = null;
+      let fixed: Task12ReceiptLocatorWriterPinnedMemberV1 | null = null;
       try {
         fixed = openPinned(lockPath);
         pinned.push(fixed);
@@ -7394,6 +7421,8 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
       }
       let busy = false;
       let ambiguous = false;
+      let fixedOwner: Task12ReceiptWriterOwnerV1 | null = null;
+      let fixedProcessObservation: Task12ReceiptLocatorWriterStaleSnapshotV1["processObservation"] | null = null;
       for (const member of pinned) {
         const parsed = parseTask12ReceiptWriterOwnerV1(
           member.bytes,
@@ -7410,6 +7439,18 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
           continue;
         }
         const processObservation = observeTask12ReceiptWriterProcessV1(parsed.owner.pid);
+        if (member === fixed) {
+          fixedOwner = parsed.owner;
+          if (processObservation.state === "dead") fixedProcessObservation = Object.freeze({ state: "dead" as const });
+          else if (
+            processObservation.state === "live"
+            && (
+              processObservation.start !== parsed.owner.start
+              || processObservation.commandHash !== parsed.owner.commandHash
+              || processObservation.identityHash !== parsed.owner.identityHash
+            )
+          ) fixedProcessObservation = Object.freeze({ state: "reused" as const, observed: processObservation });
+        }
         if (processObservation.state === "ambiguous") ambiguous = true;
         else if (
           processObservation.state === "live"
@@ -7424,6 +7465,22 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         if (Date.now() >= deadline) currentEntryFail("Task12 receipt writer lock is busy");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
         continue;
+      }
+      if (fixed !== null && fixedOwner !== null && fixedProcessObservation !== null) {
+        const staleSnapshot: Task12ReceiptLocatorWriterStaleSnapshotV1 = Object.freeze({
+          target,
+          targetHash,
+          lockPath,
+          fixed,
+          fixedOwner,
+          processObservation: fixedProcessObservation,
+          acquisitionCandidates: Object.freeze(candidateMembers),
+          guard,
+          assertStable: assertCoherentPinnedSnapshot,
+        });
+        staleSnapshot.assertStable();
+        beforeStaleMutation?.(staleSnapshot);
+        staleSnapshot.assertStable();
       }
       const selectedMember = selected.length === 1 ? selected[0]! : null;
       const independent = candidateMembers.filter((member) => member !== selectedMember);
@@ -7468,9 +7525,11 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         } catch (error) { waitForMovingSnapshot(error); }
         continue;
       }
-      const owner = observeTask12ReceiptWriterProcessV1(process.pid);
-      if (owner.state !== "live") currentEntryFail("Task12 receipt writer process is unavailable");
-      const nonce = randomUUID(); const body = { schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1", targetHash, pid: process.pid, start: owner.start, commandHash: owner.commandHash, identityHash: owner.identityHash, nonce }; bytes = task12ReceiptCanonicalBytesV1(body);
+      const processOwner = observeTask12ReceiptWriterProcessV1(process.pid);
+      if (processOwner.state !== "live") currentEntryFail("Task12 receipt writer process is unavailable");
+      const nonce = randomUUID();
+      const owner: Task12ReceiptWriterOwnerV1 = Object.freeze({ schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1", targetHash, pid: process.pid, start: processOwner.start, commandHash: processOwner.commandHash, identityHash: processOwner.identityHash, nonce });
+      bytes = task12ReceiptCanonicalBytesV1(owner);
       temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`);
       descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
       writeFileSync(descriptor, bytes); fsyncSync(descriptor); identity = fstatSync(descriptor, { bigint: true });
@@ -7536,6 +7595,9 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         ) currentEntryFail("Task12 receipt writer lock changed while held");
       };
       return Object.freeze({
+        target,
+        targetHash,
+        owner,
         assertStable,
         close: () => {
           if (heldClosed) currentEntryFail("Task12 receipt writer lock closed twice");
@@ -7671,7 +7733,950 @@ function publishLegacyZeroRecordV1(target: string, bytes: Buffer, allowUnequalIn
   }
 }
 
+type Task12CurrentStatusCasStateV1 = "Q0" | "Q1" | "Q2" | "Q3" | "Q4";
+
+type Task12CurrentStatusCasPinnedMemberV1 = Readonly<{
+  target: string;
+  descriptor: number;
+  identity: BigIntStats;
+  bytes: Buffer;
+}>;
+
+type Task12CurrentStatusCasObservationV1 = Readonly<{
+  state: Task12CurrentStatusCasStateV1;
+  route: "prior" | "next";
+  parent: Task12ReceiptDirectoryGuardV1;
+  parentIdentity: BigIntStats;
+  fixed: Task12CurrentStatusCasPinnedMemberV1;
+  temporaries: readonly Task12CurrentStatusCasPinnedMemberV1[];
+  temporaryTargets: readonly string[];
+  writer: Task12ReceiptLocatorWriterHandleV1 | null;
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+type Task12CurrentStatusCasCleanupCapabilityV1 = Readonly<{
+  target: string;
+  targetHash: string;
+  predecessorBytes: Buffer;
+  successorBytes: Buffer;
+  writer: Task12ReceiptLocatorWriterHandleV1;
+  predecessor: Task12CurrentStatusCasPinnedMemberV1;
+  temporary: Task12CurrentStatusCasPinnedMemberV1;
+  parent: Task12ReceiptDirectoryGuardV1;
+  parentIdentity: BigIntStats;
+  owner: Task12ReceiptWriterOwnerV1;
+  claimed: { value: boolean };
+  transferred: { value: boolean };
+  temporaryPresent: { value: boolean };
+  cleanupComplete: { value: boolean };
+  close: () => void;
+}>;
+
+type Task12CurrentStatusCasFaultBoundaryV1 =
+  | "before-temp-create"
+  | "after-temp-create"
+  | "after-temp-partial-write"
+  | "after-temp-complete-write"
+  | "after-temp-file-fsync"
+  | "after-temp-close"
+  | "before-selected-file-fsync"
+  | "after-selected-file-fsync"
+  | "before-rename"
+  | "after-rename"
+  | "before-extra-unlink"
+  | "after-extra-unlink"
+  | "after-extra-parent-fsync"
+  | "after-fresh-smaller-enumeration"
+  | "before-final-parent-fsync"
+  | "after-final-parent-fsync"
+  | "before-final-reopen"
+  | "after-final-reopen"
+  | "before-q1-unlink"
+  | "after-q1-unlink"
+  | "after-q1-parent-fsync"
+  | "after-q1-fresh-absence"
+  | "before-capability-transfer"
+  | "after-capability-transfer"
+  | "after-capability-claim"
+  | "after-capability-consume";
+
+const task12CurrentStatusCasCleanupCapabilitiesV1 = new Map<string, Task12CurrentStatusCasCleanupCapabilityV1>();
+
+function task12CurrentStatusCasFaultV1(_boundary: Task12CurrentStatusCasFaultBoundaryV1): void {}
+
+function requireTask12CurrentStatusPairBytesV1(bytes: Buffer, label: string): InternalProductionCurrentEntryAuthorityStatusPairV1 {
+  const value = strictCanonicalRecord(bytes, label);
+  if (!hasExactKeys(value, ["statusRef", "statusHash"])) currentEntryFail(`${label} current-status pair fields are invalid`);
+  if (!(typeof value.statusRef === "string" && typeof value.statusHash === "string")) currentEntryFail(`${label} current-status pair values are invalid`);
+  const statusRefIsBound = value.statusRef === `${TASK12_STATUS_PREFIX_V1}${value.statusHash}`;
+  if (!SHA256.test(value.statusHash) || !statusRefIsBound) {
+    currentEntryFail(`${label} current-status pair is crossed`);
+  }
+  return Object.freeze({ statusRef: value.statusRef, statusHash: value.statusHash });
+}
+
+function task12CurrentStatusCasTargetHashV1(target: string): string {
+  const authorityTarget = task12ReceiptLocatorWriterAuthorityTargetV1(target);
+  return hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget });
+}
+
+function openTask12CurrentStatusCasPinnedMemberV1(
+  target: string,
+  parentIdentity: BigIntStats,
+): Task12CurrentStatusCasPinnedMemberV1 {
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const identity = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(target, { bigint: true });
+    if (
+      !identity.isFile()
+      || identity.isSymbolicLink()
+      || (identity.mode & 0o7777n) !== 0o600n
+      || identity.nlink !== 1n
+      || identity.dev !== parentIdentity.dev
+      || identity.uid !== parentIdentity.uid
+      || !sameRegularMetadata(identity, atPath)
+      || identity.size < 0n
+      || identity.size > BigInt(CURRENT_ENTRY_MAX_BYTES)
+    ) currentEntryFail("Task12 current-status CAS member identity is invalid");
+    const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+    const after = fstatSync(descriptor, { bigint: true });
+    const reopened = lstatSync(target, { bigint: true });
+    if (!sameRegularMetadata(identity, after) || !sameRegularMetadata(identity, reopened)) {
+      currentEntryFail("Task12 current-status CAS member changed while read");
+    }
+    return Object.freeze({ target, descriptor, identity, bytes });
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertTask12CurrentStatusCasPinnedMemberStableV1(
+  member: Task12CurrentStatusCasPinnedMemberV1,
+  expectedLinkCount = 1n,
+): void {
+  const before = fstatSync(member.descriptor, { bigint: true });
+  let atPath: BigIntStats;
+  try { atPath = lstatSync(member.target, { bigint: true }); }
+  catch (error) {
+    if (isEnoent(error) && expectedLinkCount === 0n) {
+      if (!before.isFile() || before.nlink !== 0n || (before.mode & 0o7777n) !== 0o600n) currentEntryFail("Task12 current-status CAS unlinked pin is invalid");
+      const unlinkedBytes = readTask12ReceiptDescriptorBytesV1(member.descriptor, before.size);
+      const after = fstatSync(member.descriptor, { bigint: true });
+      if (!sameRegularMetadata(before, after) || !unlinkedBytes.equals(member.bytes)) currentEntryFail("Task12 current-status CAS unlinked pin changed");
+      return;
+    }
+    throw error;
+  }
+  const bytes = readTask12ReceiptDescriptorBytesV1(member.descriptor, before.size);
+  const after = fstatSync(member.descriptor, { bigint: true });
+  const reopened = lstatSync(member.target, { bigint: true });
+  if (
+    !before.isFile()
+    || before.isSymbolicLink()
+    || (before.mode & 0o7777n) !== 0o600n
+    || before.nlink !== expectedLinkCount
+    || !sameRegularMetadata(member.identity, before)
+    || !sameRegularMetadata(member.identity, atPath)
+    || !sameRegularMetadata(member.identity, after)
+    || !sameRegularMetadata(member.identity, reopened)
+    || !bytes.equals(member.bytes)
+  ) currentEntryFail("Task12 current-status CAS pin changed");
+}
+
+function closeTask12CurrentStatusCasPinnedMemberV1(member: Task12CurrentStatusCasPinnedMemberV1): void {
+  closeSync(member.descriptor);
+}
+
+function task12CurrentStatusCasBytesAreIncompleteV1(bytes: Buffer): boolean {
+  try {
+    strictCanonicalRecord(bytes, "Task12 current-status Q1 temporary");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function observeTask12CurrentStatusCasNoWriteV1(
+  target: string,
+  predecessorBytes: Buffer,
+  successorBytes: Buffer,
+): Task12CurrentStatusCasObservationV1 {
+  if (path.basename(target) !== "01-current-status.pair.json") currentEntryFail("Task12 current-status CAS target is invalid");
+  requireTask12CurrentStatusPairBytesV1(predecessorBytes, "Task12 current-status CAS predecessor");
+  requireTask12CurrentStatusPairBytesV1(successorBytes, "Task12 current-status CAS successor");
+  if (predecessorBytes.equals(successorBytes)) currentEntryFail("Task12 current-status CAS transition is not strict");
+  const directory = path.dirname(target);
+  const parent = authenticateTask12ReceiptDirectoryChainV1(directory);
+  const parentIdentity = lstatSync(directory, { bigint: true });
+  const temporaries: Task12CurrentStatusCasPinnedMemberV1[] = [];
+  let fixed: Task12CurrentStatusCasPinnedMemberV1 | null = null;
+  let closed = false;
+  try {
+    parent.assertStable();
+    const assertPinnedPhysical = (member: Task12CurrentStatusCasPinnedMemberV1): void => {
+      const identity = fstatSync(member.descriptor, { bigint: true });
+      const atPath = lstatSync(member.target, { bigint: true });
+      const mtime = identity.mtimeNs;
+      const ctime = identity.ctimeNs;
+      if (
+        !identity.isFile()
+        || identity.isSymbolicLink()
+        || identity.dev !== parentIdentity.dev
+        || identity.uid !== parentIdentity.uid
+        || (identity.mode & 0o7777n) !== 0o600n
+        || identity.nlink !== 1n
+        || identity.ino !== atPath.ino
+        || identity.size !== atPath.size
+        || mtime !== atPath.mtimeNs
+        || ctime !== atPath.ctimeNs
+        || !sameRegularMetadata(member.identity, identity)
+        || !sameRegularMetadata(member.identity, atPath)
+      ) currentEntryFail("Task12 current-status CAS member physical identity is invalid");
+    };
+    const prefix = `${path.basename(target)}.tmp-`;
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
+    const temporaryNames = readdirSync(directory).filter((entry) => entry.startsWith(prefix)).sort(compareBytes);
+    if (temporaryNames.length > 8) currentEntryFail("Task12 current-status CAS temp cap exceeded");
+    for (const name of temporaryNames) {
+      const match = pattern.exec(name);
+      if (match === null) currentEntryFail("Task12 current-status CAS temp grammar is invalid");
+      const decimalPid = Number(match[1]);
+      if (!Number.isSafeInteger(decimalPid) || decimalPid < 1) currentEntryFail("Task12 current-status CAS temp PID is invalid");
+      const temporary = openTask12CurrentStatusCasPinnedMemberV1(path.join(directory, name), parentIdentity);
+      assertPinnedPhysical(temporary);
+      temporaries.push(temporary);
+    }
+    fixed = openTask12CurrentStatusCasPinnedMemberV1(target, parentIdentity);
+    assertPinnedPhysical(fixed);
+    const targetHash = task12CurrentStatusCasTargetHashV1(target);
+    const capability = task12CurrentStatusCasCleanupCapabilitiesV1.get(targetHash) ?? null;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("Task12 current-status CAS observation is closed");
+      parent.assertStable();
+      const nowParent = lstatSync(directory, { bigint: true });
+      if (!sameRegularMetadata(parentIdentity, nowParent)) currentEntryFail("Task12 current-status CAS parent changed");
+      const freshNames = readdirSync(directory).filter((entry) => entry.startsWith(prefix)).sort(compareBytes);
+      if (canonicalComparable(freshNames) !== canonicalComparable(temporaryNames)) currentEntryFail("Task12 current-status CAS temp inventory changed");
+      assertTask12CurrentStatusCasPinnedMemberStableV1(fixed!);
+      for (const temporary of temporaries) assertTask12CurrentStatusCasPinnedMemberStableV1(temporary);
+      if (capability !== null) {
+        capability.writer.assertStable();
+        assertTask12CurrentStatusCasPinnedMemberStableV1(capability.predecessor);
+        assertTask12CurrentStatusCasPinnedMemberStableV1(capability.temporary, capability.temporaryPresent.value ? 1n : 0n);
+      }
+      parent.assertStable();
+    };
+    assertStable();
+    const classifications = Object.freeze({
+      Q0: Object.freeze({ state: "Q0" as const, route: "prior" as const }),
+      Q1: Object.freeze({ state: "Q1" as const, route: "prior" as const }),
+      Q2: Object.freeze({ state: "Q2" as const, route: "prior" as const }),
+      Q3: Object.freeze({ state: "Q3" as const, route: "next" as const }),
+    });
+    let state: Exclude<Task12CurrentStatusCasStateV1, "Q4">;
+    let route: "prior" | "next";
+    if (fixed.bytes.equals(predecessorBytes)) {
+      if (capability !== null) {
+        if (
+          capability.target !== target
+          || capability.targetHash !== targetHash
+          || !capability.predecessorBytes.equals(predecessorBytes)
+          || !capability.successorBytes.equals(successorBytes)
+          || capability.cleanupComplete.value
+        ) currentEntryFail("Task12 current-status CAS cleanup capability is crossed");
+        if (temporaries.length > 1) currentEntryFail("Task12 current-status Q1 has competing temporaries");
+        if (temporaries.length === 1 && (
+          !capability.temporaryPresent.value
+          || temporaries[0]!.identity.dev !== capability.temporary.identity.dev
+          || temporaries[0]!.identity.ino !== capability.temporary.identity.ino
+          || !temporaries[0]!.bytes.equals(capability.temporary.bytes)
+        )) currentEntryFail("Task12 current-status Q1 capability evidence is crossed");
+        if (temporaries.length === 0 && capability.temporaryPresent.value) currentEntryFail("Task12 current-status Q1 capability path disappeared");
+        ({ state, route } = classifications.Q1);
+      } else if (temporaries.length === 0) {
+        ({ state, route } = classifications.Q0);
+      } else {
+        if (temporaries.some((temporary) => !temporary.bytes.equals(successorBytes))) {
+          currentEntryFail("Task12 current-status Q1 temporary is unbound");
+        }
+        ({ state, route } = classifications.Q2);
+      }
+    } else if (fixed.bytes.equals(successorBytes)) {
+      if (capability !== null) currentEntryFail("Task12 current-status CAS capability crossed the successor");
+      if (temporaries.length > 7 || temporaries.some((temporary) => !temporary.bytes.equals(successorBytes))) {
+        currentEntryFail("Task12 current-status Q3 evidence is invalid");
+      }
+      ({ state, route } = classifications.Q3);
+    } else {
+      currentEntryFail("Task12 current-status CAS fixed pair is crossed");
+    }
+    assertStable();
+    return Object.freeze({
+      state,
+      route,
+      parent,
+      parentIdentity,
+      fixed,
+      temporaries: Object.freeze(temporaries),
+      temporaryTargets: Object.freeze(temporaries.map((temporary) => temporary.target)),
+      writer: capability?.writer ?? null,
+      assertStable,
+      close: () => {
+        if (closed) currentEntryFail("Task12 current-status CAS observation closed twice");
+        closed = true;
+        for (const temporary of [...temporaries].reverse()) closeTask12CurrentStatusCasPinnedMemberV1(temporary);
+        closeTask12CurrentStatusCasPinnedMemberV1(fixed!);
+        parent.close();
+      },
+    });
+  } catch (error) {
+    closed = true;
+    for (const temporary of [...temporaries].reverse()) closeTask12CurrentStatusCasPinnedMemberV1(temporary);
+    if (fixed !== null) closeTask12CurrentStatusCasPinnedMemberV1(fixed);
+    parent.close();
+    throw error;
+  }
+}
+
+function task12CurrentStatusCasTemporaryPatternV1(target: string): RegExp {
+  const prefix = `${path.basename(target)}.tmp-`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${prefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
+}
+
+function task12CurrentStatusCasTemporaryNamesV1(target: string): readonly string[] {
+  const prefix = `${path.basename(target)}.tmp-`;
+  return Object.freeze(readdirSync(path.dirname(target)).filter((entry) => entry.startsWith(prefix)).sort(compareBytes));
+}
+
+function createTask12CurrentStatusCasPinnedMemberFromDescriptorV1(
+  target: string,
+  descriptor: number,
+  parentIdentity: BigIntStats,
+): Task12CurrentStatusCasPinnedMemberV1 {
+  const identity = fstatSync(descriptor, { bigint: true });
+  const atPath = lstatSync(target, { bigint: true });
+  if (
+    !identity.isFile()
+    || identity.isSymbolicLink()
+    || (identity.mode & 0o7777n) !== 0o600n
+    || identity.nlink !== 1n
+    || identity.dev !== parentIdentity.dev
+    || identity.uid !== parentIdentity.uid
+    || !sameRegularMetadata(identity, atPath)
+    || identity.size < 0n
+    || identity.size > BigInt(CURRENT_ENTRY_MAX_BYTES)
+  ) currentEntryFail("Task12 current-status Q1 temporary identity is invalid");
+  const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+  const after = fstatSync(descriptor, { bigint: true });
+  const reopened = lstatSync(target, { bigint: true });
+  if (!sameRegularMetadata(identity, after) || !sameRegularMetadata(identity, reopened)) {
+    currentEntryFail("Task12 current-status Q1 temporary changed while pinned");
+  }
+  return Object.freeze({ target, descriptor, identity, bytes });
+}
+
+function assertTask12CurrentStatusCasParentStableV1(parent: Task12ReceiptDirectoryGuardV1, directory: string, identity: BigIntStats): void {
+  parent.assertStable();
+  const atPath = lstatSync(directory, { bigint: true });
+  if (
+    !atPath.isDirectory()
+    || atPath.isSymbolicLink()
+    || atPath.dev !== identity.dev
+    || atPath.ino !== identity.ino
+    || atPath.mode !== identity.mode
+    || atPath.uid !== identity.uid
+  ) currentEntryFail("Task12 current-status CAS parent changed");
+  parent.assertStable();
+}
+
+function cleanupPinnedTask12CurrentStatusCasQ1V1(
+  target: string,
+  temporary: Task12CurrentStatusCasPinnedMemberV1 | null,
+  parent: Task12ReceiptDirectoryGuardV1,
+  parentIdentity: BigIntStats,
+  assertAuthority: () => void,
+  temporaryPresent?: { value: boolean },
+  cleanupComplete?: { value: boolean },
+): void {
+  const directory = path.dirname(target);
+  const present = temporaryPresent ?? { value: temporary !== null };
+  assertAuthority();
+  assertTask12CurrentStatusCasParentStableV1(parent, directory, parentIdentity);
+  if (present.value) {
+    if (temporary === null) currentEntryFail("Task12 current-status Q1 cleanup pin is unavailable");
+    task12CurrentStatusCasFaultV1("before-q1-unlink");
+    assertAuthority();
+    assertTask12CurrentStatusCasParentStableV1(parent, directory, parentIdentity);
+    assertTask12CurrentStatusCasPinnedMemberStableV1(temporary);
+    unlinkSync(temporary.target);
+    present.value = false;
+    const afterUnlink = fstatSync(temporary.descriptor, { bigint: true });
+    if (!afterUnlink.isFile() || afterUnlink.nlink !== 0n || !readTask12ReceiptDescriptorBytesV1(temporary.descriptor, afterUnlink.size).equals(temporary.bytes)) {
+      currentEntryFail("Task12 current-status Q1 unlink is crossed");
+    }
+    task12CurrentStatusCasFaultV1("after-q1-unlink");
+  }
+  assertAuthority();
+  fsyncCurrentEntryDirectory(directory);
+  task12CurrentStatusCasFaultV1("after-q1-parent-fsync");
+  assertAuthority();
+  assertTask12CurrentStatusCasParentStableV1(parent, directory, lstatSync(directory, { bigint: true }));
+  try {
+    lstatSync(temporary?.target ?? `${target}.tmp-${process.pid}-00000000-0000-4000-8000-000000000000`, { bigint: true });
+    if (temporary !== null) currentEntryFail("Task12 current-status Q1 temporary still exists");
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  const matching = task12CurrentStatusCasTemporaryNamesV1(target);
+  if (matching.length !== 0) currentEntryFail("Task12 current-status Q1 absence is crossed");
+  assertAuthority();
+  if (cleanupComplete !== undefined) cleanupComplete.value = true;
+  task12CurrentStatusCasFaultV1("after-q1-fresh-absence");
+}
+
+function closeTask12CurrentStatusCasCleanupCapabilityV1(capability: Task12CurrentStatusCasCleanupCapabilityV1): void {
+  let primary: unknown = null;
+  try { capability.writer.close(); }
+  catch (error) { primary = error; }
+  try { closeTask12CurrentStatusCasPinnedMemberV1(capability.temporary); }
+  catch (error) { primary ??= error; }
+  try { closeTask12CurrentStatusCasPinnedMemberV1(capability.predecessor); }
+  catch (error) { primary ??= error; }
+  try { capability.parent.close(); }
+  catch (error) { primary ??= error; }
+  if (primary !== null) throw primary;
+}
+
+function transferTask12CurrentStatusCasCleanupCapabilityV1(capability: Task12CurrentStatusCasCleanupCapabilityV1): void {
+  task12CurrentStatusCasFaultV1("before-capability-transfer");
+  if (task12CurrentStatusCasCleanupCapabilitiesV1.size !== 0) currentEntryFail("Task12 current-status CAS cleanup capability already exists");
+  const targetHash = capability.targetHash;
+  task12CurrentStatusCasCleanupCapabilitiesV1.set(targetHash, capability);
+  capability.transferred.value = true;
+  task12CurrentStatusCasFaultV1("after-capability-transfer");
+}
+
+function assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability: Task12CurrentStatusCasCleanupCapabilityV1): void {
+  capability.writer.assertStable();
+  if (
+    capability.writer.target !== capability.target
+    || capability.writer.targetHash !== capability.targetHash
+    || capability.writer.owner.targetHash !== capability.targetHash
+    || capability.owner !== capability.writer.owner
+  ) currentEntryFail("Task12 current-status CAS cleanup capability writer is crossed");
+  assertTask12CurrentStatusCasPinnedMemberStableV1(capability.predecessor);
+  assertTask12CurrentStatusCasPinnedMemberStableV1(capability.temporary, capability.temporaryPresent.value ? 1n : 0n);
+  assertTask12CurrentStatusCasParentStableV1(capability.parent, path.dirname(capability.target), capability.parentIdentity);
+  const expectedNames = capability.temporaryPresent.value ? [path.basename(capability.temporary.target)] : [];
+  if (canonicalComparable(task12CurrentStatusCasTemporaryNamesV1(capability.target)) !== canonicalComparable(expectedNames)) {
+    currentEntryFail("Task12 current-status CAS cleanup capability inventory is crossed");
+  }
+}
+
+function claimTask12CurrentStatusCasCleanupCapabilityV1(
+  target: string,
+  targetHash: string,
+  predecessorBytes: Buffer,
+  successorBytes: Buffer,
+): Task12CurrentStatusCasCleanupCapabilityV1 | null {
+  if (task12CurrentStatusCasCleanupCapabilitiesV1.size === 0) return null;
+  const capability = task12CurrentStatusCasCleanupCapabilitiesV1.get(targetHash);
+  if (capability === undefined) currentEntryFail("Task12 current-status CAS cleanup capability target collision");
+  if (
+    capability.claimed.value
+    || capability.target !== target
+    || !capability.predecessorBytes.equals(predecessorBytes)
+    || !capability.successorBytes.equals(successorBytes)
+    || capability.cleanupComplete.value
+  ) currentEntryFail("Task12 current-status CAS cleanup capability claim is crossed");
+  assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability);
+  capability.claimed.value = true;
+  try {
+    task12CurrentStatusCasFaultV1("after-capability-claim");
+    assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability);
+    return capability;
+  } catch (error) {
+    capability.claimed.value = false;
+    throw error;
+  }
+}
+
+function consumeTask12CurrentStatusCasCleanupCapabilityV1(
+  targetHash: string,
+  capability: Task12CurrentStatusCasCleanupCapabilityV1,
+): void {
+  if (!capability.claimed.value || task12CurrentStatusCasCleanupCapabilitiesV1.get(targetHash) !== capability) {
+    currentEntryFail("Task12 current-status CAS cleanup capability consumption is invalid");
+  }
+  try {
+    cleanupPinnedTask12CurrentStatusCasQ1V1(
+      capability.target,
+      capability.temporary,
+      capability.parent,
+      capability.parentIdentity,
+      () => assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability),
+      capability.temporaryPresent,
+      capability.cleanupComplete,
+    );
+  } catch (error) {
+    if (!capability.cleanupComplete.value) {
+      capability.claimed.value = false;
+      throw error;
+    }
+    task12CurrentStatusCasCleanupCapabilitiesV1.delete(targetHash);
+    closeTask12CurrentStatusCasCleanupCapabilityV1(capability);
+    throw error;
+  }
+  task12CurrentStatusCasCleanupCapabilitiesV1.delete(targetHash);
+  closeTask12CurrentStatusCasCleanupCapabilityV1(capability);
+  task12CurrentStatusCasFaultV1("after-capability-consume");
+}
+
+function cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1(
+  snapshot: Task12ReceiptLocatorWriterStaleSnapshotV1,
+  predecessorBytes: Buffer,
+  successorBytes: Buffer,
+): void {
+  if (path.basename(snapshot.target) !== "01-current-status.pair.json") return;
+  if (snapshot.fixedOwner.targetHash !== snapshot.targetHash) currentEntryFail("Task12 stale current-status writer targetHash is crossed");
+  if (snapshot.processObservation.state !== "dead" && snapshot.processObservation.state !== "reused") {
+    currentEntryFail("Task12 stale current-status writer is not definitely dead or pid-reused");
+  }
+  const directory = path.dirname(snapshot.target);
+  const parent = authenticateTask12ReceiptDirectoryChainV1(directory);
+  const parentIdentity = lstatSync(directory, { bigint: true });
+  let fixed: Task12CurrentStatusCasPinnedMemberV1 | null = null;
+  const temporaries: Task12CurrentStatusCasPinnedMemberV1[] = [];
+  const temporaryPresent = { value: false };
+  try {
+    snapshot.assertStable();
+    assertTask12CurrentStatusCasParentStableV1(parent, directory, parentIdentity);
+    fixed = openTask12CurrentStatusCasPinnedMemberV1(snapshot.target, parentIdentity);
+    const names = task12CurrentStatusCasTemporaryNamesV1(snapshot.target);
+    if (names.length > 8) currentEntryFail("Task12 stale current-status CAS temp cap exceeded");
+    const pattern = task12CurrentStatusCasTemporaryPatternV1(snapshot.target);
+    for (const name of names) {
+      const match = pattern.exec(name);
+      if (match === null) currentEntryFail("Task12 stale current-status CAS temp grammar is invalid");
+      const pid = Number(match[1]);
+      if (!Number.isSafeInteger(pid) || pid < 1) currentEntryFail("Task12 stale current-status CAS temp PID is invalid");
+      temporaries.push(openTask12CurrentStatusCasPinnedMemberV1(path.join(directory, name), parentIdentity));
+    }
+    let cleanedTemporary: Task12CurrentStatusCasPinnedMemberV1 | null = null;
+    temporaryPresent.value = temporaries.length === 1;
+    const assertAuthority = (): void => {
+      snapshot.assertStable();
+      assertTask12CurrentStatusCasParentStableV1(parent, directory, parentIdentity);
+      assertTask12CurrentStatusCasPinnedMemberStableV1(fixed!);
+      const expectedNames = cleanedTemporary !== null && !temporaryPresent.value ? [] : names;
+      if (canonicalComparable(task12CurrentStatusCasTemporaryNamesV1(snapshot.target)) !== canonicalComparable(expectedNames)) {
+        currentEntryFail("Task12 stale current-status CAS temp inventory changed");
+      }
+      for (const temporary of temporaries) {
+        assertTask12CurrentStatusCasPinnedMemberStableV1(
+          temporary,
+          temporary === cleanedTemporary && !temporaryPresent.value ? 0n : 1n,
+        );
+      }
+      assertTask12CurrentStatusCasParentStableV1(parent, directory, parentIdentity);
+    };
+    assertAuthority();
+    if (fixed.bytes.equals(predecessorBytes)) {
+      if (temporaries.length === 0) {
+        cleanupPinnedTask12CurrentStatusCasQ1V1(
+          snapshot.target,
+          null,
+          parent,
+          parentIdentity,
+          assertAuthority,
+          temporaryPresent,
+        );
+        assertAuthority();
+        return;
+      }
+      const incompleteTemporaries = temporaries.filter((temporary) => task12CurrentStatusCasBytesAreIncompleteV1(temporary.bytes));
+      if (incompleteTemporaries.length > 0) {
+        if (temporaries.length !== 1 || incompleteTemporaries.length !== 1) {
+          currentEntryFail("Task12 stale current-status Q1 has multiple temporaries");
+        }
+        const expected = `${path.basename(snapshot.target)}.tmp-${snapshot.fixedOwner.pid}-${snapshot.fixedOwner.nonce}`;
+        if (names[0] !== expected) currentEntryFail("Task12 stale current-status Q1 PID or nonce is crossed");
+        cleanedTemporary = incompleteTemporaries[0]!;
+        cleanupPinnedTask12CurrentStatusCasQ1V1(
+          snapshot.target,
+          cleanedTemporary,
+          parent,
+          parentIdentity,
+          assertAuthority,
+          temporaryPresent,
+        );
+        assertAuthority();
+        return;
+      }
+      if (temporaries.every((temporary) => temporary.bytes.equals(successorBytes))) {
+        assertAuthority();
+        return;
+      }
+      currentEntryFail("Task12 stale current-status Q1 or Q2 evidence is invalid");
+    }
+    if (fixed.bytes.equals(successorBytes)) {
+      if (temporaries.length > 7 || temporaries.some((temporary) => !temporary.bytes.equals(successorBytes))) {
+        currentEntryFail("Task12 stale current-status Q3 evidence is invalid");
+      }
+      assertAuthority();
+      return;
+    }
+    currentEntryFail("Task12 stale current-status fixed pair is crossed");
+  } finally {
+    for (const temporary of [...temporaries].reverse()) closeTask12CurrentStatusCasPinnedMemberV1(temporary);
+    if (fixed !== null) closeTask12CurrentStatusCasPinnedMemberV1(fixed);
+    parent.close();
+  }
+}
+
+function createTask12CurrentStatusCasCleanupCapabilityV1(
+  target: string,
+  predecessorBytes: Buffer,
+  successorBytes: Buffer,
+  writer: Task12ReceiptLocatorWriterHandleV1,
+  predecessor: Task12CurrentStatusCasPinnedMemberV1,
+  temporary: Task12CurrentStatusCasPinnedMemberV1,
+  parent: Task12ReceiptDirectoryGuardV1,
+  parentIdentity: BigIntStats,
+): Task12CurrentStatusCasCleanupCapabilityV1 {
+  const targetHash = task12CurrentStatusCasTargetHashV1(target);
+  if (writer.target !== target || writer.targetHash !== targetHash || writer.owner.targetHash !== targetHash) {
+    currentEntryFail("Task12 current-status CAS cleanup writer authority is crossed");
+  }
+  let closed = false;
+  let capability: Task12CurrentStatusCasCleanupCapabilityV1;
+  capability = Object.freeze({
+    target,
+    targetHash,
+    predecessorBytes: Buffer.from(predecessorBytes),
+    successorBytes: Buffer.from(successorBytes),
+    writer,
+    predecessor,
+    temporary,
+    parent,
+    parentIdentity,
+    owner: writer.owner,
+    claimed: { value: false },
+    transferred: { value: false },
+    temporaryPresent: { value: true },
+    cleanupComplete: { value: false },
+    close: () => {
+      if (closed) currentEntryFail("Task12 current-status CAS cleanup capability closed twice");
+      closed = true;
+      closeTask12CurrentStatusCasCleanupCapabilityV1(capability);
+    },
+  });
+  return capability;
+}
+
+function normalizeTask12CurrentStatusCasV1(target: string, predecessorBytes: Buffer, successorBytes: Buffer): void {
+  if (path.basename(target) !== "01-current-status.pair.json") currentEntryFail("Task12 current-status CAS target is invalid");
+  const operationHash = path.basename(path.dirname(target));
+  if (!activeTask12ControllerOperationsV1.has(operationHash)) currentEntryFail("Task12 current-status CAS requires the authenticated controller lock");
+  requireTask12CurrentStatusPairBytesV1(predecessorBytes, "Task12 current-status CAS predecessor input");
+  requireTask12CurrentStatusPairBytesV1(successorBytes, "Task12 current-status CAS successor input");
+  if (predecessorBytes.equals(successorBytes)) currentEntryFail("Task12 current-status CAS transition is not strict");
+  const targetHash = task12CurrentStatusCasTargetHashV1(target);
+  const claimed = claimTask12CurrentStatusCasCleanupCapabilityV1(target, targetHash, predecessorBytes, successorBytes);
+  if (claimed !== null) consumeTask12CurrentStatusCasCleanupCapabilityV1(targetHash, claimed);
+
+  let writer: Task12ReceiptLocatorWriterHandleV1 | null = null;
+  let observation: Task12CurrentStatusCasObservationV1 | null = null;
+  let transferred = false;
+  try {
+    writer = acquireTask12ReceiptLocatorWriterV1(target, (snapshot) => cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1(snapshot, predecessorBytes, successorBytes));
+    writer.assertStable();
+    for (;;) {
+      observation = observeTask12CurrentStatusCasNoWriteV1(target, predecessorBytes, successorBytes);
+      observation.assertStable();
+      writer.assertStable();
+      if (observation.state === "Q1") currentEntryFail("Task12 current-status Q1 requires its retained cleanup capability");
+      if (observation.state === "Q0") {
+        const current = observation;
+        const q0Writer = writer;
+        if (q0Writer === null) currentEntryFail("Task12 current-status Q0 writer is unavailable");
+        let temporaryDescriptor = -1;
+        let temporaryTarget = "";
+        let closedTemporary: Task12CurrentStatusCasPinnedMemberV1 | null = null;
+        const assertQ0Authority = (temporary: Task12CurrentStatusCasPinnedMemberV1 | null): void => {
+          q0Writer.assertStable();
+          assertTask12CurrentStatusCasParentStableV1(current.parent, path.dirname(target), current.parentIdentity);
+          assertTask12CurrentStatusCasPinnedMemberStableV1(current.fixed);
+          const expectedNames = temporary === null ? [] : [path.basename(temporary.target)];
+          if (canonicalComparable(task12CurrentStatusCasTemporaryNamesV1(target)) !== canonicalComparable(expectedNames)) {
+            currentEntryFail("Task12 current-status Q0 owned temporary inventory changed");
+          }
+          if (temporary !== null) assertTask12CurrentStatusCasPinnedMemberStableV1(temporary);
+          assertTask12CurrentStatusCasPinnedMemberStableV1(current.fixed);
+          assertTask12CurrentStatusCasParentStableV1(current.parent, path.dirname(target), current.parentIdentity);
+          q0Writer.assertStable();
+        };
+        const captureQ0Temporary = (expectedBytes: Buffer): Task12CurrentStatusCasPinnedMemberV1 => {
+          if (temporaryDescriptor < 0 || temporaryTarget === "") {
+            currentEntryFail("Task12 current-status Q0 temporary descriptor is unavailable");
+          }
+          const temporary = createTask12CurrentStatusCasPinnedMemberFromDescriptorV1(
+            temporaryTarget,
+            temporaryDescriptor,
+            current.parentIdentity,
+          );
+          if (!temporary.bytes.equals(expectedBytes)) currentEntryFail("Task12 current-status Q0 temporary bytes are crossed");
+          assertQ0Authority(temporary);
+          return temporary;
+        };
+        try {
+          assertQ0Authority(null);
+          task12CurrentStatusCasFaultV1("before-temp-create");
+          assertQ0Authority(null);
+          temporaryTarget = `${target}.tmp-${q0Writer.owner.pid}-${q0Writer.owner.nonce}`;
+          temporaryDescriptor = openSync(temporaryTarget, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+          task12CurrentStatusCasFaultV1("after-temp-create");
+          captureQ0Temporary(Buffer.alloc(0));
+          const partialLength = Math.min(2, successorBytes.length);
+          writeFileSync(temporaryDescriptor, successorBytes.subarray(0, partialLength));
+          task12CurrentStatusCasFaultV1("after-temp-partial-write");
+          captureQ0Temporary(successorBytes.subarray(0, partialLength));
+          writeFileSync(temporaryDescriptor, successorBytes.subarray(partialLength));
+          task12CurrentStatusCasFaultV1("after-temp-complete-write");
+          const complete = captureQ0Temporary(successorBytes);
+          fsyncSync(temporaryDescriptor);
+          task12CurrentStatusCasFaultV1("after-temp-file-fsync");
+          const durable = captureQ0Temporary(successorBytes);
+          if (durable.identity.dev !== complete.identity.dev || durable.identity.ino !== complete.identity.ino) {
+            currentEntryFail("Task12 current-status Q2 durable temporary inode is crossed");
+          }
+          closedTemporary = openTask12CurrentStatusCasPinnedMemberV1(temporaryTarget, current.parentIdentity);
+          if (
+            closedTemporary.identity.dev !== durable.identity.dev
+            || closedTemporary.identity.ino !== durable.identity.ino
+            || !closedTemporary.bytes.equals(successorBytes)
+          ) currentEntryFail("Task12 current-status Q2 retained temporary is crossed");
+          assertQ0Authority(closedTemporary);
+          closeSync(temporaryDescriptor);
+          temporaryDescriptor = -1;
+          task12CurrentStatusCasFaultV1("after-temp-close");
+          assertQ0Authority(closedTemporary);
+        } catch (mutationError) {
+          if (temporaryDescriptor >= 0 && temporaryTarget !== "") {
+            let temporary: Task12CurrentStatusCasPinnedMemberV1 | null = null;
+            try {
+              temporary = createTask12CurrentStatusCasPinnedMemberFromDescriptorV1(temporaryTarget, temporaryDescriptor, current.parentIdentity);
+            } catch (pinError) {
+              closeSync(temporaryDescriptor);
+              temporaryDescriptor = -1;
+              throw pinError;
+            }
+            if (!temporary.bytes.equals(successorBytes)) {
+              assertQ0Authority(temporary);
+              const capability = createTask12CurrentStatusCasCleanupCapabilityV1(
+                target,
+                predecessorBytes,
+                successorBytes,
+                q0Writer,
+                current.fixed,
+                temporary,
+                current.parent,
+                current.parentIdentity,
+              );
+              temporaryDescriptor = -1;
+              writer = null;
+              observation = null;
+              try {
+                cleanupPinnedTask12CurrentStatusCasQ1V1(
+                  target,
+                  temporary,
+                  capability.parent,
+                  capability.parentIdentity,
+                  () => assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability),
+                  capability.temporaryPresent,
+                  capability.cleanupComplete,
+                );
+              } catch (cleanupError) {
+                if (capability.cleanupComplete.value) {
+                  capability.close();
+                  throw cleanupError;
+                }
+                try {
+                  transferTask12CurrentStatusCasCleanupCapabilityV1(capability);
+                } catch (transferError) {
+                  if (capability.transferred.value) {
+                    transferred = true;
+                    throw transferError;
+                  }
+                  try {
+                    cleanupPinnedTask12CurrentStatusCasQ1V1(
+                      target,
+                      temporary,
+                      capability.parent,
+                      capability.parentIdentity,
+                      () => assertTask12CurrentStatusCasCleanupCapabilityStableV1(capability),
+                      capability.temporaryPresent,
+                      capability.cleanupComplete,
+                    );
+                  } finally { capability.close(); }
+                  throw transferError;
+                }
+                transferred = true;
+                throw cleanupError;
+              }
+              capability.close();
+            }
+          }
+          throw mutationError;
+        } finally {
+          if (closedTemporary !== null) closeTask12CurrentStatusCasPinnedMemberV1(closedTemporary);
+          if (temporaryDescriptor >= 0) closeSync(temporaryDescriptor);
+        }
+        current.close();
+        observation = null;
+        continue;
+      }
+      if (observation.state === "Q2") {
+        const current = observation;
+        const selected = current.temporaries[0]!;
+        current.assertStable();
+        writer.assertStable();
+        task12CurrentStatusCasFaultV1("before-selected-file-fsync");
+        current.assertStable();
+        writer.assertStable();
+        fsyncSync(selected.descriptor);
+        task12CurrentStatusCasFaultV1("after-selected-file-fsync");
+        current.assertStable();
+        writer.assertStable();
+        task12CurrentStatusCasFaultV1("before-rename");
+        current.assertStable();
+        writer.assertStable();
+        renameSync(selected.target, target);
+        task12CurrentStatusCasFaultV1("after-rename");
+        writer.assertStable();
+        current.parent.assertStable();
+        const predecessorAfter = fstatSync(current.fixed.descriptor, { bigint: true });
+        const selectedAfter = fstatSync(selected.descriptor, { bigint: true });
+        const selectedAtPath = lstatSync(target, { bigint: true });
+        if (
+          !predecessorAfter.isFile()
+          || predecessorAfter.dev !== current.fixed.identity.dev
+          || predecessorAfter.ino !== current.fixed.identity.ino
+          || predecessorAfter.nlink !== 0n
+          || !readTask12ReceiptDescriptorBytesV1(current.fixed.descriptor, predecessorAfter.size).equals(predecessorBytes)
+          || !selectedAfter.isFile()
+          || selectedAfter.nlink !== 1n
+          || !sameRegularMetadata(selectedAfter, selectedAtPath)
+          || !readTask12ReceiptDescriptorBytesV1(selected.descriptor, selectedAfter.size).equals(successorBytes)
+        ) currentEntryFail("Task12 current-status Q2 rename transition is crossed");
+        for (const extra of current.temporaries.slice(1)) assertTask12CurrentStatusCasPinnedMemberStableV1(extra);
+        current.parent.assertStable();
+        current.close();
+        observation = null;
+        continue;
+      }
+      if (observation.state === "Q3" && observation.temporaries.length > 0) {
+        const current = observation;
+        const candidate = current.temporaries[0]!;
+        current.assertStable();
+        writer.assertStable();
+        task12CurrentStatusCasFaultV1("before-extra-unlink");
+        current.assertStable();
+        writer.assertStable();
+        unlinkSync(candidate.target);
+        const unlinked = fstatSync(candidate.descriptor, { bigint: true });
+        if (!unlinked.isFile() || unlinked.nlink !== 0n || !readTask12ReceiptDescriptorBytesV1(candidate.descriptor, unlinked.size).equals(successorBytes)) {
+          currentEntryFail("Task12 current-status Q3 cleanup transition is crossed");
+        }
+        task12CurrentStatusCasFaultV1("after-extra-unlink");
+        writer.assertStable();
+        current.parent.assertStable();
+        assertTask12CurrentStatusCasPinnedMemberStableV1(current.fixed);
+        for (const remaining of current.temporaries.slice(1)) assertTask12CurrentStatusCasPinnedMemberStableV1(remaining);
+        fsyncCurrentEntryDirectory(path.dirname(target));
+        task12CurrentStatusCasFaultV1("after-extra-parent-fsync");
+        writer.assertStable();
+        const fresh = observeTask12CurrentStatusCasNoWriteV1(target, predecessorBytes, successorBytes);
+        try {
+          task12CurrentStatusCasFaultV1("after-fresh-smaller-enumeration");
+          writer.assertStable();
+          assertTask12CurrentStatusCasPinnedMemberStableV1(current.fixed);
+          for (const remaining of current.temporaries.slice(1)) assertTask12CurrentStatusCasPinnedMemberStableV1(remaining);
+          fresh.assertStable();
+          if (fresh.state !== "Q3" || fresh.temporaries.length !== current.temporaries.length - 1) {
+            currentEntryFail("Task12 current-status Q3 cleanup did not shrink monotonically");
+          }
+          if (
+            fresh.fixed.identity.dev !== current.fixed.identity.dev
+            || fresh.fixed.identity.ino !== current.fixed.identity.ino
+            || !sameRegularMetadata(fresh.fixed.identity, current.fixed.identity)
+          ) currentEntryFail("Task12 current-status Q3 fixed continuity is crossed");
+          for (const [index, prior] of current.temporaries.slice(1).entries()) {
+            const reopened = fresh.temporaries[index];
+            if (
+              reopened === undefined
+              || reopened.target !== prior.target
+              || reopened.identity.dev !== prior.identity.dev
+              || reopened.identity.ino !== prior.identity.ino
+              || !sameRegularMetadata(reopened.identity, prior.identity)
+              || !reopened.bytes.equals(prior.bytes)
+            ) currentEntryFail("Task12 current-status Q3 temporary continuity is crossed");
+          }
+        } finally { fresh.close(); }
+        current.close();
+        observation = null;
+        continue;
+      }
+      if (observation.state === "Q3") {
+        const current = observation;
+        current.assertStable();
+        writer.assertStable();
+        task12CurrentStatusCasFaultV1("before-final-parent-fsync");
+        current.assertStable();
+        writer.assertStable();
+        fsyncCurrentEntryDirectory(path.dirname(target));
+        task12CurrentStatusCasFaultV1("after-final-parent-fsync");
+        current.assertStable();
+        writer.assertStable();
+        task12CurrentStatusCasFaultV1("before-final-reopen");
+        current.assertStable();
+        writer.assertStable();
+        const fresh = observeTask12CurrentStatusCasNoWriteV1(target, predecessorBytes, successorBytes);
+        try {
+          task12CurrentStatusCasFaultV1("after-final-reopen");
+          fresh.assertStable();
+          current.assertStable();
+          writer.assertStable();
+          if (
+            fresh.state !== "Q3"
+            || fresh.temporaries.length !== 0
+            || fresh.fixed.identity.dev !== current.fixed.identity.dev
+            || fresh.fixed.identity.ino !== current.fixed.identity.ino
+            || !sameRegularMetadata(fresh.fixed.identity, current.fixed.identity)
+          ) currentEntryFail("Task12 current-status Q4 stable reopen is crossed");
+        } finally { fresh.close(); }
+        return;
+      }
+      currentEntryFail("Task12 current-status CAS state is not resumable");
+    }
+  } finally {
+    if (!transferred) {
+      try { if (writer !== null) writer.close(); }
+      finally { if (observation !== null) observation.close(); }
+    }
+  }
+}
+
 function task12ReceiptExpectedPredecessorCasV1(target: string, predecessorBytes: Buffer, successorBytes: Buffer): void {
+  if (path.basename(target) === "01-current-status.pair.json") {
+    normalizeTask12CurrentStatusCasV1(target, predecessorBytes, successorBytes);
+    return;
+  }
+
   const directory = path.dirname(target);
   const guard = ensureTask12ReceiptPrivateDirectoryV1(directory);
   let writer: Readonly<{ close: () => void }> | null = null;
