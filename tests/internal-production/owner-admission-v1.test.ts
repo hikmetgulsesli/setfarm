@@ -1086,6 +1086,60 @@ function p3TestGit(root: string, args: readonly string[], input?: string): strin
   return result.stdout.trim();
 }
 
+function p3TestGitBytes(root: string, args: readonly string[]): Buffer {
+  const result = spawnSync("/usr/bin/git", args, {
+    cwd: root,
+    env: {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_COUNT: "0",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr.toString());
+  return result.stdout;
+}
+
+const P3_RECEIPT_SOURCE_LOCATOR_V1 = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+const P3_RECEIPT_WORKSPACE_SOURCE_V1 =
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
+const P3_RECEIPT_WORKSPACE_PROJECTION_V1 =
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+
+function restoreP3NestedRunnerReceiptSourceV1(root: string): void {
+  const projectionRoot = realpathSync(process.cwd());
+  const markerPath = path.join(projectionRoot, ".setfarm-p3-projection-marker.json");
+  if (!existsSync(markerPath)) {
+    const clonedSource = readFileSync(path.join(root, P3_RECEIPT_SOURCE_LOCATOR_V1), "utf8");
+    assert.equal(clonedSource.split(P3_RECEIPT_WORKSPACE_SOURCE_V1).length, 2);
+    assert.equal(clonedSource.includes(P3_RECEIPT_WORKSPACE_PROJECTION_V1), false);
+    return;
+  }
+  const marker = JSON.parse(
+    readFileSync(markerPath, "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(marker.schema, "setfarm.p3-isolated-projection-marker.v1");
+  assert.equal(marker.projectionRoot, projectionRoot);
+  assert.equal(marker.projectedHead, p3TestGit(projectionRoot, ["rev-parse", "HEAD"]));
+  const rawBytes = p3TestGitBytes(projectionRoot, ["show", `HEAD^:${P3_RECEIPT_SOURCE_LOCATOR_V1}`]);
+  const rawSource = rawBytes.toString("utf8");
+  assert.equal(Buffer.from(rawSource, "utf8").equals(rawBytes), true);
+  assert.equal(rawSource.split(P3_RECEIPT_WORKSPACE_SOURCE_V1).length, 2);
+  assert.equal(rawSource.includes(P3_RECEIPT_WORKSPACE_PROJECTION_V1), false);
+  const projectedBytes = Buffer.from(
+    rawSource.replace(P3_RECEIPT_WORKSPACE_SOURCE_V1, P3_RECEIPT_WORKSPACE_PROJECTION_V1),
+    "utf8",
+  );
+  assert.equal(
+    readFileSync(path.join(projectionRoot, P3_RECEIPT_SOURCE_LOCATOR_V1)).equals(projectedBytes),
+    true,
+  );
+  writeFileSync(path.join(root, P3_RECEIPT_SOURCE_LOCATOR_V1), rawBytes, { mode: 0o644 });
+}
+
 function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () => void }> {
   const container = mkdtempSync("/tmp/setfarm-p3-refusal-");
   const root = path.join(container, "setfarm");
@@ -1121,9 +1175,10 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
   for (const locator of currentByteLocators) {
     cpSync(path.join(process.cwd(), locator), path.join(root, locator));
   }
+  restoreP3NestedRunnerReceiptSourceV1(root);
   p3TestGit(root, ["config", "user.name", "Setfarm P3 Refusal Fixture"]);
   p3TestGit(root, ["config", "user.email", "setfarm-p3-refusal@invalid"]);
-  p3TestGit(root, ["add", ...currentByteLocators]);
+  p3TestGit(root, ["add", ...currentByteLocators, P3_RECEIPT_SOURCE_LOCATOR_V1]);
   if (p3TestGit(root, ["diff", "--cached", "--name-only"]) !== "") {
     p3TestGit(root, ["commit", "-qm", "P3 current-byte refusal fixture"]);
   }
@@ -1417,6 +1472,41 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   assert.doesNotMatch(helper, /migration.?33|033_v3_recovery/i);
   const activation = helperSource.slice(activationStart, activationEnd);
   assert.match(helperSource, /prepareP3FixtureCurrentEntryOperationV1/);
+  assert.match(
+    helperSource,
+    /P3 activation fixture must inherit exactly one projected workspace authority/,
+  );
+  assert.match(
+    helperSource,
+    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.dirname\(fixedRepositoryRoot\(\)\);/,
+  );
+  const runnerSource = readFileSync(
+    path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
+    "utf8",
+  );
+  const projectionStart = runnerSource.indexOf("function projectP3CurrentEntryWorkspaceAuthorityV1");
+  const projectionEnd = runnerSource.indexOf("\n\nfunction readStableIndexedMemberV1", projectionStart);
+  assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
+  const projectionAuthority = runnerSource.slice(projectionStart, projectionEnd);
+  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-post-handoff-receipt-v1\.ts"/);
+  assert.match(projectionAuthority, /sourceParts\.length !== 2/);
+  assert.match(projectionAuthority, /P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1/);
+  assert.doesNotMatch(projectionAuthority, /process\.env|callback|options|caller|HOME/);
+  const projectStart = runnerSource.indexOf("function projectCurrentBytesV1");
+  const projectEnd = runnerSource.indexOf("\n\nfunction normalizedAdminUrlV1", projectStart);
+  assert.ok(projectStart >= 0 && projectEnd > projectStart);
+  const projectOwner = runnerSource.slice(projectStart, projectEnd);
+  const sourceReopen = projectOwner.indexOf("const reopened = readStableIndexedMemberV1");
+  const projectionWrite = projectOwner.indexOf("const projectedBytes = projectP3CurrentEntryWorkspaceAuthorityV1");
+  const sourceReopenAfterWrite = projectOwner.indexOf("const reopened = readStableIndexedMemberV1", sourceReopen + 1);
+  const gitInitialization = projectOwner.indexOf('git(["init", "-q"]');
+  assert.ok(
+    sourceReopen >= 0
+    && projectionWrite > sourceReopen
+    && sourceReopenAfterWrite > projectionWrite
+    && gitInitialization > sourceReopenAfterWrite
+  );
+  assert.ok(projectOwner.indexOf("projectP3CurrentEntryWorkspaceAuthorityV1", projectionWrite) > projectionWrite);
   assert.doesNotMatch(activation, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|launchctl|lsof/);
   const guardedIndex = activation.indexOf("await applyBootstrapMainClaimHandoffGuardedMigration32V1");
   const successorIndex = activation.indexOf("await applyAndVerifyP3GenericSuccessorV1(db)");
@@ -2055,8 +2145,8 @@ test("P3 runner freezes the complete secure physical-mode domain before projecti
   assert.equal(predicate("100600", 0o600), false);
   assert.match(runner, /sourcePhysicalMode: observed\.physicalMode/);
   assert.match(runner, /reopened\.physicalMode !== observation\.sourcePhysicalMode/);
-  assert.match(runner, /writeFileSync\(target, bytes, \{ mode: expectedMode \}\)/);
-  assert.match(runner, /chmodSync\(target, expectedMode\)/);
+  assert.match(runner, /writeFileSync\(target, projectedBytes, \{ mode: observation\.projectedMode \}\)/);
+  assert.match(runner, /chmodSync\(target, observation\.projectedMode\)/);
 });
 
 test("P3 runner refuses every constructible indexed and physical projection drift before child spawn", async () => {
