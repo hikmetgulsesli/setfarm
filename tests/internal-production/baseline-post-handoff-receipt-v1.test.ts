@@ -633,6 +633,59 @@ type ExactPoisonStrictChainFixtureV1 = Readonly<{
   }>;
 }>;
 
+const EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1 = Object.freeze([
+  Object.freeze({ ordinal: 0 as const, phase: "disposition" as const, specificationPhase: 1 as const, record: "disposition" as const }),
+  Object.freeze({ ordinal: 1 as const, phase: "successor-authority-v31" as const, specificationPhase: 3 as const, record: "successorAuthorityV31" as const }),
+  Object.freeze({ ordinal: 2 as const, phase: "successor-pending" as const, specificationPhase: 4 as const, record: "successorPending" as const }),
+  Object.freeze({ ordinal: 3 as const, phase: "successor-operation" as const, specificationPhase: 5 as const, record: "successorOperation" as const }),
+  Object.freeze({ ordinal: 4 as const, phase: "successor-edge" as const, specificationPhase: 6 as const, record: "edge" as const }),
+  Object.freeze({ ordinal: 5 as const, phase: "successor-activation-seal" as const, specificationPhase: 7 as const, record: "seal" as const }),
+  Object.freeze({ ordinal: 6 as const, phase: "successor-activation-commit" as const, specificationPhase: 8 as const, record: "commit" as const }),
+] as const);
+type ExactPoisonRecoveryPublicationPhaseFixtureV1 = typeof EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1[number];
+type ExactPoisonRecoveryLeafBoundaryFixtureV1 =
+  | "temp-create"
+  | "partial-write"
+  | "complete-write"
+  | "fchmod"
+  | "file-fsync"
+  | "close"
+  | "link"
+  | "parent-fsync"
+  | "incomplete-unlink"
+  | "selected-unlink"
+  | "final-reopen";
+type ExactPoisonRecoveryLeafFaultFixtureV1 = Readonly<{
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1["phase"];
+  ordinal: ExactPoisonRecoveryPublicationPhaseFixtureV1["ordinal"];
+  boundary: ExactPoisonRecoveryLeafBoundaryFixtureV1;
+  occurrence: number;
+}>;
+
+const EXACT_POISON_RECOVERY_LEAF_BOUNDARIES_V1 = Object.freeze([
+  "temp-create",
+  "partial-write",
+  "complete-write",
+  "fchmod",
+  "file-fsync",
+  "close",
+  "link",
+  "parent-fsync",
+  "selected-unlink",
+  "final-reopen",
+] as const satisfies readonly ExactPoisonRecoveryLeafBoundaryFixtureV1[]);
+const EXACT_POISON_RECOVERY_TEMP_UUIDS_V1 = Object.freeze([
+  "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002",
+  "00000000-0000-4000-8000-000000000003",
+  "00000000-0000-4000-8000-000000000004",
+  "00000000-0000-4000-8000-000000000005",
+  "00000000-0000-4000-8000-000000000006",
+  "00000000-0000-4000-8000-000000000007",
+  "00000000-0000-4000-8000-000000000008",
+  "00000000-0000-4000-8000-000000000009",
+] as const);
+
 type ExactPoisonStrictChainFixtureOptionsV1 = Readonly<{
   currentAuthorityV31Bytes: Buffer;
   currentPendingBytes: Buffer;
@@ -1468,6 +1521,118 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   writeFileSync(modulePath, source);
 }
 
+function instrumentExactPoisonRecoveryLeafFixtureV1(
+  root: string,
+  fault: ExactPoisonRecoveryLeafFaultFixtureV1 | null,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const leafMarker = "async function publishExactPoisonRecoveryCandidateV1(";
+  const coreMarker = "\nasync function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(leafMarker).length - 1, 1, "production must retain one private held-writer exact-poison recovery leaf");
+  const leafStart = source.indexOf(leafMarker);
+  const leafEnd = source.indexOf(coreMarker, leafStart);
+  assert.ok(leafStart >= 0 && leafEnd > leafStart, "the private recovery leaf must immediately precede the publisher core");
+  let leaf = source.slice(leafStart, leafEnd);
+  for (const literal of [
+    "operation: FileSnapshot",
+    "admitted: ExactPoisonQuarantineAdmissionV1",
+    "phase: ExactPoisonRecoveryPublicationPhaseV1",
+    "ordinal: 0 | 1 | 2 | 3 | 4 | 5 | 6",
+    "heldWriter: ExactPoisonRecoveryWriterV1",
+    "const candidate = admitted.candidates[ordinal]",
+  ]) assert.ok(leaf.includes(literal), `the exact-poison recovery leaf must retain ${literal}`);
+  assert.doesNotMatch(leaf, /publishLegacyZeroRecordV1|nonselected/i, "the recovery leaf must not inherit the generic publisher or nonselected-temp cleanup");
+  const coreEnd = source.indexOf("\nasync function resumeExactPoisonQuarantineBeforeSelectionV1()", leafEnd);
+  assert.ok(coreEnd > leafEnd, "the publisher core must have a stable copied-module boundary");
+  const core = source.slice(leafEnd, coreEnd);
+  assert.equal(
+    core.split("await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);").length - 1,
+    1,
+    "the core must call the private recovery leaf once from its exact phase/ordinal loop",
+  );
+  assert.doesNotMatch(core, /publishLegacyZeroRecordV1\(candidate\.target/, "the core must not bypass the recovery-specific leaf");
+
+  const bodyMarker = "): Promise<void> {";
+  const bodyOffset = leaf.indexOf(bodyMarker);
+  assert.ok(bodyOffset >= 0, "the exact-poison recovery leaf must have one async void body");
+  const hook = `\n  const P4_EXACT_POISON_RECOVERY_LEAF_FAULT_V1 = ${JSON.stringify(fault)} as null | Readonly<{ phase: string; ordinal: number; boundary: string; occurrence: number }>;\n  let p4ExactPoisonRecoveryLeafMatchCountV1 = 0;\n  const p4ExactPoisonRecoveryLeafBoundaryV1 = (boundary: "temp-create" | "partial-write" | "complete-write" | "fchmod" | "file-fsync" | "close" | "link" | "parent-fsync" | "incomplete-unlink" | "selected-unlink" | "final-reopen"): void => {\n    const event = Object.freeze({ phase, ordinal, boundary });\n    const expected = P4_EXACT_POISON_RECOVERY_LEAF_FAULT_V1;\n    if (expected === null || event.phase !== expected.phase || event.ordinal !== expected.ordinal || event.boundary !== expected.boundary) return;\n    p4ExactPoisonRecoveryLeafMatchCountV1 += 1;\n    if (p4ExactPoisonRecoveryLeafMatchCountV1 === expected.occurrence) throw new Error(\`P4_EXACT_POISON_RECOVERY_LEAF_FAULT:\${event.phase}:\${event.boundary}:\${p4ExactPoisonRecoveryLeafMatchCountV1}\`);\n  };`;
+  leaf = leaf.slice(0, bodyOffset + bodyMarker.length) + hook + leaf.slice(bodyOffset + bodyMarker.length);
+  const replaceOnce = (literal: string, replacement: string, label: string): void => {
+    assert.equal(leaf.split(literal).length - 1, 1, `the exact-poison recovery leaf must expose one ${label} boundary`);
+    leaf = leaf.replace(literal, replacement);
+  };
+  replaceOnce(
+    "tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); p4ExactPoisonRecoveryLeafBoundaryV1(\"temp-create\");",
+    "O_EXCL temp-create",
+  );
+  replaceOnce(
+    "writeFileSync(tempDescriptor, candidate.bytes);",
+    "writeFileSync(tempDescriptor, candidate.bytes.subarray(0, Math.max(1, Math.floor(candidate.bytes.length / 2)))); p4ExactPoisonRecoveryLeafBoundaryV1(\"partial-write\"); writeFileSync(temp, candidate.bytes); p4ExactPoisonRecoveryLeafBoundaryV1(\"complete-write\");",
+    "partial/full write",
+  );
+  replaceOnce(
+    "fchmodSync(tempDescriptor, 0o600);",
+    "fchmodSync(tempDescriptor, 0o600); p4ExactPoisonRecoveryLeafBoundaryV1(\"fchmod\");",
+    "fchmod",
+  );
+  replaceOnce(
+    "fsyncSync(tempDescriptor);",
+    "fsyncSync(tempDescriptor); p4ExactPoisonRecoveryLeafBoundaryV1(\"file-fsync\");",
+    "file fsync",
+  );
+  replaceOnce(
+    "closeSync(tempDescriptor);\n    tempDescriptor = -1;",
+    "closeSync(tempDescriptor);\n    tempDescriptor = -1; p4ExactPoisonRecoveryLeafBoundaryV1(\"close\");",
+    "temp close and closed-descriptor sentinel",
+  );
+  replaceOnce(
+    "linkSync(temp, candidate.target);",
+    "linkSync(temp, candidate.target); p4ExactPoisonRecoveryLeafBoundaryV1(\"link\");",
+    "no-replace link",
+  );
+  const guardedPathParentFsync = "heldWriter.assertStable(); fsyncCurrentEntryDirectory(directory); heldWriter.assertStable();";
+  const pinnedParentFsync = "fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, directory);";
+  const guardedPathCount = leaf.split(guardedPathParentFsync).length - 1;
+  const pinnedCount = leaf.split(pinnedParentFsync).length - 1;
+  assert.equal(guardedPathCount === 0 || pinnedCount === 0, true, "the recovery leaf must use one exact parent-fsync authority");
+  assert.ok(guardedPathCount + pinnedCount >= 3, "the exact-poison recovery leaf must fsync its parent after cleanup, publication, and adoption");
+  if (guardedPathCount > 0) {
+    leaf = leaf.replaceAll(guardedPathParentFsync, `${guardedPathParentFsync} p4ExactPoisonRecoveryLeafBoundaryV1("parent-fsync");`);
+  } else {
+    leaf = leaf.replaceAll(pinnedParentFsync, `${pinnedParentFsync} p4ExactPoisonRecoveryLeafBoundaryV1("parent-fsync");`);
+  }
+  const unlinkParts = leaf.split("unlinkSync(temp);");
+  assert.equal(unlinkParts.length - 1, 2, "the recovery leaf must have only incomplete-temp and selected-temp unlink sites");
+  leaf = `${unlinkParts[0]}unlinkSync(temp); p4ExactPoisonRecoveryLeafBoundaryV1("incomplete-unlink");${unlinkParts[1]}unlinkSync(temp); p4ExactPoisonRecoveryLeafBoundaryV1("selected-unlink");${unlinkParts[2]}`;
+  assert.equal((leaf.match(/unlinkSync\(/g) ?? []).length, 2, "the recovery leaf must never unlink a nonselected recovery-family member");
+  const reopenStart = leaf.lastIndexOf("readTask12ReceiptStoreSnapshotV1(candidate.target");
+  assert.ok(reopenStart >= 0, "the recovery leaf must finish with one strict final reopen");
+  const reopenEnd = leaf.indexOf(";", reopenStart);
+  assert.ok(reopenEnd > reopenStart, "the strict final reopen must be a complete statement");
+  leaf = leaf.slice(0, reopenEnd + 1) + ' p4ExactPoisonRecoveryLeafBoundaryV1("final-reopen");' + leaf.slice(reopenEnd + 1);
+  source = source.slice(0, leafStart) + leaf + source.slice(leafEnd);
+  writeFileSync(modulePath, source);
+}
+
+function setExactPoisonRecoveryLeafFaultFixtureV1(
+  root: string,
+  fault: ExactPoisonRecoveryLeafFaultFixtureV1 | null,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const literal = /const P4_EXACT_POISON_RECOVERY_LEAF_FAULT_V1 = .*? as null \| Readonly<\{ phase: string; ordinal: number; boundary: string; occurrence: number \}>;/;
+  assert.equal((source.match(literal) ?? []).length, 1, "the copied recovery leaf must retain one private literal-only fault configuration");
+  writeFileSync(
+    modulePath,
+    source.replace(
+      literal,
+      `const P4_EXACT_POISON_RECOVERY_LEAF_FAULT_V1 = ${JSON.stringify(fault)} as null | Readonly<{ phase: string; ordinal: number; boundary: string; occurrence: number }>;`,
+    ),
+  );
+}
+
 function fixtureTransportValueV1(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return Object.freeze({ __p4ExactBufferBase64V1: value.toString("base64") });
   if (Array.isArray(value)) return value.map((entry) => fixtureTransportValueV1(entry));
@@ -1538,6 +1703,365 @@ function exactPoisonRecoveryFinalLocatorsV1(chain: ExactPoisonStrictChainFixture
     }
   }
   return Object.freeze([...locators].sort());
+}
+
+function exactPoisonRecoveryPhaseRecordV1(
+  chain: ExactPoisonStrictChainFixtureV1,
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1,
+): ExactPoisonStrictChainRecordV1 {
+  return chain.records[phase.record];
+}
+
+function exactPoisonRecoveryTempPathV1(target: string, index = 0): string {
+  const uuid = EXACT_POISON_RECOVERY_TEMP_UUIDS_V1[index];
+  assert.notEqual(uuid, undefined, "the recovery temp fixture index must remain within the explicit cap fixtures");
+  return path.join(path.dirname(target), `.${path.basename(target)}.${uuid}.tmp`);
+}
+
+function seedExactPoisonRecoveryPredecessorPhasesV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  ordinal: ExactPoisonRecoveryPublicationPhaseFixtureV1["ordinal"],
+): void {
+  for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1.slice(0, ordinal)) {
+    const record = exactPoisonRecoveryPhaseRecordV1(chain, phase);
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, record.bytes);
+  }
+}
+
+function assertExactPoisonRecoveryBoundaryFrontierV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1,
+  boundary: ExactPoisonRecoveryLeafBoundaryFixtureV1,
+  state: "fresh-publication" | "incomplete-cleanup" | "one-link-durability" = "fresh-publication",
+): void {
+  const expectedLocators = new Set<string>();
+  const addParents = (locator: string): void => {
+    for (let parent = path.posix.dirname(locator); parent !== "." && parent !== "records"; parent = path.posix.dirname(parent)) {
+      expectedLocators.add(parent);
+    }
+  };
+  for (const prior of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1.slice(0, phase.ordinal)) {
+    const record = exactPoisonRecoveryPhaseRecordV1(chain, prior);
+    addParents(record.locator);
+    expectedLocators.add(record.locator);
+    assertExactPoisonPublishedRecordV1(original.store, record, `${phase.phase}/${boundary}:prior:${prior.phase}`);
+  }
+  const record = exactPoisonRecoveryPhaseRecordV1(chain, phase);
+  addParents(record.locator);
+  const target = path.join(original.store, record.locator);
+  const temp = exactPoisonRecoveryTempPathV1(target);
+  const tempLocator = path.relative(original.store, temp).split(path.sep).join("/");
+  const tempPresent = state === "fresh-publication" && !["selected-unlink", "final-reopen"].includes(boundary);
+  const finalPresent = state === "one-link-durability"
+    || (state === "fresh-publication" && ["link", "parent-fsync", "selected-unlink", "final-reopen"].includes(boundary));
+  if (tempPresent) expectedLocators.add(tempLocator);
+  if (finalPresent) expectedLocators.add(record.locator);
+  assert.equal(existsSync(temp), tempPresent, `${phase.phase}/${boundary}: exact current temp presence`);
+  assert.equal(existsSync(target), finalPresent, `${phase.phase}/${boundary}: exact current final presence`);
+  if (tempPresent) {
+    const stats = lstatSync(temp);
+    const expectedBytes = boundary === "temp-create"
+      ? Buffer.alloc(0)
+      : boundary === "partial-write"
+        ? record.bytes.subarray(0, Math.max(1, Math.floor(record.bytes.length / 2)))
+        : record.bytes;
+    assert.equal(stats.isFile(), true, `${phase.phase}/${boundary}: temp regular file`);
+    assert.equal(stats.mode & 0o7777, 0o600, `${phase.phase}/${boundary}: temp mode`);
+    assert.equal(readFileSync(temp).equals(expectedBytes), true, `${phase.phase}/${boundary}: temp bytes`);
+    assert.equal(stats.nlink, finalPresent ? 2 : 1, `${phase.phase}/${boundary}: temp link count`);
+  }
+  if (finalPresent) {
+    const stats = lstatSync(target);
+    assert.equal(stats.isFile(), true, `${phase.phase}/${boundary}: final regular file`);
+    assert.equal(stats.mode & 0o7777, 0o600, `${phase.phase}/${boundary}: final mode`);
+    assert.equal(stats.nlink, tempPresent ? 2 : 1, `${phase.phase}/${boundary}: final link count`);
+    assert.equal(readFileSync(target).equals(record.bytes), true, `${phase.phase}/${boundary}: final bytes`);
+    if (tempPresent) assert.equal(lstatSync(temp).ino, stats.ino, `${phase.phase}/${boundary}: selected temp and final inode`);
+  }
+  const actualLocators = recoveryPhaseSnapshotV1(original.store, original.originalLocators)
+    .map((entry) => String(entry.locator))
+    .sort();
+  assert.deepEqual(actualLocators, [...expectedLocators].sort(), `${phase.phase}/${boundary}: exact prior/current frontier and zero later prefixes`);
+  for (const later of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1.slice(phase.ordinal + 1)) {
+    assert.equal(
+      existsSync(path.join(original.store, exactPoisonRecoveryPhaseRecordV1(chain, later).locator)),
+      false,
+      `${phase.phase}/${boundary}: later ${later.phase} final must remain absent`,
+    );
+  }
+}
+
+type ExactPoisonRecoveryLeafStateFixtureV1 =
+  | "F-1-incomplete"
+  | "F-1-noncanonical"
+  | "F0-equal"
+  | "F1-F2-selected-nlink2"
+  | "F2u-F3-F4-final-nlink1";
+
+function seedExactPoisonRecoveryLeafStateV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1,
+  state: ExactPoisonRecoveryLeafStateFixtureV1,
+): Readonly<{ target: string; temp: string }> {
+  seedExactPoisonRecoveryPredecessorPhasesV1(original, chain, phase.ordinal);
+  const record = exactPoisonRecoveryPhaseRecordV1(chain, phase);
+  const target = path.join(original.store, record.locator);
+  const temp = exactPoisonRecoveryTempPathV1(target);
+  if (state === "F2u-F3-F4-final-nlink1") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, record.bytes);
+    return Object.freeze({ target, temp });
+  }
+  const tempBytes = state === "F-1-incomplete"
+    ? record.bytes.subarray(0, Math.max(1, Math.floor(record.bytes.length / 2)))
+    : state === "F-1-noncanonical"
+      ? Buffer.from("{}\n", "utf8")
+      : record.bytes;
+  writeStrictCurrentEntryFixtureRecordV1(original.store, path.relative(original.store, temp), tempBytes);
+  if (state === "F1-F2-selected-nlink2") linkSync(temp, target);
+  return Object.freeze({ target, temp });
+}
+
+type ExactPoisonRecoveryLeafInvalidFixtureV1 =
+  | "unequal-temp"
+  | "crossed-temp"
+  | "two-incomplete-temps"
+  | "two-equal-temps"
+  | "eight-equal-temps"
+  | "nine-equal-temps"
+  | "unknown-member"
+  | "wrong-temp-mode"
+  | "wrong-temp-link-count"
+  | "temp-symlink"
+  | "final-plus-temp"
+  | "final-plus-incomplete-temp"
+  | "unequal-final"
+  | "wrong-final-mode"
+  | "wrong-final-link-count"
+  | "final-symlink";
+
+const EXACT_POISON_RECOVERY_LEAF_INVALID_FIXTURES_V1 = Object.freeze([
+  "two-incomplete-temps",
+  "two-equal-temps",
+  "eight-equal-temps",
+  "nine-equal-temps",
+  "unknown-member",
+  "wrong-temp-mode",
+  "wrong-temp-link-count",
+  "temp-symlink",
+  "final-plus-temp",
+  "final-plus-incomplete-temp",
+  "unequal-final",
+  "wrong-final-mode",
+  "wrong-final-link-count",
+  "final-symlink",
+] as const satisfies readonly ExactPoisonRecoveryLeafInvalidFixtureV1[]);
+
+function exactPoisonRecoveryStrictUnequalBytesV1(
+  record: ExactPoisonStrictChainRecordV1,
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1,
+  kind: "unequal-temp" | "crossed-temp",
+): Buffer {
+  const shape = {
+    disposition: Object.freeze({ refKey: "dispositionRef", hashKey: "dispositionHash", prefix: "setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/" }),
+    "successor-authority-v31": Object.freeze({ refKey: "authorityV3Migration31AuditRef", hashKey: "authorityV3Migration31AuditHash", prefix: "setfarm://internal-production/authority-v3-migration31-audit/sha256/" }),
+    "successor-pending": Object.freeze({ refKey: "pendingBootstrapHandoffMigrationRef", hashKey: "pendingBootstrapHandoffMigrationHash", prefix: "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/" }),
+    "successor-operation": Object.freeze({ refKey: "operationRef", hashKey: "operationHash", prefix: "setfarm://internal-production/current-entry-operation/sha256/" }),
+    "successor-edge": Object.freeze({ refKey: "edgeRef", hashKey: "edgeHash", prefix: "setfarm://internal-production/current-entry-store-successor-edge/sha256/" }),
+    "successor-activation-seal": Object.freeze({ refKey: "activationSealRef", hashKey: "activationSealHash", prefix: "setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/" }),
+    "successor-activation-commit": Object.freeze({ refKey: "activationCommitRef", hashKey: "activationCommitHash", prefix: "setfarm://internal-production/current-entry-store-successor-activation-commit/sha256/" }),
+  }[phase.phase];
+  const changed = rehashFixtureRecordV1(record.value, shape.refKey, shape.hashKey, shape.prefix, (core) => {
+    if (phase.phase === "disposition") {
+      if (kind === "crossed-temp") {
+        core.predecessorOperation = Object.freeze({
+          operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"f".repeat(64)}`,
+          operationHash: "f".repeat(64),
+        });
+      } else {
+        const quarantinedInventory = structuredClone(core.quarantinedInventory as Record<string, unknown>);
+        const inventoryBody = structuredClone(quarantinedInventory.inventoryBody as Record<string, unknown>);
+        inventoryBody.storeLocator = `${String(inventoryBody.storeLocator)}-strict-unequal`;
+        core.quarantinedInventory = Object.freeze({ inventoryBody: Object.freeze(inventoryBody), inventoryHash: canonicalHash(inventoryBody) });
+      }
+      return;
+    }
+    if (phase.phase === "successor-authority-v31") {
+      const controllerSource = structuredClone(core.controllerSource as Record<string, unknown>);
+      controllerSource.buildHash = kind === "unequal-temp" ? "b".repeat(64) : "c".repeat(64);
+      core.controllerSource = Object.freeze(controllerSource);
+      return;
+    }
+    if (phase.phase === "successor-pending") {
+      if (kind === "unequal-temp") {
+        const controllerSource = structuredClone(core.controllerSource as Record<string, unknown>);
+        controllerSource.buildHash = "b".repeat(64);
+        core.controllerSource = Object.freeze(controllerSource);
+      } else {
+        const migrationImplementation = structuredClone(core.migrationImplementation as Record<string, unknown>);
+        migrationImplementation.gitBlobHash = "f".repeat(40);
+        core.migrationImplementation = Object.freeze(migrationImplementation);
+      }
+      return;
+    }
+    if (phase.phase === "successor-operation") {
+      if (kind === "unequal-temp") {
+        const controllerSource = structuredClone(core.controllerSource as Record<string, unknown>);
+        controllerSource.buildHash = "b".repeat(64);
+        core.controllerSource = Object.freeze(controllerSource);
+      } else {
+        core.authorityV3Migration31Audit = Object.freeze({
+          authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"f".repeat(64)}`,
+          authorityV3Migration31AuditHash: "f".repeat(64),
+        });
+      }
+      return;
+    }
+    if (phase.phase === "successor-edge") {
+      if (kind === "unequal-temp") {
+        core.successorStoreHash = "f".repeat(64);
+        core.successorStoreRelativeRoot = `stores/sha256/ff/${"f".repeat(64)}`;
+      } else {
+        core.predecessorOperation = Object.freeze({
+          operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"f".repeat(64)}`,
+          operationHash: "f".repeat(64),
+        });
+      }
+      return;
+    }
+    if (phase.phase === "successor-activation-seal") {
+      if (kind === "unequal-temp") core.completeZeroEffectBracketHash = "f".repeat(64);
+      else core.successorEdge = Object.freeze({ edgeRef: `setfarm://internal-production/current-entry-store-successor-edge/sha256/${"f".repeat(64)}`, edgeHash: "f".repeat(64) });
+      return;
+    }
+    if (kind === "unequal-temp") core.postSealCompleteZeroEffectBracketHash = "f".repeat(64);
+    else core.successorActivationSeal = Object.freeze({ activationSealRef: `setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/${"f".repeat(64)}`, activationSealHash: "f".repeat(64) });
+  });
+  assert.deepEqual(Object.keys(changed.value).sort(), Object.keys(record.value).sort(), `${phase.phase}/${kind}: exact wrapper key set`);
+  assert.equal(changed.bytes.toString("utf8"), `${canonical(changed.value)}\n`, `${phase.phase}/${kind}: canonical wrapper plus LF`);
+  assert.notEqual(changed.bytes.equals(record.bytes), true, `${phase.phase}/${kind}: strict current-family bytes must compete with the admitted candidate`);
+  return changed.bytes;
+}
+
+function seedExactPoisonRecoveryInvalidLeafStateV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  phase: ExactPoisonRecoveryPublicationPhaseFixtureV1,
+  fault: ExactPoisonRecoveryLeafInvalidFixtureV1,
+): void {
+  seedExactPoisonRecoveryPredecessorPhasesV1(original, chain, phase.ordinal);
+  const record = exactPoisonRecoveryPhaseRecordV1(chain, phase);
+  const target = path.join(original.store, record.locator);
+  const temp = exactPoisonRecoveryTempPathV1(target);
+  const relative = (member: string): string => path.relative(original.store, member);
+  const writeTemp = (index: number, bytes: Buffer, mode = 0o600): string => {
+    const member = exactPoisonRecoveryTempPathV1(target, index);
+    writeStrictCurrentEntryFixtureRecordV1(original.store, relative(member), bytes);
+    chmodSync(member, mode);
+    return member;
+  };
+  const incomplete = record.bytes.subarray(0, Math.max(1, Math.floor(record.bytes.length / 2)));
+  if (fault === "unequal-temp") {
+    writeTemp(0, exactPoisonRecoveryStrictUnequalBytesV1(record, phase, fault));
+    return;
+  }
+  if (fault === "crossed-temp") {
+    writeTemp(0, exactPoisonRecoveryStrictUnequalBytesV1(record, phase, fault));
+    return;
+  }
+  if (fault === "two-incomplete-temps") {
+    writeTemp(0, incomplete);
+    writeTemp(1, incomplete.subarray(0, Math.max(1, Math.floor(incomplete.length / 2))));
+    return;
+  }
+  if (fault === "two-equal-temps" || fault === "eight-equal-temps" || fault === "nine-equal-temps") {
+    const count = fault === "two-equal-temps" ? 2 : fault === "eight-equal-temps" ? 8 : 9;
+    for (let index = 0; index < count; index += 1) writeTemp(index, record.bytes);
+    return;
+  }
+  if (fault === "unknown-member") {
+    writeTemp(0, record.bytes);
+    writeStrictCurrentEntryFixtureRecordV1(original.store, relative(path.join(path.dirname(target), ".unexpected-recovery-member")), Buffer.from("unexpected\n", "utf8"));
+    return;
+  }
+  if (fault === "wrong-temp-mode") {
+    writeTemp(0, record.bytes, 0o644);
+    return;
+  }
+  if (fault === "wrong-temp-link-count") {
+    writeTemp(0, record.bytes);
+    linkSync(temp, `${temp}.alias`);
+    return;
+  }
+  if (fault === "temp-symlink") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, relative(path.join(path.dirname(target), ".symlink-source")), record.bytes);
+    symlinkSync(".symlink-source", temp);
+    return;
+  }
+  if (fault === "final-plus-temp" || fault === "final-plus-incomplete-temp") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, record.bytes);
+    writeTemp(0, fault === "final-plus-temp" ? record.bytes : incomplete);
+    return;
+  }
+  if (fault === "unequal-final") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, Buffer.from("{}\n", "utf8"));
+    return;
+  }
+  if (fault === "wrong-final-mode") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, record.bytes);
+    chmodSync(target, 0o644);
+    return;
+  }
+  if (fault === "wrong-final-link-count") {
+    writeStrictCurrentEntryFixtureRecordV1(original.store, record.locator, record.bytes);
+    linkSync(target, `${target}.alias`);
+    return;
+  }
+  writeStrictCurrentEntryFixtureRecordV1(original.store, relative(path.join(path.dirname(target), ".symlink-final-source")), record.bytes);
+  symlinkSync(".symlink-final-source", target);
+}
+
+function configureExactPoisonRecoveryLeafHarnessV1(
+  root: string,
+  fault: ExactPoisonRecoveryLeafFaultFixtureV1 | null = null,
+): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  observations: Readonly<Record<string, readonly unknown[]>>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  instrumentExactPoisonRecoveryLeafFixtureV1(root, fault);
+  instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+  return Object.freeze({ original, admitted, observations });
+}
+
+function assertExactPoisonRecoveryConvergedV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  label: string,
+): void {
+  for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
+    assertExactPoisonPublishedRecordV1(original.store, exactPoisonRecoveryPhaseRecordV1(chain, phase), `${label}:${phase.phase}`);
+  }
+  const snapshot = recoveryPhaseSnapshotV1(original.store, original.originalLocators);
+  assert.deepEqual(
+    snapshot.map((entry) => String(entry.locator)).sort(),
+    exactPoisonRecoveryFinalLocatorsV1(chain),
+    `${label}: recovery must converge to only seven finals and required directories`,
+  );
+  assert.equal(
+    snapshot.some((entry) => /(?:^|\/)\.[^/]+\.[0-9a-f-]{36}\.tmp$/.test(String(entry.locator)) || String(entry.locator).endsWith(".writer.lock")),
+    false,
+    `${label}: convergence must retain no recovery temp or fixed writer lock`,
+  );
+  const reobserved = observeExactOriginalPoisonIdentityV1(original.store);
+  assert.deepEqual(reobserved.inventoryBody, original.inventoryBody, `${label}: original inventory`);
+  assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, `${label}: original file identities`);
 }
 
 function buildExactPoisonPublisherAdmissionFixtureV1(
@@ -4118,6 +4642,216 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       }
     });
   }
+
+  for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
+    for (const boundary of EXACT_POISON_RECOVERY_LEAF_BOUNDARIES_V1) {
+      it(`P4a exact-poison recovery leaf retries ${phase.phase} after ${boundary} response loss`, () => {
+        const root = createFixture();
+        try {
+          const fault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary, occurrence: 1 });
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault);
+          const first = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+          assert.equal(first.status, 0, `${phase.phase}/${boundary}: ${first.stderr}`);
+          assert.equal(first.stderr, "", `${phase.phase}/${boundary}: first call stderr`);
+          const firstObserved = JSON.parse(first.stdout) as Readonly<{
+            outcome: string;
+            message: string | null;
+          }>;
+          assert.equal(firstObserved.outcome, "threw", `${phase.phase}/${boundary}: the injected response loss must interrupt the first core call`);
+          assert.match(firstObserved.message ?? "", new RegExp(`P4_EXACT_POISON_RECOVERY_LEAF_FAULT:${phase.phase}:${boundary}:1`));
+          const afterFault = observeExactOriginalPoisonIdentityV1(harness.original.store);
+          assert.deepEqual(afterFault.inventoryBody, harness.original.inventoryBody, `${phase.phase}/${boundary}: response loss must preserve original inventory`);
+          assert.deepEqual(afterFault.predecessorFileIdentities, harness.original.predecessorFileIdentities, `${phase.phase}/${boundary}: response loss must preserve original identities`);
+          assertExactPoisonRecoveryBoundaryFrontierV1(harness.original, harness.admitted.chain, phase, boundary);
+
+          setExactPoisonRecoveryLeafFaultFixtureV1(root, null);
+          const retry = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+          assert.equal(retry.status, 0, `${phase.phase}/${boundary}: ${retry.stderr}`);
+          assert.equal(retry.stderr, "", `${phase.phase}/${boundary}: retry stderr`);
+          const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
+          assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
+          assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/${boundary}`);
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+
+    it(`P4a exact-poison recovery leaf retries ${phase.phase} after incomplete-temp cleanup response loss`, () => {
+      const root = createFixture();
+      try {
+        const fault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary: "incomplete-unlink" as const, occurrence: 1 });
+        const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault);
+        seedExactPoisonRecoveryLeafStateV1(harness.original, harness.admitted.chain, phase, "F-1-incomplete");
+        const first = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(first.status, 0, `${phase.phase}/incomplete-unlink: ${first.stderr}`);
+        const firstObserved = JSON.parse(first.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.equal(firstObserved.outcome, "threw");
+        assert.match(firstObserved.message ?? "", /P4_EXACT_POISON_RECOVERY_LEAF_FAULT/);
+        assertExactPoisonRecoveryBoundaryFrontierV1(
+          harness.original,
+          harness.admitted.chain,
+          phase,
+          "incomplete-unlink",
+          "incomplete-cleanup",
+        );
+        setExactPoisonRecoveryLeafFaultFixtureV1(root, null);
+        const retry = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(retry.status, 0, retry.stderr);
+        const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
+        assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/incomplete-unlink`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+
+    for (const state of [
+      "F-1-incomplete",
+      "F-1-noncanonical",
+      "F0-equal",
+      "F1-F2-selected-nlink2",
+      "F2u-F3-F4-final-nlink1",
+    ] as const satisfies readonly ExactPoisonRecoveryLeafStateFixtureV1[]) {
+      it(`P4a exact-poison recovery leaf adopts ${phase.phase} ${state}`, () => {
+        const root = createFixture();
+        try {
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root);
+          seedExactPoisonRecoveryLeafStateV1(harness.original, harness.admitted.chain, phase, state);
+          const result = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+          assert.equal(result.status, 0, `${phase.phase}/${state}: ${result.stderr}`);
+          assert.equal(result.stderr, "");
+          const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null }>;
+          assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+          assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/${state}`);
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+
+    it(`P4a exact-poison recovery leaf survives two ${phase.phase} cleanup/durability response losses`, () => {
+      const root = createFixture();
+      try {
+        const cleanupFault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary: "selected-unlink" as const, occurrence: 1 });
+        const harness = configureExactPoisonRecoveryLeafHarnessV1(root, cleanupFault);
+        const seeded = seedExactPoisonRecoveryLeafStateV1(harness.original, harness.admitted.chain, phase, "F1-F2-selected-nlink2");
+        const cleanup = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(cleanup.status, 0, cleanup.stderr);
+        const cleanupObserved = JSON.parse(cleanup.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.equal(cleanupObserved.outcome, "threw");
+        assert.match(cleanupObserved.message ?? "", /P4_EXACT_POISON_RECOVERY_LEAF_FAULT/);
+        assert.equal(existsSync(seeded.temp), false, `${phase.phase}: selected temp must be absent after the first response loss`);
+        assert.equal(lstatSync(seeded.target).nlink, 1, `${phase.phase}: final must be the sole one-link routing candidate`);
+        assertExactPoisonRecoveryBoundaryFrontierV1(
+          harness.original,
+          harness.admitted.chain,
+          phase,
+          "selected-unlink",
+          "one-link-durability",
+        );
+
+        setExactPoisonRecoveryLeafFaultFixtureV1(root, Object.freeze({
+          phase: phase.phase,
+          ordinal: phase.ordinal,
+          boundary: "parent-fsync",
+          occurrence: 1,
+        }));
+        const durability = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(durability.status, 0, durability.stderr);
+        const durabilityObserved = JSON.parse(durability.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.equal(durabilityObserved.outcome, "threw");
+        assert.match(durabilityObserved.message ?? "", /P4_EXACT_POISON_RECOVERY_LEAF_FAULT/);
+        assertExactPoisonRecoveryBoundaryFrontierV1(
+          harness.original,
+          harness.admitted.chain,
+          phase,
+          "parent-fsync",
+          "one-link-durability",
+        );
+
+        setExactPoisonRecoveryLeafFaultFixtureV1(root, null);
+        const retry = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(retry.status, 0, retry.stderr);
+        const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
+        assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/double-response-loss`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
+    for (const fault of ["unequal-temp", "crossed-temp"] as const) {
+      it(`P4a exact-poison recovery leaf blocks ${phase.phase} ${fault} without cleanup or later publication`, () => {
+        const root = createFixture();
+        try {
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root);
+          seedExactPoisonRecoveryInvalidLeafStateV1(harness.original, harness.admitted.chain, phase, fault);
+          const before = filesystemTreeSnapshot(harness.original.store);
+          const result = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+          assert.equal(result.status, 0, `${phase.phase}/${fault}: ${result.stderr}`);
+          assert.equal(result.stderr, "", `${phase.phase}/${fault}`);
+          const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null }>;
+          assert.equal(observed.outcome, "threw", `${phase.phase}/${fault}`);
+          assert.notEqual(observed.message, null, `${phase.phase}/${fault}`);
+          assert.deepEqual(
+            filesystemTreeSnapshot(harness.original.store),
+            before,
+            `${phase.phase}/${fault}: strict current-family competing bytes must cause zero cleanup or further publication`,
+          );
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+  }
+
+  for (const [index, fault] of EXACT_POISON_RECOVERY_LEAF_INVALID_FIXTURES_V1.entries()) {
+    const phase = EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1[index % EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1.length]!;
+    it(`P4a exact-poison recovery leaf blocks ${fault} without later publication`, () => {
+      const root = createFixture();
+      try {
+        const harness = configureExactPoisonRecoveryLeafHarnessV1(root);
+        seedExactPoisonRecoveryInvalidLeafStateV1(harness.original, harness.admitted.chain, phase, fault);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        assert.equal(result.status, 0, `${fault}: ${result.stderr}`);
+        assert.equal(result.stderr, "", fault);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null }>;
+        assert.equal(observed.outcome, "threw", fault);
+        assert.notEqual(observed.message, null, fault);
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${fault}: terminal classification must make zero cleanup or further publication`);
+        const original = observeExactOriginalPoisonIdentityV1(harness.original.store);
+        assert.deepEqual(original.inventoryBody, harness.original.inventoryBody, `${fault}: original inventory`);
+        assert.deepEqual(original.predecessorFileIdentities, harness.original.predecessorFileIdentities, `${fault}: original identities`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4a exact-poison recovery leaf is idempotent after the exact seven-final chain", () => {
+    const root = createFixture();
+    try {
+      const harness = configureExactPoisonRecoveryLeafHarnessV1(root);
+      const first = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+      assert.equal(first.status, 0, first.stderr);
+      const firstObserved = JSON.parse(first.stdout) as Readonly<{ outcome: string; message: string | null }>;
+      assert.deepEqual({ outcome: firstObserved.outcome, message: firstObserved.message }, { outcome: "returned", message: null });
+      assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, "idempotent-first");
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const second = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+      assert.equal(second.status, 0, second.stderr);
+      const secondObserved = JSON.parse(second.stdout) as Readonly<{ outcome: string; message: string | null }>;
+      assert.deepEqual({ outcome: secondObserved.outcome, message: secondObserved.message }, { outcome: "returned", message: null });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "the idempotent second call must create no temp, final, or inode change");
+      assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, "idempotent-second");
+    } finally {
+      removeFixture(root);
+    }
+  });
 
   it("P4 routes every current-entry authority store through the code-owned account workspace", () => {
     const source = readFileSync(observerSource, "utf8");

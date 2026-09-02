@@ -2886,6 +2886,25 @@ type ExactPoisonRecoveryCandidateV1 = Readonly<{
   bytes: Buffer;
 }>;
 
+type ExactPoisonRecoveryPublicationPhaseV1 =
+  | "disposition"
+  | "successor-authority-v31"
+  | "successor-pending"
+  | "successor-operation"
+  | "successor-edge"
+  | "successor-activation-seal"
+  | "successor-activation-commit";
+
+const EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1 = Object.freeze([
+  Object.freeze({ ordinal: 0 as const, phase: "disposition" as const, specificationPhase: 1 as const }),
+  Object.freeze({ ordinal: 1 as const, phase: "successor-authority-v31" as const, specificationPhase: 3 as const }),
+  Object.freeze({ ordinal: 2 as const, phase: "successor-pending" as const, specificationPhase: 4 as const }),
+  Object.freeze({ ordinal: 3 as const, phase: "successor-operation" as const, specificationPhase: 5 as const }),
+  Object.freeze({ ordinal: 4 as const, phase: "successor-edge" as const, specificationPhase: 6 as const }),
+  Object.freeze({ ordinal: 5 as const, phase: "successor-activation-seal" as const, specificationPhase: 7 as const }),
+  Object.freeze({ ordinal: 6 as const, phase: "successor-activation-commit" as const, specificationPhase: 8 as const }),
+] as const);
+
 type ExactPoisonQuarantineAdmissionV1 = Readonly<{
   candidates: readonly [
     ExactPoisonRecoveryCandidateV1,
@@ -3161,25 +3180,17 @@ function observeExactPoisonQuarantinedInventoryV1(
     ["records/pending-bootstrap-handoff-migrations/sha256/6e", new Set([`${EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1[3].locator.split("/").at(-1)!}`])],
     ["records/pending-bootstrap-handoff-migrations/sha256/ce", new Set([`${EXACT_POISON_CURRENT_PENDING_HASH_V1}.json`])],
   ]);
-  for (const candidate of expectedPublished) {
-    const resolved = path.resolve(candidate.target);
-    const relative = path.relative(root, resolved).split(path.sep).join("/");
-    if (!relative || relative === ".." || relative.startsWith("../") || path.isAbsolute(relative) || canonicalLocator(relative) !== relative) {
-      currentEntryFail("exact-poison published recovery locator escaped its store");
-    }
-    const segments = relative.split("/");
-    const basename = segments.pop()!;
-    let parent = ".";
-    for (const segment of segments) {
-      const child = parent === "." ? segment : `${parent}/${segment}`;
-      const members = exactEntries.get(parent);
-      if (!members) currentEntryFail("exact-poison recovery topology parent is absent");
-      members.add(segment);
-      if (!exactEntries.has(child)) exactEntries.set(child, new Set());
-      parent = child;
-    }
-    exactEntries.get(parent)!.add(basename);
-  }
+  // Recovery records are not members of the poisoned inventory hash.  They are
+  // authenticated against the derived seven-record frontier after candidate
+  // construction; this observation only carves out their fixed namespaces.
+  void expectedPublished;
+  const reservedRootEntries = new Set(["stores"]);
+  const reservedRecordEntries = new Set([
+    "current-entry-store-quarantine-dispositions",
+    "current-entry-store-successor-edges",
+    "current-entry-store-successor-activation-seals",
+    "current-entry-store-successor-activation-commits",
+  ]);
   const topologyDirectoryLocators = [...exactEntries.keys()].sort((left, right) => {
     const depth = left.split("/").length - right.split("/").length;
     return depth === 0 ? compareBytes(left, right) : depth;
@@ -3192,7 +3203,12 @@ function observeExactPoisonQuarantinedInventoryV1(
     if (stats.uid !== lstatSync(root, { bigint: true }).uid) currentEntryFail(`exact-poison inventory directory ${locator} owner is crossed`);
     const expected = [...(exactEntries.get(locator) ?? new Set<string>())].sort(compareBytes);
     const observed = readdirSync(target).sort(compareBytes);
-    if (canonicalComparable(observed) !== canonicalComparable(expected)) currentEntryFail(`exact-poison inventory directory ${locator} is not exact`);
+    const reserved = locator === "." ? reservedRootEntries : locator === "records" ? reservedRecordEntries : new Set<string>();
+    const originalObserved = observed.filter((entry) => !reserved.has(entry));
+    if (
+      canonicalComparable(originalObserved) !== canonicalComparable(expected)
+      || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry))
+    ) currentEntryFail(`exact-poison inventory directory ${locator} is not exact`);
     return Object.freeze({ locator, target, snapshot, uid: stats.uid });
   });
   const topologyByLocator = new Map(topologyDirectorySnapshots.map((entry) => [entry.locator, entry]));
@@ -3204,11 +3220,6 @@ function observeExactPoisonQuarantinedInventoryV1(
       currentEntryFail(`exact-poison inventory file ${locator} identity is invalid`);
     }
     return Object.freeze({ locator, snapshot });
-  });
-  const publishedSnapshots = expectedPublished.map((candidate, index) => {
-    const snapshot = requireExactPoisonRecoverySnapshotV1(candidate.target, `exact-poison published recovery member ${index}`);
-    if (!snapshot.observed.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison published recovery member ${index} bytes are crossed`);
-    return Object.freeze({ candidate, snapshot });
   });
   if (
     operation.locator !== fileSnapshots[0]!.snapshot.locator
@@ -3253,15 +3264,16 @@ function observeExactPoisonQuarantinedInventoryV1(
       assertDirectory(target, snapshot, `exact-poison stable directory ${locator}`);
       if (lstatSync(target, { bigint: true }).uid !== uid) currentEntryFail(`exact-poison stable directory ${locator} owner changed`);
       const expected = [...exactEntries.get(locator)!].sort(compareBytes);
-      if (canonicalComparable(readdirSync(target).sort(compareBytes)) !== canonicalComparable(expected)) {
+      const reserved = locator === "." ? reservedRootEntries : locator === "records" ? reservedRecordEntries : new Set<string>();
+      const observed = readdirSync(target).sort(compareBytes);
+      if (
+        canonicalComparable(observed.filter((entry) => !reserved.has(entry))) !== canonicalComparable(expected)
+        || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry))
+      ) {
         currentEntryFail(`exact-poison stable directory ${locator} topology changed`);
       }
     }
     for (const { locator, snapshot } of fileSnapshots) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable file ${locator}`);
-    for (const [index, { candidate, snapshot }] of publishedSnapshots.entries()) {
-      assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable published member ${index}`);
-      if (!snapshot.observed.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison stable published member ${index} bytes are crossed`);
-    }
     heldWriter.assertStable();
   };
   assertStableOriginals();
@@ -3537,17 +3549,19 @@ async function observeExactPoisonQuarantineAdmissionV1(
     activationCommitHash,
   });
   const successorRoot = exactPoisonSuccessorStoreRootV1(successorStoreHash);
+  const candidates = Object.freeze([
+    Object.freeze({ target: exactPoisonQuarantineDispositionPathV1(dispositionHash), bytes: task12ReceiptCanonicalBytesV1(disposition) }),
+    Object.freeze({ target: path.join(successorRoot, authorityLocator), bytes: prerequisitesA.authorityV3Migration31Audit.bytes }),
+    Object.freeze({ target: path.join(successorRoot, pendingLocator), bytes: prerequisitesA.pendingBootstrapHandoffMigration.bytes }),
+    Object.freeze({ target: path.join(successorRoot, "current-entry-operation.json"), bytes: successorOperationBytes }),
+    Object.freeze({ target: fixedLegacyExactPoisonSuccessorEdgePathV1(), bytes: task12ReceiptCanonicalBytesV1(edge) }),
+    Object.freeze({ target: exactPoisonSuccessorActivationSealPathV1(activationSealHash), bytes: task12ReceiptCanonicalBytesV1(seal) }),
+    Object.freeze({ target: exactPoisonSuccessorActivationCommitPathV1(activationCommitHash), bytes: task12ReceiptCanonicalBytesV1(commit) }),
+  ] as const);
+  assertExactPoisonRecoveryFrontierV1(candidates, heldWriter);
   inventory.assertStableOriginals();
   return Object.freeze({
-    candidates: Object.freeze([
-      Object.freeze({ target: exactPoisonQuarantineDispositionPathV1(dispositionHash), bytes: task12ReceiptCanonicalBytesV1(disposition) }),
-      Object.freeze({ target: path.join(successorRoot, authorityLocator), bytes: prerequisitesA.authorityV3Migration31Audit.bytes }),
-      Object.freeze({ target: path.join(successorRoot, pendingLocator), bytes: prerequisitesA.pendingBootstrapHandoffMigration.bytes }),
-      Object.freeze({ target: path.join(successorRoot, "current-entry-operation.json"), bytes: successorOperationBytes }),
-      Object.freeze({ target: fixedLegacyExactPoisonSuccessorEdgePathV1(), bytes: task12ReceiptCanonicalBytesV1(edge) }),
-      Object.freeze({ target: exactPoisonSuccessorActivationSealPathV1(activationSealHash), bytes: task12ReceiptCanonicalBytesV1(seal) }),
-      Object.freeze({ target: exactPoisonSuccessorActivationCommitPathV1(activationCommitHash), bytes: task12ReceiptCanonicalBytesV1(commit) }),
-    ] as const),
+    candidates,
     assertStableOriginals: inventory.assertStableOriginals,
   });
 }
@@ -3565,6 +3579,494 @@ function assertExactPoisonQuarantineAdmissionCandidatesEqualV1(
   }
 }
 
+type ExactPoisonRecoveryPinnedMemberV1 = Readonly<{
+  descriptor: number;
+  identity: BigIntStats;
+  bytes: Buffer;
+}>;
+
+function exactPoisonRecoveryRelativeLocatorV1(target: string): string {
+  const root = fixedLegacyCurrentEntryRootV1();
+  const relative = path.relative(root, path.resolve(target)).split(path.sep).join("/");
+  if (
+    !relative
+    || relative === ".."
+    || relative.startsWith("../")
+    || path.isAbsolute(relative)
+    || canonicalLocator(relative) !== relative
+  ) currentEntryFail("exact-poison recovery candidate escaped its store");
+  return relative;
+}
+
+function exactPoisonRecoveryCandidateDirectoriesV1(candidate: ExactPoisonRecoveryCandidateV1): readonly string[] {
+  const root = fixedLegacyCurrentEntryRootV1();
+  const relative = exactPoisonRecoveryRelativeLocatorV1(candidate.target);
+  const segments = relative.split("/").slice(0, -1);
+  const directories: string[] = [];
+  for (let index = 1; index <= segments.length; index += 1) {
+    const locator = segments.slice(0, index).join("/");
+    if (locator !== "records") directories.push(path.join(root, ...segments.slice(0, index)));
+  }
+  return Object.freeze(directories);
+}
+
+function exactPoisonRecoveryTempPatternV1(candidate: ExactPoisonRecoveryCandidateV1): RegExp {
+  const basename = path.basename(candidate.target).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\.${basename}\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$`);
+}
+
+function openExactPoisonRecoveryMemberV1(target: string, label: string): ExactPoisonRecoveryPinnedMemberV1 {
+  const parent = lstatSync(path.dirname(target), { bigint: true });
+  let descriptor = -1;
+  try {
+    descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const identity = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(target, { bigint: true });
+    if (
+      !identity.isFile()
+      || identity.isSymbolicLink()
+      || !atPath.isFile()
+      || atPath.isSymbolicLink()
+      || identity.dev !== parent.dev
+      || identity.dev !== atPath.dev
+      || identity.ino !== atPath.ino
+      || identity.mode !== atPath.mode
+      || identity.uid !== parent.uid
+      || identity.uid !== atPath.uid
+      || ![1n, 2n].includes(identity.nlink)
+      || atPath.nlink !== identity.nlink
+      || (identity.mode & 0o7777n) !== 0o600n
+      || identity.size < 0n
+      || identity.size > BigInt(CURRENT_ENTRY_MAX_BYTES)
+    ) currentEntryFail(`${label} identity is invalid`);
+    const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+    const after = fstatSync(descriptor, { bigint: true });
+    const reopened = lstatSync(target, { bigint: true });
+    if (!sameRegularMetadata(identity, after) || !sameRegularMetadata(identity, reopened)) {
+      currentEntryFail(`${label} changed while pinned`);
+    }
+    const pinnedDescriptor = descriptor;
+    descriptor = -1;
+    return Object.freeze({ descriptor: pinnedDescriptor, identity, bytes });
+  } finally {
+    if (descriptor >= 0) closeSync(descriptor);
+  }
+}
+
+function assertExactPoisonRecoveryPinnedMemberStableV1(
+  target: string,
+  pinned: ExactPoisonRecoveryPinnedMemberV1,
+  label: string,
+): void {
+  const now = fstatSync(pinned.descriptor, { bigint: true });
+  const atPath = lstatSync(target, { bigint: true });
+  if (
+    !sameRegularMetadata(pinned.identity, now)
+    || !sameRegularMetadata(pinned.identity, atPath)
+    || !readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size).equals(pinned.bytes)
+  ) currentEntryFail(`${label} changed while held`);
+}
+
+function exactPoisonRecoveryMemberIfPresentV1(target: string, label: string): ExactPoisonRecoveryPinnedMemberV1 | null {
+  try {
+    return openExactPoisonRecoveryMemberV1(target, label);
+  } catch (error) {
+    if (isEnoent(error)) return null;
+    throw error;
+  }
+}
+
+function assertExactPoisonRecoveryFrontierV1(
+  candidates: ExactPoisonQuarantineAdmissionV1["candidates"],
+  heldWriter: ExactPoisonRecoveryWriterV1,
+): void {
+  heldWriter.assertStable();
+  const root = fixedLegacyCurrentEntryRootV1();
+  const rootStats = lstatSync(root, { bigint: true });
+  const directoriesByPhase = candidates.map(exactPoisonRecoveryCandidateDirectoriesV1);
+  const allDirectories = new Set(directoriesByPhase.flat());
+  const allowedDirectoryChildren = new Map<string, Set<string>>();
+  const allowedFileChildren = new Map<string, Set<string>>();
+  for (const directory of allDirectories) {
+    const parent = path.dirname(directory);
+    const members = allowedDirectoryChildren.get(parent) ?? new Set<string>();
+    members.add(path.basename(directory));
+    allowedDirectoryChildren.set(parent, members);
+  }
+  for (const candidate of candidates) {
+    const directory = path.dirname(candidate.target);
+    const members = allowedFileChildren.get(directory) ?? new Set<string>();
+    members.add(path.basename(candidate.target));
+    allowedFileChildren.set(directory, members);
+  }
+  const existingDirectories = new Set<string>();
+  const orderedDirectories = [...allDirectories].sort((left, right) => {
+    const depth = left.split(path.sep).length - right.split(path.sep).length;
+    return depth === 0 ? compareBytes(left, right) : depth;
+  });
+  for (const directory of orderedDirectories) {
+    let stats: BigIntStats;
+    try { stats = lstatSync(directory, { bigint: true }); } catch (error) { if (isEnoent(error)) continue; throw error; }
+    if (
+      !stats.isDirectory()
+      || stats.isSymbolicLink()
+      || stats.dev !== rootStats.dev
+      || stats.uid !== rootStats.uid
+      || (stats.mode & 0o7777n) !== 0o700n
+      || realpathSync(directory) !== directory
+    ) currentEntryFail("exact-poison recovery frontier directory is invalid");
+    existingDirectories.add(directory);
+    const allowedDirectories = allowedDirectoryChildren.get(directory) ?? new Set<string>();
+    const allowedFiles = allowedFileChildren.get(directory) ?? new Set<string>();
+    for (const member of readdirSync(directory)) {
+      if (allowedDirectories.has(member) || allowedFiles.has(member)) continue;
+      const matchesTemp = candidates.some((candidate) => path.dirname(candidate.target) === directory && exactPoisonRecoveryTempPatternV1(candidate).test(member));
+      if (!matchesTemp) currentEntryFail("exact-poison recovery frontier contains an unknown member");
+    }
+  }
+  const states: Array<"absent" | "current" | "complete"> = [];
+  for (const [index, candidate] of candidates.entries()) {
+    const directory = path.dirname(candidate.target);
+    const tempNames = existingDirectories.has(directory)
+      ? readdirSync(directory).filter((entry) => exactPoisonRecoveryTempPatternV1(candidate).test(entry)).sort(compareBytes)
+      : [];
+    if (tempNames.length > 1) currentEntryFail("exact-poison recovery temp cap exceeded");
+    const tempTarget = tempNames.length === 1 ? path.join(directory, tempNames[0]!) : null;
+    let temp: ExactPoisonRecoveryPinnedMemberV1 | null = null;
+    let final: ExactPoisonRecoveryPinnedMemberV1 | null = null;
+    try {
+      temp = tempTarget === null ? null : openExactPoisonRecoveryMemberV1(tempTarget, `exact-poison recovery temp ${index}`);
+      final = exactPoisonRecoveryMemberIfPresentV1(candidate.target, `exact-poison recovery final ${index}`);
+      if (final === null && temp === null) {
+        states.push("absent");
+      } else if (final === null && temp !== null && temp.identity.nlink === 1n) {
+        states.push("current");
+      } else if (final !== null && temp === null && final.identity.nlink === 1n && final.bytes.equals(candidate.bytes)) {
+        states.push("complete");
+      } else if (
+        final !== null
+        && temp !== null
+        && final.bytes.equals(candidate.bytes)
+        && temp.bytes.equals(candidate.bytes)
+        && final.identity.nlink === 2n
+        && temp.identity.nlink === 2n
+        && final.identity.dev === temp.identity.dev
+        && final.identity.ino === temp.identity.ino
+      ) {
+        states.push("current");
+      } else {
+        currentEntryFail(`exact-poison recovery phase ${index} physical state is invalid`);
+      }
+    } finally {
+      if (temp !== null) closeSync(temp.descriptor);
+      if (final !== null) closeSync(final.descriptor);
+    }
+  }
+  const firstIncomplete = states.findIndex((state) => state !== "complete");
+  const frontier = firstIncomplete < 0 ? candidates.length : firstIncomplete;
+  if (states.slice(frontier + 1).some((state) => state !== "absent")) {
+    currentEntryFail("exact-poison recovery phases are not an ordered prefix");
+  }
+  const requiredDirectories = new Set<string>();
+  for (const phaseDirectories of directoriesByPhase.slice(0, frontier)) {
+    for (const directory of phaseDirectories) requiredDirectories.add(directory);
+  }
+  const currentDirectories = frontier < candidates.length
+    ? directoriesByPhase[frontier]!.filter((directory) => !requiredDirectories.has(directory))
+    : [];
+  const currentEndpointPresent = frontier < candidates.length && states[frontier] === "current";
+  let observedPrefixLength = 0;
+  while (observedPrefixLength < currentDirectories.length && existingDirectories.has(currentDirectories[observedPrefixLength]!)) {
+    requiredDirectories.add(currentDirectories[observedPrefixLength]!);
+    observedPrefixLength += 1;
+  }
+  if (
+    (currentEndpointPresent && observedPrefixLength !== currentDirectories.length)
+    || currentDirectories.slice(observedPrefixLength).some((directory) => existingDirectories.has(directory))
+    || [...existingDirectories].some((directory) => !requiredDirectories.has(directory))
+  ) currentEntryFail("exact-poison recovery directory frontier is not an ordered prefix");
+  heldWriter.assertStable();
+}
+
+function ensureExactPoisonRecoveryCandidateDirectoryV1(
+  candidate: ExactPoisonRecoveryCandidateV1,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+): void {
+  const root = fixedLegacyCurrentEntryRootV1();
+  const rootStats = lstatSync(root, { bigint: true });
+  for (const directory of exactPoisonRecoveryCandidateDirectoriesV1(candidate)) {
+    heldWriter.assertStable();
+    const parent = path.dirname(directory);
+    const guard = authenticateTask12ReceiptDirectoryChainV1(parent);
+    try {
+      guard.assertStable();
+      try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (!isEexist(error)) throw error; }
+      guard.assertStable();
+      fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, parent);
+    } finally {
+      guard.close();
+    }
+    const stats = lstatSync(directory, { bigint: true });
+    if (
+      !stats.isDirectory()
+      || stats.isSymbolicLink()
+      || stats.dev !== rootStats.dev
+      || stats.uid !== rootStats.uid
+      || (stats.mode & 0o7777n) !== 0o700n
+      || realpathSync(directory) !== directory
+    ) currentEntryFail("exact-poison recovery candidate directory is invalid");
+    heldWriter.assertStable();
+  }
+}
+
+function fsyncExactPoisonRecoveryCandidateParentV1(
+  heldWriter: ExactPoisonRecoveryWriterV1,
+  directory: string,
+): void {
+  const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
+  let descriptor = -1;
+  try {
+    heldWriter.assertStable();
+    guard.assertStable();
+    descriptor = openSync(directory, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    const before = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(directory, { bigint: true });
+    if (!before.isDirectory() || !sameRegularMetadata(before, atPath)) {
+      // Directory timestamps/link counts may change, but the opened identity,
+      // ownership, mode, and device must remain the authenticated member.
+      if (
+        !atPath.isDirectory()
+        || atPath.isSymbolicLink()
+        || before.dev !== atPath.dev
+        || before.ino !== atPath.ino
+        || before.mode !== atPath.mode
+        || before.uid !== atPath.uid
+      ) currentEntryFail("exact-poison recovery parent identity is invalid");
+    }
+    fsyncSync(descriptor);
+    const after = fstatSync(descriptor, { bigint: true });
+    const reopened = lstatSync(directory, { bigint: true });
+    if (
+      !after.isDirectory()
+      || !reopened.isDirectory()
+      || reopened.isSymbolicLink()
+      || after.dev !== before.dev
+      || after.ino !== before.ino
+      || after.mode !== before.mode
+      || after.uid !== before.uid
+      || reopened.dev !== before.dev
+      || reopened.ino !== before.ino
+      || reopened.mode !== before.mode
+      || reopened.uid !== before.uid
+    ) currentEntryFail("exact-poison recovery parent changed while fsynced");
+    guard.assertStable();
+    heldWriter.assertStable();
+  } finally {
+    if (descriptor >= 0) closeSync(descriptor);
+    guard.close();
+  }
+}
+
+function isEexist(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function isExactPoisonRecoveryCurrentFamilyBytesV1(
+  bytes: Buffer,
+  candidate: ExactPoisonRecoveryCandidateV1,
+  phase: ExactPoisonRecoveryPublicationPhaseV1,
+): boolean {
+  try {
+    const value = strictCanonicalRecord(bytes, `exact-poison ${phase} recovery temp`);
+    const admitted = strictCanonicalRecord(candidate.bytes, `exact-poison admitted ${phase}`);
+    if (canonicalComparable(Object.keys(value).sort(compareBytes)) !== canonicalComparable(Object.keys(admitted).sort(compareBytes))) return false;
+    if (value.schema !== admitted.schema) return false;
+    const shape = {
+      disposition: ["dispositionRef", "dispositionHash"],
+      "successor-authority-v31": ["authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash"],
+      "successor-pending": ["pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash"],
+      "successor-operation": ["operationRef", "operationHash"],
+      "successor-edge": ["edgeRef", "edgeHash"],
+      "successor-activation-seal": ["activationSealRef", "activationSealHash"],
+      "successor-activation-commit": ["activationCommitRef", "activationCommitHash"],
+    } as const;
+    const [refKey, hashKey] = shape[phase];
+    const hash = value[hashKey];
+    const admittedRef = admitted[refKey];
+    if (typeof hash !== "string" || !SHA256.test(hash) || typeof admittedRef !== "string") return false;
+    const suffix = admittedRef.slice(0, -64);
+    if (value[refKey] !== `${suffix}${hash}`) return false;
+    const core = { ...value };
+    delete core[refKey];
+    delete core[hashKey];
+    return hashCanonicalJson(core) === hash;
+  } catch {
+    return false;
+  }
+}
+
+async function assertExactPoisonRecoveryPublicationFenceV1(
+  operation: FileSnapshot,
+  admitted: ExactPoisonQuarantineAdmissionV1,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+): Promise<void> {
+  const observed = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
+  assertExactPoisonQuarantineAdmissionCandidatesEqualV1(observed, admitted);
+  heldWriter.assertStable();
+  observed.assertStableOriginals();
+}
+
+function exactPoisonRecoveryPublicationFaultV1(
+  _phase: ExactPoisonRecoveryPublicationPhaseV1,
+  _ordinal: 0 | 1 | 2 | 3 | 4 | 5 | 6,
+  _boundary: "temp-create" | "complete-write" | "fchmod" | "file-fsync" | "close" | "link" | "parent-fsync" | "incomplete-unlink" | "selected-unlink" | "final-reopen",
+): void {
+  // A deliberately inert, module-private seam. Copied-module crash tests replace
+  // only literal call sites; production has no environment or global switch.
+}
+
+async function publishExactPoisonRecoveryCandidateV1(
+  operation: FileSnapshot,
+  admitted: ExactPoisonQuarantineAdmissionV1,
+  phase: ExactPoisonRecoveryPublicationPhaseV1,
+  ordinal: 0 | 1 | 2 | 3 | 4 | 5 | 6,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+): Promise<void> {
+  const candidate = admitted.candidates[ordinal];
+  if (EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1[ordinal]?.phase !== phase) {
+    currentEntryFail("exact-poison recovery publication phase is crossed");
+  }
+  await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+  ensureExactPoisonRecoveryCandidateDirectoryV1(candidate, heldWriter);
+  await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+  const directory = path.dirname(candidate.target);
+  const basename = path.basename(candidate.target);
+  const pattern = exactPoisonRecoveryTempPatternV1(candidate);
+  for (;;) {
+    heldWriter.assertStable();
+    const members = readdirSync(directory).sort(compareBytes);
+    const names = members.filter((entry) => pattern.test(entry));
+    if (names.length > 1) currentEntryFail("exact-poison recovery temp cap exceeded");
+    const temp = names.length === 1
+      ? path.join(directory, names[0]!)
+      : path.join(directory, `.${basename}.00000000-0000-4000-8000-000000000001.tmp`);
+    let existingTemp: ExactPoisonRecoveryPinnedMemberV1 | null = null;
+    let existingFinal: ExactPoisonRecoveryPinnedMemberV1 | null = null;
+    let tempDescriptor = -1;
+    let selected: ExactPoisonRecoveryPinnedMemberV1 | null = null;
+    let selectedOwned = false;
+    try {
+      existingTemp = names.length === 1
+        ? openExactPoisonRecoveryMemberV1(temp, `exact-poison ${phase} temp`)
+        : null;
+      existingFinal = exactPoisonRecoveryMemberIfPresentV1(candidate.target, `exact-poison ${phase} final`);
+      if (existingFinal !== null && existingTemp === null) {
+        if (existingFinal.identity.nlink !== 1n || !existingFinal.bytes.equals(candidate.bytes)) {
+          currentEntryFail(`exact-poison ${phase} final is crossed`);
+        }
+      } else if (existingFinal !== null && existingTemp !== null) {
+        if (
+          existingFinal.identity.nlink !== 2n
+          || existingTemp.identity.nlink !== 2n
+          || existingFinal.identity.dev !== existingTemp.identity.dev
+          || existingFinal.identity.ino !== existingTemp.identity.ino
+          || !existingFinal.bytes.equals(candidate.bytes)
+          || !existingTemp.bytes.equals(candidate.bytes)
+        ) currentEntryFail(`exact-poison ${phase} selected temp is crossed`);
+        selected = existingTemp;
+      } else if (existingFinal === null && existingTemp !== null && !existingTemp.bytes.equals(candidate.bytes)) {
+        if (isExactPoisonRecoveryCurrentFamilyBytesV1(existingTemp.bytes, candidate, phase)) {
+          currentEntryFail(`exact-poison ${phase} has competing current-family bytes`);
+        }
+        await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+        assertExactPoisonRecoveryPinnedMemberStableV1(temp, existingTemp, `exact-poison ${phase} incomplete temp`);
+        unlinkSync(temp);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "incomplete-unlink");
+        fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, directory);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "parent-fsync");
+        continue;
+      } else if (existingFinal === null && existingTemp === null) {
+        tempDescriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "temp-create");
+        writeFileSync(tempDescriptor, candidate.bytes);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "complete-write");
+        fchmodSync(tempDescriptor, 0o600);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "fchmod");
+        fsyncSync(tempDescriptor);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "file-fsync");
+    closeSync(tempDescriptor);
+    tempDescriptor = -1;
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close");
+        selected = openExactPoisonRecoveryMemberV1(temp, `exact-poison ${phase} link candidate`);
+        selectedOwned = true;
+      } else if (existingFinal === null && existingTemp !== null) {
+        if (existingTemp.identity.nlink !== 1n || !existingTemp.bytes.equals(candidate.bytes)) {
+          currentEntryFail(`exact-poison ${phase} temp is crossed`);
+        }
+        fsyncSync(existingTemp.descriptor);
+        selected = existingTemp;
+      }
+
+      if (existingFinal === null) {
+        if (selected === null) currentEntryFail(`exact-poison ${phase} link candidate is absent`);
+        if (selected.identity.nlink !== 1n || !selected.bytes.equals(candidate.bytes)) {
+          currentEntryFail(`exact-poison ${phase} link candidate is crossed`);
+        }
+        await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+        assertExactPoisonRecoveryPinnedMemberStableV1(temp, selected, `exact-poison ${phase} link candidate`);
+        linkSync(temp, candidate.target);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "link");
+        fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, directory);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "parent-fsync");
+        const linkedTemp = fstatSync(selected.descriptor, { bigint: true });
+        const linkedFinal = lstatSync(candidate.target, { bigint: true });
+        if (
+          linkedTemp.nlink !== 2n
+          || linkedFinal.nlink !== 2n
+          || linkedTemp.dev !== selected.identity.dev
+          || linkedTemp.ino !== selected.identity.ino
+          || linkedFinal.dev !== selected.identity.dev
+          || linkedFinal.ino !== selected.identity.ino
+        ) currentEntryFail(`exact-poison ${phase} link proof failed`);
+        const refreshedSelected = openExactPoisonRecoveryMemberV1(temp, `exact-poison ${phase} selected link`);
+        if (selectedOwned) closeSync(selected.descriptor);
+        selected = refreshedSelected;
+        selectedOwned = true;
+      }
+
+      fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, directory);
+      exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "parent-fsync");
+      await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+      if (selected !== null) {
+        assertExactPoisonRecoveryPinnedMemberStableV1(temp, selected, `exact-poison ${phase} selected temp`);
+        const selectedFinal = lstatSync(candidate.target, { bigint: true });
+        const selectedNow = fstatSync(selected.descriptor, { bigint: true });
+        if (
+          selectedFinal.dev !== selectedNow.dev
+          || selectedFinal.ino !== selectedNow.ino
+          || selectedFinal.nlink !== 2n
+          || selectedNow.nlink !== 2n
+        ) currentEntryFail(`exact-poison ${phase} selected final changed before cleanup`);
+        await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+        unlinkSync(temp);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "selected-unlink");
+        fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, directory);
+        exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "parent-fsync");
+      }
+      const reopened = readTask12ReceiptStoreSnapshotV1(candidate.target);
+      if (!reopened.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison ${phase} final did not reopen`);
+      exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "final-reopen");
+      await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+      return;
+    } finally {
+      if (tempDescriptor >= 0) closeSync(tempDescriptor);
+      if (selectedOwned && selected !== null) closeSync(selected.descriptor);
+      if (existingTemp !== null) closeSync(existingTemp.descriptor);
+      if (existingFinal !== null) closeSync(existingFinal.descriptor);
+    }
+  }
+}
+
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
   try {
@@ -3574,27 +4076,8 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       "fixed legacy exact-poison publisher operation",
     );
     const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
-    for (const [index, candidate] of admission.candidates.entries()) {
-      const before = await observeExactPoisonQuarantineAdmissionV1(
-        operation,
-        heldWriter,
-        admission.candidates.slice(0, index),
-      );
-      assertExactPoisonQuarantineAdmissionCandidatesEqualV1(before, admission);
-      heldWriter.assertStable();
-      before.assertStableOriginals();
-      publishLegacyZeroRecordV1(candidate.target, candidate.bytes);
-      if (!readTask12ReceiptStoreBytesV1(candidate.target).equals(candidate.bytes)) {
-        currentEntryFail("exact-poison recovery candidate did not reopen exactly");
-      }
-      const after = await observeExactPoisonQuarantineAdmissionV1(
-        operation,
-        heldWriter,
-        admission.candidates.slice(0, index + 1),
-      );
-      assertExactPoisonQuarantineAdmissionCandidatesEqualV1(after, admission);
-      heldWriter.assertStable();
-      after.assertStableOriginals();
+    for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
+      await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
     }
     const complete = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
     if (complete.state !== "complete") currentEntryFail("exact-poison published recovery chain is incomplete");
