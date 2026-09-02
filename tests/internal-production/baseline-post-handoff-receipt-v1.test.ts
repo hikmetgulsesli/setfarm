@@ -560,6 +560,40 @@ function strictNonpoisonOperationFixtureBytesV1(): Buffer {
   return bytes;
 }
 
+function crossedExactPoisonOperationFixtureBytesV1(): Buffer {
+  const exact = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")) as Record<string, unknown>;
+  const operationRef = String(exact.operationRef);
+  assert.equal(operationRef.endsWith(EXACT_POISON_OPERATION_HASH_V1), true);
+  const crossedHash = `${EXACT_POISON_OPERATION_HASH_V1[0] === "0" ? "1" : "0"}${EXACT_POISON_OPERATION_HASH_V1.slice(1)}`;
+  exact.operationRef = operationRef.slice(0, -EXACT_POISON_OPERATION_HASH_V1.length) + crossedHash;
+  const bytes = Buffer.from(`${canonical(exact)}\n`, "utf8");
+  assert.equal(bytes.length, exactPoisonOperationFixtureBytesV1().length, "the crossed exact-poison fixture changes no byte length");
+  assert.equal(exact.operationHash, EXACT_POISON_OPERATION_HASH_V1, "the crossed wrapper retains the frozen core hash");
+  assert.notEqual(exact.operationRef, EXACT_POISON_OPERATION_REF_V1, "the crossed wrapper ref disagrees with its frozen hash");
+  assert.notEqual(createHash("sha256").update(bytes).digest("hex"), EXACT_POISON_OPERATION_BYTES_SHA256_V1);
+  return bytes;
+}
+
+function rewriteIdenticalBytesWithMetadataDriftV1(target: string): void {
+  const bytes = readFileSync(target);
+  const before = lstatSync(target, { bigint: true });
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    writeFileSync(target, bytes);
+    const after = lstatSync(target, { bigint: true });
+    if (after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+      assert.equal(after.dev, before.dev);
+      assert.equal(after.ino, before.ino);
+      assert.equal(after.mode, before.mode);
+      assert.equal(after.size, before.size);
+      assert.deepEqual(readFileSync(target), bytes);
+      return;
+    }
+    Atomics.wait(wait, 0, 0, 2);
+  }
+  assert.fail("an identical-byte rewrite must produce observable mtime/ctime drift");
+}
+
 function writeRawCurrentEntryOperationFixtureV1(root: string, bytes: Buffer): string {
   const store = currentEntryStore(root);
   for (const directory of [
@@ -2038,6 +2072,210 @@ function configureExactPoisonRecoveryLeafHarnessV1(
   instrumentExactPoisonRecoveryLeafFixtureV1(root, fault);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
   return Object.freeze({ original, admitted, observations });
+}
+
+type ExactPoisonDurabilityKindFixtureV1 = "seal" | "commit";
+type ExactPoisonDurabilityBoundaryFixtureV1 = "pre-fsync" | "post-fsync" | "post-reopen";
+type ExactPoisonDurabilityFaultFixtureV1 = Readonly<{
+  kind: ExactPoisonDurabilityKindFixtureV1;
+  boundary: ExactPoisonDurabilityBoundaryFixtureV1;
+  occurrence: number;
+  action: "throw" | "latch";
+  readyPath?: string;
+  releasePath?: string;
+}>;
+
+type ExactPoisonPinnedContextBoundaryFixtureV1 =
+  | "builder-operation-pre-read"
+  | "builder-operation-post-read"
+  | "stable-member-post-read";
+type ExactPoisonPinnedContextFaultFixtureV1 = Readonly<{
+  boundary: ExactPoisonPinnedContextBoundaryFixtureV1;
+  occurrence: number;
+  readyPath: string;
+  releasePath: string;
+}>;
+
+function instrumentExactPoisonDurabilityFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const sealBuilder = "async function openExactPoisonRecoveryPinnedSealChainV1(): Promise<ExactPoisonRecoveryPinnedSealChainV1> {";
+  const commitBuilder = "async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoisonRecoveryPinnedCommitChainV1> {";
+  const sealHelper = "async function durablyAuthenticateSuccessorActivationSealV1(";
+  const commitHelper = "async function durablyAuthenticateSuccessorActivationCommitV1(";
+  const faultMarker = "function exactPoisonRecoveryDurabilityFaultV1(";
+  for (const [marker, label] of [
+    [sealBuilder, "zero-input pinned seal-chain builder"],
+    [commitBuilder, "zero-input pinned commit-chain builder"],
+    [sealHelper, "publisher-only seal durability helper"],
+    [commitHelper, "generic commit durability helper"],
+    [faultMarker, "private inert durability fault boundary"],
+  ] as const) assert.equal(source.split(marker).length - 1, 1, `production must retain one ${label}`);
+
+  source = source.replace(sealBuilder, `export ${sealBuilder}`);
+  source = source.replace(commitBuilder, `export ${commitBuilder}`);
+  source = source.replace(sealHelper, `export ${sealHelper}`);
+  source = source.replace(commitHelper, `export ${commitHelper}`);
+
+  const faultStart = source.indexOf(faultMarker);
+  const faultEnd = source.indexOf("\n}\n", faultStart);
+  assert.ok(faultStart >= 0 && faultEnd > faultStart, "the private durability fault boundary must have one exact copied-module body");
+  const faultSignatureEnd = source.indexOf("): void {", faultStart);
+  assert.ok(faultSignatureEnd > faultStart && faultSignatureEnd < faultEnd, "the private durability fault boundary must return void");
+  const injectedFaultBody = `): void {
+  const probe = Reflect.get(globalThis, "__p5aExactPoisonDurabilityProbeV1") as undefined | {
+    events: string[];
+    matches: number;
+    fault: null | Readonly<{kind:string;boundary:string;occurrence:number;action:"throw"|"latch";readyPath?:string;releasePath?:string}>;
+  };
+  if (probe === undefined) return;
+  probe.events.push(kind + ":" + boundary);
+  const expected = probe.fault;
+  if (expected === null || expected.kind !== kind || expected.boundary !== boundary) return;
+  probe.matches += 1;
+  if (probe.matches !== expected.occurrence) return;
+  if (expected.action === "throw") throw new Error("P5A_EXACT_POISON_DURABILITY_FAULT:" + kind + ":" + boundary);
+  if (!expected.readyPath || !expected.releasePath) throw new Error("P5A_EXACT_POISON_DURABILITY_LATCH_PATH_MISSING");
+  writeFileSync(expected.readyPath, "ready\\n", { flag: "wx", mode: 0o600 });
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try { lstatSync(expected.releasePath); return; }
+    catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); }
+  }
+}`;
+  source = source.slice(0, faultSignatureEnd) + injectedFaultBody + source.slice(faultEnd + 2);
+
+  const operationSnapshotAnchor = `  const operation = requireExactPoisonRecoverySnapshotV1(
+    fixedLegacyCurrentEntryOperationPathV1(),
+    "fixed legacy exact-poison pinned operation",
+  );
+  const parsed = await readExactPoisonRecoveryChainV1(operation, includeCommit);`;
+  assert.equal(source.split(operationSnapshotAnchor).length - 1, 1, "the copied builder has one initial fixed-operation snapshot boundary");
+  source = source.replace(operationSnapshotAnchor, `  p5aExactPoisonPinnedContextFaultFixtureV1("builder-operation-pre-read", fixedLegacyCurrentEntryOperationPathV1());
+  const operation = requireExactPoisonRecoverySnapshotV1(
+    fixedLegacyCurrentEntryOperationPathV1(),
+    "fixed legacy exact-poison pinned operation",
+  );
+  p5aExactPoisonPinnedContextFaultFixtureV1("builder-operation-post-read", fixedLegacyCurrentEntryOperationPathV1());
+  const parsed = await readExactPoisonRecoveryChainV1(operation, includeCommit);`);
+
+  const stableFunctionMarker = "function assertExactPoisonRecoveryPinnedMemberStableV1(";
+  const stableStart = source.indexOf(stableFunctionMarker);
+  const stableEnd = source.indexOf("\n}\n", stableStart);
+  assert.ok(stableStart >= 0 && stableEnd > stableStart, "the copied module retains one pinned-member stable fence");
+  const stableRegion = source.slice(stableStart, stableEnd + 2);
+  const stableReadAnchor = `  const bytes = readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size);
+  const after = fstatSync(pinned.descriptor, { bigint: true });`;
+  const legacyStableReadAnchor = "    || !readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size).equals(pinned.bytes)";
+  const stableReadCount = stableRegion.split(stableReadAnchor).length - 1;
+  const legacyStableReadCount = stableRegion.split(legacyStableReadAnchor).length - 1;
+  assert.equal(stableReadCount + legacyStableReadCount, 1, "the copied stable fence has one current or legacy descriptor-read boundary");
+  const instrumentedStableRegion = stableReadCount === 1
+    ? stableRegion.replace(stableReadAnchor, `  const bytes = readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size);
+  p5aExactPoisonPinnedContextFaultFixtureV1("stable-member-post-read", target);
+  const after = fstatSync(pinned.descriptor, { bigint: true });`)
+    : stableRegion.replace(legacyStableReadAnchor, `    || !(() => {
+      const bytes = readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size);
+      p5aExactPoisonPinnedContextFaultFixtureV1("stable-member-post-read", target);
+      return bytes;
+    })().equals(pinned.bytes)`);
+  source = source.slice(0, stableStart) + instrumentedStableRegion + source.slice(stableEnd + 2);
+
+  const coreMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  const coreMarkerStart = source.indexOf(coreMarker);
+  assert.ok(coreMarkerStart >= 0, "the durability fixture requires the private publisher core");
+  const coreStart = source.lastIndexOf("\n", coreMarkerStart) + 1;
+  const wrapper = `function p5aExactPoisonPinnedContextFaultFixtureV1(boundary: "builder-operation-pre-read" | "builder-operation-post-read" | "stable-member-post-read", target: string): void {
+  const probe = Reflect.get(globalThis, "__p5aExactPoisonPinnedContextProbeV1") as undefined | {
+    events: ReadonlyArray<{boundary:string;target:string}>;
+    matches: number;
+    fault: null | Readonly<{boundary:string;occurrence:number;readyPath:string;releasePath:string}>;
+  };
+  if (probe === undefined) return;
+  (probe.events as Array<{boundary:string;target:string}>).push({ boundary, target });
+  const expected = probe.fault;
+  if (expected === null || expected.boundary !== boundary) return;
+  probe.matches += 1;
+  if (probe.matches !== expected.occurrence) return;
+  writeFileSync(expected.readyPath, "ready\\n", { flag: "wx", mode: 0o600 });
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try { lstatSync(expected.releasePath); return; }
+    catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); }
+  }
+}
+
+export async function p5aRunExactPoisonDurabilityFixtureV1(kind: "seal" | "commit", writerMode: "real" | "clone" = "real"): Promise<Readonly<Record<string, unknown>>> {
+  const beforeDescriptors = readdirSync("/dev/fd").filter((name) => /^[0-9]+$/.test(name)).length;
+  let writer: ExactPoisonRecoveryWriterV1 | null = null;
+  let context: ExactPoisonRecoveryPinnedSealChainV1 | ExactPoisonRecoveryPinnedCommitChainV1 | null = null;
+  try {
+    if (kind === "seal" && writerMode === "real") writer = acquireExactPoisonRecoveryWriterV1();
+    context = kind === "seal"
+      ? await openExactPoisonRecoveryPinnedSealChainV1()
+      : await openExactPoisonRecoveryPinnedCommitChainV1();
+    if (kind === "seal") {
+      if (writerMode === "clone") writer = Object.freeze({ assertStable: () => undefined, close: () => undefined }) as ExactPoisonRecoveryWriterV1;
+      await durablyAuthenticateSuccessorActivationSealV1(context as ExactPoisonRecoveryPinnedSealChainV1, writer!);
+    } else {
+      await durablyAuthenticateSuccessorActivationCommitV1(context as ExactPoisonRecoveryPinnedCommitChainV1);
+    }
+    context.assertStable();
+    return recursivelyFreeze({
+      frozen: Object.isFrozen(context),
+      successorRoot: context.successorRoot,
+      successorOperationPair: context.successorOperationPair,
+      sealParentTarget: context.sealParent.target,
+      commitParentTarget: "commitParent" in context ? context.commitParent.target : null,
+      contextKeys: Reflect.ownKeys(context).filter((key): key is string => typeof key === "string").sort(compareBytes),
+      beforeDescriptors,
+    });
+  } finally {
+    try { context?.close(); }
+    finally { if (writer !== null && writerMode === "real") writer.close(); }
+  }
+}
+
+`;
+  source = source.slice(0, coreStart) + wrapper + source.slice(coreStart);
+  writeFileSync(modulePath, source);
+}
+
+function configureExactPoisonDurabilityHarnessV1(
+  root: string,
+  kind: ExactPoisonDurabilityKindFixtureV1,
+): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, kind === "seal" ? "S" : "C");
+  instrumentExactPoisonDurabilityFixtureV1(root);
+  return Object.freeze({ original, admitted, seeded });
+}
+
+function runExactPoisonDurabilityFixtureV1(
+  root: string,
+  kind: ExactPoisonDurabilityKindFixtureV1,
+  fault: ExactPoisonDurabilityFaultFixtureV1 | null = null,
+  writerMode: "real" | "clone" = "real",
+  contextFault: ExactPoisonPinnedContextFaultFixtureV1 | null = null,
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={events:[],matches:0,fault:${JSON.stringify(fault)}};const contextProbe={events:[],matches:0,fault:${JSON.stringify(contextFault)}};Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonPinnedContextProbeV1",contextProbe);let outcome="returned",message=null,value=null;try{value=await m.p5aRunExactPoisonDurabilityFixtureV1(${JSON.stringify(kind)},${JSON.stringify(writerMode)})}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,value,events:probe.events,matches:probe.matches,contextEvents:contextProbe.events,contextMatches:contextProbe.matches,descriptorDelta:after-before}))})()`);
+}
+
+function runExactPoisonPublisherCoreWithDurabilityFixtureV1(
+  root: string,
+  observations: Readonly<Record<string, readonly unknown[]>>,
+): ReturnType<typeof spawnSync> {
+  const transported = JSON.stringify(fixtureTransportValueV1(observations));
+  const transportPath = path.join(path.dirname(root), ".p5a-exact-poison-admission.json");
+  fixtureFile(path.dirname(root), ".p5a-exact-poison-admission.json", `${transported}\n`, 0o600);
+  return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5A_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,events:durability.events,admissionCalls:admission.admissionCalls}))})()`);
 }
 
 function assertExactPoisonRecoveryConvergedV1(
@@ -5070,6 +5308,445 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.equal(preselection.status, 0, preselection.stderr);
       assert.equal(preselection.stderr, "");
       assert.deepEqual(JSON.parse(preselection.stdout), { outcome: "returned", message: null, calls: 0 }, "a fully strict D/G/H/S/C chain must skip publisher dispatch");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5a-A freezes private zero-input chain builders, async durability helpers, and publisher ordering", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const sealBuilder = "async function openExactPoisonRecoveryPinnedSealChainV1(): Promise<ExactPoisonRecoveryPinnedSealChainV1> {";
+    const commitBuilder = "async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoisonRecoveryPinnedCommitChainV1> {";
+    const sealHelper = "async function durablyAuthenticateSuccessorActivationSealV1(";
+    const commitHelper = "async function durablyAuthenticateSuccessorActivationCommitV1(";
+    for (const [marker, label] of [
+      [sealBuilder, "zero-input strict seal-chain builder"],
+      [commitBuilder, "zero-input strict commit-chain builder"],
+      [sealHelper, "async seal durability helper"],
+      [commitHelper, "async commit durability helper"],
+    ] as const) {
+      assert.equal(source.split(marker).length - 1, 1, label);
+      assert.equal(source.includes(`export ${marker}`), false, `${label} remains private`);
+    }
+    const readerStart = source.indexOf("async function readExactPoisonRecoveryChainV1(");
+    const pinnedBuilderStart = source.indexOf("async function openExactPoisonRecoveryPinnedChainV1(");
+    assert.ok(readerStart >= 0 && pinnedBuilderStart > readerStart, "the raw strict reader precedes the zero-input pinned builder");
+    const readerRegion = source.slice(readerStart, pinnedBuilderStart);
+    assert.match(readerRegion, /predecessor\.operationRef !== EXACT_POISON_OPERATION_REF_V1/, "strict chain admission binds the exact predecessor ref");
+    assert.match(readerRegion, /predecessor\.operationHash !== EXACT_POISON_OPERATION_HASH_V1/, "strict chain admission binds the exact predecessor core hash");
+    assert.match(readerRegion, /sha256\(operation\.observed\.bytes\) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1/, "strict chain admission binds the collision-resistant complete operation bytes");
+    assert.equal((source.match(/new WeakSet<ExactPoisonRecoveryWriterV1>\(\)/g) ?? []).length, 1, "one module-private WeakSet authenticates real H-writer handles");
+    const acquireStart = source.indexOf("function acquireExactPoisonRecoveryWriterV1()");
+    const acquireEnd = source.indexOf("\n}", acquireStart);
+    assert.ok(acquireStart >= 0 && acquireEnd > acquireStart);
+    assert.match(source.slice(acquireStart, acquireEnd), /\.add\(/, "the thin H-writer acquisition registers only its real returned handle");
+
+    const sealStart = source.indexOf(sealHelper);
+    const commitStart = source.indexOf(commitHelper);
+    const faultStart = source.indexOf("function exactPoisonRecoveryDurabilityFaultV1(", Math.max(sealStart, commitStart));
+    assert.ok(sealStart >= 0 && commitStart > sealStart && faultStart > commitStart, "durability helpers and their inert boundary have one ordered private region");
+    const sealRegion = source.slice(sealStart, commitStart);
+    const commitRegion = source.slice(commitStart, faultStart);
+    assert.match(sealRegion, /\.has\([^)]*heldWriter[^)]*\)/, "seal durability rejects an unregistered structural writer clone");
+    assert.match(sealRegion, /heldWriter\.assertStable\(\)/, "seal durability fences with the live H writer");
+    assert.doesNotMatch(commitRegion, /heldWriter|ExactPoisonRecoveryWriterV1|fsyncExactPoisonRecoveryCandidateParentV1/, "generic commit durability is writer-independent");
+    for (const [region, label] of [[sealRegion, "seal"], [commitRegion, "commit"]] as const) {
+      const parentName = label === "seal" ? "sealParent" : "commitParent";
+      assert.match(region, new RegExp(`const parent = context\\.${parentName};`), `${label} selects only its exact builder-owned parent pin`);
+      assert.match(region, /parent\.assertStable\(\)/, `${label} authenticates its already-pinned parent before durability`);
+      assert.match(region, /fsyncSync\(parent\.descriptor\)/, `${label} fsyncs that exact pinned parent descriptor`);
+      assert.match(region, /await openExactPoisonRecoveryPinned(?:Seal|Commit)ChainV1\(\)/, `${label} performs a fresh full semantic chain reopen`);
+      assert.doesNotMatch(region, /openSync|readdirSync|mtime|process\.env|globalThis|create|writeFile|truncate|chmod|linkSync|unlinkSync|renameSync/, `${label} has no fresh-parent open, scan, environment, namespace, or content mutation seam`);
+    }
+
+    const coreStart = source.indexOf("async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {");
+    const coreEnd = source.indexOf("\n}\n\nasync function resumeExactPoisonQuarantineBeforeSelectionV1", coreStart);
+    assert.ok(coreStart >= 0 && coreEnd > coreStart);
+    const core = source.slice(coreStart, coreEnd);
+    const ordered = [
+      'ordinal === 5',
+      'await openExactPoisonRecoveryPinnedSealChainV1()',
+      'await durablyAuthenticateSuccessorActivationSealV1(',
+      'ordinal === 6',
+      'await openExactPoisonRecoveryPinnedCommitChainV1()',
+      'await durablyAuthenticateSuccessorActivationCommitV1(',
+    ];
+    let cursor = -1;
+    for (const marker of ordered) {
+      const next = core.indexOf(marker, cursor + 1);
+      assert.ok(next > cursor, `${marker} must follow its exact predecessor in the publisher`);
+      cursor = next;
+    }
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationSealV1(").length - 1, 2, "only definition and publisher call S durability");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 2, "Phase5a-A adds only definition and publisher call for C durability");
+    assert.match(core, /heldWriter\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);/, "publisher fences the generic C helper immediately before and after its await");
+    assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
+    assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
+    assert.doesNotMatch(source, /SETFARM_[A-Z0-9_]*(?:SEAL|COMMIT|DURABILITY)|current-entry-store-successor-activation-(?!seal|commit)/);
+    const loaded = await import(`${pathToFileURL(observerSource).href}?p5a-private=${Date.now()}`) as Record<string, unknown>;
+    for (const name of [
+      "openExactPoisonRecoveryPinnedSealChainV1",
+      "openExactPoisonRecoveryPinnedCommitChainV1",
+      "durablyAuthenticateSuccessorActivationSealV1",
+      "durablyAuthenticateSuccessorActivationCommitV1",
+    ]) assert.equal(Reflect.has(loaded, name), false, `${name} must remain absent from the public ABI`);
+  });
+
+  for (const kind of ["seal", "commit"] as const) {
+    it(`P5a-A ${kind} durability authenticates one pinned full chain and closes every descriptor`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, kind);
+        const result = await runExactPoisonDurabilityFixtureV1(root, kind);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: string;
+          message: string | null;
+          value: Readonly<{ frozen: boolean; successorRoot: string; successorOperationPair: Readonly<{ ref: string; hash: string }>; sealParentTarget: string; commitParentTarget: string | null; contextKeys: string[] }>;
+          events: string[];
+          descriptorDelta: number;
+        }>;
+        assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+        assert.equal(observed.value.frozen, true);
+        assert.equal(observed.value.successorRoot, path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
+        assert.deepEqual(observed.value.successorOperationPair, {
+          ref: harness.admitted.chain.records.successorOperation.value.operationRef,
+          hash: harness.admitted.chain.records.successorOperation.value.operationHash,
+        });
+        assert.equal(observed.value.sealParentTarget, path.dirname(harness.seeded.S), `${kind}: S parent pin is bound to the exact derived seal locator`);
+        assert.equal(observed.value.commitParentTarget, kind === "commit" ? path.dirname(harness.seeded.C) : null, `${kind}: C parent pin exists only in the committed context`);
+        for (const key of ["operation", "edge", "disposition", "successorRoot", "successorOperationPair", "seal", "sealParent", "assertStable", "close"]) {
+          assert.equal(observed.value.contextKeys.includes(key), true, `${kind}: pinned context retains ${key}`);
+        }
+        assert.equal(observed.value.contextKeys.includes("commit"), kind === "commit", `${kind}: commit pin nullability`);
+        assert.equal(observed.value.contextKeys.includes("commitParent"), kind === "commit", `${kind}: commit-parent pin nullability`);
+        assert.deepEqual(observed.events, [`${kind}:pre-fsync`, `${kind}:post-fsync`, `${kind}:post-reopen`]);
+        assert.equal(observed.descriptorDelta, 0, `${kind}: helper and fresh semantic reopen close every descriptor`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P5a-A seal durability refuses a structural H-writer clone before fsync", async () => {
+    const root = createFixture();
+    try {
+      configureExactPoisonDurabilityHarnessV1(root, "seal");
+      const result = await runExactPoisonDurabilityFixtureV1(root, "seal", null, "clone");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; descriptorDelta: number }>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(observed.message ?? "", /writer|handle|authenticated|invalid/i);
+      assert.deepEqual(observed.events, [], "a clone is refused before the exact S-parent fsync boundary");
+      assert.equal(observed.descriptorDelta, 0);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5a-A complete preselection inspection closes its strict committed context on every no-dispatch return", () => {
+    const root = createFixture();
+    try {
+      configureExactPoisonDurabilityHarnessV1(root, "commit");
+      instrumentExactPoisonPreselectionFixtureV1(root);
+      const result = runFixtureExpression(root, '(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={calls:0,afterPrehook:0,throwOnCall:true};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantineBeforeSelectionV1();await m.resumeExactPoisonQuarantineBeforeSelectionV1()}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls,events:durability.events,descriptorDelta:after-before}))})()');
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), {
+        outcome: "returned",
+        message: null,
+        calls: 0,
+        events: [],
+        descriptorDelta: 0,
+      }, "two fully complete inspections close both pinned contexts and never dispatch or run durability");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const stage of [
+    Object.freeze({ name: "initial strict builder", occurrence: 1, expectedEvents: [] as string[] }),
+    Object.freeze({ name: "fresh helper reopen", occurrence: 2, expectedEvents: ["commit:pre-fsync", "commit:post-fsync"] }),
+  ]) {
+    for (const mutation of [
+      Object.freeze({
+        name: "crossed exact-poison ref with frozen hash",
+        bytes: crossedExactPoisonOperationFixtureBytesV1,
+        expectedMessage: /fixed legacy current-entry operation pair\/hash is invalid/,
+      }),
+      Object.freeze({
+        name: "canonical self-hashed nonpoison operation",
+        bytes: strictNonpoisonOperationFixtureBytesV1,
+        expectedMessage: /fixed legacy exact-poison chain operation is crossed/,
+      }),
+    ]) {
+      it(`P5a-A ${stage.name} freshly rejects fixed-operation ${mutation.name}`, async () => {
+        const root = createFixture();
+        const readyPath = path.join(path.dirname(root), `p5a-operation-pre-${stage.occurrence}-${mutation.name.replaceAll(/[^a-z]+/g, "-")}-ready`);
+        const releasePath = path.join(path.dirname(root), `p5a-operation-pre-${stage.occurrence}-${mutation.name.replaceAll(/[^a-z]+/g, "-")}-release`);
+        try {
+          const harness = configureExactPoisonDurabilityHarnessV1(root, "commit");
+          const operationPath = path.join(harness.original.store, "current-entry-operation.json");
+          const resultPromise = runExactPoisonDurabilityFixtureV1(root, "commit", null, "real", Object.freeze({
+            boundary: "builder-operation-pre-read",
+            occurrence: stage.occurrence,
+            readyPath,
+            releasePath,
+          }));
+          waitForFixturePredicateV1(() => existsSync(readyPath), `${stage.name} fixed-operation pre-read latch`);
+          const before = lstatSync(operationPath, { bigint: true });
+          writeFileSync(operationPath, mutation.bytes());
+          const after = lstatSync(operationPath, { bigint: true });
+          assert.equal(after.dev, before.dev);
+          assert.equal(after.ino, before.ino);
+          assert.equal(after.mode, before.mode);
+          writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+          const result = await resultPromise;
+          assert.equal(result.status, 0, result.stderr);
+          const observed = JSON.parse(result.stdout) as Readonly<{
+            outcome: string;
+            message: string | null;
+            events: string[];
+            contextEvents: ReadonlyArray<Readonly<{ boundary: string; target: string }>>;
+            contextMatches: number;
+            descriptorDelta: number;
+          }>;
+          assert.equal(observed.outcome, "threw", `${stage.name}:${mutation.name}`);
+          assert.match(observed.message ?? "", mutation.expectedMessage, `${stage.name}:${mutation.name}`);
+          assert.deepEqual(observed.events, stage.expectedEvents, `${stage.name}: no durability success follows operation drift`);
+          assert.equal(observed.events.includes("commit:post-reopen"), false, `${stage.name}: fresh reopen never authenticates crossed operation state`);
+          assert.equal(observed.contextMatches, stage.occurrence);
+          assert.equal(observed.contextEvents.filter((event) => event.boundary === "builder-operation-pre-read").length, stage.occurrence);
+          assert.equal(observed.contextEvents.at(-1)?.target, realpathSync(operationPath));
+          assert.equal(observed.descriptorDelta, 0, `${stage.name}: rejected construction closes every pin`);
+        } finally {
+          if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+          removeFixture(root);
+        }
+      });
+    }
+
+    it(`P5a-A ${stage.name} rejects a same-byte fixed-operation inode replacement after snapshot`, async () => {
+      const root = createFixture();
+      const readyPath = path.join(path.dirname(root), `p5a-operation-post-${stage.occurrence}-ready`);
+      const releasePath = path.join(path.dirname(root), `p5a-operation-post-${stage.occurrence}-release`);
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, "commit");
+        const operationPath = path.join(harness.original.store, "current-entry-operation.json");
+        const resultPromise = runExactPoisonDurabilityFixtureV1(root, "commit", null, "real", Object.freeze({
+          boundary: "builder-operation-post-read",
+          occurrence: stage.occurrence,
+          readyPath,
+          releasePath,
+        }));
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${stage.name} fixed-operation post-read latch`);
+        const before = lstatSync(operationPath, { bigint: true });
+        const held = `${operationPath}.held`;
+        renameSync(operationPath, held);
+        writeFileSync(operationPath, exactPoisonOperationFixtureBytesV1(), { mode: 0o600 });
+        const after = lstatSync(operationPath, { bigint: true });
+        assert.equal(after.dev, before.dev);
+        assert.notEqual(after.ino, before.ino);
+        assert.deepEqual(readFileSync(operationPath), readFileSync(held));
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await resultPromise;
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: string;
+          message: string | null;
+          events: string[];
+          contextEvents: ReadonlyArray<Readonly<{ boundary: string; target: string }>>;
+          contextMatches: number;
+          descriptorDelta: number;
+        }>;
+        assert.equal(observed.outcome, "threw");
+        assert.notEqual(observed.message, null);
+        assert.deepEqual(observed.events, stage.expectedEvents);
+        assert.equal(observed.events.includes("commit:post-reopen"), false);
+        assert.equal(observed.contextMatches, stage.occurrence);
+        assert.equal(observed.contextEvents.filter((event) => event.boundary === "builder-operation-post-read").length, stage.occurrence);
+        assert.equal(observed.descriptorDelta, 0);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P5a-A context assertStable rejects an identical-byte operation rewrite after descriptor read", async () => {
+    const root = createFixture();
+    const readyPath = path.join(path.dirname(root), "p5a-operation-stable-read-ready");
+    const releasePath = path.join(path.dirname(root), "p5a-operation-stable-read-release");
+    try {
+      const harness = configureExactPoisonDurabilityHarnessV1(root, "commit");
+      const operationPath = path.join(harness.original.store, "current-entry-operation.json");
+      const resultPromise = runExactPoisonDurabilityFixtureV1(root, "commit", null, "real", Object.freeze({
+        boundary: "stable-member-post-read",
+        occurrence: 1,
+        readyPath,
+        releasePath,
+      }));
+      waitForFixturePredicateV1(() => existsSync(readyPath), "pinned operation post-read latch");
+      rewriteIdenticalBytesWithMetadataDriftV1(operationPath);
+      writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+      const result = await resultPromise;
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{
+        outcome: string;
+        message: string | null;
+        events: string[];
+        contextEvents: ReadonlyArray<Readonly<{ boundary: string; target: string }>>;
+        contextMatches: number;
+        descriptorDelta: number;
+      }>;
+      assert.equal(observed.outcome, "threw");
+      assert.notEqual(observed.message, null);
+      assert.deepEqual(observed.events, [], "post-read metadata drift is rejected before any durability boundary");
+      assert.equal(observed.contextMatches, 1);
+      assert.deepEqual(observed.contextEvents.at(-1), { boundary: "stable-member-post-read", target: realpathSync(operationPath) });
+      assert.equal(observed.descriptorDelta, 0, "post-read rejection closes the full partially constructed context");
+    } finally {
+      if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      removeFixture(root);
+    }
+  });
+
+  for (const mutation of [
+    Object.freeze({ name: "malformed H", kind: "seal" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.H, "H", "malformed") }),
+    Object.freeze({ name: "crossed H", kind: "commit" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.H, "H", "crossed") }),
+    Object.freeze({ name: "malformed D", kind: "seal" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainDependencyV1(seeded, { scope: "D", fault: "malformed" }) }),
+    Object.freeze({ name: "crossed successor operation", kind: "commit" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainDependencyV1(seeded, { scope: "G", kind: "GOperation", fault: "crossed" }) }),
+    Object.freeze({ name: "malformed S", kind: "seal" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.S, "S", "malformed") }),
+    Object.freeze({ name: "crossed S", kind: "commit" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.S, "S", "crossed") }),
+    Object.freeze({ name: "malformed C", kind: "commit" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.C, "C", "malformed") }),
+    Object.freeze({ name: "crossed C", kind: "commit" as const, apply: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded.C, "C", "crossed") }),
+  ]) {
+    it(`P5a-A strict ${mutation.kind} builder throws ${mutation.name} instead of returning a complete sentinel`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, mutation.kind);
+        mutation.apply(harness.seeded);
+        const result = await runExactPoisonDurabilityFixtureV1(root, mutation.kind);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; descriptorDelta: number }>;
+        assert.equal(observed.outcome, "threw", mutation.name);
+        assert.notEqual(observed.message, null, mutation.name);
+        assert.deepEqual(observed.events, [], `${mutation.name}: strict construction fails before durability`);
+        assert.equal(observed.descriptorDelta, 0, `${mutation.name}: partial construction closes in reverse`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const kind of ["seal", "commit"] as const) {
+    for (const boundary of ["pre-fsync", "post-fsync", "post-reopen"] as const) {
+      it(`P5a-A ${kind} durability fails closed on ${boundary} failure or response loss`, async () => {
+        const root = createFixture();
+        try {
+          configureExactPoisonDurabilityHarnessV1(root, kind);
+          const result = await runExactPoisonDurabilityFixtureV1(root, kind, Object.freeze({ kind, boundary, occurrence: 1, action: "throw" }));
+          assert.equal(result.status, 0, result.stderr);
+          const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; matches: number; descriptorDelta: number }>;
+          assert.equal(observed.outcome, "threw");
+          assert.match(observed.message ?? "", new RegExp(`P5A_EXACT_POISON_DURABILITY_FAULT:${kind}:${boundary}`));
+          assert.equal(observed.matches, 1);
+          assert.equal(observed.events.at(-1), `${kind}:${boundary}`);
+          assert.equal(observed.descriptorDelta, 0);
+          const adopted = await runExactPoisonDurabilityFixtureV1(root, kind);
+          assert.equal(adopted.status, 0, adopted.stderr);
+          const reobserved = JSON.parse(adopted.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; descriptorDelta: number }>;
+          assert.deepEqual({ outcome: reobserved.outcome, message: reobserved.message }, { outcome: "returned", message: null }, `${kind}:${boundary}: unchanged retry adopts finite durable state`);
+          assert.deepEqual(reobserved.events, [`${kind}:pre-fsync`, `${kind}:post-fsync`, `${kind}:post-reopen`], `${kind}:${boundary}: retry reauthenticates the exact chain`);
+          assert.equal(reobserved.descriptorDelta, 0, `${kind}:${boundary}: retry closes every descriptor`);
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+  }
+
+  for (const kind of ["seal", "commit"] as const) {
+    it(`P5a-A ${kind} durability refuses nlink2 and succeeds only after an exact one-link transition`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, kind);
+        const target = kind === "seal" ? harness.seeded.S : harness.seeded.C;
+        const alias = path.join(path.dirname(root), `p5a-${kind}-nlink2-alias`);
+        linkSync(target, alias);
+        const transitional = await runExactPoisonDurabilityFixtureV1(root, kind);
+        assert.equal(transitional.status, 0, transitional.stderr);
+        const refused = JSON.parse(transitional.stdout) as Readonly<{ outcome: string; events: string[]; descriptorDelta: number }>;
+        assert.equal(refused.outcome, "threw");
+        assert.deepEqual(refused.events, []);
+        assert.equal(refused.descriptorDelta, 0);
+        unlinkSync(alias);
+        const durable = await runExactPoisonDurabilityFixtureV1(root, kind);
+        assert.equal(durable.status, 0, durable.stderr);
+        const accepted = JSON.parse(durable.stdout) as Readonly<{ outcome: string; message: string | null; descriptorDelta: number }>;
+        assert.deepEqual({ outcome: accepted.outcome, message: accepted.message, descriptorDelta: accepted.descriptorDelta }, { outcome: "returned", message: null, descriptorDelta: 0 });
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const drift of [
+    Object.freeze({ name: "seal same-byte metadata", kind: "seal" as const, target: "S" as const, apply: (target: string) => writeFileSync(target, readFileSync(target)) }),
+    Object.freeze({ name: "seal parent replacement", kind: "seal" as const, target: "S" as const, apply: (target: string) => { const parent = path.dirname(target); renameSync(parent, `${parent}.held`); mkdirSync(parent, { mode: 0o700 }); } }),
+    Object.freeze({ name: "commit inode replacement", kind: "commit" as const, target: "C" as const, apply: (target: string) => { const bytes = readFileSync(target); renameSync(target, `${target}.held`); writeFileSync(target, bytes, { mode: 0o600 }); } }),
+    Object.freeze({ name: "commit mode drift", kind: "commit" as const, target: "C" as const, apply: (target: string) => chmodSync(target, 0o644) }),
+    Object.freeze({ name: "committed-chain drift", kind: "commit" as const, target: "H" as const, apply: (target: string) => mutateExactPoisonStrictChainRecordV1(target, "H", "crossed") }),
+  ]) {
+    it(`P5a-A durability rejects ${drift.name} across parent fsync and full reopen`, async () => {
+      const root = createFixture();
+      const readyPath = path.join(path.dirname(root), `p5a-${drift.kind}-${drift.target}-ready`);
+      const releasePath = path.join(path.dirname(root), `p5a-${drift.kind}-${drift.target}-release`);
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, drift.kind);
+        const resultPromise = runExactPoisonDurabilityFixtureV1(root, drift.kind, Object.freeze({
+          kind: drift.kind,
+          boundary: "post-fsync",
+          occurrence: 1,
+          action: "latch",
+          readyPath,
+          releasePath,
+        }));
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${drift.name} post-fsync latch`);
+        drift.apply(harness.seeded[drift.target]);
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await resultPromise;
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; descriptorDelta: number }>;
+        assert.equal(observed.outcome, "threw", drift.name);
+        assert.notEqual(observed.message, null, drift.name);
+        assert.equal(observed.events.includes(`${drift.kind}:post-reopen`), false, `${drift.name}: no successful reopen boundary`);
+        assert.equal(observed.descriptorDelta, 0, drift.name);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P5a-A publisher durably completes S after ordinal 5 and C after ordinal 6 under one H writer", () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+      instrumentExactPoisonDurabilityFixtureV1(root);
+      const result = runExactPoisonPublisherCoreWithDurabilityFixtureV1(root, observations);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; events: string[]; admissionCalls: number }>;
+      assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+      assert.ok(observed.admissionCalls >= 1);
+      assert.deepEqual(observed.events, [
+        "seal:pre-fsync", "seal:post-fsync", "seal:post-reopen",
+        "commit:pre-fsync", "commit:post-fsync", "commit:post-reopen",
+      ]);
+      assertExactPoisonRecoveryConvergedV1(original, admitted.chain, "P5a-A publisher durability order");
     } finally {
       removeFixture(root);
     }

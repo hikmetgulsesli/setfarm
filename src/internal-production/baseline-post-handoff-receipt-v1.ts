@@ -25,11 +25,15 @@ import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../db/contract-spine-migration-digests.generated.js";
+import { CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST } from "../db/contract-spine-migration-source-integrity.js";
+import { replayV3HistoricalGitCommitAncestryV1 } from "../execution/v3-git-revision.js";
 import {
   validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
   type InternalProductionCompleteZeroOwnerCensusV1,
   type InternalProductionSourceRunLaunchTargetReservationPairCloseV1,
 } from "./owner-admission-v1.js";
+import { parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 } from "./product-build-authority-v2-delivery-evidence-v1.js";
 
 const MAX_BUILD_TREE_DEPTH_V1 = 64;
 const MAX_BUILD_INPUT_ENTRIES_V1 = 10_000;
@@ -1245,9 +1249,42 @@ type CurrentEntryStoreSuccessorEdgeV1 = Readonly<{
   successorOperation: CurrentEntryStoreRecordPairV1;
 }>;
 
-type ExactPoisonRecoveryChainInspectionV1 = Readonly<{
-  state: "complete" | "dispatch";
+type ExactPoisonRecoveryPinnedParentV1 = Readonly<{
+  target: string;
+  descriptor: number;
+  identity: BigIntStats;
+  assertStable: () => void;
 }>;
+
+type ExactPoisonRecoveryPinnedRecordV1 = Readonly<{
+  target: string;
+  descriptor: number;
+  identity: BigIntStats;
+  bytes: Buffer;
+}>;
+
+type ExactPoisonRecoveryPinnedSealChainV1 = Readonly<{
+  operation: ExactPoisonRecoveryPinnedRecordV1;
+  edge: ExactPoisonRecoveryPinnedRecordV1;
+  disposition: ExactPoisonRecoveryPinnedRecordV1;
+  successorRoot: string;
+  successorOperationPair: CurrentEntryStoreRecordPairV1;
+  seal: ExactPoisonRecoveryPinnedRecordV1;
+  sealParent: ExactPoisonRecoveryPinnedParentV1;
+  records: readonly ExactPoisonRecoveryPinnedRecordV1[];
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+type ExactPoisonRecoveryPinnedCommitChainV1 = Readonly<ExactPoisonRecoveryPinnedSealChainV1 & {
+  commit: ExactPoisonRecoveryPinnedRecordV1;
+  commitParent: ExactPoisonRecoveryPinnedParentV1;
+}>;
+
+type ExactPoisonRecoveryChainInspectionV1 = Readonly<
+  | { state: "dispatch" }
+  | { state: "complete"; context: ExactPoisonRecoveryPinnedCommitChainV1 }
+>;
 
 function currentEntryFail(message: string): never {
   throw new Error(`INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:${message}`);
@@ -1933,15 +1970,9 @@ function migrationImplementationEntry(source: InternalProductionCleanSetfarmSour
 }
 
 async function migration31Digests(): Promise<Readonly<{ semanticDigest: Sha256V1; sourceManifestEntryHash: Sha256V1 }>> {
-  const digests = await import("../db/contract-spine-migration-digests.generated.js") as unknown as Readonly<{
-    CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS: Readonly<Record<number, string>>;
-  }>;
-  const sourceIntegrity = await import("../db/contract-spine-migration-source-integrity.js") as unknown as Readonly<{
-    CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST: Readonly<Record<number, unknown>>;
-  }>;
   return Object.freeze({
-    semanticDigest: requireSha256(digests.CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[31], "migration 31 semantic digest"),
-    sourceManifestEntryHash: requireSha256(hashCanonicalJson(sourceIntegrity.CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[31]), "migration 31 source-manifest entry hash"),
+    semanticDigest: requireSha256(CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[31], "migration 31 semantic digest"),
+    sourceManifestEntryHash: requireSha256(hashCanonicalJson(CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[31]), "migration 31 source-manifest entry hash"),
   });
 }
 
@@ -2055,16 +2086,7 @@ async function parseAuthorityV3Migration31AuditBody(
   const migration31SourceManifestEntryHash = requireSha256(body.migration31SourceManifestEntryHash, "migration 31 source-manifest entry hash");
   const expectedDigests = await migration31Digests();
   if (migration31SemanticDigest !== expectedDigests.semanticDigest || migration31SourceManifestEntryHash !== expectedDigests.sourceManifestEntryHash) currentEntryFail("v31 migration digest binding is invalid");
-  const replay = await import("../execution/v3-git-revision.js") as unknown as Readonly<{ replayV3HistoricalGitCommitAncestryV1?: (input: Readonly<{
-    repo: string;
-    ancestorSha: string;
-    descendantSha: string;
-    expectedAncestorTreeHash: string;
-    expectedDescendantTreeHash: string;
-    expectedMergeBase: string;
-  }>) => unknown }>;
-  if (typeof replay.replayV3HistoricalGitCommitAncestryV1 !== "function") currentEntryFail("historical Git replay is unavailable");
-  replay.replayV3HistoricalGitCommitAncestryV1({ repo: fixedRepositoryRoot(), ancestorSha: PR86_SHA, descendantSha: controllerSource.sha, expectedAncestorTreeHash: PR86_TREE, expectedDescendantTreeHash: controllerSource.treeHash, expectedMergeBase: PR86_SHA });
+  replayV3HistoricalGitCommitAncestryV1({ repo: fixedRepositoryRoot(), ancestorSha: PR86_SHA, descendantSha: controllerSource.sha, expectedAncestorTreeHash: PR86_TREE, expectedDescendantTreeHash: controllerSource.treeHash, expectedMergeBase: PR86_SHA });
   return Object.freeze(body as unknown as InternalProductionAuthorityV3Migration31AuditV1);
 }
 
@@ -2481,13 +2503,9 @@ async function parseCurrentEntryStoreSuccessorOperationV1(
   const pair = parsePreselectionCurrentEntryOperationV1(bytes);
   if (pair.operationRef !== expected.ref || pair.operationHash !== expected.hash) currentEntryFail("successor operation pair is crossed");
   const value = strictCanonicalRecord(bytes, "successor current-entry operation");
-  const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{
-    parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (input: unknown) => Readonly<Record<string, unknown>>;
-  }>;
-  if (typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("successor PBA parser is unavailable");
   const observation = value.productBuildAuthorityV2Observation;
   if (!isPlainRecord(observation)) currentEntryFail("successor PBA observation is invalid");
-  const parsedResponse = pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(observation.response);
+  const parsedResponse = parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(observation.response);
   if (canonicalComparable(parsedResponse) !== canonicalComparable(observation.response)) currentEntryFail("successor PBA response is crossed");
   return recursivelyFreeze(value);
 }
@@ -2736,10 +2754,25 @@ function assertExactPoisonRecoverySnapshotStableV1(snapshot: FileSnapshot, label
   }
 }
 
-async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
+type ExactPoisonRecoveryReadChainV1 = Readonly<{
+  snapshots: readonly FileSnapshot[];
+  successorRoot: string;
+  successorOperationPair: CurrentEntryStoreRecordPairV1;
+  sealTarget: string;
+  commitTarget: string | null;
+}>;
+
+async function readExactPoisonRecoveryChainV1(
   operation: FileSnapshot,
-): Promise<ExactPoisonRecoveryChainInspectionV1> {
-  try {
+  includeCommit: boolean,
+): Promise<ExactPoisonRecoveryReadChainV1> {
+    const predecessor = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+    if (
+      operation.locator !== fixedLegacyCurrentEntryOperationPathV1()
+      || predecessor.operationRef !== EXACT_POISON_OPERATION_REF_V1
+      || predecessor.operationHash !== EXACT_POISON_OPERATION_HASH_V1
+      || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
+    ) currentEntryFail("fixed legacy exact-poison chain operation is crossed");
     const snapshots: FileSnapshot[] = [operation];
     const edgeSnapshot = requireExactPoisonRecoverySnapshotV1(
       fixedLegacyExactPoisonSuccessorEdgePathV1(),
@@ -2820,8 +2853,9 @@ async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
       completeZeroEffectBracketHash: disposition.zeroEffectProof.completeZeroEffectBracketHash,
     });
     const sealHash = requireSha256(hashCanonicalJson(sealCore), "derived successor activation seal hash");
+    const sealTarget = exactPoisonSuccessorActivationSealPathV1(sealHash);
     const sealSnapshot = requireExactPoisonRecoverySnapshotV1(
-      exactPoisonSuccessorActivationSealPathV1(sealHash),
+      sealTarget,
       "successor activation seal",
     );
     snapshots.push(sealSnapshot);
@@ -2836,19 +2870,22 @@ async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
     );
     if (canonicalComparable(seal.core) !== canonicalComparable(sealCore)) currentEntryFail("successor activation seal is crossed");
 
-    const commitCore = Object.freeze({
+    let commitTarget: string | null = null;
+    if (includeCommit) {
+      const commitCore = Object.freeze({
       schema: "setfarm.internal-production-current-entry-store-successor-activation-commit.v1",
       predecessorOperation: exactPoisonOperationPairV1(),
       successorActivationSeal: Object.freeze({ activationSealRef: seal.pair.ref, activationSealHash: seal.pair.hash }),
       postSealCompleteZeroEffectBracketHash: disposition.zeroEffectProof.completeZeroEffectBracketHash,
     });
-    const commitHash = requireSha256(hashCanonicalJson(commitCore), "derived successor activation commit hash");
-    const commitSnapshot = requireExactPoisonRecoverySnapshotV1(
-      exactPoisonSuccessorActivationCommitPathV1(commitHash),
+      const commitHash = requireSha256(hashCanonicalJson(commitCore), "derived successor activation commit hash");
+      commitTarget = exactPoisonSuccessorActivationCommitPathV1(commitHash);
+      const commitSnapshot = requireExactPoisonRecoverySnapshotV1(
+      commitTarget,
       "successor activation commit",
     );
-    snapshots.push(commitSnapshot);
-    const commit = parseCurrentEntryStoreHashedWrapperV1(
+      snapshots.push(commitSnapshot);
+      const commit = parseCurrentEntryStoreHashedWrapperV1(
       commitSnapshot.observed.bytes,
       "successor activation commit",
       ["schema", "predecessorOperation", "successorActivationSeal", "postSealCompleteZeroEffectBracketHash"],
@@ -2857,10 +2894,35 @@ async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
       CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_COMMIT_PREFIX_V1,
       commitHash,
     );
-    if (canonicalComparable(commit.core) !== canonicalComparable(commitCore)) currentEntryFail("successor activation commit is crossed");
+      if (canonicalComparable(commit.core) !== canonicalComparable(commitCore)) currentEntryFail("successor activation commit is crossed");
+    }
     for (const [index, snapshot] of snapshots.entries()) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison recovery member ${index}`);
-    return Object.freeze({ state: "complete" });
+    return Object.freeze({
+      snapshots: Object.freeze(snapshots),
+      successorRoot: path.join(exactPoisonQuarantinedStoreLocatorV1(), edge.successorStoreRelativeRoot),
+      successorOperationPair: edge.successorOperation,
+      sealTarget,
+      commitTarget,
+    });
+}
+
+async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
+  operation: FileSnapshot,
+): Promise<ExactPoisonRecoveryChainInspectionV1> {
+  let context: ExactPoisonRecoveryPinnedCommitChainV1 | null = null;
+  try {
+    context = await openExactPoisonRecoveryPinnedCommitChainV1();
+    if (
+      operation.locator !== context.operation.target
+      || !sameRegularMetadata(operation.observed.stats, context.operation.identity)
+      || !operation.observed.bytes.equals(context.operation.bytes)
+    ) currentEntryFail("exact-poison preselection operation changed");
+    context.assertStable();
+    const owned = context;
+    context = null;
+    return Object.freeze({ state: "complete", context: owned });
   } catch {
+    context?.close();
     return Object.freeze({ state: "dispatch" });
   }
 }
@@ -3046,8 +3108,12 @@ function exactPoisonRecoveryWriterTargetV1(): string {
   );
 }
 
+const exactPoisonRecoveryWritersV1 = new WeakSet<ExactPoisonRecoveryWriterV1>();
+
 function acquireExactPoisonRecoveryWriterV1(): ExactPoisonRecoveryWriterV1 {
-  return acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
+  const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
+  exactPoisonRecoveryWritersV1.add(heldWriter);
+  return heldWriter;
 }
 
 function exactPoisonQuarantinedStoreLocatorV1(): string {
@@ -3853,10 +3919,15 @@ function assertExactPoisonRecoveryPinnedMemberStableV1(
 ): void {
   const now = fstatSync(pinned.descriptor, { bigint: true });
   const atPath = lstatSync(target, { bigint: true });
+  const bytes = readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size);
+  const after = fstatSync(pinned.descriptor, { bigint: true });
+  const reopened = lstatSync(target, { bigint: true });
   if (
     !sameRegularMetadata(pinned.identity, now)
     || !sameRegularMetadata(pinned.identity, atPath)
-    || !readTask12ReceiptDescriptorBytesV1(pinned.descriptor, now.size).equals(pinned.bytes)
+    || !bytes.equals(pinned.bytes)
+    || !sameRegularMetadata(pinned.identity, after)
+    || !sameRegularMetadata(pinned.identity, reopened)
   ) currentEntryFail(`${label} changed while held`);
 }
 
@@ -3867,6 +3938,265 @@ function exactPoisonRecoveryMemberIfPresentV1(target: string, label: string): Ex
     if (isEnoent(error)) return null;
     throw error;
   }
+}
+
+type ExactPoisonRecoveryOwnedParentV1 = Readonly<{
+  pin: ExactPoisonRecoveryPinnedParentV1;
+  close: () => void;
+}>;
+
+function openExactPoisonRecoveryPinnedParentV1(target: string): ExactPoisonRecoveryOwnedParentV1 {
+  const exactTarget = path.resolve(target);
+  const presentedTarget = path.join(
+    exactPoisonQuarantinedStoreLocatorV1(),
+    path.relative(fixedLegacyCurrentEntryRootV1(), exactTarget),
+  );
+  if (realpathSync(exactTarget) !== exactTarget) currentEntryFail("exact-poison recovery parent is not canonical");
+  const root = lstatSync(fixedLegacyCurrentEntryRootV1(), { bigint: true });
+  const guard = authenticateTask12ReceiptDirectoryChainV1(exactTarget);
+  let descriptor = -1;
+  let closed = false;
+  try {
+    guard.assertStable();
+    descriptor = openSync(exactTarget, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    const identity = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(exactTarget, { bigint: true });
+    if (
+      !identity.isDirectory()
+      || !atPath.isDirectory()
+      || atPath.isSymbolicLink()
+      || identity.dev !== root.dev
+      || identity.dev !== atPath.dev
+      || identity.ino !== atPath.ino
+      || identity.mode !== atPath.mode
+      || identity.uid !== root.uid
+      || identity.uid !== atPath.uid
+      || (identity.mode & 0o7777n) !== 0o700n
+    ) currentEntryFail("exact-poison recovery parent identity is invalid");
+    const pinnedDescriptor = descriptor;
+    descriptor = -1;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("exact-poison recovery parent pin is closed");
+      guard.assertStable();
+      const now = fstatSync(pinnedDescriptor, { bigint: true });
+      const reopened = lstatSync(exactTarget, { bigint: true });
+      if (
+        !now.isDirectory()
+        || !reopened.isDirectory()
+        || reopened.isSymbolicLink()
+        || now.dev !== identity.dev
+        || now.ino !== identity.ino
+        || now.mode !== identity.mode
+        || now.uid !== identity.uid
+        || reopened.dev !== identity.dev
+        || reopened.ino !== identity.ino
+        || reopened.mode !== identity.mode
+        || reopened.uid !== identity.uid
+        || realpathSync(exactTarget) !== exactTarget
+      ) currentEntryFail("exact-poison recovery parent changed while pinned");
+    };
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      try { closeSync(pinnedDescriptor); }
+      finally { guard.close(); }
+    };
+    return Object.freeze({
+      pin: Object.freeze({ target: presentedTarget, descriptor: pinnedDescriptor, identity, assertStable }),
+      close,
+    });
+  } catch (error) {
+    if (descriptor >= 0) closeSync(descriptor);
+    guard.close();
+    throw error;
+  }
+}
+
+function openExactPoisonRecoveryPinnedRecordV1(target: string, label: string): ExactPoisonRecoveryPinnedRecordV1 {
+  const pinned = openExactPoisonRecoveryMemberV1(target, label);
+  if (pinned.identity.nlink !== 1n) {
+    closeSync(pinned.descriptor);
+    currentEntryFail(`${label} is not a strict one-link final`);
+  }
+  return Object.freeze({ target, ...pinned });
+}
+
+function assertExactPoisonRecoveryPinnedRecordStableV1(record: ExactPoisonRecoveryPinnedRecordV1, label: string): void {
+  assertExactPoisonRecoveryPinnedMemberStableV1(record.target, record, label);
+  if (record.identity.nlink !== 1n) currentEntryFail(`${label} is no longer a strict final`);
+}
+
+function assertExactPoisonRecoveryPinnedChainEqualV1(
+  expected: ExactPoisonRecoveryPinnedSealChainV1,
+  observed: ExactPoisonRecoveryPinnedSealChainV1,
+): void {
+  expected.assertStable();
+  observed.assertStable();
+  if (
+    expected.successorRoot !== observed.successorRoot
+    || expected.successorOperationPair.ref !== observed.successorOperationPair.ref
+    || expected.successorOperationPair.hash !== observed.successorOperationPair.hash
+    || expected.records.length !== observed.records.length
+  ) currentEntryFail("exact-poison recovery semantic reopen is crossed");
+  for (const [index, record] of expected.records.entries()) {
+    const reopened = observed.records[index]!;
+    if (
+      record.target !== reopened.target
+      || !sameRegularMetadata(record.identity, reopened.identity)
+      || !record.bytes.equals(reopened.bytes)
+    ) currentEntryFail(`exact-poison recovery semantic member ${index} is crossed`);
+  }
+}
+
+async function openExactPoisonRecoveryPinnedChainV1(
+  includeCommit: false,
+): Promise<ExactPoisonRecoveryPinnedSealChainV1>;
+async function openExactPoisonRecoveryPinnedChainV1(
+  includeCommit: true,
+): Promise<ExactPoisonRecoveryPinnedCommitChainV1>;
+async function openExactPoisonRecoveryPinnedChainV1(
+  includeCommit: boolean,
+): Promise<ExactPoisonRecoveryPinnedSealChainV1 | ExactPoisonRecoveryPinnedCommitChainV1> {
+  const operation = requireExactPoisonRecoverySnapshotV1(
+    fixedLegacyCurrentEntryOperationPathV1(),
+    "fixed legacy exact-poison pinned operation",
+  );
+  const parsed = await readExactPoisonRecoveryChainV1(operation, includeCommit);
+  const records: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  const parents = new Map<string, ExactPoisonRecoveryOwnedParentV1>();
+  let closed = false;
+  try {
+    for (const [index, snapshot] of parsed.snapshots.entries()) {
+      const record = openExactPoisonRecoveryPinnedRecordV1(snapshot.locator, `exact-poison pinned chain member ${index}`);
+      records.push(record);
+      if (!sameRegularMetadata(snapshot.observed.stats, record.identity) || !snapshot.observed.bytes.equals(record.bytes)) {
+        currentEntryFail(`exact-poison pinned chain member ${index} changed during construction`);
+      }
+    }
+    for (const target of [path.dirname(parsed.sealTarget), ...(parsed.commitTarget === null ? [] : [path.dirname(parsed.commitTarget)])]) {
+      if (!parents.has(target)) parents.set(target, openExactPoisonRecoveryPinnedParentV1(target));
+    }
+    const reparsedOperation = requireExactPoisonRecoverySnapshotV1(
+      fixedLegacyCurrentEntryOperationPathV1(),
+      "fixed legacy exact-poison pinned operation reopen",
+    );
+    const reparsed = await readExactPoisonRecoveryChainV1(reparsedOperation, includeCommit);
+    if (reparsed.snapshots.length !== records.length || reparsed.successorRoot !== parsed.successorRoot) {
+      currentEntryFail("exact-poison pinned chain changed during semantic construction");
+    }
+    for (const [index, snapshot] of reparsed.snapshots.entries()) {
+      const record = records[index]!;
+      if (
+        snapshot.locator !== record.target
+        || !sameRegularMetadata(snapshot.observed.stats, record.identity)
+        || !snapshot.observed.bytes.equals(record.bytes)
+      ) currentEntryFail(`exact-poison pinned semantic member ${index} changed`);
+    }
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("exact-poison pinned chain is closed");
+      for (const parent of parents.values()) parent.pin.assertStable();
+      for (const [index, record] of records.entries()) {
+        assertExactPoisonRecoveryPinnedRecordStableV1(record, `exact-poison pinned chain member ${index}`);
+      }
+      for (const parent of parents.values()) parent.pin.assertStable();
+    };
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
+      for (const parent of [...parents.values()].reverse()) parent.close();
+    };
+    const seal = records.find((record) => record.target === parsed.sealTarget);
+    if (seal === undefined) currentEntryFail("exact-poison pinned seal is absent");
+    const base = {
+      operation: records[0]!,
+      edge: records[1]!,
+      disposition: records[2]!,
+      successorRoot: parsed.successorRoot,
+      successorOperationPair: parsed.successorOperationPair,
+      seal,
+      sealParent: parents.get(path.dirname(parsed.sealTarget))!.pin,
+      records: Object.freeze(records),
+      assertStable,
+      close,
+    };
+    const context = parsed.commitTarget === null
+      ? Object.freeze(base)
+      : Object.freeze({
+        ...base,
+        commit: records.find((record) => record.target === parsed.commitTarget)!,
+        commitParent: parents.get(path.dirname(parsed.commitTarget))!.pin,
+      });
+    context.assertStable();
+    return context;
+  } catch (error) {
+    if (!closed) {
+      closed = true;
+      for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
+      for (const parent of [...parents.values()].reverse()) parent.close();
+    }
+    throw error;
+  }
+}
+
+async function openExactPoisonRecoveryPinnedSealChainV1(): Promise<ExactPoisonRecoveryPinnedSealChainV1> {
+  return openExactPoisonRecoveryPinnedChainV1(false);
+}
+
+async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoisonRecoveryPinnedCommitChainV1> {
+  return openExactPoisonRecoveryPinnedChainV1(true);
+}
+
+async function durablyAuthenticateSuccessorActivationSealV1(
+  context: ExactPoisonRecoveryPinnedSealChainV1,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+): Promise<void> {
+  if (!exactPoisonRecoveryWritersV1.has(heldWriter)) currentEntryFail("exact-poison recovery writer handle is not authenticated");
+  const parent = context.sealParent;
+  heldWriter.assertStable();
+  context.assertStable();
+  parent.assertStable();
+  exactPoisonRecoveryDurabilityFaultV1("seal", "pre-fsync");
+  fsyncSync(parent.descriptor);
+  exactPoisonRecoveryDurabilityFaultV1("seal", "post-fsync");
+  parent.assertStable();
+  context.assertStable();
+  heldWriter.assertStable();
+  const reopened = await openExactPoisonRecoveryPinnedSealChainV1();
+  try { assertExactPoisonRecoveryPinnedChainEqualV1(context, reopened); }
+  finally { reopened.close(); }
+  exactPoisonRecoveryDurabilityFaultV1("seal", "post-reopen");
+  parent.assertStable();
+  context.assertStable();
+  heldWriter.assertStable();
+}
+
+async function durablyAuthenticateSuccessorActivationCommitV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<void> {
+  const parent = context.commitParent;
+  context.assertStable();
+  parent.assertStable();
+  exactPoisonRecoveryDurabilityFaultV1("commit", "pre-fsync");
+  fsyncSync(parent.descriptor);
+  exactPoisonRecoveryDurabilityFaultV1("commit", "post-fsync");
+  parent.assertStable();
+  context.assertStable();
+  const reopened = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try { assertExactPoisonRecoveryPinnedChainEqualV1(context, reopened); }
+  finally { reopened.close(); }
+  exactPoisonRecoveryDurabilityFaultV1("commit", "post-reopen");
+  parent.assertStable();
+  context.assertStable();
+}
+
+function exactPoisonRecoveryDurabilityFaultV1(
+  kind: "seal" | "commit",
+  boundary: "pre-fsync" | "post-fsync" | "post-reopen",
+): void {
+  // Intentionally inert in production; copied-module tests replace only this body.
+  void kind;
+  void boundary;
 }
 
 function assertExactPoisonRecoveryFrontierV1(
@@ -4277,9 +4607,20 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
     const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
+      if (ordinal === 5) {
+        const context = await openExactPoisonRecoveryPinnedSealChainV1();
+        try { await durablyAuthenticateSuccessorActivationSealV1(context, heldWriter); }
+        finally { context.close(); }
+      }
+      if (ordinal === 6) {
+        const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+        try {
+          heldWriter.assertStable();
+          await durablyAuthenticateSuccessorActivationCommitV1(context);
+          heldWriter.assertStable();
+        } finally { context.close(); }
+      }
     }
-    const complete = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
-    if (complete.state !== "complete") currentEntryFail("exact-poison published recovery chain is incomplete");
     heldWriter.assertStable();
   } finally {
     heldWriter.close();
@@ -4301,6 +4642,8 @@ async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
   const chain = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
   if (chain.state === "dispatch") {
     await resumeExactPoisonQuarantinePublisherCoreV1();
+  } else {
+    chain.context.close();
   }
 }
 
