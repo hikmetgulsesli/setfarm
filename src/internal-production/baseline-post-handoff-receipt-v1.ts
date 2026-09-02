@@ -3402,6 +3402,13 @@ const TASK12_RECEIPT_WRITER_OWNER_KEYS_V1 = Object.freeze([
 ] as const);
 const TASK12_RECEIPT_WRITER_UUID_V4_V1 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+function task12ReceiptLocatorWriterAuthorityTargetV1(target: string): string {
+  const physicalTarget = path.join(realpathSync(path.dirname(target)), path.basename(target));
+  return process.platform === "darwin" && physicalTarget.startsWith("/private/var/")
+    ? physicalTarget.slice("/private".length)
+    : physicalTarget;
+}
+
 function parseTask12ReceiptWriterOwnerV1(
   bytes: Buffer,
   targetHash: string,
@@ -3445,7 +3452,11 @@ function parseTask12ReceiptWriterOwnerV1(
 
 function observeTask12ReceiptWriterProcessV1(pid: number): Task12ReceiptWriterProcessObservationV1 {
   const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), shell: false, encoding: "utf8", timeout: 2_000, maxBuffer: 65_536, stdio: ["ignore", "pipe", "pipe"] });
-  if (result.status === 1 && result.stdout === "" && result.stderr === "") return Object.freeze({ state: "dead" as const });
+  if (
+    result.status === 1
+    && result.stdout === ""
+    && (result.stderr === "" || result.stderr === `ps: process id too large: ${pid}\n`)
+  ) return Object.freeze({ state: "dead" as const });
   if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string") return Object.freeze({ state: "ambiguous" as const });
   const match = /^(.{24}) (.+)\n$/.exec(result.stdout);
   if (!match) return Object.freeze({ state: "ambiguous" as const });
@@ -3788,7 +3799,8 @@ function observeExactPoisonRecoveryWriterTransientsV1(heldWriter: ExactPoisonRec
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
   const escapedPrefix = tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
-  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target });
+  const authorityTarget = task12ReceiptLocatorWriterAuthorityTargetV1(target);
+  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget });
   const deadline = Date.now() + 250;
   const wait = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
@@ -4298,7 +4310,7 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   });
 }
 
-async function observeExactPoisonQuarantineAdmissionV1(
+async function observeExactPoisonQuarantineAdmissionCoreV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
   expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
@@ -4732,12 +4744,435 @@ function exactPoisonRecoveryDurabilityFaultV1(
   void boundary;
 }
 
+type ExactPoisonPostVisiblePreStatusRawFenceV1 = Readonly<{
+  completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1;
+  completeZeroEffectBracketHash: Sha256V1;
+  syntheticGitAbsence: typeof EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1;
+  serviceCensus: InternalProductionServiceCensusV1;
+}>;
+
+type ExactPoisonPostVisiblePreStatusPassV1 = Readonly<{
+  stage: "P0" | "P1" | "P2" | "P3" | "P4" | "P5";
+  state: "pre-status" | "progress";
+  publicationSet: Task12PreparedCurrentEntryPublicationSetV1;
+  rawFence: ExactPoisonPostVisiblePreStatusRawFenceV1;
+  topology: readonly unknown[];
+}>;
+
+async function observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(
+  database: Record<string, unknown>,
+  phase: Record<string, unknown>,
+  physical: PhysicalInventoryV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  const exact = await observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1();
+  const { task12: _task12, ...remaining } = exact;
+  return recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-pre-status-downstream-observation.v1",
+    remaining,
+    database,
+    phase,
+    ownedProcessCount: physical.ownedProcessCount,
+    ownedListenerCount: physical.ownedListenerCount,
+    ownedWorktreeCount: physical.ownedWorktreeCount,
+    dirtyWorktreeCount: physical.dirtyWorktreeCount,
+    staleChildCount: physical.staleChildCount,
+  });
+}
+
+async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+  originals: ExactPoisonRecoveryInventoryEvidenceV1,
+): Promise<ExactPoisonPostVisiblePreStatusRawFenceV1> {
+  context.assertStable();
+  originals.assertStableOriginals();
+  const syntheticGitAbsence = observeExactPoisonSyntheticGitObjectAbsenceV1();
+  const sourceA = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+  const pbaA = await observeCurrentPba();
+  const prerequisitesA = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+  const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "pre-status phase-a");
+  const serviceA = await observeInternalProductionServiceCensusV1();
+  const physicalA = observePhysicalInventoryV1(serviceA, 0);
+  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+    "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
+    "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+    "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+  ], "pre-status database");
+  const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA);
+  const serviceB = await observeInternalProductionServiceCensusV1();
+  const physicalB = observePhysicalInventoryV1(serviceB, 0);
+  const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "pre-status phase-b");
+  const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+  const pbaB = await observeCurrentPba();
+  const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+  const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB);
+  const expectedOperation = context.successorOperation;
+  if (
+    canonicalComparable(sourceA) !== canonicalComparable(sourceB)
+    || canonicalComparable(pbaA) !== canonicalComparable(pbaB)
+    || canonicalComparable(prerequisitesA) !== canonicalComparable(prerequisitesB)
+    || canonicalComparable(serviceA) !== canonicalComparable(serviceB)
+    || canonicalComparable(physicalA) !== canonicalComparable(physicalB)
+    || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
+    || canonicalComparable(downstreamA) !== canonicalComparable(downstreamB)
+  ) currentEntryFail("post-visible pre-status raw A/B observation changed");
+  if (
+    canonicalComparable(sourceA) !== canonicalComparable(expectedOperation.controllerSource)
+    || canonicalComparable(pbaA) !== canonicalComparable(expectedOperation.productBuildAuthorityV2Observation)
+    || canonicalComparable(pbaPair(pbaA)) !== canonicalComparable(expectedOperation.productBuildAuthorityV2DeliveryEvidence)
+    || canonicalComparable(prerequisitesA.authorityV3Migration31Audit.pair) !== canonicalComparable(expectedOperation.authorityV3Migration31Audit)
+    || canonicalComparable(prerequisitesA.pendingBootstrapHandoffMigration.pair) !== canonicalComparable(expectedOperation.pendingBootstrapHandoffMigration)
+  ) currentEntryFail("post-visible pre-status raw authority is crossed with the pinned successor operation");
+  originals.assertStableOriginals();
+  context.assertStable();
+  const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze([
+    { observation: "controller-source-a", value: sourceA },
+    { observation: "product-build-authority-a", value: pbaA },
+    { observation: "authority-v3-migration31-audit-a", value: prerequisitesA.authorityV3Migration31Audit.value },
+    { observation: "pending-bootstrap-handoff-migration-a", value: prerequisitesA.pendingBootstrapHandoffMigration.value },
+    { observation: "service-a", value: serviceA },
+    { observation: "physical-a", value: physicalA },
+    { observation: "database-owner-migration-manifest", value: database },
+    { observation: "downstream-absence", value: downstreamA },
+    { observation: "service-b", value: serviceB },
+    { observation: "physical-b", value: physicalB },
+    { observation: "controller-source-b", value: sourceB },
+    { observation: "product-build-authority-b", value: pbaB },
+    { observation: "authority-v3-migration31-audit-b", value: prerequisitesB.authorityV3Migration31Audit.value },
+    { observation: "pending-bootstrap-handoff-migration-b", value: prerequisitesB.pendingBootstrapHandoffMigration.value },
+  ]);
+  return Object.freeze({
+    completeZeroEffectBracket,
+    completeZeroEffectBracketHash: hashCanonicalJson(completeZeroEffectBracket),
+    syntheticGitAbsence,
+    serviceCensus: serviceA,
+  });
+}
+
+async function observeExactPoisonQuarantineAdmissionV1(
+  operation: FileSnapshot,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+): Promise<ExactPoisonQuarantineAdmissionV1> {
+  return observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished);
+}
+
+type ExactPoisonPreStatusDirectoryObservationV1 = Readonly<
+  | { state: "absent"; target: string }
+  | { state: "directory"; target: string; identity: Task12ReceiptPhysicalIdentityObservationV1; members: readonly string[] }
+>;
+
+function exactPoisonPreStatusPathStateV1(
+  target: string,
+  successorRoot: string,
+  successorRootIdentity: BigIntStats,
+): ExactPoisonPreStatusDirectoryObservationV1 {
+  try {
+    const before = lstatSync(target, { bigint: true });
+    if (
+      !before.isDirectory()
+      || before.isSymbolicLink()
+      || (before.mode & 0o7777n) !== 0o700n
+      || before.dev !== successorRootIdentity.dev
+      || before.uid !== successorRootIdentity.uid
+      || realpathSync(target) !== path.join(realpathSync(successorRoot), path.relative(successorRoot, target))
+    ) currentEntryFail("post-visible P0 directory mode, device, owner, or canonical path is invalid");
+    const members = Object.freeze(readdirSync(target).sort(compareBytes));
+    const after = lstatSync(target, { bigint: true });
+    if (!sameRegularMetadata(before, after)) currentEntryFail("post-visible P0 directory changed during observation");
+    return Object.freeze({ state: "directory" as const, target, identity: observeTask12ReceiptPhysicalIdentityV1(after), members });
+  } catch (error) {
+    if (isEnoent(error)) return Object.freeze({ state: "absent" as const, target });
+    throw error;
+  }
+}
+
+function exactPoisonPreStatusOperationDirectoryMembersV1(
+  publicationSet: Task12PreparedCurrentEntryPublicationSetV1,
+  observed: ExactPoisonPreStatusDirectoryObservationV1,
+): readonly string[] {
+  const operationDirectory = publicationSet.operationDirectoryPrefix[3];
+  if (observed.state !== "directory" || observed.target !== operationDirectory) currentEntryFail("post-visible operation directory observation is absent or crossed");
+  const controllerFixed = `.${path.basename(publicationSet.controllerLockTarget)}.writer.lock`;
+  const controllerTempPrefix = `${controllerFixed}.tmp-`;
+  const operationCandidates = publicationSet.candidates.filter((candidate) => path.dirname(candidate.target) === operationDirectory);
+  const permittedFamily = (member: string): boolean => operationCandidates.some((candidate) => {
+    const basename = path.basename(candidate.target);
+    return member === basename
+      || member.startsWith(`${basename}.tmp-`)
+      || member === `.${basename}.writer.lock`
+      || member.startsWith(`.${basename}.writer.lock.tmp-`);
+  });
+  const members = observed.members;
+  for (const member of members) {
+    if (member === controllerFixed || member.startsWith(controllerTempPrefix) || permittedFamily(member)) continue;
+    currentEntryFail("post-visible P0 operation-directory member is invalid");
+  }
+  return Object.freeze(members);
+}
+
+type ExactPoisonPreStatusRecordPrefixObservationsV1 = Readonly<{
+  observations: readonly ExactPoisonPreStatusDirectoryObservationV1[];
+  candidateDepths: readonly [number, number];
+  candidateParents: readonly [ExactPoisonPreStatusDirectoryObservationV1, ExactPoisonPreStatusDirectoryObservationV1];
+}>;
+
+function observeExactPoisonPreStatusRecordPrefixesV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+  publicationSet: Task12PreparedCurrentEntryPublicationSetV1,
+  successorRootIdentity: BigIntStats,
+): ExactPoisonPreStatusRecordPrefixObservationsV1 {
+  const recordsRoot = path.join(context.successorRoot, "records");
+  const baselineTargets = [context.successorAuthorityV31.target, context.successorPending.target] as const;
+  const candidateTargets = [publicationSet.candidates[0].target, publicationSet.candidates[2].target] as const;
+  const chainFor = (target: string): readonly [string, string, string] => Object.freeze([
+    path.dirname(path.dirname(path.dirname(target))),
+    path.dirname(path.dirname(target)),
+    path.dirname(target),
+  ] as [string, string, string]);
+  const baselineChains = baselineTargets.map(chainFor);
+  const candidateChains = candidateTargets.map(chainFor);
+  const observations: ExactPoisonPreStatusDirectoryObservationV1[] = [];
+  const observeChain = (
+    chain: readonly [string, string, string],
+    requireComplete: boolean,
+    exactLeafMember: string | null,
+  ): Readonly<{ depth: number; entries: readonly ExactPoisonPreStatusDirectoryObservationV1[] }> => {
+    const entries = chain.map((target) => exactPoisonPreStatusPathStateV1(target, context.successorRoot, successorRootIdentity));
+    observations.push(...entries);
+    let depth = 0;
+    for (const [index, entry] of entries.entries()) {
+      if (entry.state === "absent") {
+        if (entries.slice(index + 1).some((later) => later.state !== "absent")) currentEntryFail("post-visible prepared record directory prefix has a gap");
+        break;
+      }
+      depth = index + 1;
+      const expectedMembers = index < entries.length - 1
+        ? (entries[index + 1]!.state === "directory" ? [path.basename(chain[index + 1]!)] : [])
+        : (exactLeafMember === null ? null : [exactLeafMember]);
+      if (expectedMembers !== null && canonicalComparable(entry.members) !== canonicalComparable(expectedMembers)) {
+        currentEntryFail("post-visible prepared record directory child set is not exact");
+      }
+    }
+    if (requireComplete && depth !== chain.length) currentEntryFail("post-visible successor prerequisite directory prefix is incomplete");
+    return Object.freeze({ depth, entries: Object.freeze(entries) });
+  };
+  const baseline = baselineChains.map((chain, index) => observeChain(chain, true, path.basename(baselineTargets[index]!)));
+  const candidates = candidateChains.map((chain) => observeChain(chain, false, null));
+  const recordsObservation = exactPoisonPreStatusPathStateV1(recordsRoot, context.successorRoot, successorRootIdentity);
+  observations.unshift(recordsObservation);
+  if (recordsObservation.state !== "directory") currentEntryFail("post-visible successor records root is absent");
+  const expectedRecordKinds = new Set(baselineChains.map((chain) => path.basename(chain[0])));
+  for (const [index, candidate] of candidates.entries()) {
+    if (candidate.depth > 0) expectedRecordKinds.add(path.basename(candidateChains[index]![0]));
+  }
+  if (canonicalComparable(recordsObservation.members) !== canonicalComparable([...expectedRecordKinds].sort(compareBytes))) {
+    currentEntryFail("post-visible successor records root child set is not exact");
+  }
+  void baseline;
+  return Object.freeze({
+    observations: Object.freeze(observations),
+    candidateDepths: Object.freeze([candidates[0]!.depth, candidates[1]!.depth] as [number, number]),
+    candidateParents: Object.freeze([candidates[0]!.entries[2]!, candidates[1]!.entries[2]!] as [ExactPoisonPreStatusDirectoryObservationV1, ExactPoisonPreStatusDirectoryObservationV1]),
+  });
+}
+
+async function observeExactPoisonPostVisiblePreStatusPassNoWriteV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<ExactPoisonPostVisiblePreStatusPassV1> {
+  const phaseTopologyMembers = Object.freeze([
+    "pre-mutation-content-publication",
+    "pre-mutation-content-final",
+    "00-pair-publication",
+    "00-pair-final",
+    "operation-prepared-status-publication",
+    "operation-prepared-status-final",
+    "01-current-status-publication-before-one-link",
+  ]);
+  const progressTopology = Object.freeze({ phase: "P5", finalStates: Object.freeze(["F2u", "F3", "F4"]), state: "progress" });
+  context.assertStable();
+  const originals = openExactPoisonRecoveryPostVisibleOriginalsV1(context);
+  try {
+    const rawFence = await observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(context, originals.evidence);
+    const publicationSet = await buildTask12PreparedCurrentEntryPublicationSetV1(
+      createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1(context),
+      rawFence.serviceCensus,
+    );
+    if (canonicalComparable(publicationSet.serviceCensus) !== canonicalComparable(rawFence.serviceCensus)) currentEntryFail("post-visible prepared builder census is crossed");
+    originals.evidence.assertStableOriginals();
+    context.assertStable();
+
+    const successorRootIdentity = context.successorRootParent.identity;
+    const recordPrefixes = observeExactPoisonPreStatusRecordPrefixesV1(context, publicationSet, successorRootIdentity);
+    const prefixObservations: ExactPoisonPreStatusDirectoryObservationV1[] = [];
+    let prefixDepth = 0;
+    for (const [index, target] of publicationSet.operationDirectoryPrefix.entries()) {
+      const observed = exactPoisonPreStatusPathStateV1(target, context.successorRoot, successorRootIdentity);
+      prefixObservations.push(observed);
+      if (observed.state === "absent") {
+        for (const later of publicationSet.operationDirectoryPrefix.slice(index + 1)) {
+          const laterObserved = exactPoisonPreStatusPathStateV1(later, context.successorRoot, successorRootIdentity);
+          prefixObservations.push(laterObserved);
+          if (laterObserved.state !== "absent") currentEntryFail("post-visible P0 directory prefix has a gap");
+        }
+        for (let parentIndex = 0; parentIndex < index; parentIndex += 1) {
+          const parent = prefixObservations[parentIndex]!;
+          if (parent.state !== "directory") currentEntryFail("post-visible P0 directory prefix is crossed");
+          const expectedMembers = parentIndex + 1 < index ? [path.basename(publicationSet.operationDirectoryPrefix[parentIndex + 1]!)] : [];
+          if (canonicalComparable(parent.members) !== canonicalComparable(expectedMembers)) currentEntryFail("post-visible P0 directory child set is not exact");
+        }
+        const publicationPolicy = Object.freeze([
+          ...publicationSet.candidates.map((candidate) => Object.freeze({ target: candidate.target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })),
+          Object.freeze({ target: publicationSet.controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true }),
+        ]);
+        const publicationStates = publicationSet.candidates.map((candidate) => observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, publicationPolicy));
+        if (publicationStates.some((entry) => entry.state !== "F0" || entry.members.length !== 0)) currentEntryFail("post-visible P0 has a later publication member");
+        if (recordPrefixes.candidateDepths.some((depth) => depth !== 0)) currentEntryFail("post-visible P0 has a prepared record directory prefix");
+        return Object.freeze({ stage: "P0", state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, publicationStates]) });
+      }
+      prefixDepth = index + 1;
+    }
+    for (let index = 0; index < publicationSet.operationDirectoryPrefix.length - 1; index += 1) {
+      const observed = prefixObservations[index]!;
+      if (observed.state !== "directory" || canonicalComparable(observed.members) !== canonicalComparable([path.basename(publicationSet.operationDirectoryPrefix[index + 1]!)])) {
+        currentEntryFail("post-visible P0 directory child set is not exact");
+      }
+    }
+    const operationMembers = exactPoisonPreStatusOperationDirectoryMembersV1(publicationSet, prefixObservations.at(-1)!);
+    const controllerWriter = observeTask12ReceiptLocatorWriterNoWriteV1(publicationSet.controllerLockTarget);
+    const publicationPolicy = Object.freeze([
+      ...publicationSet.candidates.map((candidate) => Object.freeze({ target: candidate.target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })),
+      Object.freeze({ target: publicationSet.controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true }),
+    ]);
+    const publicationStates = publicationSet.candidates.map((candidate) => observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, publicationPolicy));
+    const candidateWriters = publicationSet.candidates.map((candidate) => {
+      try {
+        const parent = lstatSync(path.dirname(candidate.target), { bigint: true });
+        if (!parent.isDirectory() || parent.isSymbolicLink()) currentEntryFail("post-visible prepared writer parent is invalid");
+        return observeTask12ReceiptLocatorWriterNoWriteV1(candidate.target);
+      } catch (error) { if (isEnoent(error)) return null; throw error; }
+    });
+    const assertStageTopology = (currentIndex: number | null): void => {
+      const expectedOperationMembers = new Set(controllerWriter.members.map((member) => path.basename(member.target)));
+      for (const index of [1, 3] as const) {
+        const candidate = publicationSet.candidates[index]!;
+        const observed = publicationStates[index]!;
+        const basename = path.basename(candidate.target);
+        if (["F2", "F2u", "F3", "F4"].includes(observed.state)) expectedOperationMembers.add(basename);
+        for (const temporary of observed.temporaryTargets) expectedOperationMembers.add(path.basename(temporary));
+        const writerObservation = candidateWriters[index];
+        if (writerObservation !== null && writerObservation.members.length > 0) {
+          if (currentIndex !== index) currentEntryFail("post-visible prepared noncurrent writer family is present");
+          for (const member of writerObservation.members) expectedOperationMembers.add(path.basename(member.target));
+        }
+      }
+      for (const [index, writerObservation] of candidateWriters.entries()) {
+        if (writerObservation !== null && writerObservation.members.length > 0 && currentIndex !== index) currentEntryFail("post-visible prepared earlier or later writer family is present");
+      }
+      if (canonicalComparable([...expectedOperationMembers].sort(compareBytes)) !== canonicalComparable([...operationMembers].sort(compareBytes))) {
+        currentEntryFail("post-visible prepared operation-directory stage topology is crossed");
+      }
+    };
+    const p2Parent = recordPrefixes.candidateParents[0];
+    const p2PrefixDepth = recordPrefixes.candidateDepths[0];
+    const p4PrefixDepth = recordPrefixes.candidateDepths[1];
+    if (p4PrefixDepth > 0 && (p2PrefixDepth !== 3 || !["F2u", "F3", "F4"].includes(publicationStates[0]!.state) || !["F2u", "F3", "F4"].includes(publicationStates[1]!.state))) {
+      currentEntryFail("post-visible P4 record directory prefix is out of order");
+    }
+    if (p2PrefixDepth === 0) {
+      if (publicationStates.slice(1).some((entry) => entry.state !== "F0")) currentEntryFail("post-visible prepared publication order is crossed");
+      const stage = controllerWriter.members.length === 0 ? "P0" as const : "P1" as const;
+      assertStageTopology(null);
+      return Object.freeze({ stage, state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, p2Parent, operationMembers, controllerWriter, candidateWriters, publicationStates]) });
+    }
+    if (p2PrefixDepth < 3) {
+      if (publicationStates.some((entry) => entry.state !== "F0") || candidateWriters.some((entry) => entry !== null && entry.members.length > 0)) currentEntryFail("post-visible P2 partial directory prefix has publication evidence");
+      assertStageTopology(0);
+      return Object.freeze({ stage: "P2", state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, p2Parent, operationMembers, controllerWriter, candidateWriters, publicationStates]) });
+    }
+    const p2Writer = candidateWriters[0]!;
+    if (p2Writer === null) currentEntryFail("post-visible P2 writer parent observation is absent");
+    if (controllerWriter.members.length > 0 && publicationStates[0]!.state === "F0" && p2Writer.members.length === 0) {
+      if (publicationStates.slice(1).some((entry) => entry.state !== "F0")) currentEntryFail("post-visible prepared publication order is crossed");
+      assertStageTopology(null);
+      return Object.freeze({ stage: "P1", state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, p2Parent, operationMembers, controllerWriter, candidateWriters, publicationStates]) });
+    }
+    const finalStates = new Set<Task12ReceiptPublicationNoWriteObservationV1["state"]>(["F2u", "F3", "F4"]);
+    let stage: ExactPoisonPostVisiblePreStatusPassV1["stage"] = "P1";
+    for (let index = 0; index < publicationStates.length; index += 1) {
+      const observed = publicationStates[index]!;
+      if (finalStates.has(observed.state)) {
+        stage = (["P3", "P4", "P5", "P5"] as const)[index]!;
+        continue;
+      }
+      for (const later of publicationStates.slice(index + 1)) {
+        if (later.state !== "F0") currentEntryFail("post-visible prepared publication order is crossed");
+      }
+      if (observed.state === "F-1") {
+        if (observed.temporaryTarget === null) currentEntryFail("post-visible prepared temporary target is missing");
+        const temporary = observed.members.find((member) => member.target === observed.temporaryTarget);
+        if (temporary === undefined) currentEntryFail("post-visible prepared temporary observation is missing");
+        const classification = publicationSet.candidates[index]!.classifyTemporaryBytes(temporary.bytes);
+        if (classification === "canonical-unequal") currentEntryFail("post-visible prepared canonical-unequal temporary is terminal");
+        if (classification !== "incomplete-noncanonical") currentEntryFail("post-visible prepared temporary classification is crossed");
+      }
+      stage = (["P2", "P3", "P4", "P5"] as const)[index]!;
+      assertStageTopology(index);
+      return Object.freeze({ stage, state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, p2Parent, operationMembers, controllerWriter, candidateWriters, publicationStates]) });
+    }
+    assertStageTopology(null);
+    return Object.freeze({ phase: progressTopology.phase, stage: "P5", state: progressTopology.state, publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, p2Parent, operationMembers, controllerWriter, candidateWriters, publicationStates]) });
+  } finally { originals.close(); }
+}
+
+function assertExactPoisonPostVisiblePreStatusEqualV1(
+  left: ExactPoisonPostVisiblePreStatusPassV1,
+  right: ExactPoisonPostVisiblePreStatusPassV1,
+): void {
+  const comparable = (pass: ExactPoisonPostVisiblePreStatusPassV1) => ({
+    stage: pass.stage,
+    state: pass.state,
+    rawFence: pass.rawFence,
+    topology: pass.topology,
+    operationDirectoryPrefix: pass.publicationSet.operationDirectoryPrefix,
+    controllerLockTarget: pass.publicationSet.controllerLockTarget,
+    candidates: pass.publicationSet.candidates.map((candidate) => ({ phase: candidate.phase, target: candidate.target, bytesSha256: sha256(candidate.bytes), byteLength: candidate.bytes.length })),
+  });
+  if (canonicalComparable(comparable(left)) !== canonicalComparable(comparable(right))) currentEntryFail("post-visible pre-status A/B observation changed");
+}
+
+async function revalidatePostVisibleCurrentEntryStoreProgressV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<never> {
+  context.assertStable();
+  currentEntryFail("post-visible current-entry progress validation is unavailable");
+}
+
 async function revalidatePostVisibleCurrentEntryStoreV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
 ): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {
   context.assertStable();
   context.successorRootParent.assertStable();
   const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1(context);
+  const operations = path.join(context.successorRoot, "operations");
+  let operationsPresent = false;
+  try { lstatSync(operations, { bigint: true }); operationsPresent = true; }
+  catch (error) { if (!isEnoent(error)) throw error; }
+  if (operationsPresent) {
+    const passA = await observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context);
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    const passB = await observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context);
+    assertExactPoisonPostVisiblePreStatusEqualV1(passA, passB);
+    if (passB.state === "progress") return await revalidatePostVisibleCurrentEntryStoreProgressV1(context);
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity);
+    return Object.freeze({
+      storeRoot: context.successorRoot,
+      operation: Object.freeze({ operationRef: context.successorOperation.operationRef, operationHash: context.successorOperation.operationHash }),
+      selectionKind: "successor-pre-status",
+    });
+  }
   assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context);
   context.assertStable();
   context.successorRootParent.assertStable();
@@ -4762,7 +5197,7 @@ async function revalidatePostVisibleCurrentEntryStoreV1(
 type ExactPoisonPostVisibleZeroProgressSelectionV1 = Readonly<{
   storeRoot: string;
   operation: InternalProductionCurrentEntryOperationPairV1;
-  selectionKind: "successor-zero-progress";
+  selectionKind: "successor-zero-progress" | "successor-pre-status";
 }>;
 
 type ExactPoisonRecoveryPostVisibleOriginalsV1 = Readonly<{
@@ -6809,17 +7244,9 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
   const directory = path.dirname(target);
   const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
-  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target });
+  const authorityTarget = task12ReceiptLocatorWriterAuthorityTargetV1(target);
+  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget });
   const retryPinnedSnapshot = Symbol("Task12 receipt writer retry pinned snapshot");
-  const observe = (pid: number): Readonly<{ state: "live"; start: string; commandHash: string; identityHash: string } | { state: "dead" | "ambiguous" }> => {
-    const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), shell: false, encoding: "utf8", timeout: 2_000, maxBuffer: 65_536, stdio: ["ignore", "pipe", "pipe"] });
-    if (result.status === 1 && result.stdout === "" && result.stderr === "") return Object.freeze({ state: "dead" as const });
-    if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string") return Object.freeze({ state: "ambiguous" as const });
-    const match = /^(.{24}) (.+)\n$/.exec(result.stdout);
-    if (!match) return Object.freeze({ state: "ambiguous" as const });
-    const start = match[1]!; const commandHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-command.v1", command: match[2]! });
-    return Object.freeze({ state: "live" as const, start, commandHash, identityHash: hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash }) });
-  };
   const readPinned = (member: string, descriptor: number, identity: BigIntStats): Buffer => {
     let observed: Buffer;
     try {
@@ -6977,12 +7404,12 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         );
         if (parsed.state === "incomplete") {
           if (member.pid === undefined) currentEntryFail("Task12 receipt fixed writer lock is incomplete");
-          const processObservation = observe(member.pid);
+          const processObservation = observeTask12ReceiptWriterProcessV1(member.pid);
           if (processObservation.state === "live") busy = true;
           else if (processObservation.state === "ambiguous") ambiguous = true;
           continue;
         }
-        const processObservation = observe(parsed.owner.pid);
+        const processObservation = observeTask12ReceiptWriterProcessV1(parsed.owner.pid);
         if (processObservation.state === "ambiguous") ambiguous = true;
         else if (
           processObservation.state === "live"
@@ -7041,7 +7468,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         } catch (error) { waitForMovingSnapshot(error); }
         continue;
       }
-      const owner = observe(process.pid);
+      const owner = observeTask12ReceiptWriterProcessV1(process.pid);
       if (owner.state !== "live") currentEntryFail("Task12 receipt writer process is unavailable");
       const nonce = randomUUID(); const body = { schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1", targetHash, pid: process.pid, start: owner.start, commandHash: owner.commandHash, identityHash: owner.identityHash, nonce }; bytes = task12ReceiptCanonicalBytesV1(body);
       temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`);
@@ -7863,20 +8290,57 @@ function task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(
   return path.join(state.storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
 }
 
-async function ensureTask12PreparedCurrentEntryStatusV1(
-  context: SelectedCurrentEntryStoreContextV1,
-  operation: InternalProductionCurrentEntryOperationV1,
-): Promise<InternalProductionCurrentEntryOperationV1> {
-  const operationDirectory = task12OperationDirectoryV1(context, operation.operationHash);
-  const statusLocator = path.join(operationDirectory, "01-current-status.pair.json");
-  try {
-    const pairBytes = readTask12ReceiptStoreBytesV1(statusLocator);
-    await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, strictCanonicalRecord(pairBytes, "prepared current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1);
-    return operation;
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
+type Task12PreparedCurrentEntryPublicationCandidateV1<Phase extends "P2" | "P3" | "P4" | "P5"> = Readonly<{
+  phase: Phase;
+  target: string;
+  bytes: Buffer;
+  directoryPolicy: readonly Task12ReceiptPublicationDirectoryFamilyV1[];
+  classifyTemporaryBytes: (bytes: Buffer) => "expected" | "incomplete-noncanonical" | "canonical-unequal";
+}>;
+
+const task12PreparedCurrentEntryPublicationAuthorityBrandV1: unique symbol = Symbol("task12-prepared-current-entry-publication-authority-v1");
+
+type Task12PreparedCurrentEntryPublicationAuthorityV1 = Readonly<
+  | {
+    readonly [task12PreparedCurrentEntryPublicationAuthorityBrandV1]: true;
+    kind: "selected";
+    context: SelectedCurrentEntryStoreContextV1;
+    operation: InternalProductionCurrentEntryOperationV1;
   }
+  | {
+    readonly [task12PreparedCurrentEntryPublicationAuthorityBrandV1]: true;
+    kind: "pinned-successor";
+    context: ExactPoisonRecoveryPinnedCommitChainV1;
+  }
+>;
+type Task12PreparedCurrentEntryPublicationSetV1 = Readonly<{
+  operationDirectoryPrefix: readonly [string, string, string, string];
+  controllerLockTarget: string;
+  serviceCensus: InternalProductionServiceCensusV1;
+  candidates: readonly [
+    Task12PreparedCurrentEntryPublicationCandidateV1<"P2">,
+    Task12PreparedCurrentEntryPublicationCandidateV1<"P3">,
+    Task12PreparedCurrentEntryPublicationCandidateV1<"P4">,
+    Task12PreparedCurrentEntryPublicationCandidateV1<"P5">,
+  ];
+}>;
+
+async function buildTask12PreparedCurrentEntryPublicationSetV1(
+  authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
+  expectedServiceCensus?: InternalProductionServiceCensusV1,
+): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+  if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared publication authority is invalid");
+  const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
+  const operationHash = requireSha256(operation.operationHash, "prepared publication operation hash");
+  const operationDirectory = authority.kind === "selected"
+    ? task12OperationDirectoryV1(authority.context, operationHash)
+    : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+
   const census = await observeInternalProductionServiceCensusV1();
+  if (expectedServiceCensus !== undefined && canonicalComparable(census) !== canonicalComparable(expectedServiceCensus)) {
+    currentEntryFail("prepared publication service census changed");
+  }
   const serviceProjection = {
     schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     currentEntryOperationRef: operation.operationRef,
@@ -7892,9 +8356,10 @@ async function ensureTask12PreparedCurrentEntryStatusV1(
   const preMutationLoadedRuntimeServiceAuthorityHash = hashCanonicalJson(preMutationBody);
   const preMutationLoadedRuntimeServiceAuthorityRef = `${TASK12_PRE_MUTATION_PREFIX_V1}${preMutationLoadedRuntimeServiceAuthorityHash}`;
   const preMutation = recursivelyFreeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
-  const preMutationTarget = task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(context, preMutationLoadedRuntimeServiceAuthorityHash);
-  publishLegacyZeroRecordV1(preMutationTarget, await canonicalRecordBytes(preMutation));
-  publishLegacyZeroRecordV1(path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json"), await canonicalRecordBytes({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash }));
+  const preMutationTarget = authority.kind === "selected"
+    ? task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(authority.context, preMutationLoadedRuntimeServiceAuthorityHash)
+    : path.join(authority.context.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
+  const preMutationPair = recursivelyFreeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
   const source = operation.controllerSource;
   const statusBody = {
     schema: "setfarm.internal-production-current-entry-authority-status.v1",
@@ -7921,8 +8386,706 @@ async function ensureTask12PreparedCurrentEntryStatusV1(
   const statusHash = hashCanonicalJson(statusBody);
   const statusRef = `${TASK12_STATUS_PREFIX_V1}${statusHash}`;
   const status = recursivelyFreeze({ ...statusBody, statusRef, statusHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1(context, "statuses", statusHash), await canonicalRecordBytes(status));
-  publishLegacyZeroRecordV1(statusLocator, await canonicalRecordBytes({ statusRef, statusHash }));
+  const statusPair = recursivelyFreeze({ statusRef, statusHash });
+  let statusTarget: string;
+  if (authority.kind === "selected") {
+    const context = authority.context;
+    statusTarget = task12RecordPathV1(context, "statuses", statusHash);
+  } else {
+    statusTarget = path.join(authority.context.successorRoot, "records", "statuses", "sha256", statusHash.slice(0, 2), `${statusHash}.json`);
+  }
+  const currentStatusTarget = authority.kind === "selected"
+    ? task12CurrentStatusPathV1(authority.context, operationHash)
+    : path.join(operationDirectory, "01-current-status.pair.json");
+
+  const preMutationBytes = await canonicalRecordBytes(preMutation);
+  const preMutationPairBytes = await canonicalRecordBytes(preMutationPair);
+  const statusBytes = await canonicalRecordBytes(status);
+  const statusPairBytes = await canonicalRecordBytes(statusPair);
+  const classifyRecord = (
+    expectedBytes: Buffer,
+    kind: "pre-mutation-record" | "pre-mutation-pair" | "status-record" | "status-pair",
+  ): Task12PreparedCurrentEntryPublicationCandidateV1<"P2">["classifyTemporaryBytes"] => (bytes) => {
+    if (bytes.equals(expectedBytes)) return "expected";
+    let value: Record<string, unknown>;
+    try { value = strictCanonicalRecord(bytes, `prepared ${kind} temporary`); }
+    catch { return "incomplete-noncanonical"; }
+    if (kind === "pre-mutation-pair") {
+      return hasExactKeys(value, ["preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"])
+        && typeof value.preMutationLoadedRuntimeServiceAuthorityHash === "string"
+        && SHA256.test(value.preMutationLoadedRuntimeServiceAuthorityHash)
+        && value.preMutationLoadedRuntimeServiceAuthorityRef === `${TASK12_PRE_MUTATION_PREFIX_V1}${value.preMutationLoadedRuntimeServiceAuthorityHash}`
+        ? "canonical-unequal" : "incomplete-noncanonical";
+    }
+    if (kind === "status-pair") {
+      return hasExactKeys(value, ["statusRef", "statusHash"])
+        && typeof value.statusHash === "string" && SHA256.test(value.statusHash)
+        && value.statusRef === `${TASK12_STATUS_PREFIX_V1}${value.statusHash}`
+        ? "canonical-unequal" : "incomplete-noncanonical";
+    }
+    const expected = strictCanonicalRecord(expectedBytes, `expected prepared ${kind}`);
+    if (!hasExactKeys(value, Object.keys(expected)) || value.schema !== expected.schema) return "incomplete-noncanonical";
+    const refKey = kind === "pre-mutation-record" ? "preMutationLoadedRuntimeServiceAuthorityRef" : "statusRef";
+    const hashKey = kind === "pre-mutation-record" ? "preMutationLoadedRuntimeServiceAuthorityHash" : "statusHash";
+    const prefix = kind === "pre-mutation-record" ? TASK12_PRE_MUTATION_PREFIX_V1 : TASK12_STATUS_PREFIX_V1;
+    if (typeof value[hashKey] !== "string" || !SHA256.test(value[hashKey] as string) || value[refKey] !== `${prefix}${value[hashKey]}`) {
+      return "incomplete-noncanonical";
+    }
+    const body = { ...value }; delete body[refKey]; delete body[hashKey];
+    return hashCanonicalJson(body) === value[hashKey] ? "canonical-unequal" : "incomplete-noncanonical";
+  };
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  const operationsDirectory = path.dirname(path.dirname(path.dirname(operationDirectory)));
+  const controllerLockTarget = path.join(operationDirectory, "current-entry-controller.lock");
+  const preMutationPairTarget = path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const controllerWriterPolicy = Object.freeze({ target: controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true });
+  const family = (target: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true });
+  const finalOnly = (target: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target, allowFinal: true, allowPublicationTemporaries: false, allowWriterFamily: false });
+  return Object.freeze({
+    operationDirectoryPrefix: Object.freeze([
+      operationsDirectory,
+      path.join(operationsDirectory, "sha256"),
+      path.join(operationsDirectory, "sha256", operationHash.slice(0, 2)),
+      operationDirectory,
+    ] as [string, string, string, string]),
+    controllerLockTarget,
+    serviceCensus: census,
+    candidates: Object.freeze([
+      Object.freeze({ phase: "P2" as const, target: preMutationTarget, bytes: preMutationBytes, directoryPolicy: Object.freeze([family(preMutationTarget)]), classifyTemporaryBytes: classifyRecord(preMutationBytes, "pre-mutation-record") }),
+      Object.freeze({ phase: "P3" as const, target: preMutationPairTarget, bytes: preMutationPairBytes, directoryPolicy: Object.freeze([family(preMutationPairTarget), family(currentStatusTarget), controllerWriterPolicy]), classifyTemporaryBytes: classifyRecord(preMutationPairBytes, "pre-mutation-pair") }),
+      Object.freeze({ phase: "P4" as const, target: statusTarget, bytes: statusBytes, directoryPolicy: Object.freeze([family(statusTarget)]), classifyTemporaryBytes: classifyRecord(statusBytes, "status-record") }),
+      Object.freeze({ phase: "P5" as const, target: currentStatusTarget, bytes: statusPairBytes, directoryPolicy: Object.freeze([finalOnly(preMutationPairTarget), family(currentStatusTarget), controllerWriterPolicy]), classifyTemporaryBytes: classifyRecord(statusPairBytes, "status-pair") }),
+    ] as [
+      Task12PreparedCurrentEntryPublicationCandidateV1<"P2">,
+      Task12PreparedCurrentEntryPublicationCandidateV1<"P3">,
+      Task12PreparedCurrentEntryPublicationCandidateV1<"P4">,
+      Task12PreparedCurrentEntryPublicationCandidateV1<"P5">,
+    ]),
+  });
+}
+
+function createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+): Task12PreparedCurrentEntryPublicationAuthorityV1 {
+  task12OperationDirectoryV1(context, operation.operationHash);
+  return Object.freeze({ [task12PreparedCurrentEntryPublicationAuthorityBrandV1]: true as const, kind: "selected" as const, context, operation });
+}
+
+function createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Task12PreparedCurrentEntryPublicationAuthorityV1 {
+  context.assertStable();
+  return Object.freeze({ [task12PreparedCurrentEntryPublicationAuthorityBrandV1]: true as const, kind: "pinned-successor" as const, context });
+}
+
+type Task12ReceiptPhysicalIdentityObservationV1 = Readonly<{
+  deviceDecimal: string;
+  inodeDecimal: string;
+  modeOctal: string;
+  uidDecimal: string;
+  linkCountDecimal: string;
+  sizeDecimal: string;
+  mtimeNanosecondsDecimal: string;
+  ctimeNanosecondsDecimal: string;
+}>;
+
+function observeTask12ReceiptPhysicalIdentityV1(identity: BigIntStats): Task12ReceiptPhysicalIdentityObservationV1 {
+  return Object.freeze({
+    deviceDecimal: identity.dev.toString(10),
+    inodeDecimal: identity.ino.toString(10),
+    modeOctal: `0${(identity.mode & 0o7777n).toString(8)}`,
+    uidDecimal: identity.uid.toString(10),
+    linkCountDecimal: identity.nlink.toString(10),
+    sizeDecimal: identity.size.toString(10),
+    mtimeNanosecondsDecimal: identity.mtimeNs.toString(10),
+    ctimeNanosecondsDecimal: identity.ctimeNs.toString(10),
+  });
+}
+
+type Task12ReceiptLocatorWriterNoWriteObservationV1 = Readonly<{
+  state: "A0" | "A1" | "A2";
+  targetHash: string;
+  directoryIdentity: Task12ReceiptPhysicalIdentityObservationV1;
+  members: readonly Readonly<{
+    target: string;
+    identity: Task12ReceiptPhysicalIdentityObservationV1;
+    bytes: Buffer;
+    pid: number;
+    start: string | null;
+    commandHash: string | null;
+    identityHash: string | null;
+    nonce: string;
+    ownerState: "live" | "dead" | "reuse";
+  }>[];
+}>;
+
+function observeTask12ReceiptLocatorWriterNoWriteV1(target: string): Task12ReceiptLocatorWriterNoWriteObservationV1 {
+  const directory = path.dirname(target);
+  const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
+  const tempPrefix = `${path.basename(lockPath)}.tmp-`;
+  const authorityTarget = task12ReceiptLocatorWriterAuthorityTargetV1(target);
+  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget });
+  const directoryBefore = lstatSync(directory, { bigint: true });
+  if (!directoryBefore.isDirectory() || directoryBefore.isSymbolicLink() || (directoryBefore.mode & 0o7777n) !== 0o700n) currentEntryFail("Task12 receipt writer observation directory is invalid");
+  const escapedPrefix = tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tempPattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
+  const names = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
+  if (names.length > 8) currentEntryFail("Task12 receipt writer observation cap exceeded");
+  type Member = Readonly<{ target: string; identity: BigIntStats; bytes: Buffer; pid?: number; nonce?: string }>;
+  const opened: Array<{ descriptor: number; member: Member }> = [];
+  const parseOwner = (member: Member, label: string) => {
+    return parseTask12ReceiptWriterOwnerV1(member.bytes, targetHash, label, member.pid, member.nonce);
+  };
+  const openMember = (memberTarget: string, pid?: number, nonce?: string): Member => {
+    const descriptor = openSync(memberTarget, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = fstatSync(descriptor, { bigint: true });
+      const atPath = lstatSync(memberTarget, { bigint: true });
+      const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, before.size);
+      const after = fstatSync(descriptor, { bigint: true });
+      const reopened = lstatSync(memberTarget, { bigint: true });
+      if (
+        !before.isFile() || before.isSymbolicLink() || (before.mode & 0o7777n) !== 0o600n
+        || ![1n, 2n].includes(before.nlink)
+        || before.dev !== directoryBefore.dev || before.uid !== directoryBefore.uid
+        || !sameRegularMetadata(before, atPath) || !sameRegularMetadata(before, after) || !sameRegularMetadata(before, reopened)
+      ) currentEntryFail("Task12 receipt writer observation member is invalid");
+      const member = Object.freeze({ target: memberTarget, identity: before, bytes, pid, nonce });
+      opened.push({ descriptor, member });
+      return member;
+    } catch (error) {
+      closeSync(descriptor);
+      throw error;
+    }
+  };
+  try {
+    const candidates = names.map((name) => {
+      const match = tempPattern.exec(name);
+      if (!match) currentEntryFail("Task12 receipt writer observation temporary grammar is invalid");
+      const pid = Number(match[1]);
+      if (!Number.isSafeInteger(pid) || pid < 1 || !TASK12_RECEIPT_WRITER_UUID_V4_V1.test(match[2]!)) currentEntryFail("Task12 receipt writer observation PID or nonce is invalid");
+      return openMember(path.join(directory, name), pid, match[2]!);
+    });
+    let fixed: Member | null = null;
+    try { fixed = openMember(lockPath); }
+    catch (error) { if (!isEnoent(error)) throw error; }
+    const selected = fixed === null ? [] : candidates.filter((member) => member.identity.dev === fixed!.identity.dev && member.identity.ino === fixed!.identity.ino);
+    const state: "A0" | "A1" | "A2" = fixed === null ? "A0" : fixed.identity.nlink === 1n ? "A1" : "A2";
+    if (
+      (state === "A0" && candidates.some((member) => member.identity.nlink !== 1n))
+      || (state === "A1" && (selected.length !== 0 || candidates.some((member) => member.identity.nlink !== 1n)))
+      || (state === "A2" && (fixed!.identity.nlink !== 2n || selected.length !== 1 || candidates.some((member) => member !== selected[0] && member.identity.nlink !== 1n)))
+    ) currentEntryFail("Task12 receipt writer observation topology is invalid");
+    const classifyMember = (member: Member) => {
+      const parsed = parseOwner(member, "Task12 receipt writer observation");
+      if (parsed.state === "incomplete" && member.pid === undefined) currentEntryFail("Task12 receipt fixed writer observation is invalid");
+      let ownerPid = member.pid ?? (parsed.state === "complete" ? parsed.owner.pid : 0);
+      let start: string | null = null;
+      let commandHash: string | null = null;
+      let identityHash: string | null = null;
+      let nonce = member.nonce ?? "";
+      if (parsed.state === "complete") {
+        ownerPid = parsed.owner.pid;
+        start = parsed.owner.start;
+        commandHash = parsed.owner.commandHash;
+        identityHash = parsed.owner.identityHash;
+        nonce = parsed.owner.nonce;
+      }
+      const pid = ownerPid;
+      const result = observeTask12ReceiptWriterProcessV1(pid);
+      let ownerState: "live" | "dead" | "reuse" = "dead";
+      if (result.state === "live") {
+        ownerState = parsed.state === "complete" && (start !== result.start || commandHash !== result.commandHash || identityHash !== result.identityHash) ? "reuse" : "live";
+      } else if (result.state === "ambiguous") currentEntryFail("Task12 receipt writer observation is ambiguous");
+      return Object.freeze({ target: member.target, identity: observeTask12ReceiptPhysicalIdentityV1(member.identity), bytes: member.bytes, pid: ownerPid, start, commandHash, identityHash, nonce, ownerState });
+    };
+    const classified = candidates.map(classifyMember);
+    if (fixed !== null) {
+      const parsed = parseOwner(fixed, "Task12 receipt fixed writer observation");
+      if (parsed.state !== "complete") currentEntryFail("Task12 receipt fixed writer observation is invalid");
+      if (state === "A2" && !selected[0]!.bytes.equals(fixed.bytes)) currentEntryFail("Task12 receipt writer selected pair is crossed");
+      classified.push(classifyMember(fixed));
+    }
+    const directoryAfter = lstatSync(directory, { bigint: true });
+    if (!sameRegularMetadata(directoryBefore, directoryAfter)) currentEntryFail("Task12 receipt writer observation directory changed");
+    return Object.freeze({ state, targetHash, directoryIdentity: observeTask12ReceiptPhysicalIdentityV1(directoryAfter), members: Object.freeze(classified) });
+  } finally {
+    for (let index = opened.length - 1; index >= 0; index -= 1) closeSync(opened[index]!.descriptor);
+  }
+}
+
+type Task12ReceiptPublicationDirectoryFamilyV1 = Readonly<{
+  target: string;
+  allowFinal: boolean;
+  allowPublicationTemporaries: boolean;
+  allowWriterFamily: boolean;
+}>;
+
+type Task12ReceiptPublicationNoWriteObservationV1 = Readonly<{
+  state: "F-1" | "F0" | "F1" | "F2" | "F2u" | "F3" | "F4";
+  temporaryTarget: string | null;
+  temporaryTargets: readonly string[];
+  selectedTemporaryTarget: string | null;
+  directoryIdentity: Task12ReceiptPhysicalIdentityObservationV1;
+  members: readonly Readonly<{
+    target: string;
+    identity: Task12ReceiptPhysicalIdentityObservationV1;
+    bytes: Buffer;
+  }>[];
+}>;
+
+function task12ReceiptPublicationTemporaryGrammarV1(target: string): RegExp {
+  const prefix = `${path.basename(target)}.tmp-`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${prefix}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
+}
+
+function task12ReceiptPublicationTemporaryFamilyPresentV1(target: string): boolean {
+  const prefix = `${path.basename(target)}.tmp-`;
+  return readdirSync(path.dirname(target)).some((name) => name.startsWith(prefix));
+}
+
+function observeTask12ReceiptPublicationNoWriteV1(
+  target: string,
+  expectedBytes: Buffer,
+  directoryPolicy: readonly Task12ReceiptPublicationDirectoryFamilyV1[] = Object.freeze([
+    Object.freeze({ target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true }),
+  ]),
+): Task12ReceiptPublicationNoWriteObservationV1 {
+  const directory = path.dirname(target);
+  let directoryBefore: BigIntStats;
+  try {
+    directoryBefore = lstatSync(directory, { bigint: true });
+    if (!directoryBefore.isDirectory() || directoryBefore.isSymbolicLink() || (directoryBefore.mode & 0o7777n) !== 0o700n) {
+      currentEntryFail("Task12 receipt publication directory is invalid");
+    }
+  } catch (error) {
+    if (isEnoent(error)) return Object.freeze({ state: "F0" as const, temporaryTarget: null, temporaryTargets: Object.freeze([]), selectedTemporaryTarget: null, directoryIdentity: Object.freeze({ deviceDecimal: "0", inodeDecimal: "0", modeOctal: "0000", uidDecimal: "0", linkCountDecimal: "0", sizeDecimal: "0", mtimeNanosecondsDecimal: "0", ctimeNanosecondsDecimal: "0" }), members: Object.freeze([]) });
+    throw error;
+  }
+  const writerGrammar = (familyTarget: string): RegExp => {
+    const fixed = `.${path.basename(familyTarget)}.writer.lock`;
+    const prefix = `${fixed}.tmp-`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${prefix}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
+  };
+  const classifyName = (name: string): Readonly<{ family: Task12ReceiptPublicationDirectoryFamilyV1; role: "final" | "publication-temporary" | "writer" }> => {
+    for (const family of directoryPolicy) {
+      if (path.dirname(family.target) !== directory) continue;
+      const basename = path.basename(family.target);
+      if (family.allowFinal && name === basename) return Object.freeze({ family, role: "final" as const });
+      if (family.allowPublicationTemporaries && task12ReceiptPublicationTemporaryGrammarV1(family.target).test(name)) return Object.freeze({ family, role: "publication-temporary" as const });
+      const writerFixed = `.${basename}.writer.lock`;
+      if (family.allowWriterFamily && (name === writerFixed || writerGrammar(family.target).test(name))) return Object.freeze({ family, role: "writer" as const });
+    }
+    currentEntryFail("Task12 receipt publication directory has a foreign member");
+  };
+  const names = readdirSync(directory).sort(compareBytes);
+  const classifiedNames = names.map((name) => Object.freeze({ name, ...classifyName(name) }));
+  const targetTemporaryNames = classifiedNames.filter((entry) => entry.family.target === target && entry.role === "publication-temporary").map((entry) => entry.name);
+  if (targetTemporaryNames.length > 8) currentEntryFail("Task12 receipt publication temporary cap exceeded");
+  const opened: Array<{ target: string; descriptor: number; identity: BigIntStats; bytes: Buffer }> = [];
+  const openMember = (memberTarget: string) => {
+    const descriptor = openSync(memberTarget, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = fstatSync(descriptor, { bigint: true });
+      const atPath = lstatSync(memberTarget, { bigint: true });
+      const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, before.size);
+      const after = fstatSync(descriptor, { bigint: true });
+      const reopened = lstatSync(memberTarget, { bigint: true });
+      if (
+        !before.isFile() || before.isSymbolicLink() || (before.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(before.nlink)
+        || before.dev !== directoryBefore.dev || before.uid !== directoryBefore.uid
+        || !sameRegularMetadata(before, atPath) || !sameRegularMetadata(before, after) || !sameRegularMetadata(before, reopened)
+      ) {
+        currentEntryFail("Task12 receipt publication member is invalid");
+      }
+      const member = { target: memberTarget, descriptor, identity: before, bytes };
+      opened.push(member);
+      return member;
+    } catch (error) { closeSync(descriptor); throw error; }
+  };
+  try {
+    const members = classifiedNames.map((entry) => Object.freeze({ ...entry, member: openMember(path.join(directory, entry.name)) }));
+    const temporaries = members.filter((entry) => entry.family.target === target && entry.role === "publication-temporary").map((entry) => entry.member);
+    const final = members.find((entry) => entry.family.target === target && entry.role === "final")?.member ?? null;
+    const directoryAfter = lstatSync(directory, { bigint: true });
+    if (!sameRegularMetadata(directoryBefore, directoryAfter)) currentEntryFail("Task12 receipt publication directory changed");
+    const physicalMembers = Object.freeze(members.map(({ member }) => Object.freeze({ target: member.target, identity: observeTask12ReceiptPhysicalIdentityV1(member.identity), bytes: member.bytes })));
+    const temporaryTargets = Object.freeze(temporaries.map((temporary) => temporary.target));
+    const result = (state: Task12ReceiptPublicationNoWriteObservationV1["state"], temporaryTarget: string | null, selectedTemporaryTarget: string | null): Task12ReceiptPublicationNoWriteObservationV1 => Object.freeze({
+      state,
+      temporaryTarget,
+      temporaryTargets,
+      selectedTemporaryTarget,
+      directoryIdentity: observeTask12ReceiptPhysicalIdentityV1(directoryAfter),
+      members: physicalMembers,
+    });
+    if (final === null && temporaries.length === 0) return result("F0", null, null);
+    if (final === null) {
+      if (temporaries.some((temporary) => temporary.identity.nlink !== 1n)) currentEntryFail("Task12 receipt publication unlinked temporary link count is crossed");
+      const equal = temporaries.filter((temporary) => temporary.bytes.equals(expectedBytes));
+      if (equal.length === temporaries.length) return result("F1", temporaries[0]!.target, null);
+      if (temporaries.length === 1) return result("F-1", temporaries[0]!.target, null);
+      currentEntryFail("Task12 receipt publication multiple temporaries are crossed");
+    }
+    if (final === null || !final.bytes.equals(expectedBytes)) currentEntryFail("Task12 receipt publication final canonical identity changed or is crossed");
+    if (temporaries.length > 0) {
+      if (temporaries.some((temporary) => !temporary.bytes.equals(expectedBytes))) currentEntryFail("Task12 receipt publication complete temporaries are crossed");
+      const selected = temporaries.filter((temporary) => temporary.identity.dev === final.identity.dev && temporary.identity.ino === final.identity.ino);
+      if (
+        selected.length > 1
+        || (selected.length === 1 && (selected[0]!.identity.nlink !== 2n || final.identity.nlink !== 2n))
+        || (selected.length === 0 && final.identity.nlink !== 1n)
+        || temporaries.some((temporary) => temporary !== selected[0] && temporary.identity.nlink !== 1n)
+      ) currentEntryFail("Task12 receipt publication selected pair is crossed");
+      return result("F2", selected[0]?.target ?? temporaries[0]!.target, selected[0]?.target ?? null);
+    }
+    if (final.identity.nlink !== 1n) currentEntryFail("Task12 receipt publication final link count is crossed");
+    return result("F2u", null, null);
+  } finally {
+    for (let index = opened.length - 1; index >= 0; index -= 1) closeSync(opened[index]!.descriptor);
+  }
+}
+
+type Task12ReceiptPublicationTemporaryPinV1 = Readonly<{
+  target: string;
+  descriptor: number;
+  identity: BigIntStats;
+  bytes: Buffer;
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+function openTask12ReceiptPublicationTemporaryPinV1(target: string, expectedLinkCount = 1n): Task12ReceiptPublicationTemporaryPinV1 {
+  const parent = lstatSync(path.dirname(target), { bigint: true });
+  if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o7777n) !== 0o700n) currentEntryFail("prepared publication temporary parent is invalid");
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let closed = false;
+  try {
+    const identity = fstatSync(descriptor, { bigint: true });
+    const atPath = lstatSync(target, { bigint: true });
+    const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+    if (
+      !identity.isFile() || identity.isSymbolicLink() || (identity.mode & 0o7777n) !== 0o600n || identity.nlink !== expectedLinkCount
+      || identity.dev !== parent.dev || identity.uid !== parent.uid
+      || identity.dev !== atPath.dev || identity.ino !== atPath.ino || identity.mode !== atPath.mode || identity.uid !== atPath.uid
+      || identity.nlink !== atPath.nlink || identity.size !== atPath.size || identity.mtimeNs !== atPath.mtimeNs || identity.ctimeNs !== atPath.ctimeNs
+      || !sameRegularMetadata(identity, atPath)
+    ) currentEntryFail("prepared publication temporary pin is invalid");
+    const presentedTarget = process.platform === "darwin" && target.startsWith("/private/var/")
+      ? target.slice("/private".length)
+      : target;
+    const presentedIdentity = lstatSync(presentedTarget, { bigint: true });
+    if (!sameRegularMetadata(identity, presentedIdentity)) currentEntryFail("prepared publication temporary presentation is crossed");
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("prepared publication temporary pin is closed");
+      const stable = fstatSync(descriptor, { bigint: true });
+      const stableAtPath = lstatSync(target, { bigint: true });
+      const stableBytes = readTask12ReceiptDescriptorBytesV1(descriptor, stable.size);
+      if (!sameRegularMetadata(identity, stable) || !sameRegularMetadata(identity, stableAtPath) || !stableBytes.equals(bytes)) currentEntryFail("prepared publication temporary pin changed");
+    };
+    assertStable();
+    return Object.freeze({
+      target: presentedTarget,
+      descriptor,
+      identity,
+      bytes,
+      assertStable,
+      close: () => { if (closed) return; closed = true; closeSync(descriptor); },
+    });
+  } catch (error) { closeSync(descriptor); throw error; }
+}
+
+function removeTask12PreparedPublicationSelectedTemporaryV1(target: string): void {
+  unlinkSync(target);
+}
+
+function assertTask12PreparedPublicationFinalAbsentV1(target: string): void {
+  try { lstatSync(target, { bigint: true }); }
+  catch (error) { if (isEnoent(error)) return; throw error; }
+  currentEntryFail("prepared publication final appeared before temporary cleanup");
+}
+
+async function publishTask12PreparedCurrentEntryCandidateV1(
+  candidate: Task12PreparedCurrentEntryPublicationSetV1["candidates"][number],
+): Promise<void> {
+  const directory = path.dirname(candidate.target);
+  const guard = ensureTask12ReceiptPrivateDirectoryV1(directory);
+  let writer: ReturnType<typeof acquireTask12ReceiptLocatorWriterV1> | null = null;
+  try {
+    guard.assertStable();
+    writer = acquireTask12ReceiptLocatorWriterV1(candidate.target);
+    writer.assertStable();
+    for (let step = 0; step < 32; step += 1) {
+      let observed = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+      const laterPublicationMemberPresent = candidate.directoryPolicy.some((family) => {
+        if (family.target === candidate.target || !family.allowFinal || !family.allowPublicationTemporaries) return false;
+        const basename = path.basename(family.target);
+        return observed.members.some((member) => {
+          const name = path.basename(member.target);
+          return name === basename
+            || name.startsWith(`${basename}.tmp-`)
+            || name === `.${basename}.writer.lock`
+            || name.startsWith(`.${basename}.writer.lock.tmp-`);
+        });
+      });
+      if (laterPublicationMemberPresent && !["F2u", "F3", "F4"].includes(observed.state)) {
+        currentEntryFail("prepared publication later-family evidence precedes a strict current final");
+      }
+      if (["F2u", "F3", "F4"].includes(observed.state)) {
+        const final = openTask12ReceiptPublicationTemporaryPinV1(candidate.target, 1n);
+        try {
+          if (!final.bytes.equals(candidate.bytes)) currentEntryFail("prepared publication durable final bytes are crossed");
+          final.assertStable();
+          writer.assertStable();
+          guard.assertStable();
+          fsyncCurrentEntryDirectory(directory);
+          writer.assertStable();
+          guard.assertStable();
+          final.assertStable();
+          observed = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          if (!["F2u", "F3", "F4"].includes(observed.state) || observed.temporaryTargets.length !== 0) currentEntryFail("prepared publication durable final reopen did not converge");
+          final.assertStable();
+          writer.assertStable();
+          guard.assertStable();
+          return;
+        } finally { final.close(); }
+      }
+      if (observed.state === "F-1") {
+        if (observed.temporaryTargets.length !== 1 || observed.temporaryTarget === null) currentEntryFail("prepared publication F-1 target is not sole");
+        const temporary = openTask12ReceiptPublicationTemporaryPinV1(observed.temporaryTarget);
+        try {
+          const classification = candidate.classifyTemporaryBytes(temporary.bytes);
+          if (classification === "canonical-unequal") currentEntryFail("prepared publication canonical-unequal temporary is terminal");
+          if (classification !== "incomplete-noncanonical") currentEntryFail("prepared publication F-1 classification is crossed");
+          temporary.assertStable();
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          writer.assertStable();
+          guard.assertStable();
+          temporary.assertStable();
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          unlinkSync(temporary.target);
+          fsyncCurrentEntryDirectory(directory);
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          if (fresh.state !== "F0") currentEntryFail("prepared publication F-1 cleanup did not converge to absence");
+          writer.assertStable();
+          guard.assertStable();
+        } finally { temporary.close(); }
+        continue;
+      }
+      if (observed.state === "F0") {
+        const createdTarget = `${candidate.target}.tmp-${process.pid}-${randomUUID()}`;
+        const createdDescriptor = openSync(createdTarget, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+        try {
+          writeFileSync(createdDescriptor, candidate.bytes);
+          fsyncSync(createdDescriptor);
+          const identity = fstatSync(createdDescriptor, { bigint: true });
+          const atPath = lstatSync(createdTarget, { bigint: true });
+          if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1n || (identity.mode & 0o7777n) !== 0o600n || !sameRegularMetadata(identity, atPath) || !readTask12ReceiptDescriptorBytesV1(createdDescriptor, identity.size).equals(candidate.bytes)) currentEntryFail("prepared publication new temporary is invalid");
+        } finally { closeSync(createdDescriptor); }
+        continue;
+      }
+      if (observed.state === "F1") {
+        if (observed.temporaryTargets.length === 0 || observed.temporaryTarget === null) currentEntryFail("prepared publication F1 target is missing");
+        if (observed.temporaryTargets.length > 1) {
+          const redundantTarget = observed.temporaryTargets.at(-1)!;
+          const redundant = openTask12ReceiptPublicationTemporaryPinV1(redundantTarget);
+          try {
+            if (!redundant.bytes.equals(candidate.bytes)) currentEntryFail("prepared publication redundant temporary is crossed");
+            assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+            writer.assertStable();
+            guard.assertStable();
+            redundant.assertStable();
+            assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+            removeTask12PreparedPublicationSelectedTemporaryV1(redundant.target);
+            fsyncCurrentEntryDirectory(directory);
+            assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+            observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          } finally { redundant.close(); }
+          continue;
+        }
+        const selected = openTask12ReceiptPublicationTemporaryPinV1(observed.temporaryTarget);
+        try {
+          if (!selected.bytes.equals(candidate.bytes)) currentEntryFail("prepared publication selected temporary bytes are crossed");
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          writer.assertStable();
+          guard.assertStable();
+          selected.assertStable();
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          linkSync(selected.target, candidate.target);
+          fsyncCurrentEntryDirectory(directory);
+          const linked = fstatSync(selected.descriptor, { bigint: true });
+          const linkedAtTemporary = lstatSync(selected.target, { bigint: true });
+          const final = lstatSync(candidate.target, { bigint: true });
+          if (
+            linked.nlink !== 2n
+            || !sameRegularMetadata(linked, linkedAtTemporary)
+            || !sameRegularMetadata(linked, final)
+            || !readTask12ReceiptDescriptorBytesV1(selected.descriptor, linked.size).equals(candidate.bytes)
+          ) currentEntryFail("prepared publication selected link is crossed");
+          const assertLinkedStable = (): void => {
+            const descriptor = fstatSync(selected.descriptor, { bigint: true });
+            const atTemporary = lstatSync(selected.target, { bigint: true });
+            const atFinal = lstatSync(candidate.target, { bigint: true });
+            const bytes = readTask12ReceiptDescriptorBytesV1(selected.descriptor, descriptor.size);
+            if (
+              !sameRegularMetadata(linked, descriptor)
+              || !sameRegularMetadata(linked, atTemporary)
+              || !sameRegularMetadata(linked, atFinal)
+              || !bytes.equals(candidate.bytes)
+            ) currentEntryFail("prepared publication linked final changed before selected cleanup");
+          };
+          assertLinkedStable();
+          writer.assertStable();
+          guard.assertStable();
+          assertLinkedStable();
+          removeTask12PreparedPublicationSelectedTemporaryV1(selected.target);
+          fsyncCurrentEntryDirectory(directory);
+          const durableDescriptor = fstatSync(selected.descriptor, { bigint: true });
+          const durableAtPath = lstatSync(candidate.target, { bigint: true });
+          if (
+            durableDescriptor.nlink !== 1n
+            || !sameRegularMetadata(durableDescriptor, durableAtPath)
+            || !readTask12ReceiptDescriptorBytesV1(selected.descriptor, durableDescriptor.size).equals(candidate.bytes)
+          ) currentEntryFail("prepared publication linked final changed after selected cleanup");
+          const assertDurableFinalStable = (): void => {
+            const descriptor = fstatSync(selected.descriptor, { bigint: true });
+            const atPath = lstatSync(candidate.target, { bigint: true });
+            const bytes = readTask12ReceiptDescriptorBytesV1(selected.descriptor, descriptor.size);
+            if (
+              !sameRegularMetadata(durableDescriptor, descriptor)
+              || !sameRegularMetadata(durableDescriptor, atPath)
+              || !bytes.equals(candidate.bytes)
+            ) currentEntryFail("prepared publication linked final changed after fresh observation");
+          };
+          const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          if (!["F2u", "F3", "F4"].includes(fresh.state) || fresh.temporaryTargets.length !== 0) currentEntryFail("prepared publication linked cleanup did not converge");
+          assertDurableFinalStable();
+          writer.assertStable();
+          guard.assertStable();
+          assertDurableFinalStable();
+          return;
+        } finally { selected.close(); }
+      }
+      if (observed.state === "F2") {
+        const independentTargets = observed.temporaryTargets.filter((entry) => entry !== observed.selectedTemporaryTarget);
+        if (independentTargets.length > 0) {
+          const redundant = openTask12ReceiptPublicationTemporaryPinV1(independentTargets.at(-1)!);
+          const final = openTask12ReceiptPublicationTemporaryPinV1(candidate.target, observed.selectedTemporaryTarget === null ? 1n : 2n);
+          const selected = observed.selectedTemporaryTarget === null ? null : openTask12ReceiptPublicationTemporaryPinV1(observed.selectedTemporaryTarget, 2n);
+          try {
+            if (
+              !redundant.bytes.equals(candidate.bytes)
+              || !final.bytes.equals(candidate.bytes)
+              || (selected !== null && (
+                !selected.bytes.equals(candidate.bytes)
+                || selected.identity.dev !== final.identity.dev
+                || selected.identity.ino !== final.identity.ino
+              ))
+            ) currentEntryFail("prepared publication redundant linked-state topology is crossed");
+            writer.assertStable();
+            guard.assertStable();
+            redundant.assertStable();
+            final.assertStable();
+            selected?.assertStable();
+            removeTask12PreparedPublicationSelectedTemporaryV1(redundant.target);
+            fsyncCurrentEntryDirectory(directory);
+            const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+            if (fresh.state !== "F2" || fresh.temporaryTargets.length !== observed.temporaryTargets.length - 1) {
+              const removedLastIndependent = observed.selectedTemporaryTarget === null && observed.temporaryTargets.length === 1;
+              if (!removedLastIndependent || !["F2u", "F3", "F4"].includes(fresh.state) || fresh.temporaryTargets.length !== 0) {
+                currentEntryFail("prepared publication redundant linked-state cleanup did not shrink exactly");
+              }
+            }
+            final.assertStable();
+            selected?.assertStable();
+            writer.assertStable();
+            guard.assertStable();
+            final.assertStable();
+            selected?.assertStable();
+          } finally { selected?.close(); final.close(); redundant.close(); }
+          continue;
+        }
+        if (observed.selectedTemporaryTarget === null) continue;
+        const temporary = openTask12ReceiptPublicationTemporaryPinV1(observed.selectedTemporaryTarget, 2n);
+        const final = openTask12ReceiptPublicationTemporaryPinV1(candidate.target, 2n);
+        try {
+          if (
+            !temporary.bytes.equals(candidate.bytes)
+            || !final.bytes.equals(candidate.bytes)
+            || temporary.identity.dev !== final.identity.dev
+            || temporary.identity.ino !== final.identity.ino
+          ) currentEntryFail("prepared publication selected pair is crossed");
+          temporary.assertStable();
+          final.assertStable();
+          writer.assertStable();
+          guard.assertStable();
+          temporary.assertStable();
+          final.assertStable();
+          removeTask12PreparedPublicationSelectedTemporaryV1(temporary.target);
+          fsyncCurrentEntryDirectory(directory);
+          const durableDescriptor = fstatSync(final.descriptor, { bigint: true });
+          const durableAtPath = lstatSync(candidate.target, { bigint: true });
+          if (
+            durableDescriptor.nlink !== 1n
+            || !sameRegularMetadata(durableDescriptor, durableAtPath)
+            || !readTask12ReceiptDescriptorBytesV1(final.descriptor, durableDescriptor.size).equals(candidate.bytes)
+          ) currentEntryFail("prepared publication final changed after selected cleanup");
+          const assertDurableFinalStable = (): void => {
+            const stableDescriptor = fstatSync(final.descriptor, { bigint: true });
+            const stableAtPath = lstatSync(candidate.target, { bigint: true });
+            const stableBytes = readTask12ReceiptDescriptorBytesV1(final.descriptor, stableDescriptor.size);
+            if (
+              !sameRegularMetadata(durableDescriptor, stableDescriptor)
+              || !sameRegularMetadata(durableDescriptor, stableAtPath)
+              || !stableBytes.equals(candidate.bytes)
+            ) currentEntryFail("prepared publication durable final changed after fresh observation");
+          };
+          const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          if (!["F2u", "F3", "F4"].includes(fresh.state) || fresh.temporaryTargets.length !== 0) currentEntryFail("prepared publication selected cleanup did not converge");
+          assertDurableFinalStable();
+          writer.assertStable();
+          guard.assertStable();
+          assertDurableFinalStable();
+        } finally { final.close(); temporary.close(); }
+        continue;
+      }
+      currentEntryFail("prepared publication state is not resumable");
+    }
+    currentEntryFail("prepared publication did not converge within the bounded state machine");
+  } finally {
+    try { if (writer !== null) writer.close(); }
+    finally { guard.close(); }
+  }
+}
+
+async function ensureTask12PreparedCurrentEntryStatusV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+): Promise<InternalProductionCurrentEntryOperationV1> {
+  const operationDirectory = task12OperationDirectoryV1(context, operation.operationHash);
+  const statusLocator = path.join(operationDirectory, "01-current-status.pair.json");
+  let statusIdentity: BigIntStats | null = null;
+  try {
+    statusIdentity = lstatSync(statusLocator, { bigint: true });
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  if (statusIdentity !== null && statusIdentity.nlink === 1n) {
+    try {
+      const pairBytes = readTask12ReceiptStoreBytesV1(statusLocator);
+      await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, strictCanonicalRecord(pairBytes, "prepared current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1);
+      if (!task12ReceiptPublicationTemporaryFamilyPresentV1(statusLocator)) return operation;
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+    }
+  }
+  if (!activeTask12ControllerOperationsV1.has(operation.operationHash)) currentEntryFail("prepared publication requires the held controller lock");
+  const publicationSet = await buildTask12PreparedCurrentEntryPublicationSetV1(
+    createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation),
+  );
+  for (const candidate of publicationSet.candidates) await publishTask12PreparedCurrentEntryCandidateV1(candidate);
   return operation;
 }
 

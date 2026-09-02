@@ -14,6 +14,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -2416,6 +2417,47 @@ const PHASE5C_Z_CANDIDATE_MEMBERS_V1 = Object.freeze([
   "commit",
 ] as const);
 
+const PHASE5C_P_PRE_STATUS_STAGES_V1 = Object.freeze([
+  Object.freeze({
+    stage: "P0",
+    orderedPrefixMembers: Object.freeze(["operations", "sha256", "hash-prefix", "operation-directory"]),
+    admittedPrefixLengths: Object.freeze([0, 1, 2, 3, 4]),
+    forbiddenMembers: Object.freeze(["current-entry-controller.lock", "pre-mutation-content", "00-pair", "status-content", "01-pair"]),
+    mutation: "an operation-directory prefix is mistaken for zero progress or accepted with a later publication member",
+  }),
+  Object.freeze({
+    stage: "P1",
+    orderedPrefixMembers: Object.freeze(["operation-directory", "current-entry-controller.lock-writer-family"]),
+    admittedWriterStates: Object.freeze(["absent", "A0", "A1", "A2"]),
+    forbiddenMembers: Object.freeze(["pre-mutation-content", "00-pair", "status-content", "01-pair"]),
+    mutation: "a controller-lock family is treated as authority, repaired by the validator, or skipped before P2",
+  }),
+  Object.freeze({
+    stage: "P2",
+    requiredMembers: Object.freeze(["pre-mutation-content-publication"]),
+    forbiddenMembers: Object.freeze(["00-pair", "status-content", "01-pair"]),
+    mutation: "the pre-mutation content F-state is not derived from the shared prepared publication set",
+  }),
+  Object.freeze({
+    stage: "P3",
+    requiredMembers: Object.freeze(["pre-mutation-content-final", "00-pair-publication"]),
+    forbiddenMembers: Object.freeze(["status-content", "01-pair"]),
+    mutation: "the 00 pair is admitted before strict content or without its exact publication F-state",
+  }),
+  Object.freeze({
+    stage: "P4",
+    requiredMembers: Object.freeze(["00-pair-final", "operation-prepared-status-publication"]),
+    forbiddenMembers: Object.freeze(["01-pair"]),
+    mutation: "operation_prepared content is admitted before the strict 00 pair or from independently rebuilt bytes",
+  }),
+  Object.freeze({
+    stage: "P5",
+    requiredMembers: Object.freeze(["operation-prepared-status-final", "01-current-status-publication-before-one-link"]),
+    forbiddenMembers: Object.freeze([]),
+    mutation: "a strict one-link 01 final remains pre-status instead of routing to the fail-closed progress validator",
+  }),
+] as const);
+
 type Phase5bSelectedContextConsumerNameV1 = typeof PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1[number]["name"];
 type Phase5bSelectedContextModeV1 = "real" | "spread-clone" | "descriptor-copy" | "unregistered-brand";
 
@@ -2912,7 +2954,21 @@ type Phase5cZeroProgressMutationFixtureV1 =
   | Readonly<{ kind: "original-rewrite"; target: string }>
   | Readonly<{ kind: "original-directory-swap"; target: string; backup: string }>
   | Readonly<{ kind: "bracket-hash" }>
-  | Readonly<{ kind: "candidate"; index: number; field: "target" | "bytes" }>;
+  | Readonly<{ kind: "candidate"; index: number; field: "target" | "bytes" }>
+  | Readonly<{ kind: "writer-ambiguous"; pid: number }>
+  | Readonly<{ kind: "pre-status-inode-replace"; target: string; backup: string; targetType: "file" | "directory" }>
+  | Readonly<{ kind: "f1-final-appears"; target: string }>
+  | Readonly<{ kind: "f1-temp-replace"; target: string; backup: string; bytesBase64: string }>
+  | Readonly<{ kind: "f1-fresh-final"; target: string }>
+  | Readonly<{ kind: "f2-member-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "f2-redundant-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "f2-selected-post-fresh-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "f2-redundant-post-fresh-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "f1-linked-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "f1-linked-replace-without-retained-final"; target: string }>
+  | Readonly<{ kind: "final-fsync-throw" }>
+  | Readonly<{ kind: "final-post-fsync-replace"; target: string; backup: string }>
+  | Readonly<{ kind: "writer-close-throw" }>;
 
 function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
@@ -2965,7 +3021,542 @@ function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
   writeFileSync(modulePath, source);
 }
 
-function configurePhase5cZeroProgressFixtureV1(root: string): Readonly<{
+function instrumentPhase5cPreStatusFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const copiedWorkspaceLiteral = "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());";
+  assert.equal(source.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
+  source = source.replace(copiedWorkspaceLiteral, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`);
+  const copiedPresentation = `const target = process.platform === "darwin" && resolvedTarget.startsWith("/private/var/")
+    ? resolvedTarget.slice("/private".length)
+    : resolvedTarget;`;
+  assert.equal(source.split(copiedPresentation).length - 1, 1, "P5c-P copied fixture retains one macOS lexical-presentation branch");
+  source = source.replace(copiedPresentation, "const target = resolvedTarget;");
+  const selectedServiceCall = "await observeInternalProductionServiceCensusV1()";
+  const serviceProbeCall = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown}).next("service") as InternalProductionServiceCensusV1';
+  const ensureStart = source.indexOf("async function ensureTask12PreparedCurrentEntryStatusV1(");
+  const ensureEnd = source.indexOf("\nasync function resolveTask12RecordV1(", ensureStart);
+  assert.ok(ensureStart >= 0 && ensureEnd > ensureStart, "P5c-P copied fixture bounds the prepared writer");
+  let ensureRegion = source.slice(ensureStart, ensureEnd);
+  if (ensureRegion.includes(selectedServiceCall)) {
+    assert.equal(ensureRegion.split(selectedServiceCall).length - 1, 1, "P5c-P copied writer has one current service census");
+    ensureRegion = ensureRegion.replace(selectedServiceCall, serviceProbeCall);
+    source = source.slice(0, ensureStart) + ensureRegion + source.slice(ensureEnd);
+  }
+  const futureBuilderStart = source.indexOf("async function buildTask12PreparedCurrentEntryPublicationSetV1(");
+  if (futureBuilderStart >= 0) {
+    const futureBuilderEnd = source.indexOf("\nasync function ", futureBuilderStart + 20);
+    const boundedEnd = futureBuilderEnd > futureBuilderStart ? futureBuilderEnd : source.length;
+    let builderRegion = source.slice(futureBuilderStart, boundedEnd);
+    if (builderRegion.includes(selectedServiceCall)) {
+      builderRegion = builderRegion.replaceAll(selectedServiceCall, serviceProbeCall);
+      source = source.slice(0, futureBuilderStart) + builderRegion + source.slice(boundedEnd);
+    }
+  }
+  const futurePreparedPublisherStart = source.indexOf("function publishTask12PreparedCurrentEntryCandidateV1(");
+  if (futurePreparedPublisherStart >= 0) {
+    const futurePreparedPublisherEnd = source.indexOf("\n}\n\n", futurePreparedPublisherStart) + 2;
+    assert.ok(futurePreparedPublisherEnd > futurePreparedPublisherStart, "P5c-P copied fixture bounds the prepared candidate publisher");
+    let preparedPublisher = source.slice(futurePreparedPublisherStart, futurePreparedPublisherEnd);
+    const cleanupUnlinkMarker = `assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          unlinkSync(temporary.target);`;
+    assert.equal(preparedPublisher.split(cleanupUnlinkMarker).length - 1, 1, "P5c-P identifies the unique F-1 final-absence/unlink boundary");
+    const cleanupUnlinkOffset = preparedPublisher.indexOf(cleanupUnlinkMarker);
+    const finalTemporaryFenceOffset = preparedPublisher.lastIndexOf("temporary.assertStable();", cleanupUnlinkOffset);
+    const finalWriterFenceOffset = preparedPublisher.lastIndexOf("writer.assertStable();", finalTemporaryFenceOffset);
+    const finalGuardFenceOffset = preparedPublisher.lastIndexOf("guard.assertStable();", finalTemporaryFenceOffset);
+    assert.ok(finalWriterFenceOffset >= 0 && finalWriterFenceOffset < finalGuardFenceOffset && finalGuardFenceOffset < finalTemporaryFenceOffset, "P5c-P hooks after the final writer/guard fences and before the final temporary fence");
+    preparedPublisher = preparedPublisher.slice(0, finalTemporaryFenceOffset) + `
+      const p5cPCleanupProbe = Reflect.get(globalThis, "__p5cPreStatusProbeV1") as undefined | {driftTarget:string|null};
+      const p5cPShared = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {preCleanupReplacementApplied?:boolean;preCleanupBackup?:string;preCleanupUnlinkCalls?:number};
+      const p5cPReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string;bytesBase64?:string}>;reviewApplied?:boolean;createdTarget?:string|null};
+      if (p5cPShared) p5cPShared.preCleanupUnlinkCalls = 0;
+      if (p5cPCleanupProbe?.driftTarget === temporary.target) {
+        const backup = temporary.target + ".p5c-classified-original";
+        renameSync(temporary.target, backup);
+        writeFileSync(temporary.target, temporary.bytes, { flag: "wx", mode: 0o600 });
+        if (p5cPShared) { p5cPShared.preCleanupReplacementApplied = true; p5cPShared.preCleanupBackup = backup; }
+      }
+      if (p5cPReview?.mutation.kind === "f1-final-appears"
+        && path.basename(p5cPReview.mutation.target!) === path.basename(candidate.target)
+        && realpathSync(path.dirname(p5cPReview.mutation.target!)) === realpathSync(path.dirname(candidate.target))) {
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        p5cPReview.reviewApplied = true;
+        p5cPReview.createdTarget = candidate.target;
+      }
+      if (p5cPReview?.mutation.kind === "f1-temp-replace" && p5cPReview.mutation.target === temporary.target) {
+        renameSync(temporary.target, p5cPReview.mutation.backup!);
+        writeFileSync(temporary.target, Buffer.from(p5cPReview.mutation.bytesBase64!, "base64"), { flag: "wx", mode: 0o600 });
+        p5cPReview.reviewApplied = true;
+      }
+      ` + preparedPublisher.slice(finalTemporaryFenceOffset);
+    preparedPublisher = preparedPublisher.replace(cleanupUnlinkMarker, `assertTask12PreparedPublicationFinalAbsentV1(candidate.target);
+          const p5cPCleanupUnlinkProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {preCleanupUnlinkCalls?:number};
+          if (p5cPCleanupUnlinkProbe) p5cPCleanupUnlinkProbe.preCleanupUnlinkCalls = (p5cPCleanupUnlinkProbe.preCleanupUnlinkCalls ?? 0) + 1;
+          unlinkSync(temporary.target);`);
+    source = source.slice(0, futurePreparedPublisherStart) + preparedPublisher + source.slice(futurePreparedPublisherEnd);
+  }
+  const futureWriterObserverStart = source.indexOf("function observeTask12ReceiptWriterProcessV1(");
+  if (futureWriterObserverStart >= 0) {
+    const futureWriterObserverEnd = source.indexOf("\n}\n\n", futureWriterObserverStart) + 2;
+    let writerObserver = source.slice(futureWriterObserverStart, futureWriterObserverEnd);
+    const processMarker = "const result = spawnSync(\"/bin/ps\",";
+    assert.equal(writerObserver.split(processMarker).length - 1, 1, "P5c-P copied shared writer-process observer retains one process observation");
+    writerObserver = writerObserver.replace(processMarker, `const p5cPWriterMutation = (Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation?:{kind:string;pid?:number}})?.mutation;
+    if (p5cPWriterMutation?.kind === "writer-ambiguous" && p5cPWriterMutation.pid === pid) currentEntryFail("P5c-P copied writer process observation is ambiguous");
+    ${processMarker}`);
+    source = source.slice(0, futureWriterObserverStart) + writerObserver + source.slice(futureWriterObserverEnd);
+  }
+  const exportedPublisherMarker = "\nexport async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  const privatePublisherMarker = "\nasync function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  const exportedCount = source.split(exportedPublisherMarker).length - 1;
+  const privateCount = source.split(privatePublisherMarker).length - 1;
+  assert.equal(exportedCount + privateCount, 1, "P5c-P copied module retains one top-level publisher insertion point");
+  const publisherMarker = exportedCount === 1 ? exportedPublisherMarker : privatePublisherMarker;
+  const wrapper = `export async function p5cPrepareCurrentEntryFixtureV1(): Promise<InternalProductionCurrentEntryOperationV1> {
+  const pinned = await openExactPoisonRecoveryPinnedCommitChainV1();
+  let context: SelectedCurrentEntryStoreContextV1;
+  let operation: InternalProductionCurrentEntryOperationV1;
+  try {
+    pinned.assertStable();
+    context = createSelectedCurrentEntryStoreContextV1(Object.freeze({
+      storeRoot: pinned.successorRoot,
+      operation: pinned.successorOperationPair,
+      selectionKind: "successor-zero-progress" as const,
+    }));
+    operation = pinned.successorOperation;
+  } finally { pinned.close(); }
+  const operationDirectory = task12OperationDirectoryV1(context, operation.operationHash);
+  const virtualTarget = path.join(operationDirectory, "current-entry-controller.lock");
+  const fixedWriter = path.join(operationDirectory, ".current-entry-controller.lock.writer.lock");
+  const p5cPExists = (target: string): boolean => {
+    try { lstatSync(target); return true; }
+    catch (error) { if (isEnoent(error)) return false; throw error; }
+  };
+  const controller = await acquireTask12ControllerLockV1(context, operation.operationHash);
+  const p5cPProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {
+    controllerAcquireCalls:number; controllerReleaseCalls:number; controllerFixedSeen:boolean;
+    controllerVirtualSeen:boolean; controllerArtifactsAfterRelease:readonly string[];
+  };
+  if (p5cPProbe) {
+    p5cPProbe.controllerAcquireCalls = (p5cPProbe.controllerAcquireCalls ?? 0) + 1;
+    p5cPProbe.controllerFixedSeen = p5cPExists(fixedWriter);
+    p5cPProbe.controllerVirtualSeen = p5cPExists(virtualTarget);
+  }
+  try {
+    if (p5cPExists(virtualTarget) || !p5cPExists(fixedWriter)) currentEntryFail("P5c-P controller writer ownership is unavailable");
+    return await ensureTask12PreparedCurrentEntryStatusV1(context, operation);
+  } finally {
+    releaseTask12ControllerLockV1(controller);
+    if (p5cPProbe) {
+      p5cPProbe.controllerReleaseCalls = (p5cPProbe.controllerReleaseCalls ?? 0) + 1;
+      p5cPProbe.controllerArtifactsAfterRelease = p5cPExists(operationDirectory)
+        ? readdirSync(operationDirectory).filter((name) => name.includes("current-entry-controller.lock"))
+        : [];
+    }
+  }
+}
+
+`;
+  source = source.replace(publisherMarker, `\n${wrapper}${publisherMarker}`);
+
+  const validatorMarker = "async function revalidatePostVisibleCurrentEntryStoreV1(";
+  const validatorStart = source.indexOf(validatorMarker);
+  if (validatorStart >= 0) {
+    const validatorEnd = source.indexOf("\ntype ExactPoisonPostVisibleZeroProgressSelectionV1", validatorStart);
+    assert.ok(validatorEnd > validatorStart, "P5c-P copied drift hook bounds the post-visible validator");
+    const validator = source.slice(validatorStart, validatorEnd);
+    const passAMarker = "const passA = await observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context);";
+    if (validator.includes(passAMarker)) {
+      assert.equal(validator.split(passAMarker).length - 1, 1, "P5c-P copied drift hook follows exactly pass A");
+      const hooked = validator.replace(passAMarker, `${passAMarker}
+  const p5cPProbe = Reflect.get(globalThis, "__p5cPreStatusProbeV1") as undefined | {driftTarget:string|null;driftApplied:boolean};
+  const p5cPShared = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {preStatusStage?:string;preStatusState?:string};
+  if (p5cPShared) { p5cPShared.preStatusStage = passA.stage; p5cPShared.preStatusState = passA.state; }
+  if (p5cPProbe?.driftTarget) {
+    const driftBytes = readFileSync(p5cPProbe.driftTarget);
+    writeFileSync(p5cPProbe.driftTarget, Buffer.concat([driftBytes, Buffer.from(" ")]));
+    p5cPProbe.driftApplied = true;
+  }`);
+      source = source.slice(0, validatorStart) + hooked + source.slice(validatorEnd);
+    }
+  }
+  writeFileSync(modulePath, source);
+}
+
+function instrumentPhase5cPreStatusReviewFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+
+  const passAHook = `if (p5cPShared) { p5cPShared.preStatusStage = passA.stage; p5cPShared.preStatusState = passA.state; }`;
+  assert.equal(source.split(passAHook).length - 1, 1, "P5c-P review ABA hook follows the unique complete pass A");
+  source = source.replace(passAHook, `${passAHook}
+  const p5cPReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string;targetType?:string}>;reviewApplied?:boolean};
+  if (p5cPReview?.mutation.kind === "pre-status-inode-replace") {
+    const target = p5cPReview.mutation.target!;
+    const backup = p5cPReview.mutation.backup!;
+    if (p5cPReview.mutation.targetType === "directory") {
+      renameSync(target, backup);
+      mkdirSync(target, { mode: 0o700 });
+    } else {
+      const bytes = readFileSync(target);
+      renameSync(target, backup);
+      writeFileSync(target, bytes, { flag: "wx", mode: 0o600 });
+    }
+    p5cPReview.reviewApplied = true;
+  }`);
+
+  const publisherStart = source.indexOf("async function publishTask12PreparedCurrentEntryCandidateV1(");
+  const publisherEnd = source.indexOf("\nasync function ensureTask12PreparedCurrentEntryStatusV1(", publisherStart);
+  assert.ok(publisherStart >= 0 && publisherEnd > publisherStart, "P5c-P review hooks bound the prepared candidate publisher");
+  let publisher = source.slice(publisherStart, publisherEnd);
+  const publisherBody = "): Promise<void> {";
+  assert.equal(publisher.split(publisherBody).length - 1, 1, "P5c-P review counts the exact shared prepared publisher entry");
+  publisher = publisher.replace(publisherBody, `${publisherBody}
+  const p5cPPublisherEntry = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {preparedPublisherPhases?:string[]};
+  if (p5cPPublisherEntry) (p5cPPublisherEntry.preparedPublisherPhases ??= []).push(candidate.phase);`);
+  const observationEntry = "let observed = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);";
+  assert.equal(publisher.split(observationEntry).length - 1, 1, "P5c-P review counts each bounded publisher loop observation");
+  publisher = publisher.replace(observationEntry, `const p5cPObservationEntry = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {preparedPublisherObservationCalls?:Record<string,number>};
+      if (p5cPObservationEntry) {
+        p5cPObservationEntry.preparedPublisherObservationCalls ??= {};
+        p5cPObservationEntry.preparedPublisherObservationCalls[candidate.phase] = (p5cPObservationEntry.preparedPublisherObservationCalls[candidate.phase] ?? 0) + 1;
+      }
+      ${observationEntry}`);
+
+  const finalBranchStart = publisher.indexOf('if (["F2u", "F3", "F4"].includes(observed.state)) {');
+  const f1Start = publisher.indexOf('if (observed.state === "F-1") {', finalBranchStart);
+  assert.ok(finalBranchStart >= 0 && f1Start > finalBranchStart, "P5c-P review hooks bound the durable-final branch");
+  let finalBranch = publisher.slice(finalBranchStart, f1Start);
+  const finalFsync = "fsyncCurrentEntryDirectory(directory);";
+  assert.equal(finalBranch.split(finalFsync).length - 1, 1, "P5c-P review hooks the sole durable-final parent fsync");
+  finalBranch = finalBranch.replace(finalFsync, `${finalFsync}
+        const p5cPFinalReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+        if (p5cPFinalReview?.mutation.kind === "final-fsync-throw") throw new Error("P5C_P_FINAL_FSYNC_FAULT");
+        if (p5cPFinalReview?.mutation.kind === "final-post-fsync-replace"
+          && path.basename(p5cPFinalReview.mutation.target!) === path.basename(candidate.target)
+          && realpathSync(path.dirname(p5cPFinalReview.mutation.target!)) === realpathSync(path.dirname(candidate.target))) {
+          const bytes = readFileSync(candidate.target);
+          renameSync(candidate.target, p5cPFinalReview.mutation.backup!);
+          writeFileSync(candidate.target, bytes, { flag: "wx", mode: 0o600 });
+          p5cPFinalReview.reviewApplied = true;
+        }`);
+  publisher = publisher.slice(0, finalBranchStart) + finalBranch + publisher.slice(f1Start);
+
+  const updatedF1Start = publisher.indexOf('if (observed.state === "F-1") {');
+  const f0Start = publisher.indexOf('if (observed.state === "F0") {', updatedF1Start);
+  let f1 = publisher.slice(updatedF1Start, f0Start);
+  const f1DurableMarker = `fsyncCurrentEntryDirectory(directory);
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);`;
+  assert.equal(f1.split(f1DurableMarker).length - 1, 1, "P5c-P review hooks the exact F-1 durable final-absence boundary");
+  f1 = f1.replace(f1DurableMarker, `fsyncCurrentEntryDirectory(directory);
+          const p5cPFreshReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string}>;reviewApplied?:boolean;createdTarget?:string|null};
+          if (p5cPFreshReview?.mutation.kind === "f1-fresh-final"
+            && path.basename(p5cPFreshReview.mutation.target!) === path.basename(candidate.target)
+            && realpathSync(path.dirname(p5cPFreshReview.mutation.target!)) === realpathSync(path.dirname(candidate.target))) {
+            writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+            p5cPFreshReview.reviewApplied = true;
+            p5cPFreshReview.createdTarget = candidate.target;
+          }
+          assertTask12PreparedPublicationFinalAbsentV1(candidate.target);`);
+  publisher = publisher.slice(0, updatedF1Start) + f1 + publisher.slice(f0Start);
+
+  const linkedFence = `) currentEntryFail("prepared publication selected link is crossed");`;
+  assert.equal(publisher.split(linkedFence).length - 1, 1, "P5c-P review hooks the exact F1 linked-inode fence");
+  publisher = publisher.replace(linkedFence, `${linkedFence}
+          const p5cPLinkedReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+          if (p5cPLinkedReview?.mutation.kind === "f1-linked-replace"
+            && path.basename(p5cPLinkedReview.mutation.target!) === path.basename(candidate.target)
+            && realpathSync(path.dirname(p5cPLinkedReview.mutation.target!)) === realpathSync(path.dirname(candidate.target))) {
+            const bytes = readFileSync(candidate.target);
+            renameSync(candidate.target, p5cPLinkedReview.mutation.backup!);
+            writeFileSync(candidate.target, bytes, { flag: "wx", mode: 0o600 });
+            p5cPLinkedReview.reviewApplied = true;
+          } else if (p5cPLinkedReview?.mutation.kind === "f1-linked-replace-without-retained-final"
+            && path.basename(p5cPLinkedReview.mutation.target!) === path.basename(candidate.target)
+            && realpathSync(path.dirname(p5cPLinkedReview.mutation.target!)) === realpathSync(path.dirname(candidate.target))) {
+            const bytes = readFileSync(candidate.target);
+            unlinkSync(candidate.target);
+            writeFileSync(candidate.target, bytes, { flag: "wx", mode: 0o600 });
+            p5cPLinkedReview.reviewApplied = true;
+          }`);
+
+  const f2Start = publisher.indexOf('if (observed.state === "F2") {');
+  const terminalStart = publisher.indexOf('currentEntryFail("prepared publication state is not resumable")', f2Start);
+  assert.ok(f2Start >= 0 && terminalStart > f2Start, "P5c-P review hooks bound the exact F2 branch");
+  let f2 = publisher.slice(f2Start, terminalStart);
+  const redundantFence = `writer.assertStable();
+            guard.assertStable();
+            redundant.assertStable();
+            final.assertStable();
+            selected?.assertStable();`;
+  assert.equal(f2.split(redundantFence).length - 1, 1, "P5c-P review hooks the final redundant-F2 all-member fence");
+  f2 = f2.replace(redundantFence, `writer.assertStable();
+            guard.assertStable();
+            const p5cPRedundantReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+            if (p5cPRedundantReview?.mutation.kind === "f2-redundant-replace" && p5cPRedundantReview.mutation.target === redundant.target) {
+              const bytes = readFileSync(redundant.target);
+              renameSync(redundant.target, p5cPRedundantReview.mutation.backup!);
+              writeFileSync(redundant.target, bytes, { flag: "wx", mode: 0o600 });
+              p5cPRedundantReview.reviewApplied = true;
+            }
+            redundant.assertStable();
+            final.assertStable();
+            selected?.assertStable();`);
+  const redundantRemove = "removeTask12PreparedPublicationSelectedTemporaryV1(redundant.target);";
+  assert.equal(f2.split(redundantRemove).length - 1, 1, "P5c-P review counts the exact redundant F2 unlink");
+  f2 = f2.replace(redundantRemove, `const p5cPRedundantRemoveProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {redundantCleanupCalls?:number};
+            if (p5cPRedundantRemoveProbe) p5cPRedundantRemoveProbe.redundantCleanupCalls = (p5cPRedundantRemoveProbe.redundantCleanupCalls ?? 0) + 1;
+            ${redundantRemove}`);
+  const redundantFresh = `const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+            if (fresh.state !== "F2" || fresh.temporaryTargets.length !== observed.temporaryTargets.length - 1)`;
+  assert.equal(f2.split(redundantFresh).length - 1, 1, "P5c-P review hooks the redundant F2 post-fresh window");
+  f2 = f2.replace(redundantFresh, `const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+            const p5cPRedundantFresh = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+            if (p5cPRedundantFresh?.mutation.kind === "f2-redundant-post-fresh-replace"
+              && path.basename(p5cPRedundantFresh.mutation.target!) === path.basename(candidate.target)) {
+              const bytes = readFileSync(candidate.target);
+              renameSync(candidate.target, p5cPRedundantFresh.mutation.backup!);
+              writeFileSync(candidate.target, bytes, { flag: "wx", mode: 0o600 });
+              p5cPRedundantFresh.reviewApplied = true;
+            }
+            if (fresh.state !== "F2" || fresh.temporaryTargets.length !== observed.temporaryTargets.length - 1)`);
+  const f2FinalFence = `writer.assertStable();
+          guard.assertStable();
+          temporary.assertStable();
+          final.assertStable();`;
+  assert.equal(f2.split(f2FinalFence).length - 1, 1, "P5c-P review hooks the final F2 writer/guard/member fence");
+  f2 = f2.replace(f2FinalFence, `writer.assertStable();
+          guard.assertStable();
+          const p5cPF2Review = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+          if (p5cPF2Review?.mutation.kind === "f2-member-replace" && (
+            p5cPF2Review.mutation.target === temporary.target
+            || (path.basename(p5cPF2Review.mutation.target!) === path.basename(candidate.target)
+              && realpathSync(path.dirname(p5cPF2Review.mutation.target!)) === realpathSync(path.dirname(candidate.target)))
+          )) {
+            const target = p5cPF2Review.mutation.target!;
+            const bytes = readFileSync(target);
+            renameSync(target, p5cPF2Review.mutation.backup!);
+            writeFileSync(target, bytes, { flag: "wx", mode: 0o600 });
+            p5cPF2Review.reviewApplied = true;
+          }
+          temporary.assertStable();
+          final.assertStable();`);
+  const selectedFresh = `const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          if (!["F2u", "F3", "F4"].includes(fresh.state) || fresh.temporaryTargets.length !== 0)`;
+  assert.equal(f2.split(selectedFresh).length - 1, 1, "P5c-P review hooks the selected F2 post-fresh window");
+  f2 = f2.replace(selectedFresh, `const fresh = observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy);
+          const p5cPSelectedFresh = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string;target?:string;backup?:string}>;reviewApplied?:boolean};
+          if (p5cPSelectedFresh?.mutation.kind === "f2-selected-post-fresh-replace"
+            && path.basename(p5cPSelectedFresh.mutation.target!) === path.basename(candidate.target)) {
+            const bytes = readFileSync(candidate.target);
+            renameSync(candidate.target, p5cPSelectedFresh.mutation.backup!);
+            writeFileSync(candidate.target, bytes, { flag: "wx", mode: 0o600 });
+            p5cPSelectedFresh.reviewApplied = true;
+          }
+          if (!["F2u", "F3", "F4"].includes(fresh.state) || fresh.temporaryTargets.length !== 0)`);
+  const selectedRemove = "removeTask12PreparedPublicationSelectedTemporaryV1(temporary.target);";
+  assert.equal(f2.split(selectedRemove).length - 1, 1, "P5c-P review counts the exact selected F2 unlink");
+  f2 = f2.replace(selectedRemove, `const p5cPF2RemoveProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {selectedCleanupCalls?:number};
+          if (p5cPF2RemoveProbe) p5cPF2RemoveProbe.selectedCleanupCalls = (p5cPF2RemoveProbe.selectedCleanupCalls ?? 0) + 1;
+          ${selectedRemove}`);
+  publisher = publisher.slice(0, f2Start) + f2 + publisher.slice(terminalStart);
+
+  const acquireMarker = "writer = acquireTask12ReceiptLocatorWriterV1(candidate.target);";
+  assert.equal(publisher.split(acquireMarker).length - 1, 1, "P5c-P review wraps one exact target writer");
+  publisher = publisher.replace(acquireMarker, `${acquireMarker}
+    const p5cPCloseReview = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {mutation:Readonly<{kind:string}>};
+    if (p5cPCloseReview?.mutation.kind === "writer-close-throw") {
+      const acquiredWriter = writer;
+      writer = Object.freeze({ assertStable: acquiredWriter.assertStable, close: () => {
+        acquiredWriter.close();
+        const shared = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {writerCloseThrowCalls?:number};
+        if (shared) shared.writerCloseThrowCalls = (shared.writerCloseThrowCalls ?? 0) + 1;
+        throw new Error("P5C_P_WRITER_CLOSE_FAULT");
+      } });
+    }`);
+  const finalizer = `try { if (writer !== null) writer.close(); }
+    finally { guard.close(); }`;
+  assert.equal(publisher.split(finalizer).length - 1, 1, "P5c-P review instruments the exact nested writer/guard finalizer");
+  publisher = publisher.replace(finalizer, `try { if (writer !== null) writer.close(); }
+    finally {
+      guard.close();
+      const shared = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {publisherGuardCloseCalls?:number};
+      if (shared) shared.publisherGuardCloseCalls = (shared.publisherGuardCloseCalls ?? 0) + 1;
+    }`);
+  source = source.slice(0, publisherStart) + publisher + source.slice(publisherEnd);
+  writeFileSync(modulePath, source);
+}
+
+type Phase5cPreparedPublicationTargetsFixtureV1 = Readonly<{
+  operationDirectory: string;
+  preMutationContent: string;
+  preMutationPair: string;
+  statusContent: string;
+  currentStatus: string;
+}>;
+
+function phase5cPreparedPublicationTargetsV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+): Phase5cPreparedPublicationTargetsFixtureV1 {
+  const operationHash = String(chain.records.successorOperation.value.operationHash);
+  const successorRoot = path.join(original.store, chain.successorStoreRelativeRoot);
+  const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  const preMutationPair = path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const currentStatus = path.join(operationDirectory, "01-current-status.pair.json");
+  const preMutation = JSON.parse(readFileSync(preMutationPair, "utf8")) as Readonly<Record<string, string>>;
+  const status = JSON.parse(readFileSync(currentStatus, "utf8")) as Readonly<Record<string, string>>;
+  const preMutationHash = String(preMutation.preMutationLoadedRuntimeServiceAuthorityHash);
+  const statusHash = String(status.statusHash);
+  return Object.freeze({
+    operationDirectory,
+    preMutationContent: path.join(successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationHash.slice(0, 2), `${preMutationHash}.json`),
+    preMutationPair,
+    statusContent: path.join(successorRoot, "records", "statuses", "sha256", statusHash.slice(0, 2), `${statusHash}.json`),
+    currentStatus,
+  });
+}
+
+function phase5cCanonicalUnequalPublicationBytesV1(
+  targets: Phase5cPreparedPublicationTargetsFixtureV1,
+): Readonly<Record<"P2" | "P3" | "P4" | "P5", Buffer>> {
+  const expectedPreMutation = JSON.parse(readFileSync(targets.preMutationContent, "utf8")) as Record<string, unknown>;
+  const expectedPreMutationRef = String(expectedPreMutation.preMutationLoadedRuntimeServiceAuthorityRef);
+  const refFor = (ref: string, hash: string): string => `${ref.slice(0, -64)}${hash}`;
+  const projection = { ...expectedPreMutation };
+  delete projection.preMutationLoadedRuntimeServiceAuthorityRef;
+  delete projection.preMutationLoadedRuntimeServiceAuthorityHash;
+  delete projection.serviceProjectionSetHash;
+  projection.observedServiceCensusHash = "d".repeat(64);
+  const serviceProjectionSetHash = canonicalHash(projection);
+  const preMutationBody = { ...projection, serviceProjectionSetHash };
+  const preMutationLoadedRuntimeServiceAuthorityHash = canonicalHash(preMutationBody);
+  const preMutationLoadedRuntimeServiceAuthorityRef = refFor(expectedPreMutationRef, preMutationLoadedRuntimeServiceAuthorityHash);
+  const preMutation = Object.freeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
+
+  const expectedStatus = JSON.parse(readFileSync(targets.statusContent, "utf8")) as Record<string, unknown>;
+  const expectedStatusRef = String(expectedStatus.statusRef);
+  const statusBody = { ...expectedStatus };
+  delete statusBody.statusRef;
+  delete statusBody.statusHash;
+  statusBody.preMutationLoadedRuntimeServiceAuthorityRef = preMutationLoadedRuntimeServiceAuthorityRef;
+  statusBody.preMutationLoadedRuntimeServiceAuthorityHash = preMutationLoadedRuntimeServiceAuthorityHash;
+  statusBody.preMutationLoadedRuntimeServiceAuthority = preMutation;
+  const statusHash = canonicalHash(statusBody);
+  const statusRef = refFor(expectedStatusRef, statusHash);
+  const status = Object.freeze({ ...statusBody, statusRef, statusHash });
+  return Object.freeze({
+    P2: canonicalFixtureRecordV1(preMutation),
+    P3: canonicalFixtureRecordV1(Object.freeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash })),
+    P4: canonicalFixtureRecordV1(status),
+    P5: canonicalFixtureRecordV1(Object.freeze({ statusRef, statusHash })),
+  });
+}
+
+function phase5cPublicationTempV1(target: string, nonce = "00000000-0000-4000-8000-000000000001"): string {
+  return `${target}.tmp-${process.pid}-${nonce}`;
+}
+
+function phase5cEnsurePublicationParentV1(target: string): void {
+  mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+}
+
+function phase5cControllerWriterPathsV1(targets: Phase5cPreparedPublicationTargetsFixtureV1): Readonly<{
+  virtualTarget: string;
+  fixed: string;
+  tempPrefix: string;
+}> {
+  const virtualTarget = path.join(targets.operationDirectory, "current-entry-controller.lock");
+  const fixed = path.join(targets.operationDirectory, ".current-entry-controller.lock.writer.lock");
+  return Object.freeze({ virtualTarget, fixed, tempPrefix: `${fixed}.tmp-` });
+}
+
+function phase5cSeedControllerWriterV1(
+  targets: Phase5cPreparedPublicationTargetsFixtureV1,
+  state: "A1-live" | "A2-live" | "A1-stale" | "A1-ambiguous" = "A1-live",
+): Readonly<{ pid: number; fixed: string; selected: string | null }> {
+  const paths = phase5cControllerWriterPathsV1(targets);
+  const nonce = "10000000-0000-4000-8000-000000000001";
+  const pid = state === "A1-stale" ? 2_147_483_646 : process.pid;
+  const bytes = state === "A1-stale"
+    ? exactPoisonRecoveryWriterOwnerBytesFixtureV1(paths.virtualTarget, pid, nonce)
+    : exactLiveWriterOwnerFixtureV1(paths.virtualTarget, pid, nonce);
+  if (state === "A2-live") {
+    const selected = `${paths.tempPrefix}${pid}-${nonce}`;
+    writeFileSync(selected, bytes, { mode: 0o600 });
+    linkSync(selected, paths.fixed);
+    return Object.freeze({ pid, fixed: paths.fixed, selected });
+  }
+  writeFileSync(paths.fixed, bytes, { mode: 0o600 });
+  return Object.freeze({ pid, fixed: paths.fixed, selected: null });
+}
+
+type Phase5cPublicationPhysicalStateFixtureV1 = "F-1" | "F0" | "F1-or-F2" | "F2u-or-F3-or-F4";
+
+function phase5cSeedPublicationPhysicalStateV1(
+  targets: Phase5cPreparedPublicationTargetsFixtureV1,
+  phase: "P2" | "P3" | "P4" | "P5",
+  state: Phase5cPublicationPhysicalStateFixtureV1,
+): Readonly<{ target: string; expectedBytes: Buffer; temp: string | null }> {
+  const ordered = Object.freeze([
+    Object.freeze({ phase: "P2" as const, target: targets.preMutationContent }),
+    Object.freeze({ phase: "P3" as const, target: targets.preMutationPair }),
+    Object.freeze({ phase: "P4" as const, target: targets.statusContent }),
+    Object.freeze({ phase: "P5" as const, target: targets.currentStatus }),
+  ]);
+  const row = ordered.find((entry) => entry.phase === phase)!;
+  const expectedBytes = readFileSync(row.target);
+  phase5cPrunePreparedPublicationFromV1(targets, phase);
+  if (state === "F0") return Object.freeze({ target: row.target, expectedBytes, temp: null });
+  phase5cEnsurePublicationParentV1(row.target);
+  const temp = phase5cPublicationTempV1(row.target);
+  if (state === "F-1") writeFileSync(temp, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+  else if (state === "F2u-or-F3-or-F4") writeFileSync(row.target, expectedBytes, { mode: 0o600 });
+  else {
+    writeFileSync(temp, expectedBytes, { mode: 0o600 });
+    linkSync(temp, row.target);
+  }
+  return Object.freeze({ target: row.target, expectedBytes, temp: state === "F2u-or-F3-or-F4" ? null : temp });
+}
+
+function phase5cSeedTargetWriterTempsV1(target: string, count: number): readonly string[] {
+  if (count > 0) phase5cEnsurePublicationParentV1(target);
+  const fixed = path.join(path.dirname(target), `.${path.basename(target)}.writer.lock`);
+  return Object.freeze(Array.from({ length: count }, (_, index) => {
+    const nonce = `${String(index + 20).padStart(8, "0")}-0000-4000-8000-${String(index + 20).padStart(12, "0")}`;
+    const temp = `${fixed}.tmp-${process.pid}-${nonce}`;
+    writeFileSync(temp, exactLiveWriterOwnerFixtureV1(target, process.pid, nonce), { mode: 0o600 });
+    return temp;
+  }));
+}
+
+function phase5cPrunePreparedPublicationFromV1(
+  targets: Phase5cPreparedPublicationTargetsFixtureV1,
+  phase: "P2" | "P3" | "P4" | "P5",
+): string {
+  const ordered = Object.freeze([
+    Object.freeze({ phase: "P2" as const, target: targets.preMutationContent }),
+    Object.freeze({ phase: "P3" as const, target: targets.preMutationPair }),
+    Object.freeze({ phase: "P4" as const, target: targets.statusContent }),
+    Object.freeze({ phase: "P5" as const, target: targets.currentStatus }),
+  ]);
+  const index = ordered.findIndex((entry) => entry.phase === phase);
+  assert.ok(index >= 0);
+  for (const entry of ordered.slice(index).reverse()) {
+    if (existsSync(entry.target)) unlinkSync(entry.target);
+    if (entry.phase === "P2" || entry.phase === "P4") {
+      let directory = path.dirname(entry.target);
+      for (let depth = 0; depth < 3 && existsSync(directory) && readdirSync(directory).length === 0; depth += 1) {
+        rmdirSync(directory);
+        directory = path.dirname(directory);
+      }
+    }
+  }
+  return ordered[index]!.target;
+}
+
+function configurePhase5cZeroProgressFixtureV1(root: string, preStatus = false): Readonly<{
   original: ExactOriginalPoisonStoreFixtureV1;
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
   observations: Readonly<Record<string, readonly unknown[]>>;
@@ -2980,6 +3571,10 @@ function configurePhase5cZeroProgressFixtureV1(root: string): Readonly<{
   instrumentPhase5bStrictCEntryFixtureV1(root);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, true);
   instrumentPhase5cZeroProgressFixtureV1(root);
+  if (preStatus) {
+    instrumentPhase5cPreStatusFixtureV1(root);
+    instrumentPhase5cPreStatusReviewFixtureV1(root);
+  }
   return Object.freeze({ original, admitted, observations, seeded });
 }
 
@@ -3003,12 +3598,13 @@ function runPhase5cZeroProgressFixtureV1(
   root: string,
   observations: Readonly<Record<string, readonly unknown[]>>,
   mutation: Phase5cZeroProgressMutationFixtureV1,
-  entry: "selector" | "publisher" = "selector",
+  entry: "selector" | "publisher" | "prepare" = "selector",
+  preStatusDriftTarget: string | null = null,
 ): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
   const transportPath = path.join(path.dirname(root), ".p5c-zero-progress-observations.json");
   fixtureFile(path.dirname(root), ".p5c-zero-progress-observations.json", `${JSON.stringify(fixtureTransportValueV1(observations))}\n`, 0o600);
-  const call = entry === "selector" ? "m.p5bRunStrictCEntryFixtureV1()" : "m.resumeExactPoisonQuarantinePublisherCoreV1()";
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,rootIdentity:z.rootIdentity,cursors,descriptorDelta:after-before}))})()`);
+  const call = entry === "selector" ? "m.p5bRunStrictCEntryFixtureV1()" : entry === "publisher" ? "m.resumeExactPoisonQuarantinePublisherCoreV1()" : "m.p5cPrepareCurrentEntryFixtureV1()";
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
 }
 
 type Phase5bHistoricalOperationPairFixtureV1 = Readonly<{ operationRef: string; operationHash: string }>;
@@ -3493,6 +4089,17 @@ function p4bExactPoisonRecoveryWriterBoundaryV1(boundary: string, member = ""): 
 }
 `;
   source = source.replace(`export ${acquireMarker}`, `${hook}export ${acquireMarker}`);
+  const processObserverStart = source.indexOf("function observeTask12ReceiptWriterProcessV1(");
+  const processObserverEnd = source.indexOf("\n}\n\ntype ExactPoisonRecoveryPrerequisiteRecordV1", processObserverStart);
+  assert.ok(processObserverStart >= 0 && processObserverEnd > processObserverStart, "the copied writer helper must retain one bounded shared process observer");
+  let processObserver = source.slice(processObserverStart, processObserverEnd);
+  const processObservation = '  const result = spawnSync("/bin/ps",';
+  assert.equal(processObserver.split(processObservation).length - 1, 1, "the shared writer process observer must retain one bounded ps call");
+  processObserver = processObserver.replace(
+    processObservation,
+    '  if (P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1?.ambiguousPid === pid) return Object.freeze({ state: "ambiguous" as const });\n  const result = spawnSync("/bin/ps",',
+  );
+  source = source.slice(0, processObserverStart) + processObserver + source.slice(processObserverEnd);
   const acquireStart = source.indexOf(`export ${acquireMarker}`);
   const acquireEnd = source.indexOf("\n}\n\nfunction publishLegacyZeroRecordV1", acquireStart);
   assert.ok(acquireStart >= 0 && acquireEnd > acquireStart, "the copied writer helper must have one exact private boundary");
@@ -3505,15 +4112,6 @@ function p4bExactPoisonRecoveryWriterBoundaryV1(boundary: string, member = ""): 
     "const deadline = Date.now() + 10_000;",
     `const deadline = Date.now() + ${fault?.action === "latch" ? 2_000 : 250};`,
     "bounded fixture deadline",
-  );
-  replaceOnce(
-    "const observe = (pid: number): Readonly<",
-    "const observe = (pid: number): Readonly<",
-    "process observer declaration",
-  );
-  acquire = acquire.replace(
-    "    const result = spawnSync(\"/bin/ps\",",
-    "    if (P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1?.ambiguousPid === pid) return Object.freeze({ state: \"ambiguous\" as const });\n    const result = spawnSync(\"/bin/ps\",",
   );
   replaceOnce(
     "const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);",
@@ -3620,6 +4218,10 @@ function exactPoisonRecoveryWriterOwnerBytesFixtureV1(
   nonce: string,
   overrides: Readonly<Record<string, unknown>> = Object.freeze({}),
 ): Buffer {
+  const physicalTarget = path.join(realpathSync(path.dirname(target)), path.basename(target));
+  const authorityTarget = process.platform === "darwin" && physicalTarget.startsWith("/private/var/")
+    ? physicalTarget.slice("/private".length)
+    : physicalTarget;
   const start = typeof overrides.start === "string" ? overrides.start : "Mon Jan 01 00:00:00 2001";
   const commandHash = typeof overrides.commandHash === "string" ? overrides.commandHash : "8".repeat(64);
   const identityHash = typeof overrides.identityHash === "string"
@@ -3627,7 +4229,7 @@ function exactPoisonRecoveryWriterOwnerBytesFixtureV1(
     : canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash });
   return Buffer.from(`${canonical({
     schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1",
-    targetHash: canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target }),
+    targetHash: canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget }),
     pid,
     start,
     commandHash,
@@ -3664,7 +4266,7 @@ function crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
   kind: "empty" | "partial" | "noncanonical" | "complete",
 ): string {
   const before = new Set(readdirSync(path.dirname(paths.lockPath)));
-  const program = `import{spawnSync}from"node:child_process";import{createHash}from"node:crypto";import{writeFileSync}from"node:fs";const target=${JSON.stringify(paths.target)},prefix=${JSON.stringify(path.join(path.dirname(paths.lockPath), paths.tempPrefix))},nonce=${JSON.stringify(nonce)},kind=${JSON.stringify(kind)};const hash=(value)=>createHash("sha256").update(JSON.stringify(value,Object.keys(value).sort())).digest("hex");const ps=spawnSync("/bin/ps",["-p",String(process.pid),"-o","lstart=","-o","command="],{env:{PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"},encoding:"utf8"});const match=/^(.{24}) (.+)\\n$/.exec(ps.stdout);if(!match)throw new Error("P4B_CHILD_PS_UNAVAILABLE");const start=match[1],commandHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-command.v1",command:match[2]}),identityHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-process.v1",pid:process.pid,start,commandHash}),targetHash=hash({schema:"setfarm.internal-production-task12-receipt-locator-writer-target.v1",target}),body={schema:"setfarm.internal-production-task12-receipt-locator-writer-lock.v1",targetHash,pid:process.pid,start,commandHash,identityHash,nonce},bytes=Buffer.from(JSON.stringify(body,Object.keys(body).sort())+"\\n"),selected=kind==="empty"?Buffer.alloc(0):kind==="partial"?bytes.subarray(0,Math.max(1,Math.floor(bytes.length/2))):kind==="noncanonical"?Buffer.from("{}\\n"):bytes;writeFileSync(prefix+process.pid+"-"+nonce,selected,{flag:"wx",mode:0o600});process.kill(process.pid,"SIGKILL")`;
+  const program = `import{spawnSync}from"node:child_process";import{createHash}from"node:crypto";import{realpathSync,writeFileSync}from"node:fs";import{basename,dirname,join}from"node:path";const target=${JSON.stringify(paths.target)},prefix=${JSON.stringify(path.join(path.dirname(paths.lockPath), paths.tempPrefix))},nonce=${JSON.stringify(nonce)},kind=${JSON.stringify(kind)},physicalTarget=join(realpathSync(dirname(target)),basename(target)),authorityTarget=process.platform==="darwin"&&physicalTarget.startsWith("/private/var/")?physicalTarget.slice("/private".length):physicalTarget;const hash=(value)=>createHash("sha256").update(JSON.stringify(value,Object.keys(value).sort())).digest("hex");const ps=spawnSync("/bin/ps",["-p",String(process.pid),"-o","lstart=","-o","command="],{env:{PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"},encoding:"utf8"});const match=/^(.{24}) (.+)\\n$/.exec(ps.stdout);if(!match)throw new Error("P4B_CHILD_PS_UNAVAILABLE");const start=match[1],commandHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-command.v1",command:match[2]}),identityHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-process.v1",pid:process.pid,start,commandHash}),targetHash=hash({schema:"setfarm.internal-production-task12-receipt-locator-writer-target.v1",target:authorityTarget}),body={schema:"setfarm.internal-production-task12-receipt-locator-writer-lock.v1",targetHash,pid:process.pid,start,commandHash,identityHash,nonce},bytes=Buffer.from(JSON.stringify(body,Object.keys(body).sort())+"\\n"),selected=kind==="empty"?Buffer.alloc(0):kind==="partial"?bytes.subarray(0,Math.max(1,Math.floor(bytes.length/2))):kind==="noncanonical"?Buffer.from("{}\\n"):bytes;writeFileSync(prefix+process.pid+"-"+nonce,selected,{flag:"wx",mode:0o600});process.kill(process.pid,"SIGKILL")`;
   const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", program], { encoding: "utf8", env: { ...process.env } });
   assert.equal(crashed.status, null, `${kind}: fixture owner must die without same-process cleanup`);
   assert.equal(crashed.signal, "SIGKILL", `${kind}: fixture owner death signal`);
@@ -3675,7 +4277,11 @@ function crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
     const bytes = readFileSync(target);
     const value = JSON.parse(bytes.toString("utf8")) as Readonly<Record<string, unknown>>;
     assert.equal(bytes.equals(Buffer.from(`${canonical(value)}\n`, "utf8")), true, "real-child complete owner body must be canonical LF");
-    assert.equal(value.targetHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: paths.target }));
+    const physicalTarget = path.join(realpathSync(path.dirname(paths.target)), path.basename(paths.target));
+    const authorityTarget = process.platform === "darwin" && physicalTarget.startsWith("/private/var/")
+      ? physicalTarget.slice("/private".length)
+      : physicalTarget;
+    assert.equal(value.targetHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget }));
     assert.equal(value.nonce, nonce);
     assert.equal(value.identityHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid: value.pid, start: value.start, commandHash: value.commandHash }));
   }
@@ -8181,8 +8787,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     assert.match(
       source,
-      /type ExactPoisonPostVisibleZeroProgressSelectionV1\s*=\s*Readonly<\{\s*storeRoot:\s*string;\s*operation:\s*InternalProductionCurrentEntryOperationPairV1;\s*selectionKind:\s*"successor-zero-progress";\s*\}>;/,
-      "Z selection returns only the successor root, operation pair, and literal zero-progress kind",
+      /type ExactPoisonPostVisibleZeroProgressSelectionV1\s*=\s*Readonly<\{\s*storeRoot:\s*string;\s*operation:\s*InternalProductionCurrentEntryOperationPairV1;\s*selectionKind:\s*"successor-zero-progress"\s*\|\s*"successor-pre-status";\s*\}>;/,
+      "the post-visible selection returns only the successor root, operation pair, and exact Z-or-P literal kind",
     );
     assert.match(
       source,
@@ -8233,9 +8839,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(lower, /const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze\(\[/, "the constructed bracket is checked against the exact tuple type rather than inferred as an open array");
     assert.doesNotMatch(lower, /ExactPoisonRecoveryWriterV1|heldWriter|acquireExactPoisonRecoveryWriterV1|observeExactPoisonQuarantinedInventoryV1|assertExactPoisonRecoveryFrontierV1|publishExactPoison|fsyncSync|readdirSync|opendirSync|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/, "the shared candidate builder is writer-independent, no-write, and scan-free");
 
-    const admission = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionV1");
+    const admission = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionCoreV1");
+    const admissionWrapper = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionV1");
     const postVisibleFence = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryPostVisibleZeroFenceV1");
     assert.equal(source.split("observeExactPoisonRecoveryCandidatesNoWriteV1(").length - 1, 3, "the lower no-write builder has one definition and exactly admission/post-visible call sites");
+    assert.equal(admissionWrapper.split("observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished)").length - 1, 1, "the writer admission wrapper delegates exactly once to its writer-bound core");
     assert.equal(admission.split("observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory)").length - 1, 1, "writer admission delegates candidate construction after its own inventory authentication");
     assert.match(admission, /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, inventory\);[\s\S]*assertExactPoisonRecoveryFrontierV1\(observed\.candidates, heldWriter\);[\s\S]*inventory\.assertStableOriginals\(\);[\s\S]*heldWriter\.assertStable\(\)/, "writer admission retains builder then frontier then original/H stability order");
     assert.match(postVisibleFence, /^async function observeExactPoisonRecoveryPostVisibleZeroFenceV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<void>/);
@@ -8311,7 +8919,15 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.ok((validator.match(/context\.assertStable\(\)/g) ?? []).length >= 3, "the pinned C chain is fenced before, between, and after Z observations");
     assert.ok((validator.match(/context\.successorRootParent\.assertStable\(\)/g) ?? []).length >= 3, "the pinned successor-root generation is fenced before, between, and after Z observations");
     assert.match(validator, /const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1\(context\)/, "Z captures one full fail-only root metadata baseline before absence A");
-    assert.equal(validator.split("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)").length - 1, 2, "Z rejects even create+unlink root metadata drift after the fence and at final linearization");
+    const zeroBranch = validator.slice(firstAbsence, literalReturn);
+    assert.equal(zeroBranch.split("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)").length - 1, 2, "the Z branch rejects create+unlink root metadata drift after the fence and at final linearization");
+    assert.equal(validator.split("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)").length - 1, 3, "the validator has two Z root-identity fences plus the independent P final fence");
+    const zeroReturnStart = validator.lastIndexOf("return Object.freeze({", literalReturn);
+    const zeroReturnEnd = validator.indexOf("\n  });", literalReturn);
+    assert.ok(zeroReturnStart >= 0 && zeroReturnEnd > literalReturn, "the Z literal return is bounded independently from the P return");
+    const zeroReturn = validator.slice(zeroReturnStart, zeroReturnEnd + 6);
+    assert.match(zeroReturn, /return Object\.freeze\(\{[\s\S]*storeRoot:\s*context\.successorRoot,[\s\S]*operation:\s*Object\.freeze\(\{[\s\S]*operationRef:\s*context\.successorOperation\.operationRef,[\s\S]*operationHash:\s*context\.successorOperation\.operationHash[\s\S]*selectionKind:\s*"successor-zero-progress",?[\s\S]*\}\);/, "the Z branch returns the exact literal zero-progress selection");
+    assert.doesNotMatch(zeroReturn, /\bas\b/, "the Z branch returns its exact literal selection without a cast");
     assert.match(validator, /storeRoot:\s*context\.successorRoot/);
     assert.match(validator, /operation:\s*Object\.freeze\(\{\s*operationRef:\s*context\.successorOperation\.operationRef,\s*operationHash:\s*context\.successorOperation\.operationHash\s*\}\)/);
     assert.doesNotMatch(validator, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|observeExactPoisonQuarantineAdmissionV1|acquireExactPoisonRecoveryWriterV1|heldWriter|assertExactPoisonRecoveryFrontierV1|readdirSync|opendirSync|latest|mtime|fsyncSync|publish|prepareInternal|resumeInternal|resolveInternalProduction|observeInternalProduction|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/, "Z has no public recursion, writer, scan, durability, or mutation authority");
@@ -8398,20 +9014,21 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P5c-Z refuses a visible operations prefix before the no-write fence or mint", async () => {
+  it("P5c-Z refuses an invalid visible operations prefix before the zero fence or mint", async () => {
     const root = createFixture();
     try {
       const harness = configurePhase5cZeroProgressFixtureV1(root);
       const operations = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot, "operations");
       mkdirSync(operations, { mode: 0o700 });
+      chmodSync(operations, 0o755);
       const before = filesystemTreeSnapshot(harness.original.store);
       const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
       assert.equal(result.status, 0, result.stderr);
       const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
       assert.equal(observed.outcome, "threw");
-      assert.match(String(observed.message), /operations|zero-progress|visible prefix/i);
+      assert.match(String(observed.message), /operations|P0|mode|invalid/i);
       assert.deepEqual({ selectorCalls: observed.selectorCalls, validatorCalls: observed.validatorCalls, lowerReturnCalls: observed.lowerReturnCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { selectorCalls: 1, validatorCalls: 1, lowerReturnCalls: 0, creatorCalls: 0, descriptorDelta: 0 });
-      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "a visible P0 prefix is terminal and read-only");
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "an invalid visible prefix is terminal and read-only");
     } finally {
       removeFixture(root);
     }
@@ -8535,6 +9152,1407 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       removeFixture(root);
     }
   });
+
+  it("P5c-P freezes one shared prepared publication set for the writer and post-visible validator", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    assert.equal(source.split("const task12PreparedCurrentEntryPublicationAuthorityBrandV1: unique symbol").length - 1, 1,
+      "P5c-P adds one module-private unforgeable prepared-authority brand");
+    const authorityTypeStart = source.indexOf("type Task12PreparedCurrentEntryPublicationAuthorityV1 = Readonly<");
+    const authorityTypeEnd = source.indexOf("\ntype Task12PreparedCurrentEntryPublicationSetV1", authorityTypeStart);
+    assert.ok(authorityTypeStart >= 0 && authorityTypeEnd > authorityTypeStart, "P5c-P adds one selected-or-pinned private prepared authority union");
+    const authorityType = source.slice(authorityTypeStart, authorityTypeEnd);
+    assert.match(authorityType, /readonly\s*\[task12PreparedCurrentEntryPublicationAuthorityBrandV1\]:\s*true/);
+    assert.match(authorityType, /kind:\s*"selected"[\s\S]*context:\s*SelectedCurrentEntryStoreContextV1[\s\S]*operation:\s*InternalProductionCurrentEntryOperationV1/);
+    assert.match(authorityType, /kind:\s*"pinned-successor"[\s\S]*context:\s*ExactPoisonRecoveryPinnedCommitChainV1/);
+    assert.doesNotMatch(authorityType, /root:\s*string|target:\s*string|writer|observer/, "neither caller can spoof a root, target, writer, or observer");
+
+    const typeStart = source.indexOf("type Task12PreparedCurrentEntryPublicationSetV1 = Readonly<{");
+    const typeEnd = source.indexOf("\n\nasync function buildTask12PreparedCurrentEntryPublicationSetV1(", typeStart);
+    assert.ok(typeStart >= 0 && typeEnd > typeStart, "P5c-P adds one private prepared publication-set type");
+    const publicationSetType = source.slice(typeStart, typeEnd);
+    for (const member of ["operationDirectoryPrefix", "controllerLockTarget", "candidates"]) {
+      assert.match(publicationSetType, new RegExp(`\\b${member}\\b`), `the prepared set owns exact ${member}`);
+    }
+    assert.match(publicationSetType, /operationDirectoryPrefix:\s*readonly\s*\[\s*string,\s*string,\s*string,\s*string\s*\]/,
+      "P0 is the exact four-directory derived prefix");
+    for (const phase of ["P2", "P3", "P4", "P5"]) {
+      assert.match(publicationSetType, new RegExp(`Task12PreparedCurrentEntryPublicationCandidateV1<["']${phase}["']>`), `the prepared set has exact ${phase} candidate authority`);
+    }
+    assert.doesNotMatch(publicationSetType, /writer|lockOwner|selector|contextState|root:\s*string/, "the immutable candidate set carries no writer or ambient selection authority");
+
+    const builderName = "buildTask12PreparedCurrentEntryPublicationSetV1";
+    const builder = topLevelFunctionRegionV1(source, builderName);
+    assert.match(builder, /authority:\s*Task12PreparedCurrentEntryPublicationAuthorityV1/,
+      "the shared builder accepts only the authenticated selected-or-pinned authority union");
+    assert.doesNotMatch(builder, /ensureTask12PreparedCurrentEntryStatusV1|revalidatePostVisibleCurrentEntryStoreV1|acquireTask12|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "the shared builder derives candidates without publishing, acquiring, repairing, or recursing");
+    assert.doesNotMatch(builder, /requireSelectedCurrentEntryStoreContextStateV1\(/,
+      "the shared builder is not a twelfth direct WeakMap consumer");
+    assert.match(builder, /authority\.kind\s*===\s*"selected"[\s\S]*(?:task12OperationDirectoryV1|task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1)\(authority\.context/,
+      "the selected authority retains existing exact11 context-bound path helpers");
+    assert.match(builder, /authority\.kind\s*===\s*"pinned-successor"[\s\S]*authority\.context\.assertStable\(\)/,
+      "P validation authority is authenticated from the pinned C context");
+    assert.match(builder, /task12OperationDirectoryV1\(/, "all selected-writer P locators retain context-bound operation-directory derivation");
+    assert.match(builder, /task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1\(/,
+      "P2 content retains exact11 group seven path derivation");
+    assert.match(builder, /path\.join\(operationDirectory,\s*"00-pre-mutation-loaded-runtime-service-authority\.pair\.json"\)/);
+    assert.match(builder, /task12RecordPathV1\(context,\s*"statuses",/);
+    assert.match(builder, /task12CurrentStatusPathV1\(/,
+      "P5 retains exact11 group eight path derivation");
+
+    assert.equal(source.split(`${builderName}(`).length - 1, 3, "the private definition has exactly two production calls");
+    const writer = topLevelFunctionRegionV1(source, "ensureTask12PreparedCurrentEntryStatusV1");
+    const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
+    assert.equal(writer.split(`${builderName}(`).length - 1, 1, "the existing writer uses the one shared builder exactly once");
+    const pass = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusPassNoWriteV1");
+    assert.equal(pass.split(`${builderName}(`).length - 1, 1, "the post-visible P pass reconstructs the same prepared set exactly once");
+    assert.equal(validator.split(`${builderName}(`).length - 1, 0, "the validator delegates candidate reconstruction to one P pass");
+    assert.doesNotMatch(writer, /const serviceProjection\s*=|const statusBody\s*=/,
+      "the writer cannot retain a second independently drifting prepared-set construction");
+    assert.match(writer, /createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1\(context,\s*operation\)/,
+      "the existing exact11 writer group privately brands its selected authority");
+    assert.match(pass, /createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1\(context\)/,
+      "the pinned-C owner privately brands the successor authority without minting a selected context");
+
+    for (const privateName of [
+      "task12PreparedCurrentEntryPublicationAuthorityBrandV1",
+      "Task12PreparedCurrentEntryPublicationAuthorityV1",
+      "Task12PreparedCurrentEntryPublicationCandidateV1",
+      "Task12PreparedCurrentEntryPublicationSetV1",
+      "createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1",
+      "createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1",
+      "buildTask12PreparedCurrentEntryPublicationSetV1",
+    ]) {
+      assert.doesNotMatch(source, new RegExp(`^export\\s+(?:const|type|function|async\\s+function)\\s+${privateName}\\b`, "m"), `${privateName} remains module-private`);
+      assert.doesNotMatch(source, new RegExp(`^export\\s+(?:type\\s+)?\\{[^}]*\\b${privateName}\\b[^}]*\\}`, "m"), `${privateName} cannot escape through a named export list`);
+    }
+    const loaded = await import(`${pathToFileURL(observerSource).href}?p5c-p-private=${Date.now()}`) as Record<string, unknown>;
+    for (const valueName of [
+      "task12PreparedCurrentEntryPublicationAuthorityBrandV1",
+      "createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1",
+      "createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1",
+      "buildTask12PreparedCurrentEntryPublicationSetV1",
+      "observeTask12ReceiptLocatorWriterNoWriteV1",
+      "observeTask12ReceiptPublicationNoWriteV1",
+      "observeExactPoisonPostVisiblePreStatusPassNoWriteV1",
+      "publishTask12PreparedCurrentEntryCandidateV1",
+    ]) assert.equal(Reflect.get(loaded, valueName), undefined, `${valueName} is absent from the runtime public ABI`);
+
+    assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2, "P5c-P preserves the final literal exact2 contract");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 12, "P5c-P adds no twelfth exact11 semantic consumer");
+  });
+
+  it("P5c-P freezes read-only writer-owner and publication F observers plus the exact P0-P5 topology", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const owner = topLevelFunctionRegionV1(source, "observeTask12ReceiptLocatorWriterNoWriteV1");
+    const writerProcess = topLevelFunctionRegionV1(source, "observeTask12ReceiptWriterProcessV1");
+    assert.match(owner, /target:\s*string/);
+    assert.match(owner, /observeTask12ReceiptWriterProcessV1\(pid\)/, "writer ownership delegates PID liveness to the shared read-only process observer");
+    assert.doesNotMatch(owner, /spawnSync\(/, "writer-family observation does not duplicate the process syscall");
+    assert.match(writerProcess, /pid:\s*number/);
+    assert.equal(writerProcess.split('spawnSync("/bin/ps",').length - 1, 1, "the shared process observer owns the sole bounded ps observation");
+    assert.doesNotMatch(writerProcess, /(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync|acquireTask12|publishTask12|fsyncSync/, "the shared process observer is read-only");
+    for (const topology of ["A0", "A1", "A2"]) assert.match(owner, new RegExp(`["']${topology}["']`), `writer observation classifies exact ${topology}`);
+    for (const classification of ["live", "dead", "reuse", "ambiguous", "invalid"]) assert.match(owner, new RegExp(classification), `writer observation authenticates ${classification} ownership`);
+    for (const relation of ["targetHash", "pid", "start", "commandHash", "identityHash", "nonce"]) {
+      assert.match(owner, new RegExp(`\\b${relation}\\b`), `writer ownership authenticates ${relation}`);
+    }
+    assert.match(owner, /TASK12_RECEIPT_WRITER_UUID_V4_V1|[0-9a-f]\{8\}/, "writer acquisition temporaries retain UUID-v4 grammar");
+    assert.match(owner, /length\s*>\s*8|MAX[^\n]*8|>=\s*8/, "writer observation enforces the exact-eight acquisition cap");
+    assert.doesNotMatch(owner, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync|while\s*\([^)]*wait|setTimeout|Atomics\.wait/,
+      "writer-owner observation cannot acquire, wait, clean, fsync, or mutate");
+
+    const publication = topLevelFunctionRegionV1(source, "observeTask12ReceiptPublicationNoWriteV1");
+    const publicationTypeStart = source.indexOf("type Task12ReceiptPublicationNoWriteObservationV1 = Readonly<{");
+    const publicationTypeEnd = source.indexOf("\n\nfunction observeTask12ReceiptPublicationNoWriteV1(", publicationTypeStart);
+    assert.ok(publicationTypeStart >= 0 && publicationTypeEnd > publicationTypeStart, "P5c-P bounds the exact publication-observation type");
+    const publicationType = source.slice(publicationTypeStart, publicationTypeEnd);
+    assert.match(publication, /expectedBytes:\s*Buffer/);
+    for (const state of ["F-1", "F0", "F1", "F2", "F2u", "F3", "F4"]) {
+      assert.match(publicationType, new RegExp(`["']${state.replace("-", "\\-")}["']`), `publication observation retains exact ${state}`);
+    }
+    assert.match(publication, /tmp-[\s\S]*(?:\[1-5\]|\[0-9a-f\]\{8\})/,
+      "publication temporary grammar remains PID plus UUID versions one through five");
+    assert.doesNotMatch(publication, /TASK12_RECEIPT_WRITER_UUID_V4_V1/, "publication and acquisition temporary grammars remain disjoint");
+    assert.doesNotMatch(publication, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "publication observation classifies but never normalizes an F-state");
+
+    const preStatus = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusPassNoWriteV1");
+    for (const row of PHASE5C_P_PRE_STATUS_STAGES_V1) {
+      assert.match(preStatus, new RegExp(`["']${row.stage}["']`), `${row.stage}: ${row.mutation}`);
+      if ("requiredMembers" in row) {
+        for (const member of row.requiredMembers) assert.match(preStatus, new RegExp(member.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${row.stage} derives ${member}`);
+      }
+    }
+    assert.match(preStatus, /operationDirectoryPrefix/,
+      "P0 discovers no authority and admits only the literal left-to-right directory chain");
+    assert.match(preStatus, /phase:\s*"P5"[\s\S]*(?:F2u|F3|F4)[\s\S]*state:\s*"progress"/,
+      "a strict one-link P5 final exits P and routes only to progress classification");
+    assert.doesNotMatch(preStatus, /ensureTask12|acquireTask12|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|readdirSync\([^)]*storeRoot|latest|mtime|process\.env|globalThis|fsyncSync|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "P observation is bounded, read-only, nonrecursive, and does not mint");
+
+    const progress = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreProgressV1");
+    assert.match(progress, /context:\s*ExactPoisonRecoveryPinnedCommitChainV1/);
+    assert.match(progress, /Promise<never>/);
+    assert.match(progress, /context\.assertStable\(\);\s*currentEntryFail\("post-visible current-entry progress validation is unavailable"\)/,
+      "strict 01 progress stays explicitly fail-closed until the S slice");
+    assert.doesNotMatch(progress, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|publish|acquire|resolveInternalProduction|observeInternalProduction|fsyncSync|readdirSync|(?:mkdir|write|rename|unlink|rm)Sync/);
+  });
+
+  it("P5c-P resumes only an invalid sole prepared temporary and preserves canonical unequal evidence", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const candidateTypeStart = source.indexOf("type Task12PreparedCurrentEntryPublicationCandidateV1<");
+    const candidateTypeEnd = source.indexOf("\ntype Task12PreparedCurrentEntryPublicationSetV1", candidateTypeStart);
+    assert.ok(candidateTypeStart >= 0 && candidateTypeEnd > candidateTypeStart, "P5c-P defines one reusable phase-specific candidate type");
+    const candidateType = source.slice(candidateTypeStart, candidateTypeEnd);
+    assert.match(candidateType, /Phase\s+extends\s+"P2"\s*\|\s*"P3"\s*\|\s*"P4"\s*\|\s*"P5"/);
+    assert.match(candidateType, /phase:\s*Phase[\s\S]*target:\s*string[\s\S]*bytes:\s*Buffer/);
+    assert.match(candidateType, /classifyTemporaryBytes:\s*\(bytes:\s*Buffer\)\s*=>\s*"expected"\s*\|\s*"incomplete-noncanonical"\s*\|\s*"canonical-unequal"/,
+      "cleanup classification distinguishes byte incompleteness from complete crossed evidence");
+    const setTypeStart = source.indexOf("type Task12PreparedCurrentEntryPublicationSetV1 = Readonly<{");
+    const setTypeEnd = source.indexOf("\n\nasync function buildTask12PreparedCurrentEntryPublicationSetV1(", setTypeStart);
+    assert.ok(setTypeStart >= 0 && setTypeEnd > setTypeStart);
+    const setType = source.slice(setTypeStart, setTypeEnd);
+    for (const phase of ["P2", "P3", "P4", "P5"]) assert.match(setType, new RegExp(`Task12PreparedCurrentEntryPublicationCandidateV1<["']${phase}["']>`));
+
+    const pin = topLevelFunctionRegionV1(source, "openTask12ReceiptPublicationTemporaryPinV1");
+    assert.match(pin, /openSync\([^,]+,\s*constants\.O_RDONLY\s*\|\s*constants\.O_NOFOLLOW/,
+      "prepared cleanup pins the sole temporary without following links");
+    const initialFstat = pin.indexOf("fstatSync(");
+    const initialLstat = pin.indexOf("lstatSync(", initialFstat);
+    const initialRead = pin.indexOf("readTask12ReceiptDescriptorBytesV1(", initialLstat);
+    const stableFstat = pin.indexOf("fstatSync(", initialRead);
+    const stableLstat = pin.indexOf("lstatSync(", stableFstat);
+    const stableRead = pin.indexOf("readTask12ReceiptDescriptorBytesV1(", stableLstat);
+    assert.ok(initialFstat >= 0 && initialFstat < initialLstat && initialLstat < initialRead && initialRead < stableFstat && stableFstat < stableLstat && stableLstat < stableRead,
+      "the cleanup pin revalidates descriptor/path full metadata and bytes after classification");
+    for (const field of ["dev", "ino", "mode", "uid", "nlink", "size", "mtimeNs", "ctimeNs"]) {
+      assert.match(pin, new RegExp(`\\.${field}\\b`), `temporary pin fences ${field}`);
+    }
+    assert.match(pin, /assertStable[\s\S]*closeSync\(/, "the owned cleanup pin exposes a stable fence and close");
+
+    const writer = topLevelFunctionRegionV1(source, "publishTask12PreparedCurrentEntryCandidateV1");
+    assert.match(writer, /candidate:\s*Task12PreparedCurrentEntryPublicationSetV1\["candidates"\]\[number\]/);
+    const acquire = writer.indexOf("acquireTask12ReceiptLocatorWriterV1(candidate.target)");
+    const heldFence = writer.indexOf("writer.assertStable()", acquire);
+    const observe = writer.indexOf("observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy)", heldFence);
+    const f1Start = writer.indexOf('if (observed.state === "F-1") {', observe);
+    const f1End = writer.indexOf('if (observed.state === "F0") {', f1Start);
+    assert.ok(f1Start >= 0 && f1End > f1Start, "the prepared writer exposes one bounded F-1 branch before F0");
+    const f1 = writer.slice(f1Start, f1End);
+    const pinOpen = f1.indexOf("openTask12ReceiptPublicationTemporaryPinV1(observed.temporaryTarget)");
+    const classify = f1.indexOf("candidate.classifyTemporaryBytes(temporary.bytes)", pinOpen);
+    const pinFence = f1.indexOf("temporary.assertStable()", classify);
+    const firstAbsenceFence = f1.indexOf("assertTask12PreparedPublicationFinalAbsentV1(candidate.target)", pinFence);
+    const writerFenceBeforeUnlink = f1.indexOf("writer.assertStable()", firstAbsenceFence);
+    const guardFenceBeforeUnlink = f1.indexOf("guard.assertStable()", writerFenceBeforeUnlink);
+    const finalPinFence = f1.indexOf("temporary.assertStable()", guardFenceBeforeUnlink);
+    const finalAbsenceFence = f1.indexOf("assertTask12PreparedPublicationFinalAbsentV1(candidate.target)", finalPinFence);
+    const unlink = f1.indexOf("unlinkSync(temporary.target)", finalAbsenceFence);
+    const parentFsync = f1.indexOf("fsyncCurrentEntryDirectory(", unlink);
+    const durableAbsenceFence = f1.indexOf("assertTask12PreparedPublicationFinalAbsentV1(candidate.target)", parentFsync);
+    const freshObserve = f1.indexOf("observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy)", durableAbsenceFence);
+    const finalFence = f1.indexOf("writer.assertStable()", freshObserve);
+    const close = f1.indexOf("temporary.close()", finalFence);
+    assert.equal(writer.split("candidate.classifyTemporaryBytes(").length - 1, 1, "the prepared publisher has one phase-specific temporary classifier");
+    assert.equal(f1.split("candidate.classifyTemporaryBytes(temporary.bytes)").length - 1, 1, "F-1 classifies only bytes read from the pinned temporary");
+    assert.ok(acquire >= 0 && acquire < heldFence && heldFence < observe && observe < f1Start && pinOpen >= 0 && pinOpen < classify && classify < pinFence && pinFence < firstAbsenceFence && firstAbsenceFence < writerFenceBeforeUnlink && writerFenceBeforeUnlink < guardFenceBeforeUnlink && guardFenceBeforeUnlink < finalPinFence && finalPinFence < finalAbsenceFence && finalAbsenceFence < unlink && unlink < parentFsync && parentFsync < durableAbsenceFence && durableAbsenceFence < freshObserve && freshObserve < finalFence && finalFence < close,
+      "prepared F-1 cleanup and publication remain wholly serialized by the exact target writer");
+    assert.match(f1.slice(writerFenceBeforeUnlink, unlink + "unlinkSync(temporary.target)".length), /^writer\.assertStable\(\);\s*guard\.assertStable\(\);\s*temporary\.assertStable\(\);\s*assertTask12PreparedPublicationFinalAbsentV1\(candidate\.target\);\s*unlinkSync\(temporary\.target\)$/,
+      "only the read-only guard, final temporary fence, and final-absence check separate the writer fence from unlink");
+    assert.match(f1, /state\s*===\s*"F-1"[\s\S]*openTask12ReceiptPublicationTemporaryPinV1\([\s\S]*candidate\.classifyTemporaryBytes\(temporary\.bytes\)/,
+      "only F-1 invokes the phase-specific byte classifier");
+    assert.match(f1, /classification\s*!==\s*"incomplete-noncanonical"[^\n]*currentEntryFail[\s\S]*unlinkSync\(/,
+      "only noncanonical/incomplete bytes are cleanup-eligible");
+    assert.match(f1, /classification\s*===\s*"canonical-unequal"[\s\S]*currentEntryFail/,
+      "canonical self-consistent unequal or crossed evidence is terminal with zero cleanup");
+    assert.match(f1, /unlinkSync\([^)]+\)[\s\S]*fsyncCurrentEntryDirectory\([^)]+\)[\s\S]*observeTask12ReceiptPublicationNoWriteV1\(/,
+      "invalid F-1 cleanup is inode-authenticated, parent-durable, and freshly re-enumerated");
+    assert.match(f1, /try\s*\{[\s\S]*temporary\.assertStable\(\)[\s\S]*unlinkSync\(temporary\.target\)[\s\S]*\}\s*finally\s*\{\s*temporary\.close\(\)/,
+      "classification cleanup owns and closes the exact pinned temporary on every response path");
+    assert.doesNotMatch(writer, /allowUnequalIncompleteTempCleanup|publishLegacyZeroRecordV1\(|acquireTask12ReceiptLocatorWriterV1\([^)]*\)[\s\S]*publishLegacyZeroRecordV1/,
+      "prepared recovery never enables the unsafe generic unequal-temp boolean");
+
+    const ensure = topLevelFunctionRegionV1(source, "ensureTask12PreparedCurrentEntryStatusV1");
+    assert.match(ensure, /for\s*\(const candidate of publicationSet\.candidates\)[\s\S]*publishTask12PreparedCurrentEntryCandidateV1\(candidate\)/,
+      "the prepared writer consumes all four returned candidates verbatim and in order");
+    assert.doesNotMatch(ensure, /publishLegacyZeroRecordV1\([^)]*(?:preMutation|statusLocator|statusHash)/,
+      "P2-P5 cannot bypass the prepared-only recovery wrapper");
+  });
+
+  it("P5c-P linearizes A/B prepared topology with the common zero fence and preserves selector/publisher choreography", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
+    const rootBaseline = validator.indexOf("exactPoisonPostVisibleSuccessorRootIdentityV1(context)");
+    const observationA = validator.indexOf("observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context)", rootBaseline);
+    const stableCA = validator.indexOf("context.assertStable()", observationA);
+    const stableRootA = validator.indexOf("context.successorRootParent.assertStable()", stableCA);
+    const observationB = validator.indexOf("observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context)", stableRootA);
+    const equality = validator.indexOf("assertExactPoisonPostVisiblePreStatusEqualV1(", observationB);
+    const finalC = validator.indexOf("context.assertStable()", equality);
+    const finalRoot = validator.indexOf("context.successorRootParent.assertStable()", finalC);
+    const finalRootIdentity = validator.indexOf("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)", finalRoot);
+    const preStatusReturn = validator.indexOf('selectionKind: "successor-pre-status"', finalRootIdentity);
+    assert.ok(rootBaseline >= 0 && rootBaseline < observationA && observationA < stableCA && stableCA < stableRootA && stableRootA < observationB && observationB < equality && equality < finalC && finalC < finalRoot && finalRoot < finalRootIdentity && finalRootIdentity < preStatusReturn,
+      "P linearizes pass A, stable C/root, byte/identity-equal pass B, then final C/root/root-identity");
+    assert.equal(validator.split("observeExactPoisonPostVisiblePreStatusPassNoWriteV1(context)").length - 1, 2, "P performs exactly two complete raw passes");
+    const pass = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusPassNoWriteV1");
+    assert.equal(pass.split("observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(context,").length - 1, 1,
+      "each P pass includes one phase-aware Git/14-tuple/original/candidate raw fence");
+    assert.equal(pass.split("observeExactPoisonRecoveryPostVisibleZeroFenceV1(").length - 1, 0,
+      "P never reuses the Z-only downstream-absence fence");
+    assert.equal(pass.split("buildTask12PreparedCurrentEntryPublicationSetV1(").length - 1, 1, "each P pass derives its topology from the shared prepared publication set");
+    const rawFence = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1");
+    for (const label of PHASE5C_Z_BRACKET_LABELS_V1) assert.match(rawFence, new RegExp(`observation: ["']${label}["']`), `P raw fence retains exact ${label}`);
+    for (const observer of [
+      "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
+      "observeCurrentPba",
+      "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
+      "observePhaseClosedZeroV1",
+      "observeInternalProductionServiceCensusV1",
+      "observePhysicalInventoryV1",
+      "observeLegacyDatabaseCensusV1",
+      "observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1",
+    ]) assert.match(rawFence, new RegExp(`\\b${observer}\\(`), `P raw pass performs the exact ${observer} observation`);
+    for (const twice of [
+      "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
+      "observeCurrentPba",
+      "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
+      "observePhaseClosedZeroV1",
+      "observeInternalProductionServiceCensusV1",
+      "observePhysicalInventoryV1",
+    ]) assert.equal(rawFence.split(`${twice}(`).length - 1, 2, `${twice} is observed once in each half of the raw A/B bracket`);
+    assert.doesNotMatch(rawFence, /EXACT_POISON_DOWNSTREAM_ABSENCE_V1|observeExactPoisonRecoveryPostVisibleZeroFenceV1|ensureTask12|acquireTask12|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1/,
+      "P raw evidence is phase-aware and read-only rather than demanding Task12 absence or repairing it");
+    assert.doesNotMatch(rawFence, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|resolveInternalProductionCurrentEntry|observeInternalProductionCurrentEntry|readdirSync|opendirSync|fsyncSync|spawnSync|execFileSync|fetch\(|process\.env|globalThis|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+      "P raw evidence cannot select, recurse through public current APIs, scan, wait, fsync, or mutate any authority source");
+    assert.match(validator, /assertExactPoisonPostVisibleSuccessorRootIdentityV1\(context,\s*rootIdentity\)/,
+      "P shares the pinned successor-root generation fence");
+    assert.match(validator, /storeRoot:\s*context\.successorRoot[\s\S]*operationRef:\s*context\.successorOperation\.operationRef[\s\S]*operationHash:\s*context\.successorOperation\.operationHash[\s\S]*selectionKind:\s*"successor-pre-status"/,
+      "P returns only the typed selected-root progress sentinel");
+    assert.doesNotMatch(validator.slice(finalRootIdentity, preStatusReturn), /\bawait\b/, "no asynchronous gap follows P's final B+C linearization");
+
+    const selector = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
+    assert.match(selector, /await durablyAuthenticateSuccessorActivationCommitV1\(context\)[\s\S]*await revalidatePostVisibleCurrentEntryStoreV1\(context\)[\s\S]*context\.close\(\)[\s\S]*createSelectedCurrentEntryStoreContextV1\(selection\)/,
+      "selector keeps helper, validator, close, then synchronous mint for Z/P/S");
+    const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
+    assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
+      "publisher retains H ownership across the same P-capable validator");
+    const historical = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
+    assert.equal(historical.split("revalidatePostVisibleCurrentEntryStoreV1(").length - 1, 0, "historical identity never enters current P validation");
+
+    const exports = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)|^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1] ?? match[2]);
+    assert.deepEqual(exports.filter((name) => /ExactPoisonPostVisible|PreStatus|PublicationSet|PublicationAuthority|NoWrite/.test(name)), [], "P adds no public observer, result, brand, creator, or publication-set ABI");
+    assert.doesNotMatch(source, /process\.env\.[A-Z0-9_]*P5C|globalThis\.__p5c|AsyncLocalStorage<.*SelectedCurrentEntryStoreContextV1/,
+      "production P has no environment, global, or ambient-context seam");
+  });
+
+  it("P5c-P freezes physical projections, exact record prefixes, raw binding, and durable prepared cleanup", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const identityStart = source.indexOf("type Task12ReceiptPhysicalIdentityObservationV1 = Readonly<{");
+    const identityEnd = source.indexOf("\n}>;", identityStart) + "\n}>;".length;
+    assert.ok(identityStart >= 0 && identityEnd > identityStart);
+    const identityType = source.slice(identityStart, identityEnd);
+    for (const field of ["deviceDecimal", "inodeDecimal", "modeOctal", "uidDecimal", "linkCountDecimal", "sizeDecimal", "mtimeNanosecondsDecimal", "ctimeNanosecondsDecimal"]) {
+      assert.match(identityType, new RegExp(`\\b${field}: string`), `physical identity retains ${field}`);
+    }
+
+    const writerObserver = topLevelFunctionRegionV1(source, "observeTask12ReceiptLocatorWriterNoWriteV1");
+    const publicationObserver = topLevelFunctionRegionV1(source, "observeTask12ReceiptPublicationNoWriteV1");
+    for (const [region, label] of [[writerObserver, "writer"], [publicationObserver, "publication"]] as const) {
+      assert.match(region, /before\.dev\s*!==\s*directoryBefore\.dev[\s\S]*before\.uid\s*!==\s*directoryBefore\.uid/, `${label} members remain on the exact parent device and UID`);
+      assert.match(region, /bytes:\s*(?:member\.)?bytes|bytes,/, `${label} topology carries pinned member bytes`);
+      assert.match(region, /sameRegularMetadata\(before,\s*atPath\)[\s\S]*sameRegularMetadata\(before,\s*after\)[\s\S]*sameRegularMetadata\(before,\s*reopened\)/, `${label} members have descriptor/path/read fences`);
+    }
+    assert.match(publicationObserver, /targetTemporaryNames\.length\s*>\s*8/);
+    assert.match(publicationObserver, /final\s*===\s*null[\s\S]*temporaries\.some\(\(temporary\)\s*=>\s*temporary\.identity\.nlink\s*!==\s*1n\)/,
+      "final-absent publication temporaries are exact independent one-link members");
+
+    const prefix = topLevelFunctionRegionV1(source, "observeExactPoisonPreStatusRecordPrefixesV1");
+    assert.match(prefix, /context\.successorAuthorityV31\.target[\s\S]*context\.successorPending\.target/,
+      "record-prefix observation pins the exact prerequisite record chains");
+    assert.match(prefix, /publicationSet\.candidates\[0\]\.target[\s\S]*publicationSet\.candidates\[2\]\.target/,
+      "record-prefix observation derives the exact P2 and P4 content-addressed chains");
+    assert.match(prefix, /candidate\.depth\s*>\s*0[\s\S]*expectedRecordKinds\.add/);
+    assert.match(prefix, /prepared record directory child set is not exact/);
+    const pass = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusPassNoWriteV1");
+    assert.match(pass, /const recordPrefixes = observeExactPoisonPreStatusRecordPrefixesV1\(context, publicationSet, successorRootIdentity\)/);
+    assert.match(pass, /recordPrefixes\.observations/);
+    assert.match(pass, /observed\.members\.find\(\(member\)\s*=>\s*member\.target\s*===\s*observed\.temporaryTarget\)[\s\S]*classifyTemporaryBytes\(temporary\.bytes\)/,
+      "F-1 selection classifies only the retained pinned member bytes");
+
+    const raw = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1");
+    assert.match(raw, /sourceA[\s\S]*expectedOperation\.controllerSource/);
+    assert.match(raw, /pbaPair\(pbaA\)[\s\S]*expectedOperation\.productBuildAuthorityV2DeliveryEvidence/);
+    assert.match(raw, /prerequisitesA\.authorityV3Migration31Audit\.pair[\s\S]*expectedOperation\.authorityV3Migration31Audit/);
+    assert.match(raw, /prerequisitesA\.pendingBootstrapHandoffMigration\.pair[\s\S]*expectedOperation\.pendingBootstrapHandoffMigration/);
+    assert.match(raw, /downstreamA[\s\S]*downstreamB[\s\S]*post-visible pre-status raw A\/B observation changed/);
+    assert.match(pass, /buildTask12PreparedCurrentEntryPublicationSetV1\([\s\S]*rawFence\.serviceCensus/);
+    assert.match(pass, /publicationSet\.serviceCensus[\s\S]*rawFence\.serviceCensus[\s\S]*builder census is crossed/);
+
+    const builder = topLevelFunctionRegionV1(source, "buildTask12PreparedCurrentEntryPublicationSetV1");
+    assert.match(builder, /expectedServiceCensus\?: InternalProductionServiceCensusV1/);
+    assert.match(builder, /value\.preMutationLoadedRuntimeServiceAuthorityRef\s*===\s*`\$\{TASK12_PRE_MUTATION_PREFIX_V1\}\$\{value\.preMutationLoadedRuntimeServiceAuthorityHash\}`/);
+    assert.match(builder, /value\.statusRef\s*===\s*`\$\{TASK12_STATUS_PREFIX_V1\}\$\{value\.statusHash\}`/);
+
+    const publisher = topLevelFunctionRegionV1(source, "publishTask12PreparedCurrentEntryCandidateV1");
+    const durable = publisher.indexOf('if (["F2u", "F3", "F4"].includes(observed.state)) {');
+    const durableFsync = publisher.indexOf("fsyncCurrentEntryDirectory(directory)", durable);
+    const durableFresh = publisher.indexOf("observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, candidate.directoryPolicy)", durableFsync);
+    const durableReturn = publisher.indexOf("return;", durableFresh);
+    assert.ok(durable >= 0 && durable < durableFsync && durableFsync < durableFresh && durableFresh < durableReturn,
+      "one-link final adoption fsyncs its parent then performs a stable fresh reopen");
+    const f2 = publisher.slice(publisher.indexOf('if (observed.state === "F2") {'), publisher.indexOf('currentEntryFail("prepared publication state is not resumable")'));
+    assert.match(f2, /const redundant = openTask12ReceiptPublicationTemporaryPinV1[\s\S]*const final = openTask12ReceiptPublicationTemporaryPinV1[\s\S]*const selected =/,
+      "redundant F2 cleanup pins the independent, final, and optional selected members");
+    assert.match(f2, /redundant\.assertStable\(\);\s*final\.assertStable\(\);\s*selected\?\.assertStable\(\);\s*removeTask12PreparedPublicationSelectedTemporaryV1\(redundant\.target\)/,
+      "redundant F2 cleanup revalidates every authority immediately before unlink");
+    assert.match(f2, /temporary\.assertStable\(\);\s*final\.assertStable\(\);\s*writer\.assertStable\(\);\s*guard\.assertStable\(\);\s*temporary\.assertStable\(\);\s*final\.assertStable\(\);\s*removeTask12PreparedPublicationSelectedTemporaryV1\(temporary\.target\)/,
+      "selected F2 cleanup revalidates both nlink-two aliases immediately before unlink");
+    assert.match(publisher, /finally\s*\{\s*try\s*\{\s*if \(writer !== null\) writer\.close\(\);\s*\}\s*finally\s*\{\s*guard\.close\(\);\s*\}\s*\}/,
+      "a writer-close failure cannot strand the enclosing directory guard");
+
+    const acquire = topLevelFunctionRegionV1(source, "acquireTask12ReceiptLocatorWriterV1");
+    assert.match(acquire, /task12ReceiptLocatorWriterAuthorityTargetV1\(target\)/);
+    assert.match(writerObserver, /task12ReceiptLocatorWriterAuthorityTargetV1\(target\)/);
+    assert.match(acquire, /observeTask12ReceiptWriterProcessV1\(/);
+    assert.match(writerObserver, /observeTask12ReceiptWriterProcessV1\(/);
+  });
+
+  for (const role of ["prefix", "publication", "writer"] as const) {
+    it(`P5c-P rejects a same-byte ${role} inode replacement between complete passes`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        let target: string;
+        if (role === "prefix") {
+          const operationHash = String(harness.admitted.chain.records.successorOperation.value.operationHash);
+          const successorRoot = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+          target = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+          mkdirSync(target, { recursive: true, mode: 0o700 });
+        } else {
+          const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+          assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+          const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+          if (role === "publication") {
+            phase5cPrunePreparedPublicationFromV1(targets, "P4");
+            phase5cSeedControllerWriterV1(targets);
+            target = targets.preMutationPair;
+          } else {
+            phase5cPrunePreparedPublicationFromV1(targets, "P2");
+            target = phase5cSeedControllerWriterV1(targets).fixed;
+          }
+        }
+        const backup = path.join(path.dirname(root), `.p5c-p-${role}-aba-${path.basename(root)}`);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({
+          kind: "pre-status-inode-replace",
+          target,
+          backup,
+          targetType: role === "prefix" ? "directory" : "file",
+        }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.reviewApplied, true);
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /changed|identity|inode|topology|pre-status/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${role}: copied ABA is restored and production is read-only`);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const race of ["final-appears", "temp-replaced", "fresh-final"] as const) {
+    it(`P5c-P F-1 refuses ${race} without stale-authority cleanup`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const unequal = phase5cCanonicalUnequalPublicationBytesV1(targets).P2;
+        const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+        phase5cEnsurePublicationParentV1(target);
+        const temp = phase5cPublicationTempV1(target);
+        const incomplete = Buffer.from("{\n", "utf8");
+        writeFileSync(temp, incomplete, { mode: 0o600 });
+        const backup = path.join(path.dirname(root), `.p5c-p-f1-${race}-${path.basename(root)}`);
+        const mutation: Phase5cZeroProgressMutationFixtureV1 = race === "final-appears"
+          ? Object.freeze({ kind: "f1-final-appears", target })
+          : race === "temp-replaced"
+            ? Object.freeze({ kind: "f1-temp-replace", target: temp, backup, bytesBase64: unequal.toString("base64") })
+            : Object.freeze({ kind: "f1-fresh-final", target });
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, mutation, "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.reviewApplied, true);
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /final|temporary|changed|identity|absence|publication/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+        assert.equal(observed.preCleanupUnlinkCalls, race === "fresh-final" ? 1 : 0);
+        if (race !== "fresh-final") assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${race}: no stale unlink or lasting mutation`);
+        else assert.equal(existsSync(temp), false, "fresh final appears only after the authenticated incomplete inode was durably removed");
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const member of ["temporary", "final"] as const) {
+    it(`P5c-P F2 refuses a same-byte ${member} replacement before selected cleanup`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P2", "F1-or-F2");
+        assert.notEqual(physical.temp, null);
+        const target = member === "temporary" ? physical.temp! : physical.target;
+        const backup = path.join(path.dirname(root), `.p5c-p-f2-${member}-${path.basename(root)}`);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "f2-member-replace", target, backup }), "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.reviewApplied, true);
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /changed|identity|inode|temporary|publication/i);
+        assert.deepEqual({ selectedCleanupCalls: observed.selectedCleanupCalls ?? 0, descriptorDelta: observed.descriptorDelta }, { selectedCleanupCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${member}: copied F2 ABA is restored without unlink`);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-P F2 refuses a redundant temporary replacement after pinning the selected pair and final", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P2", "F1-or-F2");
+      assert.notEqual(physical.temp, null);
+      const redundant = phase5cPublicationTempV1(physical.target, "83000000-0000-4000-8000-000000000083");
+      writeFileSync(redundant, physical.expectedBytes, { mode: 0o600 });
+      const backup = path.join(path.dirname(root), `.p5c-p-f2-redundant-${path.basename(root)}`);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "f2-redundant-replace", target: redundant, backup }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.reviewApplied, true);
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /changed|identity|inode|temporary|publication/i);
+      assert.deepEqual({ redundantCleanupCalls: observed.redundantCleanupCalls ?? 0, descriptorDelta: observed.descriptorDelta }, { redundantCleanupCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "redundant replacement and selected pair are retained exactly");
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-P reenters a P5 selected nlink-two pair through the held-controller publisher and normalizes it", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P5", "F1-or-F2");
+      assert.notEqual(physical.temp, null);
+      assert.equal(lstatSync(physical.target).ino, lstatSync(physical.temp!).ino);
+      assert.equal(lstatSync(physical.target).nlink, 2);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", `P5 F2 must not fail in the preliminary nlink-one locator read: ${String(observed.message)}`);
+      assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls, selectorCalls: observed.selectorCalls, descriptorDelta: observed.descriptorDelta }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1, selectorCalls: 0, descriptorDelta: 0 });
+      assert.ok((observed.preparedPublisherPhases as readonly string[]).includes("P5"), "P5 F2 reentry reaches the shared publisher under the held controller");
+      assert.equal(existsSync(physical.temp!), false);
+      assert.equal(lstatSync(physical.target).nlink, 1);
+      assert.deepEqual(readFileSync(physical.target), physical.expectedBytes);
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-P reenters a P5 one-link final with an independent exact temporary through the held-controller publisher", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P5", "F2u-or-F3-or-F4");
+      const temporary = phase5cPublicationTempV1(physical.target, "85000000-0000-4000-8000-000000000085");
+      writeFileSync(temporary, physical.expectedBytes, { mode: 0o600 });
+      const finalBefore = lstatSync(physical.target, { bigint: true });
+      const temporaryBefore = lstatSync(temporary, { bigint: true });
+      assert.equal(finalBefore.nlink, 1n, "the strict final starts independently pinned");
+      assert.equal(temporaryBefore.nlink, 1n, "the equal temporary is not a hardlink alias");
+      assert.notEqual(finalBefore.ino, temporaryBefore.ino);
+      assert.deepEqual(readFileSync(physical.target), physical.expectedBytes);
+      assert.deepEqual(readFileSync(temporary), physical.expectedBytes);
+
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.deepEqual(
+        {
+          controllerAcquireCalls: observed.controllerAcquireCalls,
+          controllerReleaseCalls: observed.controllerReleaseCalls,
+          controllerFixedSeen: observed.controllerFixedSeen,
+          controllerVirtualSeen: observed.controllerVirtualSeen,
+          selectorCalls: observed.selectorCalls,
+          redundantCleanupCalls: observed.redundantCleanupCalls ?? 0,
+          descriptorDelta: observed.descriptorDelta,
+        },
+        {
+          controllerAcquireCalls: 1,
+          controllerReleaseCalls: 1,
+          controllerFixedSeen: true,
+          controllerVirtualSeen: false,
+          selectorCalls: 0,
+          redundantCleanupCalls: 1,
+          descriptorDelta: 0,
+        },
+      );
+      assert.ok((observed.preparedPublisherPhases as readonly string[]).includes("P5"), "P5 F2 selected-null reentry reaches the shared publisher");
+      assert.equal(existsSync(temporary), false, "the independent exact temporary is removed only by safe publisher normalization");
+      assert.deepEqual(
+        readdirSync(path.dirname(physical.target)).filter((name) => name.startsWith(`${path.basename(physical.target)}.tmp-`)),
+        [],
+        "P5 publication-family residue is empty",
+      );
+      const finalAfter = lstatSync(physical.target, { bigint: true });
+      assert.deepEqual(
+        { dev: finalAfter.dev, ino: finalAfter.ino, mode: finalAfter.mode, uid: finalAfter.uid, nlink: finalAfter.nlink },
+        { dev: finalBefore.dev, ino: finalBefore.ino, mode: finalBefore.mode, uid: finalBefore.uid, nlink: finalBefore.nlink },
+        "normalization preserves the authenticated strict final identity",
+      );
+      assert.deepEqual(readFileSync(physical.target), physical.expectedBytes);
+    } finally { removeFixture(root); }
+  });
+
+  for (const branch of ["selected", "redundant"] as const) {
+    it(`P5c-P ${branch} F2 rejects a same-byte final ABA after cleanup fresh-observe`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P2", "F1-or-F2");
+        assert.notEqual(physical.temp, null);
+        if (branch === "redundant") {
+          writeFileSync(phase5cPublicationTempV1(physical.target, "84000000-0000-4000-8000-000000000084"), physical.expectedBytes, { mode: 0o600 });
+        }
+        const backup = path.join(root, `.p5c-p-${branch}-post-fresh-final`);
+        const mutation: Phase5cZeroProgressMutationFixtureV1 = Object.freeze({
+          kind: branch === "selected" ? "f2-selected-post-fresh-replace" : "f2-redundant-post-fresh-replace",
+          target: physical.target,
+          backup,
+        });
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, mutation, "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.reviewApplied, true, "the ABA runs only after cleanup fsync and fresh observation");
+        assert.equal(
+          (observed.preparedPublisherObservationCalls as Readonly<Record<string, number>>).P2,
+          1,
+          `${branch}: post-fresh authority must be rejected before a second publisher observation`,
+        );
+        assert.equal(observed.outcome, "threw", `${branch}: post-fresh authority replacement cannot be adopted`);
+        assert.match(String(observed.message), /changed|identity|inode|final|publication|stable/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+        assert.equal(existsSync(physical.target), true, "replacement is retained");
+        assert.equal(existsSync(backup), true, "the previously authenticated final is retained");
+        assert.notEqual(lstatSync(physical.target).ino, lstatSync(backup).ino);
+        assert.deepEqual(readFileSync(physical.target), physical.expectedBytes);
+        assert.deepEqual(readFileSync(backup), physical.expectedBytes);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-P terminally rejects a retained-original crossed F1 linked replacement", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const exact = readFileSync(targets.preMutationContent);
+      const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      phase5cEnsurePublicationParentV1(target);
+      const temp = phase5cPublicationTempV1(target);
+      writeFileSync(temp, exact, { mode: 0o600 });
+      const backup = path.join(root, ".p5c-p-f1-linked-final");
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "f1-linked-replace", target, backup }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.reviewApplied, true, "the ABA executes after exact link authentication and before the selected pin closes");
+      assert.ok(
+        [1, 2].includes((observed.preparedPublisherObservationCalls as Readonly<Record<string, number>>).P2),
+        "F1 linked authority is rejected either by its retained pin or by one bounded crossed-state observation",
+      );
+      assert.equal(observed.outcome, "threw", "F1 cannot release its linked authority and rediscover an attacker replacement as F2");
+      assert.match(String(observed.message), /changed|identity|inode|link|final|publication|stable/i);
+      assert.deepEqual(
+        { selectedCleanupCalls: observed.selectedCleanupCalls ?? 0, redundantCleanupCalls: observed.redundantCleanupCalls ?? 0, descriptorDelta: observed.descriptorDelta },
+        { selectedCleanupCalls: 0, redundantCleanupCalls: 0, descriptorDelta: 0 },
+      );
+      assert.equal(existsSync(target), true);
+      assert.equal(existsSync(backup), true);
+      assert.notEqual(lstatSync(target).ino, lstatSync(backup).ino);
+      assert.deepEqual(readFileSync(target), exact);
+      assert.deepEqual(readFileSync(backup), exact);
+      assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+    } finally { removeFixture(root); }
+  });
+
+  it("P5c-P rejects an F1 linked-final replacement after the original link is removed", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const exact = readFileSync(targets.preMutationContent);
+      const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      phase5cEnsurePublicationParentV1(target);
+      const temporary = phase5cPublicationTempV1(target);
+      writeFileSync(temporary, exact, { mode: 0o600 });
+      const result = await runPhase5cZeroProgressFixtureV1(
+        root,
+        harness.observations,
+        Object.freeze({ kind: "f1-linked-replace-without-retained-final", target }),
+        "prepare",
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.reviewApplied, true, "the replacement occurs after the F1 link is authenticated");
+      assert.equal(observed.outcome, "threw", "the new final cannot be adopted after releasing the linked-inode authority");
+      assert.match(String(observed.message), /changed|crossed|identity|inode|link|final|publication|stable/i);
+      assert.deepEqual(
+        { selectedCleanupCalls: observed.selectedCleanupCalls ?? 0, redundantCleanupCalls: observed.redundantCleanupCalls ?? 0, descriptorDelta: observed.descriptorDelta },
+        { selectedCleanupCalls: 0, redundantCleanupCalls: 0, descriptorDelta: 0 },
+        "the crossed transition is terminal before any cleanup and closes every pin",
+      );
+      assert.equal(existsSync(target), true, "the replacement final is retained as evidence");
+      assert.equal(existsSync(temporary), true, "the original selected temporary is retained as evidence");
+      const finalIdentity = lstatSync(target, { bigint: true });
+      const temporaryIdentity = lstatSync(temporary, { bigint: true });
+      assert.equal(finalIdentity.nlink, 1n);
+      assert.equal(temporaryIdentity.nlink, 1n);
+      assert.notEqual(finalIdentity.ino, temporaryIdentity.ino);
+      assert.deepEqual(readFileSync(target), exact);
+      assert.deepEqual(readFileSync(temporary), exact);
+      assert.deepEqual(
+        { controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls },
+        { controllerAcquireCalls: 1, controllerReleaseCalls: 1 },
+      );
+    } finally { removeFixture(root); }
+  });
+
+  for (const fault of ["fsync", "post-fsync-replace"] as const) {
+    it(`P5c-P one-link final ${fault} cannot return durable success`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P2", "F2u-or-F3-or-F4");
+        const backup = path.join(path.dirname(root), `.p5c-p-final-${path.basename(root)}`);
+        const mutation: Phase5cZeroProgressMutationFixtureV1 = fault === "fsync"
+          ? Object.freeze({ kind: "final-fsync-throw" })
+          : Object.freeze({ kind: "final-post-fsync-replace", target: physical.target, backup });
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, mutation, "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        if (fault === "post-fsync-replace") assert.equal(observed.reviewApplied, true, "the final inode replacement hook runs after parent fsync");
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /fsync|changed|identity|publication|durable/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${fault}: no false durable adoption or lasting copied mutation`);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  for (const depth of [1, 2, 3, 4] as const) {
+    it(`P5c-P selects the exact read-only P0 directory prefix at depth ${depth}`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const successorOperation = harness.admitted.chain.records.successorOperation.value;
+        const successorRoot = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+        const members = ["operations", "sha256", String(successorOperation.operationHash).slice(0, 2), String(successorOperation.operationHash)];
+        let current = successorRoot;
+        for (const member of members.slice(0, depth)) {
+          current = path.join(current, member);
+          mkdirSync(current, { mode: 0o700 });
+        }
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.deepEqual(
+          { outcome: observed.outcome, selectorCalls: observed.selectorCalls, validatorCalls: observed.validatorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta },
+          { outcome: "returned", selectorCalls: 1, validatorCalls: 1, creatorCalls: 1, descriptorDelta: 0 },
+          "mutation caught: an exact P0 prefix is rejected as unexplained or mistaken for Z",
+        );
+        const selected = observed.value as Readonly<Record<string, unknown>>;
+        assert.equal(realpathSync(String(selected.storeRoot)), realpathSync(successorRoot));
+        assert.deepEqual(selected.operation, { operationRef: successorOperation.operationRef, operationHash: successorOperation.operationHash });
+        assert.equal(selected.selectionKind, "successor-pre-status");
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "P0 selection performs zero namespace or byte mutation");
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const invalid of ["wrong-mode", "symlink", "extra-member"] as const) {
+    it(`P5c-P refuses a P0 prefix with ${invalid}`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const successorOperation = harness.admitted.chain.records.successorOperation.value;
+        const successorRoot = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+        const operations = path.join(successorRoot, "operations");
+        if (invalid === "wrong-mode") {
+          mkdirSync(operations, { mode: 0o700 });
+          chmodSync(operations, 0o755);
+        } else if (invalid === "symlink") {
+          const outside = path.join(root, "p5c-p-symlink-target");
+          mkdirSync(outside, { mode: 0o700 });
+          symlinkSync(outside, operations);
+        } else {
+          const operationHash = String(successorOperation.operationHash);
+          const operationDirectory = path.join(operations, "sha256", operationHash.slice(0, 2), operationHash);
+          mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
+          fixtureFile(root, path.relative(root, path.join(operationDirectory, "unexpected-member")), Buffer.from("unexpected\n"), 0o600);
+        }
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /prefix|mode|symlink|member|topology|invalid|visible/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `P0 ${invalid} evidence is retained read-only`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const variant of ["eight-live", "nine-over-cap", "crossed-owner"] as const) {
+    it(`P5c-P classifies the read-only P1 controller-writer family ${variant}`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const successorOperation = harness.admitted.chain.records.successorOperation.value;
+        const successorRoot = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+        const operationHash = String(successorOperation.operationHash);
+        const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+        mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
+        const virtualTarget = path.join(operationDirectory, "current-entry-controller.lock");
+        const fixedLock = path.join(operationDirectory, ".current-entry-controller.lock.writer.lock");
+        const count = variant === "nine-over-cap" ? 9 : 8;
+        for (let index = 0; index < count; index += 1) {
+          const nonce = `${String(index + 1).padStart(8, "0")}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+          const temp = `${fixedLock}.tmp-${process.pid}-${nonce}`;
+          const ownerTarget = variant === "crossed-owner" && index === 0 ? `${virtualTarget}.crossed` : virtualTarget;
+          writeFileSync(temp, exactLiveWriterOwnerFixtureV1(ownerTarget, process.pid, nonce), { mode: 0o600 });
+        }
+        assert.equal(existsSync(virtualTarget), false, "the P1 writer target remains virtual");
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        if (variant === "eight-live") {
+          assert.deepEqual({ outcome: observed.outcome, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { outcome: "returned", creatorCalls: 1, descriptorDelta: 0 });
+          assert.equal((observed.value as Readonly<Record<string, unknown>>).selectionKind, "successor-pre-status");
+        } else {
+          assert.equal(observed.outcome, "threw");
+          assert.match(String(observed.message), variant === "nine-over-cap" ? /writer|cap|nine|8/i : /writer|owner|crossed|target/i);
+          assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        }
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${variant}: P1 observation neither waits, acquires, nor cleans`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const writerState of ["A1-live", "A2-live", "A1-stale", "A1-ambiguous"] as const) {
+    it(`P5c-P classifies the P1 fixed controller writer state ${writerState}`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        phase5cPrunePreparedPublicationFromV1(targets, "P2");
+        const owner = phase5cSeedControllerWriterV1(targets, writerState);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const mutation: Phase5cZeroProgressMutationFixtureV1 = writerState === "A1-ambiguous"
+          ? Object.freeze({ kind: "writer-ambiguous", pid: owner.pid })
+          : Object.freeze({ kind: "none" });
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, mutation);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        if (writerState === "A1-ambiguous") {
+          assert.equal(observed.outcome, "threw");
+          assert.match(String(observed.message), /writer|ambiguous|process|owner/i);
+          assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        } else {
+          assert.deepEqual(
+            { outcome: observed.outcome, creatorCalls: observed.creatorCalls, preStatusStage: observed.preStatusStage, preStatusState: observed.preStatusState, descriptorDelta: observed.descriptorDelta },
+            { outcome: "returned", creatorCalls: 1, preStatusStage: "P1", preStatusState: "pre-status", descriptorDelta: 0 },
+          );
+        }
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${writerState}: P1 owner evidence is never cleaned or acquired by selection`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const phase of ["P2", "P3", "P4", "P5"] as const) {
+    for (const physicalState of ["F0", "F1-or-F2", "F2u-or-F3-or-F4"] as const) {
+      it(`P5c-P classifies ${phase} physical ${physicalState} from the selected current store`, async () => {
+        const root = createFixture();
+        try {
+          const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+          const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+          assert.equal(seeded.status, 0, seeded.stderr);
+          assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+          const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+          phase5cSeedPublicationPhysicalStateV1(targets, phase, physicalState);
+          phase5cSeedControllerWriterV1(targets);
+          const before = filesystemTreeSnapshot(harness.original.store);
+          const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+          assert.equal(result.status, 0, result.stderr);
+          const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+          const progress = phase === "P5" && physicalState === "F2u-or-F3-or-F4";
+          const expectedStage = physicalState !== "F2u-or-F3-or-F4"
+            ? phase === "P2" && physicalState === "F0" ? "P1" : phase
+            : phase === "P2" ? "P3" : phase === "P3" ? "P4" : phase === "P4" ? "P5" : "P5";
+          assert.deepEqual(
+            { outcome: observed.outcome, creatorCalls: observed.creatorCalls, preStatusStage: observed.preStatusStage, preStatusState: observed.preStatusState, descriptorDelta: observed.descriptorDelta },
+            progress
+              ? { outcome: "threw", creatorCalls: 0, preStatusStage: expectedStage, preStatusState: "progress", descriptorDelta: 0 }
+              : { outcome: "returned", creatorCalls: 1, preStatusStage: expectedStage, preStatusState: "pre-status", descriptorDelta: 0 },
+            `${phase}/${physicalState}: mutation caught by the exact ordered F-stage classifier`,
+          );
+          if (progress) assert.match(String(observed.message), /post-visible current-entry progress validation is unavailable/);
+          else assert.equal((observed.value as Readonly<Record<string, unknown>>).selectionKind, "successor-pre-status");
+          assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${phase}/${physicalState}: selector is read-only`);
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+  }
+
+  for (const writerCount of [0, 8, 9] as const) {
+    it(`P5c-P classifies P2 F0 with ${writerCount} target-writer acquisition temporaries`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const physical = phase5cSeedPublicationPhysicalStateV1(targets, "P2", "F0");
+        phase5cSeedControllerWriterV1(targets);
+        phase5cSeedTargetWriterTempsV1(physical.target, writerCount);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        if (writerCount <= 8) {
+          assert.deepEqual(
+            { outcome: observed.outcome, creatorCalls: observed.creatorCalls, preStatusStage: observed.preStatusStage, descriptorDelta: observed.descriptorDelta },
+            { outcome: "returned", creatorCalls: 1, preStatusStage: writerCount === 0 ? "P1" : "P2", descriptorDelta: 0 },
+          );
+        } else {
+          assert.equal(observed.outcome, "threw");
+          assert.match(String(observed.message), /writer|cap|9|eight|8/i);
+          assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        }
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `P2 F0 writer count ${writerCount} remains read-only`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const invalid of [
+    "wrong-mode-temp",
+    "wrong-mode-final",
+    "symlink-temp",
+    "symlink-final",
+    "unrelated-hardlink-final",
+    "ungrammatical-temp",
+    "over-cap-temp",
+  ] as const) {
+    it(`P5c-P refuses P2 invalid publication evidence ${invalid}`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const expectedBytes = readFileSync(targets.preMutationContent);
+        const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+        phase5cEnsurePublicationParentV1(target);
+        const temp = phase5cPublicationTempV1(target);
+        const outside = path.join(root, `p5c-p-${invalid}-source`);
+        if (invalid === "wrong-mode-temp") {
+          writeFileSync(temp, expectedBytes, { mode: 0o600 });
+          chmodSync(temp, 0o640);
+        } else if (invalid === "wrong-mode-final") {
+          writeFileSync(target, expectedBytes, { mode: 0o600 });
+          chmodSync(target, 0o640);
+        } else if (invalid === "symlink-temp" || invalid === "symlink-final") {
+          fixtureFile(root, path.relative(root, outside), expectedBytes, 0o600);
+          symlinkSync(outside, invalid === "symlink-temp" ? temp : target);
+        } else if (invalid === "unrelated-hardlink-final") {
+          fixtureFile(root, path.relative(root, outside), expectedBytes, 0o600);
+          linkSync(outside, target);
+        } else if (invalid === "ungrammatical-temp") {
+          writeFileSync(`${target}.tmp-${process.pid}-not-a-uuid`, expectedBytes, { mode: 0o600 });
+        } else {
+          for (let index = 0; index < 9; index += 1) {
+            const nonce = `${String(index + 40).padStart(8, "0")}-0000-4000-8000-${String(index + 40).padStart(12, "0")}`;
+            writeFileSync(phase5cPublicationTempV1(target, nonce), expectedBytes, { mode: 0o600 });
+          }
+        }
+        phase5cSeedControllerWriterV1(targets);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /publication|temporary|mode|link|alias|grammar|cap|invalid|crossed/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${invalid}: invalid physical evidence is retained without cleanup`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P5c-P rejects a later P4 final while the ordered P2 frontier is absent", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const laterBytes = readFileSync(targets.statusContent);
+      phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      mkdirSync(path.dirname(targets.statusContent), { recursive: true, mode: 0o700 });
+      writeFileSync(targets.statusContent, laterBytes, { mode: 0o600 });
+      phase5cSeedControllerWriterV1(targets);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /order|later|status|topology|crossed|unexpected|visible/i);
+      assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "out-of-order later evidence remains byte/identity unchanged");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const phase of ["P2", "P3", "P4", "P5"] as const) {
+    it(`P5c-P ${phase} writer resumes a sole incomplete-noncanonical F-1 temporary`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        const seededObserved = JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(seededObserved.outcome, "returned", seededObserved.message as string);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const target = phase5cPrunePreparedPublicationFromV1(targets, phase);
+        phase5cEnsurePublicationParentV1(target);
+        const temp = phase5cPublicationTempV1(target);
+        writeFileSync(temp, Buffer.from("{\n", "utf8"), { mode: 0o600 });
+        const controller = phase5cSeedControllerWriterV1(targets);
+        const beforeSelection = filesystemTreeSnapshot(harness.original.store);
+        const selection = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(selection.status, 0, selection.stderr);
+        const selectionObserved = JSON.parse(selection.stdout) as Readonly<Record<string, unknown>>;
+        assert.deepEqual(
+          { outcome: selectionObserved.outcome, creatorCalls: selectionObserved.creatorCalls, preStatusStage: selectionObserved.preStatusStage, preStatusState: selectionObserved.preStatusState, descriptorDelta: selectionObserved.descriptorDelta },
+          { outcome: "returned", creatorCalls: 1, preStatusStage: phase, preStatusState: "pre-status", descriptorDelta: 0 },
+          `${phase}: selector admits the read-only F-1 frontier before writer recovery: ${String(selectionObserved.message)}`,
+        );
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), beforeSelection, `${phase}: F-1 selector mutates neither controller nor publication evidence`);
+        unlinkSync(controller.fixed);
+        const retried = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(retried.status, 0, retried.stderr);
+        const observed = JSON.parse(retried.stdout) as Readonly<Record<string, unknown>>;
+        assert.deepEqual(
+          {
+            controllerAcquireCalls: observed.controllerAcquireCalls,
+            controllerReleaseCalls: observed.controllerReleaseCalls,
+            controllerFixedSeen: observed.controllerFixedSeen,
+            controllerVirtualSeen: observed.controllerVirtualSeen,
+            controllerArtifactsAfterRelease: observed.controllerArtifactsAfterRelease,
+          },
+          { controllerAcquireCalls: 1, controllerReleaseCalls: 1, controllerFixedSeen: true, controllerVirtualSeen: false, controllerArtifactsAfterRelease: [] },
+          `${phase}: incomplete cleanup and publication execute under one released controller writer`,
+        );
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(observed.outcome, "returned", `${phase}: ${String(observed.message)}`);
+        assert.equal(existsSync(temp), false, `${phase}: invalid F-1 is cleaned under the exact target writer`);
+        for (const final of [targets.preMutationContent, targets.preMutationPair, targets.statusContent, targets.currentStatus]) {
+          assert.equal(existsSync(final), true, `${phase}: retry converges every prepared final`);
+          assert.equal(lstatSync(final).nlink, 1, `${phase}: converged final is one-link`);
+        }
+      } finally {
+        removeFixture(root);
+      }
+    });
+
+    it(`P5c-P ${phase} writer preserves a canonical-unequal temporary with zero cleanup`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const unequalByPhase = phase5cCanonicalUnequalPublicationBytesV1(targets);
+        const target = phase5cPrunePreparedPublicationFromV1(targets, phase);
+        phase5cEnsurePublicationParentV1(target);
+        const temp = phase5cPublicationTempV1(target);
+        const crossed = unequalByPhase[phase];
+        writeFileSync(temp, crossed, { mode: 0o600 });
+        const controller = phase5cSeedControllerWriterV1(targets);
+        const beforeSelection = filesystemTreeSnapshot(harness.original.store);
+        const selection = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(selection.status, 0, selection.stderr);
+        const selectionObserved = JSON.parse(selection.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(selectionObserved.outcome, "threw", `${phase}: canonical unequal selector evidence is terminal`);
+        assert.match(String(selectionObserved.message), /canonical|unequal|crossed|temporary|collision/i);
+        assert.deepEqual({ creatorCalls: selectionObserved.creatorCalls, descriptorDelta: selectionObserved.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), beforeSelection, `${phase}: selector preserves canonical unequal evidence`);
+        unlinkSync(controller.fixed);
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const retried = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(retried.status, 0, retried.stderr);
+        const observed = JSON.parse(retried.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw", `${phase}: canonical unequal evidence must fail closed`);
+        assert.match(String(observed.message), /canonical|unequal|crossed|temporary|collision/i);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${phase}: canonical unequal evidence is byte/identity unchanged`);
+        assert.deepEqual(readFileSync(temp), crossed);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const phase of ["P3"] as const) {
+    it(`P5c-P ${phase} resumes a canonical pair whose ref and hash are not bound`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const expected = JSON.parse(readFileSync(phase === "P3" ? targets.preMutationPair : targets.currentStatus, "utf8")) as Record<string, unknown>;
+        const target = phase5cPrunePreparedPublicationFromV1(targets, phase);
+        const refKey = phase === "P3" ? "preMutationLoadedRuntimeServiceAuthorityRef" : "statusRef";
+        const hashKey = phase === "P3" ? "preMutationLoadedRuntimeServiceAuthorityHash" : "statusHash";
+        const crossed = canonicalFixtureRecordV1(Object.freeze({
+          ...expected,
+          [refKey]: `${String(expected[refKey]).slice(0, -64)}${"c".repeat(64)}`,
+          [hashKey]: "e".repeat(64),
+        }));
+        const temp = phase5cPublicationTempV1(target);
+        writeFileSync(temp, crossed, { mode: 0o600 });
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(existsSync(temp), false, `${phase}: prefix-shaped but ref/hash-unbound bytes are incomplete cleanup evidence`);
+        for (const final of [targets.preMutationContent, targets.preMutationPair, targets.statusContent, targets.currentStatus]) {
+          assert.equal(existsSync(final), true, `${phase}: bounded retry converges ${path.basename(final)}`);
+          assert.equal(lstatSync(final).nlink, 1);
+        }
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const count of [2, 8] as const) {
+    it(`P5c-P converges ${count} equal independent publication temporaries under the controller writer`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const exactP2 = readFileSync(targets.preMutationContent);
+        const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+        phase5cEnsurePublicationParentV1(target);
+        for (let index = 0; index < count; index += 1) {
+          const nonce = `${String(index + 70).padStart(8, "0")}-0000-4000-8000-${String(index + 70).padStart(12, "0")}`;
+          writeFileSync(phase5cPublicationTempV1(target, nonce), exactP2, { mode: 0o600 });
+        }
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        assert.equal(observed.descriptorDelta, 0);
+        assert.equal(existsSync(target), true);
+        assert.equal(lstatSync(target).nlink, 1);
+        assert.equal(readdirSync(path.dirname(target)).filter((name) => name.startsWith(`${path.basename(target)}.tmp-`)).length, 0);
+        assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-P preserves two complete publication temporaries when one is canonical unequal", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const expected = readFileSync(targets.preMutationContent);
+      const unequal = phase5cCanonicalUnequalPublicationBytesV1(targets).P2;
+      const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      phase5cEnsurePublicationParentV1(target);
+      writeFileSync(phase5cPublicationTempV1(target, "81000000-0000-4000-8000-000000000081"), expected, { mode: 0o600 });
+      writeFileSync(phase5cPublicationTempV1(target, "82000000-0000-4000-8000-000000000082"), unequal, { mode: 0o600 });
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /multiple|temporary|crossed|canonical|unequal/i);
+      assert.equal(observed.descriptorDelta, 0);
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "mixed complete temporaries remain terminal evidence");
+    } finally { removeFixture(root); }
+  });
+
+  for (const topology of ["foreign-record-child", "later-writer-family"] as const) {
+    it(`P5c-P rejects ${topology} without cross-stage authority`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        phase5cPrunePreparedPublicationFromV1(targets, "P2");
+        phase5cSeedControllerWriterV1(targets);
+        if (topology === "foreign-record-child") {
+          const kindDirectory = path.dirname(path.dirname(path.dirname(targets.preMutationContent)));
+          mkdirSync(path.join(kindDirectory, "foreign"), { recursive: true, mode: 0o700 });
+        } else {
+          mkdirSync(path.dirname(targets.statusContent), { recursive: true, mode: 0o700 });
+          phase5cSeedTargetWriterTempsV1(targets.statusContent, 1);
+        }
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /record|child|writer|later|noncurrent|topology|crossed/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-P never unlinks a same-byte temporary replacement after cleanup classification", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      const target = phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      phase5cEnsurePublicationParentV1(target);
+      const temp = phase5cPublicationTempV1(target);
+      const incomplete = Buffer.from("{\n", "utf8");
+      writeFileSync(temp, incomplete, { mode: 0o600 });
+      const beforeInode = String(lstatSync(temp).ino);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare", temp);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls, controllerFixedSeen: observed.controllerFixedSeen, controllerVirtualSeen: observed.controllerVirtualSeen, controllerArtifactsAfterRelease: observed.controllerArtifactsAfterRelease },
+        { controllerAcquireCalls: 1, controllerReleaseCalls: 1, controllerFixedSeen: true, controllerVirtualSeen: false, controllerArtifactsAfterRelease: [] },
+        "replacement race executes wholly under one released controller writer",
+      );
+      assert.equal(observed.preCleanupReplacementApplied, true, "the copied hook replaces the classified pathname before the final pinned fence");
+      assert.equal(observed.preCleanupUnlinkCalls, 0, "the changed pathname is rejected before any cleanup unlink");
+      assert.equal(observed.outcome, "threw", "the stale classification cannot authorize unlinking the replacement");
+      assert.match(String(observed.message), /changed|identity|metadata|temporary|publication/i);
+      assert.equal(observed.descriptorDelta, 0);
+      const backup = String(observed.preCleanupBackup);
+      assert.equal(existsSync(temp), true, "replacement inode is retained");
+      assert.equal(existsSync(backup), true, "the originally classified inode is retained for causal inspection");
+      assert.notEqual(String(lstatSync(temp).ino), beforeInode, "the hook installed a genuinely different pathname inode");
+      assert.deepEqual(readFileSync(temp), incomplete);
+      assert.deepEqual(readFileSync(backup), incomplete);
+      assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-P routes a strict one-link 01 final only to the fail-closed progress validator", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /post-visible current-entry progress validation is unavailable/);
+      assert.deepEqual({ selectorCalls: observed.selectorCalls, validatorCalls: observed.validatorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { selectorCalls: 1, validatorCalls: 1, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "strict 01 progress classification cannot mint or mutate in this slice");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-P rejects a P3 A-to-B byte drift before mint and restores the copied fixture", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal(seeded.status, 0, seeded.stderr);
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      phase5cPrunePreparedPublicationFromV1(targets, "P4");
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "selector", targets.preMutationPair);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.equal(observed.preStatusDriftApplied, true, "the copied hook mutates only after complete pass A");
+      assert.match(String(observed.message), /changed|drift|canonical|identity|pre-status/i);
+      assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "the copied test restores its deliberate A/B drift and production mutates nothing");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const rawCase of ["source", "pba", "prerequisites", "builder-service", "remaining-downstream"] as const) {
+    it(`P5c-P binds ${rawCase} evidence to the pinned operation and both complete passes`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        phase5cSeedPublicationPhysicalStateV1(targets, "P3", "F0");
+        phase5cSeedControllerWriterV1(targets);
+        const observations: Record<string, readonly unknown[]> = { ...harness.observations };
+        if (rawCase === "source" || rawCase === "pba") {
+          const predecessor = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+          const value = rawCase === "source" ? predecessor.controllerSource : predecessor.productBuildAuthorityV2Observation;
+          observations[rawCase] = Object.freeze([value, value]);
+        } else if (rawCase === "prerequisites") {
+          const authorityValue = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+          const pendingValue = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+          const value = Object.freeze({
+            authorityV3Migration31Audit: Object.freeze({ value: authorityValue, bytes: exactCurrentAuthorityV31FixtureBytesV1(), pair: Object.freeze({ authorityV3Migration31AuditRef: authorityValue.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: "f".repeat(64) }) }),
+            pendingBootstrapHandoffMigration: Object.freeze({ value: pendingValue, bytes: exactCurrentPendingFixtureBytesV1(), pair: Object.freeze({ pendingBootstrapHandoffMigrationRef: pendingValue.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: pendingValue.pendingBootstrapHandoffMigrationHash }) }),
+          });
+          observations.prerequisites = Object.freeze([value, value]);
+        } else if (rawCase === "builder-service") {
+          const base = harness.observations.service![0] as Readonly<Record<string, unknown>>;
+          observations.service = Object.freeze([base, base, Object.freeze({ ...base, p5cBuilderCensusCrossed: true })]);
+        } else {
+          const base = harness.observations.downstream![0] as Readonly<Record<string, unknown>>;
+          observations.downstream = Object.freeze([base, Object.freeze({ ...base, p5cRemainingDownstreamCrossed: true })]);
+        }
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, Object.freeze(observations), Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /raw|authority|crossed|changed|census|downstream|pinned|pre-status/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${rawCase}: raw refusal has zero namespace effect`);
+      } finally { removeFixture(root); }
+    });
+  }
+
+  it("P5c-P closes the publication directory guard even when target-writer close throws", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
+      const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+      phase5cPrunePreparedPublicationFromV1(targets, "P2");
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "writer-close-throw" }), "prepare");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /P5C_P_WRITER_CLOSE_FAULT/);
+      assert.deepEqual({ writerCloseThrowCalls: observed.writerCloseThrowCalls, publisherGuardCloseCalls: observed.publisherGuardCloseCalls, descriptorDelta: observed.descriptorDelta }, { writerCloseThrowCalls: 1, publisherGuardCloseCalls: 1, descriptorDelta: 0 });
+      assert.deepEqual({ controllerAcquireCalls: observed.controllerAcquireCalls, controllerReleaseCalls: observed.controllerReleaseCalls }, { controllerAcquireCalls: 1, controllerReleaseCalls: 1 });
+    } finally { removeFixture(root); }
+  });
+
+  for (const rawKind of ["physical", "database"] as const) {
+    it(`P5c-P rejects a self-consistent pass-A to pass-B ${rawKind} drift`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+        const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+        assert.equal(seeded.status, 0, seeded.stderr);
+        assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        phase5cSeedPublicationPhysicalStateV1(targets, "P3", "F0");
+        phase5cSeedControllerWriterV1(targets);
+        const base = (harness.observations[rawKind] as readonly unknown[])[0] as Readonly<Record<string, unknown>>;
+        assert.notEqual(base, undefined, `${rawKind}: raw fixture value`);
+        const changed = Object.freeze({ ...base, p5cPreStatusPassDrift: true });
+        const driftSequence = rawKind === "physical"
+          ? Object.freeze([base, base, changed, changed])
+          : Object.freeze([base, changed]);
+        const driftedObservations = Object.freeze({ ...harness.observations, [rawKind]: driftSequence });
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runPhase5cZeroProgressFixtureV1(root, driftedObservations, Object.freeze({ kind: "none" }));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(String(observed.message), /drift|changed|physical|database|pre-status|bracket/i);
+        assert.deepEqual({ creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { creatorCalls: 0, descriptorDelta: 0 });
+        assert.equal((observed.cursors as Readonly<Record<string, number>>)[rawKind], driftSequence.length, `${rawKind}: both complete P passes consumed the causal A/B sequence`);
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${rawKind}: raw A/B validation is no-write`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
 
   for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
     it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {
