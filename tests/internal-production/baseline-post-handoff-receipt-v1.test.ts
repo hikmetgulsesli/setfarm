@@ -28,6 +28,112 @@ const observerSource = path.join(sourceRoot, "src/internal-production/baseline-p
 const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-tests.ts");
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
+const EXACT_POISON_OPERATION_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
+const EXACT_POISON_OPERATION_REF_V1 = `setfarm://internal-production/current-entry-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1}`;
+const EXACT_POISON_OPERATION_BYTES_SHA256_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
+const EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 = "9e07f9bd60955a9a681b7365a3c48cb087ff7d46459a5b9885283e0a3492ce65";
+const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "768164cd178850a940282fea1c4b107559c88cb633b510fc9082bcd047e581a7";
+const EXACT_POISON_OPERATION_BYTES_BASE64_V1 = [
+  "eyJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXQiOnsiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1ZGl0SGFzaCI6IjMxOTU3NmU0NjMyZjUyYjAzZjlkZDFj",
+  "NWE4ZWM4OTNiOGZmZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQiLCJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXRSZWYiOiJzZXRmYXJtOi8vaW50",
+  "ZXJuYWwtcHJvZHVjdGlvbi9hdXRob3JpdHktdjMtbWlncmF0aW9uMzEtYXVkaXQvc2hhMjU2LzMxOTU3NmU0NjMyZjUyYjAzZjlkZDFjNWE4ZWM4OTNiOGZm",
+  "ZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQifSwiY29udHJvbGxlclNvdXJjZSI6eyJicmFuY2giOiJtYWluIiwiYnVpbGRIYXNoIjoiMmQ0MWZhNTc5",
+  "OTc0MDVlOWQ1Y2Y1YzIyYmJmZDNkNGMyYTJkOGVjZjBiMjZkOTM1YjBkZDZhNDYwYjQ2OWNiNiIsImNsZWFuIjp0cnVlLCJvcmlnaW5NYWluU2hhIjoiNGZj",
+  "NjdmMjBkZjBlOTM1YzcwM2M0NjU4YTI5ZGJiYWE5YWEwYTk1NiIsInNoYSI6IjRmYzY3ZjIwZGYwZTkzNWM3MDNjNDY1OGEyOWRiYmFhOWFhMGE5NTYiLCJ0",
+  "cmVlSGFzaCI6IjQ3ZmRmZTJkYWZjN2ExMzU0ZDQwNDlkZDE5NGZhZjM1ODE2OTIzODkifSwib3BlcmF0aW9uSGFzaCI6IjkwZmMyZmVkYzU2ZGIyMmJiMDEz",
+  "YWQxYjI0M2U5ZGMzODY0NzNkNmI0Mjg0ZWRlMTM1ZTI2ZmQxYWI4MmZlM2QiLCJvcGVyYXRpb25SZWYiOiJzZXRmYXJtOi8vaW50ZXJuYWwtcHJvZHVjdGlv",
+  "bi9jdXJyZW50LWVudHJ5LW9wZXJhdGlvbi9zaGEyNTYvOTBmYzJmZWRjNTZkYjIyYmIwMTNhZDFiMjQzZTlkYzM4NjQ3M2Q2YjQyODRlZGUxMzVlMjZmZDFh",
+  "YjgyZmUzZCIsInBlbmRpbmdCb290c3RyYXBIYW5kb2ZmTWlncmF0aW9uIjp7InBlbmRpbmdCb290c3RyYXBIYW5kb2ZmTWlncmF0aW9uSGFzaCI6IjZlM2M2",
+  "ZTY4ZjU4ODhiMTA5MmE4OWY2YjQ4YTk5MGZmODNhODhlYmRmZDdiZTljOGM1MWY3MjFhMjlmMDk3NDEiLCJwZW5kaW5nQm9vdHN0cmFwSGFuZG9mZk1pZ3Jh",
+  "dGlvblJlZiI6InNldGZhcm06Ly9pbnRlcm5hbC1wcm9kdWN0aW9uL3BlbmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uL3NoYTI1Ni82ZTNjNmU2",
+  "OGY1ODg4YjEwOTJhODlmNmI0OGE5OTBmZjgzYTg4ZWJkZmQ3YmU5YzhjNTFmNzIxYTI5ZjA5NzQxIn0sInByb2R1Y3RCdWlsZEF1dGhvcml0eVYyRGVsaXZl",
+  "cnlFdmlkZW5jZSI6eyJkZWxpdmVyeUV2aWRlbmNlSGFzaCI6IjhkMTM2ODBlZWE1MTg0NDgzODM1NWU0NzY5OTQ3ZDI2NTY5Yjk1NGY4MjI1OTUzODZiMTVk",
+  "ZWE4OWNjNjczZGUiLCJkZWxpdmVyeUV2aWRlbmNlUmVmIjoibWlzc2lvbi1jb250cm9sOi8vaW50ZXJuYWwtcHJvZHVjdGlvbi9wcm9kdWN0LWJ1aWxkLWF1",
+  "dGhvcml0eS12Mi1kZWxpdmVyeS1ldmlkZW5jZS9zaGEyNTYvOGQxMzY4MGVlYTUxODQ0ODM4MzU1ZTQ3Njk5NDdkMjY1NjliOTU0ZjgyMjU5NTM4NmIxNWRl",
+  "YTg5Y2M2NzNkZSJ9LCJwcm9kdWN0QnVpbGRBdXRob3JpdHlWMk9ic2VydmF0aW9uIjp7Im9ic2VydmF0aW9uVHJhbnNwb3J0Ijoic291cmNlLWNsaSIsInJl",
+  "c3BvbnNlIjp7ImN1cnJlbnRTdGF0dXMiOiJjdXJyZW50IiwiZGVsaXZlcnlFdmlkZW5jZUhhc2giOiI4ZDEzNjgwZWVhNTE4NDQ4MzgzNTVlNDc2OTk0N2Qy",
+  "NjU2OWI5NTRmODIyNTk1Mzg2YjE1ZGVhODljYzY3M2RlIiwiZGVsaXZlcnlFdmlkZW5jZVJlZiI6Im1pc3Npb24tY29udHJvbDovL2ludGVybmFsLXByb2R1",
+  "Y3Rpb24vcHJvZHVjdC1idWlsZC1hdXRob3JpdHktdjItZGVsaXZlcnktZXZpZGVuY2Uvc2hhMjU2LzhkMTM2ODBlZWE1MTg0NDgzODM1NWU0NzY5OTQ3ZDI2",
+  "NTY5Yjk1NGY4MjI1OTUzODZiMTVkZWE4OWNjNjczZGUiLCJldmlkZW5jZSI6eyJjdXJyZW50U291cmNlIjp7ImJyYW5jaCI6Im1haW4iLCJidWlsZEhhc2gi",
+  "OiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwiY2xlYW4iOnRydWUsIm9yaWdpbk1h",
+  "aW5TaGEiOiI0ZWM1ZmM5OWEwNzY0NTNhODczODFjMGM3NWU1MDhkMjVkZDg4ODJkIiwic2hhIjoiNGVjNWZjOTlhMDc2NDUzYTg3MzgxYzBjNzVlNTA4ZDI1",
+  "ZGQ4ODgyZCIsInRyZWVIYXNoIjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiJ9LCJjdXJyZW50U3RhdHVzIjoiY3VycmVudCIs",
+  "ImRlbGl2ZXJlZFBhdGhCbG9icyI6W3siYmxvYkhhc2giOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAxIiwicGF0aCI6InNlcnZlci9yb3V0ZXMvc2V0ZmFybS1vcGVyYXRpb25hbC50ZXN0LnRzIn0seyJibG9iSGFzaCI6IjAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIiLCJwYXRoIjoic2VydmVyL3JvdXRlcy9zZXRmYXJtLW9wZXJhdGlv",
+  "bmFsLnRzIn0seyJibG9iSGFzaCI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMiLCJw",
+  "YXRoIjoic2VydmVyL3NlcnZpY2VzL3NldGZhcm0tcHJvZHVjdC1idWlsZC1hdXRob3JpdHkudHMifSx7ImJsb2JIYXNoIjoiMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNCIsInBhdGgiOiJzZXJ2ZXIvc2VydmljZXMvc2V0ZmFybS1wcm9kdWN0LWJ1",
+  "aWxkLWF1dGhvcml0eS50ZXN0LnRzIn0seyJibG9iSGFzaCI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDUiLCJwYXRoIjoic3JjL2xpYi9wcm9kdWN0LWJ1aWxkLWF1dGhvcml0eS50cyJ9LHsiYmxvYkhhc2giOiIwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA2IiwicGF0aCI6InNyYy9jb21wb25lbnRzL3J1bi1kZXRhaWwvUHJvZHVjdEJ1",
+  "aWxkQXV0aG9yaXR5LnRzeCJ9LHsiYmxvYkhhc2giOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDA3IiwicGF0aCI6InRlc3RzL3Byb2R1Y3QtYnVpbGQtYXV0aG9yaXR5LXJlbmRlci50ZXN0LnRzeCJ9LHsiYmxvYkhhc2giOiIwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4IiwicGF0aCI6ImNvbnRyYWN0cy92ZW5kb3Ivc2V0ZmFybS9taXNz",
+  "aW9uLWNvbnRyb2wtY29udHJhY3RzLnYxLmxvY2suanNvbiJ9XSwiZGVsaXZlcnlFdmlkZW5jZUhhc2giOiI4ZDEzNjgwZWVhNTE4NDQ4MzgzNTVlNDc2OTk0",
+  "N2QyNjU2OWI5NTRmODIyNTk1Mzg2YjE1ZGVhODljYzY3M2RlIiwiZGVsaXZlcnlFdmlkZW5jZVJlZiI6Im1pc3Npb24tY29udHJvbDovL2ludGVybmFsLXBy",
+  "b2R1Y3Rpb24vcHJvZHVjdC1idWlsZC1hdXRob3JpdHktdjItZGVsaXZlcnktZXZpZGVuY2Uvc2hhMjU2LzhkMTM2ODBlZWE1MTg0NDgzODM1NWU0NzY5OTQ3",
+  "ZDI2NTY5Yjk1NGY4MjI1OTUzODZiMTVkZWE4OWNjNjczZGUiLCJkZWxpdmVyeU1lcmdlQW5jZXN0b3JPZkN1cnJlbnRTb3VyY2UiOnRydWUsImRlbGl2ZXJ5",
+  "TWVyZ2VTaGEiOiIyNDBlNzc5ZDc4ODA0ODQzYTEyMDJjYmYwNDQwZmU0MjNiODA2YjFhIiwiZGVsaXZlcnlQck51bWJlciI6MTksImZvY3VzZWRUZXN0cyI6",
+  "eyJhcmd2IjpbIm5vZGUiLCItLWltcG9ydCIsInRzeCIsIi0tdGVzdCIsInNlcnZlci9yb3V0ZXMvc2V0ZmFybS1vcGVyYXRpb25hbC50ZXN0LnRzIiwic2Vy",
+  "dmVyL3NlcnZpY2VzL3NldGZhcm0tcHJvZHVjdC1idWlsZC1hdXRob3JpdHkudGVzdC50cyIsInRlc3RzL3Byb2R1Y3QtYnVpbGQtYXV0aG9yaXR5LXJlbmRl",
+  "ci50ZXN0LnRzeCJdLCJjb21tYW5kQ29udHJhY3RIYXNoIjoiMGRiODM3NzU3OTIwY2U1MWIwNjA5OTNkMzc5NjExZmJhODk5MDU4ZTNhYjkyNzI4ODhhYjky",
+  "ZDgxZmM1MDkzYiIsImV4aXRDb2RlIjowLCJmb2N1c2VkVGVzdFJlY2VpcHRIYXNoIjoiMDI2NWE5NzU3ZDVjOWM3OTVlZTA0N2Q2NjYzMDY4ZTBhZDY4Mzlm",
+  "MWZhMTQwMGMwODFlM2M1MjExZmUxMTY1NSIsImZvY3VzZWRUZXN0UmVjZWlwdFJlZiI6Im1pc3Npb24tY29udHJvbDovL2ludGVybmFsLXByb2R1Y3Rpb24v",
+  "cHJvZHVjdC1idWlsZC1hdXRob3JpdHktdjItZm9jdXNlZC10ZXN0LXJlY2VpcHQvc2hhMjU2LzAyNjVhOTc1N2Q1YzljNzk1ZWUwNDdkNjY2MzA2OGUwYWQ2",
+  "ODM5ZjFmYTE0MDBjMDgxZTNjNTIxMWZlMTE2NTUiLCJwYXNzZWQiOnRydWUsInNjaGVtYSI6Im1pc3Npb24tY29udHJvbC5wcm9kdWN0LWJ1aWxkLWF1dGhv",
+  "cml0eS12Mi1mb2N1c2VkLXRlc3QtcmVjZWlwdC52MSIsInRlc3RQYXRoQmxvYnMiOlt7ImJsb2JIYXNoIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMSIsInBhdGgiOiJzZXJ2ZXIvcm91dGVzL3NldGZhcm0tb3BlcmF0aW9uYWwudGVzdC50cyJ9",
+  "LHsiYmxvYkhhc2giOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0IiwicGF0aCI6InNl",
+  "cnZlci9zZXJ2aWNlcy9zZXRmYXJtLXByb2R1Y3QtYnVpbGQtYXV0aG9yaXR5LnRlc3QudHMifSx7ImJsb2JIYXNoIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNyIsInBhdGgiOiJ0ZXN0cy9wcm9kdWN0LWJ1aWxkLWF1dGhvcml0eS1yZW5kZXIu",
+  "dGVzdC50c3gifV19LCJzY2hlbWEiOiJtaXNzaW9uLWNvbnRyb2wucHJvZHVjdC1idWlsZC1hdXRob3JpdHktdjItZGVsaXZlcnktZXZpZGVuY2UudjEiLCJ2",
+  "ZW5kb3JMb2NrIjp7ImFydGlmYWN0cyI6W3sicHJvZHVjZXJQYXRoIjoiY29udHJhY3RzL2dlbmVyYXRlZC9taXNzaW9uLWNvbnRyb2wvcnVuLW9wZXJhdGlv",
+  "bmFsLXNuYXBzaG90LnYxLmNvbXBhdGliaWxpdHkuanNvbiIsInNoYTI1NiI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMjAiLCJ2ZW5kb3JlZFBhdGgiOiJjb250cmFjdHMvdmVuZG9yL3NldGZhcm0vcnVuLW9wZXJhdGlvbmFsLXNuYXBzaG90LnYx",
+  "LmNvbXBhdGliaWxpdHkuanNvbiJ9LHsicHJvZHVjZXJQYXRoIjoiY29udHJhY3RzL2dlbmVyYXRlZC9taXNzaW9uLWNvbnRyb2wvcnVuLW9wZXJhdGlvbmFs",
+  "LXNuYXBzaG90LnYxLnNjaGVtYS5qc29uIiwic2hhMjU2IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAyMSIsInZlbmRvcmVkUGF0aCI6ImNvbnRyYWN0cy92ZW5kb3Ivc2V0ZmFybS9ydW4tb3BlcmF0aW9uYWwtc25hcHNob3QudjEuc2NoZW1hLmpz",
+  "b24ifSx7InByb2R1Y2VyUGF0aCI6ImNvbnRyYWN0cy9nZW5lcmF0ZWQvbWlzc2lvbi1jb250cm9sL3J1bi1vcGVyYXRpb25hbC1zbmFwc2hvdC52Mi5jb21w",
+  "YXRpYmlsaXR5Lmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIy",
+  "IiwidmVuZG9yZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJtL3J1bi1vcGVyYXRpb25hbC1zbmFwc2hvdC52Mi5jb21wYXRpYmlsaXR5Lmpzb24i",
+  "fSx7InByb2R1Y2VyUGF0aCI6ImNvbnRyYWN0cy9nZW5lcmF0ZWQvbWlzc2lvbi1jb250cm9sL3J1bi1vcGVyYXRpb25hbC1zbmFwc2hvdC52Mi5zY2hlbWEu",
+  "anNvbiIsInNoYTI1NiI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjMiLCJ2ZW5kb3Jl",
+  "ZFBhdGgiOiJjb250cmFjdHMvdmVuZG9yL3NldGZhcm0vcnVuLW9wZXJhdGlvbmFsLXNuYXBzaG90LnYyLnNjaGVtYS5qc29uIn0seyJwcm9kdWNlclBhdGgi",
+  "OiJjb250cmFjdHMvZ2VuZXJhdGVkL21pc3Npb24tY29udHJvbC9ydW4tb3BlcmF0aW9uYWwtc25hcHNob3QudjMuY29tcGF0aWJpbGl0eS5qc29uIiwic2hh",
+  "MjU2IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyNCIsInZlbmRvcmVkUGF0aCI6ImNv",
+  "bnRyYWN0cy92ZW5kb3Ivc2V0ZmFybS9ydW4tb3BlcmF0aW9uYWwtc25hcHNob3QudjMuY29tcGF0aWJpbGl0eS5qc29uIn0seyJwcm9kdWNlclBhdGgiOiJj",
+  "b250cmFjdHMvZ2VuZXJhdGVkL21pc3Npb24tY29udHJvbC9ydW4tb3BlcmF0aW9uYWwtc25hcHNob3QudjMuc2NoZW1hLmpzb24iLCJzaGEyNTYiOiIwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI1IiwidmVuZG9yZWRQYXRoIjoiY29udHJhY3RzL3Zl",
+  "bmRvci9zZXRmYXJtL3J1bi1vcGVyYXRpb25hbC1zbmFwc2hvdC52My5zY2hlbWEuanNvbiJ9LHsicHJvZHVjZXJQYXRoIjoiY29udHJhY3RzL2dlbmVyYXRl",
+  "ZC9taXNzaW9uLWNvbnRyb2wvZGVwbG95bWVudC1vYnNlcnZhdGlvbi52MS5jb21wYXRpYmlsaXR5Lmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI2IiwidmVuZG9yZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJt",
+  "L2RlcGxveW1lbnQtb2JzZXJ2YXRpb24udjEuY29tcGF0aWJpbGl0eS5qc29uIn0seyJwcm9kdWNlclBhdGgiOiJjb250cmFjdHMvZ2VuZXJhdGVkL21pc3Np",
+  "b24tY29udHJvbC9kZXBsb3ltZW50LW9ic2VydmF0aW9uLnYxLnNjaGVtYS5qc29uIiwic2hhMjU2IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyNyIsInZlbmRvcmVkUGF0aCI6ImNvbnRyYWN0cy92ZW5kb3Ivc2V0ZmFybS9kZXBsb3ltZW50LW9i",
+  "c2VydmF0aW9uLnYxLnNjaGVtYS5qc29uIn0seyJwcm9kdWNlclBhdGgiOiJjb250cmFjdHMvZ2VuZXJhdGVkL21pc3Npb24tY29udHJvbC9wcm9qZWN0LXRy",
+  "YW5zZmVyLWFjay52MS5jb21wYXRpYmlsaXR5Lmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDI4IiwidmVuZG9yZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJtL3Byb2plY3QtdHJhbnNmZXItYWNrLnYxLmNvbXBh",
+  "dGliaWxpdHkuanNvbiJ9LHsicHJvZHVjZXJQYXRoIjoiY29udHJhY3RzL2dlbmVyYXRlZC9taXNzaW9uLWNvbnRyb2wvcHJvamVjdC10cmFuc2Zlci1hY2su",
+  "djEuc2NoZW1hLmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI5",
+  "IiwidmVuZG9yZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJtL3Byb2plY3QtdHJhbnNmZXItYWNrLnYxLnNjaGVtYS5qc29uIn0seyJwcm9kdWNl",
+  "clBhdGgiOiJjb250cmFjdHMvZ2VuZXJhdGVkL21pc3Npb24tY29udHJvbC9vcGVyYXRpb25hbC1hY3RpdmUtcnVuLXN0YXR1cy52MS5jb21wYXRpYmlsaXR5",
+  "Lmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwIiwidmVuZG9y",
+  "ZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJtL29wZXJhdGlvbmFsLWFjdGl2ZS1ydW4tc3RhdHVzLnYxLmNvbXBhdGliaWxpdHkuanNvbiJ9LHsi",
+  "cHJvZHVjZXJQYXRoIjoiY29udHJhY3RzL2dlbmVyYXRlZC9taXNzaW9uLWNvbnRyb2wvb3BlcmF0aW9uYWwtYWN0aXZlLXJ1bi1zdGF0dXMudjEuc2NoZW1h",
+  "Lmpzb24iLCJzaGEyNTYiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMxIiwidmVuZG9y",
+  "ZWRQYXRoIjoiY29udHJhY3RzL3ZlbmRvci9zZXRmYXJtL29wZXJhdGlvbmFsLWFjdGl2ZS1ydW4tc3RhdHVzLnYxLnNjaGVtYS5qc29uIn1dLCJjb21wYXRp",
+  "YmlsaXR5U2V0SGFzaCI6ImFhMjIwNDE3OTJiNzM0N2I2NTFiOGU0ODE3MmI4YWQ3Y2ZkMzdhYmI1OGNjOTczMWU4OThlOWEyMDI4NjdhYjUiLCJsb2NrQ29u",
+  "dGVudEhhc2giOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4IiwibG9ja1BhdGgiOiJj",
+  "b250cmFjdHMvdmVuZG9yL3NldGZhcm0vbWlzc2lvbi1jb250cm9sLWNvbnRyYWN0cy52MS5sb2NrLmpzb24iLCJwcm9kdWNlckNvbW1pdCI6IjRlYzVmYzk5",
+  "YTA3NjQ1M2E4NzM4MWMwYzc1ZTUwOGQyNWRkODg4MmQiLCJwcm9kdWNlclJlcG9zaXRvcnkiOiJodHRwczovL2dpdGh1Yi5jb20vaGlrbWV0Z3Vsc2VzbGkv",
+  "c2V0ZmFybS5naXQiLCJzY2hlbWEiOiJtaXNzaW9uLWNvbnRyb2wucHJvZHVjdC1idWlsZC1hdXRob3JpdHktdjItdmVuZG9yLWxvY2stcHJvamVjdGlvbi52",
+  "MSIsInZlbmRvckxvY2tQcm9qZWN0aW9uSGFzaCI6ImVmY2QyNDJiNjFlODBiOTNkYzlhNWM3ODRjNTc5NTVjOWM1MmFhMGIxMWY2NjUxOTkzOTQ0MTkzZmIw",
+  "YWI2MjUifX0sInNjaGVtYSI6Im1pc3Npb24tY29udHJvbC5wcm9kdWN0LWJ1aWxkLWF1dGhvcml0eS12Mi1kZWxpdmVyeS1ldmlkZW5jZS1yZXNwb25zZS52",
+  "MSJ9LCJzY2hlbWEiOiJzZXRmYXJtLnByb2R1Y3QtYnVpbGQtYXV0aG9yaXR5LXYyLWRlbGl2ZXJ5LWV2aWRlbmNlLW9ic2VydmF0aW9uLnYxIn0sInB1cnBv",
+  "c2UiOiJ0YXNrNmEtaW50ZXJuYWwtcHJvZHVjdGlvbi1jdXJyZW50LWVudHJ5LXYxIiwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLWN1",
+  "cnJlbnQtZW50cnktb3BlcmF0aW9uLnYxIn0K",
+].join("");
 const TASK12_P0_DELIVERY_COMMIT_SHA = "72aba7c721bffb42d3f5d7cab507360d4c588ccc";
 const TASK12_P0_DELIVERY_TREE_HASH = "e72a466a4db2f55015ecd3a26936b87c89d43a0e";
 const TASK12_P0_EXACT24_PATH_BLOB_SET_HASH = "e36c683184b25ecbe10e03b2eecc839213847cb82dd871b221f0813386080bbf";
@@ -101,6 +207,73 @@ function canonical(value: unknown): string {
 
 function canonicalHash(value: unknown): string {
   return createHash("sha256").update(canonical(value)).digest("hex");
+}
+
+function exactPoisonOperationFixtureBytesV1(): Buffer {
+  const bytes = Buffer.from(EXACT_POISON_OPERATION_BYTES_BASE64_V1, "base64");
+  assert.equal(bytes.length, 8_847, "the embedded exact-poison operation fixture must retain its frozen byte length");
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), EXACT_POISON_OPERATION_BYTES_SHA256_V1);
+  const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+  assert.equal(bytes.toString("utf8"), `${canonical(parsed)}\n`, "the embedded exact-poison operation must remain canonical JSON plus LF");
+  assert.equal(parsed.operationHash, EXACT_POISON_OPERATION_HASH_V1);
+  assert.equal(parsed.operationRef, EXACT_POISON_OPERATION_REF_V1);
+  return bytes;
+}
+
+function strictNonpoisonOperationFixtureBytesV1(): Buffer {
+  const exact = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")) as Record<string, unknown>;
+  const core = structuredClone(exact);
+  delete core.operationHash;
+  delete core.operationRef;
+  const controllerSource = core.controllerSource as Record<string, unknown>;
+  core.controllerSource = Object.freeze({ ...controllerSource, buildHash: "d".repeat(64) });
+  const operationHash = canonicalHash(core);
+  assert.notEqual(operationHash, EXACT_POISON_OPERATION_HASH_V1);
+  const bytes = Buffer.from(`${canonical({
+    ...core,
+    operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`,
+    operationHash,
+  })}\n`, "utf8");
+  assert.notEqual(createHash("sha256").update(bytes).digest("hex"), EXACT_POISON_OPERATION_BYTES_SHA256_V1);
+  return bytes;
+}
+
+function writeRawCurrentEntryOperationFixtureV1(root: string, bytes: Buffer): string {
+  const store = currentEntryStore(root);
+  for (const directory of [
+    path.join(path.dirname(root), "data"),
+    path.join(path.dirname(root), "data/internal-production-baseline"),
+    store,
+  ]) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(directory, 0o700);
+  }
+  fixtureFile(root, path.relative(root, path.join(store, "current-entry-operation.json")), bytes, 0o600);
+  return store;
+}
+
+function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const prehookMarker = "async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {";
+  const prehookStart = source.indexOf(prehookMarker);
+  const prepareMarker = "\nexport async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {";
+  const prehookEnd = source.indexOf(prepareMarker, prehookStart);
+  assert.ok(prehookStart >= 0 && prehookEnd > prehookStart, "production must provide one private exact-poison preselection boundary");
+  const prehook = source.slice(prehookStart, prehookEnd);
+  const publisherCall = "await resumeExactPoisonQuarantinePublisherCoreV1();";
+  assert.equal(prehook.split(publisherCall).length - 1, 1, "the private prehook must have one exact zero-input poison-quarantine publisher-core call");
+  const probeCall = '{ const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(!value||typeof value!=="object")throw new Error("P4_EXACT_POISON_PROBE_MISSING"); const probe=value as {calls:number;throwOnCall:boolean}; probe.calls+=1; if(probe.throwOnCall)throw new Error("P4_EXACT_POISON_PUBLISHER_CORE_CALLED"); }';
+  let instrumented = source.slice(0, prehookStart)
+    + prehook.replace(prehookMarker, `export ${prehookMarker}`).replace(publisherCall, probeCall)
+    + source.slice(prehookEnd);
+  const firstPrepareStatement = `${prepareMarker.slice(1)}\n  await resumeExactPoisonQuarantineBeforeSelectionV1();`;
+  assert.equal(instrumented.includes(firstPrepareStatement), true, "prepare must invoke the private prehook before copied-module instrumentation");
+  instrumented = instrumented.replace(
+    firstPrepareStatement,
+    `${firstPrepareStatement} { const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(value&&typeof value==="object")(value as {afterPrehook:number}).afterPrehook+=1; }`,
+  );
+  writeFileSync(modulePath, instrumented);
 }
 
 function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode = 0o644): void {
@@ -2090,6 +2263,72 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(typeof loaded.prepareInternalProductionCurrentEntryOperationV1, "function");
     assert.equal(typeof loaded.observePreparedInternalProductionCurrentEntryOperationV1, "function");
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
+  });
+
+  it("P4 freezes exact-poison preselection literals and prepare ordering", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    for (const [name, value] of [
+      ["EXACT_POISON_OPERATION_HASH_V1", EXACT_POISON_OPERATION_HASH_V1],
+      ["EXACT_POISON_OPERATION_REF_V1", EXACT_POISON_OPERATION_REF_V1],
+      ["EXACT_POISON_OPERATION_BYTES_SHA256_V1", EXACT_POISON_OPERATION_BYTES_SHA256_V1],
+      ["EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1", EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1],
+      ["EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1", EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1],
+    ] as const) {
+      assert.equal(source.includes(`const ${name} = ${JSON.stringify(value)};`), true, `${name} must remain one private frozen literal`);
+    }
+    exactPoisonOperationFixtureBytesV1();
+    const prepareMarker = "export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {";
+    const prepareStart = source.indexOf(prepareMarker);
+    const prepareEnd = source.indexOf("\nexport async function resolveInternalProductionCurrentEntryOperationV1(", prepareStart);
+    assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepare must retain one exact source boundary");
+    const prepareBody = source.slice(prepareStart + prepareMarker.length, prepareEnd);
+    assert.match(prepareBody, /^\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);/, "the prehook must be prepare's first executable statement");
+    assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 2, "one private definition and one prepare call are exact");
+    assert.doesNotMatch(source, /export\s+async\s+function\s+resumeExactPoisonQuarantineBeforeSelectionV1/);
+    const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+    assert.equal(runtimeExports.length, 53, "the existing public runtime export set must not widen");
+    assert.equal(runtimeExports.includes("prepareInternalProductionCurrentEntryOperationV1"), true);
+    assert.equal(runtimeExports.includes("resumeExactPoisonQuarantineBeforeSelectionV1"), false);
+    const loaded = await import(`${pathToFileURL(observerSource).href}?p4-exact-poison-private=${Date.now()}`) as Record<string, unknown>;
+    assert.equal(Reflect.has(loaded, "resumeExactPoisonQuarantineBeforeSelectionV1"), false);
+    assert.equal(Reflect.has(loaded, "resumeExactPoisonQuarantinePublisherCoreV1"), false);
+    assert.equal(
+      [...source.matchAll(/CURRENT_ENTRY_STORE_DIRECTORY/g)].length,
+      11,
+      "the interim preselection RED preserves eleven literal occurrences; the routing RED will replace this with exact-two anchors plus the semantic exact-eleven map",
+    );
+  });
+
+  it("P4 dispatches only exact-poison incomplete preselection before routing", () => {
+    const cases = [
+      { name: "absent", bytes: null, entrypoint: "resumeExactPoisonQuarantineBeforeSelectionV1", outcome: "returned", calls: 0, message: null },
+      { name: "strict-nonpoison", bytes: strictNonpoisonOperationFixtureBytesV1(), entrypoint: "resumeExactPoisonQuarantineBeforeSelectionV1", outcome: "returned", calls: 0, message: null },
+      { name: "malformed", bytes: Buffer.from("{\n", "utf8"), entrypoint: "resumeExactPoisonQuarantineBeforeSelectionV1", outcome: "threw", calls: 0, message: /current-entry|canonical|JSON|operation/i },
+      { name: "exact-poison-h-enoent", bytes: exactPoisonOperationFixtureBytesV1(), entrypoint: "prepareInternalProductionCurrentEntryOperationV1", outcome: "threw", calls: 1, message: /P4_EXACT_POISON_PUBLISHER_CORE_CALLED/ },
+    ] as const;
+    for (const testCase of cases) {
+      const root = createFixture();
+      try {
+        assert.notEqual(path.dirname(root), path.dirname(sourceRoot), "the copied module must not use the canonical workspace");
+        const store = testCase.bytes === null ? currentEntryStore(root) : writeRawCurrentEntryOperationFixtureV1(root, testCase.bytes);
+        if (testCase.bytes === null) assert.equal(existsSync(store), false);
+        instrumentExactPoisonPreselectionFixtureV1(root);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runFixtureExpression(root, `(async()=>{const probe={calls:0,afterPrehook:0,throwOnCall:true};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);let outcome="returned";let message=null;try{await m.${testCase.entrypoint}()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls,afterPrehook:probe.afterPrehook}))})()`);
+        assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+        assert.equal(result.stderr, "", testCase.name);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; calls: number; afterPrehook: number }>;
+        assert.equal(observed.outcome, testCase.outcome, testCase.name);
+        assert.equal(observed.calls, testCase.calls, testCase.name);
+        assert.equal(observed.afterPrehook, 0, `${testCase.name}: no later prepare/routing statement may run after a publisher-core throw`);
+        if (testCase.message === null) assert.equal(observed.message, null, testCase.name);
+        else assert.match(observed.message ?? "", testCase.message, testCase.name);
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${testCase.name}: the raw prehook or thrown publisher probe must not mutate its disposable store`);
+      } finally {
+        removeFixture(root);
+      }
+    }
   });
 
   it("P4 routes every current-entry authority store through the code-owned account workspace", () => {

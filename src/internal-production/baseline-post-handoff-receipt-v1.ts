@@ -1161,6 +1161,11 @@ export type InternalProductionCurrentEntryOperationV1 = Readonly<{
 
 const CURRENT_ENTRY_STORE_DIRECTORY = "data/internal-production-baseline/current-entry-v1";
 const CURRENT_ENTRY_MAX_BYTES = 1_048_576;
+const EXACT_POISON_OPERATION_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
+const EXACT_POISON_OPERATION_REF_V1 = "setfarm://internal-production/current-entry-operation/sha256/90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
+const EXACT_POISON_OPERATION_BYTES_SHA256_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
+const EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 = "9e07f9bd60955a9a681b7365a3c48cb087ff7d46459a5b9885283e0a3492ce65";
+const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "768164cd178850a940282fea1c4b107559c88cb633b510fc9082bcd047e581a7";
 const TASK12_P0_DELIVERY_PREFIX_V1 = "setfarm://internal-production/baseline-task12-p0-delivery-authority/sha256/";
 const PR86_SHA: "1d691c89760339ea905dfe17f8e9188e62603c1c" = "1d691c89760339ea905dfe17f8e9188e62603c1c";
 const PR86_TREE: "04f1d95a58360d06e866fe816138655efa916284" = "04f1d95a58360d06e866fe816138655efa916284";
@@ -2154,8 +2159,163 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
   return operation;
 }
 
+function fixedLegacyCurrentEntryRootV1(): string {
+  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY);
+}
+
+function fixedLegacyCurrentEntryOperationPathV1(): string {
+  return path.join(fixedLegacyCurrentEntryRootV1(), CURRENT_ENTRY_FILES.operation);
+}
+
+function fixedLegacyExactPoisonSuccessorEdgePathV1(): string {
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    "current-entry-store-successor-edges",
+    "by-predecessor-operation",
+    "sha256",
+    EXACT_POISON_OPERATION_HASH_V1.slice(0, 2),
+    `${EXACT_POISON_OPERATION_HASH_V1}.json`,
+  );
+}
+
+function readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target: string, label: string): FileSnapshot | null {
+  const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
+  const workspacePath = CODE_OWNED_WORKSPACE_ROOT_V1;
+  const workspace = directorySnapshot(workspacePath, "Setfarm workspace", repository.device);
+  const resolved = path.resolve(target);
+  const relative = path.relative(workspacePath, resolved);
+  if (
+    !relative.startsWith("data/internal-production-baseline/")
+    || relative === ".."
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+  ) currentEntryFail(`${label} escaped the fixed legacy workspace`);
+  const segments = relative.split(path.sep);
+  const basename = segments.pop();
+  if (!basename || segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    currentEntryFail(`${label} locator is invalid`);
+  }
+  let directory = workspacePath;
+  let directoryState = workspace;
+  for (const segment of segments) {
+    const child = path.join(directory, segment);
+    try {
+      lstatSync(child, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      assertDirectory(directory, directoryState, `parent of absent ${label} ${segment}`);
+      try {
+        lstatSync(child, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        assertDirectory(directory, directoryState, `parent of absent ${label} ${segment}`);
+        return null;
+      }
+      currentEntryFail(`absent ${label} ${segment} appeared while observed`);
+    }
+    const observed = directorySnapshot(child, `${label} ${segment}`, workspace.device);
+    if (observed.identity.mode !== 0o700) currentEntryFail(`${label} ${segment} has wrong mode`);
+    assertDirectory(directory, directoryState, `parent of ${label} ${segment}`);
+    directory = child;
+    directoryState = observed;
+  }
+  const record = path.join(directory, basename);
+  const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
+  try {
+    guard.assertStable();
+    try {
+      lstatSync(record, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      guard.assertStable();
+      try {
+        lstatSync(record, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        guard.assertStable();
+        return null;
+      }
+      currentEntryFail(`absent ${label} record appeared while observed`);
+    }
+    const observed = readStableRegular(record, CURRENT_ENTRY_MAX_BYTES, workspace.device);
+    if (observed.mode !== 0o600) currentEntryFail(`${label} record has wrong mode`);
+    guard.assertStable();
+    return Object.freeze({ locator: record, observed });
+  } finally {
+    guard.close();
+  }
+}
+
+function parsePreselectionCurrentEntryOperationV1(bytes: Buffer): Readonly<{
+  operationRef: string;
+  operationHash: Sha256V1;
+}> {
+  const body = strictCanonicalRecord(bytes, "fixed legacy current-entry operation");
+  if (!hasExactKeys(body, ["schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence", "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operationRef", "operationHash"])) {
+    currentEntryFail("fixed legacy current-entry operation fields are invalid");
+  }
+  if (body.schema !== "setfarm.internal-production-current-entry-operation.v1" || body.purpose !== "task6a-internal-production-current-entry-v1") {
+    currentEntryFail("fixed legacy current-entry operation discriminator is invalid");
+  }
+  const projection = { ...body };
+  delete projection.operationRef;
+  delete projection.operationHash;
+  const operationHash = requireSha256(body.operationHash, "fixed legacy current-entry operation hash");
+  const operationRef = body.operationRef;
+  if (
+    hashCanonicalJson(projection) !== operationHash
+    || typeof operationRef !== "string"
+    || operationRef !== `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`
+  ) currentEntryFail("fixed legacy current-entry operation pair/hash is invalid");
+  requireSource(body.controllerSource);
+  requirePair(body.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+  requirePair(body.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+  if (
+    !isPlainRecord(body.productBuildAuthorityV2Observation)
+    || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"])
+    || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1"
+    || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli"
+  ) currentEntryFail("fixed legacy current-entry PBA observation is invalid");
+  const observedPbaPair = pbaPair(body.productBuildAuthorityV2Observation as ProductBuildAuthorityObservationV1);
+  const storedPbaPair = requirePair(body.productBuildAuthorityV2DeliveryEvidence, "deliveryEvidenceRef", "deliveryEvidenceHash", "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/");
+  if (
+    storedPbaPair.deliveryEvidenceRef !== observedPbaPair.deliveryEvidenceRef
+    || storedPbaPair.deliveryEvidenceHash !== observedPbaPair.deliveryEvidenceHash
+  ) currentEntryFail("fixed legacy current-entry PBA pair is crossed");
+  return Object.freeze({ operationRef, operationHash });
+}
+
+async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
+  currentEntryFail("exact-poison quarantine publisher is unavailable before the complete recovery slice");
+}
+
+async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
+  const operation = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+    fixedLegacyCurrentEntryOperationPathV1(),
+    "fixed legacy current-entry operation",
+  );
+  if (operation === null) return;
+  const pair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+  if (pair.operationHash !== EXACT_POISON_OPERATION_HASH_V1) return;
+  if (
+    pair.operationRef !== EXACT_POISON_OPERATION_REF_V1
+    || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
+  ) currentEntryFail("fixed legacy exact-poison operation bytes are crossed");
+  const edge = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+    fixedLegacyExactPoisonSuccessorEdgePathV1(),
+    "fixed legacy exact-poison successor edge",
+  );
+  if (edge === null) {
+    await resumeExactPoisonQuarantinePublisherCoreV1();
+    return;
+  }
+  currentEntryFail("fixed legacy exact-poison successor edge requires the complete recovery selector");
+}
+
 export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {
-  const existingBytes = readCurrentEntryAuthorityRecordIfPresentV1(fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, CURRENT_ENTRY_FILES.operation));
+  await resumeExactPoisonQuarantineBeforeSelectionV1();
+  const existingBytes = readCurrentEntryAuthorityRecordIfPresentV1(fixedLegacyCurrentEntryOperationPathV1());
   if (existingBytes !== null) {
     const existing = strictCanonicalRecord(existingBytes, "current-entry operation");
     const existingPair = Object.freeze({ operationRef: existing.operationRef, operationHash: existing.operationHash });
