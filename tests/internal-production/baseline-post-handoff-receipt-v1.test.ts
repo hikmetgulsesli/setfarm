@@ -1497,8 +1497,9 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   root: string,
   original: ExactOriginalPoisonStoreFixtureV1,
   fault: string | null,
+  inventoryAlreadyRewritten = false,
 ): void {
-  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  if (!inventoryAlreadyRewritten) rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
   if (fault === "inventory-hash-drift") {
@@ -1519,7 +1520,12 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   const admissionStart = source.indexOf(admissionMarker);
   const admissionEnd = source.indexOf(`export ${coreMarker}`, admissionStart);
   assert.ok(admissionStart >= 0 && admissionEnd > admissionStart, "the private admission boundary must precede the publisher core");
-  let admissionRegion = source.slice(admissionStart, admissionEnd);
+  const noWriteMarker = "async function observeExactPoisonRecoveryCandidatesNoWriteV1(";
+  const noWriteStart = source.indexOf(noWriteMarker);
+  const rawStart = noWriteStart >= 0 ? noWriteStart : admissionStart;
+  const rawEnd = noWriteStart >= 0 ? admissionStart : admissionEnd;
+  assert.ok(rawEnd > rawStart, "the raw no-write observations have one bounded lower/admission region");
+  let admissionRegion = source.slice(rawStart, rawEnd);
   for (const observer of [
     "observeExactPoisonSyntheticGitObjectAbsenceV1",
     "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
@@ -1547,7 +1553,7 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
     assert.ok(admissionRegion.includes(rawCall.source), `the private admission boundary must directly invoke ${rawCall.source}`);
     admissionRegion = admissionRegion.replaceAll(rawCall.source, rawCall.target);
   }
-  source = source.slice(0, admissionStart) + admissionRegion + source.slice(admissionEnd);
+  source = source.slice(0, rawStart) + admissionRegion + source.slice(rawEnd);
   const admissionCall = "await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter)";
   assert.ok(source.includes(admissionCall), "publisher core must call the private admission boundary with only its strict operation and held writer");
   const countedAdmission = 'await (()=>{const probe=Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as undefined|{admissionCalls:number};if(!probe)throw new Error("P4_EXACT_POISON_ADMISSION_PROBE_MISSING");probe.admissionCalls+=1;return observeExactPoisonQuarantineAdmissionV1(operation,heldWriter)})()';
@@ -2383,6 +2389,33 @@ const PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1 = Object.freeze([
   }),
 ] as const);
 
+const PHASE5C_Z_BRACKET_LABELS_V1 = Object.freeze([
+  "controller-source-a",
+  "product-build-authority-a",
+  "authority-v3-migration31-audit-a",
+  "pending-bootstrap-handoff-migration-a",
+  "service-a",
+  "physical-a",
+  "database-owner-migration-manifest",
+  "downstream-absence",
+  "service-b",
+  "physical-b",
+  "controller-source-b",
+  "product-build-authority-b",
+  "authority-v3-migration31-audit-b",
+  "pending-bootstrap-handoff-migration-b",
+] as const);
+
+const PHASE5C_Z_CANDIDATE_MEMBERS_V1 = Object.freeze([
+  "disposition",
+  "successorAuthorityV31",
+  "successorPending",
+  "successorOperation",
+  "edge",
+  "seal",
+  "commit",
+] as const);
+
 type Phase5bSelectedContextConsumerNameV1 = typeof PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1[number]["name"];
 type Phase5bSelectedContextModeV1 = "real" | "spread-clone" | "descriptor-copy" | "unregistered-brand";
 
@@ -2800,15 +2833,25 @@ function instrumentPhase5bStrictCEntryFixtureV1(root: string): void {
   if (source.includes(validatorMarker)) {
     assert.equal(source.split(validatorMarker).length - 1, 1, "P5b-B1 instruments one private post-visible validator");
     const validatorStart = source.indexOf(validatorMarker);
-    const validatorBody = source.indexOf("): Promise<void> {", validatorStart);
-    assert.ok(validatorBody > validatorStart, "P5b-B1 validator retains the frozen async void signature");
-    const insertion = validatorBody + "): Promise<void> {".length;
+    const validatorEnd = source.indexOf("\n}\n", validatorStart);
+    assert.ok(validatorEnd > validatorStart, "P5b-B1 bounds the exact private validator function before inspecting its signature");
+    const validatorRegion = source.slice(validatorStart, validatorEnd + 3);
+    const oldValidatorBody = validatorRegion.indexOf("): Promise<void> {");
+    const zeroValidatorBody = validatorRegion.indexOf("): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {");
+    assert.equal(oldValidatorBody >= 0 || zeroValidatorBody >= 0, true, "P5b-B1 validator retains the bounded pre-Z or exact Z signature");
+    assert.equal(oldValidatorBody >= 0 && zeroValidatorBody >= 0, false, "P5b-B1 instruments exactly one validator signature");
+    const validatorBody = validatorStart + (oldValidatorBody >= 0 ? oldValidatorBody : zeroValidatorBody);
+    const validatorBodyMarker = oldValidatorBody >= 0
+      ? "): Promise<void> {"
+      : "): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {";
+    const insertion = validatorBody + validatorBodyMarker.length;
     source = source.slice(0, insertion) + `
-  const p5bB1ValidatorProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {contextIds:WeakMap<object,number>;mainContext:object|null;validatorCalls:number;validatorContextId:number|null;sameContext:boolean|null;events:string[]};
+  const p5bB1ValidatorProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {contextIds:WeakMap<object,number>;mainContext:object|null;validatorCalls:number;validatorContextId:number|null;sameContext:boolean|null;events:string[];stopAfterValidator?:boolean};
   p5bB1ValidatorProbe.validatorCalls += 1;
   p5bB1ValidatorProbe.validatorContextId = p5bB1ValidatorProbe.contextIds.get(context) ?? null;
   p5bB1ValidatorProbe.sameContext = p5bB1ValidatorProbe.mainContext === context;
-  p5bB1ValidatorProbe.events.push("post-visible-validator:" + p5bB1ValidatorProbe.validatorContextId);` + source.slice(insertion);
+  p5bB1ValidatorProbe.events.push("post-visible-validator:" + p5bB1ValidatorProbe.validatorContextId);
+  if (p5bB1ValidatorProbe.stopAfterValidator) currentEntryFail("Phase5b-B1 post-visible validator fixture stop");` + source.slice(insertion);
   } else {
     const insertion = source.indexOf(publisherMarker);
     assert.ok(insertion >= 0, "P5b-B1 has one private insertion point for the RED-only validator stub");
@@ -2860,7 +2903,112 @@ function runPhase5bStrictCEntryFixtureV1(
   faultStage: Phase5bStrictCEntryFaultStageV1 | null = null,
   durabilityFault: ExactPoisonDurabilityFaultFixtureV1 | null = null,
 ): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:${JSON.stringify(faultStage)}};const durability={events:[],matches:0,fault:${JSON.stringify(durabilityFault)}};Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null,value=null;try{value=await m.p5bRunStrictCEntryFixtureV1()}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,durabilityEvents:durability.events,durabilityMatches:durability.matches,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:${JSON.stringify(faultStage)},stopAfterValidator:true};const durability={events:[],matches:0,fault:${JSON.stringify(durabilityFault)}};Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null,value=null;try{value=await m.p5bRunStrictCEntryFixtureV1()}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,durabilityEvents:durability.events,durabilityMatches:durability.matches,descriptorDelta:after-before}))})()`);
+}
+
+type Phase5cZeroProgressMutationFixtureV1 =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "operations-transient" }>
+  | Readonly<{ kind: "original-rewrite"; target: string }>
+  | Readonly<{ kind: "original-directory-swap"; target: string; backup: string }>
+  | Readonly<{ kind: "bracket-hash" }>
+  | Readonly<{ kind: "candidate"; index: number; field: "target" | "bytes" }>;
+
+function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const lowerMarker = "async function observeExactPoisonRecoveryCandidatesNoWriteV1(";
+  const upperMarker = "async function observeExactPoisonRecoveryPostVisibleZeroFenceV1(";
+  if (source.includes(lowerMarker) || source.includes(upperMarker)) {
+    if (!source.includes("\n  rmdirSync,\n")) {
+      const importAnchor = "  renameSync,\n  unlinkSync,";
+      assert.equal(source.split(importAnchor).length - 1, 1, "P5c-Z copied ABA harness has one bounded node:fs import anchor");
+      source = source.replace(importAnchor, "  renameSync,\n  rmdirSync,\n  unlinkSync,");
+    }
+    assert.equal(source.split(lowerMarker).length - 1, 1, "P5c-Z instruments exactly one detached no-write candidate builder");
+    assert.equal(source.split(upperMarker).length - 1, 1, "P5c-Z instruments exactly one context-only post-visible fence");
+    const upperStart = source.indexOf(upperMarker);
+    const validatorStart = source.indexOf("async function revalidatePostVisibleCurrentEntryStoreV1(", upperStart);
+    assert.ok(validatorStart > upperStart, "the post-visible fence precedes the exact Z validator");
+    const upperRegion = source.slice(upperStart, validatorStart);
+    const observedCall = /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(([^,]+),\s*originals\.evidence\);/;
+    assert.equal([...upperRegion.matchAll(new RegExp(observedCall.source, "g"))].length, 1, "P5c-Z observes one detached lower result inside the owned-originals lifetime");
+    const hookedUpper = upperRegion.replace(observedCall, (_match, operationExpression: string) => `const rawObserved = await observeExactPoisonRecoveryCandidatesNoWriteV1(${operationExpression}, originals.evidence);
+    const p5cProbe = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {lowerReturnCalls:number;mutation:Readonly<{kind:string;index?:number;field?:string}>;transientApplied:boolean;rootIdentity:null|Readonly<Record<string,string>>};
+    let observed = rawObserved;
+    if (p5cProbe) {
+      p5cProbe.lowerReturnCalls += 1;
+      const descriptorIdentity = fstatSync(context.successorRootParent.descriptor, { bigint: true });
+      const pathIdentity = lstatSync(realpathSync(context.successorRoot), { bigint: true });
+      p5cProbe.rootIdentity = Object.freeze({descriptorDevice:String(descriptorIdentity.dev),descriptorInode:String(descriptorIdentity.ino),pathDevice:String(pathIdentity.dev),pathInode:String(pathIdentity.ino),mode:String(descriptorIdentity.mode & 0o7777n),uid:String(descriptorIdentity.uid)});
+      if (p5cProbe.mutation.kind === "candidate") {
+        const index = p5cProbe.mutation.index!;
+        const candidates = [...rawObserved.candidates] as ExactPoisonRecoveryCandidateV1[];
+        const candidate = candidates[index]!;
+        candidates[index] = Object.freeze(p5cProbe.mutation.field === "target"
+          ? { target: candidate.target + ".crossed", bytes: candidate.bytes }
+          : { target: candidate.target, bytes: Buffer.concat([candidate.bytes, Buffer.from(" ")]) });
+        observed = Object.freeze({ ...rawObserved, candidates: Object.freeze(candidates) as ExactPoisonRecoveryNoWriteFenceV1["candidates"] });
+      }
+      if (p5cProbe.mutation.kind === "bracket-hash") {
+        observed = Object.freeze({ ...rawObserved, completeZeroEffectBracketHash: "f".repeat(64) as Sha256V1 });
+      }
+      if (p5cProbe.mutation.kind === "operations-transient") {
+        const operations = path.join(context.successorRoot, "operations");
+        mkdirSync(operations, { mode: 0o700 });
+        rmdirSync(operations);
+        p5cProbe.transientApplied = true;
+      }
+    }`);
+    source = source.slice(0, upperStart) + hookedUpper + source.slice(validatorStart);
+  }
+  writeFileSync(modulePath, source);
+}
+
+function configurePhase5cZeroProgressFixtureV1(root: string): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  observations: Readonly<Record<string, readonly unknown[]>>;
+  seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+  instrumentPhase5bStrictCEntryFixtureV1(root);
+  instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, true);
+  instrumentPhase5cZeroProgressFixtureV1(root);
+  return Object.freeze({ original, admitted, observations, seeded });
+}
+
+function configurePhase5cZeroProgressPublisherFixtureV1(root: string): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  observations: Readonly<Record<string, readonly unknown[]>>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  instrumentPhase5bStrictCEntryFixtureV1(root);
+  instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, true);
+  instrumentPhase5cZeroProgressFixtureV1(root);
+  return Object.freeze({ original, admitted, observations });
+}
+
+function runPhase5cZeroProgressFixtureV1(
+  root: string,
+  observations: Readonly<Record<string, readonly unknown[]>>,
+  mutation: Phase5cZeroProgressMutationFixtureV1,
+  entry: "selector" | "publisher" = "selector",
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  const transportPath = path.join(path.dirname(root), ".p5c-zero-progress-observations.json");
+  fixtureFile(path.dirname(root), ".p5c-zero-progress-observations.json", `${JSON.stringify(fixtureTransportValueV1(observations))}\n`, 0o600);
+  const call = entry === "selector" ? "m.p5bRunStrictCEntryFixtureV1()" : "m.resumeExactPoisonQuarantinePublisherCoreV1()";
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,rootIdentity:z.rootIdentity,cursors,descriptorDelta:after-before}))})()`);
 }
 
 type Phase5bHistoricalOperationPairFixtureV1 = Readonly<{ operationRef: string; operationHash: string }>;
@@ -2988,7 +3136,7 @@ function instrumentPhase5bNestedPrerequisiteFixtureV1(root: string): void {
   );
   insertAfterSignature(
     "async function revalidatePostVisibleCurrentEntryStoreV1",
-    "): Promise<void> {",
+    "): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {",
     `\n  const p5bB3ValidatorProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {validatorCalls:number};\n  if (p5bB3ValidatorProbe) p5bB3ValidatorProbe.validatorCalls += 1;`,
   );
 
@@ -6331,7 +6479,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
     assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
     assert.equal(historicalResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical strict-C resolution invokes C durability exactly once");
-    assert.match(core, /heldWriter\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);/, "publisher fences the generic C helper immediately before and after its await");
+    assert.match(core, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/, "publisher fences the generic C helper with the exact H writer and pinned C context immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
     assert.doesNotMatch(source, /SETFARM_[A-Z0-9_]*(?:SEAL|COMMIT|DURABILITY)|current-entry-store-successor-activation-(?!seal|commit)/);
@@ -7159,9 +7307,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
     assert.match(
       validator,
-      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<void> \{\s*context\.assertStable\(\);\s*currentEntryFail\("post-visible current-entry validation is unavailable"\);\s*\}\s*$/,
-      "the private B1 placeholder is exactly one context fence followed by one unavailable failure, with no recursion, scan, durability, mutation, or minting surface",
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<(?:void|ExactPoisonPostVisibleZeroProgressSelectionV1)>/,
+      "the B1 entry remains one private context-only validator while the P5c-Z slice strengthens its result",
     );
+    assert.doesNotMatch(validator, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|resumeExactPoisonQuarantine|durablyAuthenticateSuccessorActivationSealV1|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync|latest|mtime|process\.env|globalThis/, "the B1 validator boundary retains no recursion, scan, writer, publisher, or ambient authority");
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function revalidatePostVisibleCurrentEntryStoreV1|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B1 adds no public seam, runtime env seam, or fourth marker family");
   });
 
@@ -8027,6 +8176,365 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       }
     });
   }
+
+  it("P5c-Z freezes the context-only zero-progress result and the two-layer no-write fence", () => {
+    const source = readFileSync(observerSource, "utf8");
+    assert.match(
+      source,
+      /type ExactPoisonPostVisibleZeroProgressSelectionV1\s*=\s*Readonly<\{\s*storeRoot:\s*string;\s*operation:\s*InternalProductionCurrentEntryOperationPairV1;\s*selectionKind:\s*"successor-zero-progress";\s*\}>;/,
+      "Z selection returns only the successor root, operation pair, and literal zero-progress kind",
+    );
+    assert.match(
+      source,
+      /type ExactPoisonRecoveryInventoryEvidenceV1\s*=\s*Readonly<\{[\s\S]*?inventoryBody:[\s\S]*?inventoryHash:[\s\S]*?predecessorFileIdentities:[\s\S]*?assertStableOriginals:\s*\(\)\s*=>\s*void;[\s\S]*?\}>;/,
+      "the shared no-write candidate builder receives only frozen original-inventory evidence",
+    );
+    assert.match(
+      source,
+      /type ExactPoisonRecoveryNoWriteFenceV1\s*=\s*Readonly<\{\s*completeZeroEffectBracket:\s*CompleteZeroEffectBracketHashInputV1;\s*completeZeroEffectBracketHash:\s*Sha256V1;\s*candidates:\s*readonly \[\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*ExactPoisonRecoveryCandidateV1,\s*\];\s*\}>;/,
+      "the shared builder returns detached bracket/hash and exact-seven candidates, never a closing callback",
+    );
+    const bracketTypeStart = source.indexOf("type CompleteZeroEffectBracketHashInputV1");
+    const bracketTypeEnd = source.indexOf("type ExactPoisonRecoveryNoWriteFenceV1", bracketTypeStart);
+    assert.ok(bracketTypeStart >= 0 && bracketTypeEnd > bracketTypeStart, "P5c-Z bounds the exact complete-zero bracket tuple type");
+    const bracketType = source.slice(bracketTypeStart, bracketTypeEnd);
+    for (const label of PHASE5C_Z_BRACKET_LABELS_V1) {
+      assert.equal(bracketType.split(`observation: \"${label}\"`).length - 1, 1, `the tuple type contains ${label} exactly once`);
+    }
+    const bracketOffsets = PHASE5C_Z_BRACKET_LABELS_V1.map((label) => bracketType.indexOf(`observation: \"${label}\"`));
+    assert.deepEqual([...bracketOffsets].sort((left, right) => left - right), bracketOffsets, "the tuple type freezes the exact fourteen-member order");
+    assert.equal((bracketType.match(/observation:/g) ?? []).length, 14, "the bracket tuple admits no duplicate or extra member");
+    const commitContextStart = source.indexOf("type ExactPoisonRecoveryPinnedCommitChainV1");
+    const commitContextEnd = source.indexOf("type ExactPoisonRecoveryChainInspectionV1", commitContextStart);
+    assert.ok(commitContextStart >= 0 && commitContextEnd > commitContextStart, "P5c-Z bounds the pinned commit context type");
+    const commitContext = source.slice(commitContextStart, commitContextEnd);
+    for (const field of [
+      "dispositionValue: CurrentEntryStoreQuarantineDispositionV1",
+      "zeroEffectProof: CurrentEntryStoreZeroEffectProofV1",
+      "successorGenesis: CurrentEntryStoreSuccessorGenesisV1",
+      "successorAuthorityV31: ExactPoisonRecoveryPinnedRecordV1",
+      "successorPending: ExactPoisonRecoveryPinnedRecordV1",
+      "successorOperationRecord: ExactPoisonRecoveryPinnedRecordV1",
+      "successorRootParent: ExactPoisonRecoveryPinnedParentV1",
+    ]) assert.match(commitContext, new RegExp(field), `the strict C context owns ${field}`);
+    const pinnedBuilder = topLevelFunctionRegionV1(source, "openExactPoisonRecoveryPinnedChainV1");
+    assert.match(
+      pinnedBuilder,
+      /const successorRoot = exactPoisonSuccessorStoreRootV1\(parsed\.successorGenesis\.successorStoreHash\);[\s\S]*const successorRootParent = openExactPoisonRecoveryPinnedParentV1\(successorRoot\)/,
+      "the strict chain derives and pins the actual successor root from the authenticated genesis hash",
+    );
+    assert.match(pinnedBuilder, /successorRoot,?[\s\S]*successorRootParent:\s*successorRootParent\.pin/, "the context owns the exact genesis-derived successor-root descriptor");
+
+    const lower = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCandidatesNoWriteV1");
+    assert.match(lower, /^async function observeExactPoisonRecoveryCandidatesNoWriteV1\(\s*operation: FileSnapshot,\s*inventory: ExactPoisonRecoveryInventoryEvidenceV1,?\s*\): Promise<ExactPoisonRecoveryNoWriteFenceV1>/);
+    for (const label of PHASE5C_Z_BRACKET_LABELS_V1) assert.match(lower, new RegExp(`observation: ["']${label}["']`), `the no-write fence retains exact bracket member ${label}`);
+    assert.equal(lower.split("hashCanonicalJson(completeZeroEffectBracket)").length - 1, 1, "the exact fourteen-member bracket is hashed once");
+    assert.equal(lower.split("inventory.assertStableOriginals()").length - 1, 2, "original pins fence the entire asynchronous fourteen-member observation and candidate construction");
+    assert.match(lower, /const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze\(\[/, "the constructed bracket is checked against the exact tuple type rather than inferred as an open array");
+    assert.doesNotMatch(lower, /ExactPoisonRecoveryWriterV1|heldWriter|acquireExactPoisonRecoveryWriterV1|observeExactPoisonQuarantinedInventoryV1|assertExactPoisonRecoveryFrontierV1|publishExactPoison|fsyncSync|readdirSync|opendirSync|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/, "the shared candidate builder is writer-independent, no-write, and scan-free");
+
+    const admission = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionV1");
+    const postVisibleFence = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryPostVisibleZeroFenceV1");
+    assert.equal(source.split("observeExactPoisonRecoveryCandidatesNoWriteV1(").length - 1, 3, "the lower no-write builder has one definition and exactly admission/post-visible call sites");
+    assert.equal(admission.split("observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory)").length - 1, 1, "writer admission delegates candidate construction after its own inventory authentication");
+    assert.match(admission, /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, inventory\);[\s\S]*assertExactPoisonRecoveryFrontierV1\(observed\.candidates, heldWriter\);[\s\S]*inventory\.assertStableOriginals\(\);[\s\S]*heldWriter\.assertStable\(\)/, "writer admission retains builder then frontier then original/H stability order");
+    assert.match(postVisibleFence, /^async function observeExactPoisonRecoveryPostVisibleZeroFenceV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<void>/);
+    assert.doesNotMatch(postVisibleFence, /observeExactPoisonQuarantineAdmissionV1|ExactPoisonRecoveryWriterV1|heldWriter|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync/);
+    assert.match(postVisibleFence, /const originals = openExactPoisonRecoveryPostVisibleOriginalsV1\(context\);[\s\S]*const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1\(context\.operation\);[\s\S]*const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, originals\.evidence\);[\s\S]*assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(observed\.candidates, expectedCandidates\);[\s\S]*observed\.completeZeroEffectBracketHash !== context\.zeroEffectProof\.completeZeroEffectBracketHash[\s\S]*finally\s*\{\s*originals\.close\(\);\s*\}/, "post-visible validation projects only the pinned predecessor operation, compares detached bracket/exact-seven candidates, and closes all original pins");
+    const pinnedSnapshot = topLevelFunctionRegionV1(source, "exactPoisonRecoveryPinnedRecordFileSnapshotV1");
+    assert.match(pinnedSnapshot, /^function exactPoisonRecoveryPinnedRecordFileSnapshotV1\(\s*record: ExactPoisonRecoveryPinnedRecordV1,?\s*\): FileSnapshot/);
+    assert.match(pinnedSnapshot, /locator:\s*record\.target/);
+    assert.match(pinnedSnapshot, /bytes:\s*record\.bytes/);
+    assert.match(pinnedSnapshot, /mode:\s*Number\(record\.identity\.mode\s*&\s*0o7777n\)/);
+    assert.match(pinnedSnapshot, /stats:\s*record\.identity/);
+    assert.doesNotMatch(pinnedSnapshot, /read|open|lstat|statSync|resolve|select|CURRENT_ENTRY/, "the lower operation snapshot is a pure projection of the already pinned predecessor member");
+    const candidateEquality = topLevelFunctionRegionV1(source, "assertExactPoisonQuarantineAdmissionCandidatesEqualV1");
+    assert.match(candidateEquality, /^function assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(\s*observed: ExactPoisonRecoveryNoWriteFenceV1\["candidates"\],\s*expected: ExactPoisonRecoveryNoWriteFenceV1\["candidates"\],?\s*\): void/, "candidate equality accepts only the detached exact-seven tuple on both sides");
+    for (const [field, record] of [
+      ["disposition", "context.disposition"],
+      ["successor-authority-v31", "context.successorAuthorityV31"],
+      ["successor-pending", "context.successorPending"],
+      ["successor-operation", "context.successorOperationRecord"],
+      ["successor-edge", "context.edge"],
+      ["successor-activation-seal", "context.seal"],
+      ["successor-activation-commit", "context.commit"],
+    ] as const) assert.match(postVisibleFence, new RegExp(`phase: ["']${field}["'][\\s\\S]*target: ${record.replace(".", "\\.")}\\.target[\\s\\S]*bytes: ${record.replace(".", "\\.")}\\.bytes`), `post-visible exact-seven comparison binds ${field} to its typed pinned record`);
+
+    const originals = topLevelFunctionRegionV1(source, "openExactPoisonRecoveryPostVisibleOriginalsV1");
+    assert.match(originals, /^function openExactPoisonRecoveryPostVisibleOriginalsV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1/);
+    assert.doesNotMatch(originals, /readdirSync|opendirSync|acquireExactPoisonRecoveryWriterV1|observeExactPoisonRecoveryWriterTransientsV1|\.writer\.lock|latest|mtime/, "the originals fence direct-pins only the strict proof's exact ten directories and five files");
+    assert.match(originals, /EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1/);
+    assert.match(originals, /EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1/);
+    assert.match(originals, /EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1\.map\(\(locator\)[\s\S]*openExactPoisonRecoveryPinnedParentV1/);
+    assert.match(originals, /EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1\.map\(\(locator\)[\s\S]*openExactPoisonRecoveryPinnedRecordV1/);
+    assert.match(originals, /directoryPins\.length !== 10|EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1\.length !== 10/, "the original-root owner pins exactly ten directories");
+    assert.match(originals, /filePins\.length !== 5|EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1\.length !== 5/, "the original-root owner pins exactly five files");
+    assert.match(originals, /context\.zeroEffectProof\.value\.predecessorFileIdentities/);
+    assert.match(originals, /context\.dispositionValue\.value\.quarantinedInventory/);
+    assert.match(originals, /assertStableOriginals/);
+    assert.match(originals, /for \(let index = .*\.length - 1; index >= 0; index -= 1\)/, "original descriptors close in reverse construction order");
+  });
+
+  it("P5c-Z validator linearizes only an exact absent operations prefix and returns the literal successor selection", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
+    assert.match(
+      validator,
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1>/,
+      "the validator has the exact private context-only Z signature",
+    );
+    const absenceCall = "assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context)";
+    assert.equal(validator.split(absenceCall).length - 1, 2, "Z checks the exact operations-prefix absence before and after the full no-write fence");
+    assert.equal(validator.split("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context)").length - 1, 1, "Z performs one complete no-write A/B fence");
+    const firstAbsence = validator.indexOf(absenceCall);
+    const fence = validator.indexOf("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context)");
+    const secondAbsence = validator.indexOf(absenceCall, firstAbsence + absenceCall.length);
+    const literalReturn = validator.indexOf('selectionKind: "successor-zero-progress"');
+    const rootBaseline = validator.indexOf("const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1(context)");
+    const firstRootIdentityFence = validator.indexOf("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)", fence);
+    const finalContextFence = validator.indexOf("context.assertStable()", secondAbsence);
+    const finalRootFence = validator.indexOf("context.successorRootParent.assertStable()", finalContextFence);
+    const finalRootIdentityFence = validator.indexOf("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)", firstRootIdentityFence + 1);
+    assert.ok(
+      rootBaseline >= 0
+      && rootBaseline < firstAbsence
+      && firstAbsence < fence
+      && fence < firstRootIdentityFence
+      && firstRootIdentityFence < secondAbsence
+      && secondAbsence < finalContextFence
+      && finalContextFence < finalRootFence
+      && finalRootFence < finalRootIdentityFence
+      && finalRootIdentityFence < literalReturn,
+      "Z linearizes root baseline, absence-A, full fence, root recheck, absence-B, final C/root/root-identity fences, then literal return",
+    );
+    assert.doesNotMatch(validator.slice(finalRootIdentityFence, literalReturn), /\bawait\b/, "no asynchronous work may reopen a drift window after the final root-identity fence");
+    assert.ok((validator.match(/context\.assertStable\(\)/g) ?? []).length >= 3, "the pinned C chain is fenced before, between, and after Z observations");
+    assert.ok((validator.match(/context\.successorRootParent\.assertStable\(\)/g) ?? []).length >= 3, "the pinned successor-root generation is fenced before, between, and after Z observations");
+    assert.match(validator, /const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1\(context\)/, "Z captures one full fail-only root metadata baseline before absence A");
+    assert.equal(validator.split("assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity)").length - 1, 2, "Z rejects even create+unlink root metadata drift after the fence and at final linearization");
+    assert.match(validator, /storeRoot:\s*context\.successorRoot/);
+    assert.match(validator, /operation:\s*Object\.freeze\(\{\s*operationRef:\s*context\.successorOperation\.operationRef,\s*operationHash:\s*context\.successorOperation\.operationHash\s*\}\)/);
+    assert.doesNotMatch(validator, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|observeExactPoisonQuarantineAdmissionV1|acquireExactPoisonRecoveryWriterV1|heldWriter|assertExactPoisonRecoveryFrontierV1|readdirSync|opendirSync|latest|mtime|fsyncSync|publish|prepareInternal|resumeInternal|resolveInternalProduction|observeInternalProduction|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/, "Z has no public recursion, writer, scan, durability, or mutation authority");
+
+    const absence = topLevelFunctionRegionV1(source, "assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1");
+    assert.match(absence, /path\.join\(context\.successorRoot,\s*"operations"\)/, "Z derives the sole classified prefix from the pinned successor root");
+    assert.match(absence, /path\.dirname\(operations(?:Path)?\) !== context\.successorRoot|path\.relative\(context\.successorRoot, operations(?:Path)?\)/, "the classified operations member is proven to be a direct child of the pinned successor root");
+    assert.equal(absence.split("context.successorRootParent.assertStable()").length - 1, 3, "the root pin brackets both direct ENOENT observations");
+    assert.doesNotMatch(absence, /readdirSync|opendirSync|latest|mtime|\.writer\.lock|acquireExactPoisonRecoveryWriterV1|unlink|rename|write|mkdir/, "Z prefix classification is exact-path, read-only, and lock-family blind");
+
+    const rootIdentity = topLevelFunctionRegionV1(source, "exactPoisonPostVisibleSuccessorRootIdentityV1");
+    for (const field of ["dev", "ino", "mode", "uid", "nlink", "size", "mtimeNs", "ctimeNs"]) assert.match(rootIdentity, new RegExp(`\\b${field}\\b`), `Z root drift baseline includes ${field}`);
+    assert.match(rootIdentity, /fstatSync\(context\.successorRootParent\.descriptor/);
+    assert.match(rootIdentity, /lstatSync\(context\.successorRoot/);
+    assert.doesNotMatch(rootIdentity, /readdirSync|opendirSync|latest|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1/, "root metadata is drift detection only, never selection authority");
+  });
+
+  it("P5c-Z selector closes the raw chain before mint while publisher retains its H writer through validation", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const selector = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
+    const helper = selector.indexOf("await durablyAuthenticateSuccessorActivationCommitV1(context)");
+    const validator = selector.indexOf("await revalidatePostVisibleCurrentEntryStoreV1(context)");
+    const close = selector.indexOf("context.close()", validator);
+    const mint = selector.indexOf("createSelectedCurrentEntryStoreContextV1(", close);
+    assert.ok(helper >= 0 && helper < validator && validator < close && close < mint, "current selection is C helper then validator then raw close then one mint");
+    assert.doesNotMatch(selector.slice(close, mint), /\bawait\b/, "selection closes its raw pinned context and synchronously mints without a new drift window");
+    assert.equal(selector.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 1, "strict Z mints exactly one selected context");
+    assert.match(selector, /const selection = await revalidatePostVisibleCurrentEntryStoreV1\(context\)/);
+    assert.match(selector, /return createSelectedCurrentEntryStoreContextV1\(selection\)/);
+
+    const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
+    assert.match(
+      publisher,
+      /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
+      "publisher keeps the H-derived writer and same pinned C context stable across helper and validator",
+    );
+    const historical = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
+    assert.equal(historical.split("durablyAuthenticateSuccessorActivationCommitV1(context)").length - 1, 1, "historical successor identity retains the C helper");
+    assert.equal(historical.split("revalidatePostVisibleCurrentEntryStoreV1(").length - 1, 0, "historical successor identity never claims current Z selection");
+  });
+
+  it("P5c-Z selects one registered successor context only after the exact full no-write fence", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        {
+          outcome: observed.outcome,
+          selectorCalls: observed.selectorCalls,
+          creatorCalls: observed.creatorCalls,
+          builderCalls: observed.builderCalls,
+          helperCalls: observed.helperCalls,
+          validatorCalls: observed.validatorCalls,
+          lowerReturnCalls: observed.lowerReturnCalls,
+          contextCloseCalls: observed.contextCloseCalls,
+          descriptorDelta: observed.descriptorDelta,
+        },
+        { outcome: "returned", selectorCalls: 1, creatorCalls: 1, builderCalls: 2, helperCalls: 1, validatorCalls: 1, lowerReturnCalls: 1, contextCloseCalls: 2, descriptorDelta: 0 },
+      );
+      const successorOperation = harness.admitted.chain.records.successorOperation.value;
+      assert.deepEqual(observed.value, {
+        storeRoot: path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot),
+        operation: { operationRef: successorOperation.operationRef, operationHash: successorOperation.operationHash },
+        selectionKind: "successor-zero-progress",
+      });
+      const successorRoot = realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
+      const successorRootIdentity = lstatSync(successorRoot, { bigint: true });
+      assert.deepEqual(observed.rootIdentity, {
+        descriptorDevice: String(successorRootIdentity.dev),
+        descriptorInode: String(successorRootIdentity.ino),
+        pathDevice: String(successorRootIdentity.dev),
+        pathInode: String(successorRootIdentity.ino),
+        mode: String(successorRootIdentity.mode & 0o7777n),
+        uid: String(successorRootIdentity.uid),
+      }, "the validator owns the actual genesis-derived successor-root inode");
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "zero-progress selection is byte/identity read-only");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-Z refuses a visible operations prefix before the no-write fence or mint", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const operations = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot, "operations");
+      mkdirSync(operations, { mode: 0o700 });
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /operations|zero-progress|visible prefix/i);
+      assert.deepEqual({ selectorCalls: observed.selectorCalls, validatorCalls: observed.validatorCalls, lowerReturnCalls: observed.lowerReturnCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { selectorCalls: 1, validatorCalls: 1, lowerReturnCalls: 0, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "a visible P0 prefix is terminal and read-only");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-Z rejects an operations create-unlink ABA by the pinned root metadata fence", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "operations-transient" }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /root|metadata|changed|drift/i);
+      assert.deepEqual({ validatorCalls: observed.validatorCalls, lowerReturnCalls: observed.lowerReturnCalls, transientApplied: observed.transientApplied, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { validatorCalls: 1, lowerReturnCalls: 1, transientApplied: true, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "the create-unlink ABA leaves the same visible namespace but cannot mint Z");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-Z keeps all ten directory and five file pins live across the asynchronous raw bracket", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const target = path.join(harness.original.store, EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1[1]!);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "original-rewrite", target }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /original|predecessor|identity|changed|drift/i);
+      assert.deepEqual({ validatorCalls: observed.validatorCalls, originalRewriteApplied: observed.originalRewriteApplied, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { validatorCalls: 1, originalRewriteApplied: true, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "same-byte original drift is detected without changing visible bytes or inode");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-Z rejects an original directory generation swap while its exact ten-directory fence is live", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const target = path.join(harness.original.store, "records/authority-v3-migration31-audits/sha256/31");
+      const backup = path.join(harness.original.store, "records/authority-v3-migration31-audits/sha256/.held-31");
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "original-directory-swap", target, backup }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /original|directory|identity|changed|drift/i);
+      assert.deepEqual({ validatorCalls: observed.validatorCalls, originalDirectorySwapApplied: observed.originalDirectorySwapApplied, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { validatorCalls: 1, originalDirectorySwapApplied: true, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "the test restores the original directory generation after proving refusal");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-Z rejects a detached lower bracket hash even when all seven candidate bytes remain exact", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressFixtureV1(root);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "bracket-hash" }));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /bracket|hash|drift|crossed/i);
+      assert.deepEqual({ validatorCalls: observed.validatorCalls, lowerReturnCalls: observed.lowerReturnCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { validatorCalls: 1, lowerReturnCalls: 1, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, "a detached bracket mismatch is read-only");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const [index, member] of PHASE5C_Z_CANDIDATE_MEMBERS_V1.entries()) {
+    for (const field of ["target", "bytes"] as const) {
+      it(`P5c-Z rejects a detached lower ${member} ${field} result against the pinned chain`, async () => {
+        const root = createFixture();
+        try {
+          const harness = configurePhase5cZeroProgressFixtureV1(root);
+          const before = filesystemTreeSnapshot(harness.original.store);
+          const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "candidate", index, field }));
+          assert.equal(result.status, 0, result.stderr);
+          const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+          assert.equal(observed.outcome, "threw");
+          assert.match(String(observed.message), /candidate|drift|crossed/i);
+          assert.deepEqual({ validatorCalls: observed.validatorCalls, lowerReturnCalls: observed.lowerReturnCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { validatorCalls: 1, lowerReturnCalls: 1, creatorCalls: 0, descriptorDelta: 0 });
+          assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before, `${member} ${field} refusal is read-only`);
+        } finally {
+          removeFixture(root);
+        }
+      });
+    }
+  }
+
+  it("P5c-Z publisher retains its H writer through validation before reporting exact convergence", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5cZeroProgressPublisherFixtureV1(root);
+      const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "publisher");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        {
+          outcome: observed.outcome,
+          publisherCalls: observed.publisherCalls,
+          writerCalls: observed.writerCalls,
+          validatorCalls: observed.validatorCalls,
+          lowerReturnCalls: observed.lowerReturnCalls,
+          creatorCalls: observed.creatorCalls,
+          descriptorDelta: observed.descriptorDelta,
+        },
+        { outcome: "returned", publisherCalls: 1, writerCalls: 1, validatorCalls: 1, lowerReturnCalls: 1, creatorCalls: 0, descriptorDelta: 0 },
+      );
+      assert.ok(Number(observed.admissionCalls) >= 1, "publisher performs at least one writer-bound admission before its post-visible fence");
+      assert.equal(observed.sameContext, true, "publisher C durability and Z validation share the same pinned context");
+      assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, "P5c-Z publisher");
+    } finally {
+      removeFixture(root);
+    }
+  });
 
   for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
     it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {

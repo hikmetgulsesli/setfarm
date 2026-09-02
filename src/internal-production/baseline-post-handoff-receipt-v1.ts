@@ -1176,6 +1176,7 @@ async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryS
       );
       if (edge !== null || edgeAfterOperationReopen !== null) {
         const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+        let successorSelection: ExactPoisonPostVisibleZeroProgressSelectionV1;
         try {
           if (
             operation.locator !== context.operation.target
@@ -1185,11 +1186,12 @@ async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryS
           context.assertStable();
           await durablyAuthenticateSuccessorActivationCommitV1(context);
           context.assertStable();
-          await revalidatePostVisibleCurrentEntryStoreV1(context);
-          currentEntryFail("post-visible current-entry validation returned without selecting a store");
+          const selection = await revalidatePostVisibleCurrentEntryStoreV1(context);
+          successorSelection = selection;
         } finally {
           context.close();
         }
+        return mintSelectedCurrentEntryStoreContextV1(successorSelection);
       }
       state = Object.freeze({
         storeRoot,
@@ -1198,7 +1200,13 @@ async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryS
       });
     }
   }
-  return createSelectedCurrentEntryStoreContextV1(state);
+  return mintSelectedCurrentEntryStoreContextV1(state);
+
+  function mintSelectedCurrentEntryStoreContextV1(
+    selection: Parameters<typeof createSelectedCurrentEntryStoreContextV1>[0],
+  ): SelectedCurrentEntryStoreContextV1 {
+    return createSelectedCurrentEntryStoreContextV1(selection);
+  }
 }
 
 type CurrentAuthorityAuditV1 = Readonly<Record<string, unknown>>;
@@ -1376,6 +1384,13 @@ type ExactPoisonRecoveryPinnedSealChainV1 = Readonly<{
 }>;
 
 type ExactPoisonRecoveryPinnedCommitChainV1 = Readonly<ExactPoisonRecoveryPinnedSealChainV1 & {
+  dispositionValue: CurrentEntryStoreQuarantineDispositionV1;
+  zeroEffectProof: CurrentEntryStoreZeroEffectProofV1;
+  successorGenesis: CurrentEntryStoreSuccessorGenesisV1;
+  successorAuthorityV31: ExactPoisonRecoveryPinnedRecordV1;
+  successorPending: ExactPoisonRecoveryPinnedRecordV1;
+  successorOperationRecord: ExactPoisonRecoveryPinnedRecordV1;
+  successorRootParent: ExactPoisonRecoveryPinnedParentV1;
   commit: ExactPoisonRecoveryPinnedRecordV1;
   commitParent: ExactPoisonRecoveryPinnedParentV1;
 }>;
@@ -3155,6 +3170,9 @@ function assertExactPoisonRecoverySnapshotStableV1(snapshot: FileSnapshot, label
 
 type ExactPoisonRecoveryReadChainV1 = Readonly<{
   snapshots: readonly FileSnapshot[];
+  dispositionValue: CurrentEntryStoreQuarantineDispositionV1;
+  zeroEffectProof: CurrentEntryStoreZeroEffectProofV1;
+  successorGenesis: CurrentEntryStoreSuccessorGenesisV1;
   successorRoot: string;
   successorOperationPair: CurrentEntryStoreRecordPairV1;
   successorOperation: InternalProductionCurrentEntryOperationV1;
@@ -3327,6 +3345,9 @@ async function readExactPoisonRecoveryChainV1(
     for (const [index, snapshot] of snapshots.entries()) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison recovery member ${index}`);
     return Object.freeze({
       snapshots: Object.freeze(snapshots),
+      dispositionValue: disposition,
+      zeroEffectProof: disposition.zeroEffectProof,
+      successorGenesis: disposition.successorGenesis,
       successorRoot: path.join(exactPoisonQuarantinedStoreLocatorV1(), edge.successorStoreRelativeRoot),
       successorOperationPair: edge.successorOperation,
       successorOperation,
@@ -3454,6 +3475,44 @@ type ExactPoisonRecoveryCandidateV1 = Readonly<{
   bytes: Buffer;
 }>;
 
+type CompleteZeroEffectBracketHashInputV1 = readonly [
+  Readonly<{ observation: "controller-source-a"; value: unknown }>,
+  Readonly<{ observation: "product-build-authority-a"; value: unknown }>,
+  Readonly<{ observation: "authority-v3-migration31-audit-a"; value: unknown }>,
+  Readonly<{ observation: "pending-bootstrap-handoff-migration-a"; value: unknown }>,
+  Readonly<{ observation: "service-a"; value: unknown }>,
+  Readonly<{ observation: "physical-a"; value: unknown }>,
+  Readonly<{ observation: "database-owner-migration-manifest"; value: unknown }>,
+  Readonly<{ observation: "downstream-absence"; value: unknown }>,
+  Readonly<{ observation: "service-b"; value: unknown }>,
+  Readonly<{ observation: "physical-b"; value: unknown }>,
+  Readonly<{ observation: "controller-source-b"; value: unknown }>,
+  Readonly<{ observation: "product-build-authority-b"; value: unknown }>,
+  Readonly<{ observation: "authority-v3-migration31-audit-b"; value: unknown }>,
+  Readonly<{ observation: "pending-bootstrap-handoff-migration-b"; value: unknown }>,
+];
+
+type ExactPoisonRecoveryNoWriteFenceV1 = Readonly<{
+  completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1;
+  completeZeroEffectBracketHash: Sha256V1;
+  candidates: readonly [
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+  ];
+}>;
+
+type ExactPoisonRecoveryInventoryEvidenceV1 = Readonly<{
+  inventoryBody: Record<string, unknown>;
+  inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
+  predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
+  assertStableOriginals: () => void;
+}>;
+
 type ExactPoisonRecoveryPublicationPhaseV1 =
   | "disposition"
   | "successor-authority-v31"
@@ -3474,15 +3533,7 @@ const EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1 = Object.freeze([
 ] as const);
 
 type ExactPoisonQuarantineAdmissionV1 = Readonly<{
-  candidates: readonly [
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-    ExactPoisonRecoveryCandidateV1,
-  ];
+  candidates: ExactPoisonRecoveryNoWriteFenceV1["candidates"];
   assertStableOriginals: () => void;
 }>;
 
@@ -3842,12 +3893,7 @@ function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
   expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
-): Readonly<{
-  inventoryBody: Record<string, unknown>;
-  inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
-  predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
-  assertStableOriginals: () => void;
-}> {
+): ExactPoisonRecoveryInventoryEvidenceV1 {
   heldWriter.assertStable();
   const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
   const root = fixedLegacyCurrentEntryRootV1();
@@ -4053,21 +4099,19 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   return recursivelyFreeze({ ...body, observationRef: `${LEGACY_ZERO_PREFIX_V1}${observationHash}`, observationHash });
 }
 
-async function observeExactPoisonQuarantineAdmissionV1(
+async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   operation: FileSnapshot,
-  heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
-): Promise<ExactPoisonQuarantineAdmissionV1> {
-  heldWriter.assertStable();
+  inventory: ExactPoisonRecoveryInventoryEvidenceV1,
+): Promise<ExactPoisonRecoveryNoWriteFenceV1> {
   const predecessorPair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
   if (
     predecessorPair.operationRef !== EXACT_POISON_OPERATION_REF_V1
     || predecessorPair.operationHash !== EXACT_POISON_OPERATION_HASH_V1
     || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
   ) currentEntryFail("exact-poison publisher operation is crossed");
+  inventory.assertStableOriginals();
   const operationValue = strictCanonicalRecord(operation.observed.bytes, "exact-poison publisher operation");
   const contaminationFingerprint = exactPoisonContaminationFingerprintV1(operation);
-  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
   const unavailableSyntheticGitObjects = observeExactPoisonSyntheticGitObjectAbsenceV1();
   if (canonicalComparable(unavailableSyntheticGitObjects) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)) {
     currentEntryFail("exact-poison synthetic Git absence tuple is crossed");
@@ -4133,7 +4177,7 @@ async function observeExactPoisonQuarantineAdmissionV1(
     phaseA,
     physicalA,
   );
-  const completeZeroEffectBracket = recursivelyFreeze([
+  const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze([
     { observation: "controller-source-a", value: sourceA },
     { observation: "product-build-authority-a", value: pbaA },
     { observation: "authority-v3-migration31-audit-a", value: prerequisitesA.authorityV3Migration31Audit.value },
@@ -4246,22 +4290,39 @@ async function observeExactPoisonQuarantineAdmissionV1(
     Object.freeze({ target: exactPoisonSuccessorActivationSealPathV1(activationSealHash), bytes: task12ReceiptCanonicalBytesV1(seal) }),
     Object.freeze({ target: exactPoisonSuccessorActivationCommitPathV1(activationCommitHash), bytes: task12ReceiptCanonicalBytesV1(commit) }),
   ] as const);
-  assertExactPoisonRecoveryFrontierV1(candidates, heldWriter);
   inventory.assertStableOriginals();
   return Object.freeze({
+    completeZeroEffectBracket,
+    completeZeroEffectBracketHash,
     candidates,
+  });
+}
+
+async function observeExactPoisonQuarantineAdmissionV1(
+  operation: FileSnapshot,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+): Promise<ExactPoisonQuarantineAdmissionV1> {
+  heldWriter.assertStable();
+  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
+  const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory);
+  assertExactPoisonRecoveryFrontierV1(observed.candidates, heldWriter);
+  inventory.assertStableOriginals();
+  heldWriter.assertStable();
+  return Object.freeze({
+    candidates: observed.candidates,
     assertStableOriginals: inventory.assertStableOriginals,
   });
 }
 
 function assertExactPoisonQuarantineAdmissionCandidatesEqualV1(
-  observed: ExactPoisonQuarantineAdmissionV1,
-  admitted: ExactPoisonQuarantineAdmissionV1,
+  observed: ExactPoisonRecoveryNoWriteFenceV1["candidates"],
+  expected: ExactPoisonRecoveryNoWriteFenceV1["candidates"],
 ): void {
-  if (observed.candidates.length !== admitted.candidates.length) currentEntryFail("exact-poison recovery candidate count drifted");
-  for (const [index, candidate] of observed.candidates.entries()) {
-    const expected = admitted.candidates[index]!;
-    if (candidate.target !== expected.target || !candidate.bytes.equals(expected.bytes)) {
+  if (observed.length !== expected.length) currentEntryFail("exact-poison recovery candidate count drifted");
+  for (const [index, candidate] of observed.entries()) {
+    const expectedCandidate = expected[index]!;
+    if (candidate.target !== expectedCandidate.target || !candidate.bytes.equals(expectedCandidate.bytes)) {
       currentEntryFail(`exact-poison recovery candidate ${index} drifted`);
     }
   }
@@ -4503,6 +4564,9 @@ async function openExactPoisonRecoveryPinnedChainV1(
         currentEntryFail(`exact-poison pinned chain member ${index} changed during construction`);
       }
     }
+    const successorRoot = exactPoisonSuccessorStoreRootV1(parsed.successorGenesis.successorStoreHash);
+    const successorRootParent = openExactPoisonRecoveryPinnedParentV1(successorRoot);
+    parents.set(successorRoot, successorRootParent);
     for (const target of [path.dirname(parsed.sealTarget), ...(parsed.commitTarget === null ? [] : [path.dirname(parsed.commitTarget)])]) {
       if (!parents.has(target)) parents.set(target, openExactPoisonRecoveryPinnedParentV1(target));
     }
@@ -4559,6 +4623,13 @@ async function openExactPoisonRecoveryPinnedChainV1(
       ? Object.freeze(base)
       : Object.freeze({
         ...base,
+        dispositionValue: parsed.dispositionValue,
+        zeroEffectProof: parsed.zeroEffectProof,
+        successorGenesis: parsed.successorGenesis,
+        successorAuthorityV31: records[4]!,
+        successorPending: records[5]!,
+        successorOperationRecord: records[3]!,
+        successorRootParent: successorRootParent.pin,
         commit: records.find((record) => record.target === parsed.commitTarget)!,
         commitParent: parents.get(path.dirname(parsed.commitTarget))!.pin,
       });
@@ -4580,6 +4651,33 @@ async function openExactPoisonRecoveryPinnedSealChainV1(): Promise<ExactPoisonRe
 
 async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoisonRecoveryPinnedCommitChainV1> {
   return openExactPoisonRecoveryPinnedChainV1(true);
+}
+
+async function observeExactPoisonRecoveryPostVisibleZeroFenceV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<void> {
+  const originals = openExactPoisonRecoveryPostVisibleOriginalsV1(context);
+  try {
+    const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1(context.operation);
+    const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, originals.evidence);
+    const expectedCandidates = Object.freeze([
+      Object.freeze({ phase: "disposition" as const, target: context.disposition.target, bytes: context.disposition.bytes }),
+      Object.freeze({ phase: "successor-authority-v31" as const, target: context.successorAuthorityV31.target, bytes: context.successorAuthorityV31.bytes }),
+      Object.freeze({ phase: "successor-pending" as const, target: context.successorPending.target, bytes: context.successorPending.bytes }),
+      Object.freeze({ phase: "successor-operation" as const, target: context.successorOperationRecord.target, bytes: context.successorOperationRecord.bytes }),
+      Object.freeze({ phase: "successor-edge" as const, target: context.edge.target, bytes: context.edge.bytes }),
+      Object.freeze({ phase: "successor-activation-seal" as const, target: context.seal.target, bytes: context.seal.bytes }),
+      Object.freeze({ phase: "successor-activation-commit" as const, target: context.commit.target, bytes: context.commit.bytes }),
+    ] as const);
+    assertExactPoisonQuarantineAdmissionCandidatesEqualV1(observed.candidates, expectedCandidates);
+    if (observed.completeZeroEffectBracketHash !== context.zeroEffectProof.completeZeroEffectBracketHash) {
+      currentEntryFail("post-visible complete zero-effect bracket hash drifted");
+    }
+    context.assertStable();
+    originals.evidence.assertStableOriginals();
+  } finally {
+    originals.close();
+  }
 }
 
 async function durablyAuthenticateSuccessorActivationSealV1(
@@ -4625,13 +4723,6 @@ async function durablyAuthenticateSuccessorActivationCommitV1(
   context.assertStable();
 }
 
-async function revalidatePostVisibleCurrentEntryStoreV1(
-  context: ExactPoisonRecoveryPinnedCommitChainV1,
-): Promise<void> {
-  context.assertStable();
-  currentEntryFail("post-visible current-entry validation is unavailable");
-}
-
 function exactPoisonRecoveryDurabilityFaultV1(
   kind: "seal" | "commit",
   boundary: "pre-fsync" | "post-fsync" | "post-reopen",
@@ -4639,6 +4730,251 @@ function exactPoisonRecoveryDurabilityFaultV1(
   // Intentionally inert in production; copied-module tests replace only this body.
   void kind;
   void boundary;
+}
+
+async function revalidatePostVisibleCurrentEntryStoreV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {
+  context.assertStable();
+  context.successorRootParent.assertStable();
+  const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1(context);
+  assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context);
+  context.assertStable();
+  context.successorRootParent.assertStable();
+  await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context);
+  context.assertStable();
+  context.successorRootParent.assertStable();
+  assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity);
+  assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context);
+  context.assertStable();
+  context.successorRootParent.assertStable();
+  assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity);
+  return Object.freeze({
+    storeRoot: context.successorRoot,
+    operation: Object.freeze({
+      operationRef: context.successorOperation.operationRef,
+      operationHash: context.successorOperation.operationHash
+    }),
+    selectionKind: "successor-zero-progress",
+  });
+}
+
+type ExactPoisonPostVisibleZeroProgressSelectionV1 = Readonly<{
+  storeRoot: string;
+  operation: InternalProductionCurrentEntryOperationPairV1;
+  selectionKind: "successor-zero-progress";
+}>;
+
+type ExactPoisonRecoveryPostVisibleOriginalsV1 = Readonly<{
+  evidence: ExactPoisonRecoveryInventoryEvidenceV1;
+  close: () => void;
+}>;
+
+function exactPoisonRecoveryPinnedRecordFileSnapshotV1(
+  record: ExactPoisonRecoveryPinnedRecordV1,
+): FileSnapshot {
+  return Object.freeze({
+    locator: record.target,
+    observed: Object.freeze({
+      bytes: record.bytes,
+      mode: Number(record.identity.mode & 0o7777n),
+      stats: record.identity,
+    }),
+  });
+}
+
+function openExactPoisonRecoveryPostVisibleOriginalsV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): ExactPoisonRecoveryPostVisibleOriginalsV1 {
+  const quarantinedInventory = context.dispositionValue.value.quarantinedInventory;
+  const predecessorFileIdentities = context.zeroEffectProof.value.predecessorFileIdentities;
+  if (
+    !isPlainRecord(quarantinedInventory)
+    || !hasExactKeys(quarantinedInventory, ["inventoryBody", "inventoryHash"])
+    || !isPlainRecord(quarantinedInventory.inventoryBody)
+    || quarantinedInventory.inventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || hashCanonicalJson(quarantinedInventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || canonicalComparable(predecessorFileIdentities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)
+  ) currentEntryFail("post-visible original inventory evidence is crossed");
+  const inventoryBody = quarantinedInventory.inventoryBody;
+  const orderedDirectories = inventoryBody.orderedDirectories;
+  const orderedFiles = inventoryBody.orderedFiles;
+  if (
+    !Array.isArray(orderedDirectories)
+    || orderedDirectories.length !== 10
+    || !Array.isArray(orderedFiles)
+    || orderedFiles.length !== 5
+    || !Array.isArray(predecessorFileIdentities)
+    || predecessorFileIdentities.length !== 5
+  ) currentEntryFail("post-visible original inventory cardinality is crossed");
+
+  const root = fixedLegacyCurrentEntryRootV1();
+  const directoryPins: ExactPoisonRecoveryOwnedParentV1[] = [];
+  const filePins: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    for (let index = filePins.length - 1; index >= 0; index -= 1) closeSync(filePins[index]!.descriptor);
+    for (let index = directoryPins.length - 1; index >= 0; index -= 1) directoryPins[index]!.close();
+  };
+  try {
+    EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1.map((locator) => {
+      const index = EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1.indexOf(locator);
+      const expected = orderedDirectories[index];
+      if (!isPlainRecord(expected) || !hasExactKeys(expected, ["deviceDecimal", "inodeDecimal", "locator", "mode", "uidDecimal"])) {
+        currentEntryFail(`post-visible original directory ${index} evidence is invalid`);
+      }
+      const target = locator === "." ? root : path.join(root, locator);
+      const owned = openExactPoisonRecoveryPinnedParentV1(target);
+      directoryPins.push(owned);
+      const identity = owned.pin.identity;
+      if (
+        expected.locator !== locator
+        || expected.deviceDecimal !== identity.dev.toString(10)
+        || expected.inodeDecimal !== identity.ino.toString(10)
+        || expected.mode !== `0${(identity.mode & 0o7777n).toString(8)}`
+        || expected.uidDecimal !== identity.uid.toString(10)
+      ) currentEntryFail(`post-visible original directory ${locator} is crossed`);
+      return owned;
+    });
+    EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1.map((locator) => {
+      const index = EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1.indexOf(locator);
+      const expected = orderedFiles[index];
+      const expectedIdentity = predecessorFileIdentities[index];
+      if (
+        !isPlainRecord(expected)
+        || !hasExactKeys(expected, ["byteLength", "bytesSha256", "linkCount", "locator", "mode"])
+        || !isPlainRecord(expectedIdentity)
+        || !hasExactKeys(expectedIdentity, ["locator", "uidDecimal", "deviceDecimal", "inodeDecimal"])
+      ) currentEntryFail(`post-visible original file ${index} evidence is invalid`);
+      const record = openExactPoisonRecoveryPinnedRecordV1(path.join(root, locator), `post-visible original file ${locator}`);
+      filePins.push(record);
+      if (
+        expected.locator !== locator
+        || expected.byteLength !== record.bytes.length
+        || expected.bytesSha256 !== sha256(record.bytes)
+        || expected.linkCount !== Number(record.identity.nlink)
+        || expected.mode !== `0${(record.identity.mode & 0o7777n).toString(8)}`
+        || expectedIdentity.locator !== locator
+        || expectedIdentity.uidDecimal !== record.identity.uid.toString(10)
+        || expectedIdentity.deviceDecimal !== record.identity.dev.toString(10)
+        || expectedIdentity.inodeDecimal !== record.identity.ino.toString(10)
+      ) currentEntryFail(`post-visible original file ${locator} is crossed`);
+      return record;
+    });
+    if (directoryPins.length !== 10 || filePins.length !== 5) currentEntryFail("post-visible original pin count is crossed");
+    const assertStableOriginals = (): void => {
+      if (closed) currentEntryFail("post-visible original pins are closed");
+      context.assertStable();
+      for (const directory of directoryPins) directory.pin.assertStable();
+      for (const [index, record] of filePins.entries()) {
+        assertExactPoisonRecoveryPinnedRecordStableV1(record, `post-visible original file ${index}`);
+      }
+      for (const directory of directoryPins) directory.pin.assertStable();
+      context.assertStable();
+    };
+    assertStableOriginals();
+    return Object.freeze({
+      evidence: Object.freeze({
+        inventoryBody,
+        inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+        predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+        assertStableOriginals,
+      }),
+      close,
+    });
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
+type ExactPoisonPostVisibleSuccessorRootIdentityV1 = Readonly<{
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  uid: bigint;
+  nlink: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}>;
+
+function exactPoisonPostVisibleSuccessorRootIdentityV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): ExactPoisonPostVisibleSuccessorRootIdentityV1 {
+  context.successorRootParent.assertStable();
+  const before = fstatSync(context.successorRootParent.descriptor, { bigint: true });
+  const atPath = lstatSync(context.successorRoot, { bigint: true });
+  if (
+    !before.isDirectory()
+    || !atPath.isDirectory()
+    || atPath.isSymbolicLink()
+    || !sameRegularMetadata(before, atPath)
+    || (before.mode & 0o7777n) !== 0o700n
+  ) currentEntryFail("post-visible successor root identity is crossed");
+  context.successorRootParent.assertStable();
+  const after = fstatSync(context.successorRootParent.descriptor, { bigint: true });
+  const reopened = lstatSync(context.successorRoot, { bigint: true });
+  if (
+    !after.isDirectory()
+    || !reopened.isDirectory()
+    || reopened.isSymbolicLink()
+    || !sameRegularMetadata(before, after)
+    || !sameRegularMetadata(before, reopened)
+  ) currentEntryFail("post-visible successor root identity moved while observed");
+  return Object.freeze({
+    dev: after.dev,
+    ino: after.ino,
+    mode: after.mode,
+    uid: after.uid,
+    nlink: after.nlink,
+    size: after.size,
+    mtimeNs: after.mtimeNs,
+    ctimeNs: after.ctimeNs,
+  });
+}
+
+function assertExactPoisonPostVisibleSuccessorRootIdentityV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+  expected: ExactPoisonPostVisibleSuccessorRootIdentityV1,
+): void {
+  const observed = exactPoisonPostVisibleSuccessorRootIdentityV1(context);
+  if (
+    observed.dev !== expected.dev
+    || observed.ino !== expected.ino
+    || observed.mode !== expected.mode
+    || observed.uid !== expected.uid
+    || observed.nlink !== expected.nlink
+    || observed.size !== expected.size
+    || observed.mtimeNs !== expected.mtimeNs
+    || observed.ctimeNs !== expected.ctimeNs
+  ) currentEntryFail("post-visible successor root metadata drifted");
+}
+
+function assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): void {
+  const operationsPath = path.join(context.successorRoot, "operations");
+  if (path.dirname(operationsPath) !== context.successorRoot || path.relative(context.successorRoot, operationsPath) !== "operations") {
+    currentEntryFail("post-visible operations prefix escaped the successor root");
+  }
+  context.successorRootParent.assertStable();
+  try {
+    lstatSync(operationsPath, { bigint: true });
+    currentEntryFail("post-visible operations prefix is visible");
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  context.successorRootParent.assertStable();
+  try {
+    lstatSync(operationsPath, { bigint: true });
+    currentEntryFail("post-visible operations prefix appeared while observed");
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  context.successorRootParent.assertStable();
 }
 
 function assertExactPoisonRecoveryFrontierV1(
@@ -4876,7 +5212,7 @@ async function assertExactPoisonRecoveryPublicationFenceV1(
   heldWriter: ExactPoisonRecoveryWriterV1,
 ): Promise<void> {
   const observed = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
-  assertExactPoisonQuarantineAdmissionCandidatesEqualV1(observed, admitted);
+  assertExactPoisonQuarantineAdmissionCandidatesEqualV1(observed.candidates, admitted.candidates);
   heldWriter.assertStable();
   observed.assertStableOriginals();
 }
@@ -5058,8 +5394,13 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
         const context = await openExactPoisonRecoveryPinnedCommitChainV1();
         try {
           heldWriter.assertStable();
+          context.assertStable();
           await durablyAuthenticateSuccessorActivationCommitV1(context);
           heldWriter.assertStable();
+          context.assertStable();
+          await revalidatePostVisibleCurrentEntryStoreV1(context);
+          heldWriter.assertStable();
+          context.assertStable();
         } finally { context.close(); }
       }
     }
