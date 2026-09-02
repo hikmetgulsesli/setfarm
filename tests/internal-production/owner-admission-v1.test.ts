@@ -1111,8 +1111,15 @@ const P3_RECEIPT_WORKSPACE_PROJECTION_V1 =
 
 function restoreP3NestedRunnerReceiptSourceV1(root: string): void {
   const projectionRoot = realpathSync(process.cwd());
+  const markerPath = path.join(projectionRoot, ".setfarm-p3-projection-marker.json");
+  if (!existsSync(markerPath)) {
+    const clonedSource = readFileSync(path.join(root, P3_RECEIPT_SOURCE_LOCATOR_V1), "utf8");
+    assert.equal(clonedSource.split(P3_RECEIPT_WORKSPACE_SOURCE_V1).length, 2);
+    assert.equal(clonedSource.includes(P3_RECEIPT_WORKSPACE_PROJECTION_V1), false);
+    return;
+  }
   const marker = JSON.parse(
-    readFileSync(path.join(projectionRoot, ".setfarm-p3-projection-marker.json"), "utf8"),
+    readFileSync(markerPath, "utf8"),
   ) as Record<string, unknown>;
   assert.equal(marker.schema, "setfarm.p3-isolated-projection-marker.v1");
   assert.equal(marker.projectionRoot, projectionRoot);
