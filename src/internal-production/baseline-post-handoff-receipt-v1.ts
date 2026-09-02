@@ -1195,6 +1195,60 @@ const CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1 = Object.freeze([
   "task12-p0-delivery-authorities",
 ] as const);
 
+type ExactPoisonOperationPairV1 = Readonly<{
+  operationRef: typeof EXACT_POISON_OPERATION_REF_V1;
+  operationHash: typeof EXACT_POISON_OPERATION_HASH_V1;
+}>;
+
+type CurrentEntryStoreRecordPairV1 = Readonly<{
+  ref: string;
+  hash: Sha256V1;
+}>;
+
+type CurrentEntryStoreSuccessorGenesisEntryV1 = Readonly<{
+  locator: string;
+  mode: "0600";
+  byteLength: number;
+  bytesSha256: Sha256V1;
+}>;
+
+type CurrentEntryStoreZeroEffectProofV1 = Readonly<{
+  value: Record<string, unknown>;
+  pair: CurrentEntryStoreRecordPairV1;
+  completeZeroEffectBracketHash: Sha256V1;
+  successorOperation: Record<string, unknown>;
+}>;
+
+type CurrentEntryStoreSuccessorGenesisV1 = Readonly<{
+  value: Record<string, unknown>;
+  successorStoreHash: Sha256V1;
+  orderedEntries: readonly [
+    CurrentEntryStoreSuccessorGenesisEntryV1,
+    CurrentEntryStoreSuccessorGenesisEntryV1,
+    CurrentEntryStoreSuccessorGenesisEntryV1,
+  ];
+}>;
+
+type CurrentEntryStoreQuarantineDispositionV1 = Readonly<{
+  value: Record<string, unknown>;
+  pair: CurrentEntryStoreRecordPairV1;
+  zeroEffectProof: CurrentEntryStoreZeroEffectProofV1;
+  successorGenesis: CurrentEntryStoreSuccessorGenesisV1;
+}>;
+
+type CurrentEntryStoreSuccessorEdgeV1 = Readonly<{
+  value: Record<string, unknown>;
+  pair: CurrentEntryStoreRecordPairV1;
+  disposition: CurrentEntryStoreRecordPairV1;
+  successorStoreHash: Sha256V1;
+  successorStoreRelativeRoot: string;
+  successorOperation: CurrentEntryStoreRecordPairV1;
+}>;
+
+type ExactPoisonRecoveryChainInspectionV1 = Readonly<{
+  state: "complete" | "dispatch";
+}>;
+
 function currentEntryFail(message: string): never {
   throw new Error(`INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:${message}`);
 }
@@ -2286,6 +2340,531 @@ function parsePreselectionCurrentEntryOperationV1(bytes: Buffer): Readonly<{
   return Object.freeze({ operationRef, operationHash });
 }
 
+const CURRENT_ENTRY_STORE_ZERO_EFFECT_PROOF_PREFIX_V1 = "setfarm://internal-production/current-entry-store-zero-effect-proof/sha256/";
+const CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1 = "setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/";
+const CURRENT_ENTRY_STORE_SUCCESSOR_EDGE_PREFIX_V1 = "setfarm://internal-production/current-entry-store-successor-edge/sha256/";
+const CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_SEAL_PREFIX_V1 = "setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/";
+const CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_COMMIT_PREFIX_V1 = "setfarm://internal-production/current-entry-store-successor-activation-commit/sha256/";
+
+const EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1 = Object.freeze([
+  Object.freeze({ locator: "current-entry-operation.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141401" }),
+  Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141143" }),
+  Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136356" }),
+  Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/6e/6e3c6e68f5888b1092a89f6b48a990ff83a88ebdfd7be9c8c51f721a29f09741.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141205" }),
+  Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136424" }),
+] as const);
+
+const EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1 = Object.freeze([
+  Object.freeze({ repository: "setfarm", objectSha: "4fc67f20df0e935c703c4658a29dbbaa9aa0a956", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
+  Object.freeze({ repository: "mission-control", objectSha: "4ec5fc99a076453a87381c0c75e508d25dd8882d", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
+] as const);
+
+function exactPoisonOperationPairV1(): ExactPoisonOperationPairV1 {
+  return Object.freeze({
+    operationRef: EXACT_POISON_OPERATION_REF_V1,
+    operationHash: EXACT_POISON_OPERATION_HASH_V1,
+  });
+}
+
+function requireCurrentEntryStorePairV1(
+  value: unknown,
+  refKey: string,
+  hashKey: string,
+  prefix: string,
+): CurrentEntryStoreRecordPairV1 {
+  const pair = requirePair(value, refKey, hashKey, prefix);
+  return Object.freeze({ ref: pair[refKey]!, hash: pair[hashKey]! as Sha256V1 });
+}
+
+function requireCurrentEntryStorePairFromRecordV1(
+  value: unknown,
+  refKey: string,
+  hashKey: string,
+  prefix: string,
+): CurrentEntryStoreRecordPairV1 {
+  if (!isPlainRecord(value)) currentEntryFail(`${refKey} containing record is invalid`);
+  return requireCurrentEntryStorePairV1({ [refKey]: value[refKey], [hashKey]: value[hashKey] }, refKey, hashKey, prefix);
+}
+
+function assertCurrentEntryStorePairEqualV1(
+  observed: CurrentEntryStoreRecordPairV1,
+  expected: CurrentEntryStoreRecordPairV1,
+  label: string,
+): void {
+  if (observed.ref !== expected.ref || observed.hash !== expected.hash) currentEntryFail(`${label} pair is crossed`);
+}
+
+function requireExactPoisonPredecessorV1(value: unknown, label: string): ExactPoisonOperationPairV1 {
+  const pair = requireCurrentEntryStorePairV1(
+    value,
+    "operationRef",
+    "operationHash",
+    "setfarm://internal-production/current-entry-operation/sha256/",
+  );
+  if (pair.ref !== EXACT_POISON_OPERATION_REF_V1 || pair.hash !== EXACT_POISON_OPERATION_HASH_V1) {
+    currentEntryFail(`${label} predecessor is crossed`);
+  }
+  return exactPoisonOperationPairV1();
+}
+
+function parseCurrentEntryStoreHashedWrapperV1(
+  bytes: Buffer,
+  label: string,
+  coreKeys: readonly string[],
+  refKey: string,
+  hashKey: string,
+  prefix: string,
+  expectedHash?: Sha256V1,
+): Readonly<{ value: Record<string, unknown>; core: Record<string, unknown>; pair: CurrentEntryStoreRecordPairV1 }> {
+  const value = strictCanonicalRecord(bytes, label);
+  if (!hasExactKeys(value, [...coreKeys, refKey, hashKey])) currentEntryFail(`${label} fields are invalid`);
+  const core = { ...value };
+  delete core[refKey];
+  delete core[hashKey];
+  const pair = requireCurrentEntryStorePairV1(
+    { [refKey]: value[refKey], [hashKey]: value[hashKey] },
+    refKey,
+    hashKey,
+    prefix,
+  );
+  if (hashCanonicalJson(core) !== pair.hash || (expectedHash !== undefined && pair.hash !== expectedHash)) {
+    currentEntryFail(`${label} hash is crossed`);
+  }
+  return Object.freeze({ value, core, pair });
+}
+
+function exactPoisonQuarantineDispositionPathV1(hash: string): string {
+  const exactHash = requireSha256(hash, "exact-poison quarantine disposition hash");
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    "current-entry-store-quarantine-dispositions",
+    "sha256",
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
+  );
+}
+
+function exactPoisonSuccessorStoreRootV1(hash: string): string {
+  const exactHash = requireSha256(hash, "exact-poison successor store hash");
+  return path.join(fixedLegacyCurrentEntryRootV1(), "stores", "sha256", exactHash.slice(0, 2), exactHash);
+}
+
+function exactPoisonSuccessorActivationSealPathV1(hash: string): string {
+  const exactHash = requireSha256(hash, "exact-poison successor activation seal hash");
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    "current-entry-store-successor-activation-seals",
+    "sha256",
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
+  );
+}
+
+function exactPoisonSuccessorActivationCommitPathV1(hash: string): string {
+  const exactHash = requireSha256(hash, "exact-poison successor activation commit hash");
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    "current-entry-store-successor-activation-commits",
+    "sha256",
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
+  );
+}
+
+async function parseCurrentEntryStoreSuccessorOperationV1(
+  bytes: Buffer,
+  expected: CurrentEntryStoreRecordPairV1,
+): Promise<Record<string, unknown>> {
+  const pair = parsePreselectionCurrentEntryOperationV1(bytes);
+  if (pair.operationRef !== expected.ref || pair.operationHash !== expected.hash) currentEntryFail("successor operation pair is crossed");
+  const value = strictCanonicalRecord(bytes, "successor current-entry operation");
+  const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{
+    parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (input: unknown) => Readonly<Record<string, unknown>>;
+  }>;
+  if (typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("successor PBA parser is unavailable");
+  const observation = value.productBuildAuthorityV2Observation;
+  if (!isPlainRecord(observation)) currentEntryFail("successor PBA observation is invalid");
+  const parsedResponse = pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(observation.response);
+  if (canonicalComparable(parsedResponse) !== canonicalComparable(observation.response)) currentEntryFail("successor PBA response is crossed");
+  return recursivelyFreeze(value);
+}
+
+function parseCurrentEntryStoreLegacyZeroOwnerV1(
+  value: unknown,
+  successorSource: InternalProductionCleanSetfarmSourceBuildV1,
+  successorAuditPair: CurrentEntryStoreRecordPairV1,
+): void {
+  if (!isPlainRecord(value) || !hasExactKeys(value, [
+    "schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash",
+    "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash",
+    "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState",
+    "manifestActivationState", "observationRef", "observationHash",
+  ])) currentEntryFail("successor legacy zero-owner fields are invalid");
+  const core = { ...value };
+  delete core.observationRef;
+  delete core.observationHash;
+  const hash = requireSha256(value.observationHash, "successor legacy zero-owner hash");
+  if (value.observationRef !== `${LEGACY_ZERO_PREFIX_V1}${hash}` || hashCanonicalJson(core) !== hash) {
+    currentEntryFail("successor legacy zero-owner hash is crossed");
+  }
+  const census = value.census;
+  if (
+    value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1"
+    || value.observationKind !== "legacy-pre-manifest-existing-live-truth"
+    || value.allThirtySixScalarCountsZero !== true
+    || value.ownerReservationSidecarState !== "absent-before-migration-32"
+    || value.ownerAdmissionHeadState !== "absent-before-migration-32"
+    || value.manifestActivationState !== "absent-before-initial-a-activation"
+    || !isPlainRecord(census)
+    || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1)
+    || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)
+  ) currentEntryFail("successor legacy zero-owner body is invalid");
+  const auditPair = requireCurrentEntryStorePairV1(
+    { authorityV3Migration31AuditRef: value.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: value.authorityV3Migration31AuditHash },
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+  );
+  assertCurrentEntryStorePairEqualV1(auditPair, successorAuditPair, "successor legacy zero-owner audit");
+  if (
+    value.cleanSetfarmSourceSha !== successorSource.sha
+    || value.cleanSetfarmTreeHash !== successorSource.treeHash
+    || value.cleanSetfarmBuildHash !== successorSource.buildHash
+  ) currentEntryFail("successor legacy zero-owner source is crossed");
+  requireSha256(value.observedSpawnerGenerationHash, "successor legacy zero-owner spawner generation");
+}
+
+async function parseCurrentEntryStoreZeroEffectProofV1(value: unknown): Promise<CurrentEntryStoreZeroEffectProofV1> {
+  if (!isPlainRecord(value)) currentEntryFail("zero-effect proof is invalid");
+  const parsed = parseCurrentEntryStoreHashedWrapperV1(
+    Buffer.from(`${canonicalComparable(value)}\n`, "utf8"),
+    "zero-effect proof",
+    [
+      "schema", "predecessorOperation", "contaminationFingerprintHash", "quarantinedInventoryHash",
+      "completeZeroEffectBracketHash", "predecessorFileIdentities", "unavailableSyntheticGitObjects",
+      "successorOperation", "legacyPreManifestZeroOwner",
+    ],
+    "zeroEffectProofRef",
+    "zeroEffectProofHash",
+    CURRENT_ENTRY_STORE_ZERO_EFFECT_PROOF_PREFIX_V1,
+  );
+  if (parsed.value.schema !== "setfarm.internal-production-current-entry-store-zero-effect-proof.v1") currentEntryFail("zero-effect proof schema is invalid");
+  requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "zero-effect proof");
+  if (
+    parsed.value.contaminationFingerprintHash !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1
+    || parsed.value.quarantinedInventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || canonicalComparable(parsed.value.predecessorFileIdentities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)
+    || canonicalComparable(parsed.value.unavailableSyntheticGitObjects) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)
+  ) currentEntryFail("zero-effect proof exact poison evidence is crossed");
+  const completeZeroEffectBracketHash = requireSha256(parsed.value.completeZeroEffectBracketHash, "complete zero-effect bracket hash");
+  if (!isPlainRecord(parsed.value.successorOperation)) currentEntryFail("zero-effect proof successor operation is invalid");
+  const successorPair = requireCurrentEntryStorePairFromRecordV1(
+    parsed.value.successorOperation,
+    "operationRef",
+    "operationHash",
+    "setfarm://internal-production/current-entry-operation/sha256/",
+  );
+  const successorOperation = await parseCurrentEntryStoreSuccessorOperationV1(
+    Buffer.from(`${canonicalComparable(parsed.value.successorOperation)}\n`, "utf8"),
+    successorPair,
+  );
+  const successorSource = requireSource(successorOperation.controllerSource);
+  const successorPbaObservation = successorOperation.productBuildAuthorityV2Observation;
+  if (!isPlainRecord(successorPbaObservation) || !isPlainRecord(successorPbaObservation.response)) {
+    currentEntryFail("zero-effect proof successor PBA observation is invalid");
+  }
+  const successorPbaEvidence = successorPbaObservation.response.evidence;
+  if (!isPlainRecord(successorPbaEvidence)) currentEntryFail("zero-effect proof successor PBA evidence is invalid");
+  const successorPbaSource = requireSource(successorPbaEvidence.currentSource);
+  if (
+    successorPair.hash === EXACT_POISON_OPERATION_HASH_V1
+    || successorSource.sha === EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1[0].objectSha
+    || successorPbaSource.sha === EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1[1].objectSha
+  ) currentEntryFail("zero-effect proof successor source is not fresh");
+  const successorAuditPair = requireCurrentEntryStorePairV1(
+    successorOperation.authorityV3Migration31Audit,
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+  );
+  parseCurrentEntryStoreLegacyZeroOwnerV1(parsed.value.legacyPreManifestZeroOwner, successorSource, successorAuditPair);
+  return Object.freeze({
+    value: recursivelyFreeze(parsed.value),
+    pair: parsed.pair,
+    completeZeroEffectBracketHash,
+    successorOperation,
+  });
+}
+
+function parseCurrentEntryStoreGenesisEntryV1(value: unknown, label: string): CurrentEntryStoreSuccessorGenesisEntryV1 {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["locator", "mode", "byteLength", "bytesSha256"])) {
+    currentEntryFail(`${label} fields are invalid`);
+  }
+  if (typeof value.locator !== "string" || canonicalLocator(value.locator) !== value.locator || value.mode !== "0600" || !isNaturalNumber(value.byteLength)) {
+    currentEntryFail(`${label} body is invalid`);
+  }
+  return Object.freeze({
+    locator: value.locator,
+    mode: "0600",
+    byteLength: value.byteLength,
+    bytesSha256: requireSha256(value.bytesSha256, `${label} byte hash`),
+  });
+}
+
+function parseCurrentEntryStoreSuccessorGenesisV1(
+  value: unknown,
+  proof: CurrentEntryStoreZeroEffectProofV1,
+): CurrentEntryStoreSuccessorGenesisV1 {
+  if (!isPlainRecord(value) || !hasExactKeys(value, [
+    "schema", "predecessorOperation", "zeroEffectProof", "authorityV3Migration31Audit",
+    "pendingBootstrapHandoffMigration", "successorOperation", "orderedEntries", "successorStoreHash",
+  ])) currentEntryFail("successor genesis fields are invalid");
+  const core = { ...value };
+  delete core.successorStoreHash;
+  const successorStoreHash = requireSha256(value.successorStoreHash, "successor store hash");
+  if (value.schema !== "setfarm.internal-production-current-entry-store-successor-genesis.v1" || hashCanonicalJson(core) !== successorStoreHash) {
+    currentEntryFail("successor genesis hash is crossed");
+  }
+  requireExactPoisonPredecessorV1(value.predecessorOperation, "successor genesis");
+  const proofPair = requireCurrentEntryStorePairV1(value.zeroEffectProof, "zeroEffectProofRef", "zeroEffectProofHash", CURRENT_ENTRY_STORE_ZERO_EFFECT_PROOF_PREFIX_V1);
+  assertCurrentEntryStorePairEqualV1(proofPair, proof.pair, "successor genesis proof");
+  const proofOperationPair = requireCurrentEntryStorePairFromRecordV1(
+    proof.successorOperation,
+    "operationRef",
+    "operationHash",
+    "setfarm://internal-production/current-entry-operation/sha256/",
+  );
+  const operationPair = requireCurrentEntryStorePairV1(value.successorOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  assertCurrentEntryStorePairEqualV1(operationPair, proofOperationPair, "successor genesis operation");
+  const proofAuditPair = requireCurrentEntryStorePairV1(
+    proof.successorOperation.authorityV3Migration31Audit,
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+  );
+  const auditPair = requireCurrentEntryStorePairV1(value.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+  assertCurrentEntryStorePairEqualV1(auditPair, proofAuditPair, "successor genesis audit");
+  const proofPendingPair = requireCurrentEntryStorePairV1(
+    proof.successorOperation.pendingBootstrapHandoffMigration,
+    "pendingBootstrapHandoffMigrationRef",
+    "pendingBootstrapHandoffMigrationHash",
+    "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+  );
+  const pendingPair = requireCurrentEntryStorePairV1(value.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+  assertCurrentEntryStorePairEqualV1(pendingPair, proofPendingPair, "successor genesis pending migration");
+  if (!Array.isArray(value.orderedEntries) || value.orderedEntries.length !== 3) currentEntryFail("successor genesis ordered entries are invalid");
+  const orderedEntries = Object.freeze([
+    parseCurrentEntryStoreGenesisEntryV1(value.orderedEntries[0], "successor operation genesis entry"),
+    parseCurrentEntryStoreGenesisEntryV1(value.orderedEntries[1], "successor audit genesis entry"),
+    parseCurrentEntryStoreGenesisEntryV1(value.orderedEntries[2], "successor pending genesis entry"),
+  ] as const);
+  return Object.freeze({ value: recursivelyFreeze(value), successorStoreHash, orderedEntries });
+}
+
+async function parseCurrentEntryStoreQuarantineDispositionV1(
+  bytes: Buffer,
+  expected: CurrentEntryStoreRecordPairV1,
+): Promise<CurrentEntryStoreQuarantineDispositionV1> {
+  const parsed = parseCurrentEntryStoreHashedWrapperV1(
+    bytes,
+    "quarantine disposition",
+    ["schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory", "zeroEffectProof", "successorGenesis"],
+    "dispositionRef",
+    "dispositionHash",
+    CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1,
+    expected.hash,
+  );
+  assertCurrentEntryStorePairEqualV1(parsed.pair, expected, "quarantine disposition");
+  if (
+    parsed.value.schema !== "setfarm.internal-production-current-entry-store-quarantine-disposition.v1"
+    || parsed.value.reason !== "p3-projected-fixture-workspace-root-contamination-v1"
+  ) currentEntryFail("quarantine disposition discriminator is invalid");
+  requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "quarantine disposition");
+  const fingerprint = parsed.value.contaminationFingerprint;
+  if (
+    !isPlainRecord(fingerprint)
+    || !hasExactKeys(fingerprint, ["fingerprintBody", "fingerprintHash"])
+    || fingerprint.fingerprintHash !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1
+    || !isPlainRecord(fingerprint.fingerprintBody)
+    || hashCanonicalJson(fingerprint.fingerprintBody) !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1
+  ) currentEntryFail("quarantine contamination fingerprint is crossed");
+  const inventory = parsed.value.quarantinedInventory;
+  if (
+    !isPlainRecord(inventory)
+    || !hasExactKeys(inventory, ["inventoryBody", "inventoryHash"])
+    || inventory.inventoryHash !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+    || !isPlainRecord(inventory.inventoryBody)
+    || hashCanonicalJson(inventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
+  ) currentEntryFail("quarantined inventory is crossed");
+  const zeroEffectProof = await parseCurrentEntryStoreZeroEffectProofV1(parsed.value.zeroEffectProof);
+  const successorGenesis = parseCurrentEntryStoreSuccessorGenesisV1(parsed.value.successorGenesis, zeroEffectProof);
+  return Object.freeze({ value: recursivelyFreeze(parsed.value), pair: parsed.pair, zeroEffectProof, successorGenesis });
+}
+
+function parseCurrentEntryStoreSuccessorEdgeV1(bytes: Buffer): CurrentEntryStoreSuccessorEdgeV1 {
+  const parsed = parseCurrentEntryStoreHashedWrapperV1(
+    bytes,
+    "successor edge",
+    ["schema", "predecessorOperation", "disposition", "successorStoreHash", "successorStoreRelativeRoot", "successorOperation"],
+    "edgeRef",
+    "edgeHash",
+    CURRENT_ENTRY_STORE_SUCCESSOR_EDGE_PREFIX_V1,
+  );
+  if (parsed.value.schema !== "setfarm.internal-production-current-entry-store-successor-edge.v1") currentEntryFail("successor edge schema is invalid");
+  requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "successor edge");
+  const disposition = requireCurrentEntryStorePairV1(parsed.value.disposition, "dispositionRef", "dispositionHash", CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1);
+  const successorStoreHash = requireSha256(parsed.value.successorStoreHash, "successor edge store hash");
+  const successorStoreRelativeRoot = `stores/sha256/${successorStoreHash.slice(0, 2)}/${successorStoreHash}`;
+  if (parsed.value.successorStoreRelativeRoot !== successorStoreRelativeRoot) currentEntryFail("successor edge store root is crossed");
+  const successorOperation = requireCurrentEntryStorePairV1(parsed.value.successorOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  return Object.freeze({ value: recursivelyFreeze(parsed.value), pair: parsed.pair, disposition, successorStoreHash, successorStoreRelativeRoot, successorOperation });
+}
+
+function requireExactPoisonRecoverySnapshotV1(target: string, label: string): FileSnapshot {
+  const snapshot = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target, label);
+  if (snapshot === null) currentEntryFail(`${label} is absent`);
+  return snapshot;
+}
+
+function assertExactPoisonRecoverySnapshotStableV1(snapshot: FileSnapshot, label: string): void {
+  const reopened = requireExactPoisonRecoverySnapshotV1(snapshot.locator, label);
+  if (!sameRegularMetadata(snapshot.observed.stats, reopened.observed.stats) || !snapshot.observed.bytes.equals(reopened.observed.bytes)) {
+    currentEntryFail(`${label} changed across recovery-chain inspection`);
+  }
+}
+
+async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
+  operation: FileSnapshot,
+): Promise<ExactPoisonRecoveryChainInspectionV1> {
+  try {
+    const snapshots: FileSnapshot[] = [operation];
+    const edgeSnapshot = requireExactPoisonRecoverySnapshotV1(
+      fixedLegacyExactPoisonSuccessorEdgePathV1(),
+      "fixed legacy exact-poison successor edge",
+    );
+    snapshots.push(edgeSnapshot);
+    const edge = parseCurrentEntryStoreSuccessorEdgeV1(edgeSnapshot.observed.bytes);
+
+    const dispositionSnapshot = requireExactPoisonRecoverySnapshotV1(
+      exactPoisonQuarantineDispositionPathV1(edge.disposition.hash),
+      "exact-poison quarantine disposition",
+    );
+    snapshots.push(dispositionSnapshot);
+    const disposition = await parseCurrentEntryStoreQuarantineDispositionV1(dispositionSnapshot.observed.bytes, edge.disposition);
+    if (disposition.successorGenesis.successorStoreHash !== edge.successorStoreHash) currentEntryFail("successor edge genesis hash is crossed");
+    const proofOperationPair = requireCurrentEntryStorePairFromRecordV1(
+      disposition.zeroEffectProof.successorOperation,
+      "operationRef",
+      "operationHash",
+      "setfarm://internal-production/current-entry-operation/sha256/",
+    );
+    assertCurrentEntryStorePairEqualV1(proofOperationPair, edge.successorOperation, "successor edge operation");
+
+    const successorRoot = exactPoisonSuccessorStoreRootV1(edge.successorStoreHash);
+    if (path.relative(fixedLegacyCurrentEntryRootV1(), successorRoot).split(path.sep).join("/") !== edge.successorStoreRelativeRoot) {
+      currentEntryFail("successor root locator is crossed");
+    }
+    const successorAuditPair = requireCurrentEntryStorePairV1(
+      disposition.zeroEffectProof.successorOperation.authorityV3Migration31Audit,
+      "authorityV3Migration31AuditRef",
+      "authorityV3Migration31AuditHash",
+      "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+    );
+    const successorPendingPair = requireCurrentEntryStorePairV1(
+      disposition.zeroEffectProof.successorOperation.pendingBootstrapHandoffMigration,
+      "pendingBootstrapHandoffMigrationRef",
+      "pendingBootstrapHandoffMigrationHash",
+      "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+    );
+    const successorLocators = Object.freeze([
+      "current-entry-operation.json",
+      `records/authority-v3-migration31-audits/sha256/${successorAuditPair.hash.slice(0, 2)}/${successorAuditPair.hash}.json`,
+      `records/pending-bootstrap-handoff-migrations/sha256/${successorPendingPair.hash.slice(0, 2)}/${successorPendingPair.hash}.json`,
+    ] as const);
+    const successorSnapshots = successorLocators.map((locator, index) => {
+      const entry = disposition.successorGenesis.orderedEntries[index]!;
+      if (entry.locator !== locator || entry.mode !== "0600") currentEntryFail("successor genesis entry locator is crossed");
+      const snapshot = requireExactPoisonRecoverySnapshotV1(path.join(successorRoot, locator), `successor genesis member ${locator}`);
+      if (snapshot.observed.bytes.length !== entry.byteLength || sha256(snapshot.observed.bytes) !== entry.bytesSha256) {
+        currentEntryFail(`successor genesis member ${locator} bytes are crossed`);
+      }
+      snapshots.push(snapshot);
+      return snapshot;
+    });
+    const successorOperation = await parseCurrentEntryStoreSuccessorOperationV1(successorSnapshots[0]!.observed.bytes, edge.successorOperation);
+    if (canonicalComparable(successorOperation) !== canonicalComparable(disposition.zeroEffectProof.successorOperation)) {
+      currentEntryFail("successor operation differs from the zero-effect proof");
+    }
+    const auditBody = strictCanonicalRecord(successorSnapshots[1]!.observed.bytes, "successor authority-v31 audit");
+    const parsedAudit = await parseAuthorityV3Migration31AuditBody(auditBody, {
+      authorityV3Migration31AuditRef: successorAuditPair.ref,
+      authorityV3Migration31AuditHash: successorAuditPair.hash,
+    });
+    const pendingBody = strictCanonicalRecord(successorSnapshots[2]!.observed.bytes, "successor pending migration");
+    const parsedPending = parsePendingBootstrapHandoffMigrationBody(pendingBody, {
+      pendingBootstrapHandoffMigrationRef: successorPendingPair.ref,
+      pendingBootstrapHandoffMigrationHash: successorPendingPair.hash,
+    });
+    if (
+      canonicalComparable(parsedAudit.controllerSource) !== canonicalComparable(successorOperation.controllerSource)
+      || canonicalComparable(parsedPending.controllerSource) !== canonicalComparable(successorOperation.controllerSource)
+    ) currentEntryFail("successor prerequisite source is crossed");
+
+    const sealCore = Object.freeze({
+      schema: "setfarm.internal-production-current-entry-store-successor-activation-seal.v1",
+      predecessorOperation: exactPoisonOperationPairV1(),
+      successorEdge: Object.freeze({ edgeRef: edge.pair.ref, edgeHash: edge.pair.hash }),
+      completeZeroEffectBracketHash: disposition.zeroEffectProof.completeZeroEffectBracketHash,
+    });
+    const sealHash = requireSha256(hashCanonicalJson(sealCore), "derived successor activation seal hash");
+    const sealSnapshot = requireExactPoisonRecoverySnapshotV1(
+      exactPoisonSuccessorActivationSealPathV1(sealHash),
+      "successor activation seal",
+    );
+    snapshots.push(sealSnapshot);
+    const seal = parseCurrentEntryStoreHashedWrapperV1(
+      sealSnapshot.observed.bytes,
+      "successor activation seal",
+      ["schema", "predecessorOperation", "successorEdge", "completeZeroEffectBracketHash"],
+      "activationSealRef",
+      "activationSealHash",
+      CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_SEAL_PREFIX_V1,
+      sealHash,
+    );
+    if (canonicalComparable(seal.core) !== canonicalComparable(sealCore)) currentEntryFail("successor activation seal is crossed");
+
+    const commitCore = Object.freeze({
+      schema: "setfarm.internal-production-current-entry-store-successor-activation-commit.v1",
+      predecessorOperation: exactPoisonOperationPairV1(),
+      successorActivationSeal: Object.freeze({ activationSealRef: seal.pair.ref, activationSealHash: seal.pair.hash }),
+      postSealCompleteZeroEffectBracketHash: disposition.zeroEffectProof.completeZeroEffectBracketHash,
+    });
+    const commitHash = requireSha256(hashCanonicalJson(commitCore), "derived successor activation commit hash");
+    const commitSnapshot = requireExactPoisonRecoverySnapshotV1(
+      exactPoisonSuccessorActivationCommitPathV1(commitHash),
+      "successor activation commit",
+    );
+    snapshots.push(commitSnapshot);
+    const commit = parseCurrentEntryStoreHashedWrapperV1(
+      commitSnapshot.observed.bytes,
+      "successor activation commit",
+      ["schema", "predecessorOperation", "successorActivationSeal", "postSealCompleteZeroEffectBracketHash"],
+      "activationCommitRef",
+      "activationCommitHash",
+      CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_COMMIT_PREFIX_V1,
+      commitHash,
+    );
+    if (canonicalComparable(commit.core) !== canonicalComparable(commitCore)) currentEntryFail("successor activation commit is crossed");
+    for (const [index, snapshot] of snapshots.entries()) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison recovery member ${index}`);
+    return Object.freeze({ state: "complete" });
+  } catch {
+    return Object.freeze({ state: "dispatch" });
+  }
+}
+
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   currentEntryFail("exact-poison quarantine publisher is unavailable before the complete recovery slice");
 }
@@ -2302,15 +2881,10 @@ async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
     pair.operationRef !== EXACT_POISON_OPERATION_REF_V1
     || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
   ) currentEntryFail("fixed legacy exact-poison operation bytes are crossed");
-  const edge = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
-    fixedLegacyExactPoisonSuccessorEdgePathV1(),
-    "fixed legacy exact-poison successor edge",
-  );
-  if (edge === null) {
+  const chain = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
+  if (chain.state === "dispatch") {
     await resumeExactPoisonQuarantinePublisherCoreV1();
-    return;
   }
-  currentEntryFail("fixed legacy exact-poison successor edge requires the complete recovery selector");
 }
 
 export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {

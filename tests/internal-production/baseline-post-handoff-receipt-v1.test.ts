@@ -134,6 +134,208 @@ const EXACT_POISON_OPERATION_BYTES_BASE64_V1 = [
   "c2UiOiJ0YXNrNmEtaW50ZXJuYWwtcHJvZHVjdGlvbi1jdXJyZW50LWVudHJ5LXYxIiwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLWN1",
   "cnJlbnQtZW50cnktb3BlcmF0aW9uLnYxIn0K",
 ].join("");
+const EXACT_POISON_AUTHORITY_V31_RECORD_BYTES_BASE64_V1 = [
+  "eyJhdXRob3JpdHlWM0NvbnRyYWN0U3BpbmVUaHJvdWdoTWlncmF0aW9uMzEiOnsibWlncmF0aW9ucyI6W3siY2hlY2tzdW0iOiJhNDgwODNlNmQ0OGQwMDcy",
+  "YTM2ZjI1NWYwMmQwNTcwODYwNjA1M2VkYzM4YWExNDBkZWE4YTU4YzdiNDhhMzJlIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAx",
+  "X2V4ZWN1dGlvbl9hdHRlbXB0cyIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjF9LHsiY2hlY2tzdW0iOiI5OTNlMTFjZmY5YTdlNjQxYzhkZTJlMWMw",
+  "OGQyNTkxNjc1ZGY5Y2ExOGRmYjc4YzMwNGEzN2RkMGU5ZDE0ZWE0IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAyX3J1bl9wcm90",
+  "b2NvbF9pZGVudGl0eSIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjJ9LHsiY2hlY2tzdW0iOiI1N2UyNGY3M2VlNmQzY2UwMjcyZGFlODM4OTNiMWE3",
+  "MDkwZmI5YjgwZTQ3NmZlNDhkNzk0YWIyMmVlMGZkYThmIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAzX21pZ3JhdGlvbl9yZWxl",
+  "YXNlX2F0dGVzdGF0aW9uIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6M30seyJjaGVja3N1bSI6IjA5YjliNDcxYTI3MTAwYmFmNTg0NjZmZmQxMTli",
+  "MDc4MGMyNTlkNTI1YmQ0MmRmZTMxNzdkMDY5YWFiNjBiODQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDRfY29tcGlsZXJfcHJl",
+  "ZmxpZ2h0X2lkZW50aXR5Iiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6NH0seyJjaGVja3N1bSI6Ijk2Zjg5ZWY0Mjc3MTU5YjI5ODM1NDIzYTY4ZmYz",
+  "NWY5NGUxZDU2YTNmOThlYzg3NmU5M2E4N2NlMjk1NTYzYjQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDVfY2xhaW1fYXR0ZW1w",
+  "dF9yZWxhdGlvbmFsX2JpbmRpbmciLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjo1fSx7ImNoZWNrc3VtIjoiN2NlYzI5OTEyODYxNjNjN2RhODM5MGQ4",
+  "ODA2MzViZWViYzM2MjY4MmFlMzkxZmRjMjJkZDRkZWRiODg4Yjg3MiIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAwNl9kdXJhYmxl",
+  "X3J1bnRpbWVfb3duZXJzaGlwIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Nn0seyJjaGVja3N1bSI6ImFjZjc3ZWIzM2M2ODU0ZGNhYTg2YzViOGJm",
+  "MmM4MGZkNzRkYjk2OTg1YmIwYWU0OTczNTBhOWQ5ZDQwNzY5NmQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDdfbWFuYWdlcl9v",
+  "d25lZF9jb21wbGV0aW9uIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6N30seyJjaGVja3N1bSI6ImMzMTJkYTQ5NjYyZGFhMWM5NmYwNjM3MTQyNzEx",
+  "YmRjODNlYjllOTAxYTY2MzIxMjFhYjFhNDk5YzQ0ZjdhYTIiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDhfcnVudGltZV9jb21w",
+  "bGV0aW9uX2VmZmVjdF9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjo4fSx7ImNoZWNrc3VtIjoiNDAwZTBkNWY1YjhhOTI2MzU5MGUzYzll",
+  "MDNhMmU3MTk4Y2M5NjkyMTllZjY2NGI3NTNkYWVkMjNiZTQ2MWY1NCIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAwOV9wcm9kdWN0",
+  "X2FydGlmYWN0X2luZGV4Iiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6OX0seyJjaGVja3N1bSI6ImY2NTlmMDliOTA0ZGUwMWQzZDBhMzYxZWU1ZmNk",
+  "OGZiMjhlOWNhOTE2YmU0NTY3ZWYxNDYxMTRiNmE4MzYxMTQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMTBfZmluZGluZ19yZWNv",
+  "dmVyeV9ldmlkZW5jZV9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMH0seyJjaGVja3N1bSI6IjgzOTdhODYxYjgzNTViMTg3ODFmNDRj",
+  "ODk4MDZhNjI0YmNmMzE1NjU2YjZjMWM5Y2MzM2IxNzY0OGE1ZmQyNDMiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMTFfcmV2aXNp",
+  "b25lZF9yZWNvdmVyeV9kZWxpdmVyeV9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMX0seyJjaGVja3N1bSI6IjAzMzliMGQ5MGQ5ZTJj",
+  "NWMyYzBkODFiYmFlNTFhNjIyYTExM2U2ODM0M2NhYjM0MTNiYmRhZjJkZGJiMDI3NzgiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIw",
+  "MTJfY2Fub25pY2FsX29wZXJhdGlvbmFsX2V2ZW50X3Byb2plY3Rpb24iLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMn0seyJjaGVja3N1bSI6ImUz",
+  "YzRmNWQzYTQ2ZWNlMTI5YmUxOTYxNzgwYWZjYjlkNGQwYTQ5ZTEyYzc4NjhjNWEzZDc1NGUzYzIwNjE2MTYiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRp",
+  "YyIsIm5hbWUiOiIwMTNfYWNjZXB0ZWRfY2FuZGlkYXRlX2xlZGdlciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjEzfSx7ImNoZWNrc3VtIjoiM2Qw",
+  "M2Q0NDAxNDEyYWQ2ODM1OWJiOGFlODA0MWY1MzEwZWU0YmJiN2VjYjUzNDc4MWJlMDM2MTkxYWNmY2MzNCIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGlj",
+  "IiwibmFtZSI6IjAxNF92M19kZXBsb3lfcmVjZWlwdF9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxNH0seyJjaGVja3N1bSI6IjRhOTky",
+  "ODZkNjhhYjg3MTFiMDkyYzEzNTY3NzgwMTZhZjM4YmI4M2U1NTJmMTE0MjZjYjRlNTliZmQwNzhiMzMiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIs",
+  "Im5hbWUiOiIwMTVfdjNfcmVsZWFzZV9hZG1pc3Npb25fbGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MTV9LHsiY2hlY2tzdW0iOiI2M2I5",
+  "MGVlM2FmMjg1NjAwZTI1Zjk1N2NmZDVmYjBiMTgzYmNmY2E3Mzg0Mjk0YzBlNDA2MjIyMDQ1NjFkYjcwIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMi",
+  "LCJuYW1lIjoiMDE2X3YzX3ByZXBhcmF0aW9uX2Jsb2NrX2xlZGdlciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjE2fSx7ImNoZWNrc3VtIjoiNjhl",
+  "ZjY5MTBmM2IxYjVjNTIzNzU5NGU4NDU2MDU3MGExMDZmNDM5YmUzNzRkNmZkODQzOThkYjZmYTk0ZWM3ZSIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGlj",
+  "IiwibmFtZSI6IjAxN192M19naXRodWJfcmV2aWV3X3Jlc29sdXRpb25fZXZpZGVuY2UiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxN30seyJjaGVj",
+  "a3N1bSI6IjM1NzBjNDU5YWI2MGNmN2JhZTUzOWM2NDkyMDk3ZDljMDM5NDljZTFkYjQwN2U3OWVlZmFiNmEzMWU4YjJmODMiLCJtaWdyYXRpb25DbGFzcyI6",
+  "ImF1dG9tYXRpYyIsIm5hbWUiOiIwMThfdjNfcHJvamVjdF90cmFuc2Zlcl9hY2tfbGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MTh9LHsi",
+  "Y2hlY2tzdW0iOiJiYjcwN2Q5ZjE1ZmE3YWU5NWEyYzM5ODllZTA2MTIxYzE2ZDM2NGNlNWJkZmFiYTkyMzU4NDE1M2ZiOWJhYzIyIiwibWlncmF0aW9uQ2xh",
+  "c3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDE5X3J1bnRpbWVfY29tcGxldGlvbl9zdWJtaXNzaW9uX2V2aWRlbmNlIiwic3RhdGUiOiJhcHBsaWVkIiwidmVy",
+  "c2lvbiI6MTl9LHsiY2hlY2tzdW0iOiJkNTcyZTQ4MzJhZDQxYmQ3NDhmNDZiMzYxZGQyNzg3ZWI3NmNkN2UxOTAxNTAxY2NmYTk0ZDI2MTg2OTc1YzMzIiwi",
+  "bWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIwX3JlY292ZXJ5X3Rlcm1pbmFsX2xlYXNlX2lkZW50aXR5Iiwic3RhdGUiOiJhcHBsaWVk",
+  "IiwidmVyc2lvbiI6MjB9LHsiY2hlY2tzdW0iOiJiN2M2YWQ0YTYwZDRmMzIwM2NmNDRmZmQyM2E3OTUyODQ5ODVlODhkOTk3NjE4ODU2MzJjOGFmNjZiZGZj",
+  "NzM1IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIxX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2Vfc2VhbCIsInN0YXRlIjoiYXBw",
+  "bGllZCIsInZlcnNpb24iOjIxfSx7ImNoZWNrc3VtIjoiMGJmNDZjYzBkZDQ2OGU2ZDlkNDdkZjc2YjI4OWI5OGUwYTdhZTYwMDcyZTk5ZDY0ZmRhYjdmNDNk",
+  "MDg5NDY0NiIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAyMl9wcm9kdWN0X2NvbXBpbGF0aW9uX2F0dGVtcHRfbGVkZ2VyIiwic3Rh",
+  "dGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MjJ9LHsiY2hlY2tzdW0iOiIxMTMyNWE0MzYyMTcyZjk5NTYwN2NhODQ5NGFlZWFjMzk3Yzg2ZDMzMTBhMjY4MzJi",
+  "NTFmNjIyNDVhMWYxN2ZlIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIzX2FydGlmYWN0X3B1YmxpY2F0aW9uX2JhdGNoX2xlZGdl",
+  "ciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjIzfSx7ImNoZWNrc3VtIjoiYTFiMTEyNmE1OGE2YzdiOGQ4NDVlNjVjYzk1ODQwMWE3ZjliZTQzZGYz",
+  "YzI2MWUxYjI4Y2E2OTk5ZjNlMzk5ZSIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAyNF9hcnRpZmFjdF9zdG9yZV9hdXRob3JpdHlf",
+  "bGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MjR9LHsiY2hlY2tzdW0iOiI2MzQyNDM0OTExYjI3Y2Q0N2VjY2FlMjQwOGFmMWMzZjc4MjBi",
+  "YzQzMWUwMGVjZTBlYzQ2Y2NhMDcwZGRiNTFkIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDI1X3YzX3ByZXBhcmF0aW9uX2F1dGhv",
+  "cml0eV92Ml9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyNX0seyJjaGVja3N1bSI6ImM2MGQ5MTIzMGRjNWZmMDcwNGNlMmRmZWY1MTM0",
+  "YTk0ZDkxZTZkNjNlM2UzNGNmZWIxOTk4ZGZiODk3YTAxNTUiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjZfYXJ0aWZhY3RfcHVi",
+  "bGljYXRpb25fYmF0Y2hfcGxhbl9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyNn0seyJjaGVja3N1bSI6IjUzZmM2OWIyODIzOGIyYmMy",
+  "N2QwOTJjMmRhNjIwYjY1M2NiZmVlMzc4YjJkMjgwOGYyZmQzZTRjNTkzZWIxZmYiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjdf",
+  "cGxhdGZvcm1fcmVsZWFzZV9zdG9yZV9yZWNvcmRfbGVkZ2VyX3YzIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Mjd9LHsiY2hlY2tzdW0iOiI2Yzc1",
+  "OWIyN2UzOWUxZDQ4MmM2NTMxYzUwNDc1ZTQ4Y2FiZjFiZTEyZTUzOWQ4MWY3OTU1MzJjNzBiMDczZGU5IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMi",
+  "LCJuYW1lIjoiMDI4X3J1bnRpbWVfY29tcGxldGlvbl9tYW5pZmVzdF9hdXRob3JpdHkiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyOH0seyJjaGVj",
+  "a3N1bSI6IjVkODU0Mzk3ZTMwNWFhM2JiYWNmZjg1Y2VlMTg0YjdkYjc1NjZiOGUyODA1ZWEyYTc2NDEyNzNmMmQwMThmY2IiLCJtaWdyYXRpb25DbGFzcyI6",
+  "ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjlfdjNfc3RvcnlfY2xhaW1fcnVudGltZV9iaW5kaW5nX3YxIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Mjl9",
+  "LHsiY2hlY2tzdW0iOiJlZTk2NDRiMGMzZmQyMDI5MDkwMmZiNjJkMzM2ZTg1MWQ3YjZmNGUzMmU4OTU2ZDZmMDdhNTIxNTZhM2M0ZGMxIiwibWlncmF0aW9u",
+  "Q2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDMwX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2VfYXV0aG9yaXR5X3YyIiwic3RhdGUiOiJhcHBsaWVkIiwi",
+  "dmVyc2lvbiI6MzB9LHsiY2hlY2tzdW0iOiI3ZmJhNmNmNjJlMjIwMWRjMTJlNjQxNzU2MTFlM2E3N2ZlNzgwYmM1YWY5OGE2MmY1ZjM1MzI4MWUwNzVhYjhm",
+  "IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDMxX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2VfYXV0aG9yaXR5X3YzIiwic3RhdGUi",
+  "OiJhcHBsaWVkIiwidmVyc2lvbiI6MzF9XSwic2NoZW1hIjoic2V0ZmFybS5hdXRob3JpdHktdjMtY29udHJhY3Qtc3BpbmUtdGhyb3VnaC1taWdyYXRpb24t",
+  "MzEtYXVkaXQudjEiLCJzdGF0dXMiOiJ2ZXJpZmllZCIsInRocm91Z2hWZXJzaW9uIjozMX0sImF1dGhvcml0eVYzTWlncmF0aW9uMzFBdWRpdEhhc2giOiIz",
+  "MTk1NzZlNDYzMmY1MmIwM2Y5ZGQxYzVhOGVjODkzYjhmZmU0MDkxNTI0ZGVhYWM2OTI3OTJhMzg5ZGRmNzZkIiwiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1",
+  "ZGl0UmVmIjoic2V0ZmFybTovL2ludGVybmFsLXByb2R1Y3Rpb24vYXV0aG9yaXR5LXYzLW1pZ3JhdGlvbjMxLWF1ZGl0L3NoYTI1Ni8zMTk1NzZlNDYzMmY1",
+  "MmIwM2Y5ZGQxYzVhOGVjODkzYjhmZmU0MDkxNTI0ZGVhYWM2OTI3OTJhMzg5ZGRmNzZkIiwiY29udHJvbGxlclNvdXJjZSI6eyJicmFuY2giOiJtYWluIiwi",
+  "YnVpbGRIYXNoIjoiMmQ0MWZhNTc5OTc0MDVlOWQ1Y2Y1YzIyYmJmZDNkNGMyYTJkOGVjZjBiMjZkOTM1YjBkZDZhNDYwYjQ2OWNiNiIsImNsZWFuIjp0cnVl",
+  "LCJvcmlnaW5NYWluU2hhIjoiNGZjNjdmMjBkZjBlOTM1YzcwM2M0NjU4YTI5ZGJiYWE5YWEwYTk1NiIsInNoYSI6IjRmYzY3ZjIwZGYwZTkzNWM3MDNjNDY1",
+  "OGEyOWRiYmFhOWFhMGE5NTYiLCJ0cmVlSGFzaCI6IjQ3ZmRmZTJkYWZjN2ExMzU0ZDQwNDlkZDE5NGZhZjM1ODE2OTIzODkifSwiY3VycmVudEF1dGhvcml0",
+  "eUF1ZGl0Ijp7ImFydGlmYWN0UHVibGljYXRpb25BdXRob3JpdHlMZWRnZXIiOnsiYXV0aG9yaXR5IjpudWxsLCJiYXRjaFBsYW5Db3VudCI6MCwic2NoZW1h",
+  "Ijoic2V0ZmFybS5hcnRpZmFjdC1wdWJsaWNhdGlvbi1hdXRob3JpdHktbGVkZ2VyLWF1ZGl0LnYyIiwic2NvcGUiOiJkYXRhYmFzZS1sZWRnZXItb25seSIs",
+  "InN0YXR1cyI6InZlcmlmaWVkIn0sImF1dGhvcml0eVN0YXRlIjoiZGF0YWJhc2VfaW50ZWdyaXR5X2F1ZGl0X29ubHkiLCJtdXRhdGlvbkF1dGhvcml0eSI6",
+  "ZmFsc2UsInBsYXRmb3JtUmVsZWFzZVN0b3JlUmVjb3JkTGVkZ2VyIjp7ImF1dGhvcml0eVN0YXRlIjoiZGF0YWJhc2VfcmVjb3JkX2ludGVncml0eV9hdWRp",
+  "dF9vbmx5IiwibXV0YXRpb25BdXRob3JpdHkiOmZhbHNlLCJwcm9kdWN0aW9uQWRtaXNzaW9uIjoiZm9yYmlkZGVuIiwicHJvZHVjdGlvbkF1dGhvcml0eSI6",
+  "ZmFsc2UsInJlY29yZENvdW50IjowLCJyZXN0YXJ0QXV0aG9yaXR5IjpmYWxzZSwic2NoZW1hIjoic2V0ZmFybS5wbGF0Zm9ybS1yZWxlYXNlLXN0b3JlLXJl",
+  "Y29yZC1sZWRnZXItY3VycmVudC1hdWRpdC52MyIsInNjb3BlIjoiZGF0YWJhc2UtcmVjb3JkLWludGVncml0eS1vbmx5Iiwic3RhdHVzIjoiaW50ZWdyaXR5",
+  "X3ZlcmlmaWVkIiwic3RvcmVBdXRob3JpdHkiOmZhbHNlLCJ0YWlsUHVibGlzaGVkQ2Vuc3VzSGFzaCI6bnVsbCwidGFpbFJlY29yZEhhc2giOm51bGwsInRy",
+  "dXN0Q29uY2x1c2lvbiI6ImNoYXJhY3Rlcml6YXRpb25fb25seSJ9LCJwcm9kdWN0aW9uQWRtaXNzaW9uIjoiZm9yYmlkZGVuIiwicHJvZHVjdGlvbkF1dGhv",
+  "cml0eSI6ZmFsc2UsInJlc3RhcnRBdXRob3JpdHkiOmZhbHNlLCJzY2hlbWEiOiJzZXRmYXJtLmNvbnRyYWN0LXNwaW5lLWN1cnJlbnQtYXV0aG9yaXR5LWxl",
+  "ZGdlcnMtYXVkaXQudjIiLCJzY29wZSI6ImRhdGFiYXNlLWN1cnJlbnQtYXV0aG9yaXR5LWxlZGdlcnMtb25seSIsInN0YXR1cyI6InZlcmlmaWVkIiwic3Rv",
+  "cmVBdXRob3JpdHkiOmZhbHNlLCJ0cnVzdENvbmNsdXNpb24iOiJjaGFyYWN0ZXJpemF0aW9uX29ubHkiLCJ2M1N0b3J5Q2xhaW1SdW50aW1lQmluZGluZyI6",
+  "eyJhdXRob3JpdHlTdGF0ZSI6ImRhdGFiYXNlX2JpbmRpbmdfaW50ZWdyaXR5X2F1ZGl0X29ubHkiLCJiaW5kaW5nQ291bnQiOjAsIm11dGF0aW9uQXV0aG9y",
+  "aXR5IjpmYWxzZSwicHJvZHVjdGlvbkFkbWlzc2lvbiI6ImZvcmJpZGRlbiIsInByb2R1Y3Rpb25BdXRob3JpdHkiOmZhbHNlLCJyZXF1aXJlZE93bmVyQ291",
+  "bnQiOjAsInNjaGVtYSI6InNldGZhcm0udjMtc3RvcnktY2xhaW0tcnVudGltZS1iaW5kaW5nLWN1cnJlbnQtYXVkaXQudjEiLCJzY29wZSI6ImRhdGFiYXNl",
+  "LWJpbmRpbmctaW50ZWdyaXR5LW9ubHkiLCJzdGF0dXMiOiJpbnRlZ3JpdHlfdmVyaWZpZWQifSwidmVyc2lvbiI6IjIuMC4wIn0sImN1cnJlbnRBdXRob3Jp",
+  "dHlBdWRpdEhhc2giOiJmZTUyMWYyNTc1YTdiNDNiODgyNDQ3MzFkNmE3YjhmNThmMzA3ZGY3OTMyNDlkNTMwNzg5MjJiNDE0ZTBiNmZlIiwiY3VycmVudFN0",
+  "YXR1cyI6ImN1cnJlbnQiLCJtaWdyYXRpb24zMVNlbWFudGljRGlnZXN0IjoiZjA1MmVmZjFiNDVkZjBmMDBmZmI4NDRmZTBkMjNiNTQyZWFmYTQ3ODlkYTVl",
+  "OTBhMzI5YThkNzU2ZGZjZGMzYSIsIm1pZ3JhdGlvbjMxU291cmNlTWFuaWZlc3RFbnRyeUhhc2giOiJjNGQ4YTIwODVkNDI1ZjljMmRlMWI0NTY2MDMyNWUy",
+  "YmYwN2E5NWU4NmQ5MmMxM2UyYzlkZjM5NGI3NDBhYTlmIiwicHI4NkRlbGl2ZXJ5Ijp7ImRlc2NlbmRhbnRTaGEiOiI0ZmM2N2YyMGRmMGU5MzVjNzAzYzQ2",
+  "NThhMjlkYmJhYTlhYTBhOTU2IiwiZGVzY2VuZGFudFRyZWVIYXNoIjoiNDdmZGZlMmRhZmM3YTEzNTRkNDA0OWRkMTk0ZmFmMzU4MTY5MjM4OSIsImV4cGVj",
+  "dGVkTWVyZ2VCYXNlIjoiMWQ2OTFjODk3NjAzMzllYTkwNWRmZTE3ZjhlOTE4OGU2MjYwM2MxYyIsIm1lcmdlU2hhIjoiMWQ2OTFjODk3NjAzMzllYTkwNWRm",
+  "ZTE3ZjhlOTE4OGU2MjYwM2MxYyIsIm1lcmdlVHJlZUhhc2giOiIwNGYxZDk1YTU4MzYwZDA2ZTg2NmZlODE2MTM4NjU1ZWZhOTE2Mjg0IiwicHVsbFJlcXVl",
+  "c3ROdW1iZXIiOjg2fSwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLWF1dGhvcml0eS12My1taWdyYXRpb24zMS1hdWRpdC52MSJ9Cg==",
+].join("");
+const EXACT_POISON_PENDING_RECORD_BYTES_BASE64_V1 = [
+  "eyJjb250cm9sbGVyU291cmNlIjp7ImJyYW5jaCI6Im1haW4iLCJidWlsZEhhc2giOiIyZDQxZmE1Nzk5NzQwNWU5ZDVjZjVjMjJiYmZkM2Q0YzJhMmQ4ZWNm",
+  "MGIyNmQ5MzViMGRkNmE0NjBiNDY5Y2I2IiwiY2xlYW4iOnRydWUsIm9yaWdpbk1haW5TaGEiOiI0ZmM2N2YyMGRmMGU5MzVjNzAzYzQ2NThhMjlkYmJhYTlh",
+  "YTBhOTU2Iiwic2hhIjoiNGZjNjdmMjBkZjBlOTM1YzcwM2M0NjU4YTI5ZGJiYWE5YWEwYTk1NiIsInRyZWVIYXNoIjoiNDdmZGZlMmRhZmM3YTEzNTRkNDA0",
+  "OWRkMTk0ZmFmMzU4MTY5MjM4OSJ9LCJjdXJyZW50U3RhdHVzIjoiY3VycmVudCIsIm1pZ3JhdGlvbkltcGxlbWVudGF0aW9uIjp7ImdpdEJsb2JIYXNoIjoi",
+  "NDBhNWQzYmFmNjk0NjU4YzYyODBmZDZjYThhZWE2YzY0MTE2OGI3YyIsImdpdE1vZGUiOiIxMDA2NDQiLCJsb2NhdG9yIjoic3JjL2RiL2Jvb3RzdHJhcC1t",
+  "YWluLWNsYWltLWhhbmRvZmYtdjEtbWlncmF0aW9uLnRzIn0sInBlbmRpbmdCb290c3RyYXBIYW5kb2ZmTWlncmF0aW9uSGFzaCI6IjZlM2M2ZTY4ZjU4ODhi",
+  "MTA5MmE4OWY2YjQ4YTk5MGZmODNhODhlYmRmZDdiZTljOGM1MWY3MjFhMjlmMDk3NDEiLCJwZW5kaW5nQm9vdHN0cmFwSGFuZG9mZk1pZ3JhdGlvblJlZiI6",
+  "InNldGZhcm06Ly9pbnRlcm5hbC1wcm9kdWN0aW9uL3BlbmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uL3NoYTI1Ni82ZTNjNmU2OGY1ODg4YjEw",
+  "OTJhODlmNmI0OGE5OTBmZjgzYTg4ZWJkZmQ3YmU5YzhjNTFmNzIxYTI5ZjA5NzQxIiwicGVuZGluZ1N1Y2Nlc3NvciI6eyJleHBlY3RlZFNjaGVtYVByb2pl",
+  "Y3Rpb25IYXNoIjoiOWY0NGI2MzEyYmE2MmZiN2I0OGRhMTUzZTcwZmE3ZjE5Y2U1NDNkYmVlYzUwMGI5MTExZDc1MDg0N2E3ZWVkMSIsIm1pZ3JhdGlvbiI6",
+  "eyJjaGVja3N1bSI6ImQxNTJlYzNkNzBkZTQyMjFkYzJhNWJjNzljY2Y0NmI0YTZiODlhM2Y1ZThiOTY2YjgwMDJhMTI5ZDllOGM3MWQiLCJtaWdyYXRpb25D",
+  "bGFzcyI6Imd1YXJkZWQiLCJuYW1lIjoiY29udHJhY3Qtc3BpbmUtYm9vdHN0cmFwLW1haW4tY2xhaW0taGFuZG9mZi12MSIsInN0YXRlIjoicGVuZGluZyIs",
+  "InZlcnNpb24iOjMyfSwibWlncmF0aW9uRGlnZXN0IjoiOGNiYWFiMGM0N2JmMzYzOTAzMzQ0MmQyZGY5YTFjMTVkNDIxZWIzNGFkYmFiNzJmYTgyOTUxNzEy",
+  "Y2FmZTRlMiIsIm5hbWVkTWlncmF0aW9uRGlnZXN0RW50cnlIYXNoIjoiODFkOTE2NGNhMGYyYzBiZTFjZWNlMzkxZmM2NTRhODU0YzI4Y2NmY2U5MDViODdj",
+  "M2FkNjgwMjAyZjk1NTU3YyIsIm9yZGVyZWRTdGF0ZW1lbnRzSGFzaCI6ImNjZmNmZGI2ZWQ5ZTlkODdhZGQ5ZTI4Mzk0YjJlNjdiZjllZDU1MzQ3ODQxZmUw",
+  "NTI5Y2RkZTRkNmE1YjM0YzkiLCJzY2hlbWEiOiJzZXRmYXJtLnBlbmRpbmctYm9vdHN0cmFwLW1haW4tY2xhaW0taGFuZG9mZi1ndWFyZGVkLXN1Y2Nlc3Nv",
+  "ci52MSIsInN0YXR1cyI6ImV4YWN0X3BlbmRpbmdfZ3VhcmRlZF9zdWNjZXNzb3IifSwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLXBl",
+  "bmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uLXByb2plY3Rpb24udjEifQo=",
+].join("");
+const EXACT_POISON_CONTAMINATION_FINGERPRINT_BODY_BASE64_V1 = [
+  "eyJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXQiOnsiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1ZGl0SGFzaCI6IjMxOTU3NmU0NjMyZjUyYjAzZjlkZDFj",
+  "NWE4ZWM4OTNiOGZmZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQiLCJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXRSZWYiOiJzZXRmYXJtOi8vaW50",
+  "ZXJuYWwtcHJvZHVjdGlvbi9hdXRob3JpdHktdjMtbWlncmF0aW9uMzEtYXVkaXQvc2hhMjU2LzMxOTU3NmU0NjMyZjUyYjAzZjlkZDFjNWE4ZWM4OTNiOGZm",
+  "ZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQifSwiY29udHJvbGxlclNvdXJjZSI6eyJicmFuY2giOiJtYWluIiwiYnVpbGRIYXNoIjoiMmQ0MWZhNTc5",
+  "OTc0MDVlOWQ1Y2Y1YzIyYmJmZDNkNGMyYTJkOGVjZjBiMjZkOTM1YjBkZDZhNDYwYjQ2OWNiNiIsImNsZWFuIjp0cnVlLCJvcmlnaW5NYWluU2hhIjoiNGZj",
+  "NjdmMjBkZjBlOTM1YzcwM2M0NjU4YTI5ZGJiYWE5YWEwYTk1NiIsInNoYSI6IjRmYzY3ZjIwZGYwZTkzNWM3MDNjNDY1OGEyOWRiYmFhOWFhMGE5NTYiLCJ0",
+  "cmVlSGFzaCI6IjQ3ZmRmZTJkYWZjN2ExMzU0ZDQwNDlkZDE5NGZhZjM1ODE2OTIzODkifSwib3BlcmF0aW9uQnl0ZXNTaGEyNTYiOiJlYmNiYTE4N2U5NTNm",
+  "ZGE5ZTc5NjJhMGNlMGNmNGZjMTBmZWVkODgxZTljZTY5YjZkNTkxNDBhOWVmNDNkN2Y2IiwicGVuZGluZ0Jvb3RzdHJhcEhhbmRvZmZNaWdyYXRpb24iOnsi",
+  "cGVuZGluZ0Jvb3RzdHJhcEhhbmRvZmZNaWdyYXRpb25IYXNoIjoiNmUzYzZlNjhmNTg4OGIxMDkyYTg5ZjZiNDhhOTkwZmY4M2E4OGViZGZkN2JlOWM4YzUx",
+  "ZjcyMWEyOWYwOTc0MSIsInBlbmRpbmdCb290c3RyYXBIYW5kb2ZmTWlncmF0aW9uUmVmIjoic2V0ZmFybTovL2ludGVybmFsLXByb2R1Y3Rpb24vcGVuZGlu",
+  "Zy1ib290c3RyYXAtaGFuZG9mZi1taWdyYXRpb24vc2hhMjU2LzZlM2M2ZTY4ZjU4ODhiMTA5MmE4OWY2YjQ4YTk5MGZmODNhODhlYmRmZDdiZTljOGM1MWY3",
+  "MjFhMjlmMDk3NDEifSwicHJlZGVjZXNzb3JPcGVyYXRpb24iOnsib3BlcmF0aW9uSGFzaCI6IjkwZmMyZmVkYzU2ZGIyMmJiMDEzYWQxYjI0M2U5ZGMzODY0",
+  "NzNkNmI0Mjg0ZWRlMTM1ZTI2ZmQxYWI4MmZlM2QiLCJvcGVyYXRpb25SZWYiOiJzZXRmYXJtOi8vaW50ZXJuYWwtcHJvZHVjdGlvbi9jdXJyZW50LWVudHJ5",
+  "LW9wZXJhdGlvbi9zaGEyNTYvOTBmYzJmZWRjNTZkYjIyYmIwMTNhZDFiMjQzZTlkYzM4NjQ3M2Q2YjQyODRlZGUxMzVlMjZmZDFhYjgyZmUzZCJ9LCJwcm9k",
+  "dWN0QnVpbGRBdXRob3JpdHkiOnsiY3VycmVudFNvdXJjZSI6eyJicmFuY2giOiJtYWluIiwiYnVpbGRIYXNoIjoiY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj",
+  "Y2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjYyIsImNsZWFuIjp0cnVlLCJvcmlnaW5NYWluU2hhIjoiNGVjNWZjOTlhMDc2NDUzYTg3",
+  "MzgxYzBjNzVlNTA4ZDI1ZGQ4ODgyZCIsInNoYSI6IjRlYzVmYzk5YTA3NjQ1M2E4NzM4MWMwYzc1ZTUwOGQyNWRkODg4MmQiLCJ0cmVlSGFzaCI6ImJiYmJi",
+  "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIifSwiZGVsaXZlcnlFdmlkZW5jZSI6eyJkZWxpdmVyeUV2aWRlbmNlSGFzaCI6IjhkMTM2ODBl",
+  "ZWE1MTg0NDgzODM1NWU0NzY5OTQ3ZDI2NTY5Yjk1NGY4MjI1OTUzODZiMTVkZWE4OWNjNjczZGUiLCJkZWxpdmVyeUV2aWRlbmNlUmVmIjoibWlzc2lvbi1j",
+  "b250cm9sOi8vaW50ZXJuYWwtcHJvZHVjdGlvbi9wcm9kdWN0LWJ1aWxkLWF1dGhvcml0eS12Mi1kZWxpdmVyeS1ldmlkZW5jZS9zaGEyNTYvOGQxMzY4MGVl",
+  "YTUxODQ0ODM4MzU1ZTQ3Njk5NDdkMjY1NjliOTU0ZjgyMjU5NTM4NmIxNWRlYTg5Y2M2NzNkZSJ9LCJkZWxpdmVyeU1lcmdlQW5jZXN0b3JPZkN1cnJlbnRT",
+  "b3VyY2UiOnRydWUsImRlbGl2ZXJ5TWVyZ2VTaGEiOiIyNDBlNzc5ZDc4ODA0ODQzYTEyMDJjYmYwNDQwZmU0MjNiODA2YjFhIiwiZGVsaXZlcnlQck51bWJl",
+  "ciI6MTksImZvY3VzZWRIYXNoZXMiOnsiY29tbWFuZENvbnRyYWN0SGFzaCI6IjBkYjgzNzc1NzkyMGNlNTFiMDYwOTkzZDM3OTYxMWZiYTg5OTA1OGUzYWI5",
+  "MjcyODg4YWI5MmQ4MWZjNTA5M2IiLCJmb2N1c2VkVGVzdFJlY2VpcHRIYXNoIjoiMDI2NWE5NzU3ZDVjOWM3OTVlZTA0N2Q2NjYzMDY4ZTBhZDY4MzlmMWZh",
+  "MTQwMGMwODFlM2M1MjExZmUxMTY1NSIsIm9yZGVyZWRUZXN0UGF0aEJsb2JIYXNoZXMiOlsiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMSIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDQiLCIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA3Il19LCJvcmRlcmVkRGVsaXZl",
+  "cmVkQmxvYkhhc2hlcyI6WyIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxIiwiMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMiIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMiLCIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDA0IiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNSIsIjAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDYiLCIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA3IiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwOCJdLCJ2ZW5kb3JIYXNoZXMiOnsiY29tcGF0aWJpbGl0eVNldEhhc2giOiJhYTIyMDQxNzkyYjczNDdiNjUxYjhlNDgxNzJiOGFkN2NmZDM3",
+  "YWJiNThjYzk3MzFlODk4ZTlhMjAyODY3YWI1IiwibG9ja0NvbnRlbnRIYXNoIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwOCIsIm9yZGVyZWRBcnRpZmFjdEhhc2hlcyI6WyIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIwIiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAy",
+  "MSIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjIiLCIwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIzIiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAyNCIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjUi",
+  "LCIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI2IiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyNyIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMjgiLCIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI5Iiwi",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAzMCIsIjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMzEiXSwidmVuZG9yTG9ja1Byb2plY3Rpb25IYXNoIjoiZWZjZDI0MmI2MWU4MGI5M2Rj",
+  "OWE1Yzc4NGM1Nzk1NWM5YzUyYWEwYjExZjY2NTE5OTM5NDQxOTNmYjBhYjYyNSJ9fSwic2NoZW1hIjoic2V0ZmFybS5wMy1wcm9qZWN0ZWQtY3VycmVudC1l",
+  "bnRyeS1maXh0dXJlLWNvbnRhbWluYXRpb24tZmluZ2VycHJpbnQudjEifQ==",
+].join("");
+const EXACT_POISON_QUARANTINED_INVENTORY_BODY_BASE64_V1 = [
+  "eyJvcmRlcmVkRGlyZWN0b3JpZXMiOlt7ImRldmljZURlY2ltYWwiOiIxNjc3NzIzMCIsImlub2RlRGVjaW1hbCI6IjEzMzEzNjM0OCIsImxvY2F0b3IiOiIu",
+  "IiwibW9kZSI6IjA3MDAiLCJ1aWREZWNpbWFsIjoiNTAxIn0seyJkZXZpY2VEZWNpbWFsIjoiMTY3NzcyMzAiLCJpbm9kZURlY2ltYWwiOiIxMzMxMzYzNDki",
+  "LCJsb2NhdG9yIjoicmVjb3JkcyIsIm1vZGUiOiIwNzAwIiwidWlkRGVjaW1hbCI6IjUwMSJ9LHsiZGV2aWNlRGVjaW1hbCI6IjE2Nzc3MjMwIiwiaW5vZGVE",
+  "ZWNpbWFsIjoiMTMzMTM2MzUwIiwibG9jYXRvciI6InJlY29yZHMvYXV0aG9yaXR5LXYzLW1pZ3JhdGlvbjMxLWF1ZGl0cyIsIm1vZGUiOiIwNzAwIiwidWlk",
+  "RGVjaW1hbCI6IjUwMSJ9LHsiZGV2aWNlRGVjaW1hbCI6IjE2Nzc3MjMwIiwiaW5vZGVEZWNpbWFsIjoiMTMzMTM2MzUxIiwibG9jYXRvciI6InJlY29yZHMv",
+  "YXV0aG9yaXR5LXYzLW1pZ3JhdGlvbjMxLWF1ZGl0cy9zaGEyNTYiLCJtb2RlIjoiMDcwMCIsInVpZERlY2ltYWwiOiI1MDEifSx7ImRldmljZURlY2ltYWwi",
+  "OiIxNjc3NzIzMCIsImlub2RlRGVjaW1hbCI6IjEzMzE0MTEzOSIsImxvY2F0b3IiOiJyZWNvcmRzL2F1dGhvcml0eS12My1taWdyYXRpb24zMS1hdWRpdHMv",
+  "c2hhMjU2LzMxIiwibW9kZSI6IjA3MDAiLCJ1aWREZWNpbWFsIjoiNTAxIn0seyJkZXZpY2VEZWNpbWFsIjoiMTY3NzcyMzAiLCJpbm9kZURlY2ltYWwiOiIx",
+  "MzMxMzYzNTIiLCJsb2NhdG9yIjoicmVjb3Jkcy9hdXRob3JpdHktdjMtbWlncmF0aW9uMzEtYXVkaXRzL3NoYTI1Ni9lMiIsIm1vZGUiOiIwNzAwIiwidWlk",
+  "RGVjaW1hbCI6IjUwMSJ9LHsiZGV2aWNlRGVjaW1hbCI6IjE2Nzc3MjMwIiwiaW5vZGVEZWNpbWFsIjoiMTMzMTM2NDE4IiwibG9jYXRvciI6InJlY29yZHMv",
+  "cGVuZGluZy1ib290c3RyYXAtaGFuZG9mZi1taWdyYXRpb25zIiwibW9kZSI6IjA3MDAiLCJ1aWREZWNpbWFsIjoiNTAxIn0seyJkZXZpY2VEZWNpbWFsIjoi",
+  "MTY3NzcyMzAiLCJpbm9kZURlY2ltYWwiOiIxMzMxMzY0MTkiLCJsb2NhdG9yIjoicmVjb3Jkcy9wZW5kaW5nLWJvb3RzdHJhcC1oYW5kb2ZmLW1pZ3JhdGlv",
+  "bnMvc2hhMjU2IiwibW9kZSI6IjA3MDAiLCJ1aWREZWNpbWFsIjoiNTAxIn0seyJkZXZpY2VEZWNpbWFsIjoiMTY3NzcyMzAiLCJpbm9kZURlY2ltYWwiOiIx",
+  "MzMxNDEyMDEiLCJsb2NhdG9yIjoicmVjb3Jkcy9wZW5kaW5nLWJvb3RzdHJhcC1oYW5kb2ZmLW1pZ3JhdGlvbnMvc2hhMjU2LzZlIiwibW9kZSI6IjA3MDAi",
+  "LCJ1aWREZWNpbWFsIjoiNTAxIn0seyJkZXZpY2VEZWNpbWFsIjoiMTY3NzcyMzAiLCJpbm9kZURlY2ltYWwiOiIxMzMxMzY0MjAiLCJsb2NhdG9yIjoicmVj",
+  "b3Jkcy9wZW5kaW5nLWJvb3RzdHJhcC1oYW5kb2ZmLW1pZ3JhdGlvbnMvc2hhMjU2L2NlIiwibW9kZSI6IjA3MDAiLCJ1aWREZWNpbWFsIjoiNTAxIn1dLCJv",
+  "cmRlcmVkRmlsZXMiOlt7ImJ5dGVMZW5ndGgiOjg4NDcsImJ5dGVzU2hhMjU2IjoiZWJjYmExODdlOTUzZmRhOWU3OTYyYTBjZTBjZjRmYzEwZmVlZDg4MWU5",
+  "Y2U2OWI2ZDU5MTQwYTllZjQzZDdmNiIsImxpbmtDb3VudCI6MSwibG9jYXRvciI6ImN1cnJlbnQtZW50cnktb3BlcmF0aW9uLmpzb24iLCJtb2RlIjoiMDYw",
+  "MCJ9LHsiYnl0ZUxlbmd0aCI6ODYzOCwiYnl0ZXNTaGEyNTYiOiJlY2UwZjFkMGQwOTU0MTM3YTQ1MjU5NjNmMGE4ODI5YjliZTM1OTdkM2QxODNiYmRjOTUy",
+  "NjJkNDAwNjNkOTYyIiwibGlua0NvdW50IjoxLCJsb2NhdG9yIjoicmVjb3Jkcy9hdXRob3JpdHktdjMtbWlncmF0aW9uMzEtYXVkaXRzL3NoYTI1Ni8zMS8z",
+  "MTk1NzZlNDYzMmY1MmIwM2Y5ZGQxYzVhOGVjODkzYjhmZmU0MDkxNTI0ZGVhYWM2OTI3OTJhMzg5ZGRmNzZkLmpzb24iLCJtb2RlIjoiMDYwMCJ9LHsiYnl0",
+  "ZUxlbmd0aCI6ODYzOCwiYnl0ZXNTaGEyNTYiOiIyOTQyNjc2OWVkOGVmOWQxMDczYTRjM2U2MDRiMjMwMWQ0ZWI0YThiNTVhNTIxNzhkNjhiOGEzMjBiNjM3",
+  "OTUxIiwibGlua0NvdW50IjoxLCJsb2NhdG9yIjoicmVjb3Jkcy9hdXRob3JpdHktdjMtbWlncmF0aW9uMzEtYXVkaXRzL3NoYTI1Ni9lMi9lMjE2NWQ2NjNm",
+  "NzY2YjI1MDYyNDVhMTAxOGQ1MTk1YzkxOWU4ZGVlYjdlZWZmODJiMGYzNWE1ZTYxY2MzMDI1Lmpzb24iLCJtb2RlIjoiMDYwMCJ9LHsiYnl0ZUxlbmd0aCI6",
+  "MTU4MCwiYnl0ZXNTaGEyNTYiOiIxOWQ5N2I1YzllNTVlYWZjNGFjZWE5Y2Q3ZThmMGFiODUxZDQ0MTA5MDRkY2IzMzNjN2M2ODFmMWYyOGQwYmM3IiwibGlu",
+  "a0NvdW50IjoxLCJsb2NhdG9yIjoicmVjb3Jkcy9wZW5kaW5nLWJvb3RzdHJhcC1oYW5kb2ZmLW1pZ3JhdGlvbnMvc2hhMjU2LzZlLzZlM2M2ZTY4ZjU4ODhi",
+  "MTA5MmE4OWY2YjQ4YTk5MGZmODNhODhlYmRmZDdiZTljOGM1MWY3MjFhMjlmMDk3NDEuanNvbiIsIm1vZGUiOiIwNjAwIn0seyJieXRlTGVuZ3RoIjoxNTgw",
+  "LCJieXRlc1NoYTI1NiI6IjNjY2FmYzViOGE5YzBhZTE4NWJiZmQ4NWNhZTFhNzMxYzRjY2VlOWM1OGVmMDQzZTEzYThjMjU5MTcxMjQyMzUiLCJsaW5rQ291",
+  "bnQiOjEsImxvY2F0b3IiOiJyZWNvcmRzL3BlbmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9ucy9zaGEyNTYvY2UvY2UyMWIxYzBiMzMyYjRmOThi",
+  "YmI1NjBhOTQ3YzI5ZmI4MGUwMzYwMDQ2ZDJjMzQ4MjlkNmM0ZTQzYzMyYjAxNS5qc29uIiwibW9kZSI6IjA2MDAifV0sInNjaGVtYSI6InNldGZhcm0uaW50",
+  "ZXJuYWwtcHJvZHVjdGlvbi1jdXJyZW50LWVudHJ5LXN0b3JlLXF1YXJhbnRpbmUtaW52ZW50b3J5LnYxIiwic3RvcmVMb2NhdG9yIjoiL1VzZXJzL3NldHJv",
+  "eC9haS9zZXRyb3gvZGF0YS9pbnRlcm5hbC1wcm9kdWN0aW9uLWJhc2VsaW5lL2N1cnJlbnQtZW50cnktdjEifQ==",
+].join("");
+
 const TASK12_P0_DELIVERY_COMMIT_SHA = "72aba7c721bffb42d3f5d7cab507360d4c588ccc";
 const TASK12_P0_DELIVERY_TREE_HASH = "e72a466a4db2f55015ecd3a26936b87c89d43a0e";
 const TASK12_P0_EXACT24_PATH_BLOB_SET_HASH = "e36c683184b25ecbe10e03b2eecc839213847cb82dd871b221f0813386080bbf";
@@ -274,6 +476,531 @@ function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
     `${firstPrepareStatement} { const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(value&&typeof value==="object")(value as {afterPrehook:number}).afterPrehook+=1; }`,
   );
   writeFileSync(modulePath, instrumented);
+}
+
+type ExactPoisonStrictChainRecordV1 = Readonly<{
+  value: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+  locator: string;
+}>;
+
+type ExactPoisonStrictChainModelV1 = Readonly<{
+  value: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+}>;
+
+type ExactPoisonStrictChainFixtureV1 = Readonly<{
+  completeZeroEffectBracketHash: string;
+  dispositionHash: string;
+  successorStoreHash: string;
+  edgeHash: string;
+  activationSealHash: string;
+  activationCommitHash: string;
+  successorStoreRelativeRoot: string;
+  embedded: Readonly<{
+    zeroEffectProof: ExactPoisonStrictChainModelV1;
+    successorGenesis: ExactPoisonStrictChainModelV1;
+  }>;
+  records: Readonly<{
+    disposition: ExactPoisonStrictChainRecordV1;
+    successorOperation: ExactPoisonStrictChainRecordV1;
+    successorAuthorityV31: ExactPoisonStrictChainRecordV1;
+    successorPending: ExactPoisonStrictChainRecordV1;
+    edge: ExactPoisonStrictChainRecordV1;
+    seal: ExactPoisonStrictChainRecordV1;
+    commit: ExactPoisonStrictChainRecordV1;
+  }>;
+}>;
+
+function exactFixtureJsonBytesV1(base64: string, byteLength: number, bytesSha256: string, label: string): Buffer {
+  const bytes = Buffer.from(base64, "base64");
+  assert.equal(bytes.length, byteLength, `${label} byte length`);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), bytesSha256, `${label} byte hash`);
+  const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+  assert.equal(bytes.toString("utf8"), `${canonical(parsed)}\n`, `${label} canonical JSON plus LF`);
+  return bytes;
+}
+
+function exactFixtureBodyV1(base64: string, hash: string, label: string): Readonly<Record<string, unknown>> {
+  const text = Buffer.from(base64, "base64").toString("utf8");
+  const body = JSON.parse(text) as Record<string, unknown>;
+  assert.equal(text, canonical(body), `${label} canonical JSON without LF`);
+  assert.equal(canonicalHash(body), hash, `${label} canonical hash`);
+  return Object.freeze(body);
+}
+
+function exactFixtureKeysV1(value: Readonly<Record<string, unknown>>, keys: readonly string[], label: string): void {
+  assert.deepEqual(Object.keys(value).sort(), [...keys].sort(), `${label} exact key set`);
+}
+
+function canonicalFixtureRecordV1(value: Readonly<Record<string, unknown>>): Buffer {
+  return Buffer.from(`${canonical(value)}\n`, "utf8");
+}
+
+function rehashFixtureRecordV1(
+  original: Readonly<Record<string, unknown>>,
+  refKey: string,
+  hashKey: string,
+  refPrefix: string,
+  mutate: (core: Record<string, unknown>) => void,
+): Readonly<{ value: Readonly<Record<string, unknown>>; bytes: Buffer; hash: string; ref: string }> {
+  const core = structuredClone(original);
+  delete core[refKey];
+  delete core[hashKey];
+  mutate(core);
+  const hash = canonicalHash(core);
+  const ref = `${refPrefix}${hash}`;
+  const value = Object.freeze({ ...core, [refKey]: ref, [hashKey]: hash });
+  return Object.freeze({ value, bytes: canonicalFixtureRecordV1(value), hash, ref });
+}
+
+function zeroOwnerCensusFixtureV1(): Readonly<Record<string, 0>> {
+  return Object.freeze(Object.fromEntries([
+    "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
+    "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "ordinaryStartingCount",
+    "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount",
+    "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount", "artifactReservationCount",
+    "publicationBatchCount", "artifactPublicationCount", "docsSessionCount", "docsLeaseCount",
+    "fleetStageCount", "fleetInflightCount", "fleetPendingReviewCount", "matrixInflightCount",
+    "launchOutboxCount", "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount",
+    "operationalDeliveryCount", "sourceRunOwnerCount", "coldRehearsalOwnerCount",
+    "compilationLeaseCount", "executionLeaseCount", "ownedProcessCount", "ownedListenerCount",
+    "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount",
+  ].map((key) => [key, 0])) as Record<string, 0>);
+}
+
+function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictChainFixtureV1 {
+  const predecessorOperation = Object.freeze({
+    operationRef: EXACT_POISON_OPERATION_REF_V1,
+    operationHash: EXACT_POISON_OPERATION_HASH_V1,
+  });
+  const poisonOperation = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")) as Record<string, unknown>;
+  const exactAuthorityV31 = JSON.parse(exactFixtureJsonBytesV1(
+    EXACT_POISON_AUTHORITY_V31_RECORD_BYTES_BASE64_V1,
+    8_638,
+    "ece0f1d0d0954137a4525963f0a8829b9be3597d3d183bbdc95262d40063d962",
+    "exact poison authority-v31 record",
+  ).toString("utf8")) as Record<string, unknown>;
+  const exactPending = JSON.parse(exactFixtureJsonBytesV1(
+    EXACT_POISON_PENDING_RECORD_BYTES_BASE64_V1,
+    1_580,
+    "19d97b5c9e55eafc4acea9cd7e8f0ab851d4410904dcb333c7c681f1f28d0bc7",
+    "exact poison pending record",
+  ).toString("utf8")) as Record<string, unknown>;
+  const observedSource = runObserver(root);
+  assert.equal(observedSource.status, 0, observedSource.stderr);
+  const successorSource = Object.freeze(JSON.parse(observedSource.stdout) as Record<string, unknown>);
+  assert.equal(successorSource.sha, git(root, ["rev-parse", "HEAD"]));
+  assert.equal(successorSource.treeHash, git(root, ["rev-parse", "HEAD^{tree}"]));
+  assert.equal(successorSource.originMainSha, successorSource.sha);
+  assert.equal(successorSource.clean, true);
+  const successorMigrationBlob = git(root, ["rev-parse", `${successorSource.sha}:src/db/bootstrap-main-claim-handoff-v1-migration.ts`]);
+  const poisonPbaObservation = poisonOperation.productBuildAuthorityV2Observation as Record<string, unknown>;
+  const poisonPbaResponse = poisonPbaObservation.response as Record<string, unknown>;
+  const poisonPbaEvidence = poisonPbaResponse.evidence as Record<string, unknown>;
+  const successorPbaSource = Object.freeze({
+    branch: "main",
+    buildHash: "6".repeat(64),
+    clean: true,
+    originMainSha: "4".repeat(40),
+    sha: "4".repeat(40),
+    treeHash: "5".repeat(40),
+  });
+  const successorVendorLockCore = structuredClone(poisonPbaEvidence.vendorLock as Record<string, unknown>);
+  delete successorVendorLockCore.vendorLockProjectionHash;
+  successorVendorLockCore.producerCommit = successorPbaSource.sha;
+  const successorVendorLock = Object.freeze({
+    ...successorVendorLockCore,
+    vendorLockProjectionHash: canonicalHash(successorVendorLockCore),
+  });
+  const successorPbaEvidence = rehashFixtureRecordV1(
+    poisonPbaEvidence,
+    "deliveryEvidenceRef",
+    "deliveryEvidenceHash",
+    "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/",
+    (core) => {
+      core.currentSource = successorPbaSource;
+      core.vendorLock = successorVendorLock;
+    },
+  );
+  const successorPbaResponse = Object.freeze({
+    ...poisonPbaResponse,
+    deliveryEvidenceRef: successorPbaEvidence.ref,
+    deliveryEvidenceHash: successorPbaEvidence.hash,
+    evidence: successorPbaEvidence.value,
+  });
+  const successorPbaObservation = Object.freeze({
+    ...poisonPbaObservation,
+    response: successorPbaResponse,
+  });
+  const successorPbaPair = Object.freeze({
+    deliveryEvidenceRef: successorPbaEvidence.ref,
+    deliveryEvidenceHash: successorPbaEvidence.hash,
+  });
+  exactFixtureKeysV1(successorPbaObservation, Object.keys(poisonPbaObservation), "successor PBA observation");
+  exactFixtureKeysV1(successorPbaResponse, Object.keys(poisonPbaResponse), "successor PBA response");
+  exactFixtureKeysV1(successorPbaEvidence.value, Object.keys(poisonPbaEvidence), "successor PBA evidence");
+  exactFixtureKeysV1(successorVendorLock, Object.keys(poisonPbaEvidence.vendorLock as Record<string, unknown>), "successor PBA vendor lock");
+  const successorAuthorityV31 = rehashFixtureRecordV1(
+    exactAuthorityV31,
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+    (core) => {
+      core.controllerSource = successorSource;
+      const pr86Delivery = core.pr86Delivery as Record<string, unknown>;
+      core.pr86Delivery = Object.freeze({
+        ...pr86Delivery,
+        descendantSha: successorSource.sha,
+        descendantTreeHash: successorSource.treeHash,
+      });
+      core.migration31SourceManifestEntryHash = canonicalHash({});
+    },
+  );
+  const successorPending = rehashFixtureRecordV1(
+    exactPending,
+    "pendingBootstrapHandoffMigrationRef",
+    "pendingBootstrapHandoffMigrationHash",
+    "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+    (core) => {
+      core.controllerSource = successorSource;
+      const migrationImplementation = core.migrationImplementation as Record<string, unknown>;
+      core.migrationImplementation = Object.freeze({ ...migrationImplementation, gitBlobHash: successorMigrationBlob });
+    },
+  );
+  const successorPr86Delivery = successorAuthorityV31.value.pr86Delivery as Readonly<Record<string, unknown>>;
+  const successorMigrationImplementation = successorPending.value.migrationImplementation as Readonly<Record<string, unknown>>;
+  assert.equal(successorPr86Delivery.descendantSha, successorSource.sha);
+  assert.equal(successorPr86Delivery.descendantTreeHash, successorSource.treeHash);
+  assert.equal(successorMigrationImplementation.gitBlobHash, successorMigrationBlob);
+  const successorOperationCore = structuredClone(poisonOperation);
+  delete successorOperationCore.operationRef;
+  delete successorOperationCore.operationHash;
+  successorOperationCore.controllerSource = successorSource;
+  successorOperationCore.productBuildAuthorityV2DeliveryEvidence = successorPbaPair;
+  successorOperationCore.productBuildAuthorityV2Observation = successorPbaObservation;
+  successorOperationCore.authorityV3Migration31Audit = Object.freeze({
+    authorityV3Migration31AuditRef: successorAuthorityV31.ref,
+    authorityV3Migration31AuditHash: successorAuthorityV31.hash,
+  });
+  successorOperationCore.pendingBootstrapHandoffMigration = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: successorPending.ref,
+    pendingBootstrapHandoffMigrationHash: successorPending.hash,
+  });
+  exactFixtureKeysV1(successorOperationCore, [
+    "schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence",
+    "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration",
+  ], "successor operation core");
+  const successorOperationHash = canonicalHash(successorOperationCore);
+  const successorOperationRef = `setfarm://internal-production/current-entry-operation/sha256/${successorOperationHash}`;
+  const successorOperation = Object.freeze({ ...successorOperationCore, operationRef: successorOperationRef, operationHash: successorOperationHash });
+  exactFixtureKeysV1(successorOperation, [
+    "schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence",
+    "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration",
+    "operationRef", "operationHash",
+  ], "successor operation wrapper");
+  const successorOperationBytes = canonicalFixtureRecordV1(successorOperation);
+
+  const completeZeroEffectBracketHash = "a".repeat(64);
+  const successorLegacyZeroCore = Object.freeze({
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    observationKind: "legacy-pre-manifest-existing-live-truth",
+    authorityV3Migration31AuditRef: successorAuthorityV31.ref,
+    authorityV3Migration31AuditHash: successorAuthorityV31.hash,
+    cleanSetfarmSourceSha: successorSource.sha,
+    cleanSetfarmTreeHash: successorSource.treeHash,
+    cleanSetfarmBuildHash: successorSource.buildHash,
+    observedSpawnerGenerationHash: "e".repeat(64),
+    census: zeroOwnerCensusFixtureV1(),
+    allThirtySixScalarCountsZero: true,
+    ownerReservationSidecarState: "absent-before-migration-32",
+    ownerAdmissionHeadState: "absent-before-migration-32",
+    manifestActivationState: "absent-before-initial-a-activation",
+  });
+  const successorLegacyZeroHash = canonicalHash(successorLegacyZeroCore);
+  const successorLegacyZero = Object.freeze({
+    ...successorLegacyZeroCore,
+    observationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${successorLegacyZeroHash}`,
+    observationHash: successorLegacyZeroHash,
+  });
+  const zeroEffectProofCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-zero-effect-proof.v1",
+    predecessorOperation,
+    contaminationFingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1,
+    quarantinedInventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+    completeZeroEffectBracketHash,
+    predecessorFileIdentities: Object.freeze([
+      Object.freeze({ locator: "current-entry-operation.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141401" }),
+      Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141143" }),
+      Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136356" }),
+      Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/6e/6e3c6e68f5888b1092a89f6b48a990ff83a88ebdfd7be9c8c51f721a29f09741.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141205" }),
+      Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136424" }),
+    ]),
+    unavailableSyntheticGitObjects: Object.freeze([
+      Object.freeze({ repository: "setfarm", objectSha: "4fc67f20df0e935c703c4658a29dbbaa9aa0a956", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
+      Object.freeze({ repository: "mission-control", objectSha: "4ec5fc99a076453a87381c0c75e508d25dd8882d", objectType: "commit", state: "absent", networkAccess: "forbidden" }),
+    ]),
+    successorOperation,
+    legacyPreManifestZeroOwner: successorLegacyZero,
+  });
+  assert.notEqual(successorSource.sha, zeroEffectProofCore.unavailableSyntheticGitObjects[0]?.objectSha);
+  assert.notEqual(successorPbaSource.sha, zeroEffectProofCore.unavailableSyntheticGitObjects[1]?.objectSha);
+  exactFixtureKeysV1(zeroEffectProofCore, [
+    "schema", "predecessorOperation", "contaminationFingerprintHash", "quarantinedInventoryHash",
+    "completeZeroEffectBracketHash", "predecessorFileIdentities", "unavailableSyntheticGitObjects",
+    "successorOperation", "legacyPreManifestZeroOwner",
+  ], "zero-effect proof core");
+  const zeroEffectProofHash = canonicalHash(zeroEffectProofCore);
+  const zeroEffectProof = Object.freeze({
+    ...zeroEffectProofCore,
+    zeroEffectProofRef: `setfarm://internal-production/current-entry-store-zero-effect-proof/sha256/${zeroEffectProofHash}`,
+    zeroEffectProofHash,
+  });
+  exactFixtureKeysV1(zeroEffectProof, [...Object.keys(zeroEffectProofCore), "zeroEffectProofRef", "zeroEffectProofHash"], "zero-effect proof wrapper");
+
+  const authorityLocator = `records/authority-v3-migration31-audits/sha256/${successorAuthorityV31.hash.slice(0, 2)}/${successorAuthorityV31.hash}.json`;
+  const pendingLocator = `records/pending-bootstrap-handoff-migrations/sha256/${successorPending.hash.slice(0, 2)}/${successorPending.hash}.json`;
+  const genesisCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-genesis.v1",
+    predecessorOperation,
+    zeroEffectProof: Object.freeze({ zeroEffectProofRef: zeroEffectProof.zeroEffectProofRef, zeroEffectProofHash }),
+    authorityV3Migration31Audit: successorOperation.authorityV3Migration31Audit,
+    pendingBootstrapHandoffMigration: successorOperation.pendingBootstrapHandoffMigration,
+    successorOperation: Object.freeze({ operationRef: successorOperationRef, operationHash: successorOperationHash }),
+    orderedEntries: Object.freeze([
+      Object.freeze({ locator: "current-entry-operation.json", mode: "0600", byteLength: successorOperationBytes.length, bytesSha256: createHash("sha256").update(successorOperationBytes).digest("hex") }),
+      Object.freeze({ locator: authorityLocator, mode: "0600", byteLength: successorAuthorityV31.bytes.length, bytesSha256: createHash("sha256").update(successorAuthorityV31.bytes).digest("hex") }),
+      Object.freeze({ locator: pendingLocator, mode: "0600", byteLength: successorPending.bytes.length, bytesSha256: createHash("sha256").update(successorPending.bytes).digest("hex") }),
+    ]),
+  });
+  exactFixtureKeysV1(genesisCore, [
+    "schema", "predecessorOperation", "zeroEffectProof", "authorityV3Migration31Audit",
+    "pendingBootstrapHandoffMigration", "successorOperation", "orderedEntries",
+  ], "successor genesis core");
+  const successorStoreHash = canonicalHash(genesisCore);
+  const successorGenesis = Object.freeze({ ...genesisCore, successorStoreHash });
+  exactFixtureKeysV1(successorGenesis, [...Object.keys(genesisCore), "successorStoreHash"], "successor genesis wrapper");
+
+  const contaminationFingerprint = Object.freeze({
+    fingerprintBody: exactFixtureBodyV1(EXACT_POISON_CONTAMINATION_FINGERPRINT_BODY_BASE64_V1, EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1, "contamination fingerprint"),
+    fingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1,
+  });
+  const quarantinedInventory = Object.freeze({
+    inventoryBody: exactFixtureBodyV1(EXACT_POISON_QUARANTINED_INVENTORY_BODY_BASE64_V1, EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1, "quarantined inventory"),
+    inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+  });
+  const dispositionCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-quarantine-disposition.v1",
+    reason: "p3-projected-fixture-workspace-root-contamination-v1",
+    predecessorOperation,
+    contaminationFingerprint,
+    quarantinedInventory,
+    zeroEffectProof,
+    successorGenesis,
+  });
+  exactFixtureKeysV1(dispositionCore, [
+    "schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory",
+    "zeroEffectProof", "successorGenesis",
+  ], "quarantine disposition core");
+  const dispositionHash = canonicalHash(dispositionCore);
+  const dispositionRef = `setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/${dispositionHash}`;
+  const disposition = Object.freeze({ ...dispositionCore, dispositionRef, dispositionHash });
+  exactFixtureKeysV1(disposition, [...Object.keys(dispositionCore), "dispositionRef", "dispositionHash"], "quarantine disposition wrapper");
+  const successorStoreRelativeRoot = `stores/sha256/${successorStoreHash.slice(0, 2)}/${successorStoreHash}`;
+  const edgeCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-edge.v1",
+    predecessorOperation,
+    disposition: Object.freeze({ dispositionRef, dispositionHash }),
+    successorStoreHash,
+    successorStoreRelativeRoot,
+    successorOperation: Object.freeze({ operationRef: successorOperationRef, operationHash: successorOperationHash }),
+  });
+  exactFixtureKeysV1(edgeCore, ["schema", "predecessorOperation", "disposition", "successorStoreHash", "successorStoreRelativeRoot", "successorOperation"], "successor edge core");
+  const edgeHash = canonicalHash(edgeCore);
+  const edgeRef = `setfarm://internal-production/current-entry-store-successor-edge/sha256/${edgeHash}`;
+  const edge = Object.freeze({ ...edgeCore, edgeRef, edgeHash });
+  exactFixtureKeysV1(edge, [...Object.keys(edgeCore), "edgeRef", "edgeHash"], "successor edge wrapper");
+  const sealCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-activation-seal.v1",
+    predecessorOperation,
+    successorEdge: Object.freeze({ edgeRef, edgeHash }),
+    completeZeroEffectBracketHash,
+  });
+  exactFixtureKeysV1(sealCore, ["schema", "predecessorOperation", "successorEdge", "completeZeroEffectBracketHash"], "activation seal core");
+  const activationSealHash = canonicalHash(sealCore);
+  const activationSealRef = `setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/${activationSealHash}`;
+  const seal = Object.freeze({ ...sealCore, activationSealRef, activationSealHash });
+  exactFixtureKeysV1(seal, [...Object.keys(sealCore), "activationSealRef", "activationSealHash"], "activation seal wrapper");
+  const commitCore = Object.freeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-activation-commit.v1",
+    predecessorOperation,
+    successorActivationSeal: Object.freeze({ activationSealRef, activationSealHash }),
+    postSealCompleteZeroEffectBracketHash: completeZeroEffectBracketHash,
+  });
+  exactFixtureKeysV1(commitCore, ["schema", "predecessorOperation", "successorActivationSeal", "postSealCompleteZeroEffectBracketHash"], "activation commit core");
+  const activationCommitHash = canonicalHash(commitCore);
+  const activationCommitRef = `setfarm://internal-production/current-entry-store-successor-activation-commit/sha256/${activationCommitHash}`;
+  const commit = Object.freeze({ ...commitCore, activationCommitRef, activationCommitHash });
+  exactFixtureKeysV1(commit, [...Object.keys(commitCore), "activationCommitRef", "activationCommitHash"], "activation commit wrapper");
+  assert.equal(zeroEffectProof.completeZeroEffectBracketHash, seal.completeZeroEffectBracketHash);
+  assert.equal(seal.completeZeroEffectBracketHash, commit.postSealCompleteZeroEffectBracketHash);
+
+  return Object.freeze({
+    completeZeroEffectBracketHash,
+    dispositionHash,
+    successorStoreHash,
+    edgeHash,
+    activationSealHash,
+    activationCommitHash,
+    successorStoreRelativeRoot,
+    embedded: Object.freeze({
+      zeroEffectProof: Object.freeze({ value: zeroEffectProof, bytes: canonicalFixtureRecordV1(zeroEffectProof) }),
+      successorGenesis: Object.freeze({ value: successorGenesis, bytes: canonicalFixtureRecordV1(successorGenesis) }),
+    }),
+    records: Object.freeze({
+      disposition: Object.freeze({ value: disposition, bytes: canonicalFixtureRecordV1(disposition), locator: `records/current-entry-store-quarantine-dispositions/sha256/${dispositionHash.slice(0, 2)}/${dispositionHash}.json` }),
+      successorOperation: Object.freeze({ value: successorOperation, bytes: successorOperationBytes, locator: `${successorStoreRelativeRoot}/current-entry-operation.json` }),
+      successorAuthorityV31: Object.freeze({ value: successorAuthorityV31.value, bytes: successorAuthorityV31.bytes, locator: `${successorStoreRelativeRoot}/${authorityLocator}` }),
+      successorPending: Object.freeze({ value: successorPending.value, bytes: successorPending.bytes, locator: `${successorStoreRelativeRoot}/${pendingLocator}` }),
+      edge: Object.freeze({ value: edge, bytes: canonicalFixtureRecordV1(edge), locator: `records/current-entry-store-successor-edges/by-predecessor-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1.slice(0, 2)}/${EXACT_POISON_OPERATION_HASH_V1}.json` }),
+      seal: Object.freeze({ value: seal, bytes: canonicalFixtureRecordV1(seal), locator: `records/current-entry-store-successor-activation-seals/sha256/${activationSealHash.slice(0, 2)}/${activationSealHash}.json` }),
+      commit: Object.freeze({ value: commit, bytes: canonicalFixtureRecordV1(commit), locator: `records/current-entry-store-successor-activation-commits/sha256/${activationCommitHash.slice(0, 2)}/${activationCommitHash}.json` }),
+    }),
+  });
+}
+
+function writeStrictCurrentEntryFixtureRecordV1(store: string, locator: string, bytes: Buffer): string {
+  const target = path.join(store, locator);
+  let directory = store;
+  for (const segment of path.dirname(locator).split(path.sep).filter((entry) => entry !== ".")) {
+    directory = path.join(directory, segment);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(directory, 0o700);
+  }
+  writeFileSync(target, bytes, { mode: 0o600 });
+  chmodSync(target, 0o600);
+  return target;
+}
+
+function seedExactPoisonStrictChainFixtureV1(
+  root: string,
+  chain: ExactPoisonStrictChainFixtureV1,
+  through: "H" | "S" | "C",
+): Readonly<{
+  store: string;
+  D: string;
+  GOperation: string;
+  GAuthorityV31: string;
+  GPending: string;
+  H: string;
+  S: string;
+  C: string;
+}> {
+  const store = writeRawCurrentEntryOperationFixtureV1(root, exactPoisonOperationFixtureBytesV1());
+  const D = writeStrictCurrentEntryFixtureRecordV1(store, chain.records.disposition.locator, chain.records.disposition.bytes);
+  const GOperation = writeStrictCurrentEntryFixtureRecordV1(store, chain.records.successorOperation.locator, chain.records.successorOperation.bytes);
+  const GAuthorityV31 = writeStrictCurrentEntryFixtureRecordV1(store, chain.records.successorAuthorityV31.locator, chain.records.successorAuthorityV31.bytes);
+  const GPending = writeStrictCurrentEntryFixtureRecordV1(store, chain.records.successorPending.locator, chain.records.successorPending.bytes);
+  const H = writeStrictCurrentEntryFixtureRecordV1(store, chain.records.edge.locator, chain.records.edge.bytes);
+  const S = path.join(store, chain.records.seal.locator);
+  const C = path.join(store, chain.records.commit.locator);
+  if (through === "S" || through === "C") writeStrictCurrentEntryFixtureRecordV1(store, chain.records.seal.locator, chain.records.seal.bytes);
+  if (through === "C") writeStrictCurrentEntryFixtureRecordV1(store, chain.records.commit.locator, chain.records.commit.bytes);
+  return Object.freeze({ store, D, GOperation, GAuthorityV31, GPending, H, S, C });
+}
+
+function mutateExactPoisonStrictChainRecordV1(
+  target: string,
+  kind: "H" | "S" | "C",
+  fault: "malformed" | "crossed" | "noncanonical" | "wrong-mode" | "wrong-link",
+): void {
+  if (fault === "wrong-mode") {
+    chmodSync(target, 0o644);
+    return;
+  }
+  if (fault === "wrong-link") {
+    linkSync(target, `${target}.alias`);
+    return;
+  }
+  if (fault === "malformed") {
+    writeFileSync(target, "{\n");
+    return;
+  }
+  const value = JSON.parse(readFileSync(target, "utf8")) as Record<string, unknown>;
+  if (fault === "noncanonical") {
+    writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`);
+    return;
+  }
+  const shape = {
+    H: Object.freeze({ refKey: "edgeRef", hashKey: "edgeHash", prefix: "setfarm://internal-production/current-entry-store-successor-edge/sha256/", binding: "predecessorOperation", ref: "operationRef", hash: "operationHash", bindingPrefix: "setfarm://internal-production/current-entry-operation/sha256/" }),
+    S: Object.freeze({ refKey: "activationSealRef", hashKey: "activationSealHash", prefix: "setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/", binding: "successorEdge", ref: "edgeRef", hash: "edgeHash", bindingPrefix: "setfarm://internal-production/current-entry-store-successor-edge/sha256/" }),
+    C: Object.freeze({ refKey: "activationCommitRef", hashKey: "activationCommitHash", prefix: "setfarm://internal-production/current-entry-store-successor-activation-commit/sha256/", binding: "successorActivationSeal", ref: "activationSealRef", hash: "activationSealHash", bindingPrefix: "setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/" }),
+  }[kind];
+  const crossedHash = "f".repeat(64);
+  const crossed = rehashFixtureRecordV1(value, shape.refKey, shape.hashKey, shape.prefix, (core) => {
+    core[shape.binding] = Object.freeze({ [shape.ref]: `${shape.bindingPrefix}${crossedHash}`, [shape.hash]: crossedHash });
+  });
+  writeFileSync(target, crossed.bytes);
+}
+
+type ExactPoisonStrictChainMutationV1 =
+  | Readonly<{ scope: "routing"; kind: "H" | "S" | "C"; fault: "malformed" | "crossed" | "noncanonical" | "wrong-mode" | "wrong-link" }>
+  | Readonly<{ scope: "D"; fault: "missing" | "malformed" | "crossed" }>
+  | Readonly<{ scope: "G"; kind: "GOperation" | "GAuthorityV31" | "GPending"; fault: "missing" | "malformed" | "crossed" }>;
+
+function mutateExactPoisonStrictChainDependencyV1(
+  seeded: Readonly<{
+    D: string;
+    GOperation: string;
+    GAuthorityV31: string;
+    GPending: string;
+    H: string;
+    S: string;
+    C: string;
+  }>,
+  mutation: ExactPoisonStrictChainMutationV1,
+): void {
+  if (mutation.scope === "routing") {
+    mutateExactPoisonStrictChainRecordV1(seeded[mutation.kind], mutation.kind, mutation.fault);
+    return;
+  }
+  const target = seeded[mutation.scope === "D" ? "D" : mutation.kind];
+  if (mutation.fault === "missing") {
+    unlinkSync(target);
+    return;
+  }
+  if (mutation.fault === "malformed") {
+    writeFileSync(target, "{\n");
+    return;
+  }
+  const value = JSON.parse(readFileSync(target, "utf8")) as Record<string, unknown>;
+  if (mutation.scope === "D") {
+    const crossed = rehashFixtureRecordV1(
+      value,
+      "dispositionRef",
+      "dispositionHash",
+      "setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/",
+      (core) => {
+        const crossedHash = "f".repeat(64);
+        core.predecessorOperation = Object.freeze({
+          operationRef: `setfarm://internal-production/current-entry-operation/sha256/${crossedHash}`,
+          operationHash: crossedHash,
+        });
+      },
+    );
+    writeFileSync(target, crossed.bytes);
+    return;
+  }
+  const shape = {
+    GOperation: Object.freeze({ refKey: "operationRef", hashKey: "operationHash", prefix: "setfarm://internal-production/current-entry-operation/sha256/" }),
+    GAuthorityV31: Object.freeze({ refKey: "authorityV3Migration31AuditRef", hashKey: "authorityV3Migration31AuditHash", prefix: "setfarm://internal-production/authority-v3-migration31-audit/sha256/" }),
+    GPending: Object.freeze({ refKey: "pendingBootstrapHandoffMigrationRef", hashKey: "pendingBootstrapHandoffMigrationHash", prefix: "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/" }),
+  }[mutation.kind];
+  const crossed = rehashFixtureRecordV1(value, shape.refKey, shape.hashKey, shape.prefix, (core) => {
+    const controllerSource = core.controllerSource as Record<string, unknown>;
+    core.controllerSource = Object.freeze({ ...controllerSource, buildHash: "7".repeat(64) });
+  });
+  writeFileSync(target, crossed.bytes);
 }
 
 function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode = 0o644): void {
@@ -2320,7 +3047,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.equal(result.stderr, "", testCase.name);
         const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; calls: number; afterPrehook: number }>;
         assert.equal(observed.outcome, testCase.outcome, testCase.name);
-        assert.equal(observed.calls, testCase.calls, testCase.name);
+        assert.equal(observed.calls, testCase.calls, `${testCase.name}: ${observed.message ?? "no error"}`);
         assert.equal(observed.afterPrehook, 0, `${testCase.name}: no later prepare/routing statement may run after a publisher-core throw`);
         if (testCase.message === null) assert.equal(observed.message, null, testCase.name);
         else assert.match(observed.message ?? "", testCase.message, testCase.name);
@@ -2330,6 +3057,148 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       }
     }
   });
+
+  it("P4 constructs the exact deterministic poison successor record model", () => {
+    const root = finalizedFixture().root;
+    try {
+      const chain = buildExactPoisonStrictChainFixtureV1(root);
+    const assertWrappedFormula = (
+      record: ExactPoisonStrictChainModelV1,
+      refKey: string | null,
+      hashKey: string,
+      prefix: string | null,
+    ): void => {
+      const core = structuredClone(record.value);
+      const observedHash = core[hashKey];
+      delete core[hashKey];
+      let observedRef: unknown = null;
+      if (refKey !== null) {
+        observedRef = core[refKey];
+        delete core[refKey];
+      }
+      assert.equal(observedHash, canonicalHash(core));
+      if (refKey !== null) assert.equal(observedRef, `${prefix}${observedHash}`);
+      assert.equal(record.bytes.toString("utf8"), `${canonical(record.value)}\n`);
+    };
+    assertWrappedFormula(chain.embedded.zeroEffectProof, "zeroEffectProofRef", "zeroEffectProofHash", "setfarm://internal-production/current-entry-store-zero-effect-proof/sha256/");
+    assertWrappedFormula(chain.embedded.successorGenesis, null, "successorStoreHash", null);
+    assertWrappedFormula(chain.records.disposition, "dispositionRef", "dispositionHash", "setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/");
+    assertWrappedFormula(chain.records.edge, "edgeRef", "edgeHash", "setfarm://internal-production/current-entry-store-successor-edge/sha256/");
+    assertWrappedFormula(chain.records.seal, "activationSealRef", "activationSealHash", "setfarm://internal-production/current-entry-store-successor-activation-seal/sha256/");
+    assertWrappedFormula(chain.records.commit, "activationCommitRef", "activationCommitHash", "setfarm://internal-production/current-entry-store-successor-activation-commit/sha256/");
+    assertWrappedFormula(chain.records.successorOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+    assertWrappedFormula(chain.records.successorAuthorityV31, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+    assertWrappedFormula(chain.records.successorPending, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+    assert.equal(chain.records.disposition.locator, `records/current-entry-store-quarantine-dispositions/sha256/${chain.dispositionHash.slice(0, 2)}/${chain.dispositionHash}.json`);
+    assert.equal(chain.successorStoreRelativeRoot, `stores/sha256/${chain.successorStoreHash.slice(0, 2)}/${chain.successorStoreHash}`);
+    assert.equal(chain.records.successorOperation.locator, `${chain.successorStoreRelativeRoot}/current-entry-operation.json`);
+    assert.equal(chain.records.edge.locator, `records/current-entry-store-successor-edges/by-predecessor-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1.slice(0, 2)}/${EXACT_POISON_OPERATION_HASH_V1}.json`);
+    assert.equal(chain.records.seal.locator, `records/current-entry-store-successor-activation-seals/sha256/${chain.activationSealHash.slice(0, 2)}/${chain.activationSealHash}.json`);
+    assert.equal(chain.records.commit.locator, `records/current-entry-store-successor-activation-commits/sha256/${chain.activationCommitHash.slice(0, 2)}/${chain.activationCommitHash}.json`);
+    assert.deepEqual(Reflect.get(chain.records.disposition.value, "zeroEffectProof"), chain.embedded.zeroEffectProof.value);
+    assert.deepEqual(Reflect.get(chain.records.disposition.value, "successorGenesis"), chain.embedded.successorGenesis.value);
+    const orderedEntries = Reflect.get(chain.embedded.successorGenesis.value, "orderedEntries") as readonly Readonly<Record<string, unknown>>[];
+    const genesisMembers = [chain.records.successorOperation, chain.records.successorAuthorityV31, chain.records.successorPending];
+    assert.equal(orderedEntries.length, genesisMembers.length);
+    for (const [index, member] of genesisMembers.entries()) {
+      assert.deepEqual(orderedEntries[index], {
+        locator: member.locator.slice(chain.successorStoreRelativeRoot.length + 1),
+        mode: "0600",
+        byteLength: member.bytes.length,
+        bytesSha256: createHash("sha256").update(member.bytes).digest("hex"),
+      });
+    }
+    assert.equal(Reflect.get(chain.records.seal.value, "completeZeroEffectBracketHash"), chain.completeZeroEffectBracketHash);
+    assert.equal(Reflect.get(chain.records.commit.value, "postSealCompleteZeroEffectBracketHash"), chain.completeZeroEffectBracketHash);
+    const successorOperation = chain.records.successorOperation.value;
+    const successorSource = Reflect.get(successorOperation, "controllerSource") as Readonly<Record<string, unknown>>;
+    const pbaObservation = Reflect.get(successorOperation, "productBuildAuthorityV2Observation") as Readonly<Record<string, unknown>>;
+    const pbaResponse = Reflect.get(pbaObservation, "response") as Readonly<Record<string, unknown>>;
+    const pbaEvidence = Reflect.get(pbaResponse, "evidence") as Readonly<Record<string, unknown>>;
+    const pbaSource = Reflect.get(pbaEvidence, "currentSource") as Readonly<Record<string, unknown>>;
+    const unavailable = Reflect.get(chain.embedded.zeroEffectProof.value, "unavailableSyntheticGitObjects") as readonly Readonly<Record<string, unknown>>[];
+    assert.notEqual(successorSource.sha, unavailable[0]?.objectSha);
+    assert.notEqual(pbaSource.sha, unavailable[1]?.objectSha);
+    assert.deepEqual(Reflect.get(successorOperation, "productBuildAuthorityV2DeliveryEvidence"), {
+      deliveryEvidenceRef: pbaEvidence.deliveryEvidenceRef,
+      deliveryEvidenceHash: pbaEvidence.deliveryEvidenceHash,
+    });
+    const successorV31 = chain.records.successorAuthorityV31.value;
+    const successorPending = chain.records.successorPending.value;
+    const pr86Delivery = Reflect.get(successorV31, "pr86Delivery") as Readonly<Record<string, unknown>>;
+    const migrationImplementation = Reflect.get(successorPending, "migrationImplementation") as Readonly<Record<string, unknown>>;
+    assert.equal(pr86Delivery.descendantSha, git(root, ["rev-parse", "HEAD"]));
+    assert.equal(pr86Delivery.descendantTreeHash, git(root, ["rev-parse", "HEAD^{tree}"]));
+    assert.equal(
+      migrationImplementation.gitBlobHash,
+      git(root, ["rev-parse", "HEAD:src/db/bootstrap-main-claim-handoff-v1-migration.ts"]),
+    );
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  const exactPoisonStrictChainCasesV1: ReadonlyArray<Readonly<{
+      name: string;
+      through: "H" | "S" | "C";
+      mutation: ExactPoisonStrictChainMutationV1 | null;
+      calls: 0 | 1;
+    }>> = [
+      { name: "strict-h-seal-absent", through: "H", mutation: null, calls: 1 },
+      { name: "strict-h-s-commit-absent", through: "S", mutation: null, calls: 1 },
+      ...(["H", "S", "C"] as const).flatMap((kind) =>
+        (["malformed", "crossed", "noncanonical", "wrong-mode", "wrong-link"] as const).map((fault) => Object.freeze({
+          name: `${kind.toLowerCase()}-${fault}`,
+          through: "C" as const,
+          mutation: Object.freeze({ scope: "routing" as const, kind, fault }),
+          calls: 1 as const,
+        }))),
+      ...(["missing", "malformed", "crossed"] as const).map((fault) => Object.freeze({
+        name: `disposition-${fault}`,
+        through: "C" as const,
+        mutation: Object.freeze({ scope: "D" as const, fault }),
+        calls: 1 as const,
+      })),
+      ...(["GOperation", "GAuthorityV31", "GPending"] as const).flatMap((kind) =>
+        (["missing", "malformed", "crossed"] as const).map((fault) => Object.freeze({
+          name: `${kind}-${fault}`,
+          through: "C" as const,
+          mutation: Object.freeze({ scope: "G" as const, kind, fault }),
+          calls: 1 as const,
+        }))),
+      { name: "full-strict-h-s-c", through: "C", mutation: null, calls: 0 },
+    ];
+
+  for (const testCase of exactPoisonStrictChainCasesV1) {
+    it(`P4 strict-chain preselection ${testCase.name}`, () => {
+      const root = finalizedFixture().root;
+      try {
+        const chain = buildExactPoisonStrictChainFixtureV1(root);
+        const seeded = seedExactPoisonStrictChainFixtureV1(root, chain, testCase.through);
+        if (testCase.mutation !== null) {
+          mutateExactPoisonStrictChainDependencyV1(seeded, testCase.mutation);
+        }
+        instrumentExactPoisonPreselectionFixtureV1(root);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runFixtureExpression(root, '(async()=>{const probe={calls:0,afterPrehook:0,throwOnCall:true};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);let outcome="returned";let message=null;try{await m.resumeExactPoisonQuarantineBeforeSelectionV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls}))})()');
+        assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+        assert.equal(result.stderr, "", testCase.name);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; calls: number }>;
+        assert.equal(observed.calls, testCase.calls, `${testCase.name}: ${observed.message ?? "no error"}`);
+        assert.equal(
+          observed.outcome,
+          testCase.calls === 0 ? "returned" : "threw",
+          `${testCase.name}: ${observed.message ?? "no error"}`,
+        );
+        if (testCase.calls === 0) assert.equal(observed.message, null, testCase.name);
+        else assert.match(observed.message ?? "", /P4_EXACT_POISON_PUBLISHER_CORE_CALLED/, testCase.name);
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${testCase.name}: strict-chain preselection must remain read-only`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
 
   it("P4 routes every current-entry authority store through the code-owned account workspace", () => {
     const source = readFileSync(observerSource, "utf8");
