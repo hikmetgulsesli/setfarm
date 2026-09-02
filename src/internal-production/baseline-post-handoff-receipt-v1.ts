@@ -6965,7 +6965,11 @@ function task12ReceiptExpectedPredecessorCasV1(target: string, predecessorBytes:
   }
 }
 
-async function parseLegacyZeroV1(value: Record<string, unknown>, pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+async function parseLegacyZeroV1(
+  value: Record<string, unknown>,
+  pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1,
+  resolveAudit: (pair: InternalProductionAuthorityV3Migration31AuditPairV1) => Promise<InternalProductionAuthorityV3Migration31AuditV1>,
+): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
   if (!hasExactKeys(value, ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"])) currentEntryFail("legacy zero-owner fields are invalid");
   const projection = { ...value };
   delete projection.observationRef;
@@ -6980,7 +6984,7 @@ async function parseLegacyZeroV1(value: Record<string, unknown>, pair: InternalP
     "authorityV3Migration31AuditHash",
     "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
   ) as InternalProductionAuthorityV3Migration31AuditPairV1;
-  const audit = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  const audit = await resolveAudit(auditPair);
   const cleanSource = requireSource({
     branch: "main",
     clean: true,
@@ -6994,11 +6998,12 @@ async function parseLegacyZeroV1(value: Record<string, unknown>, pair: InternalP
   return recursivelyFreeze(value as unknown as InternalProductionLegacyPreManifestZeroOwnerObservationV1);
 }
 
-export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
-  if (operation === null) currentEntryFail("legacy zero-owner observation requires the prepared current-entry operation");
+async function observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
   const auditPair = requirePair(operation.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/") as InternalProductionAuthorityV3Migration31AuditPairV1;
-  const audit = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  const audit = await resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, auditPair);
   const source = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   if (canonicalComparable(source) !== canonicalComparable(operation.controllerSource) || canonicalComparable(source) !== canonicalComparable(audit.controllerSource)) currentEntryFail("legacy zero-owner controller source is crossed");
   await reobserveStoredMigration31AuditV1(audit);
@@ -7009,7 +7014,7 @@ export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): P
   const servicesB = await observeInternalProductionServiceCensusV1();
   const physicalB = observePhysicalInventoryV1(servicesB, database.activeRunCount);
   const phaseB = await observePhaseClosedZeroV1(source);
-  const auditAgain = await resolveInternalProductionAuthorityV3Migration31AuditV1(auditPair);
+  const auditAgain = await resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, auditPair);
   await reobserveStoredMigration31AuditV1(auditAgain);
   assertServiceCensusPassStableV1(servicesA, servicesB, "legacy zero-owner observation changed across its database snapshot");
   if (
@@ -7076,7 +7081,15 @@ export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): P
   const bytes = await canonicalRecordBytes(value);
   const target = legacyZeroPathV1(observationHash);
   publishLegacyZeroRecordV1(target, bytes);
-  return resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1({ observationRef: value.observationRef, observationHash });
+  const pair = { observationRef: value.observationRef, observationHash };
+  return resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, pair);
+}
+
+export async function observeInternalProductionLegacyPreManifestZeroOwnerV1(): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
+  if (operation === null) currentEntryFail("legacy zero-owner observation requires the prepared current-entry operation");
+  return observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
 }
 
 export async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(
@@ -7085,7 +7098,21 @@ export async function resolveInternalProductionLegacyPreManifestZeroOwnerObserva
   const expected = requirePair(pair, "observationRef", "observationHash", LEGACY_ZERO_PREFIX_V1) as InternalProductionLegacyPreManifestZeroOwnerObservationPairV1;
   const target = legacyZeroPathV1(expected.observationHash);
   const bytes = readTask12ReceiptStoreBytesV1(target);
-  return await parseLegacyZeroV1(strictCanonicalRecord(bytes, "legacy zero-owner observation"), expected);
+  return await parseLegacyZeroV1(strictCanonicalRecord(bytes, "legacy zero-owner observation"), expected, resolveInternalProductionAuthorityV3Migration31AuditV1);
+}
+
+async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1,
+): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
+  const expected = requirePair(pair, "observationRef", "observationHash", LEGACY_ZERO_PREFIX_V1) as InternalProductionLegacyPreManifestZeroOwnerObservationPairV1;
+  const target = legacyZeroPathV1(expected.observationHash);
+  const bytes = readTask12ReceiptStoreBytesV1(target);
+  return await parseLegacyZeroV1(
+    strictCanonicalRecord(bytes, "legacy zero-owner observation"),
+    expected,
+    (auditPair) => resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, auditPair),
+  );
 }
 
 const COMPLETE_ZERO_STORE_V1 = "data/internal-production-baseline/complete-zero-owner-census-observation-v1";
@@ -7992,9 +8019,11 @@ export async function resolveInternalProductionPreManifestMigration32Authorizati
   return value;
 }
 
-export async function observeInternalProductionPreManifestMigration32AuthorizationStatusV1(
+async function observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1 | null,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  void context;
   if (!operation) {
     const body = { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1", state: "absent", currentEntryOperation: null, authorization: null, consumption: null, migrationReceipt: null, refusalCode: null };
     const statusHash = hashCanonicalJson(body);
@@ -8015,9 +8044,17 @@ export async function observeInternalProductionPreManifestMigration32Authorizati
   return recursivelyFreeze({ ...body, statusRef: `${TASK12_MIGRATION_PREFIXES_V1.status}${statusHash}`, statusHash });
 }
 
-export async function prepareInternalProductionPreManifestMigration32AuthorizationV1(
+export async function observeInternalProductionPreManifestMigration32AuthorizationStatusV1(
+): Promise<Readonly<Record<string, unknown>>> {
+  const context = await selectCurrentEntryStoreContextV1();
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
+  return observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation);
+}
+
+async function prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1,
 ): Promise<InternalProductionPreManifestMigration32AuthorizationPairV1> {
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
   if (!operation) currentEntryFail("migration-32 authorization requires the prepared operation");
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Record<string, unknown>;
   const observeStatus = startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1;
@@ -8031,8 +8068,8 @@ export async function prepareInternalProductionPreManifestMigration32Authorizati
     observationRef: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationRef),
     observationHash: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationHash),
   };
-  const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(postZeroPair);
-  const freshZero = await observeInternalProductionLegacyPreManifestZeroOwnerV1();
+  const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, postZeroPair);
+  const freshZero = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
   if (canonicalComparable(postZero.census) !== canonicalComparable(freshZero.census) || postZero.observedSpawnerGenerationHash !== freshZero.observedSpawnerGenerationHash) currentEntryFail("legacy zero-owner reobservation drifted");
   const body = {
     schema: "setfarm.internal-production-pre-manifest-migration-32-authorization.v1",
@@ -8059,13 +8096,22 @@ export async function prepareInternalProductionPreManifestMigration32Authorizati
   return pair;
 }
 
-export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1(
+export async function prepareInternalProductionPreManifestMigration32AuthorizationV1(
+): Promise<InternalProductionPreManifestMigration32AuthorizationPairV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
+  if (!operation) currentEntryFail("migration-32 authorization requires the prepared operation");
+  return prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation);
+}
+
+async function applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1,
   input: Readonly<{ authorizationRef: string; authorizationHash: string }>,
 ): Promise<Readonly<{ migrationReceiptRef: string; migrationReceiptHash: string }>> {
   const authorization = await resolveInternalProductionPreManifestMigration32AuthorizationV1(input);
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
-  if (!operation || authorization.currentEntryOperationRef !== operation.operationRef || authorization.currentEntryOperationHash !== operation.operationHash) currentEntryFail("migration-32 authorization operation is crossed");
-  const observed = await observeInternalProductionPreManifestMigration32AuthorizationStatusV1();
+  if (authorization.currentEntryOperationRef !== operation.operationRef || authorization.currentEntryOperationHash !== operation.operationHash) currentEntryFail("migration-32 authorization operation is crossed");
+  const observed = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation);
   if (observed.state === "terminal" && isPlainRecord(observed.migrationReceipt)) {
     await resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(observed.migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1);
     return observed.migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1;
@@ -8083,7 +8129,7 @@ export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1
   let result: Record<string, unknown>;
   let consumptionPair: InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1;
   try {
-    const fresh = await observeInternalProductionLegacyPreManifestZeroOwnerV1();
+    const fresh = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
     if (fresh.observationRef !== authorization.freshLegacyZeroOwnerObservationRef || fresh.observationHash !== authorization.freshLegacyZeroOwnerObservationHash) currentEntryFail("migration-32 final zero observation changed");
     if (observed.state === "consumed") {
       if (!isPlainRecord(observed.consumption)) currentEntryFail("migration-32 consumed prefix is incomplete");
@@ -8136,7 +8182,7 @@ export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1
     try { await (abortInternalProductionCurrentEntryMigration32TransactionV1 as (tx: unknown) => Promise<void>)(transaction); } catch { /* transaction may already be terminal */ }
     throw error;
   }
-  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationV1(operation.pendingBootstrapHandoffMigration);
+  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, operation.pendingBootstrapHandoffMigration);
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Record<string, unknown>;
   const observeStartup = startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1;
   const resolveSealed = startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1;
@@ -8176,6 +8222,15 @@ export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1
   await publishTask12MigrationStatusV1(operation.operationHash, 2, { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1", state: "terminal", currentEntryOperation: operationPair(operation), authorization: input, consumption: consumptionPair, migrationReceipt: receiptPair, refusalCode: null });
   await resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(receiptPair);
   return receiptPair;
+}
+
+export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1(
+  input: Readonly<{ authorizationRef: string; authorizationHash: string }>,
+): Promise<Readonly<{ migrationReceiptRef: string; migrationReceiptHash: string }>> {
+  const context = await selectCurrentEntryStoreContextV1();
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
+  if (!operation) currentEntryFail("migration-32 authorization operation is crossed");
+  return applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(context, operation, input);
 }
 
 const RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1 = "recovery-source-bootstrap-pending-input.json";
@@ -8710,7 +8765,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     });
   }
   if (status.state === "pre_manifest_bootstrap_sealed") {
-    const authorization = await prepareInternalProductionPreManifestMigration32AuthorizationV1();
+    const authorization = await prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation);
     status = await advanceTask12CurrentStatusV1(context, status, "migration_applying", {
       migrationApplyingPhase: { phase: "prepared", authorization, consumption: null, migrationReceipt: null, currentAudit: null },
     });
@@ -8718,7 +8773,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
   if (status.state === "migration_applying") {
     const phase = status.migrationApplyingPhase as Record<string, unknown>;
     let authorization = phase.authorization as InternalProductionPreManifestMigration32AuthorizationPairV1;
-    if (!isPlainRecord(authorization)) authorization = await prepareInternalProductionPreManifestMigration32AuthorizationV1();
+    if (!isPlainRecord(authorization)) authorization = await prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation);
     let migrationReceipt: InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1;
     if (phase.phase === "current_audited" && isPlainRecord(phase.migrationReceipt)) {
       migrationReceipt = phase.migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1;
@@ -8726,8 +8781,8 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
       if (!isPlainRecord(phase.currentAudit)) currentEntryFail("migration-32 current audit pair is absent");
       await resolveInternalProductionBootstrapHandoffCurrentAuditV1(phase.currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>);
     } else {
-      migrationReceipt = await applyInternalProductionBaselineBootstrapHandoffMigrationV1(authorization);
-      const migrationStatus = await observeInternalProductionPreManifestMigration32AuthorizationStatusV1();
+      migrationReceipt = await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(context, operation, authorization);
+      const migrationStatus = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation);
       if (migrationStatus.state !== "terminal" || !isPlainRecord(migrationStatus.consumption)) currentEntryFail("migration-32 terminal status is unavailable");
       status = await advanceTask12CurrentStatusV1(context, status, "migration_applying", {
         migrationApplyingPhase: { phase: "receipt_published", authorization, consumption: migrationStatus.consumption, migrationReceipt, currentAudit: null },

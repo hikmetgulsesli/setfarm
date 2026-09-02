@@ -2292,6 +2292,97 @@ const PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1 = Object.freeze([
   Object.freeze({ name: "recovery-pair-close", functionName: "recoverySourceBootstrapPairClosePathV1", expectedSuffix: `records/source-run-launch-target-reservation-pair-closes/sha256/aa/${"a".repeat(64)}.json` }),
 ] as const);
 
+const PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1 = Object.freeze([
+  Object.freeze({ name: "observeCurrentInternalProductionAuthorityV3Migration31AuditV1", delegates: Object.freeze(["observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1"]), mutation: "a current v31 observer reselects or falls back to the public historical resolver" }),
+  Object.freeze({ name: "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1", delegates: Object.freeze(["observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1"]), mutation: "a current pending observer reselects or falls back to the public historical resolver" }),
+  Object.freeze({ name: "observePreparedInternalProductionCurrentEntryOperationV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1"]), mutation: "a prepared-operation observer drops its selected root" }),
+  Object.freeze({ name: "observeInternalProductionCurrentEntryAuthorityStatusV1", delegates: Object.freeze(["observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1"]), mutation: "a status observer performs a nested public selection" }),
+  Object.freeze({ name: "resolveInternalProductionCurrentEntryAuthorityStatusV1", delegates: Object.freeze(["resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1"]), mutation: "a status resolver performs a nested public selection" }),
+  Object.freeze({ name: "resolveInternalProductionCurrentEntryAuthorityV1", delegates: Object.freeze(["resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1"]), mutation: "an authority resolver performs a nested public selection" }),
+  Object.freeze({ name: "resolveInternalProductionCurrentEntryVerificationV1", delegates: Object.freeze(["resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1"]), mutation: "a verification resolver performs a nested public selection" }),
+  Object.freeze({ name: "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1", delegates: Object.freeze(["resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1"]), mutation: "a runtime-owner resolver performs a nested public selection" }),
+  Object.freeze({ name: "resolveInternalProductionRecoverySourceBootstrapPendingInputV1", delegates: Object.freeze(["resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1"]), mutation: "a recovery pending-input resolver reads an ambient or fixed legacy root" }),
+  Object.freeze({ name: "resolveInternalProductionRecoverySourceBootstrapOperationV1", delegates: Object.freeze(["resolveInternalProductionRecoverySourceBootstrapOperationWithSelectedCurrentEntryStoreContextV1"]), mutation: "a recovery operation resolver reads an ambient or fixed legacy root" }),
+  Object.freeze({ name: "resolveInternalProductionRecoverySourceRunTerminalAuthorityV1", delegates: Object.freeze(["resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1"]), mutation: "a source-run terminal resolver reselects" }),
+  Object.freeze({ name: "resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1", delegates: Object.freeze(["resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1"]), mutation: "a run-launch terminal resolver reselects" }),
+  Object.freeze({ name: "resolveInternalProductionRecoverySourceBootstrapRunReceiptV1", delegates: Object.freeze(["resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1"]), mutation: "a run-receipt resolver reselects" }),
+  Object.freeze({ name: "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1", delegates: Object.freeze(["resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1"]), mutation: "a pair-close resolver reselects" }),
+  Object.freeze({ name: "observeInternalProductionRecoverySourceBootstrapStatusV1", delegates: Object.freeze(["observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1"]), mutation: "a recovery status observer reselects" }),
+  Object.freeze({ name: "observeInternalProductionLegacyPreManifestZeroOwnerV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1"]), mutation: "legacy-zero observation reselects instead of retaining one current-entry root" }),
+  Object.freeze({ name: "observeInternalProductionPreManifestMigration32AuthorizationStatusV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1"]), mutation: "migration status reselects instead of retaining one current-entry root" }),
+  Object.freeze({ name: "prepareInternalProductionPreManifestMigration32AuthorizationV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1"]), mutation: "migration preparation reselects directly or through fresh legacy-zero observation" }),
+  Object.freeze({ name: "applyInternalProductionBaselineBootstrapHandoffMigrationV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1"]), mutation: "migration apply reselects directly, through status, or through fresh legacy-zero observation" }),
+  Object.freeze({ name: "prepareInternalProductionCurrentEntryOperationV1", delegates: Object.freeze(["prepareCurrentEntryOperationPathV1", "resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1", "observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1"]), mutation: "operation preparation mixes roots across its repeated prerequisite fences" }),
+  Object.freeze({ name: "prepareInternalProductionRecoverySourceBootstrapRunV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "prepareRecoverySourceBootstrapHeldLockV1"]), mutation: "recovery preparation reselects between operation observation and its held-lock graph" }),
+  Object.freeze({ name: "resumeActiveInternalProductionRecoverySourceBootstrapRunV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "resumeRecoverySourceBootstrapHeldLockV1"]), mutation: "active recovery resume reselects between operation observation and held-lock resume" }),
+  Object.freeze({ name: "resumeInternalProductionCurrentEntryAuthorityV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1", "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1", "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1", "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", "prepareRecoverySourceBootstrapHeldLockV1", "resumeRecoverySourceBootstrapHeldLockV1", "observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1"]), mutation: "current-entry resume selects a second root in a later phase" }),
+  Object.freeze({ name: "verifyCurrentInternalProductionCurrentEntryV1", delegates: Object.freeze(["observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1"]), mutation: "verification resolves status, authority, runtime, or receipt from different selected roots" }),
+] as const);
+
+const PHASE5B_PRIVATE_SELECTED_GRAPH_V1 = Object.freeze([
+  "observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1",
+  "observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1",
+  "observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1",
+  "observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1",
+  "observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1",
+  "parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionRecoverySourceBootstrapOperationWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1",
+  "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1",
+  "prepareRecoverySourceBootstrapHeldLockV1",
+  "resumeRecoverySourceBootstrapHeldLockV1",
+  "resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1",
+  "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1",
+  "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1",
+  "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1",
+  "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1",
+] as const);
+
+const PHASE5B_HISTORICAL_ZERO_SELECTION_GRAPH_V1 = Object.freeze([
+  "resolveInternalProductionCurrentEntryOperationV1",
+  "resolveInternalProductionAuthorityV3Migration31AuditV1",
+  "resolveInternalProductionPendingBootstrapHandoffMigrationV1",
+  "resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1",
+  "observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1",
+] as const);
+
+const PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1 = Object.freeze([
+  Object.freeze({
+    name: "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1",
+    publicName: "observeInternalProductionLegacyPreManifestZeroOwnerV1",
+    call: "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation)",
+    mutation: "legacy-zero observation re-enters the public prepared-operation observer",
+  }),
+  Object.freeze({
+    name: "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1",
+    publicName: "observeInternalProductionPreManifestMigration32AuthorizationStatusV1",
+    call: "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation)",
+    mutation: "migration status reselects instead of using the admitted operation",
+  }),
+  Object.freeze({
+    name: "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1",
+    publicName: "prepareInternalProductionPreManifestMigration32AuthorizationV1",
+    call: "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation)",
+    mutation: "migration preparation reselects directly or through fresh legacy-zero observation",
+  }),
+  Object.freeze({
+    name: "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1",
+    publicName: "applyInternalProductionBaselineBootstrapHandoffMigrationV1",
+    call: "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(context, operation, input)",
+    mutation: "migration apply reselects directly, through status, or through fresh legacy-zero observation",
+  }),
+] as const);
+
 type Phase5bSelectedContextConsumerNameV1 = typeof PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1[number]["name"];
 type Phase5bSelectedContextModeV1 = "real" | "spread-clone" | "descriptor-copy" | "unregistered-brand";
 
@@ -2476,6 +2567,119 @@ function runPhase5bAppearingEdgeFixtureV1(root: string, target: string, bytes: B
 
 function runPhase5bPredecessorTerminalCloseRoutingFixtureV1(root: string): ReturnType<typeof spawnSync> {
   return runFixtureExpression(root, `(async()=>{const probe={active:false,filesystemCalls:0,creatorCalls:0,selectorCalls:0,appearingEdge:null,publicTerminalCalls:0,selectedTerminalCalls:0,publicCloseCalls:0,selectedCloseCalls:0};Reflect.set(globalThis,"__p5bSelectedCurrentEntryStoreProbeV1",probe);let outcome="returned",message=null;try{await m.p5bRunPredecessorTerminalCloseRoutingFixtureV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,...probe}))})()`);
+}
+
+type Phase5bActiveWrapperSentinelModeV1 = "authority-status" | "recovery-pending-input" | "resume-current-authority" | "verify-current";
+
+function instrumentPhase5bActiveWrapperGraphFixtureV1(root: string, mode: Phase5bActiveWrapperSentinelModeV1): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const selectorMarker = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+  const creatorName = "createSelectedCurrentEntryStoreContextV1";
+  assert.equal(source.split(selectorMarker).length - 1, 1, "P5b-B4 instruments one real selected-store selector");
+  source = source.replace(selectorMarker, `${selectorMarker}
+  const p5bB4SelectorProbe = Reflect.get(globalThis, "__p5bActiveWrapperProbeV1") as undefined | {selectorCalls:number};
+  if (p5bB4SelectorProbe) p5bB4SelectorProbe.selectorCalls += 1;`);
+
+  const creatorRegion = topLevelFunctionRegionV1(source, creatorName);
+  const creatorStart = source.indexOf(creatorRegion);
+  const creatorReturn = "  return context;";
+  assert.equal(creatorRegion.split(creatorReturn).length - 1, 1, "P5b-B4 observes one creator return after WeakMap registration");
+  const creatorReturnIndex = source.indexOf(creatorReturn, creatorStart);
+  source = source.slice(0, creatorReturnIndex) + `  const p5bB4CreatorProbe = Reflect.get(globalThis, "__p5bActiveWrapperProbeV1") as undefined | {creatorCalls:number;createdContext:object|null};
+  if (p5bB4CreatorProbe) { p5bB4CreatorProbe.creatorCalls += 1; p5bB4CreatorProbe.createdContext = context; }
+` + source.slice(creatorReturnIndex);
+
+  const sentinel = mode === "authority-status" || mode === "verify-current"
+    ? Object.freeze({ name: "observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1", signature: "): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {" })
+    : mode === "recovery-pending-input"
+      ? Object.freeze({ name: "resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1", signature: "): Promise<InternalProductionRecoverySourceBootstrapPendingInputV1> {" })
+      : Object.freeze({ name: "observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", signature: "): Promise<InternalProductionCurrentEntryOperationV1 | null> {" });
+  const sentinelRegion = topLevelFunctionRegionV1(source, sentinel.name);
+  const sentinelStart = source.indexOf(sentinelRegion);
+  assert.equal(sentinelRegion.split(sentinel.signature).length - 1, 1, `${mode}: P5b-B4 requires one private selected delegate signature`);
+  const sentinelBody = source.indexOf(sentinel.signature, sentinelStart) + sentinel.signature.length;
+  assert.ok(sentinelBody >= sentinelStart && sentinelBody < sentinelStart + sentinelRegion.length, `${mode}: P5b-B4 bounds the private delegate entry`);
+  source = source.slice(0, sentinelBody) + `
+  const p5bB4DelegateProbe = Reflect.get(globalThis, "__p5bActiveWrapperProbeV1") as {expectedMode:string;createdContext:object|null;privateEntryCalls:number;sameContext:boolean|null;registered:boolean;selectionKind:string|null};
+  p5bB4DelegateProbe.privateEntryCalls += 1;
+  p5bB4DelegateProbe.sameContext = p5bB4DelegateProbe.createdContext === context;
+  p5bB4DelegateProbe.registered = selectedCurrentEntryStoreContextStatesV1.has(context);
+  p5bB4DelegateProbe.selectionKind = requireSelectedCurrentEntryStoreContextStateV1(context).selectionKind;
+  throw new Error("P5B_B4_SENTINEL:" + p5bB4DelegateProbe.expectedMode);` + source.slice(sentinelBody);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5bActiveWrapperGraphFixtureV1(root: string, mode: Phase5bActiveWrapperSentinelModeV1): ReturnType<typeof spawnSync> {
+  const hash = "a".repeat(64);
+  const call = mode === "authority-status"
+    ? "m.observeInternalProductionCurrentEntryAuthorityStatusV1()"
+    : mode === "recovery-pending-input"
+      ? `m.resolveInternalProductionRecoverySourceBootstrapPendingInputV1({pendingInputRef:${JSON.stringify(`setfarm://internal-production/recovery-source-bootstrap-pending-input/sha256/${hash}`)},pendingInputHash:${JSON.stringify(hash)}})`
+      : mode === "resume-current-authority"
+        ? "m.resumeInternalProductionCurrentEntryAuthorityV1()"
+        : "m.verifyCurrentInternalProductionCurrentEntryV1()";
+  return runFixtureExpression(root, `(async()=>{const probe={expectedMode:${JSON.stringify(mode)},selectorCalls:0,creatorCalls:0,createdContext:null,privateEntryCalls:0,sameContext:null,registered:false,selectionKind:null};Reflect.set(globalThis,"__p5bActiveWrapperProbeV1",probe);let outcome="returned",message=null;try{await ${call}}catch(error){outcome="threw";message=String(error)}const {createdContext:_,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,...serializable}))})()`);
+}
+
+type Phase5bMigrationOperationCoreModeV1 = "legacy-zero" | "migration-status" | "migration-prepare" | "migration-apply";
+
+function instrumentPhase5bMigrationOperationCoreFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const selectorMarker = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+  const publicPreparedMarker = "export async function observePreparedInternalProductionCurrentEntryOperationV1(";
+  assert.equal(source.split(selectorMarker).length - 1, 1, "P5b-B4 core fixture counts one selected-store selector");
+  assert.equal(source.split(publicPreparedMarker).length - 1, 1, "P5b-B4 core fixture counts one public prepared-operation bridge");
+  source = source.replace(selectorMarker, `${selectorMarker}
+  const p5bB4CoreSelectorProbe = Reflect.get(globalThis, "__p5bMigrationOperationCoreProbeV1") as undefined | {selectorCalls:number};
+  if (p5bB4CoreSelectorProbe) p5bB4CoreSelectorProbe.selectorCalls += 1;`);
+  const publicPreparedRegion = topLevelFunctionRegionV1(source, "observePreparedInternalProductionCurrentEntryOperationV1");
+  const publicPreparedStart = source.indexOf(publicPreparedRegion);
+  const publicPreparedBody = source.indexOf(" {\n", publicPreparedStart) + 2;
+  assert.ok(publicPreparedBody > publicPreparedStart && publicPreparedBody < publicPreparedStart + publicPreparedRegion.length, "P5b-B4 bounds the public prepared-operation bridge body");
+  source = source.slice(0, publicPreparedBody) + `
+  const p5bB4PublicPreparedProbe = Reflect.get(globalThis, "__p5bMigrationOperationCoreProbeV1") as undefined | {publicPreparedCalls:number};
+  if (p5bB4PublicPreparedProbe) { p5bB4PublicPreparedProbe.publicPreparedCalls += 1; throw new Error("P5B_B4_PUBLIC_PREPARED_RESELECTION"); }` + source.slice(publicPreparedBody);
+
+  for (const core of PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1) {
+    const marker = `async function ${core.name}(`;
+    if (!source.includes(marker)) continue;
+    const region = topLevelFunctionRegionV1(source, core.name);
+    const start = source.indexOf(region);
+    const body = source.indexOf(" {\n", start) + 2;
+    assert.ok(body > start && body < start + region.length, `${core.name}: P5b-B4 bounds one private core body`);
+    source = source.slice(0, body) + `
+  const p5bB4CoreProbe = Reflect.get(globalThis, "__p5bMigrationOperationCoreProbeV1") as {mode:string;expectedContext:object|null;expectedOperation:object|null;coreCalls:number;sameContext:boolean|null;sameOperation:boolean|null};
+  p5bB4CoreProbe.coreCalls += 1;
+  p5bB4CoreProbe.sameContext = p5bB4CoreProbe.expectedContext === context;
+  p5bB4CoreProbe.sameOperation = p5bB4CoreProbe.expectedOperation === operation;
+  throw new Error("P5B_B4_OPERATION_CORE:" + p5bB4CoreProbe.mode);` + source.slice(body);
+  }
+
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(wrapperMarker).length - 1, 1, "P5b-B4 inserts one copied-only operation-core runner");
+  const wrapper = `export async function p5bRunMigrationOperationCoreFixtureV1(mode: "legacy-zero" | "migration-status" | "migration-prepare" | "migration-apply"): Promise<void> {
+  const hash = "a".repeat(64);
+  const pair = Object.freeze({ operationRef: "setfarm://internal-production/current-entry-operation/sha256/" + hash, operationHash: hash });
+  const operation = Object.freeze({ ...pair }) as InternalProductionCurrentEntryOperationV1;
+  const context = createSelectedCurrentEntryStoreContextV1(Object.freeze({ storeRoot: fixedLegacyCurrentEntryRootV1(), operation: pair, selectionKind: "legacy-edge-absent" as const }));
+  const probe = Reflect.get(globalThis, "__p5bMigrationOperationCoreProbeV1") as {expectedContext:object|null;expectedOperation:object|null};
+  probe.expectedContext = context;
+  probe.expectedOperation = operation;
+  if (mode === "legacy-zero") await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
+  else if (mode === "migration-status") await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation);
+  else if (mode === "migration-prepare") await prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation);
+  else await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(context, operation, Object.freeze({ authorizationRef: "setfarm://internal-production/pre-manifest-migration-32-authorization/sha256/" + hash, authorizationHash: hash }));
+}
+
+`;
+  source = source.replace(wrapperMarker, wrapper + wrapperMarker);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5bMigrationOperationCoreFixtureV1(root: string, mode: Phase5bMigrationOperationCoreModeV1): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{const probe={mode:${JSON.stringify(mode)},expectedContext:null,expectedOperation:null,selectorCalls:0,publicPreparedCalls:0,coreCalls:0,sameContext:null,sameOperation:null};Reflect.set(globalThis,"__p5bMigrationOperationCoreProbeV1",probe);let outcome="returned",message=null;try{await m.p5bRunMigrationOperationCoreFixtureV1(${JSON.stringify(mode)})}catch(error){outcome="threw";message=String(error)}const {expectedContext:_,expectedOperation:__,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,...serializable}))})()`);
 }
 
 type Phase5bStrictCEntryFaultStageV1 = "builder" | "helper";
@@ -7630,6 +7834,199 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       removeFixture(root);
     }
   });
+
+  it("P5b-B4 freezes the exact active-wrapper graph and keeps historical entrypoints selection-free", () => {
+    const source = readFileSync(observerSource, "utf8");
+    assert.equal(PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.length, 24, "P5b-B4 freezes exactly twenty-four public active wrappers");
+    assert.equal(PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.filter((entry) => entry.delegates.length === 1).length, 15, "P5b-B4 freezes fifteen thin wrappers");
+    assert.equal(PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.filter((entry) => entry.delegates.length > 1).length, 9, "P5b-B4 freezes nine operation-bound orchestrators");
+    const activeNames = PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.map((entry) => entry.name);
+    const exportedSelectorNames = [...source.matchAll(/^export async function ([A-Za-z0-9_]+)\(/gm)]
+      .map((match) => match[1]!)
+      .filter((name) => topLevelFunctionRegionV1(source, name).includes("selectCurrentEntryStoreContextV1()"))
+      .sort();
+    assert.deepEqual(exportedSelectorNames, [...activeNames].sort(), "P5b-B4 rejects an untracked twenty-fifth public selector wrapper");
+    for (const wrapper of PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1) {
+      const region = topLevelFunctionRegionV1(source, wrapper.name);
+      assert.equal(region.split("selectCurrentEntryStoreContextV1()").length - 1, 1, `${wrapper.name}: ${wrapper.mutation}`);
+      assert.equal(region.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 0, `${wrapper.name}: only the selector may mint`);
+      assert.match(region, /const context = await selectCurrentEntryStoreContextV1\(\);/, `${wrapper.name}: binds one explicit per-call context`);
+      for (const delegate of wrapper.delegates) {
+        assert.match(region, new RegExp(`\\b${delegate}\\(context\\b`), `${wrapper.name}: threads the selected context to ${delegate}`);
+      }
+      for (const forbidden of [...activeNames, ...PHASE5B_HISTORICAL_ZERO_SELECTION_GRAPH_V1]) {
+        if (forbidden === wrapper.name) continue;
+        assert.doesNotMatch(region, new RegExp(`\\b${forbidden}\\(`), `${wrapper.name}: ${wrapper.mutation}; no nested public routing through ${forbidden}`);
+      }
+      assert.doesNotMatch(region, /AsyncLocalStorage|globalThis|process\.env|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|JSON\.stringify\(context|structuredClone\(context/, `${wrapper.name}: explicit context threading has no ambient or serialized substitute`);
+    }
+
+    assert.equal(PHASE5B_PRIVATE_SELECTED_GRAPH_V1.length, 26, "P5b-B4 freezes the original selected graph plus four operation cores and one selected legacy-zero resolver");
+    const privateSelectedNames = [...source.matchAll(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+WithSelectedCurrentEntryStoreContextV1)\(/gm)]
+      .map((match) => match[1]!)
+      .concat([
+        "prepareRecoverySourceBootstrapHeldLockV1",
+        "resumeRecoverySourceBootstrapHeldLockV1",
+        ...PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1.map((entry) => entry.name),
+      ])
+      .sort();
+    assert.deepEqual(privateSelectedNames, [...PHASE5B_PRIVATE_SELECTED_GRAPH_V1].sort(), "P5b-B4 rejects an untracked private selected/held-lock route");
+    for (const privateName of PHASE5B_PRIVATE_SELECTED_GRAPH_V1) {
+      const region = topLevelFunctionRegionV1(source, privateName);
+      assert.match(region, /context:\s*SelectedCurrentEntryStoreContextV1/, `${privateName}: receives the selected context explicitly`);
+      assert.equal(region.split("selectCurrentEntryStoreContextV1(").length - 1, 0, `${privateName}: nested private work cannot reselect`);
+      assert.equal(region.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 0, `${privateName}: nested private work cannot mint`);
+      for (const publicName of [...activeNames, ...PHASE5B_HISTORICAL_ZERO_SELECTION_GRAPH_V1]) {
+        assert.doesNotMatch(region, new RegExp(`\\b${publicName}\\(`), `${privateName}: nested private work cannot recurse through public routing`);
+      }
+      assert.doesNotMatch(region, /AsyncLocalStorage|globalThis|process\.env|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|JSON\.stringify\(context|structuredClone\(context/, `${privateName}: nested private work cannot recover context from ambient state`);
+    }
+
+    for (const historicalName of PHASE5B_HISTORICAL_ZERO_SELECTION_GRAPH_V1) {
+      const region = topLevelFunctionRegionV1(source, historicalName);
+      assert.equal(region.split("selectCurrentEntryStoreContextV1(").length - 1, 0, `${historicalName}: immutable historical/P0 resolution never selects current state`);
+      assert.equal(region.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 0, `${historicalName}: immutable historical/P0 resolution never mints current state`);
+      assert.doesNotMatch(region, /WithSelectedCurrentEntryStoreContextV1\(/, `${historicalName}: immutable historical/P0 resolution never enters the active graph`);
+      assert.doesNotMatch(region, /AsyncLocalStorage|globalThis|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|JSON\.stringify\(context|structuredClone\(context/, `${historicalName}: immutable historical/P0 resolution has no ambient context`);
+    }
+  });
+
+  for (const core of PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1) {
+    it(`P5b-B4 ${core.name} is context-and-operation bound without public reselection`, () => {
+      const source = readFileSync(observerSource, "utf8");
+      const region = topLevelFunctionRegionV1(source, core.name);
+      assert.match(region, new RegExp(`(?:async )?function ${core.name}\\(\\s*context: SelectedCurrentEntryStoreContextV1,\\s*operation: InternalProductionCurrentEntryOperationV1`), `${core.name}: receives the already-selected context and operation first`);
+      assert.equal(region.split("selectCurrentEntryStoreContextV1(").length - 1, 0, `${core.name}: does not select again`);
+      assert.equal(region.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 0, `${core.name}: does not mint another context`);
+      for (const publicName of [
+        "observePreparedInternalProductionCurrentEntryOperationV1",
+        "observeInternalProductionLegacyPreManifestZeroOwnerV1",
+        "observeInternalProductionPreManifestMigration32AuthorizationStatusV1",
+        "prepareInternalProductionPreManifestMigration32AuthorizationV1",
+        "applyInternalProductionBaselineBootstrapHandoffMigrationV1",
+      ]) assert.doesNotMatch(region, new RegExp(`\\b${publicName}\\(`), `${core.name}: ${core.mutation}`);
+      assert.doesNotMatch(region, /AsyncLocalStorage|globalThis|process\.env|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|JSON\.stringify\(context|structuredClone\(context/, `${core.name}: no ambient context substitute`);
+
+      const publicRegion = topLevelFunctionRegionV1(source, core.publicName);
+      assert.equal(publicRegion.split("selectCurrentEntryStoreContextV1()").length - 1, 1, `${core.publicName}: selects exactly once`);
+      assert.match(publicRegion, /const context = await selectCurrentEntryStoreContextV1\(\);/);
+      assert.match(publicRegion, /observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1\(context\)/, `${core.publicName}: observes its operation from the same context`);
+      assert.match(publicRegion, new RegExp(core.call.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${core.publicName}: delegates the same context and operation to its private core`);
+    });
+  }
+
+  it("P5b-B4 migration preparation and apply keep their nested status and fresh-zero work operation-bound", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const parser = topLevelFunctionRegionV1(source, "parseLegacyZeroV1");
+    const historicalLegacyZeroResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1");
+    const legacy = topLevelFunctionRegionV1(source, "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1");
+    const prepare = topLevelFunctionRegionV1(source, "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1");
+    const apply = topLevelFunctionRegionV1(source, "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1");
+    const selectedLegacyZeroResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1");
+    assert.equal(legacy.split("resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context,").length - 1, 2, "fresh-zero revalidates both audit passes from the selected root");
+    assert.equal(legacy.split("resolveInternalProductionAuthorityV3Migration31AuditV1(").length - 1, 0, "fresh-zero never falls back to the public historical audit resolver");
+    assert.match(legacy, /resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1\(context, pair\)/, "fresh-zero resolves its published record with the selected root");
+    assert.doesNotMatch(legacy, /resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1\(/, "fresh-zero cannot also reopen through the public historical resolver");
+    assert.match(parser, /resolveAudit:\s*\(pair: InternalProductionAuthorityV3Migration31AuditPairV1\)\s*=>\s*Promise<InternalProductionAuthorityV3Migration31AuditV1>/, "legacy-zero parsing receives one explicit audit authority resolver");
+    assert.equal(parser.split("resolveAudit(auditPair)").length - 1, 1, "legacy-zero parsing resolves the nested audit exactly once through its injected authority");
+    assert.doesNotMatch(parser, /resolveInternalProductionAuthorityV3Migration31Audit(?:WithSelectedCurrentEntryStoreContext)?V1\(/, "legacy-zero parsing has no fixed or selected ambient audit route");
+    assert.match(historicalLegacyZeroResolver, /parseLegacyZeroV1\([\s\S]*resolveInternalProductionAuthorityV3Migration31AuditV1\)/, "the historical public legacy-zero resolver injects only the historical audit resolver");
+    assert.match(selectedLegacyZeroResolver, /parseLegacyZeroV1\([\s\S]*\(auditPair\)\s*=>\s*resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1\(context, auditPair\)/, "selected legacy-zero parsing injects the context-bound audit resolver");
+    assert.doesNotMatch(selectedLegacyZeroResolver, /resolveInternalProductionAuthorityV3Migration31AuditV1\(|resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1\(/, "selected legacy-zero parsing cannot recurse through historical public resolvers");
+    assert.match(prepare, /observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1\(context, operation\)/, "prepare reuses the bound operation for fresh-zero observation");
+    assert.match(prepare, /resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1\(context, postZeroPair\)/, "prepare resolves its sealed post-zero record from the selected root");
+    assert.doesNotMatch(prepare, /resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1\(/, "prepare cannot also parse post-zero evidence through the public historical resolver");
+    assert.match(apply, /observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1\(context, operation\)/, "apply reuses the bound operation for status observation");
+    assert.match(apply, /observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1\(context, operation\)/, "apply reuses the bound operation for its final fresh-zero observation");
+    assert.match(apply, /resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1\(context,/, "apply resolves pending migration evidence from the selected root");
+    assert.doesNotMatch(apply, /resolveInternalProductionPendingBootstrapHandoffMigrationV1\(/, "apply cannot fall back to the public fixed-root pending resolver");
+
+    const resume = topLevelFunctionRegionV1(source, "resumeInternalProductionCurrentEntryAuthorityV1");
+    assert.equal(resume.split("prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1(context, operation)").length - 1, 2, "resume threads its one context and operation through both prepare/adopt paths");
+    assert.equal(resume.split("applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1(context, operation, authorization)").length - 1, 1, "resume threads its one context and operation into migration apply");
+    assert.equal(resume.split("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(context, operation)").length - 1, 1, "resume threads its one context and operation into terminal status observation");
+  });
+
+  for (const runtime of [
+    Object.freeze({ mode: "authority-status" as const, mutation: "status calls its public observer again and selects a second root" }),
+    Object.freeze({ mode: "recovery-pending-input" as const, mutation: "recovery pending-input ignores the selected handle and reads ambient legacy state" }),
+    Object.freeze({ mode: "resume-current-authority" as const, mutation: "resume calls the public prepared-operation observer and reselects before its lock" }),
+    Object.freeze({ mode: "verify-current" as const, mutation: "verify calls the public status observer and reselects before verification" }),
+  ]) {
+    it(`P5b-B4 ${runtime.mode} reaches its first private delegate with one registered selected context`, () => {
+      const root = createFixture();
+      try {
+        instrumentPhase5bActiveWrapperGraphFixtureV1(root, runtime.mode);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runPhase5bActiveWrapperGraphFixtureV1(root, runtime.mode);
+        assert.equal(result.status, 0, `${runtime.mode}: ${result.stderr}`);
+        assert.equal(result.stderr, "", runtime.mode);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: string;
+          message: string | null;
+          expectedMode: string;
+          selectorCalls: number;
+          creatorCalls: number;
+          privateEntryCalls: number;
+          sameContext: boolean | null;
+          registered: boolean;
+          selectionKind: string | null;
+        }>;
+        assert.deepEqual(
+          observed,
+          {
+            outcome: "threw",
+            message: `Error: P5B_B4_SENTINEL:${runtime.mode}`,
+            expectedMode: runtime.mode,
+            selectorCalls: 1,
+            creatorCalls: 1,
+            privateEntryCalls: 1,
+            sameContext: true,
+            registered: true,
+            selectionKind: "legacy-store-absent",
+          },
+          runtime.mutation,
+        );
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${runtime.mode}: the sentinel is reached before any recovery/status/resume/verify effect`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const core of [
+    Object.freeze({ mode: "legacy-zero" as const, name: "observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1" }),
+    Object.freeze({ mode: "migration-status" as const, name: "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1" }),
+    Object.freeze({ mode: "migration-prepare" as const, name: "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1" }),
+    Object.freeze({ mode: "migration-apply" as const, name: "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1" }),
+  ]) {
+    it(`P5b-B4 ${core.name} receives one already-selected context and the exact admitted operation`, () => {
+      const root = createFixture();
+      try {
+        instrumentPhase5bMigrationOperationCoreFixtureV1(root);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runPhase5bMigrationOperationCoreFixtureV1(root, core.mode);
+        assert.equal(result.status, 0, `${core.mode}: ${result.stderr}`);
+        assert.equal(result.stderr, "", core.mode);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.deepEqual(observed, {
+          outcome: "threw",
+          message: `Error: P5B_B4_OPERATION_CORE:${core.mode}`,
+          mode: core.mode,
+          selectorCalls: 0,
+          publicPreparedCalls: 0,
+          coreCalls: 1,
+          sameContext: true,
+          sameOperation: true,
+        });
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${core.mode}: operation admission reaches the core before any effect`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
 
   for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
     it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {
