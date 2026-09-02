@@ -1994,10 +1994,6 @@ function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context: SelectedCur
   return readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(readCurrentEntryStore(context, true), target);
 }
 
-function readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(target: string): FileSnapshot | null {
-  return readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(readFixedLegacyCurrentEntryStoreIfPresentV1(), target);
-}
-
 function readCurrentEntryAuthorityRecordIfPresentV1(context: SelectedCurrentEntryStoreContextV1, target: string): Buffer | null {
   return readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context, target)?.observed.bytes ?? null;
 }
@@ -2049,6 +2045,41 @@ function openSelectedCurrentEntryPrerequisiteRootReaderV1(
   }
 }
 
+function openFixedLegacyCurrentEntryPrerequisiteRootReaderV1(
+  store?: Readonly<{ directory: string; device: bigint }>,
+): CurrentEntryPrerequisiteRootReaderV1 {
+  const fixedStore = store ?? readFixedLegacyCurrentEntryStoreIfPresentV1();
+  if (fixedStore === null) currentEntryFail("fixed legacy current-entry store is absent");
+  const guard = authenticateTask12ReceiptDirectoryChainV1(fixedStore.directory);
+  let closed = false;
+  try {
+    guard.assertStable();
+    const root = directorySnapshot(fixedStore.directory, "fixed legacy current-entry prerequisite root", fixedStore.device);
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("fixed legacy current-entry prerequisite root reader is closed");
+      guard.assertStable();
+      assertDirectory(fixedStore.directory, root, "fixed legacy current-entry prerequisite root");
+      guard.assertStable();
+    };
+    assertStable();
+    return Object.freeze({
+      store: fixedStore,
+      root,
+      guard,
+      assertStable,
+      close: (): void => {
+        if (closed) currentEntryFail("fixed legacy current-entry prerequisite root reader closed twice");
+        closed = true;
+        guard.close();
+      },
+    });
+  } catch (error) {
+    closed = true;
+    guard.close();
+    throw error;
+  }
+}
+
 function readCurrentEntryPrerequisiteRecordAtRootV1(
   rootReader: CurrentEntryPrerequisiteRootReaderV1,
   context: SelectedCurrentEntryStoreContextV1,
@@ -2084,23 +2115,31 @@ function readCurrentEntryPrerequisiteRecordAtRootV1(
   return legacySnapshot.observed.bytes;
 }
 
-function readFixedLegacyCurrentEntryPrerequisiteRecordV1(
+function readFixedLegacyCurrentEntryPrerequisiteRecordAtRootV1(
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
   hash: string,
+  contentPath: string,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Buffer {
-  const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
-  if (store === null) currentEntryFail("fixed legacy current-entry store is absent");
-  const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(store.directory, kind, hash);
-  const content = readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath);
+  rootReader.assertStable();
+  const expectedContentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, kind, hash);
+  if (contentPath !== expectedContentPath) currentEntryFail("fixed legacy current-entry prerequisite locator is crossed");
+  const content = readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(rootReader.store, contentPath);
+  rootReader.assertStable();
   if (content !== null) {
     retained?.push(Object.freeze({ source: content, absentContentLocator: null }));
+    rootReader.assertStable();
     return content.observed.bytes;
   }
-  const legacyLocator = path.join(store.directory, CURRENT_ENTRY_FILES[kind]);
+  const legacyLocator = path.join(rootReader.store.directory, CURRENT_ENTRY_FILES[kind]);
+  rootReader.assertStable();
   const legacySnapshot = Object.freeze({ locator: legacyLocator, observed: readTask12ReceiptStoreSnapshotV1(legacyLocator) });
-  if (readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath) !== null) currentEntryFail("fixed legacy content record appeared during fallback");
+  rootReader.assertStable();
+  if (readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(rootReader.store, contentPath) !== null) currentEntryFail("fixed legacy content record appeared during fallback");
+  rootReader.assertStable();
   retained?.push(Object.freeze({ source: legacySnapshot, absentContentLocator: contentPath }));
+  rootReader.assertStable();
   return legacySnapshot.observed.bytes;
 }
 
@@ -2268,14 +2307,23 @@ export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
 
 async function resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
+  rootReader?: CurrentEntryPrerequisiteRootReaderV1,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
-  const body = strictCanonicalRecord(
-    readFixedLegacyCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, retained),
-    "v31 audit",
-  );
-  return parseAuthorityV3Migration31AuditBody(body, expected);
+  const ownsRootReader = rootReader === undefined;
+  rootReader ??= openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  try {
+    const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!);
+    return await resolveInternalProductionAuthorityV3Migration31AuditAtPrerequisiteRootV1(rootReader,
+      (borrowedRootReader, kind, hash, target, snapshots) => readFixedLegacyCurrentEntryPrerequisiteRecordAtRootV1(borrowedRootReader, kind, hash, target, snapshots),
+      contentPath,
+      expected,
+      retained,
+    );
+  } finally {
+    if (ownsRootReader) rootReader.close();
+  }
 }
 
 async function resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
@@ -2289,22 +2337,35 @@ async function resolveInternalProductionAuthorityV3Migration31AuditWithSelectedC
   const ownsRootReader = rootReader === undefined;
   rootReader ??= openSelectedCurrentEntryPrerequisiteRootReaderV1(context);
   try {
-    return await resolveInternalProductionAuthorityV3Migration31AuditAtPrerequisiteRootV1(rootReader, context, contentPath, expected, retained);
+    return await resolveInternalProductionAuthorityV3Migration31AuditAtPrerequisiteRootV1(rootReader,
+      (borrowedRootReader, kind, hash, target, snapshots) => readCurrentEntryPrerequisiteRecordAtRootV1(borrowedRootReader, context, kind, hash, target, snapshots),
+      contentPath,
+      expected,
+      retained,
+    );
   } finally {
     if (ownsRootReader) rootReader.close();
   }
 }
 
+type CurrentEntryPrerequisiteRecordReaderV1 = (
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  hash: string,
+  contentPath: string,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+) => Buffer;
+
 async function resolveInternalProductionAuthorityV3Migration31AuditAtPrerequisiteRootV1(
   rootReader: CurrentEntryPrerequisiteRootReaderV1,
-  context: SelectedCurrentEntryStoreContextV1,
+  readRecord: CurrentEntryPrerequisiteRecordReaderV1,
   contentPath: string,
   expected: Readonly<Record<string, string>>,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   rootReader.assertStable();
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordAtRootV1(rootReader, context, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, contentPath, retained),
+    readRecord(rootReader, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, contentPath, retained),
     "v31 audit",
   );
   const parsed = await parseAuthorityV3Migration31AuditBody(body, expected);
@@ -2344,14 +2405,23 @@ export async function resolveInternalProductionPendingBootstrapHandoffMigrationV
 
 async function resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
+  rootReader?: CurrentEntryPrerequisiteRootReaderV1,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
   const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
-  const body = strictCanonicalRecord(
-    readFixedLegacyCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, retained),
-    "pending migration",
-  );
-  return parsePendingBootstrapHandoffMigrationBody(body, expected);
+  const ownsRootReader = rootReader === undefined;
+  rootReader ??= openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  try {
+    const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!);
+    return resolveInternalProductionPendingBootstrapHandoffMigrationAtPrerequisiteRootV1(rootReader,
+      (borrowedRootReader, kind, hash, target, snapshots) => readFixedLegacyCurrentEntryPrerequisiteRecordAtRootV1(borrowedRootReader, kind, hash, target, snapshots),
+      contentPath,
+      expected,
+      retained,
+    );
+  } finally {
+    if (ownsRootReader) rootReader.close();
+  }
 }
 
 async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
@@ -2365,7 +2435,12 @@ async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSele
   const ownsRootReader = rootReader === undefined;
   rootReader ??= openSelectedCurrentEntryPrerequisiteRootReaderV1(context);
   try {
-    return resolveInternalProductionPendingBootstrapHandoffMigrationAtPrerequisiteRootV1(rootReader, context, contentPath, expected, retained);
+    return resolveInternalProductionPendingBootstrapHandoffMigrationAtPrerequisiteRootV1(rootReader,
+      (borrowedRootReader, kind, hash, target, snapshots) => readCurrentEntryPrerequisiteRecordAtRootV1(borrowedRootReader, context, kind, hash, target, snapshots),
+      contentPath,
+      expected,
+      retained,
+    );
   } finally {
     if (ownsRootReader) rootReader.close();
   }
@@ -2373,14 +2448,14 @@ async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSele
 
 function resolveInternalProductionPendingBootstrapHandoffMigrationAtPrerequisiteRootV1(
   rootReader: CurrentEntryPrerequisiteRootReaderV1,
-  context: SelectedCurrentEntryStoreContextV1,
+  readRecord: CurrentEntryPrerequisiteRecordReaderV1,
   contentPath: string,
   expected: Readonly<Record<string, string>>,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): InternalProductionPendingBootstrapHandoffMigrationProjectionV1 {
   rootReader.assertStable();
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordAtRootV1(rootReader, context, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, contentPath, retained),
+    readRecord(rootReader, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, contentPath, retained),
     "pending migration",
   );
   const parsed = parsePendingBootstrapHandoffMigrationBody(body, expected);
@@ -5079,20 +5154,26 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
   const expected = requirePair(pair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
   const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
   if (store === null) currentEntryFail("fixed legacy current-entry store is absent");
-  const target = Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES.operation });
-  const bytes = readCurrentEntryRecord(target.directory, target.basename, target.device);
-  const body = strictCanonicalRecord(bytes, "current-entry operation");
-  const fixedOperation = parsePreselectionCurrentEntryOperationV1(bytes);
-  if (
-    expected.operationRef === fixedOperation.operationRef
-    && expected.operationHash === fixedOperation.operationHash
-  ) {
-    return parseCurrentEntryOperationBodyCoreV1(
-      body,
-      expected,
-      (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, retained),
-      (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, retained),
-    );
+  const rootReader = openFixedLegacyCurrentEntryPrerequisiteRootReaderV1(store);
+  try {
+    rootReader.assertStable();
+    const target = Object.freeze({ ...rootReader.store, basename: CURRENT_ENTRY_FILES.operation });
+    const bytes = readCurrentEntryRecord(target.directory, target.basename, target.device);
+    rootReader.assertStable();
+    const body = strictCanonicalRecord(bytes, "current-entry operation");
+    const fixedOperation = parsePreselectionCurrentEntryOperationV1(bytes);
+    if (
+      expected.operationRef === fixedOperation.operationRef
+      && expected.operationHash === fixedOperation.operationHash
+    )
+      return await parseCurrentEntryOperationBodyCoreV1(
+        body,
+        expected,
+        (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, rootReader, retained),
+        (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, rootReader, retained),
+      );
+  } finally {
+    rootReader.close();
   }
   const context = await openExactPoisonRecoveryPinnedCommitChainV1();
   try {
