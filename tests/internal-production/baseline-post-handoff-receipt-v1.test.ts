@@ -2753,6 +2753,214 @@ function phase5bLegacyBaitPathV1(store: string, successorLocator: string): strin
   return path.join(store, normalized.slice(index + 1));
 }
 
+type Phase5bNestedPrerequisiteKindFixtureV1 = "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+type Phase5bNestedPrerequisiteRouteFixtureV1 = "active" | "historical-v31" | "historical-pending" | "historical-operation";
+
+function instrumentPhase5bNestedPrerequisiteFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(wrapperMarker).length - 1, 1, "P5b-B3 has one copied-module wrapper insertion point");
+
+  const insertAfterSignature = (functionName: string, returnSignature: string, body: string): void => {
+    const marker = `${functionName}(`;
+    const start = source.indexOf(marker);
+    assert.ok(start >= 0, `P5b-B3 finds ${functionName}`);
+    const end = source.indexOf(returnSignature, start);
+    assert.ok(end > start, `P5b-B3 bounds ${functionName}`);
+    const insertion = end + returnSignature.length;
+    source = source.slice(0, insertion) + body + source.slice(insertion);
+  };
+
+  insertAfterSignature(
+    "async function selectCurrentEntryStoreContextV1",
+    "): Promise<SelectedCurrentEntryStoreContextV1> {",
+    `\n  const p5bB3SelectorProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {selectorCalls:number};\n  if (p5bB3SelectorProbe) p5bB3SelectorProbe.selectorCalls += 1;`,
+  );
+  insertAfterSignature(
+    "function createSelectedCurrentEntryStoreContextV1",
+    "): SelectedCurrentEntryStoreContextV1 {",
+    `\n  const p5bB3CreatorProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {creatorCalls:number};\n  if (p5bB3CreatorProbe) p5bB3CreatorProbe.creatorCalls += 1;`,
+  );
+  insertAfterSignature(
+    "async function revalidatePostVisibleCurrentEntryStoreV1",
+    "): Promise<void> {",
+    `\n  const p5bB3ValidatorProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {validatorCalls:number};\n  if (p5bB3ValidatorProbe) p5bB3ValidatorProbe.validatorCalls += 1;`,
+  );
+
+  const resolverCounters = [
+    ["async function resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1", "): Promise<InternalProductionAuthorityV3Migration31AuditV1> {", "selectedV31Calls"],
+    ["async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1", "): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {", "selectedPendingCalls"],
+    ["async function resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1", "): Promise<InternalProductionAuthorityV3Migration31AuditV1> {", "historicalV31Calls"],
+    ["async function resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1", "): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {", "historicalPendingCalls"],
+    ["export async function resolveInternalProductionAuthorityV3Migration31AuditV1", "): Promise<InternalProductionAuthorityV3Migration31AuditV1> {", "publicV31Calls"],
+    ["export async function resolveInternalProductionPendingBootstrapHandoffMigrationV1", "): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {", "publicPendingCalls"],
+  ] as const;
+  for (const [name, signature, counter] of resolverCounters) {
+    insertAfterSignature(name, signature, `\n  const p5bB3ResolverProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {${counter}:number};\n  if (p5bB3ResolverProbe) p5bB3ResolverProbe.${counter} += 1;`);
+  }
+
+  const snapshotReader = "function readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(";
+  const snapshotStart = source.indexOf(snapshotReader);
+  const snapshotBody = source.indexOf("): FileSnapshot | null {", snapshotStart);
+  assert.ok(snapshotStart >= 0 && snapshotBody > snapshotStart, "P5b-B3 bounds the raw prerequisite store reader");
+  const snapshotInsertion = snapshotBody + "): FileSnapshot | null {".length;
+  source = source.slice(0, snapshotInsertion) + `
+  const p5bB3OpenProbe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {openLog:Array<{root:string|null;target:string}>};
+  if (p5bB3OpenProbe) p5bB3OpenProbe.openLog.push({root:store?.directory ?? null,target});` + source.slice(snapshotInsertion);
+
+  const selectedFallback = "  const legacy = fixedCurrentEntryPath(context, kind);";
+  const historicalFallback = "  const legacyLocator = path.join(store.directory, CURRENT_ENTRY_FILES[kind]);";
+  assert.equal(source.split(selectedFallback).length - 1, 1, "P5b-B3 instruments one selected-root fallback boundary");
+  assert.equal(source.split(historicalFallback).length - 1, 1, "P5b-B3 instruments one historical-root fallback boundary");
+  source = source.replace(selectedFallback, `  p5bB3MaybeDriftPrerequisiteRootV1("active", kind, "after-content-enoent");\n${selectedFallback}\n  p5bB3RecordFallbackOpenV1(legacy.directory, path.join(legacy.directory, legacy.basename));`);
+  source = source.replace(historicalFallback, `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallback}\n  p5bB3RecordFallbackOpenV1(store.directory, legacyLocator);`);
+
+  const historicalResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
+  const resolverStart = source.indexOf(historicalResolver);
+  const legacyReturn = "    return parseCurrentEntryOperationBodyCoreV1(";
+  const legacyReturnIndex = source.indexOf(legacyReturn, resolverStart);
+  assert.ok(legacyReturnIndex >= resolverStart && legacyReturnIndex < resolverStart + historicalResolver.length, "P5b-B3 instruments the fixed-operation to nested-callback boundary");
+  source = source.slice(0, legacyReturnIndex) + `    p5bB3MaybeDriftPrerequisiteRootV1("historical-operation", "authorityV3Migration31Audit", "after-operation-read");\n` + source.slice(legacyReturnIndex);
+
+  const activeResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1");
+  const activeResolverStart = source.indexOf(activeResolver);
+  const activeBody = "  const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), \"current-entry operation\");";
+  const activeBodyIndex = source.indexOf(activeBody, activeResolverStart);
+  assert.ok(activeBodyIndex >= activeResolverStart && activeBodyIndex < activeResolverStart + activeResolver.length, "P5b-B3 instruments the active operation immediately after its stable body read");
+  const activeInsertion = activeBodyIndex + activeBody.length;
+  source = source.slice(0, activeInsertion) + `\n  p5bB3MaybeDriftPrerequisiteRootV1("active", "authorityV3Migration31Audit", "after-operation-read");` + source.slice(activeInsertion);
+
+  const copiedHelpers = `type P5bB3NestedRouteV1 = "active" | "historical-standalone" | "historical-operation";
+function p5bB3MaybeDriftPrerequisiteRootV1(route: P5bB3NestedRouteV1, kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration", stage: "after-content-enoent" | "after-operation-read"): void {
+  const probe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {drift:null|{route:P5bB3NestedRouteV1;kind:"authorityV3Migration31Audit"|"pendingBootstrapHandoffMigration";stage:"after-content-enoent"|"after-operation-read";root:string;replacement:string;backup:string};driftDone:boolean;events:string[]};
+  const drift = probe?.drift;
+  if (!probe || !drift || probe.driftDone || drift.route !== route || drift.kind !== kind || drift.stage !== stage) return;
+  renameSync(drift.root, drift.backup);
+  renameSync(drift.replacement, drift.root);
+  probe.driftDone = true;
+  probe.events.push("root-drift:" + route + ":" + kind + ":" + stage);
+}
+
+function p5bB3RecordFallbackOpenV1(root: string, target: string): void {
+  const probe = Reflect.get(globalThis, "__p5bNestedPrerequisiteProbeV1") as undefined | {openLog:Array<{root:string|null;target:string}>};
+  if (probe) probe.openLog.push({root,target});
+}
+
+export async function p5bRunActiveNestedPrerequisiteFixtureV1(pair: InternalProductionCurrentEntryOperationPairV1): Promise<InternalProductionCurrentEntryOperationV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context, pair);
+}
+
+export async function p5bRunHistoricalNestedPrerequisiteFixtureV1(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration", pair: InternalProductionAuthorityV3Migration31AuditPairV1 | InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1): Promise<unknown> {
+  return kind === "authorityV3Migration31Audit"
+    ? resolveInternalProductionAuthorityV3Migration31AuditV1(pair as InternalProductionAuthorityV3Migration31AuditPairV1)
+    : resolveInternalProductionPendingBootstrapHandoffMigrationV1(pair as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1);
+}
+
+export async function p5bRunHistoricalOperationNestedPrerequisiteFixtureV1(pair: InternalProductionCurrentEntryOperationPairV1): Promise<InternalProductionCurrentEntryOperationV1> {
+  return resolveInternalProductionCurrentEntryOperationV1(pair);
+}
+
+`;
+  source = source.replace(wrapperMarker, copiedHelpers + wrapperMarker);
+  writeFileSync(modulePath, source);
+}
+
+function phase5bNestedPrerequisitePairV1(
+  kind: Phase5bNestedPrerequisiteKindFixtureV1,
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string>> {
+  if (kind === "authorityV3Migration31Audit") {
+    assert.equal(typeof value.authorityV3Migration31AuditRef, "string");
+    assert.equal(typeof value.authorityV3Migration31AuditHash, "string");
+    return Object.freeze({ authorityV3Migration31AuditRef: value.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: value.authorityV3Migration31AuditHash });
+  }
+  assert.equal(typeof value.pendingBootstrapHandoffMigrationRef, "string");
+  assert.equal(typeof value.pendingBootstrapHandoffMigrationHash, "string");
+  return Object.freeze({ pendingBootstrapHandoffMigrationRef: value.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: value.pendingBootstrapHandoffMigrationHash });
+}
+
+function phase5bNestedPrerequisiteAlternateRecordV1(
+  kind: Phase5bNestedPrerequisiteKindFixtureV1,
+  value: Readonly<Record<string, unknown>>,
+): ReturnType<typeof rehashFixtureRecordV1> {
+  const source = value.controllerSource as Readonly<Record<string, unknown>>;
+  const replacementBuildHash = String(source.buildHash) === "f".repeat(64) ? "e".repeat(64) : "f".repeat(64);
+  return kind === "authorityV3Migration31Audit"
+    ? rehashFixtureRecordV1(value, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/", (core) => { core.controllerSource = Object.freeze({ ...(core.controllerSource as Readonly<Record<string, unknown>>), buildHash: replacementBuildHash }); })
+    : rehashFixtureRecordV1(value, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/", (core) => { core.controllerSource = Object.freeze({ ...(core.controllerSource as Readonly<Record<string, unknown>>), buildHash: replacementBuildHash }); });
+}
+
+function seedPhase5bNestedPrerequisiteFixtureV1(root: string): Readonly<{
+  ordinary: ReturnType<typeof seedPhase5bOrdinaryHistoricalOperationFixtureV1>;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1 }>;
+  content: Readonly<Record<Phase5bNestedPrerequisiteKindFixtureV1, string>>;
+  fixed: Readonly<Record<Phase5bNestedPrerequisiteKindFixtureV1, string>>;
+  values: Readonly<Record<Phase5bNestedPrerequisiteKindFixtureV1, Readonly<Record<string, unknown>>>>;
+  bytes: Readonly<Record<Phase5bNestedPrerequisiteKindFixtureV1, Buffer>>;
+  oppositeRoot: string;
+  replacementRoot: string;
+  backupRoot: string;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+  const content = Object.freeze({
+    authorityV3Migration31Audit: phase5bLegacyBaitPathV1(ordinary.store, admitted.chain.records.successorAuthorityV31.locator),
+    pendingBootstrapHandoffMigration: phase5bLegacyBaitPathV1(ordinary.store, admitted.chain.records.successorPending.locator),
+  });
+  const fixed = Object.freeze({
+    authorityV3Migration31Audit: path.join(ordinary.store, "authority-v3-migration31-audit.json"),
+    pendingBootstrapHandoffMigration: path.join(ordinary.store, "pending-bootstrap-handoff-migration.json"),
+  });
+  const values = Object.freeze({
+    authorityV3Migration31Audit: admitted.chain.records.successorAuthorityV31.value,
+    pendingBootstrapHandoffMigration: admitted.chain.records.successorPending.value,
+  });
+  const bytes = Object.freeze({
+    authorityV3Migration31Audit: admitted.chain.records.successorAuthorityV31.bytes,
+    pendingBootstrapHandoffMigration: admitted.chain.records.successorPending.bytes,
+  });
+  const oppositeRoot = `${ordinary.store}.opposite`;
+  const replacementRoot = `${ordinary.store}.replacement`;
+  const backupRoot = `${ordinary.store}.before-drift`;
+  for (const store of [oppositeRoot, replacementRoot]) {
+    mkdirSync(store, { recursive: true, mode: 0o700 });
+    chmodSync(store, 0o700);
+    fixtureFile(root, path.relative(root, path.join(store, "authority-v3-migration31-audit.json")), bytes.authorityV3Migration31Audit, 0o600);
+    fixtureFile(root, path.relative(root, path.join(store, "pending-bootstrap-handoff-migration.json")), bytes.pendingBootstrapHandoffMigration, 0o600);
+  }
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    const opposite = phase5bNestedPrerequisiteAlternateRecordV1(kind, values[kind]);
+    const target = kind === "authorityV3Migration31Audit"
+      ? phase5bLegacyBaitPathV1(oppositeRoot, admitted.chain.records.successorAuthorityV31.locator)
+      : phase5bLegacyBaitPathV1(oppositeRoot, admitted.chain.records.successorPending.locator);
+    fixtureFile(root, path.relative(root, target), opposite.bytes, 0o600);
+  }
+  instrumentPhase5bNestedPrerequisiteFixtureV1(root);
+  return Object.freeze({ ordinary, admitted, content, fixed, values, bytes, oppositeRoot, replacementRoot, backupRoot });
+}
+
+function runPhase5bNestedPrerequisiteFixtureV1(
+  root: string,
+  route: Phase5bNestedPrerequisiteRouteFixtureV1,
+  pair: Readonly<Record<string, string>>,
+  drift: Readonly<{ route: "active" | "historical-standalone" | "historical-operation"; kind: Phase5bNestedPrerequisiteKindFixtureV1; stage: "after-content-enoent" | "after-operation-read"; root: string; replacement: string; backup: string }> | null = null,
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  const call = route === "active"
+    ? `m.p5bRunActiveNestedPrerequisiteFixtureV1(${JSON.stringify(pair)})`
+    : route === "historical-operation"
+      ? `m.p5bRunHistoricalOperationNestedPrerequisiteFixtureV1(${JSON.stringify(pair)})`
+      : `m.p5bRunHistoricalNestedPrerequisiteFixtureV1(${JSON.stringify(route === "historical-v31" ? "authorityV3Migration31Audit" : "pendingBootstrapHandoffMigration")},${JSON.stringify(pair)})`;
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,validatorCalls:0,selectedV31Calls:0,selectedPendingCalls:0,historicalV31Calls:0,historicalPendingCalls:0,publicV31Calls:0,publicPendingCalls:0,openLog:[],events:[],drift:${JSON.stringify(drift)},driftDone:false};Reflect.set(globalThis,"__p5bNestedPrerequisiteProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(probe.driftDone&&probe.drift){fs.renameSync(probe.drift.root,probe.drift.replacement);fs.renameSync(probe.drift.backup,probe.drift.root)}}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,value,...probe,descriptorDelta:after-before}))})()`);
+}
+
+function phase5bNestedPresentedPathV1(store: string, target: string): string {
+  return path.join(realpathSync(store), path.relative(store, target));
+}
+
 function topLevelFunctionRegionV1(source: string, functionName: string): string {
   const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}\\(`, "gm"))]
     .map((match) => match.index);
@@ -7032,6 +7240,145 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       }
     });
   }
+
+  it("P5b-B3a freezes one pinned prerequisite root across operation and both active nested records", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const rootTypeStart = source.indexOf("type CurrentEntryPrerequisiteRootReaderV1 =");
+    const rootTypeEnd = source.indexOf("\n\nfunction openSelectedCurrentEntryPrerequisiteRootReaderV1", rootTypeStart);
+    assert.ok(rootTypeStart >= 0 && rootTypeEnd > rootTypeStart, "one private prerequisite-root reader type is frozen");
+    const rootType = source.slice(rootTypeStart, rootTypeEnd);
+    assert.match(rootType, /store:\s*Readonly<\{\s*directory:\s*string;\s*device:\s*bigint;?\s*\}>/);
+    assert.match(rootType, /root:\s*DirectorySnapshot/);
+    assert.match(rootType, /guard:\s*Task12ReceiptDirectoryGuardV1/);
+    assert.match(rootType, /assertStable\(\):\s*void/);
+    assert.match(rootType, /close\(\):\s*void/);
+
+    const selectedOpen = topLevelFunctionRegionV1(source, "openSelectedCurrentEntryPrerequisiteRootReaderV1");
+    assert.match(selectedOpen, /const store = readCurrentEntryStore\(context\);/, "the root reader inherits exact11 group #2 instead of becoming a twelfth direct context consumer");
+    assert.match(selectedOpen, /authenticateTask12ReceiptDirectoryChainV1|directorySnapshot/);
+    assert.doesNotMatch(selectedOpen, /requireSelectedCurrentEntryStoreContextStateV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|process\.env|globalThis/);
+
+    const activeOperation = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1");
+    assert.equal((activeOperation.match(/openSelectedCurrentEntryPrerequisiteRootReaderV1\(context\)/g) ?? []).length, 1, "the active operation opens exactly one selected-root reader");
+    assert.match(activeOperation, /rootReader\.assertStable\(\)[\s\S]*?readCurrentEntryRecord\([\s\S]*?rootReader\.assertStable\(\)/, "the operation bytes are read inside the same root generation");
+    assert.match(activeOperation, /parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1\(context,[\s\S]*?rootReader/);
+    assert.match(activeOperation, /finally\s*\{\s*rootReader\.close\(\);\s*\}/);
+
+    const activeParse = topLevelFunctionRegionV1(source, "parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1");
+    assert.match(activeParse, /resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1\(context,\s*nested,\s*rootReader/);
+    assert.match(activeParse, /resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1\(context,\s*nested,\s*rootReader/);
+    assert.doesNotMatch(activeParse, /resolveInternalProductionAuthorityV3Migration31AuditV1|resolveInternalProductionPendingBootstrapHandoffMigrationV1|AtFixedLegacyRootV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1/);
+
+    for (const resolverName of [
+      "resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1",
+      "resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1",
+    ]) {
+      const resolver = topLevelFunctionRegionV1(source, resolverName);
+      assert.match(resolver, /currentEntryPrerequisiteRecordPathV1\(context,\s*kind|currentEntryPrerequisiteRecordPathV1\(context,\s*"(?:authorityV3Migration31Audit|pendingBootstrapHandoffMigration)"/, `${resolverName} preserves exact11 group #3 context-derived content routing`);
+      assert.match(resolver, /resolveInternalProduction(?:AuthorityV3Migration31Audit|PendingBootstrapHandoffMigration)AtPrerequisiteRootV1\(rootReader/);
+      assert.doesNotMatch(resolver, /currentEntryPrerequisiteRecordPathAtRootV1|readFixedLegacyCurrentEntryPrerequisiteRecordV1|selectCurrentEntryStoreContextV1/);
+    }
+
+    const atRootRead = topLevelFunctionRegionV1(source, "readCurrentEntryPrerequisiteRecordAtRootV1");
+    assert.match(atRootRead, /rootReader\.assertStable\(\)[\s\S]*?contentPath[\s\S]*?rootReader\.assertStable\(\)/, "content observation is bracketed by the pinned root");
+    assert.match(atRootRead, /if \(content !== null\)[\s\S]*?rootReader\.assertStable\(\)[\s\S]*?return content\.observed\.bytes/, "content success revalidates the same root before return");
+    assert.match(atRootRead, /legacySnapshot[\s\S]*?absentContentLocator[\s\S]*?rootReader\.assertStable\(\)[\s\S]*?return legacySnapshot\.observed\.bytes/, "exact ENOENT fallback rechecks content absence and root identity after the same-root fixed read");
+    assert.doesNotMatch(atRootRead, /requireSelectedCurrentEntryStoreContextStateV1|\bcatch\b|readFixedLegacyCurrentEntry|fixedLegacyCurrentEntryRootV1|process\.env|globalThis|readdirSync|opendirSync|mtime|latest/, "the root reader has no twelfth context authentication, cross-root fallback, catch downgrade, scan, or ambient authority");
+  });
+
+  it("P5b-B3a active operation reads both content prerequisites only from its selected root", async () => {
+    const root = createFixture();
+    try {
+      const harness = seedPhase5bNestedPrerequisiteFixtureV1(root);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bNestedPrerequisiteFixtureV1(root, "active", harness.ordinary.pair);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned");
+      assert.deepEqual(observed.value, harness.ordinary.operation);
+      assert.deepEqual(
+        { selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, selectedV31Calls: observed.selectedV31Calls, selectedPendingCalls: observed.selectedPendingCalls, historicalV31Calls: observed.historicalV31Calls, historicalPendingCalls: observed.historicalPendingCalls, validatorCalls: observed.validatorCalls, descriptorDelta: observed.descriptorDelta },
+        { selectorCalls: 1, creatorCalls: 1, selectedV31Calls: 1, selectedPendingCalls: 1, historicalV31Calls: 0, historicalPendingCalls: 0, validatorCalls: 0, descriptorDelta: 0 },
+      );
+      const openLog = observed.openLog as readonly Readonly<{ root: string; target: string }>[];
+      assert.deepEqual(openLog.map((entry) => entry.target), [harness.content.authorityV3Migration31Audit, harness.content.pendingBootstrapHandoffMigration].map((target) => phase5bNestedPresentedPathV1(harness.ordinary.store, target)));
+      assert.equal(openLog.every((entry) => entry.root === realpathSync(harness.ordinary.store)), true, "both nested records use the selected root identity");
+      assert.equal(openLog.some((entry) => entry.root === realpathSync(harness.oppositeRoot) || entry.target.startsWith(`${realpathSync(harness.oppositeRoot)}${path.sep}`)), false, "opposite-root valid bait is never opened");
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B3a chosen malformed content is terminal despite opposite-root valid bait", async () => {
+    const root = createFixture();
+    try {
+      const harness = seedPhase5bNestedPrerequisiteFixtureV1(root);
+      writeFileSync(harness.content.authorityV3Migration31Audit, "{\n");
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bNestedPrerequisiteFixtureV1(root, "active", harness.ordinary.pair);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /not JSON|canonical JSON|v31/i);
+      assert.deepEqual(
+        { selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, selectedV31Calls: observed.selectedV31Calls, selectedPendingCalls: observed.selectedPendingCalls, historicalV31Calls: observed.historicalV31Calls, validatorCalls: observed.validatorCalls, descriptorDelta: observed.descriptorDelta },
+        { selectorCalls: 1, creatorCalls: 1, selectedV31Calls: 1, selectedPendingCalls: 0, historicalV31Calls: 0, validatorCalls: 0, descriptorDelta: 0 },
+      );
+      const openLog = observed.openLog as readonly Readonly<{ root: string; target: string }>[];
+      assert.deepEqual(openLog, [{ root: realpathSync(harness.ordinary.store), target: phase5bNestedPresentedPathV1(harness.ordinary.store, harness.content.authorityV3Migration31Audit) }], "malformed present content never downgrades into fixed or opposite-root fallback");
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B3a exact content ENOENT falls back only to the fixed member in the same selected root", async () => {
+    const root = createFixture();
+    try {
+      const harness = seedPhase5bNestedPrerequisiteFixtureV1(root);
+      unlinkSync(harness.content.authorityV3Migration31Audit);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bNestedPrerequisiteFixtureV1(root, "active", harness.ordinary.pair);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned");
+      assert.deepEqual(observed.value, harness.ordinary.operation);
+      assert.deepEqual({ selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, selectedV31Calls: observed.selectedV31Calls, selectedPendingCalls: observed.selectedPendingCalls, validatorCalls: observed.validatorCalls, descriptorDelta: observed.descriptorDelta }, { selectorCalls: 1, creatorCalls: 1, selectedV31Calls: 1, selectedPendingCalls: 1, validatorCalls: 0, descriptorDelta: 0 });
+      const openLog = observed.openLog as readonly Readonly<{ root: string; target: string }>[];
+      assert.deepEqual(openLog.map((entry) => entry.target), [harness.content.authorityV3Migration31Audit, harness.fixed.authorityV3Migration31Audit, harness.content.authorityV3Migration31Audit, harness.content.pendingBootstrapHandoffMigration].map((target) => phase5bNestedPresentedPathV1(harness.ordinary.store, target)));
+      assert.equal(openLog.every((entry) => entry.root === realpathSync(harness.ordinary.store)), true, "ENOENT, fixed fallback, final absence check, and pending read share one root");
+      assert.equal(openLog.some((entry) => entry.root === realpathSync(harness.oppositeRoot)), false);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B3a root replacement after operation read cannot mix a new generation into nested prerequisites", async () => {
+    const root = createFixture();
+    try {
+      const harness = seedPhase5bNestedPrerequisiteFixtureV1(root);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const drift = Object.freeze({ route: "active" as const, kind: "authorityV3Migration31Audit" as const, stage: "after-operation-read" as const, root: harness.ordinary.store, replacement: harness.replacementRoot, backup: harness.backupRoot });
+      const result = await runPhase5bNestedPrerequisiteFixtureV1(root, "active", harness.ordinary.pair, drift);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.driftDone, true, "the same-path different-inode root swap executes between operation and v31");
+      assert.deepEqual(observed.events, ["root-drift:active:authorityV3Migration31Audit:after-operation-read"]);
+      assert.equal(observed.outcome, "threw", "a single operation-scoped root reader rejects the replacement generation");
+      assert.match(String(observed.message), /root|directory|changed|identity|stable/i);
+      assert.deepEqual({ selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, validatorCalls: observed.validatorCalls, descriptorDelta: observed.descriptorDelta }, { selectorCalls: 1, creatorCalls: 1, validatorCalls: 0, descriptorDelta: 0 });
+      assert.equal((observed.openLog as readonly Readonly<{ root: string; target: string }>[]).some((entry) => entry.root === harness.oppositeRoot), false);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "the causal swap is restored without changing either store generation");
+    } finally {
+      removeFixture(root);
+    }
+  });
 
   for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
     it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {
