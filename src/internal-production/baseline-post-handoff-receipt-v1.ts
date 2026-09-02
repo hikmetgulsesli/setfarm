@@ -2865,8 +2865,743 @@ async function inspectExactPoisonRecoveryChainBeforeSelectionV1(
   }
 }
 
+type ExactPoisonRecoveryWriterV1 = Readonly<{
+  assertStable: () => void;
+  close: () => void;
+}>;
+
+type ExactPoisonRecoveryPrerequisiteRecordV1 = Readonly<{
+  value: Record<string, unknown>;
+  bytes: Buffer;
+  pair: Readonly<Record<string, string>>;
+}>;
+
+type ExactPoisonRecoveryPrerequisitesV1 = Readonly<{
+  authorityV3Migration31Audit: ExactPoisonRecoveryPrerequisiteRecordV1;
+  pendingBootstrapHandoffMigration: ExactPoisonRecoveryPrerequisiteRecordV1;
+}>;
+
+type ExactPoisonRecoveryCandidateV1 = Readonly<{
+  target: string;
+  bytes: Buffer;
+}>;
+
+type ExactPoisonQuarantineAdmissionV1 = Readonly<{
+  candidates: readonly [
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+    ExactPoisonRecoveryCandidateV1,
+  ];
+  assertStableOriginals: () => void;
+}>;
+
+const EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1 = "e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025";
+const EXACT_POISON_CURRENT_PENDING_HASH_V1 = "ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015";
+const EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1 = Object.freeze([
+  ".",
+  "records",
+  "records/authority-v3-migration31-audits",
+  "records/authority-v3-migration31-audits/sha256",
+  "records/authority-v3-migration31-audits/sha256/31",
+  "records/authority-v3-migration31-audits/sha256/e2",
+  "records/pending-bootstrap-handoff-migrations",
+  "records/pending-bootstrap-handoff-migrations/sha256",
+  "records/pending-bootstrap-handoff-migrations/sha256/6e",
+  "records/pending-bootstrap-handoff-migrations/sha256/ce",
+] as const);
+const EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1 = Object.freeze(
+  EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1.map((identity) => identity.locator),
+);
+const EXACT_POISON_DOWNSTREAM_ABSENCE_V1 = Object.freeze({
+  migration32Application: "absent",
+  migration33: "absent",
+  manifestA: "absent",
+  manifestHead: "absent",
+  admission: "absent",
+  canary: "absent",
+  target: "absent",
+  close: "absent",
+  restart: "absent",
+  rebind: "absent",
+  process: "absent",
+  listener: "absent",
+  lifecycleStatus: "absent",
+  receipt: "absent",
+  bootstrap: "absent",
+  task12: "absent",
+} as const);
+const EXACT_POISON_PHASE_ZERO_KEYS_V1 = Object.freeze([
+  "ordinaryStartingCount", "restartReservationCount", "serviceRestartOperationCount",
+  "launchPreparationCount", "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount",
+  "docsSessionCount", "docsLeaseCount", "fleetStageCount", "fleetInflightCount",
+  "fleetPendingReviewCount", "matrixInflightCount", "launchOutboxCount", "sourceRunOwnerCount",
+  "coldRehearsalOwnerCount", "compilationLeaseCount", "executionLeaseCount",
+] as const);
+
+function exactPoisonRecoveryWriterTargetV1(): string {
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    `current-entry-store-quarantine-recovery-by-predecessor-operation-${EXACT_POISON_OPERATION_HASH_V1}`,
+  );
+}
+
+function exactPoisonQuarantinedStoreLocatorV1(): string {
+  const modulePath = path.resolve(fileURLToPath(import.meta.url));
+  const lexicalRepository = path.dirname(path.dirname(path.dirname(modulePath)));
+  const lexicalWorkspace = path.dirname(lexicalRepository);
+  const workspace = realpathSync(lexicalRepository) === fixedRepositoryRoot()
+    && realpathSync(lexicalWorkspace) === realpathSync(CODE_OWNED_WORKSPACE_ROOT_V1)
+    ? lexicalWorkspace
+    : CODE_OWNED_WORKSPACE_ROOT_V1;
+  const relative = path.relative(realpathSync(CODE_OWNED_WORKSPACE_ROOT_V1), fixedLegacyCurrentEntryRootV1());
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    currentEntryFail("exact-poison inventory store relative locator is crossed");
+  }
+  const resolvedTarget = path.resolve(workspace, relative);
+  const target = process.platform === "darwin" && resolvedTarget.startsWith("/private/var/")
+    ? resolvedTarget.slice("/private".length)
+    : resolvedTarget;
+  if (realpathSync(target) !== fixedLegacyCurrentEntryRootV1()) currentEntryFail("exact-poison inventory store locator is crossed");
+  return target;
+}
+
+function exactPoisonRecoveryPrerequisitePathV1(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration", hash: string): string {
+  const exactHash = requireSha256(hash, `exact-poison current ${kind} hash`);
+  return path.join(
+    fixedLegacyCurrentEntryRootV1(),
+    "records",
+    CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1[kind],
+    "sha256",
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
+  );
+}
+
+async function observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(): Promise<ExactPoisonRecoveryPrerequisitesV1> {
+  const authoritySnapshot = requireExactPoisonRecoverySnapshotV1(
+    exactPoisonRecoveryPrerequisitePathV1("authorityV3Migration31Audit", EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1),
+    "exact-poison current authority-v31 audit",
+  );
+  const authorityBody = strictCanonicalRecord(authoritySnapshot.observed.bytes, "exact-poison current authority-v31 audit");
+  const authorityPair = Object.freeze({
+    authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1}`,
+    authorityV3Migration31AuditHash: EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1,
+  });
+  const authorityValue = await parseAuthorityV3Migration31AuditBody(authorityBody, authorityPair);
+
+  const pendingSnapshot = requireExactPoisonRecoverySnapshotV1(
+    exactPoisonRecoveryPrerequisitePathV1("pendingBootstrapHandoffMigration", EXACT_POISON_CURRENT_PENDING_HASH_V1),
+    "exact-poison current pending migration",
+  );
+  const pendingBody = strictCanonicalRecord(pendingSnapshot.observed.bytes, "exact-poison current pending migration");
+  const pendingPair = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${EXACT_POISON_CURRENT_PENDING_HASH_V1}`,
+    pendingBootstrapHandoffMigrationHash: EXACT_POISON_CURRENT_PENDING_HASH_V1,
+  });
+  const pendingValue = parsePendingBootstrapHandoffMigrationBody(pendingBody, pendingPair);
+  assertExactPoisonRecoverySnapshotStableV1(authoritySnapshot, "exact-poison current authority-v31 audit");
+  assertExactPoisonRecoverySnapshotStableV1(pendingSnapshot, "exact-poison current pending migration");
+  return recursivelyFreeze({
+    authorityV3Migration31Audit: { value: authorityValue, bytes: authoritySnapshot.observed.bytes, pair: authorityPair },
+    pendingBootstrapHandoffMigration: { value: pendingValue, bytes: pendingSnapshot.observed.bytes, pair: pendingPair },
+  });
+}
+
+function observeExactPoisonSyntheticGitObjectAbsenceV1(): typeof EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1 {
+  const missionControlRoot = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "mission-control");
+  const missionControlStats = lstatSync(missionControlRoot, { bigint: true });
+  const uid = process.getuid?.();
+  if (
+    !Number.isSafeInteger(uid)
+    || !missionControlStats.isDirectory()
+    || missionControlStats.isSymbolicLink()
+    || missionControlStats.uid !== BigInt(uid!)
+    || (Number(missionControlStats.mode & 0o7777n) & 0o022) !== 0
+    || realpathSync(missionControlRoot) !== missionControlRoot
+  ) currentEntryFail("exact-poison Mission Control Git root is invalid");
+  const repositories = Object.freeze({
+    setfarm: fixedRepositoryRoot(),
+    "mission-control": missionControlRoot,
+  } as const);
+  for (const expected of EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1) {
+    const result = spawnSync(
+      "/usr/bin/git",
+      [...GIT_PREFIX, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+      {
+        cwd: repositories[expected.repository],
+        env: GIT_ENV,
+        shell: false,
+        encoding: "utf8",
+        input: `${expected.objectSha}\n`,
+        timeout: 10_000,
+        maxBuffer: 65_536,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    if (
+      result.error
+      || result.signal
+      || result.status !== 0
+      || result.stderr !== ""
+      || result.stdout !== `${expected.objectSha} missing\n`
+    ) currentEntryFail(`exact-poison synthetic ${expected.repository} Git object absence is not proven`);
+  }
+  return EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1;
+}
+
+async function observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1(): Promise<typeof EXACT_POISON_DOWNSTREAM_ABSENCE_V1> {
+  const sourceA = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison downstream phase");
+  const sourceB = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  if (canonicalComparable(sourceA) !== canonicalComparable(sourceB)) {
+    currentEntryFail("exact-poison downstream source changed across absence observation");
+  }
+  return EXACT_POISON_DOWNSTREAM_ABSENCE_V1;
+}
+
+function exactPoisonContaminationFingerprintV1(operation: FileSnapshot): Readonly<{
+  fingerprintBody: Record<string, unknown>;
+  fingerprintHash: typeof EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1;
+}> {
+  if (sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1) {
+    currentEntryFail("exact-poison operation bytes changed before fingerprinting");
+  }
+  const value = strictCanonicalRecord(operation.observed.bytes, "exact-poison operation fingerprint source");
+  const pbaObservation = value.productBuildAuthorityV2Observation;
+  if (!isPlainRecord(pbaObservation) || !isPlainRecord(pbaObservation.response) || !isPlainRecord(pbaObservation.response.evidence)) {
+    currentEntryFail("exact-poison fingerprint PBA evidence is invalid");
+  }
+  const evidence = pbaObservation.response.evidence;
+  const focusedTests = evidence.focusedTests;
+  const vendorLock = evidence.vendorLock;
+  const deliveredPathBlobs = evidence.deliveredPathBlobs;
+  if (
+    !isPlainRecord(focusedTests)
+    || !Array.isArray(focusedTests.testPathBlobs)
+    || !isPlainRecord(vendorLock)
+    || !Array.isArray(vendorLock.artifacts)
+    || !Array.isArray(deliveredPathBlobs)
+  ) currentEntryFail("exact-poison fingerprint PBA projection is invalid");
+  const orderedTestPathBlobHashes = focusedTests.testPathBlobs.map((entry) => {
+    if (!isPlainRecord(entry)) currentEntryFail("exact-poison focused test blob is invalid");
+    return requireGitHash(entry.blobHash, "exact-poison focused test blob hash");
+  });
+  const orderedArtifactHashes = vendorLock.artifacts.map((entry) => {
+    if (!isPlainRecord(entry)) currentEntryFail("exact-poison vendor artifact is invalid");
+    return requireSha256(entry.sha256, "exact-poison vendor artifact hash");
+  });
+  const orderedDeliveredBlobHashes = deliveredPathBlobs.map((entry) => {
+    if (!isPlainRecord(entry)) currentEntryFail("exact-poison delivered blob is invalid");
+    return requireGitHash(entry.blobHash, "exact-poison delivered blob hash");
+  });
+  const fingerprintBody = recursivelyFreeze({
+    authorityV3Migration31Audit: value.authorityV3Migration31Audit,
+    controllerSource: value.controllerSource,
+    operationBytesSha256: EXACT_POISON_OPERATION_BYTES_SHA256_V1,
+    pendingBootstrapHandoffMigration: value.pendingBootstrapHandoffMigration,
+    predecessorOperation: exactPoisonOperationPairV1(),
+    productBuildAuthority: {
+      currentSource: evidence.currentSource,
+      deliveryEvidence: {
+        deliveryEvidenceHash: evidence.deliveryEvidenceHash,
+        deliveryEvidenceRef: evidence.deliveryEvidenceRef,
+      },
+      deliveryMergeAncestorOfCurrentSource: evidence.deliveryMergeAncestorOfCurrentSource,
+      deliveryMergeSha: evidence.deliveryMergeSha,
+      deliveryPrNumber: evidence.deliveryPrNumber,
+      focusedHashes: {
+        commandContractHash: focusedTests.commandContractHash,
+        focusedTestReceiptHash: focusedTests.focusedTestReceiptHash,
+        orderedTestPathBlobHashes,
+      },
+      orderedDeliveredBlobHashes,
+      vendorHashes: {
+        compatibilitySetHash: vendorLock.compatibilitySetHash,
+        lockContentHash: vendorLock.lockContentHash,
+        orderedArtifactHashes,
+        vendorLockProjectionHash: vendorLock.vendorLockProjectionHash,
+      },
+    },
+    schema: "setfarm.p3-projected-current-entry-fixture-contamination-fingerprint.v1",
+  });
+  if (hashCanonicalJson(fingerprintBody) !== EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1) {
+    currentEntryFail("exact-poison contamination fingerprint is not exact");
+  }
+  return Object.freeze({ fingerprintBody, fingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 });
+}
+
+function observeExactPoisonQuarantinedInventoryV1(
+  operation: FileSnapshot,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+): Readonly<{
+  inventoryBody: Record<string, unknown>;
+  inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
+  predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
+  assertStableOriginals: () => void;
+}> {
+  heldWriter.assertStable();
+  const root = fixedLegacyCurrentEntryRootV1();
+  const rootSnapshot = directorySnapshot(root, "exact-poison quarantined store");
+  const recoveryLock = `.${path.basename(exactPoisonRecoveryWriterTargetV1())}.writer.lock`;
+  const exactEntries = new Map<string, Set<string>>([
+    [".", new Set(["current-entry-operation.json", "records"])],
+    ["records", new Set([recoveryLock, "authority-v3-migration31-audits", "pending-bootstrap-handoff-migrations"])],
+    ["records/authority-v3-migration31-audits", new Set(["sha256"])],
+    ["records/authority-v3-migration31-audits/sha256", new Set(["31", "e2"])],
+    ["records/authority-v3-migration31-audits/sha256/31", new Set([`${EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1[1].locator.split("/").at(-1)!}`])],
+    ["records/authority-v3-migration31-audits/sha256/e2", new Set([`${EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1}.json`])],
+    ["records/pending-bootstrap-handoff-migrations", new Set(["sha256"])],
+    ["records/pending-bootstrap-handoff-migrations/sha256", new Set(["6e", "ce"])],
+    ["records/pending-bootstrap-handoff-migrations/sha256/6e", new Set([`${EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1[3].locator.split("/").at(-1)!}`])],
+    ["records/pending-bootstrap-handoff-migrations/sha256/ce", new Set([`${EXACT_POISON_CURRENT_PENDING_HASH_V1}.json`])],
+  ]);
+  for (const candidate of expectedPublished) {
+    const resolved = path.resolve(candidate.target);
+    const relative = path.relative(root, resolved).split(path.sep).join("/");
+    if (!relative || relative === ".." || relative.startsWith("../") || path.isAbsolute(relative) || canonicalLocator(relative) !== relative) {
+      currentEntryFail("exact-poison published recovery locator escaped its store");
+    }
+    const segments = relative.split("/");
+    const basename = segments.pop()!;
+    let parent = ".";
+    for (const segment of segments) {
+      const child = parent === "." ? segment : `${parent}/${segment}`;
+      const members = exactEntries.get(parent);
+      if (!members) currentEntryFail("exact-poison recovery topology parent is absent");
+      members.add(segment);
+      if (!exactEntries.has(child)) exactEntries.set(child, new Set());
+      parent = child;
+    }
+    exactEntries.get(parent)!.add(basename);
+  }
+  const topologyDirectoryLocators = [...exactEntries.keys()].sort((left, right) => {
+    const depth = left.split("/").length - right.split("/").length;
+    return depth === 0 ? compareBytes(left, right) : depth;
+  });
+  const topologyDirectorySnapshots = topologyDirectoryLocators.map((locator) => {
+    const target = locator === "." ? root : path.join(root, locator);
+    const snapshot = directorySnapshot(target, `exact-poison inventory directory ${locator}`, rootSnapshot.device);
+    if (snapshot.identity.mode !== 0o700) currentEntryFail(`exact-poison inventory directory ${locator} mode is invalid`);
+    const stats = lstatSync(target, { bigint: true });
+    if (stats.uid !== lstatSync(root, { bigint: true }).uid) currentEntryFail(`exact-poison inventory directory ${locator} owner is crossed`);
+    const expected = [...(exactEntries.get(locator) ?? new Set<string>())].sort(compareBytes);
+    const observed = readdirSync(target).sort(compareBytes);
+    if (canonicalComparable(observed) !== canonicalComparable(expected)) currentEntryFail(`exact-poison inventory directory ${locator} is not exact`);
+    return Object.freeze({ locator, target, snapshot, uid: stats.uid });
+  });
+  const topologyByLocator = new Map(topologyDirectorySnapshots.map((entry) => [entry.locator, entry]));
+  const directorySnapshots = EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1.map((locator) => topologyByLocator.get(locator)!);
+  const fileSnapshots = EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1.map((locator) => {
+    const target = path.join(root, locator);
+    const snapshot = requireExactPoisonRecoverySnapshotV1(target, `exact-poison inventory file ${locator}`);
+    if (snapshot.observed.mode !== 0o600 || snapshot.observed.stats.nlink !== 1n) {
+      currentEntryFail(`exact-poison inventory file ${locator} identity is invalid`);
+    }
+    return Object.freeze({ locator, snapshot });
+  });
+  const publishedSnapshots = expectedPublished.map((candidate, index) => {
+    const snapshot = requireExactPoisonRecoverySnapshotV1(candidate.target, `exact-poison published recovery member ${index}`);
+    if (!snapshot.observed.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison published recovery member ${index} bytes are crossed`);
+    return Object.freeze({ candidate, snapshot });
+  });
+  if (
+    operation.locator !== fileSnapshots[0]!.snapshot.locator
+    || !sameRegularMetadata(operation.observed.stats, fileSnapshots[0]!.snapshot.observed.stats)
+    || !operation.observed.bytes.equals(fileSnapshots[0]!.snapshot.observed.bytes)
+  ) currentEntryFail("exact-poison operation changed across inventory observation");
+  const orderedDirectories = Object.freeze(directorySnapshots.map(({ locator, snapshot, uid }) => Object.freeze({
+    deviceDecimal: snapshot.identity.devDecimal,
+    inodeDecimal: snapshot.identity.inoDecimal,
+    locator,
+    mode: `0${snapshot.identity.mode.toString(8)}`,
+    uidDecimal: uid.toString(10),
+  })));
+  const orderedFiles = Object.freeze(fileSnapshots.map(({ locator, snapshot }) => Object.freeze({
+    byteLength: snapshot.observed.bytes.length,
+    bytesSha256: sha256(snapshot.observed.bytes),
+    linkCount: Number(snapshot.observed.stats.nlink),
+    locator,
+    mode: `0${snapshot.observed.mode.toString(8)}`,
+  })));
+  const inventoryBody = recursivelyFreeze({
+    orderedDirectories,
+    orderedFiles,
+    schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1",
+    storeLocator: exactPoisonQuarantinedStoreLocatorV1(),
+  });
+  if (hashCanonicalJson(inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1) {
+    currentEntryFail("exact-poison quarantined inventory hash is crossed");
+  }
+  const identities = Object.freeze(fileSnapshots.map(({ locator, snapshot }) => Object.freeze({
+    locator,
+    uidDecimal: snapshot.observed.stats.uid.toString(10),
+    deviceDecimal: snapshot.observed.stats.dev.toString(10),
+    inodeDecimal: snapshot.observed.stats.ino.toString(10),
+  })));
+  if (canonicalComparable(identities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)) {
+    currentEntryFail("exact-poison predecessor file identities are crossed");
+  }
+  const assertStableOriginals = (): void => {
+    heldWriter.assertStable();
+    for (const { locator, target, snapshot, uid } of topologyDirectorySnapshots) {
+      assertDirectory(target, snapshot, `exact-poison stable directory ${locator}`);
+      if (lstatSync(target, { bigint: true }).uid !== uid) currentEntryFail(`exact-poison stable directory ${locator} owner changed`);
+      const expected = [...exactEntries.get(locator)!].sort(compareBytes);
+      if (canonicalComparable(readdirSync(target).sort(compareBytes)) !== canonicalComparable(expected)) {
+        currentEntryFail(`exact-poison stable directory ${locator} topology changed`);
+      }
+    }
+    for (const { locator, snapshot } of fileSnapshots) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable file ${locator}`);
+    for (const [index, { candidate, snapshot }] of publishedSnapshots.entries()) {
+      assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable published member ${index}`);
+      if (!snapshot.observed.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison stable published member ${index} bytes are crossed`);
+    }
+    heldWriter.assertStable();
+  };
+  assertStableOriginals();
+  return Object.freeze({
+    inventoryBody,
+    inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+    predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+    assertStableOriginals,
+  });
+}
+
+function requireExactPoisonRecoveryPrerequisitesV1(value: unknown): ExactPoisonRecoveryPrerequisitesV1 {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"])) {
+    currentEntryFail("exact-poison current prerequisite observation is invalid");
+  }
+  const requireRecord = (record: unknown, refKey: string, hashKey: string, prefix: string, label: string): ExactPoisonRecoveryPrerequisiteRecordV1 => {
+    if (!isPlainRecord(record) || !hasExactKeys(record, ["value", "bytes", "pair"]) || !isPlainRecord(record.value) || !Buffer.isBuffer(record.bytes)) {
+      currentEntryFail(`${label} no-write observation is invalid`);
+    }
+    const pair = requirePair(record.pair, refKey, hashKey, prefix);
+    if (
+      record.bytes.toString("utf8") !== `${canonicalComparable(record.value)}\n`
+      || record.value[refKey] !== pair[refKey]
+      || record.value[hashKey] !== pair[hashKey]
+    ) currentEntryFail(`${label} no-write observation is crossed`);
+    return Object.freeze({ value: record.value, bytes: record.bytes, pair });
+  };
+  return Object.freeze({
+    authorityV3Migration31Audit: requireRecord(
+      value.authorityV3Migration31Audit,
+      "authorityV3Migration31AuditRef",
+      "authorityV3Migration31AuditHash",
+      "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+      "exact-poison authority-v31",
+    ),
+    pendingBootstrapHandoffMigration: requireRecord(
+      value.pendingBootstrapHandoffMigration,
+      "pendingBootstrapHandoffMigrationRef",
+      "pendingBootstrapHandoffMigrationHash",
+      "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+      "exact-poison pending migration",
+    ),
+  });
+}
+
+function requireExactZeroCountsV1(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, keys) || keys.some((key) => value[key] !== 0)) {
+    currentEntryFail(`${label} is not exact zero`);
+  }
+  return value;
+}
+
+function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
+  source: InternalProductionCleanSetfarmSourceBuildV1,
+  audit: ExactPoisonRecoveryPrerequisiteRecordV1,
+  service: InternalProductionServiceCensusV1,
+  database: Record<string, unknown>,
+  phase: Record<string, unknown>,
+  physical: PhysicalInventoryV1,
+): Record<string, unknown> {
+  const census = recursivelyFreeze({
+    ...database,
+    ...phase,
+    ownedProcessCount: physical.ownedProcessCount,
+    ownedListenerCount: physical.ownedListenerCount,
+    ownedWorktreeCount: physical.ownedWorktreeCount,
+    dirtyWorktreeCount: physical.dirtyWorktreeCount,
+    staleChildCount: physical.staleChildCount,
+  } as InternalProductionCompleteZeroOwnerCensusV1);
+  if (!hasExactKeys(census as unknown as Record<string, unknown>, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) {
+    currentEntryFail("exact-poison complete legacy census is not zero");
+  }
+  const body = {
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    observationKind: "legacy-pre-manifest-existing-live-truth",
+    authorityV3Migration31AuditRef: audit.pair.authorityV3Migration31AuditRef,
+    authorityV3Migration31AuditHash: audit.pair.authorityV3Migration31AuditHash,
+    cleanSetfarmSourceSha: source.sha,
+    cleanSetfarmTreeHash: source.treeHash,
+    cleanSetfarmBuildHash: source.buildHash,
+    observedSpawnerGenerationHash: service.spawner.generationHash,
+    census,
+    allThirtySixScalarCountsZero: true,
+    ownerReservationSidecarState: "absent-before-migration-32",
+    ownerAdmissionHeadState: "absent-before-migration-32",
+    manifestActivationState: "absent-before-initial-a-activation",
+  };
+  const observationHash = hashCanonicalJson(body);
+  return recursivelyFreeze({ ...body, observationRef: `${LEGACY_ZERO_PREFIX_V1}${observationHash}`, observationHash });
+}
+
+async function observeExactPoisonQuarantineAdmissionV1(
+  operation: FileSnapshot,
+  heldWriter: ExactPoisonRecoveryWriterV1,
+  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+): Promise<ExactPoisonQuarantineAdmissionV1> {
+  heldWriter.assertStable();
+  const predecessorPair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+  if (
+    predecessorPair.operationRef !== EXACT_POISON_OPERATION_REF_V1
+    || predecessorPair.operationHash !== EXACT_POISON_OPERATION_HASH_V1
+    || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
+  ) currentEntryFail("exact-poison publisher operation is crossed");
+  const operationValue = strictCanonicalRecord(operation.observed.bytes, "exact-poison publisher operation");
+  const contaminationFingerprint = exactPoisonContaminationFingerprintV1(operation);
+  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
+  const unavailableSyntheticGitObjects = observeExactPoisonSyntheticGitObjectAbsenceV1();
+  if (canonicalComparable(unavailableSyntheticGitObjects) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)) {
+    currentEntryFail("exact-poison synthetic Git absence tuple is crossed");
+  }
+
+  const sourceA = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+  const pbaA = await observeCurrentPba();
+  const prerequisitesA = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+  const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison phase-a");
+  const serviceA = await observeInternalProductionServiceCensusV1();
+  const physicalA = observePhysicalInventoryV1(serviceA, 0);
+  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+    "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
+    "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+    "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+  ], "exact-poison database");
+  const downstreamAbsence = await observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1();
+  if (canonicalComparable(downstreamAbsence) !== canonicalComparable(EXACT_POISON_DOWNSTREAM_ABSENCE_V1)) {
+    currentEntryFail("exact-poison downstream authority is present");
+  }
+  const serviceB = await observeInternalProductionServiceCensusV1();
+  const physicalB = observePhysicalInventoryV1(serviceB, 0);
+  const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "exact-poison phase-b");
+  const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+  const pbaB = await observeCurrentPba();
+  const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+  if (
+    canonicalComparable(sourceA) !== canonicalComparable(sourceB)
+    || canonicalComparable(pbaA) !== canonicalComparable(pbaB)
+    || canonicalComparable(prerequisitesA.authorityV3Migration31Audit.value) !== canonicalComparable(prerequisitesB.authorityV3Migration31Audit.value)
+    || canonicalComparable(prerequisitesA.pendingBootstrapHandoffMigration.value) !== canonicalComparable(prerequisitesB.pendingBootstrapHandoffMigration.value)
+    || canonicalComparable(serviceA) !== canonicalComparable(serviceB)
+    || canonicalComparable(physicalA) !== canonicalComparable(physicalB)
+    || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
+  ) currentEntryFail("exact-poison zero-effect A/B observations drifted");
+  if (
+    canonicalComparable(prerequisitesA.authorityV3Migration31Audit.value.controllerSource) !== canonicalComparable(sourceA)
+    || canonicalComparable(prerequisitesA.pendingBootstrapHandoffMigration.value.controllerSource) !== canonicalComparable(sourceA)
+  ) currentEntryFail("exact-poison current prerequisites are crossed with source");
+  const successorPbaPair = pbaPair(pbaA);
+  const successorOperationCore = recursivelyFreeze({
+    schema: operationValue.schema,
+    purpose: operationValue.purpose,
+    controllerSource: sourceA,
+    productBuildAuthorityV2DeliveryEvidence: successorPbaPair,
+    productBuildAuthorityV2Observation: pbaA,
+    authorityV3Migration31Audit: prerequisitesA.authorityV3Migration31Audit.pair,
+    pendingBootstrapHandoffMigration: prerequisitesA.pendingBootstrapHandoffMigration.pair,
+  });
+  const successorOperationHash = hashCanonicalJson(successorOperationCore);
+  const successorOperation = recursivelyFreeze({
+    ...successorOperationCore,
+    operationRef: `setfarm://internal-production/current-entry-operation/sha256/${successorOperationHash}`,
+    operationHash: successorOperationHash,
+  });
+  if (successorOperationHash === EXACT_POISON_OPERATION_HASH_V1) currentEntryFail("exact-poison successor operation is not fresh");
+  const successorOperationBytes = task12ReceiptCanonicalBytesV1(successorOperation);
+  const legacyZero = buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
+    sourceA,
+    prerequisitesA.authorityV3Migration31Audit,
+    serviceA,
+    database,
+    phaseA,
+    physicalA,
+  );
+  const completeZeroEffectBracket = recursivelyFreeze([
+    { observation: "controller-source-a", value: sourceA },
+    { observation: "product-build-authority-a", value: pbaA },
+    { observation: "authority-v3-migration31-audit-a", value: prerequisitesA.authorityV3Migration31Audit.value },
+    { observation: "pending-bootstrap-handoff-migration-a", value: prerequisitesA.pendingBootstrapHandoffMigration.value },
+    { observation: "service-a", value: serviceA },
+    { observation: "physical-a", value: physicalA },
+    { observation: "database-owner-migration-manifest", value: legacyZero },
+    { observation: "downstream-absence", value: downstreamAbsence },
+    { observation: "service-b", value: serviceB },
+    { observation: "physical-b", value: physicalB },
+    { observation: "controller-source-b", value: sourceB },
+    { observation: "product-build-authority-b", value: pbaB },
+    { observation: "authority-v3-migration31-audit-b", value: prerequisitesB.authorityV3Migration31Audit.value },
+    { observation: "pending-bootstrap-handoff-migration-b", value: prerequisitesB.pendingBootstrapHandoffMigration.value },
+  ]);
+  const completeZeroEffectBracketHash = hashCanonicalJson(completeZeroEffectBracket);
+  const zeroEffectProofCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-zero-effect-proof.v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    contaminationFingerprintHash: contaminationFingerprint.fingerprintHash,
+    quarantinedInventoryHash: inventory.inventoryHash,
+    completeZeroEffectBracketHash,
+    predecessorFileIdentities: inventory.predecessorFileIdentities,
+    unavailableSyntheticGitObjects,
+    successorOperation,
+    legacyPreManifestZeroOwner: legacyZero,
+  });
+  const zeroEffectProofHash = hashCanonicalJson(zeroEffectProofCore);
+  const zeroEffectProof = recursivelyFreeze({
+    ...zeroEffectProofCore,
+    zeroEffectProofRef: `${CURRENT_ENTRY_STORE_ZERO_EFFECT_PROOF_PREFIX_V1}${zeroEffectProofHash}`,
+    zeroEffectProofHash,
+  });
+  const authorityHash = prerequisitesA.authorityV3Migration31Audit.pair.authorityV3Migration31AuditHash!;
+  const pendingHash = prerequisitesA.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationHash!;
+  const authorityLocator = `records/authority-v3-migration31-audits/sha256/${authorityHash.slice(0, 2)}/${authorityHash}.json`;
+  const pendingLocator = `records/pending-bootstrap-handoff-migrations/sha256/${pendingHash.slice(0, 2)}/${pendingHash}.json`;
+  const genesisCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-genesis.v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    zeroEffectProof: { zeroEffectProofRef: zeroEffectProof.zeroEffectProofRef, zeroEffectProofHash },
+    authorityV3Migration31Audit: prerequisitesA.authorityV3Migration31Audit.pair,
+    pendingBootstrapHandoffMigration: prerequisitesA.pendingBootstrapHandoffMigration.pair,
+    successorOperation: { operationRef: successorOperation.operationRef, operationHash: successorOperationHash },
+    orderedEntries: [
+      { locator: "current-entry-operation.json", mode: "0600", byteLength: successorOperationBytes.length, bytesSha256: sha256(successorOperationBytes) },
+      { locator: authorityLocator, mode: "0600", byteLength: prerequisitesA.authorityV3Migration31Audit.bytes.length, bytesSha256: sha256(prerequisitesA.authorityV3Migration31Audit.bytes) },
+      { locator: pendingLocator, mode: "0600", byteLength: prerequisitesA.pendingBootstrapHandoffMigration.bytes.length, bytesSha256: sha256(prerequisitesA.pendingBootstrapHandoffMigration.bytes) },
+    ],
+  });
+  const successorStoreHash = hashCanonicalJson(genesisCore);
+  const successorGenesis = recursivelyFreeze({ ...genesisCore, successorStoreHash });
+  const dispositionCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-quarantine-disposition.v1",
+    reason: "p3-projected-fixture-workspace-root-contamination-v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    contaminationFingerprint,
+    quarantinedInventory: { inventoryBody: inventory.inventoryBody, inventoryHash: inventory.inventoryHash },
+    zeroEffectProof,
+    successorGenesis,
+  });
+  const dispositionHash = hashCanonicalJson(dispositionCore);
+  const disposition = recursivelyFreeze({
+    ...dispositionCore,
+    dispositionRef: `${CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1}${dispositionHash}`,
+    dispositionHash,
+  });
+  const successorStoreRelativeRoot = `stores/sha256/${successorStoreHash.slice(0, 2)}/${successorStoreHash}`;
+  const edgeCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-edge.v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    disposition: { dispositionRef: disposition.dispositionRef, dispositionHash },
+    successorStoreHash,
+    successorStoreRelativeRoot,
+    successorOperation: { operationRef: successorOperation.operationRef, operationHash: successorOperationHash },
+  });
+  const edgeHash = hashCanonicalJson(edgeCore);
+  const edge = recursivelyFreeze({ ...edgeCore, edgeRef: `${CURRENT_ENTRY_STORE_SUCCESSOR_EDGE_PREFIX_V1}${edgeHash}`, edgeHash });
+  const sealCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-activation-seal.v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    successorEdge: { edgeRef: edge.edgeRef, edgeHash },
+    completeZeroEffectBracketHash,
+  });
+  const activationSealHash = hashCanonicalJson(sealCore);
+  const seal = recursivelyFreeze({
+    ...sealCore,
+    activationSealRef: `${CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_SEAL_PREFIX_V1}${activationSealHash}`,
+    activationSealHash,
+  });
+  const commitCore = recursivelyFreeze({
+    schema: "setfarm.internal-production-current-entry-store-successor-activation-commit.v1",
+    predecessorOperation: exactPoisonOperationPairV1(),
+    successorActivationSeal: { activationSealRef: seal.activationSealRef, activationSealHash },
+    postSealCompleteZeroEffectBracketHash: completeZeroEffectBracketHash,
+  });
+  const activationCommitHash = hashCanonicalJson(commitCore);
+  const commit = recursivelyFreeze({
+    ...commitCore,
+    activationCommitRef: `${CURRENT_ENTRY_STORE_SUCCESSOR_ACTIVATION_COMMIT_PREFIX_V1}${activationCommitHash}`,
+    activationCommitHash,
+  });
+  const successorRoot = exactPoisonSuccessorStoreRootV1(successorStoreHash);
+  inventory.assertStableOriginals();
+  return Object.freeze({
+    candidates: Object.freeze([
+      Object.freeze({ target: exactPoisonQuarantineDispositionPathV1(dispositionHash), bytes: task12ReceiptCanonicalBytesV1(disposition) }),
+      Object.freeze({ target: path.join(successorRoot, authorityLocator), bytes: prerequisitesA.authorityV3Migration31Audit.bytes }),
+      Object.freeze({ target: path.join(successorRoot, pendingLocator), bytes: prerequisitesA.pendingBootstrapHandoffMigration.bytes }),
+      Object.freeze({ target: path.join(successorRoot, "current-entry-operation.json"), bytes: successorOperationBytes }),
+      Object.freeze({ target: fixedLegacyExactPoisonSuccessorEdgePathV1(), bytes: task12ReceiptCanonicalBytesV1(edge) }),
+      Object.freeze({ target: exactPoisonSuccessorActivationSealPathV1(activationSealHash), bytes: task12ReceiptCanonicalBytesV1(seal) }),
+      Object.freeze({ target: exactPoisonSuccessorActivationCommitPathV1(activationCommitHash), bytes: task12ReceiptCanonicalBytesV1(commit) }),
+    ] as const),
+    assertStableOriginals: inventory.assertStableOriginals,
+  });
+}
+
+function assertExactPoisonQuarantineAdmissionCandidatesEqualV1(
+  observed: ExactPoisonQuarantineAdmissionV1,
+  admitted: ExactPoisonQuarantineAdmissionV1,
+): void {
+  if (observed.candidates.length !== admitted.candidates.length) currentEntryFail("exact-poison recovery candidate count drifted");
+  for (const [index, candidate] of observed.candidates.entries()) {
+    const expected = admitted.candidates[index]!;
+    if (candidate.target !== expected.target || !candidate.bytes.equals(expected.bytes)) {
+      currentEntryFail(`exact-poison recovery candidate ${index} drifted`);
+    }
+  }
+}
+
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
-  currentEntryFail("exact-poison quarantine publisher is unavailable before the complete recovery slice");
+  const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
+  try {
+    heldWriter.assertStable();
+    const operation = requireExactPoisonRecoverySnapshotV1(
+      fixedLegacyCurrentEntryOperationPathV1(),
+      "fixed legacy exact-poison publisher operation",
+    );
+    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
+    for (const [index, candidate] of admission.candidates.entries()) {
+      const before = await observeExactPoisonQuarantineAdmissionV1(
+        operation,
+        heldWriter,
+        admission.candidates.slice(0, index),
+      );
+      assertExactPoisonQuarantineAdmissionCandidatesEqualV1(before, admission);
+      heldWriter.assertStable();
+      before.assertStableOriginals();
+      publishLegacyZeroRecordV1(candidate.target, candidate.bytes);
+      if (!readTask12ReceiptStoreBytesV1(candidate.target).equals(candidate.bytes)) {
+        currentEntryFail("exact-poison recovery candidate did not reopen exactly");
+      }
+      const after = await observeExactPoisonQuarantineAdmissionV1(
+        operation,
+        heldWriter,
+        admission.candidates.slice(0, index + 1),
+      );
+      assertExactPoisonQuarantineAdmissionCandidatesEqualV1(after, admission);
+      heldWriter.assertStable();
+      after.assertStableOriginals();
+    }
+    const complete = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
+    if (complete.state !== "complete") currentEntryFail("exact-poison published recovery chain is incomplete");
+    heldWriter.assertStable();
+  } finally {
+    heldWriter.close();
+  }
 }
 
 async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
@@ -4176,7 +4911,7 @@ function readTask12ReceiptStoreBytesV1(target: string, expectedLinkCount = 1): B
   return readTask12ReceiptStoreSnapshotV1(target, expectedLinkCount).bytes;
 }
 
-function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ close: () => void }> {
+function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertStable: () => void; close: () => void }> {
   const directory = path.dirname(target);
   const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
@@ -4254,17 +4989,50 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ close: 
       }
       unlinkPinned(temp, descriptor, identity, bytes, 2n); temp = ""; fsyncCurrentEntryDirectory(directory); guard.assertStable();
       const heldDescriptor = descriptor;
-      const heldIdentity = identity;
+      const heldIdentity = fstatSync(heldDescriptor, { bigint: true });
+      const heldAtPath = lstatSync(lockPath, { bigint: true });
+      if (
+        !heldIdentity.isFile()
+        || !sameRegularMetadata(heldIdentity, heldAtPath)
+        || (heldIdentity.mode & 0o7777n) !== 0o600n
+        || heldIdentity.nlink !== 1n
+        || !readTask12ReceiptDescriptorBytesV1(heldDescriptor, heldIdentity.size).equals(bytes)
+      ) currentEntryFail("Task12 receipt writer lock post-link identity is invalid");
       const heldBytes = bytes;
       descriptor = -1;
       guardTransferred = true;
-      return Object.freeze({ close: () => {
-        try {
-          guard.assertStable(); const atPath = lstatSync(lockPath, { bigint: true }); const now = fstatSync(heldDescriptor, { bigint: true }); const reopened = readTask12ReceiptDescriptorBytesV1(heldDescriptor, now.size);
-          if (!now.isFile() || (now.mode & 0o7777n) !== 0o600n || now.nlink !== 1n || atPath.dev !== heldIdentity.dev || atPath.ino !== heldIdentity.ino || now.dev !== heldIdentity.dev || now.ino !== heldIdentity.ino || !reopened.equals(heldBytes)) currentEntryFail("Task12 receipt writer lock changed before release");
-          unlinkSync(lockPath); fsyncCurrentEntryDirectory(directory); guard.assertStable();
-        } finally { closeSync(heldDescriptor); guard.close(); }
-      } });
+      let heldClosed = false;
+      const assertStable = (): void => {
+        if (heldClosed) currentEntryFail("Task12 receipt writer lock is closed");
+        guard.assertStable();
+        const atPath = lstatSync(lockPath, { bigint: true });
+        const now = fstatSync(heldDescriptor, { bigint: true });
+        const reopened = readTask12ReceiptDescriptorBytesV1(heldDescriptor, now.size);
+        if (
+          !now.isFile()
+          || (now.mode & 0o7777n) !== 0o600n
+          || now.nlink !== 1n
+          || !sameRegularMetadata(heldIdentity, now)
+          || !sameRegularMetadata(heldIdentity, atPath)
+          || !reopened.equals(heldBytes)
+        ) currentEntryFail("Task12 receipt writer lock changed while held");
+      };
+      return Object.freeze({
+        assertStable,
+        close: () => {
+          if (heldClosed) currentEntryFail("Task12 receipt writer lock closed twice");
+          try {
+            assertStable();
+            unlinkSync(lockPath);
+            fsyncCurrentEntryDirectory(directory);
+            guard.assertStable();
+          } finally {
+            heldClosed = true;
+            closeSync(heldDescriptor);
+            guard.close();
+          }
+        },
+      });
     } catch (error) {
       if (descriptor >= 0 && identity !== null && bytes !== null) {
         try {

@@ -252,6 +252,126 @@ const EXACT_POISON_PENDING_RECORD_BYTES_BASE64_V1 = [
   "ci52MSIsInN0YXR1cyI6ImV4YWN0X3BlbmRpbmdfZ3VhcmRlZF9zdWNjZXNzb3IifSwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLXBl",
   "bmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uLXByb2plY3Rpb24udjEifQo=",
 ].join("");
+// phase-3a-current-record-fixtures-v1:start
+const EXACT_CURRENT_AUTHORITY_V31_RECORD_BYTES_BASE64_V1 = [
+  "eyJhdXRob3JpdHlWM0NvbnRyYWN0U3BpbmVUaHJvdWdoTWlncmF0aW9uMzEiOnsibWlncmF0aW9ucyI6W3siY2hlY2tzdW0iOiJhNDgwODNlNmQ0OGQwMDcy",
+  "YTM2ZjI1NWYwMmQwNTcwODYwNjA1M2VkYzM4YWExNDBkZWE4YTU4YzdiNDhhMzJlIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAx",
+  "X2V4ZWN1dGlvbl9hdHRlbXB0cyIsInN0YXRlIjoiYWRvcHRlZCIsInZlcnNpb24iOjF9LHsiY2hlY2tzdW0iOiI5OTNlMTFjZmY5YTdlNjQxYzhkZTJlMWMw",
+  "OGQyNTkxNjc1ZGY5Y2ExOGRmYjc4YzMwNGEzN2RkMGU5ZDE0ZWE0IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAyX3J1bl9wcm90",
+  "b2NvbF9pZGVudGl0eSIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjJ9LHsiY2hlY2tzdW0iOiI1N2UyNGY3M2VlNmQzY2UwMjcyZGFlODM4OTNiMWE3",
+  "MDkwZmI5YjgwZTQ3NmZlNDhkNzk0YWIyMmVlMGZkYThmIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDAzX21pZ3JhdGlvbl9yZWxl",
+  "YXNlX2F0dGVzdGF0aW9uIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6M30seyJjaGVja3N1bSI6IjA5YjliNDcxYTI3MTAwYmFmNTg0NjZmZmQxMTli",
+  "MDc4MGMyNTlkNTI1YmQ0MmRmZTMxNzdkMDY5YWFiNjBiODQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDRfY29tcGlsZXJfcHJl",
+  "ZmxpZ2h0X2lkZW50aXR5Iiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6NH0seyJjaGVja3N1bSI6Ijk2Zjg5ZWY0Mjc3MTU5YjI5ODM1NDIzYTY4ZmYz",
+  "NWY5NGUxZDU2YTNmOThlYzg3NmU5M2E4N2NlMjk1NTYzYjQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDVfY2xhaW1fYXR0ZW1w",
+  "dF9yZWxhdGlvbmFsX2JpbmRpbmciLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjo1fSx7ImNoZWNrc3VtIjoiN2NlYzI5OTEyODYxNjNjN2RhODM5MGQ4",
+  "ODA2MzViZWViYzM2MjY4MmFlMzkxZmRjMjJkZDRkZWRiODg4Yjg3MiIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAwNl9kdXJhYmxl",
+  "X3J1bnRpbWVfb3duZXJzaGlwIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Nn0seyJjaGVja3N1bSI6ImFjZjc3ZWIzM2M2ODU0ZGNhYTg2YzViOGJm",
+  "MmM4MGZkNzRkYjk2OTg1YmIwYWU0OTczNTBhOWQ5ZDQwNzY5NmQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDdfbWFuYWdlcl9v",
+  "d25lZF9jb21wbGV0aW9uIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6N30seyJjaGVja3N1bSI6ImMzMTJkYTQ5NjYyZGFhMWM5NmYwNjM3MTQyNzEx",
+  "YmRjODNlYjllOTAxYTY2MzIxMjFhYjFhNDk5YzQ0ZjdhYTIiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMDhfcnVudGltZV9jb21w",
+  "bGV0aW9uX2VmZmVjdF9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjo4fSx7ImNoZWNrc3VtIjoiNDAwZTBkNWY1YjhhOTI2MzU5MGUzYzll",
+  "MDNhMmU3MTk4Y2M5NjkyMTllZjY2NGI3NTNkYWVkMjNiZTQ2MWY1NCIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAwOV9wcm9kdWN0",
+  "X2FydGlmYWN0X2luZGV4Iiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6OX0seyJjaGVja3N1bSI6ImY2NTlmMDliOTA0ZGUwMWQzZDBhMzYxZWU1ZmNk",
+  "OGZiMjhlOWNhOTE2YmU0NTY3ZWYxNDYxMTRiNmE4MzYxMTQiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMTBfZmluZGluZ19yZWNv",
+  "dmVyeV9ldmlkZW5jZV9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMH0seyJjaGVja3N1bSI6IjgzOTdhODYxYjgzNTViMTg3ODFmNDRj",
+  "ODk4MDZhNjI0YmNmMzE1NjU2YjZjMWM5Y2MzM2IxNzY0OGE1ZmQyNDMiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMTFfcmV2aXNp",
+  "b25lZF9yZWNvdmVyeV9kZWxpdmVyeV9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMX0seyJjaGVja3N1bSI6IjAzMzliMGQ5MGQ5ZTJj",
+  "NWMyYzBkODFiYmFlNTFhNjIyYTExM2U2ODM0M2NhYjM0MTNiYmRhZjJkZGJiMDI3NzgiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIw",
+  "MTJfY2Fub25pY2FsX29wZXJhdGlvbmFsX2V2ZW50X3Byb2plY3Rpb24iLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxMn0seyJjaGVja3N1bSI6ImUz",
+  "YzRmNWQzYTQ2ZWNlMTI5YmUxOTYxNzgwYWZjYjlkNGQwYTQ5ZTEyYzc4NjhjNWEzZDc1NGUzYzIwNjE2MTYiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRp",
+  "YyIsIm5hbWUiOiIwMTNfYWNjZXB0ZWRfY2FuZGlkYXRlX2xlZGdlciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjEzfSx7ImNoZWNrc3VtIjoiM2Qw",
+  "M2Q0NDAxNDEyYWQ2ODM1OWJiOGFlODA0MWY1MzEwZWU0YmJiN2VjYjUzNDc4MWJlMDM2MTkxYWNmY2MzNCIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGlj",
+  "IiwibmFtZSI6IjAxNF92M19kZXBsb3lfcmVjZWlwdF9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxNH0seyJjaGVja3N1bSI6IjRhOTky",
+  "ODZkNjhhYjg3MTFiMDkyYzEzNTY3NzgwMTZhZjM4YmI4M2U1NTJmMTE0MjZjYjRlNTliZmQwNzhiMzMiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIs",
+  "Im5hbWUiOiIwMTVfdjNfcmVsZWFzZV9hZG1pc3Npb25fbGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MTV9LHsiY2hlY2tzdW0iOiI2M2I5",
+  "MGVlM2FmMjg1NjAwZTI1Zjk1N2NmZDVmYjBiMTgzYmNmY2E3Mzg0Mjk0YzBlNDA2MjIyMDQ1NjFkYjcwIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMi",
+  "LCJuYW1lIjoiMDE2X3YzX3ByZXBhcmF0aW9uX2Jsb2NrX2xlZGdlciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjE2fSx7ImNoZWNrc3VtIjoiNjhl",
+  "ZjY5MTBmM2IxYjVjNTIzNzU5NGU4NDU2MDU3MGExMDZmNDM5YmUzNzRkNmZkODQzOThkYjZmYTk0ZWM3ZSIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGlj",
+  "IiwibmFtZSI6IjAxN192M19naXRodWJfcmV2aWV3X3Jlc29sdXRpb25fZXZpZGVuY2UiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoxN30seyJjaGVj",
+  "a3N1bSI6IjM1NzBjNDU5YWI2MGNmN2JhZTUzOWM2NDkyMDk3ZDljMDM5NDljZTFkYjQwN2U3OWVlZmFiNmEzMWU4YjJmODMiLCJtaWdyYXRpb25DbGFzcyI6",
+  "ImF1dG9tYXRpYyIsIm5hbWUiOiIwMThfdjNfcHJvamVjdF90cmFuc2Zlcl9hY2tfbGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MTh9LHsi",
+  "Y2hlY2tzdW0iOiJiYjcwN2Q5ZjE1ZmE3YWU5NWEyYzM5ODllZTA2MTIxYzE2ZDM2NGNlNWJkZmFiYTkyMzU4NDE1M2ZiOWJhYzIyIiwibWlncmF0aW9uQ2xh",
+  "c3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDE5X3J1bnRpbWVfY29tcGxldGlvbl9zdWJtaXNzaW9uX2V2aWRlbmNlIiwic3RhdGUiOiJhcHBsaWVkIiwidmVy",
+  "c2lvbiI6MTl9LHsiY2hlY2tzdW0iOiJkNTcyZTQ4MzJhZDQxYmQ3NDhmNDZiMzYxZGQyNzg3ZWI3NmNkN2UxOTAxNTAxY2NmYTk0ZDI2MTg2OTc1YzMzIiwi",
+  "bWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIwX3JlY292ZXJ5X3Rlcm1pbmFsX2xlYXNlX2lkZW50aXR5Iiwic3RhdGUiOiJhcHBsaWVk",
+  "IiwidmVyc2lvbiI6MjB9LHsiY2hlY2tzdW0iOiJiN2M2YWQ0YTYwZDRmMzIwM2NmNDRmZmQyM2E3OTUyODQ5ODVlODhkOTk3NjE4ODU2MzJjOGFmNjZiZGZj",
+  "NzM1IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIxX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2Vfc2VhbCIsInN0YXRlIjoiYXBw",
+  "bGllZCIsInZlcnNpb24iOjIxfSx7ImNoZWNrc3VtIjoiMGJmNDZjYzBkZDQ2OGU2ZDlkNDdkZjc2YjI4OWI5OGUwYTdhZTYwMDcyZTk5ZDY0ZmRhYjdmNDNk",
+  "MDg5NDY0NiIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAyMl9wcm9kdWN0X2NvbXBpbGF0aW9uX2F0dGVtcHRfbGVkZ2VyIiwic3Rh",
+  "dGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MjJ9LHsiY2hlY2tzdW0iOiIxMTMyNWE0MzYyMTcyZjk5NTYwN2NhODQ5NGFlZWFjMzk3Yzg2ZDMzMTBhMjY4MzJi",
+  "NTFmNjIyNDVhMWYxN2ZlIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDIzX2FydGlmYWN0X3B1YmxpY2F0aW9uX2JhdGNoX2xlZGdl",
+  "ciIsInN0YXRlIjoiYXBwbGllZCIsInZlcnNpb24iOjIzfSx7ImNoZWNrc3VtIjoiYTFiMTEyNmE1OGE2YzdiOGQ4NDVlNjVjYzk1ODQwMWE3ZjliZTQzZGYz",
+  "YzI2MWUxYjI4Y2E2OTk5ZjNlMzk5ZSIsIm1pZ3JhdGlvbkNsYXNzIjoiYXV0b21hdGljIiwibmFtZSI6IjAyNF9hcnRpZmFjdF9zdG9yZV9hdXRob3JpdHlf",
+  "bGVkZ2VyIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6MjR9LHsiY2hlY2tzdW0iOiI2MzQyNDM0OTExYjI3Y2Q0N2VjY2FlMjQwOGFmMWMzZjc4MjBi",
+  "YzQzMWUwMGVjZTBlYzQ2Y2NhMDcwZGRiNTFkIiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDI1X3YzX3ByZXBhcmF0aW9uX2F1dGhv",
+  "cml0eV92Ml9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyNX0seyJjaGVja3N1bSI6ImM2MGQ5MTIzMGRjNWZmMDcwNGNlMmRmZWY1MTM0",
+  "YTk0ZDkxZTZkNjNlM2UzNGNmZWIxOTk4ZGZiODk3YTAxNTUiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjZfYXJ0aWZhY3RfcHVi",
+  "bGljYXRpb25fYmF0Y2hfcGxhbl9sZWRnZXIiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyNn0seyJjaGVja3N1bSI6IjUzZmM2OWIyODIzOGIyYmMy",
+  "N2QwOTJjMmRhNjIwYjY1M2NiZmVlMzc4YjJkMjgwOGYyZmQzZTRjNTkzZWIxZmYiLCJtaWdyYXRpb25DbGFzcyI6ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjdf",
+  "cGxhdGZvcm1fcmVsZWFzZV9zdG9yZV9yZWNvcmRfbGVkZ2VyX3YzIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Mjd9LHsiY2hlY2tzdW0iOiI2Yzc1",
+  "OWIyN2UzOWUxZDQ4MmM2NTMxYzUwNDc1ZTQ4Y2FiZjFiZTEyZTUzOWQ4MWY3OTU1MzJjNzBiMDczZGU5IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMi",
+  "LCJuYW1lIjoiMDI4X3J1bnRpbWVfY29tcGxldGlvbl9tYW5pZmVzdF9hdXRob3JpdHkiLCJzdGF0ZSI6ImFwcGxpZWQiLCJ2ZXJzaW9uIjoyOH0seyJjaGVj",
+  "a3N1bSI6IjVkODU0Mzk3ZTMwNWFhM2JiYWNmZjg1Y2VlMTg0YjdkYjc1NjZiOGUyODA1ZWEyYTc2NDEyNzNmMmQwMThmY2IiLCJtaWdyYXRpb25DbGFzcyI6",
+  "ImF1dG9tYXRpYyIsIm5hbWUiOiIwMjlfdjNfc3RvcnlfY2xhaW1fcnVudGltZV9iaW5kaW5nX3YxIiwic3RhdGUiOiJhcHBsaWVkIiwidmVyc2lvbiI6Mjl9",
+  "LHsiY2hlY2tzdW0iOiJlZTk2NDRiMGMzZmQyMDI5MDkwMmZiNjJkMzM2ZTg1MWQ3YjZmNGUzMmU4OTU2ZDZmMDdhNTIxNTZhM2M0ZGMxIiwibWlncmF0aW9u",
+  "Q2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDMwX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2VfYXV0aG9yaXR5X3YyIiwic3RhdGUiOiJhcHBsaWVkIiwi",
+  "dmVyc2lvbiI6MzB9LHsiY2hlY2tzdW0iOiI3ZmJhNmNmNjJlMjIwMWRjMTJlNjQxNzU2MTFlM2E3N2ZlNzgwYmM1YWY5OGE2MmY1ZjM1MzI4MWUwNzVhYjhm",
+  "IiwibWlncmF0aW9uQ2xhc3MiOiJhdXRvbWF0aWMiLCJuYW1lIjoiMDMxX29wZXJhdGlvbmFsX2ZhaWx1cmVfY2F1c2VfYXV0aG9yaXR5X3YzIiwic3RhdGUi",
+  "OiJhcHBsaWVkIiwidmVyc2lvbiI6MzF9XSwic2NoZW1hIjoic2V0ZmFybS5hdXRob3JpdHktdjMtY29udHJhY3Qtc3BpbmUtdGhyb3VnaC1taWdyYXRpb24t",
+  "MzEtYXVkaXQudjEiLCJzdGF0dXMiOiJ2ZXJpZmllZCIsInRocm91Z2hWZXJzaW9uIjozMX0sImF1dGhvcml0eVYzTWlncmF0aW9uMzFBdWRpdEhhc2giOiJl",
+  "MjE2NWQ2NjNmNzY2YjI1MDYyNDVhMTAxOGQ1MTk1YzkxOWU4ZGVlYjdlZWZmODJiMGYzNWE1ZTYxY2MzMDI1IiwiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1",
+  "ZGl0UmVmIjoic2V0ZmFybTovL2ludGVybmFsLXByb2R1Y3Rpb24vYXV0aG9yaXR5LXYzLW1pZ3JhdGlvbjMxLWF1ZGl0L3NoYTI1Ni9lMjE2NWQ2NjNmNzY2",
+  "YjI1MDYyNDVhMTAxOGQ1MTk1YzkxOWU4ZGVlYjdlZWZmODJiMGYzNWE1ZTYxY2MzMDI1IiwiY29udHJvbGxlclNvdXJjZSI6eyJicmFuY2giOiJtYWluIiwi",
+  "YnVpbGRIYXNoIjoiMDBkODdiODk5ZWM0ODFkNTdjMzg2YzY1YTA0MjY2ZTM3YjY5MjI5Mzg4MDkyZTg0Zjk5YmZlNGNjNTRjNDQyNCIsImNsZWFuIjp0cnVl",
+  "LCJvcmlnaW5NYWluU2hhIjoiNTA1YmRlNGFkYTc4NTE5MjY3ZGIzM2U1OWRlOWJlN2Y3Y2FmMzAyOSIsInNoYSI6IjUwNWJkZTRhZGE3ODUxOTI2N2RiMzNl",
+  "NTlkZTliZTdmN2NhZjMwMjkiLCJ0cmVlSGFzaCI6ImIyNDVmOGIxNDBiZWJmYmU1NmJhMDllYmRmMjJiMjYxMjlmYThjNWEifSwiY3VycmVudEF1dGhvcml0",
+  "eUF1ZGl0Ijp7ImFydGlmYWN0UHVibGljYXRpb25BdXRob3JpdHlMZWRnZXIiOnsiYXV0aG9yaXR5IjpudWxsLCJiYXRjaFBsYW5Db3VudCI6MCwic2NoZW1h",
+  "Ijoic2V0ZmFybS5hcnRpZmFjdC1wdWJsaWNhdGlvbi1hdXRob3JpdHktbGVkZ2VyLWF1ZGl0LnYyIiwic2NvcGUiOiJkYXRhYmFzZS1sZWRnZXItb25seSIs",
+  "InN0YXR1cyI6InZlcmlmaWVkIn0sImF1dGhvcml0eVN0YXRlIjoiZGF0YWJhc2VfaW50ZWdyaXR5X2F1ZGl0X29ubHkiLCJtdXRhdGlvbkF1dGhvcml0eSI6",
+  "ZmFsc2UsInBsYXRmb3JtUmVsZWFzZVN0b3JlUmVjb3JkTGVkZ2VyIjp7ImF1dGhvcml0eVN0YXRlIjoiZGF0YWJhc2VfcmVjb3JkX2ludGVncml0eV9hdWRp",
+  "dF9vbmx5IiwibXV0YXRpb25BdXRob3JpdHkiOmZhbHNlLCJwcm9kdWN0aW9uQWRtaXNzaW9uIjoiZm9yYmlkZGVuIiwicHJvZHVjdGlvbkF1dGhvcml0eSI6",
+  "ZmFsc2UsInJlY29yZENvdW50IjowLCJyZXN0YXJ0QXV0aG9yaXR5IjpmYWxzZSwic2NoZW1hIjoic2V0ZmFybS5wbGF0Zm9ybS1yZWxlYXNlLXN0b3JlLXJl",
+  "Y29yZC1sZWRnZXItY3VycmVudC1hdWRpdC52MyIsInNjb3BlIjoiZGF0YWJhc2UtcmVjb3JkLWludGVncml0eS1vbmx5Iiwic3RhdHVzIjoiaW50ZWdyaXR5",
+  "X3ZlcmlmaWVkIiwic3RvcmVBdXRob3JpdHkiOmZhbHNlLCJ0YWlsUHVibGlzaGVkQ2Vuc3VzSGFzaCI6bnVsbCwidGFpbFJlY29yZEhhc2giOm51bGwsInRy",
+  "dXN0Q29uY2x1c2lvbiI6ImNoYXJhY3Rlcml6YXRpb25fb25seSJ9LCJwcm9kdWN0aW9uQWRtaXNzaW9uIjoiZm9yYmlkZGVuIiwicHJvZHVjdGlvbkF1dGhv",
+  "cml0eSI6ZmFsc2UsInJlc3RhcnRBdXRob3JpdHkiOmZhbHNlLCJzY2hlbWEiOiJzZXRmYXJtLmNvbnRyYWN0LXNwaW5lLWN1cnJlbnQtYXV0aG9yaXR5LWxl",
+  "ZGdlcnMtYXVkaXQudjIiLCJzY29wZSI6ImRhdGFiYXNlLWN1cnJlbnQtYXV0aG9yaXR5LWxlZGdlcnMtb25seSIsInN0YXR1cyI6InZlcmlmaWVkIiwic3Rv",
+  "cmVBdXRob3JpdHkiOmZhbHNlLCJ0cnVzdENvbmNsdXNpb24iOiJjaGFyYWN0ZXJpemF0aW9uX29ubHkiLCJ2M1N0b3J5Q2xhaW1SdW50aW1lQmluZGluZyI6",
+  "eyJhdXRob3JpdHlTdGF0ZSI6ImRhdGFiYXNlX2JpbmRpbmdfaW50ZWdyaXR5X2F1ZGl0X29ubHkiLCJiaW5kaW5nQ291bnQiOjAsIm11dGF0aW9uQXV0aG9y",
+  "aXR5IjpmYWxzZSwicHJvZHVjdGlvbkFkbWlzc2lvbiI6ImZvcmJpZGRlbiIsInByb2R1Y3Rpb25BdXRob3JpdHkiOmZhbHNlLCJyZXF1aXJlZE93bmVyQ291",
+  "bnQiOjAsInNjaGVtYSI6InNldGZhcm0udjMtc3RvcnktY2xhaW0tcnVudGltZS1iaW5kaW5nLWN1cnJlbnQtYXVkaXQudjEiLCJzY29wZSI6ImRhdGFiYXNl",
+  "LWJpbmRpbmctaW50ZWdyaXR5LW9ubHkiLCJzdGF0dXMiOiJpbnRlZ3JpdHlfdmVyaWZpZWQifSwidmVyc2lvbiI6IjIuMC4wIn0sImN1cnJlbnRBdXRob3Jp",
+  "dHlBdWRpdEhhc2giOiJmZTUyMWYyNTc1YTdiNDNiODgyNDQ3MzFkNmE3YjhmNThmMzA3ZGY3OTMyNDlkNTMwNzg5MjJiNDE0ZTBiNmZlIiwiY3VycmVudFN0",
+  "YXR1cyI6ImN1cnJlbnQiLCJtaWdyYXRpb24zMVNlbWFudGljRGlnZXN0IjoiZjA1MmVmZjFiNDVkZjBmMDBmZmI4NDRmZTBkMjNiNTQyZWFmYTQ3ODlkYTVl",
+  "OTBhMzI5YThkNzU2ZGZjZGMzYSIsIm1pZ3JhdGlvbjMxU291cmNlTWFuaWZlc3RFbnRyeUhhc2giOiJjNGQ4YTIwODVkNDI1ZjljMmRlMWI0NTY2MDMyNWUy",
+  "YmYwN2E5NWU4NmQ5MmMxM2UyYzlkZjM5NGI3NDBhYTlmIiwicHI4NkRlbGl2ZXJ5Ijp7ImRlc2NlbmRhbnRTaGEiOiI1MDViZGU0YWRhNzg1MTkyNjdkYjMz",
+  "ZTU5ZGU5YmU3ZjdjYWYzMDI5IiwiZGVzY2VuZGFudFRyZWVIYXNoIjoiYjI0NWY4YjE0MGJlYmZiZTU2YmEwOWViZGYyMmIyNjEyOWZhOGM1YSIsImV4cGVj",
+  "dGVkTWVyZ2VCYXNlIjoiMWQ2OTFjODk3NjAzMzllYTkwNWRmZTE3ZjhlOTE4OGU2MjYwM2MxYyIsIm1lcmdlU2hhIjoiMWQ2OTFjODk3NjAzMzllYTkwNWRm",
+  "ZTE3ZjhlOTE4OGU2MjYwM2MxYyIsIm1lcmdlVHJlZUhhc2giOiIwNGYxZDk1YTU4MzYwZDA2ZTg2NmZlODE2MTM4NjU1ZWZhOTE2Mjg0IiwicHVsbFJlcXVl",
+  "c3ROdW1iZXIiOjg2fSwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLWF1dGhvcml0eS12My1taWdyYXRpb24zMS1hdWRpdC52MSJ9Cg==",
+].join("");
+const EXACT_CURRENT_PENDING_RECORD_BYTES_BASE64_V1 = [
+  "eyJjb250cm9sbGVyU291cmNlIjp7ImJyYW5jaCI6Im1haW4iLCJidWlsZEhhc2giOiIwMGQ4N2I4OTllYzQ4MWQ1N2MzODZjNjVhMDQyNjZlMzdiNjkyMjkz",
+  "ODgwOTJlODRmOTliZmU0Y2M1NGM0NDI0IiwiY2xlYW4iOnRydWUsIm9yaWdpbk1haW5TaGEiOiI1MDViZGU0YWRhNzg1MTkyNjdkYjMzZTU5ZGU5YmU3Zjdj",
+  "YWYzMDI5Iiwic2hhIjoiNTA1YmRlNGFkYTc4NTE5MjY3ZGIzM2U1OWRlOWJlN2Y3Y2FmMzAyOSIsInRyZWVIYXNoIjoiYjI0NWY4YjE0MGJlYmZiZTU2YmEw",
+  "OWViZGYyMmIyNjEyOWZhOGM1YSJ9LCJjdXJyZW50U3RhdHVzIjoiY3VycmVudCIsIm1pZ3JhdGlvbkltcGxlbWVudGF0aW9uIjp7ImdpdEJsb2JIYXNoIjoi",
+  "NDBhNWQzYmFmNjk0NjU4YzYyODBmZDZjYThhZWE2YzY0MTE2OGI3YyIsImdpdE1vZGUiOiIxMDA2NDQiLCJsb2NhdG9yIjoic3JjL2RiL2Jvb3RzdHJhcC1t",
+  "YWluLWNsYWltLWhhbmRvZmYtdjEtbWlncmF0aW9uLnRzIn0sInBlbmRpbmdCb290c3RyYXBIYW5kb2ZmTWlncmF0aW9uSGFzaCI6ImNlMjFiMWMwYjMzMmI0",
+  "Zjk4YmJiNTYwYTk0N2MyOWZiODBlMDM2MDA0NmQyYzM0ODI5ZDZjNGU0M2MzMmIwMTUiLCJwZW5kaW5nQm9vdHN0cmFwSGFuZG9mZk1pZ3JhdGlvblJlZiI6",
+  "InNldGZhcm06Ly9pbnRlcm5hbC1wcm9kdWN0aW9uL3BlbmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uL3NoYTI1Ni9jZTIxYjFjMGIzMzJiNGY5",
+  "OGJiYjU2MGE5NDdjMjlmYjgwZTAzNjAwNDZkMmMzNDgyOWQ2YzRlNDNjMzJiMDE1IiwicGVuZGluZ1N1Y2Nlc3NvciI6eyJleHBlY3RlZFNjaGVtYVByb2pl",
+  "Y3Rpb25IYXNoIjoiOWY0NGI2MzEyYmE2MmZiN2I0OGRhMTUzZTcwZmE3ZjE5Y2U1NDNkYmVlYzUwMGI5MTExZDc1MDg0N2E3ZWVkMSIsIm1pZ3JhdGlvbiI6",
+  "eyJjaGVja3N1bSI6ImQxNTJlYzNkNzBkZTQyMjFkYzJhNWJjNzljY2Y0NmI0YTZiODlhM2Y1ZThiOTY2YjgwMDJhMTI5ZDllOGM3MWQiLCJtaWdyYXRpb25D",
+  "bGFzcyI6Imd1YXJkZWQiLCJuYW1lIjoiY29udHJhY3Qtc3BpbmUtYm9vdHN0cmFwLW1haW4tY2xhaW0taGFuZG9mZi12MSIsInN0YXRlIjoicGVuZGluZyIs",
+  "InZlcnNpb24iOjMyfSwibWlncmF0aW9uRGlnZXN0IjoiOGNiYWFiMGM0N2JmMzYzOTAzMzQ0MmQyZGY5YTFjMTVkNDIxZWIzNGFkYmFiNzJmYTgyOTUxNzEy",
+  "Y2FmZTRlMiIsIm5hbWVkTWlncmF0aW9uRGlnZXN0RW50cnlIYXNoIjoiODFkOTE2NGNhMGYyYzBiZTFjZWNlMzkxZmM2NTRhODU0YzI4Y2NmY2U5MDViODdj",
+  "M2FkNjgwMjAyZjk1NTU3YyIsIm9yZGVyZWRTdGF0ZW1lbnRzSGFzaCI6ImNjZmNmZGI2ZWQ5ZTlkODdhZGQ5ZTI4Mzk0YjJlNjdiZjllZDU1MzQ3ODQxZmUw",
+  "NTI5Y2RkZTRkNmE1YjM0YzkiLCJzY2hlbWEiOiJzZXRmYXJtLnBlbmRpbmctYm9vdHN0cmFwLW1haW4tY2xhaW0taGFuZG9mZi1ndWFyZGVkLXN1Y2Nlc3Nv",
+  "ci52MSIsInN0YXR1cyI6ImV4YWN0X3BlbmRpbmdfZ3VhcmRlZF9zdWNjZXNzb3IifSwic2NoZW1hIjoic2V0ZmFybS5pbnRlcm5hbC1wcm9kdWN0aW9uLXBl",
+  "bmRpbmctYm9vdHN0cmFwLWhhbmRvZmYtbWlncmF0aW9uLXByb2plY3Rpb24udjEifQo=",
+].join("");
+// phase-3a-current-record-fixtures-v1:end
 const EXACT_POISON_CONTAMINATION_FINGERPRINT_BODY_BASE64_V1 = [
   "eyJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXQiOnsiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1ZGl0SGFzaCI6IjMxOTU3NmU0NjMyZjUyYjAzZjlkZDFj",
   "NWE4ZWM4OTNiOGZmZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQiLCJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXRSZWYiOiJzZXRmYXJtOi8vaW50",
@@ -491,6 +611,7 @@ type ExactPoisonStrictChainModelV1 = Readonly<{
 
 type ExactPoisonStrictChainFixtureV1 = Readonly<{
   completeZeroEffectBracketHash: string;
+  completeZeroEffectBracket: readonly unknown[] | null;
   dispositionHash: string;
   successorStoreHash: string;
   edgeHash: string;
@@ -510,6 +631,17 @@ type ExactPoisonStrictChainFixtureV1 = Readonly<{
     seal: ExactPoisonStrictChainRecordV1;
     commit: ExactPoisonStrictChainRecordV1;
   }>;
+}>;
+
+type ExactPoisonStrictChainFixtureOptionsV1 = Readonly<{
+  currentAuthorityV31Bytes: Buffer;
+  currentPendingBytes: Buffer;
+  inventoryBody: Readonly<Record<string, unknown>>;
+  inventoryHash: string;
+  predecessorFileIdentities: readonly Readonly<Record<string, string>>[];
+  serviceCensus: Readonly<Record<string, unknown>>;
+  physicalInventory: Readonly<Record<string, unknown>>;
+  downstreamAbsence: Readonly<Record<string, "absent">>;
 }>;
 
 function exactFixtureJsonBytesV1(base64: string, byteLength: number, bytesSha256: string, label: string): Buffer {
@@ -569,7 +701,10 @@ function zeroOwnerCensusFixtureV1(): Readonly<Record<string, 0>> {
   ].map((key) => [key, 0])) as Record<string, 0>);
 }
 
-function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictChainFixtureV1 {
+function buildExactPoisonStrictChainFixtureV1(
+  root: string,
+  options?: ExactPoisonStrictChainFixtureOptionsV1,
+): ExactPoisonStrictChainFixtureV1 {
   const predecessorOperation = Object.freeze({
     operationRef: EXACT_POISON_OPERATION_REF_V1,
     operationHash: EXACT_POISON_OPERATION_HASH_V1,
@@ -587,14 +722,28 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
     "19d97b5c9e55eafc4acea9cd7e8f0ab851d4410904dcb333c7c681f1f28d0bc7",
     "exact poison pending record",
   ).toString("utf8")) as Record<string, unknown>;
-  const observedSource = runObserver(root);
-  assert.equal(observedSource.status, 0, observedSource.stderr);
-  const successorSource = Object.freeze(JSON.parse(observedSource.stdout) as Record<string, unknown>);
-  assert.equal(successorSource.sha, git(root, ["rev-parse", "HEAD"]));
-  assert.equal(successorSource.treeHash, git(root, ["rev-parse", "HEAD^{tree}"]));
-  assert.equal(successorSource.originMainSha, successorSource.sha);
-  assert.equal(successorSource.clean, true);
-  const successorMigrationBlob = git(root, ["rev-parse", `${successorSource.sha}:src/db/bootstrap-main-claim-handoff-v1-migration.ts`]);
+  const currentAuthorityV31 = options === undefined
+    ? null
+    : JSON.parse(options.currentAuthorityV31Bytes.toString("utf8")) as Record<string, unknown>;
+  const currentPending = options === undefined
+    ? null
+    : JSON.parse(options.currentPendingBytes.toString("utf8")) as Record<string, unknown>;
+  const observedSource = options === undefined ? runObserver(root) : null;
+  if (observedSource !== null) assert.equal(observedSource.status, 0, observedSource.stderr);
+  const successorSource = Object.freeze(options === undefined
+    ? JSON.parse(observedSource!.stdout) as Record<string, unknown>
+    : structuredClone(currentAuthorityV31!.controllerSource as Record<string, unknown>));
+  if (options === undefined) {
+    assert.equal(successorSource.sha, git(root, ["rev-parse", "HEAD"]));
+    assert.equal(successorSource.treeHash, git(root, ["rev-parse", "HEAD^{tree}"]));
+    assert.equal(successorSource.originMainSha, successorSource.sha);
+    assert.equal(successorSource.clean, true);
+  } else {
+    assert.deepEqual(currentPending!.controllerSource, successorSource);
+  }
+  const successorMigrationBlob = options === undefined
+    ? git(root, ["rev-parse", `${successorSource.sha}:src/db/bootstrap-main-claim-handoff-v1-migration.ts`])
+    : (currentPending!.migrationImplementation as Record<string, unknown>).gitBlobHash;
   const poisonPbaObservation = poisonOperation.productBuildAuthorityV2Observation as Record<string, unknown>;
   const poisonPbaResponse = poisonPbaObservation.response as Record<string, unknown>;
   const poisonPbaEvidence = poisonPbaResponse.evidence as Record<string, unknown>;
@@ -641,33 +790,47 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
   exactFixtureKeysV1(successorPbaResponse, Object.keys(poisonPbaResponse), "successor PBA response");
   exactFixtureKeysV1(successorPbaEvidence.value, Object.keys(poisonPbaEvidence), "successor PBA evidence");
   exactFixtureKeysV1(successorVendorLock, Object.keys(poisonPbaEvidence.vendorLock as Record<string, unknown>), "successor PBA vendor lock");
-  const successorAuthorityV31 = rehashFixtureRecordV1(
-    exactAuthorityV31,
-    "authorityV3Migration31AuditRef",
-    "authorityV3Migration31AuditHash",
-    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
-    (core) => {
-      core.controllerSource = successorSource;
-      const pr86Delivery = core.pr86Delivery as Record<string, unknown>;
-      core.pr86Delivery = Object.freeze({
-        ...pr86Delivery,
-        descendantSha: successorSource.sha,
-        descendantTreeHash: successorSource.treeHash,
-      });
-      core.migration31SourceManifestEntryHash = canonicalHash({});
-    },
-  );
-  const successorPending = rehashFixtureRecordV1(
-    exactPending,
-    "pendingBootstrapHandoffMigrationRef",
-    "pendingBootstrapHandoffMigrationHash",
-    "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
-    (core) => {
-      core.controllerSource = successorSource;
-      const migrationImplementation = core.migrationImplementation as Record<string, unknown>;
-      core.migrationImplementation = Object.freeze({ ...migrationImplementation, gitBlobHash: successorMigrationBlob });
-    },
-  );
+  const successorAuthorityV31 = options === undefined
+    ? rehashFixtureRecordV1(
+      exactAuthorityV31,
+      "authorityV3Migration31AuditRef",
+      "authorityV3Migration31AuditHash",
+      "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+      (core) => {
+        core.controllerSource = successorSource;
+        const pr86Delivery = core.pr86Delivery as Record<string, unknown>;
+        core.pr86Delivery = Object.freeze({
+          ...pr86Delivery,
+          descendantSha: successorSource.sha,
+          descendantTreeHash: successorSource.treeHash,
+        });
+        core.migration31SourceManifestEntryHash = canonicalHash({});
+      },
+    )
+    : Object.freeze({
+      value: Object.freeze(currentAuthorityV31!),
+      bytes: options.currentAuthorityV31Bytes,
+      hash: currentAuthorityV31!.authorityV3Migration31AuditHash as string,
+      ref: currentAuthorityV31!.authorityV3Migration31AuditRef as string,
+    });
+  const successorPending = options === undefined
+    ? rehashFixtureRecordV1(
+      exactPending,
+      "pendingBootstrapHandoffMigrationRef",
+      "pendingBootstrapHandoffMigrationHash",
+      "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+      (core) => {
+        core.controllerSource = successorSource;
+        const migrationImplementation = core.migrationImplementation as Record<string, unknown>;
+        core.migrationImplementation = Object.freeze({ ...migrationImplementation, gitBlobHash: successorMigrationBlob });
+      },
+    )
+    : Object.freeze({
+      value: Object.freeze(currentPending!),
+      bytes: options.currentPendingBytes,
+      hash: currentPending!.pendingBootstrapHandoffMigrationHash as string,
+      ref: currentPending!.pendingBootstrapHandoffMigrationRef as string,
+    });
   const successorPr86Delivery = successorAuthorityV31.value.pr86Delivery as Readonly<Record<string, unknown>>;
   const successorMigrationImplementation = successorPending.value.migrationImplementation as Readonly<Record<string, unknown>>;
   assert.equal(successorPr86Delivery.descendantSha, successorSource.sha);
@@ -701,7 +864,6 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
   ], "successor operation wrapper");
   const successorOperationBytes = canonicalFixtureRecordV1(successorOperation);
 
-  const completeZeroEffectBracketHash = "a".repeat(64);
   const successorLegacyZeroCore = Object.freeze({
     schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
     observationKind: "legacy-pre-manifest-existing-live-truth",
@@ -710,7 +872,9 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
     cleanSetfarmSourceSha: successorSource.sha,
     cleanSetfarmTreeHash: successorSource.treeHash,
     cleanSetfarmBuildHash: successorSource.buildHash,
-    observedSpawnerGenerationHash: "e".repeat(64),
+    observedSpawnerGenerationHash: options === undefined
+      ? "e".repeat(64)
+      : ((options.serviceCensus.spawner as Readonly<Record<string, unknown>>).generationHash as string),
     census: zeroOwnerCensusFixtureV1(),
     allThirtySixScalarCountsZero: true,
     ownerReservationSidecarState: "absent-before-migration-32",
@@ -723,13 +887,32 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
     observationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${successorLegacyZeroHash}`,
     observationHash: successorLegacyZeroHash,
   });
+  const completeZeroEffectBracket = options === undefined ? null : Object.freeze([
+    Object.freeze({ observation: "controller-source-a", value: successorSource }),
+    Object.freeze({ observation: "product-build-authority-a", value: successorPbaObservation }),
+    Object.freeze({ observation: "authority-v3-migration31-audit-a", value: successorAuthorityV31.value }),
+    Object.freeze({ observation: "pending-bootstrap-handoff-migration-a", value: successorPending.value }),
+    Object.freeze({ observation: "service-a", value: options.serviceCensus }),
+    Object.freeze({ observation: "physical-a", value: options.physicalInventory }),
+    Object.freeze({ observation: "database-owner-migration-manifest", value: successorLegacyZero }),
+    Object.freeze({ observation: "downstream-absence", value: options.downstreamAbsence }),
+    Object.freeze({ observation: "service-b", value: options.serviceCensus }),
+    Object.freeze({ observation: "physical-b", value: options.physicalInventory }),
+    Object.freeze({ observation: "controller-source-b", value: successorSource }),
+    Object.freeze({ observation: "product-build-authority-b", value: successorPbaObservation }),
+    Object.freeze({ observation: "authority-v3-migration31-audit-b", value: successorAuthorityV31.value }),
+    Object.freeze({ observation: "pending-bootstrap-handoff-migration-b", value: successorPending.value }),
+  ]);
+  const completeZeroEffectBracketHash = completeZeroEffectBracket === null
+    ? "a".repeat(64)
+    : canonicalHash(completeZeroEffectBracket);
   const zeroEffectProofCore = Object.freeze({
     schema: "setfarm.internal-production-current-entry-store-zero-effect-proof.v1",
     predecessorOperation,
     contaminationFingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1,
-    quarantinedInventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+    quarantinedInventoryHash: options?.inventoryHash ?? EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
     completeZeroEffectBracketHash,
-    predecessorFileIdentities: Object.freeze([
+    predecessorFileIdentities: options?.predecessorFileIdentities ?? Object.freeze([
       Object.freeze({ locator: "current-entry-operation.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141401" }),
       Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133141143" }),
       Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json", uidDecimal: "501", deviceDecimal: "16777230", inodeDecimal: "133136356" }),
@@ -786,8 +969,9 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
     fingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1,
   });
   const quarantinedInventory = Object.freeze({
-    inventoryBody: exactFixtureBodyV1(EXACT_POISON_QUARANTINED_INVENTORY_BODY_BASE64_V1, EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1, "quarantined inventory"),
-    inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
+    inventoryBody: options?.inventoryBody
+      ?? exactFixtureBodyV1(EXACT_POISON_QUARANTINED_INVENTORY_BODY_BASE64_V1, EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1, "quarantined inventory"),
+    inventoryHash: options?.inventoryHash ?? EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
   });
   const dispositionCore = Object.freeze({
     schema: "setfarm.internal-production-current-entry-store-quarantine-disposition.v1",
@@ -847,6 +1031,7 @@ function buildExactPoisonStrictChainFixtureV1(root: string): ExactPoisonStrictCh
 
   return Object.freeze({
     completeZeroEffectBracketHash,
+    completeZeroEffectBracket,
     dispositionHash,
     successorStoreHash,
     edgeHash,
@@ -1002,6 +1187,600 @@ function mutateExactPoisonStrictChainDependencyV1(
   });
   writeFileSync(target, crossed.bytes);
 }
+
+const EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1 = Object.freeze([
+  ".",
+  "records",
+  "records/authority-v3-migration31-audits",
+  "records/authority-v3-migration31-audits/sha256",
+  "records/authority-v3-migration31-audits/sha256/31",
+  "records/authority-v3-migration31-audits/sha256/e2",
+  "records/pending-bootstrap-handoff-migrations",
+  "records/pending-bootstrap-handoff-migrations/sha256",
+  "records/pending-bootstrap-handoff-migrations/sha256/6e",
+  "records/pending-bootstrap-handoff-migrations/sha256/ce",
+] as const);
+const EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1 = Object.freeze([
+  "current-entry-operation.json",
+  "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json",
+  "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json",
+  "records/pending-bootstrap-handoff-migrations/sha256/6e/6e3c6e68f5888b1092a89f6b48a990ff83a88ebdfd7be9c8c51f721a29f09741.json",
+  "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json",
+] as const);
+
+function exactCurrentAuthorityV31FixtureBytesV1(): Buffer {
+  return exactFixtureJsonBytesV1(
+    EXACT_CURRENT_AUTHORITY_V31_RECORD_BYTES_BASE64_V1,
+    8_638,
+    "29426769ed8ef9d1073a4c3e604b2301d4eb4a8b55a52178d68b8a320b637951",
+    "exact current authority-v31 record",
+  );
+}
+
+function exactCurrentPendingFixtureBytesV1(): Buffer {
+  return exactFixtureJsonBytesV1(
+    EXACT_CURRENT_PENDING_RECORD_BYTES_BASE64_V1,
+    1_580,
+    "3ccafc5b8a9c0ae185bbfd85cae1a731c4ccee9c58ef043e13a8c25917124235",
+    "exact current pending record",
+  );
+}
+
+type ExactOriginalPoisonStoreFixtureV1 = Readonly<{
+  store: string;
+  inventoryBody: Readonly<Record<string, unknown>>;
+  inventoryHash: string;
+  predecessorFileIdentities: readonly Readonly<Record<string, string>>[];
+  originalSnapshot: readonly Readonly<Record<string, string | number>>[];
+  originalLocators: readonly string[];
+}>;
+
+function seedExactOriginalPoisonStoreV1(root: string): ExactOriginalPoisonStoreFixtureV1 {
+  const store = writeRawCurrentEntryOperationFixtureV1(root, exactPoisonOperationFixtureBytesV1());
+  const members = Object.freeze([
+    Object.freeze({ locator: "current-entry-operation.json", bytes: exactPoisonOperationFixtureBytesV1() }),
+    Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/31/319576e4632f52b03f9dd1c5a8ec893b8ffe4091524deaac692792a389ddf76d.json", bytes: exactFixtureJsonBytesV1(EXACT_POISON_AUTHORITY_V31_RECORD_BYTES_BASE64_V1, 8_638, "ece0f1d0d0954137a4525963f0a8829b9be3597d3d183bbdc95262d40063d962", "exact poison authority-v31 record") }),
+    Object.freeze({ locator: "records/authority-v3-migration31-audits/sha256/e2/e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025.json", bytes: exactCurrentAuthorityV31FixtureBytesV1() }),
+    Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/6e/6e3c6e68f5888b1092a89f6b48a990ff83a88ebdfd7be9c8c51f721a29f09741.json", bytes: exactFixtureJsonBytesV1(EXACT_POISON_PENDING_RECORD_BYTES_BASE64_V1, 1_580, "19d97b5c9e55eafc4acea9cd7e8f0ab851d4410904dcb333c7c681f1f28d0bc7", "exact poison pending record") }),
+    Object.freeze({ locator: "records/pending-bootstrap-handoff-migrations/sha256/ce/ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015.json", bytes: exactCurrentPendingFixtureBytesV1() }),
+  ]);
+  for (const member of members.slice(1)) writeStrictCurrentEntryFixtureRecordV1(store, member.locator, member.bytes);
+  const orderedDirectories = EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.map((locator) => {
+    const stats = lstatSync(locator === "." ? store : path.join(store, locator), { bigint: true });
+    assert.equal(stats.isDirectory(), true, locator);
+    return Object.freeze({
+      deviceDecimal: String(stats.dev),
+      inodeDecimal: String(stats.ino),
+      locator,
+      mode: `0${Number(stats.mode & 0o777n).toString(8)}`,
+      uidDecimal: String(stats.uid),
+    });
+  });
+  const orderedFiles = members.map((member) => {
+    const target = path.join(store, member.locator);
+    const stats = lstatSync(target, { bigint: true });
+    assert.equal(stats.isFile(), true, member.locator);
+    assert.equal(Number(stats.nlink), 1, member.locator);
+    assert.equal(readFileSync(target).equals(member.bytes), true, member.locator);
+    return Object.freeze({
+      byteLength: member.bytes.length,
+      bytesSha256: createHash("sha256").update(member.bytes).digest("hex"),
+      linkCount: 1,
+      locator: member.locator,
+      mode: `0${Number(stats.mode & 0o777n).toString(8)}`,
+    });
+  });
+  const inventoryBody = Object.freeze({
+    orderedDirectories: Object.freeze(orderedDirectories),
+    orderedFiles: Object.freeze(orderedFiles),
+    schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1",
+    storeLocator: store,
+  });
+  const predecessorFileIdentities = Object.freeze(members.map((member) => {
+    const stats = lstatSync(path.join(store, member.locator), { bigint: true });
+    return Object.freeze({ locator: member.locator, uidDecimal: String(stats.uid), deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino) });
+  }));
+  assert.equal(EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.length, 10);
+  assert.equal(members.length, 5);
+  return Object.freeze({
+    store,
+    inventoryBody,
+    inventoryHash: canonicalHash(inventoryBody),
+    predecessorFileIdentities,
+    originalSnapshot: filesystemTreeSnapshot(store),
+    originalLocators: Object.freeze(members.map((member) => member.locator)),
+  });
+}
+
+function observeExactOriginalPoisonIdentityV1(store: string): Readonly<{
+  inventoryBody: Readonly<Record<string, unknown>>;
+  predecessorFileIdentities: readonly Readonly<Record<string, string>>[];
+}> {
+  const orderedDirectories = EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.map((locator) => {
+    const stats = lstatSync(locator === "." ? store : path.join(store, locator), { bigint: true });
+    return Object.freeze({ deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino), locator, mode: `0${Number(stats.mode & 0o777n).toString(8)}`, uidDecimal: String(stats.uid) });
+  });
+  const orderedFiles = EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1.map((locator) => {
+    const target = path.join(store, locator);
+    const stats = lstatSync(target, { bigint: true });
+    const bytes = readFileSync(target);
+    return Object.freeze({ byteLength: bytes.length, bytesSha256: createHash("sha256").update(bytes).digest("hex"), linkCount: Number(stats.nlink), locator, mode: `0${Number(stats.mode & 0o777n).toString(8)}` });
+  });
+  const inventoryBody = Object.freeze({ orderedDirectories: Object.freeze(orderedDirectories), orderedFiles: Object.freeze(orderedFiles), schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1", storeLocator: store });
+  const predecessorFileIdentities = Object.freeze(EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1.map((locator) => {
+    const stats = lstatSync(path.join(store, locator), { bigint: true });
+    return Object.freeze({ locator, uidDecimal: String(stats.uid), deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino) });
+  }));
+  return Object.freeze({ inventoryBody, predecessorFileIdentities });
+}
+
+function exactZeroEffectServiceCensusV1(): Readonly<Record<string, unknown>> {
+  const source = Object.freeze({ sha: "8".repeat(40), treeHash: "9".repeat(40), buildHash: "a".repeat(64) });
+  const service = (label: string, pid: number, port: number | null) => Object.freeze({
+    label,
+    pid,
+    processStartTimeEpochMs: 1_800_000_000_000 + pid,
+    processIdentityHash: canonicalHash({ label, pid, kind: "process" }),
+    serviceIdentityHash: canonicalHash({ label, pid, kind: "service" }),
+    generationHash: canonicalHash({ label, pid, kind: "generation" }),
+    loadedSourceSha: source.sha,
+    loadedTreeHash: source.treeHash,
+    loadedBuildHash: source.buildHash,
+    processOwnerCount: 1,
+    ...(port === null ? { listener: null } : {
+      listenerOwnerCount: 1,
+      listener: Object.freeze({ host: "127.0.0.1", port, listenerIdentityHash: canonicalHash({ label, port }) }),
+    }),
+  });
+  const body = Object.freeze({
+    schema: "setfarm.internal-production-service-census.v1",
+    spawner: service("com.setrox.setfarm-spawner", 81_001, null),
+    dashboard: service("com.setrox.setfarm-dashboard", 81_002, 3333),
+    missionControl: service("com.setrox.mission-control", 81_003, 3080),
+    openClaw: service("ai.openclaw.gateway", 81_004, 18789),
+  });
+  return Object.freeze({ ...body, censusHash: canonicalHash(body) });
+}
+
+function exactZeroEffectPhysicalInventoryV1(): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    worktrees: Object.freeze([]), processes: Object.freeze([]), listeners: Object.freeze([]), stale: Object.freeze([]),
+    ownedProcessCount: 0, ownedListenerCount: 0, ownedWorktreeCount: 0, dirtyWorktreeCount: 0, staleChildCount: 0,
+  });
+}
+
+const EXACT_ZERO_EFFECT_DOWNSTREAM_ABSENCE_V1 = Object.freeze(Object.fromEntries([
+  "migration32Application", "migration33", "manifestA", "manifestHead", "admission", "canary", "target", "close",
+  "restart", "rebind", "process", "listener", "lifecycleStatus", "receipt", "bootstrap", "task12",
+].map((key) => [key, "absent"]))) as Readonly<Record<string, "absent">>;
+
+function installExactCurrentSuccessorGitFixtureV1(root: string): void {
+  const successorSourceSha = "505bde4ada78519267db33e59de9be7f7caf3029";
+  assert.equal(git(sourceRoot, ["cat-file", "-t", successorSourceSha]), "commit", "the authorized successor commit must remain locally available");
+  git(root, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", sourceRoot, successorSourceSha]);
+  assert.equal(git(root, ["cat-file", "-t", successorSourceSha]), "commit", "the disposable repository must own the authorized successor object");
+  const migration31ManifestEntry = Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({ file: "src/db/operational-failure-cause-authority-v3-migration.ts", region: "migration-v31-operational-failure-cause-authority-v3" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-error-binding" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-registration" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-current-object-ownership" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-head-dispatch" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-current-authority-audit" }),
+      Object.freeze({ file: "src/db/contract-spine-migrations.ts", region: "migration-v31-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/db/operational-failure-cause-authority-v3-migration.ts",
+      "src/execution/operational-failure-cause-authority-v1.ts",
+      "src/execution/operational-failure-cause-authority-v2.ts",
+      "src/execution/operational-failure-cause-authority-v3.ts",
+      "src/execution/schemas/operational-failure-cause-v1.ts",
+      "src/product-compiler/canonical-json.ts",
+      "src/recovery/v3-downstream-terminal-cause-v1.ts",
+    ]),
+  });
+  assert.equal(canonicalHash(migration31ManifestEntry), "c4d8a2085d425f9c2de1b45660325e2bf07a95e86d92c13e2c9df394b740aa9f");
+  fixtureFile(
+    root,
+    "src/db/contract-spine-migration-source-integrity.ts",
+    `export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST=Object.freeze({31:Object.freeze(${JSON.stringify(migration31ManifestEntry)})});\n`,
+  );
+  git(root, ["add", "src/db/contract-spine-migration-source-integrity.ts"]);
+  git(root, ["commit", "-qm", "fixture authorized v31 manifest"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  assert.equal(git(root, ["status", "--porcelain"]), "", "the exact-current parser fixture must remain clean");
+}
+
+function rewriteExactPoisonPhysicalInventoryFixtureV1(root: string, original: ExactOriginalPoisonStoreFixtureV1): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const inventoryLiteral = `const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "${EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1}";`;
+  assert.equal(source.split(inventoryLiteral).length - 1, 1, "production must retain one private frozen inventory-hash literal");
+  source = source.replace(inventoryLiteral, `const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "${original.inventoryHash}";`);
+  const identityLiteral = /const EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1 = Object\.freeze\(\[[\s\S]*?\]\s+as const\);/;
+  assert.equal((source.match(identityLiteral) ?? []).length, 1, "production must retain one private frozen predecessor-identity literal");
+  source = source.replace(
+    identityLiteral,
+    `const EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1 = Object.freeze(${JSON.stringify(original.predecessorFileIdentities)} as const);`,
+  );
+  writeFileSync(modulePath, source);
+}
+
+function instrumentExactPoisonPublisherCoreFixtureV1(
+  root: string,
+  original: ExactOriginalPoisonStoreFixtureV1,
+  fault: string | null,
+): void {
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  if (fault === "inventory-hash-drift") {
+    const literal = `const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "${original.inventoryHash}";`;
+    assert.equal(source.split(literal).length - 1, 1);
+    source = source.replace(literal, `const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "${"f".repeat(64)}";`);
+  }
+  if (fault === "fingerprint-drift") {
+    const literal = `const EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 = "${EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1}";`;
+    assert.equal(source.split(literal).length - 1, 1);
+    source = source.replace(literal, `const EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 = "${"f".repeat(64)}";`);
+  }
+  const coreMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(coreMarker).length - 1, 1, "production must retain one private zero-input publisher core");
+  source = source.replace(coreMarker, `export ${coreMarker}`);
+  const admissionMarker = "async function observeExactPoisonQuarantineAdmissionV1(";
+  assert.equal(source.split(admissionMarker).length - 1, 1, "production must retain one private exact-poison admission boundary");
+  const admissionStart = source.indexOf(admissionMarker);
+  const admissionEnd = source.indexOf(`export ${coreMarker}`, admissionStart);
+  assert.ok(admissionStart >= 0 && admissionEnd > admissionStart, "the private admission boundary must precede the publisher core");
+  let admissionRegion = source.slice(admissionStart, admissionEnd);
+  for (const observer of [
+    "observeExactPoisonSyntheticGitObjectAbsenceV1",
+    "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
+    "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
+    "observeCurrentPba",
+    "observeInternalProductionServiceCensusV1",
+    "observePhysicalInventoryV1",
+    "observeLegacyDatabaseCensusV1",
+    "observePhaseClosedZeroV1",
+    "observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1",
+  ]) assert.ok(admissionRegion.includes(observer), `the private admission boundary must call ${observer}`);
+  const probe = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown;nextPhysical:(...args:unknown[])=>unknown;nextPhase:(...args:unknown[])=>unknown;observeSyntheticGit:(...args:unknown[])=>unknown})';
+  const rawCalls = Object.freeze([
+    Object.freeze({ source: "observeCurrentInternalProductionCleanSetfarmSourceBuildV1()", target: `${probe}.next("source")` }),
+    Object.freeze({ source: "observeCurrentPba()", target: `${probe}.next("pba")` }),
+    Object.freeze({ source: "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1()", target: `${probe}.next("prerequisites")` }),
+    Object.freeze({ source: "observeInternalProductionServiceCensusV1()", target: `${probe}.next("service")` }),
+    Object.freeze({ source: "observeLegacyDatabaseCensusV1()", target: `${probe}.next("database")` }),
+    Object.freeze({ source: "observePhysicalInventoryV1(", target: `${probe}.nextPhysical(` }),
+    Object.freeze({ source: "observePhaseClosedZeroV1(", target: `${probe}.nextPhase(` }),
+    Object.freeze({ source: "observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1()", target: `${probe}.next("downstream")` }),
+    Object.freeze({ source: "observeExactPoisonSyntheticGitObjectAbsenceV1(", target: `${probe}.observeSyntheticGit(` }),
+  ]);
+  for (const rawCall of rawCalls) {
+    assert.ok(admissionRegion.includes(rawCall.source), `the private admission boundary must directly invoke ${rawCall.source}`);
+    admissionRegion = admissionRegion.replaceAll(rawCall.source, rawCall.target);
+  }
+  source = source.slice(0, admissionStart) + admissionRegion + source.slice(admissionEnd);
+  const admissionCall = "await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter)";
+  assert.ok(source.includes(admissionCall), "publisher core must call the private admission boundary with only its strict operation and held writer");
+  const countedAdmission = 'await (()=>{const probe=Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as undefined|{admissionCalls:number};if(!probe)throw new Error("P4_EXACT_POISON_ADMISSION_PROBE_MISSING");probe.admissionCalls+=1;return observeExactPoisonQuarantineAdmissionV1(operation,heldWriter)})()';
+  source = source.replaceAll(admissionCall, countedAdmission);
+  writeFileSync(modulePath, source);
+}
+
+function fixtureTransportValueV1(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) return Object.freeze({ __p4ExactBufferBase64V1: value.toString("base64") });
+  if (Array.isArray(value)) return value.map((entry) => fixtureTransportValueV1(entry));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, fixtureTransportValueV1(entry)]));
+  }
+  return value;
+}
+
+function runExactPoisonPublisherCoreFixtureV1(
+  root: string,
+  observations: Readonly<Record<string, readonly unknown[]>>,
+  gitFault: "error" | null,
+): ReturnType<typeof spawnSync> {
+  const transported = JSON.stringify(fixtureTransportValueV1(observations));
+  const transportPath = path.join(path.dirname(root), ".p4-exact-poison-admission.json");
+  fixtureFile(path.dirname(root), ".p4-exact-poison-admission.json", `${transported}\n`, 0o600);
+  return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>{const fault=${JSON.stringify(gitFault)};if(fault!==null)throw new Error("P4_EXACT_POISON_SYNTHETIC_GIT_"+fault.toUpperCase());return next("syntheticGit")}};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,admissionCalls:probe.admissionCalls,cursors:probe.cursors}))})()`);
+}
+
+function assertExactPoisonPublishedRecordV1(store: string, record: ExactPoisonStrictChainRecordV1, label: string): void {
+  const target = path.join(store, record.locator);
+  const stats = lstatSync(target);
+  assert.equal(stats.isFile(), true, `${label} must be a regular file`);
+  assert.equal(stats.isSymbolicLink(), false, `${label} must not be a symlink`);
+  assert.equal(stats.mode & 0o7777, 0o600, `${label} mode`);
+  assert.equal(stats.nlink, 1, `${label} link count`);
+  assert.equal(readFileSync(target).equals(record.bytes), true, `${label} bytes`);
+  for (let directory = path.dirname(target); directory !== store; directory = path.dirname(directory)) {
+    const directoryStats = lstatSync(directory);
+    assert.equal(directoryStats.isDirectory(), true, `${label} parent must be a directory`);
+    assert.equal(directoryStats.isSymbolicLink(), false, `${label} parent must not be a symlink`);
+    assert.equal(directoryStats.mode & 0o7777, 0o700, `${label} parent mode`);
+  }
+}
+
+function recoveryPhaseSnapshotV1(store: string, originalLocators: readonly string[]): readonly Readonly<Record<string, string | number>>[] {
+  const originals = new Set(originalLocators);
+  const recoveryPrefixes = [
+    "records/current-entry-store-quarantine-dispositions",
+    "records/current-entry-store-successor-edges",
+    "records/current-entry-store-successor-activation-seals",
+    "records/current-entry-store-successor-activation-commits",
+    "stores",
+  ];
+  return Object.freeze(filesystemTreeSnapshot(store).filter((entry) => {
+    const locator = String(entry.locator);
+    if (originals.has(locator)) return false;
+    return recoveryPrefixes.some((prefix) => locator === prefix || locator.startsWith(`${prefix}/`))
+      || locator.includes("current-entry-store-quarantine-recovery-by-predecessor-operation");
+  }));
+}
+
+function exactPoisonRecoveryFinalLocatorsV1(chain: ExactPoisonStrictChainFixtureV1): readonly string[] {
+  const locators = new Set<string>();
+  for (const record of [
+    chain.records.disposition,
+    chain.records.successorOperation,
+    chain.records.successorAuthorityV31,
+    chain.records.successorPending,
+    chain.records.edge,
+    chain.records.seal,
+    chain.records.commit,
+  ]) {
+    locators.add(record.locator);
+    for (let parent = path.posix.dirname(record.locator); parent !== "." && parent !== "records"; parent = path.posix.dirname(parent)) {
+      locators.add(parent);
+    }
+  }
+  return Object.freeze([...locators].sort());
+}
+
+function buildExactPoisonPublisherAdmissionFixtureV1(
+  root: string,
+  original: ExactOriginalPoisonStoreFixtureV1,
+): Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }> {
+  const currentAuthorityV31Bytes = exactCurrentAuthorityV31FixtureBytesV1();
+  const currentPendingBytes = exactCurrentPendingFixtureBytesV1();
+  const serviceCensus = exactZeroEffectServiceCensusV1();
+  const physicalInventory = exactZeroEffectPhysicalInventoryV1();
+  const chain = buildExactPoisonStrictChainFixtureV1(root, {
+    currentAuthorityV31Bytes,
+    currentPendingBytes,
+    inventoryBody: original.inventoryBody,
+    inventoryHash: original.inventoryHash,
+    predecessorFileIdentities: original.predecessorFileIdentities,
+    serviceCensus,
+    physicalInventory,
+    downstreamAbsence: EXACT_ZERO_EFFECT_DOWNSTREAM_ABSENCE_V1,
+  });
+  assert.notEqual(chain.completeZeroEffectBracket, null);
+  assert.equal(canonicalHash(chain.completeZeroEffectBracket), chain.completeZeroEffectBracketHash);
+  const successorOperation = chain.records.successorOperation.value;
+  const proof = chain.embedded.zeroEffectProof.value;
+  const value = Object.freeze({
+    predecessorOperation: Object.freeze({ operationRef: EXACT_POISON_OPERATION_REF_V1, operationHash: EXACT_POISON_OPERATION_HASH_V1 }),
+    contaminationFingerprint: Object.freeze({
+      fingerprintBody: exactFixtureBodyV1(EXACT_POISON_CONTAMINATION_FINGERPRINT_BODY_BASE64_V1, EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1, "contamination fingerprint"),
+      fingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1,
+    }),
+    quarantinedInventory: Object.freeze({ inventoryBody: original.inventoryBody, inventoryHash: original.inventoryHash }),
+    predecessorFileIdentities: original.predecessorFileIdentities,
+    unavailableSyntheticGitObjects: Reflect.get(proof, "unavailableSyntheticGitObjects"),
+    completeZeroEffectBracket: chain.completeZeroEffectBracket,
+    completeZeroEffectBracketHash: chain.completeZeroEffectBracketHash,
+    current: Object.freeze({
+      controllerSource: Reflect.get(successorOperation, "controllerSource"),
+      productBuildAuthorityV2Observation: Reflect.get(successorOperation, "productBuildAuthorityV2Observation"),
+      authorityV3Migration31Audit: chain.records.successorAuthorityV31.value,
+      pendingBootstrapHandoffMigration: chain.records.successorPending.value,
+      serviceCensus,
+      physicalInventory,
+      databaseOwnerMigrationManifest: Reflect.get(proof, "legacyPreManifestZeroOwner"),
+      downstreamAbsence: EXACT_ZERO_EFFECT_DOWNSTREAM_ABSENCE_V1,
+    }),
+    candidates: Object.freeze({
+      zeroEffectProof: chain.embedded.zeroEffectProof,
+      successorGenesis: chain.embedded.successorGenesis,
+      disposition: chain.records.disposition,
+      successorOperation: chain.records.successorOperation,
+      successorAuthorityV31: chain.records.successorAuthorityV31,
+      successorPending: chain.records.successorPending,
+      edge: chain.records.edge,
+      seal: chain.records.seal,
+      commit: chain.records.commit,
+    }),
+  });
+  return Object.freeze({ chain, value });
+}
+
+function buildExactPoisonPublisherRawObservationsV1(
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>,
+): Readonly<Record<string, readonly unknown[]>> {
+  const current = admitted.value.current as Readonly<Record<string, unknown>>;
+  const authorityV31 = admitted.chain.records.successorAuthorityV31;
+  const pending = admitted.chain.records.successorPending;
+  const prerequisites = Object.freeze({
+    authorityV3Migration31Audit: Object.freeze({
+      value: authorityV31.value,
+      bytes: authorityV31.bytes,
+      pair: Object.freeze({
+        authorityV3Migration31AuditRef: authorityV31.value.authorityV3Migration31AuditRef,
+        authorityV3Migration31AuditHash: authorityV31.value.authorityV3Migration31AuditHash,
+      }),
+    }),
+    pendingBootstrapHandoffMigration: Object.freeze({
+      value: pending.value,
+      bytes: pending.bytes,
+      pair: Object.freeze({
+        pendingBootstrapHandoffMigrationRef: pending.value.pendingBootstrapHandoffMigrationRef,
+        pendingBootstrapHandoffMigrationHash: pending.value.pendingBootstrapHandoffMigrationHash,
+      }),
+    }),
+  });
+  exactFixtureKeysV1(prerequisites, ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"], "no-write prerequisite observation");
+  for (const [label, record, refKey, hashKey] of [
+    ["authority-v31", prerequisites.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash"],
+    ["pending", prerequisites.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash"],
+  ] as const) {
+    exactFixtureKeysV1(record, ["value", "bytes", "pair"], `${label} no-write prerequisite`);
+    assert.equal(record.bytes.toString("utf8"), `${canonical(record.value)}\n`, `${label} no-write bytes`);
+    assert.deepEqual(record.pair, { [refKey]: record.value[refKey], [hashKey]: record.value[hashKey] }, `${label} no-write pair`);
+  }
+  const completeZero = zeroOwnerCensusFixtureV1();
+  const database = Object.freeze(Object.fromEntries([
+    "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
+    "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "artifactReservationCount",
+    "publicationBatchCount", "artifactPublicationCount", "terminationOwnerCount", "findingOwnerCount",
+    "recoveryOwnerCount", "operationalDeliveryCount",
+  ].map((key) => [key, completeZero[key]])));
+  const phase = Object.freeze(Object.fromEntries([
+    "ordinaryStartingCount", "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount",
+    "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount", "docsSessionCount", "docsLeaseCount",
+    "fleetStageCount", "fleetInflightCount", "fleetPendingReviewCount", "matrixInflightCount", "launchOutboxCount",
+    "sourceRunOwnerCount", "coldRehearsalOwnerCount", "compilationLeaseCount", "executionLeaseCount",
+  ].map((key) => [key, completeZero[key]])));
+  const pair = (value: unknown): readonly unknown[] => Object.freeze([value, value]);
+  return Object.freeze({
+    source: pair(current.controllerSource),
+    pba: pair(current.productBuildAuthorityV2Observation),
+    prerequisites: pair(prerequisites),
+    service: pair(current.serviceCensus),
+    physical: pair(current.physicalInventory),
+    database: Object.freeze([database]),
+    phase: pair(phase),
+    downstream: Object.freeze([EXACT_ZERO_EFFECT_DOWNSTREAM_ABSENCE_V1]),
+    syntheticGit: Object.freeze([admitted.value.unavailableSyntheticGitObjects]),
+  });
+}
+
+function replaceExactPoisonRawSecondV1(
+  observations: Readonly<Record<string, readonly unknown[]>>,
+  key: string,
+  mutate: (value: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>,
+): Readonly<Record<string, readonly unknown[]>> {
+  const sequence = observations[key]!;
+  assert.equal(sequence.length, 2, `${key} must expose one A/B pair`);
+  assert.deepEqual(sequence[0], sequence[1], `${key} baseline A/B equality`);
+  return Object.freeze({ ...observations, [key]: Object.freeze([sequence[0], mutate(sequence[1] as Readonly<Record<string, unknown>>)]) });
+}
+
+type ExactPoisonAdmissionNegativeFixtureV1 = Readonly<{
+  name: string;
+  fault: string;
+  gitFault?: "error";
+  mutate: (
+    original: ExactOriginalPoisonStoreFixtureV1,
+    observations: Readonly<Record<string, readonly unknown[]>>,
+  ) => Readonly<Record<string, readonly unknown[]>>;
+}>;
+
+const exactPoisonAdmissionNegativeFixturesV1: readonly ExactPoisonAdmissionNegativeFixtureV1[] = Object.freeze([
+  Object.freeze({
+    name: "original-record-byte-drift",
+    fault: "original-record-byte-drift",
+    mutate: (original, observations) => {
+      const target = path.join(original.store, original.originalLocators[1]!);
+      const bytes = readFileSync(target);
+      bytes[0] = bytes[0] === 0x7b ? 0x5b : 0x7b;
+      writeFileSync(target, bytes);
+      return observations;
+    },
+  }),
+  Object.freeze({
+    name: "original-record-mode-drift",
+    fault: "original-record-mode-drift",
+    mutate: (original, observations) => {
+      chmodSync(path.join(original.store, original.originalLocators[2]!), 0o644);
+      return observations;
+    },
+  }),
+  Object.freeze({
+    name: "original-record-link-drift",
+    fault: "original-record-link-drift",
+    mutate: (original, observations) => {
+      const target = path.join(original.store, original.originalLocators[3]!);
+      linkSync(target, `${target}.alias`);
+      return observations;
+    },
+  }),
+  Object.freeze({
+    name: "original-store-extra-dirent",
+    fault: "original-store-extra-dirent",
+    mutate: (original, observations) => {
+      fixtureFile(original.store, "records/unexpected-authority.json", "unexpected\n", 0o600);
+      return observations;
+    },
+  }),
+  Object.freeze({
+    name: "inventory-hash-drift",
+    fault: "inventory-hash-drift",
+    mutate: (_original, observations) => observations,
+  }),
+  Object.freeze({
+    name: "fingerprint-drift",
+    fault: "fingerprint-drift",
+    mutate: (_original, observations) => observations,
+  }),
+  Object.freeze({
+    name: "fixed-operation-byte-drift",
+    fault: "fixed-operation-byte-drift",
+    mutate: (original, observations) => {
+      const target = path.join(original.store, "current-entry-operation.json");
+      const bytes = readFileSync(target);
+      bytes[0] = bytes[0] === 0x7b ? 0x5b : 0x7b;
+      writeFileSync(target, bytes);
+      return observations;
+    },
+  }),
+  Object.freeze({
+    name: "synthetic-git-object-present",
+    fault: "synthetic-git-object-present",
+    mutate: (_original, observations) => {
+      const tuple = [...(observations.syntheticGit![0] as readonly Readonly<Record<string, unknown>>[])];
+      tuple[0] = Object.freeze({ ...tuple[0], state: "present" });
+      return Object.freeze({ ...observations, syntheticGit: Object.freeze([Object.freeze(tuple)]) });
+    },
+  }),
+  Object.freeze({
+    name: "synthetic-git-object-error",
+    fault: "synthetic-git-object-error",
+    gitFault: "error",
+    mutate: (_original, observations) => observations,
+  }),
+  ...([
+    Object.freeze({ name: "controller-source", key: "source", prerequisite: null }),
+    Object.freeze({ name: "product-build-authority", key: "pba", prerequisite: null }),
+    Object.freeze({ name: "authority-v31", key: "prerequisites", prerequisite: "authorityV3Migration31Audit" }),
+    Object.freeze({ name: "pending-migration", key: "prerequisites", prerequisite: "pendingBootstrapHandoffMigration" }),
+    Object.freeze({ name: "service-census", key: "service", prerequisite: null }),
+    Object.freeze({ name: "physical-inventory", key: "physical", prerequisite: null }),
+  ] as const).map((pair) => Object.freeze({
+    name: `${pair.name}-a-b-drift`,
+    fault: `${pair.name}-a-b-drift`,
+    mutate: (_original: ExactOriginalPoisonStoreFixtureV1, observations: Readonly<Record<string, readonly unknown[]>>) =>
+      replaceExactPoisonRawSecondV1(observations, pair.key, (value) => {
+        if (pair.prerequisite === null) return Object.freeze({ ...value, p4AdmissionDrift: true });
+        const nested = value[pair.prerequisite] as Readonly<Record<string, unknown>>;
+        return Object.freeze({
+          ...value,
+          [pair.prerequisite]: Object.freeze({ ...nested, value: Object.freeze({ ...(nested.value as Readonly<Record<string, unknown>>), p4AdmissionDrift: true }) }),
+        });
+      }),
+  })),
+  Object.freeze({
+    name: "nonzero-downstream-effect",
+    fault: "nonzero-downstream-effect",
+    mutate: (_original, observations) => {
+      const downstream = observations.downstream![0] as Readonly<Record<string, unknown>>;
+      return Object.freeze({ ...observations, downstream: Object.freeze([Object.freeze({ ...downstream, migration32Application: "present" })]) });
+    },
+  }),
+]);
 
 function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode = 0o644): void {
   const target = path.join(root, locator);
@@ -3194,6 +3973,146 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         if (testCase.calls === 0) assert.equal(observed.message, null, testCase.name);
         else assert.match(observed.message ?? "", /P4_EXACT_POISON_PUBLISHER_CORE_CALLED/, testCase.name);
         assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${testCase.name}: strict-chain preselection must remain read-only`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4 exact-poison publisher authenticates its deterministic admission fixture", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admission = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const authorityBytes = exactCurrentAuthorityV31FixtureBytesV1();
+      const pendingBytes = exactCurrentPendingFixtureBytesV1();
+      assert.equal(admission.chain.records.successorAuthorityV31.bytes.equals(authorityBytes), true);
+      assert.equal(admission.chain.records.successorPending.bytes.equals(pendingBytes), true);
+      assert.equal(createHash("sha256").update(authorityBytes).digest("hex"), "29426769ed8ef9d1073a4c3e604b2301d4eb4a8b55a52178d68b8a320b637951");
+      assert.equal(createHash("sha256").update(pendingBytes).digest("hex"), "3ccafc5b8a9c0ae185bbfd85cae1a731c4ccee9c58ef043e13a8c25917124235");
+      assert.notEqual(original.inventoryHash, EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1, "fixture physical identities must produce one fixture-only inventory hash");
+      assert.equal(canonicalHash(original.inventoryBody), original.inventoryHash);
+      assert.equal((original.inventoryBody.orderedDirectories as readonly unknown[]).length, 10);
+      assert.equal((original.inventoryBody.orderedFiles as readonly unknown[]).length, 5);
+      assert.equal(admission.chain.completeZeroEffectBracket?.length, 14);
+      assert.deepEqual(
+        admission.chain.completeZeroEffectBracket?.map((entry) => Reflect.get(entry as object, "observation")),
+        [
+          "controller-source-a", "product-build-authority-a", "authority-v3-migration31-audit-a",
+          "pending-bootstrap-handoff-migration-a", "service-a", "physical-a",
+          "database-owner-migration-manifest", "downstream-absence", "service-b", "physical-b",
+          "controller-source-b", "product-build-authority-b", "authority-v3-migration31-audit-b",
+          "pending-bootstrap-handoff-migration-b",
+        ],
+      );
+      assert.equal(canonicalHash(admission.chain.completeZeroEffectBracket), admission.chain.completeZeroEffectBracketHash);
+      const proof = admission.chain.embedded.zeroEffectProof.value;
+      assert.equal(proof.quarantinedInventoryHash, original.inventoryHash);
+      assert.deepEqual(proof.predecessorFileIdentities, original.predecessorFileIdentities);
+      assert.equal(proof.completeZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
+      const disposition = admission.chain.records.disposition.value;
+      assert.deepEqual(disposition.quarantinedInventory, { inventoryBody: original.inventoryBody, inventoryHash: original.inventoryHash });
+      assert.equal(disposition.contaminationFingerprint.fingerprintHash, EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1);
+      const successorOperation = admission.chain.records.successorOperation.value;
+      const successorSource = successorOperation.controllerSource as Readonly<Record<string, unknown>>;
+      assert.equal(successorSource.sha, "505bde4ada78519267db33e59de9be7f7caf3029");
+      assert.deepEqual(admission.chain.records.successorAuthorityV31.value.controllerSource, successorSource);
+      assert.deepEqual(admission.chain.records.successorPending.value.controllerSource, successorSource);
+      assert.equal(admission.chain.records.seal.value.completeZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
+      assert.equal(admission.chain.records.commit.value.postSealCompleteZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P4 exact-poison publisher leaves an authorized e2 ce strict chain preselection-complete", () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+      seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+      instrumentExactPoisonPreselectionFixtureV1(root);
+      const result = runFixtureExpression(root, '(async()=>{const probe={calls:0,afterPrehook:0,throwOnCall:true};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantineBeforeSelectionV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls}))})()');
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.deepEqual(JSON.parse(result.stdout), { outcome: "returned", message: null, calls: 0 });
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P4 exact-poison publisher publishes the exact admitted chain without changing predecessor evidence", () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+      const result = runExactPoisonPublisherCoreFixtureV1(root, observations, null);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; admissionCalls: number }>;
+      assert.equal(observed.outcome, "returned");
+      assert.equal(observed.message, null);
+      assert.ok(observed.admissionCalls >= 1, "the publisher must execute its real private admission boundary before recovery publication");
+      for (const [label, record] of Object.entries({
+        disposition: admitted.chain.records.disposition,
+        successorOperation: admitted.chain.records.successorOperation,
+        successorAuthorityV31: admitted.chain.records.successorAuthorityV31,
+        successorPending: admitted.chain.records.successorPending,
+        edge: admitted.chain.records.edge,
+        seal: admitted.chain.records.seal,
+        commit: admitted.chain.records.commit,
+      })) assertExactPoisonPublishedRecordV1(original.store, record, label);
+      const recoverySnapshot = recoveryPhaseSnapshotV1(original.store, original.originalLocators);
+      assert.deepEqual(
+        recoverySnapshot.map((entry) => String(entry.locator)).sort(),
+        exactPoisonRecoveryFinalLocatorsV1(admitted.chain),
+        "successful recovery must retain only the exact seven finals and their required directories",
+      );
+      assert.equal(
+        recoverySnapshot.some((entry) => String(entry.locator).includes(".tmp-") || String(entry.locator).endsWith(".writer.lock")),
+        false,
+        "successful recovery must retain no temporary or fixed writer lock",
+      );
+      const reobserved = observeExactOriginalPoisonIdentityV1(original.store);
+      assert.deepEqual(reobserved.inventoryBody, original.inventoryBody, "all original directory/file bytes, modes, links, and identities must remain exact");
+      assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, "all five predecessor dev/inode identities must remain exact");
+
+      instrumentExactPoisonPreselectionFixtureV1(root);
+      const preselection = runFixtureExpression(root, '(async()=>{const probe={calls:0,afterPrehook:0,throwOnCall:true};Reflect.set(globalThis,"__p4ExactPoisonPreselectionProbeV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantineBeforeSelectionV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,calls:probe.calls}))})()');
+      assert.equal(preselection.status, 0, preselection.stderr);
+      assert.equal(preselection.stderr, "");
+      assert.deepEqual(JSON.parse(preselection.stdout), { outcome: "returned", message: null, calls: 0 }, "a fully strict D/G/H/S/C chain must skip publisher dispatch");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
+    it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {
+      const root = createFixture();
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+        const faultedObservations = negative.mutate(original, observations);
+        const before = filesystemTreeSnapshot(original.store);
+        assert.deepEqual(recoveryPhaseSnapshotV1(original.store, original.originalLocators), [], `${negative.name}: fixture must begin without recovery phase bytes`);
+        instrumentExactPoisonPublisherCoreFixtureV1(root, original, negative.fault);
+        const result = runExactPoisonPublisherCoreFixtureV1(root, faultedObservations, negative.gitFault ?? null);
+        assert.equal(result.status, 0, `${negative.name}: ${result.stderr}`);
+        assert.equal(result.stderr, "", negative.name);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; admissionCalls: number }>;
+        assert.equal(observed.outcome, "threw", negative.name);
+        assert.equal(observed.admissionCalls, 1, `${negative.name}: real admission refusal must occur on its first execution`);
+        assert.notEqual(observed.message, null, `${negative.name}: real admission refusal must expose an error`);
+        assert.deepEqual(filesystemTreeSnapshot(original.store), before, `${negative.name}: refusal must preserve the exact pre-call store`);
+        assert.deepEqual(recoveryPhaseSnapshotV1(original.store, original.originalLocators), [], `${negative.name}: refusal must publish zero recovery phase bytes`);
       } finally {
         removeFixture(root);
       }
