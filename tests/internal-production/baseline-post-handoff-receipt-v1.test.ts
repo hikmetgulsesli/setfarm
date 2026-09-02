@@ -2478,6 +2478,187 @@ function runPhase5bPredecessorTerminalCloseRoutingFixtureV1(root: string): Retur
   return runFixtureExpression(root, `(async()=>{const probe={active:false,filesystemCalls:0,creatorCalls:0,selectorCalls:0,appearingEdge:null,publicTerminalCalls:0,selectedTerminalCalls:0,publicCloseCalls:0,selectedCloseCalls:0};Reflect.set(globalThis,"__p5bSelectedCurrentEntryStoreProbeV1",probe);let outcome="returned",message=null;try{await m.p5bRunPredecessorTerminalCloseRoutingFixtureV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,...probe}))})()`);
 }
 
+type Phase5bStrictCEntryFaultStageV1 = "builder" | "helper";
+
+function instrumentPhase5bStrictCEntryFixtureV1(root: string): void {
+  instrumentExactPoisonDurabilityFixtureV1(root);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const selectorMarker = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+  const createMarker = "function createSelectedCurrentEntryStoreContextV1(";
+  const commitBuilder = "export async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoisonRecoveryPinnedCommitChainV1> {";
+  const commitHelper = "export async function durablyAuthenticateSuccessorActivationCommitV1(";
+  const sealHelper = "export async function durablyAuthenticateSuccessorActivationSealV1(";
+  const writerMarker = "function acquireExactPoisonRecoveryWriterV1(): ExactPoisonRecoveryWriterV1 {";
+  const publisherMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  for (const [marker, label] of [
+    [selectorMarker, "selected-store selector"],
+    [createMarker, "selected-store context creator"],
+    [commitBuilder, "copied strict commit-chain builder"],
+    [commitHelper, "copied C durability helper"],
+    [sealHelper, "copied publisher-only S durability helper"],
+    [writerMarker, "H-derived recovery writer acquisition"],
+    [publisherMarker, "recovery publisher core"],
+  ] as const) assert.equal(source.split(marker).length - 1, 1, `P5b-B1 requires one ${label}`);
+
+  source = source.replace(selectorMarker, `${selectorMarker}
+  const p5bB1SelectorProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {selectorCalls:number};
+  if (p5bB1SelectorProbe) p5bB1SelectorProbe.selectorCalls += 1;`);
+
+  const createStart = source.indexOf(createMarker);
+  const createEnd = source.indexOf("\n}\n", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "P5b-B1 requires one bounded selected-context creator");
+  const createRegion = source.slice(createStart, createEnd + 2);
+  const weakMapSet = "selectedCurrentEntryStoreContextStatesV1.set(";
+  assert.equal(createRegion.split(weakMapSet).length - 1, 1, "P5b-B1 counts only actual WeakMap registrations");
+  const weakMapSetIndex = source.indexOf(weakMapSet, createStart);
+  source = source.slice(0, weakMapSetIndex)
+    + '(Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {creatorCalls:number}).creatorCalls += 1;\n  '
+    + source.slice(weakMapSetIndex);
+
+  source = source.replace(commitBuilder, `${commitBuilder}
+  const p5bB1BuilderProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {builderCalls:number;events:string[];faultStage:null|"builder"|"helper"};
+  if (p5bB1BuilderProbe) {
+    p5bB1BuilderProbe.builderCalls += 1;
+    p5bB1BuilderProbe.events.push("commit-builder-enter:" + p5bB1BuilderProbe.builderCalls);
+    if (p5bB1BuilderProbe.faultStage === "builder" && p5bB1BuilderProbe.builderCalls === 1) throw new Error("P5B_B1_COMMIT_BUILDER_FAULT");
+  }`);
+
+  const contextReturnAnchor = `    context.assertStable();
+    return context;`;
+  assert.equal(source.split(contextReturnAnchor).length - 1, 1, "P5b-B1 registers each freshly built pinned context once");
+  source = source.replace(contextReturnAnchor, `    context.assertStable();
+    const p5bB1BuiltProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {contextIds:WeakMap<object,number>;nextContextId:number;events:string[]};
+    if (p5bB1BuiltProbe) {
+      p5bB1BuiltProbe.nextContextId += 1;
+      p5bB1BuiltProbe.contextIds.set(context, p5bB1BuiltProbe.nextContextId);
+      p5bB1BuiltProbe.events.push("commit-builder-return:" + p5bB1BuiltProbe.nextContextId);
+    }
+    return context;`);
+
+  const chainBuilderMarker = "async function openExactPoisonRecoveryPinnedChainV1(";
+  const chainBuilderStart = source.indexOf(chainBuilderMarker);
+  const commitBuilderStart = source.indexOf(commitBuilder, chainBuilderStart);
+  assert.ok(chainBuilderStart >= 0 && commitBuilderStart > chainBuilderStart, "P5b-B1 bounds the private pinned-chain builder");
+  const chainBuilderRegion = source.slice(chainBuilderStart, commitBuilderStart);
+  const closeMarker = "    const close = (): void => {";
+  assert.equal(chainBuilderRegion.split(closeMarker).length - 1, 1, "P5b-B1 counts the sole pinned-chain close boundary");
+  const closeIndex = source.indexOf(closeMarker, chainBuilderStart);
+  source = source.slice(0, closeIndex) + `${closeMarker}
+      const p5bB1CloseProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {contextCloseCalls:number;events:string[]};
+      if (p5bB1CloseProbe) { p5bB1CloseProbe.contextCloseCalls += 1; p5bB1CloseProbe.events.push("context-close:" + p5bB1CloseProbe.contextCloseCalls); }` + source.slice(closeIndex + closeMarker.length);
+
+  const commitHelperStart = source.indexOf(commitHelper);
+  const commitHelperBody = source.indexOf("): Promise<void> {", commitHelperStart);
+  assert.ok(commitHelperStart >= 0 && commitHelperBody > commitHelperStart, "P5b-B1 bounds the C durability helper signature");
+  const commitHelperInsertion = commitHelperBody + "): Promise<void> {".length;
+  source = source.slice(0, commitHelperInsertion) + `
+  const p5bB1HelperProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {contextIds:WeakMap<object,number>;mainContext:object|null;helperCalls:number;helperContextId:number|null;events:string[];faultStage:null|"builder"|"helper"};
+  if (p5bB1HelperProbe) {
+    p5bB1HelperProbe.helperCalls += 1;
+    p5bB1HelperProbe.mainContext = context;
+    p5bB1HelperProbe.helperContextId = p5bB1HelperProbe.contextIds.get(context) ?? null;
+    p5bB1HelperProbe.events.push("commit-helper:" + p5bB1HelperProbe.helperContextId);
+    if (p5bB1HelperProbe.faultStage === "helper") throw new Error("P5B_B1_COMMIT_HELPER_FAULT");
+  }` + source.slice(commitHelperInsertion);
+
+  const durabilityFaultStart = source.indexOf("function exactPoisonRecoveryDurabilityFaultV1(", commitHelperStart);
+  assert.ok(commitHelperStart >= 0 && durabilityFaultStart > commitHelperStart, "P5b-B1 bounds the C durability helper");
+  const commitHelperRegion = source.slice(commitHelperStart, durabilityFaultStart);
+  const commitFsync = "  fsyncSync(parent.descriptor);";
+  assert.equal(commitHelperRegion.split(commitFsync).length - 1, 1, "P5b-B1 observes the sole exact C-parent fsync");
+  const commitFsyncIndex = source.indexOf(commitFsync, commitHelperStart);
+  source = source.slice(0, commitFsyncIndex) + `  const p5bB1FsyncProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {fsyncTargets:string[];fsyncIdentities:Array<{descriptorDevice:string;descriptorInode:string;pathDevice:string;pathInode:string}>;events:string[]};
+  if (p5bB1FsyncProbe) {
+    const descriptorIdentity = fstatSync(parent.descriptor, { bigint: true });
+    const pathIdentity = lstatSync(realpathSync(parent.target), { bigint: true });
+    p5bB1FsyncProbe.fsyncTargets.push(parent.target);
+    p5bB1FsyncProbe.fsyncIdentities.push({descriptorDevice:String(descriptorIdentity.dev),descriptorInode:String(descriptorIdentity.ino),pathDevice:String(pathIdentity.dev),pathInode:String(pathIdentity.ino)});
+    p5bB1FsyncProbe.events.push("commit-parent-fsync:" + parent.target);
+  }
+` + source.slice(commitFsyncIndex);
+
+  const sealHelperStart = source.indexOf(sealHelper);
+  const sealHelperBody = source.indexOf("): Promise<void> {", sealHelperStart);
+  assert.ok(sealHelperStart >= 0 && sealHelperBody > sealHelperStart, "P5b-B1 bounds the S durability helper signature");
+  const sealHelperInsertion = sealHelperBody + "): Promise<void> {".length;
+  source = source.slice(0, sealHelperInsertion) + `
+  const p5bB1SealProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {sealHelperCalls:number};
+  if (p5bB1SealProbe) p5bB1SealProbe.sealHelperCalls += 1;` + source.slice(sealHelperInsertion);
+  source = source.replace(writerMarker, `${writerMarker}
+  const p5bB1WriterProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {writerCalls:number};
+  if (p5bB1WriterProbe) p5bB1WriterProbe.writerCalls += 1;`);
+  source = source.replace(publisherMarker, `${publisherMarker}
+  const p5bB1PublisherProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as undefined | {publisherCalls:number};
+  if (p5bB1PublisherProbe) p5bB1PublisherProbe.publisherCalls += 1;`);
+
+  const validatorMarker = "async function revalidatePostVisibleCurrentEntryStoreV1(";
+  if (source.includes(validatorMarker)) {
+    assert.equal(source.split(validatorMarker).length - 1, 1, "P5b-B1 instruments one private post-visible validator");
+    const validatorStart = source.indexOf(validatorMarker);
+    const validatorBody = source.indexOf("): Promise<void> {", validatorStart);
+    assert.ok(validatorBody > validatorStart, "P5b-B1 validator retains the frozen async void signature");
+    const insertion = validatorBody + "): Promise<void> {".length;
+    source = source.slice(0, insertion) + `
+  const p5bB1ValidatorProbe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {contextIds:WeakMap<object,number>;mainContext:object|null;validatorCalls:number;validatorContextId:number|null;sameContext:boolean|null;events:string[]};
+  p5bB1ValidatorProbe.validatorCalls += 1;
+  p5bB1ValidatorProbe.validatorContextId = p5bB1ValidatorProbe.contextIds.get(context) ?? null;
+  p5bB1ValidatorProbe.sameContext = p5bB1ValidatorProbe.mainContext === context;
+  p5bB1ValidatorProbe.events.push("post-visible-validator:" + p5bB1ValidatorProbe.validatorContextId);` + source.slice(insertion);
+  } else {
+    const insertion = source.indexOf(publisherMarker);
+    assert.ok(insertion >= 0, "P5b-B1 has one private insertion point for the RED-only validator stub");
+    const validatorStub = `async function revalidatePostVisibleCurrentEntryStoreV1(context: ExactPoisonRecoveryPinnedCommitChainV1): Promise<void> {
+  const probe = Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {contextIds:WeakMap<object,number>;mainContext:object|null;validatorCalls:number;validatorContextId:number|null;sameContext:boolean|null;events:string[]};
+  probe.validatorCalls += 1;
+  probe.validatorContextId = probe.contextIds.get(context) ?? null;
+  probe.sameContext = probe.mainContext === context;
+  probe.events.push("post-visible-validator:" + probe.validatorContextId);
+  context.assertStable();
+  currentEntryFail("Phase5b-B1 post-visible validation is intentionally fail-closed");
+}
+
+`;
+    source = source.slice(0, insertion) + validatorStub + source.slice(insertion);
+  }
+
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(wrapperMarker).length - 1, 1, "P5b-B1 copied module retains one wrapper insertion point");
+  const wrapper = `export async function p5bRunStrictCEntryFixtureV1(): Promise<Readonly<Record<string, unknown>>> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return requireSelectedCurrentEntryStoreContextStateV1(context);
+}
+
+`;
+  source = source.replace(wrapperMarker, wrapper + wrapperMarker);
+  writeFileSync(modulePath, source);
+}
+
+function configurePhase5bStrictCEntryFixtureV1(
+  root: string,
+  through: "H" | "S" | "C",
+): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, through);
+  instrumentPhase5bStrictCEntryFixtureV1(root);
+  return Object.freeze({ original, admitted, seeded });
+}
+
+function runPhase5bStrictCEntryFixtureV1(
+  root: string,
+  faultStage: Phase5bStrictCEntryFaultStageV1 | null = null,
+  durabilityFault: ExactPoisonDurabilityFaultFixtureV1 | null = null,
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:${JSON.stringify(faultStage)}};const durability={events:[],matches:0,fault:${JSON.stringify(durabilityFault)}};Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null,value=null;try{value=await m.p5bRunStrictCEntryFixtureV1()}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,durabilityEvents:durability.events,durabilityMatches:durability.matches,descriptorDelta:after-before}))})()`);
+}
+
 function topLevelFunctionRegionV1(source: string, functionName: string): string {
   const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}\\(`, "gm"))]
     .map((match) => match.index);
@@ -5590,7 +5771,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       cursor = next;
     }
     assert.equal(source.split("durablyAuthenticateSuccessorActivationSealV1(").length - 1, 2, "only definition and publisher call S durability");
-    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 2, "Phase5a-A adds only definition and publisher call for C durability");
+    const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 3, "C durability has exactly one definition, one publisher call, and one current-selector call");
+    assert.equal(commitRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "C durability retains one private definition");
+    assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
+    assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
     assert.match(core, /heldWriter\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);/, "publisher fences the generic C helper immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
@@ -6022,7 +6207,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     );
     assert.doesNotMatch(selectorRegion, /\b(?:readdirSync|opendirSync)\(|\b(?:mtime|mtimeMs|mtimeNs|ctime|ctimeMs|ctimeNs|birthtime|birthtimeMs|latest)\b|process\.env|globalThis|AsyncLocalStorage/, "selection performs no namespace scan, time/latest choice, environment lookup, or ambient-context access");
     assert.doesNotMatch(selectorRegion, /EXACT_POISON_OPERATION|fixedLegacyExactPoisonSuccessorEdgePathV1/, "legacy edge selection derives H from the strict operation pair rather than the one frozen poison hash");
-    assert.doesNotMatch(selectorRegion, /openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation|revalidatePostVisible|fsyncSync/, "Phase5b-A refuses H before successor durability or post-visible routing work");
+    assert.equal(selectorRegion.split("openExactPoisonRecoveryPinnedCommitChainV1()").length - 1, 1, "a present H enters the one strict commit-chain builder allowed by B1");
+    assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(context)").length - 1, 1, "B1 permits exactly one C durability call after strict construction");
+    assert.equal(selectorRegion.split("revalidatePostVisibleCurrentEntryStoreV1(context)").length - 1, 1, "B1 permits exactly one fail-closed post-visible call after C durability");
+    assert.doesNotMatch(selectorRegion, /openExactPoisonRecoveryPinnedSealChainV1|durablyAuthenticateSuccessorActivationSealV1|fsyncSync/, "selection never invokes S durability or performs a direct fsync");
     for (const selectionKind of [
       "legacy-store-absent",
       "legacy-operation-absent",
@@ -6239,7 +6427,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; value: unknown; filesystemCalls: number; creatorCalls: number }>;
         assert.equal(observed.outcome, "threw");
-        assert.match(observed.message ?? "", /edge|successor|current-entry|canonical|strict|Phase5b-A/i);
+        assert.match(observed.message ?? "", /edge|successor|current-entry|canonical|strict|Phase5b-A|quarantined|inventory/i);
         assert.equal(observed.value, null, `${presentH.name}: a present H path cannot mint or return a legacy handle`);
         assert.equal(observed.creatorCalls, 0, `${presentH.name}: selector refuses before creator/WeakMap registration`);
         assert.equal(observed.filesystemCalls, 0, `${presentH.name}: consumer filesystem access never begins after selector refusal`);
@@ -6315,7 +6503,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         edgeApplied: boolean;
       }>;
       assert.equal(observed.outcome, "threw");
-      assert.match(observed.message ?? "", /edge|appeared|selection|current-entry/i);
+      assert.match(observed.message ?? "", /edge|appeared|selection|current-entry|quarantined|inventory/i);
       assert.equal(observed.value, null);
       assert.equal(observed.edgeApplied, true);
       assert.equal(observed.selectorCalls, 1);
@@ -6396,6 +6584,113 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           selectedCloseCalls: 1,
         },
       );
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B1 freezes the direct strict-C selector entry as builder then C durability then fail-closed post-visible validation", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const selector = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
+    assert.match(
+      selector,
+      /const context = await openExactPoisonRecoveryPinnedCommitChainV1\(\);[\s\S]*?operation\.locator !== context\.operation\.target[\s\S]*?!sameRegularMetadata\(operation\.observed\.stats, context\.operation\.identity\)[\s\S]*?!operation\.observed\.bytes\.equals\(context\.operation\.bytes\)[\s\S]*?context\.assertStable\(\);[\s\S]*?await durablyAuthenticateSuccessorActivationCommitV1\(context\);[\s\S]*?context\.assertStable\(\);[\s\S]*?await revalidatePostVisibleCurrentEntryStoreV1\(context\);[\s\S]*?finally\s*\{\s*context\.close\(\);\s*\}/,
+      "a present strict chain must retain one pinned context through operation equality, C durability, post-visible refusal, and finally-close",
+    );
+    assert.doesNotMatch(selector, /\bcatch\b|inspectExactPoisonRecoveryChainBeforeSelectionV1|durablyAuthenticateSuccessorActivationSealV1|acquireExactPoisonRecoveryWriterV1|resumeExactPoisonQuarantinePublisherCoreV1/, "strict-C selection has no catch-all completion, S helper, H writer, or publisher fallback");
+    assert.doesNotMatch(selector, /readdirSync|opendirSync|mtime|latest|process\.env|globalThis|AsyncLocalStorage|createSelectedCurrentEntryStoreContextV1\([^)]*successor/, "strict-C B1 performs no scan, ambient lookup, or successor mint");
+    assert.doesNotMatch(selector, /fsyncSync|mkdir|writeFile|appendFile|truncate|chmod|chown|linkSync|symlink|rename|unlink|rmSync|rmdir/, "the selector delegates the sole permitted durability effect to the C helper");
+
+    const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
+    assert.match(
+      validator,
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<void> \{\s*context\.assertStable\(\);\s*currentEntryFail\("post-visible current-entry validation is unavailable"\);\s*\}\s*$/,
+      "the private B1 placeholder is exactly one context fence followed by one unavailable failure, with no recursion, scan, durability, mutation, or minting surface",
+    );
+    assert.doesNotMatch(source, /export\s+(?:async\s+)?function revalidatePostVisibleCurrentEntryStoreV1|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B1 adds no public seam, runtime env seam, or fourth marker family");
+  });
+
+  it("P5b-B1 strict C uses one pinned context and closes it on validator and helper failures", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5bStrictCEntryFixtureV1(root, "C");
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const strict = await runPhase5bStrictCEntryFixtureV1(root);
+      assert.equal(strict.status, 0, strict.stderr);
+      const observed = JSON.parse(strict.stdout) as Readonly<{
+        outcome: string;
+        message: string | null;
+        selectorCalls: number;
+        creatorCalls: number;
+        builderCalls: number;
+        helperCalls: number;
+        validatorCalls: number;
+        contextCloseCalls: number;
+        sealHelperCalls: number;
+        writerCalls: number;
+        publisherCalls: number;
+        helperContextId: number | null;
+        validatorContextId: number | null;
+        sameContext: boolean | null;
+        fsyncTargets: string[];
+        fsyncIdentities: ReadonlyArray<Readonly<{descriptorDevice:string;descriptorInode:string;pathDevice:string;pathInode:string}>>;
+        events: string[];
+        durabilityEvents: string[];
+        descriptorDelta: number;
+      }>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(observed.message ?? "", /post-visible|Phase5b-B1|unavailable/i);
+      assert.deepEqual({ selectorCalls: observed.selectorCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, validatorCalls: observed.validatorCalls, creatorCalls: observed.creatorCalls }, { selectorCalls: 1, builderCalls: 2, helperCalls: 1, validatorCalls: 1, creatorCalls: 0 });
+      assert.deepEqual({ helperContextId: observed.helperContextId, validatorContextId: observed.validatorContextId, sameContext: observed.sameContext }, { helperContextId: 1, validatorContextId: 1, sameContext: true }, "C helper and post-visible validator receive the same original pinned context");
+      assert.deepEqual(observed.fsyncTargets, [path.dirname(harness.seeded.C)], "selection fsyncs only the exact derived C parent descriptor using its stable lexical presentation");
+      assert.deepEqual(observed.fsyncTargets.map((target) => realpathSync(target)), [realpathSync(path.dirname(harness.seeded.C))], "lexical C-parent presentation resolves to the exact derived physical parent");
+      assert.equal(observed.fsyncIdentities.length, 1);
+      const fsyncIdentity = observed.fsyncIdentities[0]!;
+      assert.deepEqual(
+        { device: fsyncIdentity.descriptorDevice, inode: fsyncIdentity.descriptorInode },
+        { device: fsyncIdentity.pathDevice, inode: fsyncIdentity.pathInode },
+        "the fsynced descriptor dev/inode is the exact realpath C-parent dev/inode",
+      );
+      assert.deepEqual(observed.durabilityEvents, ["commit:pre-fsync", "commit:post-fsync", "commit:post-reopen"]);
+      assert.deepEqual({ contextCloseCalls: observed.contextCloseCalls, sealHelperCalls: observed.sealHelperCalls, writerCalls: observed.writerCalls, publisherCalls: observed.publisherCalls, descriptorDelta: observed.descriptorDelta }, { contextCloseCalls: 2, sealHelperCalls: 0, writerCalls: 0, publisherCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(observed.events, [
+        "commit-builder-enter:1",
+        "commit-builder-return:1",
+        "commit-helper:1",
+        `commit-parent-fsync:${path.dirname(harness.seeded.C)}`,
+        "commit-builder-enter:2",
+        "commit-builder-return:2",
+        "context-close:1",
+        "post-visible-validator:1",
+        "context-close:2",
+      ]);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "strict-C validation preserves every disposable workspace byte and identity");
+
+      const helperFault = await runPhase5bStrictCEntryFixtureV1(root, "helper");
+      assert.equal(helperFault.status, 0, helperFault.stderr);
+      const refused = JSON.parse(helperFault.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(refused.outcome, "threw");
+      assert.match(String(refused.message), /P5B_B1_COMMIT_HELPER_FAULT/);
+      assert.deepEqual(
+        {
+          selectorCalls: refused.selectorCalls,
+          builderCalls: refused.builderCalls,
+          helperCalls: refused.helperCalls,
+          validatorCalls: refused.validatorCalls,
+          creatorCalls: refused.creatorCalls,
+          contextCloseCalls: refused.contextCloseCalls,
+          sealHelperCalls: refused.sealHelperCalls,
+          writerCalls: refused.writerCalls,
+          publisherCalls: refused.publisherCalls,
+          descriptorDelta: refused.descriptorDelta,
+        },
+        { selectorCalls: 1, builderCalls: 1, helperCalls: 1, validatorCalls: 0, creatorCalls: 0, contextCloseCalls: 1, sealHelperCalls: 0, writerCalls: 0, publisherCalls: 0, descriptorDelta: 0 },
+        "a C-helper failure propagates, closes the original context, and skips validation and minting",
+      );
+      assert.deepEqual(refused.fsyncTargets, [], "a helper-entry failure performs no durability syscall");
+      assert.deepEqual(refused.durabilityEvents, [], "a helper-entry failure cannot reach a durability boundary");
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "helper failure preserves every disposable workspace byte and identity");
     } finally {
       removeFixture(root);
     }

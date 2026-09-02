@@ -1161,7 +1161,6 @@ async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryS
         fixedLegacyCurrentEntrySuccessorEdgePathV1(pair.operationHash),
         "fixed legacy current-entry successor edge",
       );
-      if (edge !== null) currentEntryFail("Phase5b-A refuses a present current-entry successor edge");
       const reopened = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
         fixedLegacyCurrentEntryOperationPathV1(),
         "fixed legacy current-entry operation",
@@ -1175,7 +1174,23 @@ async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryS
         fixedLegacyCurrentEntrySuccessorEdgePathV1(pair.operationHash),
         "fixed legacy current-entry successor edge",
       );
-      if (edgeAfterOperationReopen !== null) currentEntryFail("Phase5b-A refuses a current-entry successor edge that appeared during selection");
+      if (edge !== null || edgeAfterOperationReopen !== null) {
+        const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+        try {
+          if (
+            operation.locator !== context.operation.target
+            || !sameRegularMetadata(operation.observed.stats, context.operation.identity)
+            || !operation.observed.bytes.equals(context.operation.bytes)
+          ) currentEntryFail("strict current-entry successor operation changed during selection");
+          context.assertStable();
+          await durablyAuthenticateSuccessorActivationCommitV1(context);
+          context.assertStable();
+          await revalidatePostVisibleCurrentEntryStoreV1(context);
+          currentEntryFail("post-visible current-entry validation returned without selecting a store");
+        } finally {
+          context.close();
+        }
+      }
       state = Object.freeze({
         storeRoot,
         operation: Object.freeze({ operationRef: pair.operationRef, operationHash: pair.operationHash }),
@@ -4397,6 +4412,13 @@ async function durablyAuthenticateSuccessorActivationCommitV1(
   exactPoisonRecoveryDurabilityFaultV1("commit", "post-reopen");
   parent.assertStable();
   context.assertStable();
+}
+
+async function revalidatePostVisibleCurrentEntryStoreV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): Promise<void> {
+  context.assertStable();
+  currentEntryFail("post-visible current-entry validation is unavailable");
 }
 
 function exactPoisonRecoveryDurabilityFaultV1(
