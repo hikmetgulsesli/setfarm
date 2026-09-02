@@ -2278,6 +2278,217 @@ function runExactPoisonPublisherCoreWithDurabilityFixtureV1(
   return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5A_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,events:durability.events,admissionCalls:admission.admissionCalls}))})()`);
 }
 
+const PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1 = Object.freeze([
+  Object.freeze({ name: "ensure-store", functionName: "ensureCurrentEntryStore", expectedSuffix: "" }),
+  Object.freeze({ name: "read-store", functionName: "readCurrentEntryStore", expectedSuffix: null }),
+  Object.freeze({ name: "prerequisite-record", functionName: "currentEntryPrerequisiteRecordPathV1", expectedSuffix: `records/authority-v3-migration31-audits/sha256/aa/${"a".repeat(64)}.json` }),
+  Object.freeze({ name: "prepare-operation", functionName: "prepareCurrentEntryOperationPathV1", expectedSuffix: "current-entry-operation.json" }),
+  Object.freeze({ name: "task12-record", functionName: "task12RecordPathV1", expectedSuffix: `records/statuses/sha256/aa/${"a".repeat(64)}.json` }),
+  Object.freeze({ name: "task12-operation", functionName: "task12OperationDirectoryV1", expectedSuffix: `operations/sha256/aa/${"a".repeat(64)}` }),
+  Object.freeze({ name: "prepared-pre-mutation", functionName: "task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1", expectedSuffix: `records/pre-mutation-loaded-runtime-service-authorities/sha256/aa/${"a".repeat(64)}.json` }),
+  Object.freeze({ name: "current-status", functionName: "task12CurrentStatusPathV1", expectedSuffix: `operations/sha256/aa/${"a".repeat(64)}/01-current-status.pair.json` }),
+  Object.freeze({ name: "predecessor-pre-mutation", functionName: "task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1", expectedSuffix: `records/pre-mutation-loaded-runtime-service-authorities/sha256/aa/${"a".repeat(64)}.json` }),
+  Object.freeze({ name: "recovery-source-root", functionName: "recoverySourceBootstrapRootV1", expectedSuffix: "recovery-source-bootstrap-v1" }),
+  Object.freeze({ name: "recovery-pair-close", functionName: "recoverySourceBootstrapPairClosePathV1", expectedSuffix: `records/source-run-launch-target-reservation-pair-closes/sha256/aa/${"a".repeat(64)}.json` }),
+] as const);
+
+type Phase5bSelectedContextConsumerNameV1 = typeof PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1[number]["name"];
+type Phase5bSelectedContextModeV1 = "real" | "spread-clone" | "descriptor-copy" | "unregistered-brand";
+
+function instrumentPhase5bSelectedContextFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const selectorMarker = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+  const createMarker = "function createSelectedCurrentEntryStoreContextV1(";
+  const requireMarker = "function requireSelectedCurrentEntryStoreContextStateV1(";
+  const brandMarker = "const selectedCurrentEntryStoreContextBrandV1: unique symbol";
+  const directoryMarker = "function directorySnapshot(directoryPath: string, label: string, expectedDevice?: bigint): DirectorySnapshot {";
+  for (const [marker, label] of [
+    [selectorMarker, "zero-input selected-store selector"],
+    [createMarker, "selected-store handle creator"],
+    [requireMarker, "selected-store WeakMap authenticator"],
+    [brandMarker, "opaque selected-store symbol brand"],
+    [directoryMarker, "filesystem observation boundary"],
+  ] as const) assert.equal(source.split(marker).length - 1, 1, `production must retain one ${label}`);
+  for (const consumer of PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1) {
+    assert.match(source, new RegExp(`function ${consumer.functionName}\\(`), `${consumer.name} must retain its exact synchronous consumer`);
+  }
+
+  const createStart = source.indexOf(createMarker);
+  const requireStart = source.indexOf(requireMarker, createStart);
+  assert.ok(createStart >= 0 && requireStart > createStart, "the copied fixture must retain one ordered creator/authenticator region");
+  const createRegion = source.slice(createStart, requireStart);
+  const setMarker = "selectedCurrentEntryStoreContextStatesV1.set(";
+  assert.equal(createRegion.split(setMarker).length - 1, 1, "only the private creator registers selected-store state");
+  const setIndex = source.indexOf(setMarker, createStart);
+  source = source.slice(0, setIndex)
+    + '(Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as {creatorCalls:number}).creatorCalls += 1;\n  '
+    + source.slice(setIndex);
+
+  source = source.replace(directoryMarker, `${directoryMarker}
+  const p5bProbe = Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as undefined | {active:boolean;filesystemCalls:number;creatorCalls:number};
+  if (p5bProbe?.active === true) p5bProbe.filesystemCalls += 1;`);
+
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(wrapperMarker).length - 1, 1, "the copied selected-context fixture requires exactly one wrapper insertion point");
+  const wrapperIndex = source.indexOf(wrapperMarker);
+  assert.ok(wrapperIndex >= 0, "the copied selected-context fixture requires one wrapper insertion point");
+  const wrapper = `export async function p5bRunSelectedCurrentEntryStoreContextFixtureV1(
+  mode: "real" | "spread-clone" | "descriptor-copy" | "unregistered-brand",
+  consumer: "ensure-store" | "read-store" | "prerequisite-record" | "prepare-operation" | "task12-record" | "task12-operation" | "prepared-pre-mutation" | "current-status" | "predecessor-pre-mutation" | "recovery-source-root" | "recovery-pair-close",
+): Promise<Readonly<Record<string, unknown>>> {
+  const real = await selectCurrentEntryStoreContextV1();
+  const state = requireSelectedCurrentEntryStoreContextStateV1(real);
+  const candidate = mode === "real"
+    ? real
+    : mode === "spread-clone"
+      ? Object.freeze({ ...real }) as SelectedCurrentEntryStoreContextV1
+      : mode === "descriptor-copy"
+        ? Object.freeze(Object.create(Object.getPrototypeOf(real), Object.getOwnPropertyDescriptors(real))) as SelectedCurrentEntryStoreContextV1
+        : Object.freeze({ [selectedCurrentEntryStoreContextBrandV1]: true }) as SelectedCurrentEntryStoreContextV1;
+  const probe = Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as {active:boolean;filesystemCalls:number;creatorCalls:number};
+  probe.filesystemCalls = 0;
+  probe.active = true;
+  const hash = "a".repeat(64);
+  let result: unknown;
+  if (consumer === "ensure-store") result = ensureCurrentEntryStore(candidate).directory;
+  else if (consumer === "read-store") result = readCurrentEntryStore(candidate, true)?.directory ?? null;
+  else if (consumer === "prerequisite-record") result = currentEntryPrerequisiteRecordPathV1(candidate, "authorityV3Migration31Audit", hash);
+  else if (consumer === "prepare-operation") result = prepareCurrentEntryOperationPathV1(candidate);
+  else if (consumer === "task12-record") result = task12RecordPathV1(candidate, "statuses", hash);
+  else if (consumer === "task12-operation") result = task12OperationDirectoryV1(candidate, hash);
+  else if (consumer === "prepared-pre-mutation") result = task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(candidate, hash);
+  else if (consumer === "current-status") result = task12CurrentStatusPathV1(candidate, hash);
+  else if (consumer === "predecessor-pre-mutation") result = task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(candidate, hash);
+  else if (consumer === "recovery-source-root") result = recoverySourceBootstrapRootV1(candidate);
+  else result = recoverySourceBootstrapPairClosePathV1(candidate, hash);
+  return recursivelyFreeze({
+    result,
+    state,
+    stateOwnKeys: Reflect.ownKeys(state),
+    handleFrozen: Object.isFrozen(real),
+    handleOwnKeyKinds: Reflect.ownKeys(real).map((key) => typeof key),
+    handleStringKeys: Object.keys(real),
+    serializedHandle: JSON.stringify(real),
+    filesystemCalls: probe.filesystemCalls,
+    creatorCalls: probe.creatorCalls,
+  });
+}
+
+`;
+  source = source.slice(0, wrapperIndex) + wrapper + source.slice(wrapperIndex);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5bSelectedContextFixtureV1(
+  root: string,
+  mode: Phase5bSelectedContextModeV1,
+  consumer: Phase5bSelectedContextConsumerNameV1,
+): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{const probe={active:false,filesystemCalls:0,creatorCalls:0};Reflect.set(globalThis,"__p5bSelectedCurrentEntryStoreProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await m.p5bRunSelectedCurrentEntryStoreContextFixtureV1(${JSON.stringify(mode)},${JSON.stringify(consumer)})}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,filesystemCalls:probe.filesystemCalls,creatorCalls:probe.creatorCalls}))})()`);
+}
+
+function instrumentPhase5bSelectionRaceAndPredecessorRoutingFixtureV1(root: string): void {
+  instrumentPhase5bSelectedContextFixtureV1(root);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const selectorMarker = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+  assert.equal(source.split(selectorMarker).length - 1, 1);
+  source = source.replace(selectorMarker, `${selectorMarker}
+  const p5bSelectorProbe = Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as undefined | { selectorCalls?: number };
+  if (p5bSelectorProbe) p5bSelectorProbe.selectorCalls = (p5bSelectorProbe.selectorCalls ?? 0) + 1;`);
+
+  const operationReopenMarker = `      const reopened = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyCurrentEntryOperationPathV1(),
+        "fixed legacy current-entry operation",
+      );`;
+  assert.equal(source.split(operationReopenMarker).length - 1, 1, "the race fixture must hook the sole selector operation reopen");
+  source = source.replace(operationReopenMarker, `${operationReopenMarker}
+      const p5bRaceProbe = Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as undefined | { appearingEdge?: { target: string; bytesBase64: string; applied: boolean } | null };
+      if (p5bRaceProbe?.appearingEdge && p5bRaceProbe.appearingEdge.applied === false) {
+        writeFileSync(p5bRaceProbe.appearingEdge.target, Buffer.from(p5bRaceProbe.appearingEdge.bytesBase64, "base64"), { flag: "wx", mode: 0o600 });
+        p5bRaceProbe.appearingEdge.applied = true;
+      }`);
+
+  const counters = [
+    Object.freeze({
+      name: "resolveInternalProductionRecoverySourceRunTerminalAuthorityV1",
+      returnType: "InternalProductionRecoverySourceRunTerminalAuthorityV1",
+      counter: "publicTerminalCalls",
+      stub: false,
+    }),
+    Object.freeze({
+      name: "resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1",
+      returnType: "InternalProductionRecoverySourceRunTerminalAuthorityV1",
+      counter: "selectedTerminalCalls",
+      stub: true,
+    }),
+    Object.freeze({
+      name: "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1",
+      returnType: "InternalProductionSourceRunLaunchTargetReservationPairCloseV1",
+      counter: "publicCloseCalls",
+      stub: false,
+    }),
+    Object.freeze({
+      name: "resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1",
+      returnType: "InternalProductionSourceRunLaunchTargetReservationPairCloseV1",
+      counter: "selectedCloseCalls",
+      stub: true,
+    }),
+  ] as const;
+  for (const counter of counters) {
+    const declaration = `${counter.name.includes("WithSelected") ? "async" : "export async"} function ${counter.name}(`;
+    assert.equal(source.split(declaration).length - 1, 1, `${counter.name} must retain one declaration`);
+    const start = source.indexOf(declaration);
+    const bodyMarker = `): Promise<${counter.returnType}> {`;
+    const bodyStart = source.indexOf(bodyMarker, start);
+    assert.ok(bodyStart > start, `${counter.name} must retain its exact return boundary`);
+    const insertion = bodyStart + bodyMarker.length;
+    const statement = `
+  const p5bRoutingProbe = Reflect.get(globalThis, "__p5bSelectedCurrentEntryStoreProbeV1") as { ${counter.counter}: number };
+  p5bRoutingProbe.${counter.counter} += 1;${counter.stub ? `
+  return Object.freeze({}) as ${counter.returnType};` : ""}`;
+    source = source.slice(0, insertion) + statement + source.slice(insertion);
+  }
+
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(wrapperMarker).length - 1, 1);
+  const wrapper = `export async function p5bRunPredecessorTerminalCloseRoutingFixtureV1(): Promise<void> {
+  const context = await selectCurrentEntryStoreContextV1();
+  await resolveTask12PredecessorAuthorityPairV1(context, "terminalSettlement", {
+    terminalSettlementRef: "setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${"a".repeat(64)}",
+    terminalSettlementHash: "${"a".repeat(64)}",
+  }, Object.freeze({}));
+  await resolveTask12PredecessorAuthorityPairV1(context, "targetClose", {
+    targetReservationPairCloseRef: "setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/${"b".repeat(64)}",
+    targetReservationPairCloseHash: "${"b".repeat(64)}",
+  }, Object.freeze({}));
+}
+
+`;
+  source = source.replace(wrapperMarker, wrapper + wrapperMarker);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5bAppearingEdgeFixtureV1(root: string, target: string, bytes: Buffer): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{const probe={active:false,filesystemCalls:0,creatorCalls:0,selectorCalls:0,appearingEdge:{target:${JSON.stringify(target)},bytesBase64:${JSON.stringify(bytes.toString("base64"))},applied:false}};Reflect.set(globalThis,"__p5bSelectedCurrentEntryStoreProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await m.p5bRunSelectedCurrentEntryStoreContextFixtureV1("real","read-store")}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,filesystemCalls:probe.filesystemCalls,creatorCalls:probe.creatorCalls,selectorCalls:probe.selectorCalls,edgeApplied:probe.appearingEdge.applied}))})()`);
+}
+
+function runPhase5bPredecessorTerminalCloseRoutingFixtureV1(root: string): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{const probe={active:false,filesystemCalls:0,creatorCalls:0,selectorCalls:0,appearingEdge:null,publicTerminalCalls:0,selectedTerminalCalls:0,publicCloseCalls:0,selectedCloseCalls:0};Reflect.set(globalThis,"__p5bSelectedCurrentEntryStoreProbeV1",probe);let outcome="returned",message=null;try{await m.p5bRunPredecessorTerminalCloseRoutingFixtureV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,...probe}))})()`);
+}
+
+function topLevelFunctionRegionV1(source: string, functionName: string): string {
+  const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}\\(`, "gm"))]
+    .map((match) => match.index);
+  assert.ok(starts.length > 0, `${functionName} must have a top-level implementation`);
+  const start = starts.at(-1)!;
+  const next = /\n(?=(?:export\s+)?(?:async\s+)?function\s+|(?:const|type|interface)\s+[A-Za-z0-9_]+)/g;
+  next.lastIndex = start + 1;
+  const boundary = next.exec(source)?.index ?? source.length;
+  return source.slice(start, boundary);
+}
+
 function assertExactPoisonRecoveryConvergedV1(
   original: ExactOriginalPoisonStoreFixtureV1,
   chain: ExactPoisonStrictChainFixtureV1,
@@ -4992,7 +5203,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
   });
 
-  it("P4 freezes exact-poison preselection literals and prepare ordering", async () => {
+  it("P4 freezes exact-poison preselection literals, prepare ordering, and the final selected-store source map", async () => {
     const source = readFileSync(observerSource, "utf8");
     for (const [name, value] of [
       ["EXACT_POISON_OPERATION_HASH_V1", EXACT_POISON_OPERATION_HASH_V1],
@@ -5021,9 +5232,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(Reflect.has(loaded, "resumeExactPoisonQuarantinePublisherCoreV1"), false);
     assert.equal(
       [...source.matchAll(/CURRENT_ENTRY_STORE_DIRECTORY/g)].length,
-      11,
-      "the interim preselection RED preserves eleven literal occurrences; the routing RED will replace this with exact-two anchors plus the semantic exact-eleven map",
+      2,
+      "only the declaration and byte-unchanged historical P0 retain the legacy directory token",
     );
+    assert.equal(PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1.length, 11, "the final active-store contract is the explicit exact-eleven semantic consumer table");
   });
 
   it("P4 dispatches only exact-poison incomplete preselection before routing", () => {
@@ -5747,6 +5959,443 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         "commit:pre-fsync", "commit:post-fsync", "commit:post-reopen",
       ]);
       assertExactPoisonRecoveryConvergedV1(original, admitted.chain, "P5a-A publisher durability order");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-A freezes one opaque private selected-store context and the exact eleven synchronous consumers", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const brand = "const selectedCurrentEntryStoreContextBrandV1: unique symbol";
+    const contextType = "type SelectedCurrentEntryStoreContextV1";
+    const stateMap = "const selectedCurrentEntryStoreContextStatesV1 = new WeakMap<SelectedCurrentEntryStoreContextV1";
+    const create = "function createSelectedCurrentEntryStoreContextV1(";
+    const requireState = "function requireSelectedCurrentEntryStoreContextStateV1(";
+    const selector = "async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {";
+    for (const [marker, label] of [
+      [brand, "one private unique-symbol brand"],
+      [contextType, "one opaque selected-store handle type"],
+      [stateMap, "one private selected-store WeakMap"],
+      [create, "one private selected-store creator"],
+      [requireState, "one private selected-store authenticator"],
+      [selector, "one zero-input async selected-store selector"],
+    ] as const) {
+      assert.equal(source.split(marker).length - 1, 1, label);
+      assert.equal(source.includes(`export ${marker}`), false, `${label} remains private`);
+    }
+    const authorityMarkers = [brand, contextType, stateMap, create, requireState, selector] as const;
+    let authorityCursor = -1;
+    for (const marker of authorityMarkers) {
+      const next = source.indexOf(marker);
+      assert.ok(next > authorityCursor, `${marker} follows the preceding private context authority`);
+      authorityCursor = next;
+    }
+    const contextAuthorityRegion = source.slice(source.indexOf(brand), source.indexOf(selector));
+    assert.doesNotMatch(contextAuthorityRegion, /JSON\.stringify|structuredClone|canonicalComparable|hashCanonicalJson|AsyncLocalStorage|process\.env|globalThis/, "the handle authority has no serialization, hash, ambient, or reconstruction seam");
+    assert.equal((contextAuthorityRegion.match(/new WeakMap</g) ?? []).length, 1, "the one private WeakMap is the only context authority store");
+    assert.doesNotMatch(contextAuthorityRegion, /new (?:Map|Set)<|\[[^\]]*SelectedCurrentEntryStoreContextV1/, "no second ambient context cache or retained-handle collection exists");
+    assert.match(source, /type SelectedCurrentEntryStoreContextV1\s*=\s*Readonly<\{\s*readonly \[selectedCurrentEntryStoreContextBrandV1\]: true;?\s*\}>/, "the opaque handle exposes exactly its symbol brand");
+    assert.match(
+      source,
+      /const selectedCurrentEntryStoreContextStatesV1\s*=\s*new WeakMap<\s*SelectedCurrentEntryStoreContextV1\s*,\s*Readonly<\{\s*storeRoot:\s*string;\s*operation:\s*InternalProductionCurrentEntryOperationPairV1\s*\|\s*null;\s*selectionKind:\s*"legacy-store-absent"\s*\|\s*"legacy-operation-absent"\s*\|\s*"legacy-edge-absent"\s*\|\s*"successor-zero-progress"\s*\|\s*"successor-pre-status"\s*\|\s*"successor-progress";\s*\}>\s*>\(\);/,
+      "the sole WeakMap value has exactly the ordered storeRoot, nullable operation pair, and six-kind selection state",
+    );
+    assert.equal(source.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 2, "only the creator definition and selector call may create a handle");
+    const createRegion = topLevelFunctionRegionV1(source, "createSelectedCurrentEntryStoreContextV1");
+    assert.equal(createRegion.split("selectedCurrentEntryStoreContextStatesV1.set(").length - 1, 1, "only the creator registers a handle in the WeakMap");
+    assert.match(createRegion, /Object\.freeze\(/, "the creator freezes the opaque handle before registration");
+    const requireRegion = topLevelFunctionRegionV1(source, "requireSelectedCurrentEntryStoreContextStateV1");
+    assert.match(
+      requireRegion,
+      /^function requireSelectedCurrentEntryStoreContextStateV1\([\s\S]*?\)\s*(?::[^\n]+)?\s*\{\n  const state = selectedCurrentEntryStoreContextStatesV1\.get\(context\);/,
+      "the authenticator's first executable statement is the sole WeakMap lookup",
+    );
+    assert.equal(requireRegion.split("selectedCurrentEntryStoreContextStatesV1.get(context)").length - 1, 1);
+    assert.doesNotMatch(requireRegion, /directorySnapshot|(?:lstat|stat|fstat|open|readFile|readdir|exists|realpath|mkdir|writeFile|link|unlink|rename)Sync|fixedWorkspaceAuthorityPathV1|selectCurrentEntryStoreContextV1|durablyAuthenticate|postVisible|process\.env|globalThis/, "authentication rejects an unregistered handle without filesystem, path, selection, durability, or ambient work");
+    const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
+    assert.equal(selectorRegion.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 1, "the selector mints exactly one handle on a selected branch");
+    assert.doesNotMatch(selectorRegion.slice(0, selectorRegion.indexOf("{")), /root|path|input|context/, "the selector accepts no caller root, path, or context");
+    assert.doesNotMatch(
+      selectorRegion,
+      /\b(?:appendFileSync|writeFileSync|writeSync|copyFileSync|ftruncateSync|truncateSync|fchmodSync|chmodSync|fchownSync|chownSync|lchownSync|linkSync|symlinkSync|unlinkSync|renameSync|rmSync|rmdirSync|mkdirSync|spawn|spawnSync|exec|execSync|execFile|execFileSync|fork|fetch|request|connect|publish[A-Za-z0-9_]*|acquire[A-Za-z0-9_]*|prepare[A-Za-z0-9_]*|apply[A-Za-z0-9_]*|consume[A-Za-z0-9_]*|restart[A-Za-z0-9_]*|release[A-Za-z0-9_]*|insert[A-Za-z0-9_]*|update[A-Za-z0-9_]*|delete[A-Za-z0-9_]*)\(|\b(?:constants\.)?O_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND)\b/,
+      "selection is read-only and cannot normalize, publish, lock, write, spawn, call a service effect, or mutate namespace/content/metadata",
+    );
+    assert.doesNotMatch(selectorRegion, /\b(?:readdirSync|opendirSync)\(|\b(?:mtime|mtimeMs|mtimeNs|ctime|ctimeMs|ctimeNs|birthtime|birthtimeMs|latest)\b|process\.env|globalThis|AsyncLocalStorage/, "selection performs no namespace scan, time/latest choice, environment lookup, or ambient-context access");
+    assert.doesNotMatch(selectorRegion, /EXACT_POISON_OPERATION|fixedLegacyExactPoisonSuccessorEdgePathV1/, "legacy edge selection derives H from the strict operation pair rather than the one frozen poison hash");
+    assert.doesNotMatch(selectorRegion, /openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation|revalidatePostVisible|fsyncSync/, "Phase5b-A refuses H before successor durability or post-visible routing work");
+    for (const selectionKind of [
+      "legacy-store-absent",
+      "legacy-operation-absent",
+      "legacy-edge-absent",
+      "successor-zero-progress",
+      "successor-pre-status",
+      "successor-progress",
+    ] as const) assert.match(source, new RegExp(`"${selectionKind}"`), `the state union retains ${selectionKind}`);
+
+    assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2, "only the declaration and byte-unchanged historical P0 retain the legacy directory token");
+    assert.equal((source.match(/"data\/internal-production-baseline\/current-entry-v1"/g) ?? []).length, 1, "only the legacy directory declaration retains the full literal");
+    assert.doesNotMatch(source, /RECOVERY_SOURCE_BOOTSTRAP_ROOT_V1/, "recovery-source active routing no longer keeps a second ambient root constant");
+    assert.match(source, /const LEGACY_CURRENT_ENTRY_STORE_SEGMENTS_V1\s*=\s*Object\.freeze\(\["data",\s*"internal-production-baseline",\s*"current-entry-v1"\]\)/, "private fixed-legacy bootstrap derives from the exact segment tuple without another full literal");
+    assert.match(source, /function task12P0DeliveryPathV1\(hash: string\): string \{\n  return fixedWorkspaceAuthorityPathV1\(CURRENT_ENTRY_STORE_DIRECTORY, "task12-p0-delivery-authorities", "sha256", hash\.slice\(0, 2\), `\$\{hash\}\.json`\);\n\}/, "historical P0 remains byte-unchanged and outside active-store routing");
+
+    assert.equal(PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1.length, 11);
+    for (const consumer of PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1) {
+      const region = topLevelFunctionRegionV1(source, consumer.functionName);
+      assert.match(region, new RegExp(`function ${consumer.functionName}\\(`), `${consumer.name}: exact function exists`);
+      assert.match(region, /context:\s*SelectedCurrentEntryStoreContextV1/, `${consumer.name}: receives the explicit opaque context`);
+      assert.match(
+        region,
+        new RegExp(`^function ${consumer.functionName}\\([\\s\\S]*?\\)\\s*(?::[^\\n]+)?\\s*\\{\\n  const state = requireSelectedCurrentEntryStoreContextStateV1\\(context\\);`),
+        `${consumer.name}: authenticates the WeakMap handle as its first executable statement`,
+      );
+      assert.equal(region.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 1, `${consumer.name}: authenticates the context exactly once`);
+      assert.match(region, /state\.storeRoot/, `${consumer.name}: derives its active-store result from the authenticated selected root`);
+      assert.doesNotMatch(region, /CURRENT_ENTRY_STORE_DIRECTORY|LEGACY_CURRENT_ENTRY_STORE_SEGMENTS_V1|fixedLegacyCurrentEntry|fixedWorkspaceAuthorityPathV1\(\s*["'`]data\/internal-production-baseline\/current-entry-v1/, `${consumer.name}: cannot authenticate then retain legacy-root routing`);
+      assert.doesNotMatch(region, /^(?:export\s+)?async\s+function/m, `${consumer.name}: remains synchronous`);
+      assert.doesNotMatch(region, /\bawait\b|selectCurrentEntryStoreContextV1\(|durablyAuthenticateSuccessorActivation|postVisible|PostVisible|WeakMap|process\.env|AsyncLocalStorage/, `${consumer.name}: performs no selection, durability, post-visible validation, await, or ambient lookup`);
+    }
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 11, "the authenticator is consumed by exactly the eleven semantic groups");
+    const fixedPathRegion = topLevelFunctionRegionV1(source, "fixedCurrentEntryPath");
+    assert.match(fixedPathRegion, /context:\s*SelectedCurrentEntryStoreContextV1/);
+    assert.match(fixedPathRegion, /readCurrentEntryStore\(context/);
+    assert.doesNotMatch(fixedPathRegion, /requireSelectedCurrentEntryStoreContextStateV1\(/, "fixedCurrentEntryPath inherits the selected root and is not a twelfth consumer");
+
+    const prepareRegion = topLevelFunctionRegionV1(source, "prepareInternalProductionCurrentEntryOperationV1");
+    assert.match(prepareRegion, /^export async function prepareInternalProductionCurrentEntryOperationV1\(\): Promise<InternalProductionCurrentEntryOperationV1> \{\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);\n  const context = await selectCurrentEntryStoreContextV1\(\);\n  const operationPath = prepareCurrentEntryOperationPathV1\(context\);/, "prepare executes the poison prehook first, selects exactly once second, and derives the fixed operation path third");
+    assert.equal(prepareRegion.split("selectCurrentEntryStoreContextV1()").length - 1, 1, "prepare selects once per top-level call");
+    assert.doesNotMatch(source, /AsyncLocalStorage|SETFARM_[A-Z0-9_]*CURRENT_ENTRY_(?:ROOT|STORE|CONTEXT)|JSON\.stringify\([^\n]*SelectedCurrentEntryStoreContextV1/);
+    assert.doesNotMatch(source, /export\s+(?:async\s+)?function\s+(?:selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|requireSelectedCurrentEntryStoreContextStateV1)/);
+    const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+    assert.equal(runtimeExports.length, 53, "the public runtime export set remains unchanged");
+    const loaded = await import(`${pathToFileURL(observerSource).href}?p5b-private=${Date.now()}`) as Record<string, unknown>;
+    for (const privateName of [
+      "selectedCurrentEntryStoreContextBrandV1",
+      "selectedCurrentEntryStoreContextStatesV1",
+      "createSelectedCurrentEntryStoreContextV1",
+      "requireSelectedCurrentEntryStoreContextStateV1",
+      "selectCurrentEntryStoreContextV1",
+    ]) assert.equal(Reflect.has(loaded, privateName), false, `${privateName} remains absent from the public ABI`);
+  });
+
+  for (const consumer of PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1) {
+    it(`P5b-A real legacy-store-absent context serves only ${consumer.name}`, () => {
+      const root = createFixture();
+      try {
+        const selectedRoot = path.join(realpathSync(path.dirname(root)), "data/internal-production-baseline/current-entry-v1");
+        assert.equal(existsSync(currentEntryStore(root)), false);
+        instrumentPhase5bSelectedContextFixtureV1(root);
+        const result = runPhase5bSelectedContextFixtureV1(root, "real", consumer.name);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: string;
+          message: string | null;
+          value: Readonly<{
+            result: string | null;
+            state: Readonly<{ storeRoot: string; operation: null; selectionKind: string }>;
+            stateOwnKeys: string[];
+            handleFrozen: boolean;
+            handleOwnKeyKinds: string[];
+            handleStringKeys: string[];
+            serializedHandle: string;
+            filesystemCalls: number;
+            creatorCalls: number;
+          }> | null;
+        }>;
+        assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+        assert.ok(observed.value);
+        assert.deepEqual(observed.value.state, { storeRoot: selectedRoot, operation: null, selectionKind: "legacy-store-absent" });
+        assert.deepEqual(observed.value.stateOwnKeys, ["storeRoot", "operation", "selectionKind"], `${consumer.name}: selected state has no extra string or symbol key`);
+        assert.equal(observed.value.handleFrozen, true);
+        assert.deepEqual(observed.value.handleOwnKeyKinds, ["symbol"]);
+        assert.deepEqual(observed.value.handleStringKeys, []);
+        assert.equal(observed.value.serializedHandle, "{}");
+        assert.equal(observed.value.creatorCalls, 1, `${consumer.name}: the selector mints exactly one real handle`);
+        const expected = consumer.expectedSuffix === null
+          ? null
+          : consumer.expectedSuffix === ""
+            ? selectedRoot
+            : path.join(selectedRoot, consumer.expectedSuffix);
+        assert.equal(observed.value.result, expected);
+        if (!new Set<Phase5bSelectedContextConsumerNameV1>(["ensure-store", "read-store"]).has(consumer.name)) {
+          assert.equal(observed.value.filesystemCalls, 0, `${consumer.name}: path derivation performs no post-selection filesystem lookup`);
+        }
+      } finally {
+        removeFixture(root);
+      }
+    });
+
+    it(`P5b-A ${consumer.name} rejects a spread clone before filesystem access`, () => {
+      const root = createFixture();
+      try {
+        instrumentPhase5bSelectedContextFixtureV1(root);
+        const result = runPhase5bSelectedContextFixtureV1(root, "spread-clone", consumer.name);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; filesystemCalls: number; creatorCalls: number }>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(observed.message ?? "", /selected|context|handle|registered|invalid/i);
+        assert.equal(observed.filesystemCalls, 0, `${consumer.name}: an unregistered clone fails before filesystem access`);
+        assert.equal(observed.creatorCalls, 1, `${consumer.name}: only the real selector result is registered`);
+        assert.equal(existsSync(currentEntryStore(root)), false, `${consumer.name}: a forged context cannot create the store`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const mode of ["descriptor-copy", "unregistered-brand"] as const) {
+    it(`P5b-A ${mode} cannot reconstruct selected-store authority`, () => {
+      const root = createFixture();
+      try {
+        instrumentPhase5bSelectedContextFixtureV1(root);
+        const result = runPhase5bSelectedContextFixtureV1(root, mode, "read-store");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; filesystemCalls: number; creatorCalls: number }>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(observed.message ?? "", /selected|context|handle|registered|invalid/i);
+        assert.equal(observed.filesystemCalls, 0);
+        assert.equal(observed.creatorCalls, 1, "forgery does not mint a second handle");
+        assert.equal(existsSync(currentEntryStore(root)), false);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const legacy of [
+    Object.freeze({ name: "store absent", setup: (_root: string): void => {}, selectionKind: "legacy-store-absent", operation: null }),
+    Object.freeze({
+      name: "operation absent",
+      setup: (root: string): void => {
+        for (const directory of [path.join(path.dirname(root), "data"), path.join(path.dirname(root), "data/internal-production-baseline"), currentEntryStore(root)]) {
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          chmodSync(directory, 0o700);
+        }
+      },
+      selectionKind: "legacy-operation-absent",
+      operation: null,
+    }),
+    Object.freeze({
+      name: "exact predecessor with edge ENOENT",
+      setup: (root: string): void => { seedExactOriginalPoisonStoreV1(root); },
+      selectionKind: "legacy-edge-absent",
+      operation: Object.freeze({ operationRef: EXACT_POISON_OPERATION_REF_V1, operationHash: EXACT_POISON_OPERATION_HASH_V1 }),
+    }),
+  ] as const) {
+    it(`P5b-A selector mints only the ${legacy.name} legacy state`, () => {
+      const root = createFixture();
+      try {
+        legacy.setup(root);
+        instrumentPhase5bSelectedContextFixtureV1(root);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runPhase5bSelectedContextFixtureV1(root, "real", "read-store");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; value: Readonly<{ state: Readonly<Record<string, unknown>>; stateOwnKeys: string[]; creatorCalls: number }> }>;
+        assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+        assert.deepEqual(observed.value.state, {
+          storeRoot: path.join(realpathSync(path.dirname(root)), "data/internal-production-baseline/current-entry-v1"),
+          operation: legacy.operation,
+          selectionKind: legacy.selectionKind,
+        });
+        assert.deepEqual(observed.value.stateOwnKeys, ["storeRoot", "operation", "selectionKind"], `${legacy.name}: selected state has the exact three-key order`);
+        assert.equal(observed.value.creatorCalls, 1, `${legacy.name}: selection mints exactly one registered handle`);
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${legacy.name}: selection and read-only consumption preserve every disposable workspace byte and identity`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const presentH of [
+    Object.freeze({
+      name: "malformed H",
+      setup: (root: string): void => {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        writeStrictCurrentEntryFixtureRecordV1(
+          original.store,
+          `records/current-entry-store-successor-edges/by-predecessor-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1.slice(0, 2)}/${EXACT_POISON_OPERATION_HASH_V1}.json`,
+          Buffer.from("{}\n", "utf8"),
+        );
+      },
+    }),
+    Object.freeze({
+      name: "fully strict H through C chain",
+      setup: (root: string): void => {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+      },
+    }),
+  ] as const) {
+    it(`P5b-A refuses ${presentH.name} before minting a legacy context`, () => {
+      const root = createFixture();
+      try {
+        presentH.setup(root);
+        instrumentPhase5bSelectedContextFixtureV1(root);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = runPhase5bSelectedContextFixtureV1(root, "real", "read-store");
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: string; message: string | null; value: unknown; filesystemCalls: number; creatorCalls: number }>;
+        assert.equal(observed.outcome, "threw");
+        assert.match(observed.message ?? "", /edge|successor|current-entry|canonical|strict|Phase5b-A/i);
+        assert.equal(observed.value, null, `${presentH.name}: a present H path cannot mint or return a legacy handle`);
+        assert.equal(observed.creatorCalls, 0, `${presentH.name}: selector refuses before creator/WeakMap registration`);
+        assert.equal(observed.filesystemCalls, 0, `${presentH.name}: consumer filesystem access never begins after selector refusal`);
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${presentH.name}: refusal preserves every disposable workspace byte and identity`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P5b-A derives legacy edge ENOENT from an ordinary strict operation pair", () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const successorOperation = admitted.chain.records.successorOperation;
+      assert.notEqual(successorOperation.value.operationHash, EXACT_POISON_OPERATION_HASH_V1);
+      writeFileSync(path.join(original.store, "current-entry-operation.json"), successorOperation.bytes);
+      chmodSync(path.join(original.store, "current-entry-operation.json"), 0o600);
+      writeStrictCurrentEntryFixtureRecordV1(
+        original.store,
+        `records/current-entry-store-successor-edges/by-predecessor-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1.slice(0, 2)}/${EXACT_POISON_OPERATION_HASH_V1}.json`,
+        Buffer.from("{}\n", "utf8"),
+      );
+      instrumentPhase5bSelectedContextFixtureV1(root);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = runPhase5bSelectedContextFixtureV1(root, "real", "read-store");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{
+        outcome: string;
+        message: string | null;
+        value: Readonly<{ state: Readonly<Record<string, unknown>>; stateOwnKeys: string[]; creatorCalls: number }>;
+      }>;
+      assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
+      assert.deepEqual(observed.value.state, {
+        storeRoot: path.join(realpathSync(path.dirname(root)), "data/internal-production-baseline/current-entry-v1"),
+        operation: {
+          operationRef: successorOperation.value.operationRef,
+          operationHash: successorOperation.value.operationHash,
+        },
+        selectionKind: "legacy-edge-absent",
+      });
+      assert.deepEqual(observed.value.stateOwnKeys, ["storeRoot", "operation", "selectionKind"]);
+      assert.equal(observed.value.creatorCalls, 1);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "ordinary strict edge-ENOENT selection ignores the unrelated poison-H locator and preserves every disposable workspace byte and identity");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-A rejects an operation-derived H that appears after the stable operation reopen and before mint", () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+      unlinkSync(seeded.H);
+      instrumentPhase5bSelectionRaceAndPredecessorRoutingFixtureV1(root);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = runPhase5bAppearingEdgeFixtureV1(root, seeded.H, admitted.chain.records.edge.bytes);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{
+        outcome: string;
+        message: string | null;
+        value: unknown;
+        filesystemCalls: number;
+        creatorCalls: number;
+        selectorCalls: number;
+        edgeApplied: boolean;
+      }>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(observed.message ?? "", /edge|appeared|selection|current-entry/i);
+      assert.equal(observed.value, null);
+      assert.equal(observed.edgeApplied, true);
+      assert.equal(observed.selectorCalls, 1);
+      assert.equal(observed.creatorCalls, 0, "the late edge is rejected before WeakMap registration");
+      assert.equal(observed.filesystemCalls, 0, "consumer filesystem work never begins after the selector refusal");
+      const edgeStats = lstatSync(seeded.H);
+      assert.equal(edgeStats.isFile(), true);
+      assert.equal(edgeStats.isSymbolicLink(), false);
+      assert.equal(edgeStats.mode & 0o7777, 0o600);
+      assert.equal(edgeStats.nlink, 1);
+      assert.equal(readFileSync(seeded.H).equals(admitted.chain.records.edge.bytes), true);
+
+      const after = filesystemTreeSnapshot(workspace);
+      const edgeLocator = path.relative(workspace, seeded.H).split(path.sep).join("/");
+      const beforeByLocator = new Map(before.map((entry) => [String(entry.locator), entry]));
+      const afterByLocator = new Map(after.map((entry) => [String(entry.locator), entry]));
+      assert.deepEqual(
+        [...afterByLocator.keys()].filter((locator) => !beforeByLocator.has(locator)),
+        [edgeLocator],
+        "the exact H file is the only new namespace member",
+      );
+      const edgeAncestors = new Set<string>();
+      for (let directory = path.posix.dirname(edgeLocator); directory !== "."; directory = path.posix.dirname(directory)) edgeAncestors.add(directory);
+      for (const [locator, expected] of beforeByLocator) {
+        const actual = afterByLocator.get(locator);
+        assert.ok(actual, `${locator}: the race must not remove an existing member`);
+        if (String(expected.kind) === "directory" && edgeAncestors.has(locator)) {
+          const { size: _expectedSize, ...expectedStable } = expected;
+          const { size: _actualSize, ...actualStable } = actual;
+          assert.deepEqual(actualStable, expectedStable, `${locator}: only the H dirent's consequent directory size may change`);
+        } else {
+          assert.deepEqual(actual, expected, `${locator}: the late-H refusal preserves unrelated bytes and identity`);
+        }
+      }
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-A predecessor terminal and close routing reuses one selected context without public nested selection", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const publicAuthority = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryAuthorityV1");
+    assert.equal(publicAuthority.split("selectCurrentEntryStoreContextV1()").length - 1, 1, "the public authority resolver selects once");
+    assert.match(publicAuthority, /return resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1\(context, input\);/);
+    const selectedAuthority = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1");
+    assert.doesNotMatch(selectedAuthority, /selectCurrentEntryStoreContextV1\(/, "the selected authority resolver cannot reselect");
+    const predecessor = topLevelFunctionRegionV1(source, "resolveTask12PredecessorAuthorityPairV1");
+    assert.match(predecessor, /name === "terminalSettlement"[\s\S]*?resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1\(context,/);
+    assert.match(predecessor, /name === "targetClose"[\s\S]*?resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1\(context,/);
+    assert.doesNotMatch(predecessor, /resolveInternalProductionRecoverySourceRunTerminalAuthorityV1\(/, "terminal settlement cannot call the public reselecting resolver");
+    assert.doesNotMatch(predecessor, /resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1\(/, "target close cannot call the public reselecting resolver");
+
+    const root = createFixture();
+    try {
+      instrumentPhase5bSelectionRaceAndPredecessorRoutingFixtureV1(root);
+      const result = runPhase5bPredecessorTerminalCloseRoutingFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        {
+          outcome: observed.outcome,
+          message: observed.message,
+          selectorCalls: observed.selectorCalls,
+          creatorCalls: observed.creatorCalls,
+          publicTerminalCalls: observed.publicTerminalCalls,
+          selectedTerminalCalls: observed.selectedTerminalCalls,
+          publicCloseCalls: observed.publicCloseCalls,
+          selectedCloseCalls: observed.selectedCloseCalls,
+        },
+        {
+          outcome: "returned",
+          message: null,
+          selectorCalls: 1,
+          creatorCalls: 1,
+          publicTerminalCalls: 0,
+          selectedTerminalCalls: 1,
+          publicCloseCalls: 0,
+          selectedCloseCalls: 1,
+        },
+      );
     } finally {
       removeFixture(root);
     }

@@ -1104,6 +1104,88 @@ export type InternalProductionCurrentEntryOperationPairV1 = Readonly<{
   operationHash: Sha256V1;
 }>;
 
+const selectedCurrentEntryStoreContextBrandV1: unique symbol = Symbol("selected-current-entry-store-context-v1");
+type SelectedCurrentEntryStoreContextV1 = Readonly<{
+  readonly [selectedCurrentEntryStoreContextBrandV1]: true;
+}>;
+const selectedCurrentEntryStoreContextStatesV1 = new WeakMap<SelectedCurrentEntryStoreContextV1,
+  Readonly<{
+    storeRoot: string;
+    operation: InternalProductionCurrentEntryOperationPairV1 | null;
+    selectionKind: "legacy-store-absent" | "legacy-operation-absent" | "legacy-edge-absent" | "successor-zero-progress" | "successor-pre-status" | "successor-progress";
+  }>
+>();
+
+function createSelectedCurrentEntryStoreContextV1(
+  state: Readonly<{
+    storeRoot: string;
+    operation: InternalProductionCurrentEntryOperationPairV1 | null;
+    selectionKind: "legacy-store-absent" | "legacy-operation-absent" | "legacy-edge-absent" | "successor-zero-progress" | "successor-pre-status" | "successor-progress";
+  }>,
+): SelectedCurrentEntryStoreContextV1 {
+  const context = Object.freeze({ [selectedCurrentEntryStoreContextBrandV1]: true as const });
+  selectedCurrentEntryStoreContextStatesV1.set(context, Object.freeze({
+    storeRoot: state.storeRoot,
+    operation: state.operation,
+    selectionKind: state.selectionKind,
+  }));
+  return context;
+}
+
+function requireSelectedCurrentEntryStoreContextStateV1(context: SelectedCurrentEntryStoreContextV1): Readonly<{ storeRoot: string; operation: InternalProductionCurrentEntryOperationPairV1 | null; selectionKind: "legacy-store-absent" | "legacy-operation-absent" | "legacy-edge-absent" | "successor-zero-progress" | "successor-pre-status" | "successor-progress"; }> {
+  const state = selectedCurrentEntryStoreContextStatesV1.get(context);
+  if (!state) currentEntryFail("selected current-entry store context is not registered");
+  return state;
+}
+
+async function selectCurrentEntryStoreContextV1(): Promise<SelectedCurrentEntryStoreContextV1> {
+  const storeRoot = fixedLegacyCurrentEntryRootV1();
+  const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
+  let state: Readonly<{
+    storeRoot: string;
+    operation: InternalProductionCurrentEntryOperationPairV1 | null;
+    selectionKind: "legacy-store-absent" | "legacy-operation-absent" | "legacy-edge-absent";
+  }>;
+  if (store === null) {
+    state = Object.freeze({ storeRoot, operation: null, selectionKind: "legacy-store-absent" });
+  } else {
+    const operation = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+      fixedLegacyCurrentEntryOperationPathV1(),
+      "fixed legacy current-entry operation",
+    );
+    if (operation === null) {
+      state = Object.freeze({ storeRoot, operation: null, selectionKind: "legacy-operation-absent" });
+    } else {
+      const pair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+      const edge = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyCurrentEntrySuccessorEdgePathV1(pair.operationHash),
+        "fixed legacy current-entry successor edge",
+      );
+      if (edge !== null) currentEntryFail("Phase5b-A refuses a present current-entry successor edge");
+      const reopened = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyCurrentEntryOperationPathV1(),
+        "fixed legacy current-entry operation",
+      );
+      if (
+        reopened === null
+        || !sameRegularMetadata(operation.observed.stats, reopened.observed.stats)
+        || !operation.observed.bytes.equals(reopened.observed.bytes)
+      ) currentEntryFail("fixed legacy current-entry operation changed during selection");
+      const edgeAfterOperationReopen = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyCurrentEntrySuccessorEdgePathV1(pair.operationHash),
+        "fixed legacy current-entry successor edge",
+      );
+      if (edgeAfterOperationReopen !== null) currentEntryFail("Phase5b-A refuses a current-entry successor edge that appeared during selection");
+      state = Object.freeze({
+        storeRoot,
+        operation: Object.freeze({ operationRef: pair.operationRef, operationHash: pair.operationHash }),
+        selectionKind: "legacy-edge-absent",
+      });
+    }
+  }
+  return createSelectedCurrentEntryStoreContextV1(state);
+}
+
 type CurrentAuthorityAuditV1 = Readonly<Record<string, unknown>>;
 type Migration31AuditDataV1 = Readonly<Record<string, unknown>>;
 type PendingSuccessorV1 = Readonly<Record<string, unknown>>;
@@ -1164,6 +1246,7 @@ export type InternalProductionCurrentEntryOperationV1 = Readonly<{
 }>;
 
 const CURRENT_ENTRY_STORE_DIRECTORY = "data/internal-production-baseline/current-entry-v1";
+const LEGACY_CURRENT_ENTRY_STORE_SEGMENTS_V1 = Object.freeze(["data", "internal-production-baseline", "current-entry-v1"]);
 const CURRENT_ENTRY_MAX_BYTES = 1_048_576;
 const EXACT_POISON_OPERATION_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
 const EXACT_POISON_OPERATION_REF_V1 = "setfarm://internal-production/current-entry-operation/sha256/90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
@@ -1451,11 +1534,14 @@ async function currentEntryPublisherPlannerV1(): Promise<NoReplacePlannerV1> {
   return loaded.planNoReplacePublisherRecoveryV1 as NoReplacePlannerV1;
 }
 
-function ensureCurrentEntryStore(): Readonly<{ directory: string; device: bigint }> {
+function ensureCurrentEntryStore(context: SelectedCurrentEntryStoreContextV1): Readonly<{ directory: string; device: bigint }> {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
   const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
   const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const workspaceSnapshot = directorySnapshot(workspace, "Setfarm workspace", repository.device);
-  const segments = CURRENT_ENTRY_STORE_DIRECTORY.split("/");
+  const relativeRoot = path.relative(workspace, state.storeRoot);
+  if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) currentEntryFail("selected current-entry store escaped the workspace");
+  const segments = relativeRoot.split(path.sep);
   let directory = workspace;
   for (const segment of segments) {
     directory = path.join(directory, segment);
@@ -1470,16 +1556,19 @@ function ensureCurrentEntryStore(): Readonly<{ directory: string; device: bigint
   return Object.freeze({ directory, device: workspaceSnapshot.device });
 }
 
-function readCurrentEntryStore(): Readonly<{ directory: string; device: bigint }>;
-function readCurrentEntryStore(allowAbsent: true): Readonly<{ directory: string; device: bigint }> | null;
-function readCurrentEntryStore(allowAbsent = false): Readonly<{ directory: string; device: bigint }> | null {
+function readCurrentEntryStore(context: SelectedCurrentEntryStoreContextV1): Readonly<{ directory: string; device: bigint }>;
+function readCurrentEntryStore(context: SelectedCurrentEntryStoreContextV1, allowAbsent: true): Readonly<{ directory: string; device: bigint }> | null;
+function readCurrentEntryStore(context: SelectedCurrentEntryStoreContextV1, allowAbsent = false): Readonly<{ directory: string; device: bigint }> | null {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
   const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
   const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
   const workspaceSnapshot = directorySnapshot(workspace, "Setfarm workspace", repository.device);
+  const relativeRoot = path.relative(workspace, state.storeRoot);
+  if (!relativeRoot || relativeRoot === ".." || relativeRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeRoot)) currentEntryFail("selected current-entry store escaped the workspace");
   let directory = workspace;
   let parentDirectory = workspace;
   let parentSnapshot = workspaceSnapshot;
-  for (const segment of CURRENT_ENTRY_STORE_DIRECTORY.split("/")) {
+  for (const segment of relativeRoot.split(path.sep)) {
     directory = path.join(directory, segment);
     try {
       lstatSync(directory, { bigint: true });
@@ -1616,11 +1705,11 @@ function normalizeExistingCurrentEntryFamily(
   }
 }
 
-async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promise<void> {
+async function publishCurrentEntryRecord(context: SelectedCurrentEntryStoreContextV1, basename: string, bytes: Buffer): Promise<void> {
   if (bytes.length === 0 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("record bytes exceed the cap");
   if (basename !== CURRENT_ENTRY_FILES.operation) currentEntryFail("publisher target family is invalid");
-  await validateCurrentEntryRecordBytes("operation", bytes);
-  const store = ensureCurrentEntryStore();
+  await validateCurrentEntryRecordBytes("operation", bytes, context);
+  const store = ensureCurrentEntryStore(context);
   const planner = await currentEntryPublisherPlannerV1();
   const directoryGuard = authenticateTask12ReceiptDirectoryChainV1(store.directory);
   const currentEntryWriterTarget = path.join(store.directory, "current-entry-store");
@@ -1650,7 +1739,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
       if (!unclassifiedInventory.includes(CURRENT_ENTRY_FILES[kind])) continue;
       const legacy = publisherEntry(store.directory, CURRENT_ENTRY_FILES[kind], store.device);
       if (legacy.linkCount !== 1) currentEntryFail(`legacy current-entry record ${CURRENT_ENTRY_FILES[kind]} has invalid identity`);
-      await validateCurrentEntryRecordBytes(kind, legacy.bytes);
+      await validateCurrentEntryRecordBytes(kind, legacy.bytes, context);
     }
     const publisherInventory = unclassifiedInventory.filter((name) => !legacyNames.has(name));
     if (publisherInventory.some((name) => !families.some((family) => family.pattern.test(name)))) currentEntryFail("current-entry store has an unknown or foreign dirent");
@@ -1667,7 +1756,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     for (const state of familyStates.filter((candidate) => candidate.family.kind !== "operation")) {
       for (const entry of state.entries) {
         try {
-          await validateCurrentEntryRecordBytes(state.family.kind, entry.bytes);
+          await validateCurrentEntryRecordBytes(state.family.kind, entry.bytes, context);
         } catch (error) {
           const invalidAuthenticatedSoleTemp = entry.name !== state.family.fixedName && state.entries.length === 1 && entry.linkCount === 1;
           if (!invalidAuthenticatedSoleTemp) throw error;
@@ -1679,7 +1768,7 @@ async function publishCurrentEntryRecord(basename: string, bytes: Buffer): Promi
     if (operationState) {
       for (const entry of operationState.entries) {
         try {
-          await validateCurrentEntryRecordBytes("operation", entry.bytes);
+          await validateCurrentEntryRecordBytes("operation", entry.bytes, context);
         } catch (error) {
           const invalidAuthenticatedSoleTemp = entry.name !== operationState.family.fixedName && operationState.entries.length === 1 && entry.linkCount === 1;
           if (!invalidAuthenticatedSoleTemp) throw error;
@@ -1803,28 +1892,33 @@ function strictCanonicalRecord(bytes: Buffer, label: string): Record<string, unk
   return value;
 }
 
-function fixedCurrentEntryPath(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Readonly<{ directory: string; basename: string; device: bigint }> {
-  const store = readCurrentEntryStore();
+function fixedCurrentEntryPath(context: SelectedCurrentEntryStoreContextV1, kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Readonly<{ directory: string; basename: string; device: bigint }> {
+  const store = readCurrentEntryStore(context);
   return Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES[kind] });
 }
 
-function currentEntryPrerequisiteRecordPathV1(
+function currentEntryPrerequisiteRecordPathAtRootV1(
+  storeRoot: string,
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
   hash: string,
 ): string {
   const exactHash = requireSha256(hash, `current-entry ${kind} record hash`);
-  return fixedWorkspaceAuthorityPathV1(
-    CURRENT_ENTRY_STORE_DIRECTORY,
-    "records",
-    CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1[kind],
-    "sha256",
-    exactHash.slice(0, 2),
-    `${exactHash}.json`,
-  );
+  return path.join(storeRoot, "records", CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1[kind], "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
 }
 
-function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(target: string): FileSnapshot | null {
-  const store = readCurrentEntryStore(true);
+function currentEntryPrerequisiteRecordPathV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  hash: string,
+): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  return currentEntryPrerequisiteRecordPathAtRootV1(state.storeRoot, kind, hash);
+}
+
+function readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(
+  store: Readonly<{ directory: string; device: bigint }> | null,
+  target: string,
+): FileSnapshot | null {
   if (store === null) return null;
   const relative = path.relative(store.directory, path.resolve(target));
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) currentEntryFail("current-entry authority record escaped its store");
@@ -1880,8 +1974,16 @@ function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(target: string): Fil
   return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });
 }
 
-function readCurrentEntryAuthorityRecordIfPresentV1(target: string): Buffer | null {
-  return readCurrentEntryAuthorityRecordSnapshotIfPresentV1(target)?.observed.bytes ?? null;
+function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context: SelectedCurrentEntryStoreContextV1, target: string): FileSnapshot | null {
+  return readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(readCurrentEntryStore(context, true), target);
+}
+
+function readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(target: string): FileSnapshot | null {
+  return readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(readFixedLegacyCurrentEntryStoreIfPresentV1(), target);
+}
+
+function readCurrentEntryAuthorityRecordIfPresentV1(context: SelectedCurrentEntryStoreContextV1, target: string): Buffer | null {
+  return readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context, target)?.observed.bytes ?? null;
 }
 
 type CurrentEntryPrerequisiteSnapshotV1 = Readonly<{
@@ -1890,26 +1992,47 @@ type CurrentEntryPrerequisiteSnapshotV1 = Readonly<{
 }>;
 
 function readCurrentEntryPrerequisiteRecordV1(
+  context: SelectedCurrentEntryStoreContextV1,
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
   hash: string,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Buffer {
-  const contentPath = currentEntryPrerequisiteRecordPathV1(kind, hash);
-  const content = readCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath);
+  const contentPath = currentEntryPrerequisiteRecordPathV1(context, kind, hash);
+  const content = readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context, contentPath);
   if (content !== null) {
     retained?.push(Object.freeze({ source: content, absentContentLocator: null }));
     return content.observed.bytes;
   }
-  const legacy = fixedCurrentEntryPath(kind);
+  const legacy = fixedCurrentEntryPath(context, kind);
   const legacyLocator = path.join(legacy.directory, legacy.basename);
   const legacySnapshot = Object.freeze({ locator: legacyLocator, observed: readTask12ReceiptStoreSnapshotV1(legacyLocator) });
-  if (readCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath) !== null) currentEntryFail("content record appeared during legacy fallback");
+  if (readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context, contentPath) !== null) currentEntryFail("content record appeared during legacy fallback");
   retained?.push(Object.freeze({ source: legacySnapshot, absentContentLocator: contentPath }));
   return legacySnapshot.observed.bytes;
 }
 
-async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Promise<void> {
-  const target = fixedCurrentEntryPath(kind);
+function readFixedLegacyCurrentEntryPrerequisiteRecordV1(
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  hash: string,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+): Buffer {
+  const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
+  if (store === null) currentEntryFail("fixed legacy current-entry store is absent");
+  const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(store.directory, kind, hash);
+  const content = readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath);
+  if (content !== null) {
+    retained?.push(Object.freeze({ source: content, absentContentLocator: null }));
+    return content.observed.bytes;
+  }
+  const legacyLocator = path.join(store.directory, CURRENT_ENTRY_FILES[kind]);
+  const legacySnapshot = Object.freeze({ locator: legacyLocator, observed: readTask12ReceiptStoreSnapshotV1(legacyLocator) });
+  if (readFixedLegacyCurrentEntryAuthorityRecordSnapshotIfPresentV1(contentPath) !== null) currentEntryFail("fixed legacy content record appeared during fallback");
+  retained?.push(Object.freeze({ source: legacySnapshot, absentContentLocator: contentPath }));
+  return legacySnapshot.observed.bytes;
+}
+
+async function validateStoredCurrentEntryFamily(context: SelectedCurrentEntryStoreContextV1, kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation"): Promise<void> {
+  const target = fixedCurrentEntryPath(context, kind);
   let body: Record<string, unknown>;
   try {
     body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), `stored ${kind}`);
@@ -1927,12 +2050,13 @@ async function validateStoredCurrentEntryFamily(kind: "authorityV3Migration31Aud
     parsePendingBootstrapHandoffMigrationBody(body, expected);
     return;
   }
-  await resolveInternalProductionCurrentEntryOperationV1(requirePair(Object.freeze({ operationRef: body.operationRef, operationHash: body.operationHash }), "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1);
+  await resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context, requirePair(Object.freeze({ operationRef: body.operationRef, operationHash: body.operationHash }), "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1);
 }
 
 async function validateCurrentEntryRecordBytes(
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration" | "operation",
   bytes: Buffer,
+  context?: SelectedCurrentEntryStoreContextV1,
 ): Promise<void> {
   const body = strictCanonicalRecord(bytes, `current-entry ${kind}`);
   if (kind === "authorityV3Migration31Audit") {
@@ -1946,7 +2070,8 @@ async function validateCurrentEntryRecordBytes(
     return;
   }
   const expected = requirePair(Object.freeze({ operationRef: body.operationRef, operationHash: body.operationHash }), "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
-  await parseCurrentEntryOperationBody(body, expected);
+  if (!context) currentEntryFail("current-entry operation validation requires a selected store context");
+  await parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1(context, body, expected);
 }
 
 function v31Pair(value: InternalProductionAuthorityV3Migration31AuditV1): InternalProductionAuthorityV3Migration31AuditPairV1 {
@@ -1977,6 +2102,13 @@ async function migration31Digests(): Promise<Readonly<{ semanticDigest: Sha256V1
 }
 
 export async function observeCurrentInternalProductionAuthorityV3Migration31AuditV1(): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
+}
+
+async function observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   const ports = await import("../db-pg.js") as Readonly<{
     auditCurrentInternalProductionAuthorityV3Migration31V1?: () => Promise<Readonly<{ authorityV3ContractSpineThroughMigration31: Migration31AuditDataV1; currentAuthorityAudit: CurrentAuthorityAuditV1 }>>;
   }>;
@@ -2011,14 +2143,21 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
   const bytes = await canonicalRecordBytes(value);
   await validateCurrentEntryRecordBytes("authorityV3Migration31Audit", bytes);
   publishLegacyZeroRecordV1(
-    currentEntryPrerequisiteRecordPathV1("authorityV3Migration31Audit", authorityV3Migration31AuditHash),
+    currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", authorityV3Migration31AuditHash),
     bytes,
     true,
   );
-  return resolveInternalProductionAuthorityV3Migration31AuditV1(v31Pair(value));
+  return resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, v31Pair(value));
 }
 
 export async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1(): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context);
+}
+
+async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
   const ports = await import("../db-pg.js") as Readonly<{
     inspectCurrentInternalProductionPendingBootstrapHandoffMigrationV1?: () => Promise<PendingSuccessorV1>;
   }>;
@@ -2041,26 +2180,39 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
   const bytes = await canonicalRecordBytes(value);
   await validateCurrentEntryRecordBytes("pendingBootstrapHandoffMigration", bytes);
   publishLegacyZeroRecordV1(
-    currentEntryPrerequisiteRecordPathV1("pendingBootstrapHandoffMigration", pendingBootstrapHandoffMigrationHash),
+    currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", pendingBootstrapHandoffMigrationHash),
     bytes,
     true,
   );
-  return resolveInternalProductionPendingBootstrapHandoffMigrationV1(pendingPair(value));
+  return resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, pendingPair(value));
 }
 
 export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
-  return resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(pair);
+  return resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(pair);
 }
 
-async function resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(
+async function resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
   const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, retained),
+    readFixedLegacyCurrentEntryPrerequisiteRecordV1("authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, retained),
+    "v31 audit",
+  );
+  return parseAuthorityV3Migration31AuditBody(body, expected);
+}
+
+async function resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  pair: InternalProductionAuthorityV3Migration31AuditPairV1,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+  const body = strictCanonicalRecord(
+    readCurrentEntryPrerequisiteRecordV1(context, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!, retained),
     "v31 audit",
   );
   return parseAuthorityV3Migration31AuditBody(body, expected);
@@ -2093,16 +2245,29 @@ async function parseAuthorityV3Migration31AuditBody(
 export async function resolveInternalProductionPendingBootstrapHandoffMigrationV1(
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
-  return resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(pair);
+  return resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(pair);
 }
 
-async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(
+async function resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
   retained?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
   const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
   const body = strictCanonicalRecord(
-    readCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, retained),
+    readFixedLegacyCurrentEntryPrerequisiteRecordV1("pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, retained),
+    "pending migration",
+  );
+  return parsePendingBootstrapHandoffMigrationBody(body, expected);
+}
+
+async function resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
+  retained?: CurrentEntryPrerequisiteSnapshotV1[],
+): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+  const body = strictCanonicalRecord(
+    readCurrentEntryPrerequisiteRecordV1(context, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!, retained),
     "pending migration",
   );
   return parsePendingBootstrapHandoffMigrationBody(body, expected);
@@ -2162,7 +2327,14 @@ function pbaPair(observation: ProductBuildAuthorityObservationV1): Readonly<{ de
 export async function observePreparedInternalProductionCurrentEntryOperationV1(): Promise<
   InternalProductionCurrentEntryOperationV1 | null
 > {
-  const store = readCurrentEntryStore(true);
+  const context = await selectCurrentEntryStoreContextV1();
+  return observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
+}
+
+async function observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<InternalProductionCurrentEntryOperationV1 | null> {
+  const store = readCurrentEntryStore(context, true);
   if (store === null) return null;
   const storeBefore = directorySnapshot(store.directory, "prepared current-entry store", store.device);
   const authorityDirectories = new Set<string>(CURRENT_ENTRY_AUTHORITY_DIRECTORIES_V1);
@@ -2203,7 +2375,7 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
       "operationHash",
       "setfarm://internal-production/current-entry-operation/sha256/",
     ) as InternalProductionCurrentEntryOperationPairV1;
-    operation = await parseCurrentEntryOperationBody(body, pair, prerequisiteSnapshots);
+    operation = await parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1(context, body, pair, prerequisiteSnapshots);
     if (prerequisiteSnapshots.length !== 2) currentEntryFail("prepared current-entry prerequisite snapshots are incomplete");
   }
   const finalEntries = readdirSync(store.directory).sort(compareBytes);
@@ -2227,7 +2399,7 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
     if (final.mode !== 0o600 || !sameRegularMetadata(retained.source.observed.stats, final.stats) || !retained.source.observed.bytes.equals(final.bytes)) {
       currentEntryFail("prepared current-entry prerequisite changed after validation");
     }
-    if (retained.absentContentLocator !== null && readCurrentEntryAuthorityRecordSnapshotIfPresentV1(retained.absentContentLocator) !== null) {
+    if (retained.absentContentLocator !== null && readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context, retained.absentContentLocator) !== null) {
       currentEntryFail("prepared current-entry content appeared after legacy fallback");
     }
   }
@@ -2236,23 +2408,60 @@ export async function observePreparedInternalProductionCurrentEntryOperationV1()
 }
 
 function fixedLegacyCurrentEntryRootV1(): string {
-  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY);
+  return fixedWorkspaceAuthorityPathV1(...LEGACY_CURRENT_ENTRY_STORE_SEGMENTS_V1);
 }
 
 function fixedLegacyCurrentEntryOperationPathV1(): string {
   return path.join(fixedLegacyCurrentEntryRootV1(), CURRENT_ENTRY_FILES.operation);
 }
 
-function fixedLegacyExactPoisonSuccessorEdgePathV1(): string {
+function fixedLegacyCurrentEntrySuccessorEdgePathV1(operationHash: string): string {
+  const exactHash = requireSha256(operationHash, "fixed legacy current-entry successor edge operation hash");
   return path.join(
     fixedLegacyCurrentEntryRootV1(),
     "records",
     "current-entry-store-successor-edges",
     "by-predecessor-operation",
     "sha256",
-    EXACT_POISON_OPERATION_HASH_V1.slice(0, 2),
-    `${EXACT_POISON_OPERATION_HASH_V1}.json`,
+    exactHash.slice(0, 2),
+    `${exactHash}.json`,
   );
+}
+
+function fixedLegacyExactPoisonSuccessorEdgePathV1(): string {
+  return fixedLegacyCurrentEntrySuccessorEdgePathV1(EXACT_POISON_OPERATION_HASH_V1);
+}
+
+function readFixedLegacyCurrentEntryStoreIfPresentV1(): Readonly<{ directory: string; device: bigint }> | null {
+  const repository = directorySnapshot(fixedRepositoryRoot(), "Setfarm repository");
+  const workspacePath = CODE_OWNED_WORKSPACE_ROOT_V1;
+  const workspace = directorySnapshot(workspacePath, "Setfarm workspace", repository.device);
+  let directory = workspacePath;
+  let parentDirectory = workspacePath;
+  let parentSnapshot = workspace;
+  for (const segment of LEGACY_CURRENT_ENTRY_STORE_SEGMENTS_V1) {
+    directory = path.join(directory, segment);
+    try {
+      lstatSync(directory, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      assertDirectory(parentDirectory, parentSnapshot, `parent of absent fixed legacy current-entry store ${segment}`);
+      try {
+        lstatSync(directory, { bigint: true });
+      } catch (reobservedError) {
+        if (!isEnoent(reobservedError)) throw reobservedError;
+        assertDirectory(parentDirectory, parentSnapshot, `parent of absent fixed legacy current-entry store ${segment}`);
+        return null;
+      }
+      currentEntryFail(`absent fixed legacy current-entry store ${segment} appeared while observed`);
+    }
+    const observed = directorySnapshot(directory, `fixed legacy current-entry store ${segment}`, workspace.device);
+    if (observed.identity.mode !== 0o700) currentEntryFail(`fixed legacy current-entry store ${segment} has wrong mode`);
+    assertDirectory(parentDirectory, parentSnapshot, `parent of fixed legacy current-entry store ${segment}`);
+    parentDirectory = directory;
+    parentSnapshot = observed;
+  }
+  return Object.freeze({ directory, device: workspace.device });
 }
 
 function readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target: string, label: string): FileSnapshot | null {
@@ -4647,27 +4856,34 @@ async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
   }
 }
 
+function prepareCurrentEntryOperationPathV1(context: SelectedCurrentEntryStoreContextV1): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  return path.join(state.storeRoot, CURRENT_ENTRY_FILES.operation);
+}
+
 export async function prepareInternalProductionCurrentEntryOperationV1(): Promise<InternalProductionCurrentEntryOperationV1> {
   await resumeExactPoisonQuarantineBeforeSelectionV1();
-  const existingBytes = readCurrentEntryAuthorityRecordIfPresentV1(fixedLegacyCurrentEntryOperationPathV1());
+  const context = await selectCurrentEntryStoreContextV1();
+  const operationPath = prepareCurrentEntryOperationPathV1(context);
+  const existingBytes = readCurrentEntryAuthorityRecordIfPresentV1(context, operationPath);
   if (existingBytes !== null) {
     const existing = strictCanonicalRecord(existingBytes, "current-entry operation");
     const existingPair = Object.freeze({ operationRef: existing.operationRef, operationHash: existing.operationHash });
-    const resolved = await resolveInternalProductionCurrentEntryOperationV1(
+    const resolved = await resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context,
       requirePair(existingPair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1,
     );
-    const controllerLock = await acquireTask12ControllerLockV1(resolved.operationHash);
-    try { return await ensureTask12PreparedCurrentEntryStatusV1(resolved); }
+    const controllerLock = await acquireTask12ControllerLockV1(context, resolved.operationHash);
+    try { return await ensureTask12PreparedCurrentEntryStatusV1(context, resolved); }
     finally { releaseTask12ControllerLockV1(controllerLock); }
   }
   const s0 = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const pba0 = await observeCurrentPba();
-  const v31 = await observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
-  const pending = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+  const v31 = await observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
+  const pending = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context);
   const s1 = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const pba1 = await observeCurrentPba();
-  const v31Again = await observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
-  const pendingAgain = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+  const v31Again = await observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
+  const pendingAgain = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context);
   if (
     canonicalComparable(s0) !== canonicalComparable(s1)
     || canonicalComparable(pba0) !== canonicalComparable(pba1)
@@ -4687,15 +4903,15 @@ export async function prepareInternalProductionCurrentEntryOperationV1(): Promis
   };
   const operationHash = hashCanonicalJson(body);
   const value: InternalProductionCurrentEntryOperationV1 = Object.freeze({ ...body, operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash });
-  await publishCurrentEntryRecord(CURRENT_ENTRY_FILES.operation, await canonicalRecordBytes(value));
-  const resolved = await resolveInternalProductionCurrentEntryOperationV1(operationPair(value));
-  const finalV31 = await observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
-  const finalPending = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+  await publishCurrentEntryRecord(context, CURRENT_ENTRY_FILES.operation, await canonicalRecordBytes(value));
+  const resolved = await resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context, operationPair(value));
+  const finalV31 = await observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
+  const finalPending = await observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context);
   const finalSource = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const finalPba = await observeCurrentPba();
   if (canonicalComparable(finalSource) !== canonicalComparable(s0) || canonicalComparable(finalPba) !== canonicalComparable(pba0) || canonicalComparable(v31Pair(finalV31)) !== canonicalComparable(v31Pair(v31)) || canonicalComparable(pendingPair(finalPending)) !== canonicalComparable(pendingPair(pending))) currentEntryFail("current-entry final equality fence failed");
-  const controllerLock = await acquireTask12ControllerLockV1(resolved.operationHash);
-  try { return await ensureTask12PreparedCurrentEntryStatusV1(resolved); }
+  const controllerLock = await acquireTask12ControllerLockV1(context, resolved.operationHash);
+  try { return await ensureTask12PreparedCurrentEntryStatusV1(context, resolved); }
   finally { releaseTask12ControllerLockV1(controllerLock); }
 }
 
@@ -4703,14 +4919,48 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
   pair: InternalProductionCurrentEntryOperationPairV1,
 ): Promise<InternalProductionCurrentEntryOperationV1> {
   const expected = requirePair(pair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
-  const target = fixedCurrentEntryPath("operation");
+  const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
+  if (store === null) currentEntryFail("fixed legacy current-entry store is absent");
+  const target = Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES.operation });
   const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "current-entry operation");
-  return parseCurrentEntryOperationBody(body, expected);
+  return parseCurrentEntryOperationBodyCoreV1(
+    body,
+    expected,
+    (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, retained),
+    (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, retained),
+  );
 }
 
-async function parseCurrentEntryOperationBody(
+async function resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  pair: InternalProductionCurrentEntryOperationPairV1,
+): Promise<InternalProductionCurrentEntryOperationV1> {
+  const expected = requirePair(pair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const target = fixedCurrentEntryPath(context, "operation");
+  const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "current-entry operation");
+  return parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1(context, body, expected);
+}
+
+async function parseCurrentEntryOperationBodyWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
   body: Record<string, unknown>,
   expected: Readonly<Record<string, string>>,
+  retainedPrerequisites?: CurrentEntryPrerequisiteSnapshotV1[],
+): Promise<InternalProductionCurrentEntryOperationV1> {
+  return parseCurrentEntryOperationBodyCoreV1(
+    body,
+    expected,
+    (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, nested, retained),
+    (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, nested, retained),
+    retainedPrerequisites,
+  );
+}
+
+async function parseCurrentEntryOperationBodyCoreV1(
+  body: Record<string, unknown>,
+  expected: Readonly<Record<string, string>>,
+  resolveV31: (pair: InternalProductionAuthorityV3Migration31AuditPairV1, retained?: CurrentEntryPrerequisiteSnapshotV1[]) => Promise<InternalProductionAuthorityV3Migration31AuditV1>,
+  resolvePending: (pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1, retained?: CurrentEntryPrerequisiteSnapshotV1[]) => Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1>,
   retainedPrerequisites?: CurrentEntryPrerequisiteSnapshotV1[],
 ): Promise<InternalProductionCurrentEntryOperationV1> {
   if (!hasExactKeys(body, ["schema", "purpose", "controllerSource", "productBuildAuthorityV2DeliveryEvidence", "productBuildAuthorityV2Observation", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "operationRef", "operationHash"])) currentEntryFail("current-entry operation fields are invalid");
@@ -4721,8 +4971,8 @@ async function parseCurrentEntryOperationBody(
   const hash = requireSha256(body.operationHash, "current-entry operation hash");
   if (hashCanonicalJson(projection) !== hash || body.operationRef !== `setfarm://internal-production/current-entry-operation/sha256/${hash}` || expected.operationHash !== hash || expected.operationRef !== body.operationRef) currentEntryFail("current-entry operation pair/hash is invalid");
   const source = requireSource(body.controllerSource);
-  const v31 = await resolveInternalProductionAuthorityV3Migration31AuditWithSnapshotV1(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1, retainedPrerequisites);
-  const pending = await resolveInternalProductionPendingBootstrapHandoffMigrationWithSnapshotV1(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1, retainedPrerequisites);
+  const v31 = await resolveV31(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1, retainedPrerequisites);
+  const pending = await resolvePending(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1, retainedPrerequisites);
   if (canonicalComparable(v31.controllerSource) !== canonicalComparable(source) || canonicalComparable(pending.controllerSource) !== canonicalComparable(source)) currentEntryFail("current-entry nested source is crossed");
   const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{ parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (value: unknown) => Readonly<Record<string, unknown>> }>;
   if (!isPlainRecord(body.productBuildAuthorityV2Observation) || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"]) || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli" || typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("stored PBA observation is invalid");
@@ -6768,12 +7018,14 @@ const TASK12_VERIFICATION_PREFIX_V1 = "setfarm://internal-production/current-ent
 const TASK12_FRESH_OBSERVATION_PREFIX_V1 = "setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/";
 const TASK12_PRE_MUTATION_PREFIX_V1 = "setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/";
 
-function task12RecordPathV1(kind: "statuses" | "entry-authorities" | "fresh-runtime-and-owner-observations" | "verifications", hash: string): string {
-  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+function task12RecordPathV1(context: SelectedCurrentEntryStoreContextV1, kind: "statuses" | "entry-authorities" | "fresh-runtime-and-owner-observations" | "verifications", hash: string): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  return path.join(state.storeRoot, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
-function task12OperationDirectoryV1(operationHash: string): string {
-  return fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+function task12OperationDirectoryV1(context: SelectedCurrentEntryStoreContextV1, operationHash: string): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  return path.join(state.storeRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
 }
 
 const TASK12_MIGRATION_ROOT_V1 = "data/internal-production-baseline/pre-manifest-migration32-v1";
@@ -6888,12 +7140,13 @@ async function publishTask12MigrationStatusV1(
 }
 
 async function task12CasCurrentStatusV1(
+  context: SelectedCurrentEntryStoreContextV1,
   operationHash: string,
   expected: InternalProductionCurrentEntryAuthorityStatusPairV1,
   successor: InternalProductionCurrentEntryAuthorityStatusPairV1,
 ): Promise<void> {
   if (!activeTask12ControllerOperationsV1.has(operationHash)) currentEntryFail("current-entry status CAS requires the authenticated controller lock");
-  const operationDirectory = task12OperationDirectoryV1(operationHash);
+  const operationDirectory = task12OperationDirectoryV1(context, operationHash);
   const locator = path.join(operationDirectory, "01-current-status.pair.json");
   task12ReceiptExpectedPredecessorCasV1(locator, await canonicalRecordBytes(expected), await canonicalRecordBytes(successor));
 }
@@ -6915,10 +7168,10 @@ function observeTask12ControllerProcessV1(pid: number): Readonly<{ processStartT
   return Object.freeze({ processStartTimeEpochMs, lstart, command, processIdentityHash });
 }
 
-async function acquireTask12ControllerLockV1(operationHash: string): Promise<Task12ControllerLockHandleV1> {
+async function acquireTask12ControllerLockV1(context: SelectedCurrentEntryStoreContextV1, operationHash: string): Promise<Task12ControllerLockHandleV1> {
   requireSha256(operationHash, "current-entry controller operation hash");
   if (activeTask12ControllerOperationsV1.has(operationHash)) currentEntryFail("current-entry controller lock is not reentrant");
-  const directory = task12OperationDirectoryV1(operationHash);
+  const directory = task12OperationDirectoryV1(context, operationHash);
   const target = path.join(directory, "current-entry-controller.lock");
   const directoryGuard = ensureTask12ReceiptPrivateDirectoryV1(directory);
   directoryGuard.close();
@@ -6939,6 +7192,7 @@ function releaseTask12ControllerLockV1(handle: Task12ControllerLockHandleV1): vo
 }
 
 async function advanceTask12CurrentStatusV1(
+  context: SelectedCurrentEntryStoreContextV1,
   predecessor: InternalProductionCurrentEntryAuthorityStatusV1,
   state: InternalProductionCurrentEntryAuthorityStatusV1["state"],
   patch: Readonly<Record<string, unknown>>,
@@ -6949,19 +7203,29 @@ async function advanceTask12CurrentStatusV1(
   const statusHash = hashCanonicalJson(body);
   const statusRef = `${TASK12_STATUS_PREFIX_V1}${statusHash}`;
   const value = recursivelyFreeze({ ...body, statusRef, statusHash }) as InternalProductionCurrentEntryAuthorityStatusV1;
-  publishLegacyZeroRecordV1(task12RecordPathV1("statuses", statusHash), await canonicalRecordBytes(value));
-  await task12CasCurrentStatusV1(String(predecessor.operationHash), { statusRef: predecessor.statusRef, statusHash: predecessor.statusHash }, { statusRef, statusHash });
-  return resolveInternalProductionCurrentEntryAuthorityStatusV1({ statusRef, statusHash });
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "statuses", statusHash), await canonicalRecordBytes(value));
+  await task12CasCurrentStatusV1(context, String(predecessor.operationHash), { statusRef: predecessor.statusRef, statusHash: predecessor.statusHash }, { statusRef, statusHash });
+  return resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, { statusRef, statusHash });
+}
+
+function task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  hash: string,
+): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  const exactHash = requireSha256(hash, "prepared pre-mutation loaded runtime service authority hash");
+  return path.join(state.storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
 }
 
 async function ensureTask12PreparedCurrentEntryStatusV1(
+  context: SelectedCurrentEntryStoreContextV1,
   operation: InternalProductionCurrentEntryOperationV1,
 ): Promise<InternalProductionCurrentEntryOperationV1> {
-  const operationDirectory = task12OperationDirectoryV1(operation.operationHash);
+  const operationDirectory = task12OperationDirectoryV1(context, operation.operationHash);
   const statusLocator = path.join(operationDirectory, "01-current-status.pair.json");
   try {
     const pairBytes = readTask12ReceiptStoreBytesV1(statusLocator);
-    await resolveInternalProductionCurrentEntryAuthorityStatusV1(strictCanonicalRecord(pairBytes, "prepared current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1);
+    await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, strictCanonicalRecord(pairBytes, "prepared current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1);
     return operation;
   } catch (error) {
     if (!isEnoent(error)) throw error;
@@ -6982,7 +7246,7 @@ async function ensureTask12PreparedCurrentEntryStatusV1(
   const preMutationLoadedRuntimeServiceAuthorityHash = hashCanonicalJson(preMutationBody);
   const preMutationLoadedRuntimeServiceAuthorityRef = `${TASK12_PRE_MUTATION_PREFIX_V1}${preMutationLoadedRuntimeServiceAuthorityHash}`;
   const preMutation = recursivelyFreeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
-  const preMutationTarget = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
+  const preMutationTarget = task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(context, preMutationLoadedRuntimeServiceAuthorityHash);
   publishLegacyZeroRecordV1(preMutationTarget, await canonicalRecordBytes(preMutation));
   publishLegacyZeroRecordV1(path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json"), await canonicalRecordBytes({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash }));
   const source = operation.controllerSource;
@@ -7011,15 +7275,15 @@ async function ensureTask12PreparedCurrentEntryStatusV1(
   const statusHash = hashCanonicalJson(statusBody);
   const statusRef = `${TASK12_STATUS_PREFIX_V1}${statusHash}`;
   const status = recursivelyFreeze({ ...statusBody, statusRef, statusHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1("statuses", statusHash), await canonicalRecordBytes(status));
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "statuses", statusHash), await canonicalRecordBytes(status));
   publishLegacyZeroRecordV1(statusLocator, await canonicalRecordBytes({ statusRef, statusHash }));
   return operation;
 }
 
-async function resolveTask12RecordV1(pair: unknown, refKey: string, hashKey: string, prefix: string, kind: "statuses" | "entry-authorities" | "fresh-runtime-and-owner-observations" | "verifications", label: string): Promise<Record<string, unknown>> {
+async function resolveTask12RecordV1(context: SelectedCurrentEntryStoreContextV1, pair: unknown, refKey: string, hashKey: string, prefix: string, kind: "statuses" | "entry-authorities" | "fresh-runtime-and-owner-observations" | "verifications", label: string): Promise<Record<string, unknown>> {
   const exact = requirePair(pair, refKey, hashKey, prefix);
   const hash = exact[hashKey]!;
-  const target = task12RecordPathV1(kind, hash);
+  const target = task12RecordPathV1(context, kind, hash);
   const bytes = readTask12ReceiptStoreBytesV1(target);
   const value = strictCanonicalRecord(bytes, label);
   const body = { ...value }; delete body[refKey]; delete body[hashKey];
@@ -7043,15 +7307,28 @@ function absentTask12StatusV1(): InternalProductionCurrentEntryAuthorityStatusV1
   return recursivelyFreeze({ ...body, statusRef: `${TASK12_STATUS_PREFIX_V1}${statusHash}`, statusHash });
 }
 
+function task12CurrentStatusPathV1(context: SelectedCurrentEntryStoreContextV1, operationHash: string): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  const exactHash = requireSha256(operationHash, "current-entry current-status operation hash");
+  return path.join(state.storeRoot, "operations", "sha256", exactHash.slice(0, 2), exactHash, "01-current-status.pair.json");
+}
+
 export async function observeInternalProductionCurrentEntryAuthorityStatusV1(
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  const context = await selectCurrentEntryStoreContextV1();
+  return observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context);
+}
+
+async function observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!operation) return absentTask12StatusV1();
-  const locator = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "01-current-status.pair.json");
+  const locator = task12CurrentStatusPathV1(context, operation.operationHash);
   try {
     const bytes = readTask12ReceiptStoreBytesV1(locator);
     const pair = strictCanonicalRecord(bytes, "current-entry status locator") as InternalProductionCurrentEntryAuthorityStatusPairV1;
-    return resolveInternalProductionCurrentEntryAuthorityStatusV1(pair);
+    return resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, pair);
   } catch (error) {
     if (isEnoent(error)) currentEntryFail("prepared operation has no current status");
     throw error;
@@ -7061,7 +7338,15 @@ export async function observeInternalProductionCurrentEntryAuthorityStatusV1(
 export async function resolveInternalProductionCurrentEntryAuthorityStatusV1(
   input: InternalProductionCurrentEntryAuthorityStatusPairV1,
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
-  const status = await resolveTask12RecordV1(input, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1, "statuses", "current-entry status");
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: InternalProductionCurrentEntryAuthorityStatusPairV1,
+): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
+  const status = await resolveTask12RecordV1(context, input, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1, "statuses", "current-entry status");
   const states = new Set(["absent", "operation_prepared", "pre_schema_spawner_rebinding", "pre_manifest_bootstrap_sealed", "migration_applying", "manifest_activating", "spawner_admission_transitioning", "prepared", "canary_running", "settled", "ready", "blocked"]);
   if (status.schema !== "setfarm.internal-production-current-entry-authority-status.v1" || typeof status.state !== "string" || !states.has(status.state)) currentEntryFail("current-entry status discriminator is invalid");
   if (status.state === "blocked") {
@@ -7133,7 +7418,15 @@ export async function resolveInternalProductionCurrentEntryAuthorityStatusV1(
 export async function resolveInternalProductionCurrentEntryAuthorityV1(
   input: InternalProductionCurrentEntryAuthorityPairV1,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const authority = await resolveTask12RecordV1(input, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1, "entry-authorities", "current-entry authority");
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: InternalProductionCurrentEntryAuthorityPairV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  const authority = await resolveTask12RecordV1(context, input, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1, "entry-authorities", "current-entry authority");
   if (authority.schema !== "setfarm.internal-production-current-entry-authority.v1") currentEntryFail("current-entry authority schema is invalid");
   return authority;
 }
@@ -7170,7 +7463,17 @@ const TASK12_RESOLVED_PAIR_SPECS_V1 = Object.freeze([
   ["ownerAdmissionFenceRelease", "ownerAdmissionFenceReleaseRef", "ownerAdmissionFenceReleaseHash", "setfarm://internal-production/global-owner-admission-fence-release/sha256/"],
 ] as const);
 
+function task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  hash: string,
+): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  const exactHash = requireSha256(hash, "predecessor pre-mutation loaded runtime service authority hash");
+  return path.join(state.storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
+}
+
 async function resolveTask12PredecessorAuthorityPairV1(
+  context: SelectedCurrentEntryStoreContextV1,
   name: string,
   pair: Readonly<Record<string, unknown>>,
   authority: Readonly<Record<string, unknown>>,
@@ -7180,8 +7483,8 @@ async function resolveTask12PredecessorAuthorityPairV1(
     await module.resolveProductBuildAuthorityV2DeliveryEvidenceV1(pair as unknown as Parameters<typeof module.resolveProductBuildAuthorityV2DeliveryEvidenceV1>[0]);
     return;
   }
-  if (name === "authorityV3Migration31Audit") { await resolveInternalProductionAuthorityV3Migration31AuditV1(pair as InternalProductionAuthorityV3Migration31AuditPairV1); return; }
-  if (name === "pendingBootstrapHandoffMigration") { await resolveInternalProductionPendingBootstrapHandoffMigrationV1(pair as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1); return; }
+  if (name === "authorityV3Migration31Audit") { await resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, pair as InternalProductionAuthorityV3Migration31AuditPairV1); return; }
+  if (name === "pendingBootstrapHandoffMigration") { await resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, pair as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1); return; }
   if (name === "authorityV3FocusedTestReceipt") {
     const module = await import("./product-build-authority-v2-delivery-evidence-v1.js");
     const observation = await module.resolveProductBuildAuthorityV2DeliveryEvidenceV1(
@@ -7195,11 +7498,11 @@ async function resolveTask12PredecessorAuthorityPairV1(
     ) currentEntryFail("current-entry focused-test receipt is crossed");
     return;
   }
-  if (name === "currentEntryOperation") { await resolveInternalProductionCurrentEntryOperationV1(pair as InternalProductionCurrentEntryOperationPairV1); return; }
+  if (name === "currentEntryOperation") { await resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context, pair as InternalProductionCurrentEntryOperationPairV1); return; }
   if (name === "preMutationLoadedRuntimeServiceAuthority") {
     const exact = requirePair(pair, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
     const hash = String(exact.preMutationLoadedRuntimeServiceAuthorityHash);
-    const target = fixedWorkspaceAuthorityPathV1(CURRENT_ENTRY_STORE_DIRECTORY, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+    const target = task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(context, hash);
     const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority");
     const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
     if (
@@ -7250,8 +7553,8 @@ async function resolveTask12PredecessorAuthorityPairV1(
     await (resolver as (pair: unknown) => Promise<unknown>)(actualPair);
     return;
   }
-  if (name === "terminalSettlement") { await resolveInternalProductionRecoverySourceRunTerminalAuthorityV1({ terminalSourceRunRef: String(pair.terminalSettlementRef), terminalSourceRunHash: String(pair.terminalSettlementHash) }); return; }
-  if (name === "targetClose") { await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1(pair as Readonly<{ targetReservationPairCloseRef: string; targetReservationPairCloseHash: string }>); return; }
+  if (name === "terminalSettlement") { await resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalSourceRunRef: String(pair.terminalSettlementRef), terminalSourceRunHash: String(pair.terminalSettlementHash) }); return; }
+  if (name === "targetClose") { await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, pair as Readonly<{ targetReservationPairCloseRef: string; targetReservationPairCloseHash: string }>); return; }
   if (name === "loadedRuntimeServiceAuthority") {
     const embedded = authority.loadedRuntimeServiceAuthority;
     if (!isPlainRecord(embedded) || !isPlainRecord(embedded.body)) currentEntryFail("loaded runtime service authority body is absent");
@@ -7280,6 +7583,7 @@ async function resolveTask12PredecessorAuthorityPairV1(
 }
 
 async function deriveTask12ResolvedAuthorityPairsV1(
+  context: SelectedCurrentEntryStoreContextV1,
   authority: Readonly<Record<string, unknown>>,
   entryAuthority: InternalProductionCurrentEntryAuthorityPairV1,
   currentEntryStatus: InternalProductionCurrentEntryAuthorityStatusPairV1,
@@ -7290,18 +7594,18 @@ async function deriveTask12ResolvedAuthorityPairsV1(
   for (const [name, refKey, hashKey, prefix] of TASK12_RESOLVED_PAIR_SPECS_V1) {
     const pair = requirePair(authority[name], refKey, hashKey, prefix);
     const exactPair = recursivelyFreeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] });
-    await resolveTask12PredecessorAuthorityPairV1(name, exactPair, authority);
+    await resolveTask12PredecessorAuthorityPairV1(context, name, exactPair, authority);
     orderedPairs.push(Object.freeze({ name, pair: exactPair }));
   }
-  await resolveInternalProductionCurrentEntryAuthorityV1(entryAuthority);
+  await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, entryAuthority);
   orderedPairs.push(Object.freeze({ name: "currentEntryAuthority", pair: recursivelyFreeze({ entryAuthorityRef: entryAuthority.entryAuthorityRef, entryAuthorityHash: entryAuthority.entryAuthorityHash }) }));
-  await resolveInternalProductionCurrentEntryAuthorityStatusV1(currentEntryStatus);
+  await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, currentEntryStatus);
   orderedPairs.push(Object.freeze({ name: "currentEntryStatus", pair: recursivelyFreeze({ statusRef: currentEntryStatus.statusRef, statusHash: currentEntryStatus.statusHash }) }));
   const zero = requirePair(completeZeroOwnerCensusObservation, "observationRef", "observationHash", COMPLETE_ZERO_PREFIX_V1);
   await resolveInternalProductionCompleteZeroOwnerCensusObservationV1({ observationRef: String(zero.observationRef), observationHash: String(zero.observationHash) });
   orderedPairs.push(Object.freeze({ name: "completeZeroOwnerCensusObservation", pair: recursivelyFreeze({ observationRef: zero.observationRef, observationHash: zero.observationHash }) }));
   const fresh = requirePair(freshRuntimeAndOwnerObservation, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1);
-  await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1({ freshRuntimeAndOwnerObservationRef: String(fresh.freshRuntimeAndOwnerObservationRef), freshRuntimeAndOwnerObservationHash: String(fresh.freshRuntimeAndOwnerObservationHash) });
+  await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, { freshRuntimeAndOwnerObservationRef: String(fresh.freshRuntimeAndOwnerObservationRef), freshRuntimeAndOwnerObservationHash: String(fresh.freshRuntimeAndOwnerObservationHash) });
   orderedPairs.push(Object.freeze({ name: "freshRuntimeAndOwnerObservation", pair: recursivelyFreeze({ freshRuntimeAndOwnerObservationRef: fresh.freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash: fresh.freshRuntimeAndOwnerObservationHash }) }));
   if (orderedPairs.length !== 33) currentEntryFail("current-entry resolved authority set cardinality is invalid");
   return recursivelyFreeze(orderedPairs);
@@ -7310,15 +7614,24 @@ async function deriveTask12ResolvedAuthorityPairsV1(
 export async function resolveInternalProductionCurrentEntryVerificationV1(
   input: InternalProductionCurrentEntryVerificationPairV1,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const verification = await resolveTask12RecordV1(input, "currentEntryVerificationRef", "currentEntryVerificationHash", TASK12_VERIFICATION_PREFIX_V1, "verifications", "current-entry verification");
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: InternalProductionCurrentEntryVerificationPairV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  const verification = await resolveTask12RecordV1(context, input, "currentEntryVerificationRef", "currentEntryVerificationHash", TASK12_VERIFICATION_PREFIX_V1, "verifications", "current-entry verification");
   if (!hasExactKeys(verification, ["schema", "currentStatus", "currentEntryStatus", "entryAuthority", "resolvedAuthoritySetHash", "freshRuntimeAndOwnerObservation", "currentEntryVerificationRef", "currentEntryVerificationHash"]) || verification.schema !== "setfarm.internal-production-current-entry-verification.v1" || verification.currentStatus !== "current") currentEntryFail("current-entry verification shape is invalid");
   if (!isPlainRecord(verification.currentEntryStatus) || !isPlainRecord(verification.entryAuthority) || !isPlainRecord(verification.freshRuntimeAndOwnerObservation)) currentEntryFail("current-entry verification dependency pairs are invalid");
-  const status = await resolveInternalProductionCurrentEntryAuthorityStatusV1(verification.currentEntryStatus as InternalProductionCurrentEntryAuthorityStatusPairV1);
+  const status = await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, verification.currentEntryStatus as InternalProductionCurrentEntryAuthorityStatusPairV1);
   if (status.state !== "ready" || canonicalComparable(status.entryAuthority) !== canonicalComparable(verification.entryAuthority)) currentEntryFail("current-entry verification status is no longer ready/current");
-  const authority = await resolveInternalProductionCurrentEntryAuthorityV1(verification.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1);
-  const fresh = await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1(verification.freshRuntimeAndOwnerObservation as Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>);
+  const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, verification.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1);
+  const fresh = await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, verification.freshRuntimeAndOwnerObservation as Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>);
   if (canonicalComparable(fresh.currentEntryStatus) !== canonicalComparable(verification.currentEntryStatus) || canonicalComparable(fresh.entryAuthority) !== canonicalComparable(verification.entryAuthority)) currentEntryFail("current-entry verification fresh observation is crossed");
   const orderedPairs = await deriveTask12ResolvedAuthorityPairsV1(
+    context,
     authority,
     verification.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1,
     verification.currentEntryStatus as InternalProductionCurrentEntryAuthorityStatusPairV1,
@@ -7335,7 +7648,15 @@ export async function resolveInternalProductionCurrentEntryVerificationV1(
 export async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1(
   input: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const value = await resolveTask12RecordV1(input, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1, "fresh-runtime-and-owner-observations", "current-entry fresh runtime/owner observation");
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>,
+): Promise<Readonly<Record<string, unknown>>> {
+  const value = await resolveTask12RecordV1(context, input, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1, "fresh-runtime-and-owner-observations", "current-entry fresh runtime/owner observation");
   if (!hasExactKeys(value, ["schema", "currentEntryStatus", "entryAuthority", "serviceCensus", "completeZeroOwnerCensusObservation", "completeZeroOwnerCensusObservationBody", "controllerRuntimeSourceRelations", "observedAt", "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash"]) || value.schema !== "setfarm.internal-production-current-entry-fresh-runtime-and-owner-observation.v1" || typeof value.observedAt !== "string" || !RFC3339_MILLIS.test(value.observedAt)) currentEntryFail("current-entry fresh runtime/owner observation shape is invalid");
   if (!isPlainRecord(value.completeZeroOwnerCensusObservation) || !isPlainRecord(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero evidence is invalid");
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);
@@ -7579,7 +7900,6 @@ export async function applyInternalProductionBaselineBootstrapHandoffMigrationV1
   return receiptPair;
 }
 
-const RECOVERY_SOURCE_BOOTSTRAP_ROOT_V1 = "data/internal-production-baseline/current-entry-v1/recovery-source-bootstrap-v1";
 const RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1 = "recovery-source-bootstrap-pending-input.json";
 const RECOVERY_SOURCE_BOOTSTRAP_VISIBILITY_FILE_V1 = "recovery-source-bootstrap-visibility-head.json";
 const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
@@ -7590,13 +7910,14 @@ const RECOVERY_SOURCE_BOOTSTRAP_PROMPT_MANIFEST_HASH_V1 = hashCanonicalJson({
   task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
 });
 
-function recoverySourceBootstrapRootV1(): string {
-  return fixedWorkspaceAuthorityPathV1(RECOVERY_SOURCE_BOOTSTRAP_ROOT_V1);
+function recoverySourceBootstrapRootV1(context: SelectedCurrentEntryStoreContextV1): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  return path.join(state.storeRoot, "recovery-source-bootstrap-v1");
 }
 
-function recoverySourceBootstrapRecordPathV1(kind: string, hash: string): string {
+function recoverySourceBootstrapRecordPathV1(context: SelectedCurrentEntryStoreContextV1, kind: string, hash: string): string {
   requireSha256(hash, "recovery source bootstrap record hash");
-  return path.join(recoverySourceBootstrapRootV1(), "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+  return path.join(recoverySourceBootstrapRootV1(context), "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function readRecoverySourceBootstrapRecordV1(target: string, label: string): Record<string, unknown> {
@@ -7620,8 +7941,16 @@ export async function resolveInternalProductionRecoverySourceBootstrapPendingInp
   pendingInputRef: string;
   pendingInputHash: string;
 }>): Promise<InternalProductionRecoverySourceBootstrapPendingInputV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ pendingInputRef: string; pendingInputHash: string }>,
+): Promise<InternalProductionRecoverySourceBootstrapPendingInputV1> {
   const pair = requirePair(input, "pendingInputRef", "pendingInputHash", "setfarm://internal-production/recovery-source-bootstrap-pending-input/sha256/");
-  const value = readRecoverySourceBootstrapRecordV1(path.join(recoverySourceBootstrapRootV1(), RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1), "recovery source bootstrap pending input");
+  const value = readRecoverySourceBootstrapRecordV1(path.join(recoverySourceBootstrapRootV1(context), RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1), "recovery source bootstrap pending input");
   return validateRecoverySourceBootstrapPendingInputV1(value, pair as Readonly<{ pendingInputRef: string; pendingInputHash: string }>);
 }
 
@@ -7657,25 +7986,25 @@ function validateRecoverySourceBootstrapVisibilityHeadV1(value: Record<string, u
   return recursivelyFreeze(value as unknown as RecoverySourceBootstrapVisibilityHeadV1);
 }
 
-function recoverySourceBootstrapVisibilityPairV1(): RecoverySourceBootstrapVisibilityHeadV1 {
-  const pointer = readRecoverySourceBootstrapRecordV1(path.join(recoverySourceBootstrapRootV1(), RECOVERY_SOURCE_BOOTSTRAP_VISIBILITY_FILE_V1), "recovery source bootstrap visibility pointer");
+function recoverySourceBootstrapVisibilityPairV1(context: SelectedCurrentEntryStoreContextV1): RecoverySourceBootstrapVisibilityHeadV1 {
+  const pointer = readRecoverySourceBootstrapRecordV1(path.join(recoverySourceBootstrapRootV1(context), RECOVERY_SOURCE_BOOTSTRAP_VISIBILITY_FILE_V1), "recovery source bootstrap visibility pointer");
   const pair = requirePair(pointer, "visibilityHeadRef", "visibilityHeadHash", "setfarm://internal-production/recovery-source-bootstrap-visibility-head/sha256/");
-  const head = validateRecoverySourceBootstrapVisibilityHeadV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("visibility-heads", String(pair.visibilityHeadHash)), "recovery source bootstrap visibility head"));
+  const head = validateRecoverySourceBootstrapVisibilityHeadV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "visibility-heads", String(pair.visibilityHeadHash)), "recovery source bootstrap visibility head"));
   if (head.visibilityHeadRef !== pair.visibilityHeadRef || head.visibilityHeadHash !== pair.visibilityHeadHash) currentEntryFail("recovery source bootstrap visibility pointer is crossed");
   return head;
 }
 
-async function publishRecoverySourceBootstrapVisibilityV1(head: RecoverySourceBootstrapVisibilityHeadV1, predecessor: RecoverySourceBootstrapVisibilityHeadV1 | null): Promise<void> {
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("visibility-heads", head.visibilityHeadHash), await canonicalRecordBytes(head));
-  const target = path.join(recoverySourceBootstrapRootV1(), RECOVERY_SOURCE_BOOTSTRAP_VISIBILITY_FILE_V1);
+async function publishRecoverySourceBootstrapVisibilityV1(context: SelectedCurrentEntryStoreContextV1, head: RecoverySourceBootstrapVisibilityHeadV1, predecessor: RecoverySourceBootstrapVisibilityHeadV1 | null): Promise<void> {
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "visibility-heads", head.visibilityHeadHash), await canonicalRecordBytes(head));
+  const target = path.join(recoverySourceBootstrapRootV1(context), RECOVERY_SOURCE_BOOTSTRAP_VISIBILITY_FILE_V1);
   const pointerBytes = await canonicalRecordBytes({ visibilityHeadRef: head.visibilityHeadRef, visibilityHeadHash: head.visibilityHeadHash });
   if (predecessor === null) {
     publishLegacyZeroRecordV1(target, pointerBytes);
   } else {
-    const current = recoverySourceBootstrapVisibilityPairV1();
+    const current = recoverySourceBootstrapVisibilityPairV1(context);
     if (current.visibilityHeadRef !== predecessor.visibilityHeadRef || current.visibilityHeadHash !== predecessor.visibilityHeadHash) currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
     task12ReceiptExpectedPredecessorCasV1(target, await canonicalRecordBytes({ visibilityHeadRef: predecessor.visibilityHeadRef, visibilityHeadHash: predecessor.visibilityHeadHash }), pointerBytes);
-    const adopted = recoverySourceBootstrapVisibilityPairV1();
+    const adopted = recoverySourceBootstrapVisibilityPairV1(context);
     if (adopted.visibilityHeadHash !== head.visibilityHeadHash) currentEntryFail("recovery source bootstrap visibility CAS did not reopen");
   }
 }
@@ -7689,31 +8018,39 @@ function validateRecoverySourceBootstrapOperationV1(value: Record<string, unknow
   return recursivelyFreeze(value as unknown as InternalProductionRecoverySourceBootstrapOperationV1);
 }
 
-function readRecoverySourceBootstrapOperationV1(hash: string): InternalProductionRecoverySourceBootstrapOperationV1 {
-  return validateRecoverySourceBootstrapOperationV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("operations", hash), "recovery source bootstrap operation"));
+function readRecoverySourceBootstrapOperationV1(context: SelectedCurrentEntryStoreContextV1, hash: string): InternalProductionRecoverySourceBootstrapOperationV1 {
+  return validateRecoverySourceBootstrapOperationV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "operations", hash), "recovery source bootstrap operation"));
 }
 
 export async function resolveInternalProductionRecoverySourceBootstrapOperationV1(input: Readonly<{
   operationRef: string;
   operationHash: string;
 }>): Promise<InternalProductionRecoverySourceBootstrapOperationV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionRecoverySourceBootstrapOperationWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionRecoverySourceBootstrapOperationWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ operationRef: string; operationHash: string }>,
+): Promise<InternalProductionRecoverySourceBootstrapOperationV1> {
   const pair = requirePair(
     input,
     "operationRef",
     "operationHash",
     "setfarm://internal-production/recovery-source-bootstrap-operation/sha256/",
   );
-  const operation = readRecoverySourceBootstrapOperationV1(String(pair.operationHash));
+  const operation = readRecoverySourceBootstrapOperationV1(context, String(pair.operationHash));
   if (operation.operationRef !== pair.operationRef || operation.operationHash !== pair.operationHash) {
     currentEntryFail("recovery source bootstrap operation pair is crossed");
   }
-  const pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputV1({ pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash });
-  const intent = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("start-intents", operation.startIntentHash), "recovery source bootstrap start intent");
+  const pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, { pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash });
+  const intent = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "start-intents", operation.startIntentHash), "recovery source bootstrap start intent");
   const intentKeys = ["schema", "purpose", "repository", "workflow", "protocol", "promptManifestHash", "pendingInputRef", "pendingInputHash", "baseSourceSha", "baseSourceTreeHash", "buildHash", "activationPreflightHash", "releaseAdmissionHash", "targetSourceRunReservationRef", "targetSourceRunReservationHash", "targetRunReservationRef", "targetRunReservationHash", "targetRunLaunchCompositeHash", "ownerAdmissionFenceRef", "ownerAdmissionFenceHash", "startIntentRef", "startIntentHash"];
   if (!hasExactKeys(intent, intentKeys) || intent.schema !== "setfarm.internal-production-recovery-source-bootstrap-start-intent.v1") currentEntryFail("recovery source bootstrap start intent shape is invalid");
   const intentBody = { ...intent }; delete intentBody.startIntentRef; delete intentBody.startIntentHash;
   if (hashCanonicalJson(intentBody) !== operation.startIntentHash || intent.startIntentRef !== operation.startIntentRef || intent.startIntentHash !== operation.startIntentHash) currentEntryFail("recovery source bootstrap start intent pair is crossed");
-  const outbox = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("start-outboxes", operation.startOutboxHash), "recovery source bootstrap start outbox");
+  const outbox = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "start-outboxes", operation.startOutboxHash), "recovery source bootstrap start outbox");
   const outboxKeys = ["schema", "kind", "purpose", "repository", "workflow", "protocol", "pendingInputRef", "pendingInputHash", "startIntentRef", "startIntentHash", "targetRunLaunchCompositeHash", "startOutboxRef", "startOutboxHash"];
   if (!hasExactKeys(outbox, outboxKeys) || outbox.schema !== "setfarm.internal-production-recovery-source-bootstrap-start-outbox.v1" || outbox.kind !== "recovery-source-bootstrap") currentEntryFail("recovery source bootstrap start outbox shape is invalid");
   const outboxBody = { ...outbox }; delete outboxBody.startOutboxRef; delete outboxBody.startOutboxHash;
@@ -7739,14 +8076,22 @@ export async function resolveInternalProductionRecoverySourceRunTerminalAuthorit
   terminalSourceRunRef: string;
   terminalSourceRunHash: string;
 }>): Promise<InternalProductionRecoverySourceRunTerminalAuthorityV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ terminalSourceRunRef: string; terminalSourceRunHash: string }>,
+): Promise<InternalProductionRecoverySourceRunTerminalAuthorityV1> {
   const pair = requirePair(input, "terminalSourceRunRef", "terminalSourceRunHash", "setfarm://internal-production/recovery-source-run-terminal-authority/sha256/");
-  const value = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("terminal-source-runs", String(pair.terminalSourceRunHash)), "recovery source-run terminal authority");
+  const value = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "terminal-source-runs", String(pair.terminalSourceRunHash)), "recovery source-run terminal authority");
   const keys = ["schema", "operationRef", "operationHash", "targetSourceRunReservationRef", "targetSourceRunReservationHash", "targetRunLaunchCompositeHash", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash", "unrelatedReservationCount", "unrelatedOwnerCount", "terminalOwnerRef", "terminalOwnerHash", "terminalSourceRunRef", "terminalSourceRunHash"];
   if (!hasExactKeys(value, keys) || value.schema !== "setfarm.internal-production-recovery-source-run-terminal-authority.v1" || value.unrelatedReservationCount !== 0 || value.unrelatedOwnerCount !== 0) currentEntryFail("recovery source-run terminal authority shape is invalid");
   const body = { ...value }; delete body.terminalSourceRunRef; delete body.terminalSourceRunHash;
   const hash = requireSha256(value.terminalSourceRunHash, "recovery source-run terminal authority hash");
   if (hashCanonicalJson(body) !== hash || value.terminalSourceRunRef !== `setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${hash}` || pair.terminalSourceRunRef !== value.terminalSourceRunRef || pair.terminalSourceRunHash !== hash) currentEntryFail("recovery source-run terminal authority pair is crossed");
-  const operation = readRecoverySourceBootstrapOperationV1(requireSha256(value.operationHash, "recovery source-run operation hash"));
+  const operation = readRecoverySourceBootstrapOperationV1(context, requireSha256(value.operationHash, "recovery source-run operation hash"));
   if (operation.operationRef !== value.operationRef || operation.targetSourceRunReservationRef !== value.targetSourceRunReservationRef || operation.targetSourceRunReservationHash !== value.targetSourceRunReservationHash || operation.targetRunLaunchCompositeHash !== value.targetRunLaunchCompositeHash) currentEntryFail("recovery source-run terminal authority operation is crossed");
   return recursivelyFreeze(value as unknown as InternalProductionRecoverySourceRunTerminalAuthorityV1);
 }
@@ -7755,14 +8100,22 @@ export async function resolveInternalProductionRecoveryRunLaunchTerminalAuthorit
   terminalRunLaunchRef: string;
   terminalRunLaunchHash: string;
 }>): Promise<InternalProductionRecoveryRunLaunchTerminalAuthorityV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ terminalRunLaunchRef: string; terminalRunLaunchHash: string }>,
+): Promise<InternalProductionRecoveryRunLaunchTerminalAuthorityV1> {
   const pair = requirePair(input, "terminalRunLaunchRef", "terminalRunLaunchHash", "setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/");
-  const value = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1("terminal-run-launches", String(pair.terminalRunLaunchHash)), "recovery run-launch terminal authority");
+  const value = readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapRecordPathV1(context, "terminal-run-launches", String(pair.terminalRunLaunchHash)), "recovery run-launch terminal authority");
   const keys = ["schema", "operationRef", "operationHash", "targetRunReservationRef", "targetRunReservationHash", "targetRunLaunchCompositeHash", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash", "runReservationTerminalOwnerRef", "runReservationTerminalOwnerHash", "terminalRunLaunchRef", "terminalRunLaunchHash"];
   if (!hasExactKeys(value, keys) || value.schema !== "setfarm.internal-production-recovery-run-launch-terminal-authority.v1") currentEntryFail("recovery run-launch terminal authority shape is invalid");
   const body = { ...value }; delete body.terminalRunLaunchRef; delete body.terminalRunLaunchHash;
   const hash = requireSha256(value.terminalRunLaunchHash, "recovery run-launch terminal authority hash");
   if (hashCanonicalJson(body) !== hash || value.terminalRunLaunchRef !== `setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/${hash}` || pair.terminalRunLaunchRef !== value.terminalRunLaunchRef || pair.terminalRunLaunchHash !== hash) currentEntryFail("recovery run-launch terminal authority pair is crossed");
-  const operation = readRecoverySourceBootstrapOperationV1(requireSha256(value.operationHash, "recovery run-launch operation hash"));
+  const operation = readRecoverySourceBootstrapOperationV1(context, requireSha256(value.operationHash, "recovery run-launch operation hash"));
   if (operation.operationRef !== value.operationRef || operation.targetRunReservationRef !== value.targetRunReservationRef || operation.targetRunReservationHash !== value.targetRunReservationHash || operation.targetRunLaunchCompositeHash !== value.targetRunLaunchCompositeHash) currentEntryFail("recovery run-launch terminal authority operation is crossed");
   return recursivelyFreeze(value as unknown as InternalProductionRecoveryRunLaunchTerminalAuthorityV1);
 }
@@ -7771,9 +8124,17 @@ export async function resolveInternalProductionRecoverySourceBootstrapRunReceipt
   sourceRunRef: string;
   sourceRunHash: string;
 }>): Promise<InternalProductionRecoverySourceBootstrapRunReceiptV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ sourceRunRef: string; sourceRunHash: string }>,
+): Promise<InternalProductionRecoverySourceBootstrapRunReceiptV1> {
   const pair = requirePair(input, "sourceRunRef", "sourceRunHash", "setfarm://internal-production/recovery-source-bootstrap-run-receipt/sha256/");
   const value = readRecoverySourceBootstrapRecordV1(
-    recoverySourceBootstrapRecordPathV1("run-receipts", String(pair.sourceRunHash)),
+    recoverySourceBootstrapRecordPathV1(context, "run-receipts", String(pair.sourceRunHash)),
     "recovery source bootstrap run receipt",
   );
   const keys = [
@@ -7790,10 +8151,10 @@ export async function resolveInternalProductionRecoverySourceBootstrapRunReceipt
   const body = { ...value }; delete body.sourceRunRef; delete body.sourceRunHash;
   const sourceRunHash = requireSha256(value.sourceRunHash, "recovery source bootstrap run receipt hash");
   if (hashCanonicalJson(body) !== sourceRunHash || value.sourceRunRef !== `setfarm://internal-production/recovery-source-bootstrap-run-receipt/sha256/${sourceRunHash}` || pair.sourceRunRef !== value.sourceRunRef || pair.sourceRunHash !== sourceRunHash) currentEntryFail("recovery source bootstrap run receipt pair is crossed");
-  const operation = await resolveInternalProductionRecoverySourceBootstrapOperationV1({ operationRef: String(value.operationRef), operationHash: String(value.operationHash) });
-  const sourceTerminal = await resolveInternalProductionRecoverySourceRunTerminalAuthorityV1({ terminalSourceRunRef: String(value.terminalSourceRunRef), terminalSourceRunHash: String(value.terminalSourceRunHash) });
-  const runTerminal = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1({ terminalRunLaunchRef: String(value.terminalRunLaunchRef), terminalRunLaunchHash: String(value.terminalRunLaunchHash) });
-  const pairClose = await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1({ targetReservationPairCloseRef: String(value.targetReservationPairCloseRef), targetReservationPairCloseHash: String(value.targetReservationPairCloseHash) });
+  const operation = await resolveInternalProductionRecoverySourceBootstrapOperationWithSelectedCurrentEntryStoreContextV1(context, { operationRef: String(value.operationRef), operationHash: String(value.operationHash) });
+  const sourceTerminal = await resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalSourceRunRef: String(value.terminalSourceRunRef), terminalSourceRunHash: String(value.terminalSourceRunHash) });
+  const runTerminal = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalRunLaunchRef: String(value.terminalRunLaunchRef), terminalRunLaunchHash: String(value.terminalRunLaunchHash) });
+  const pairClose = await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, { targetReservationPairCloseRef: String(value.targetReservationPairCloseRef), targetReservationPairCloseHash: String(value.targetReservationPairCloseHash) });
   const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
   const resolveRelease = db.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1;
   if (typeof resolveRelease !== "function" || resolveRelease.length !== 1) currentEntryFail("recovery source bootstrap fence release resolver is unavailable");
@@ -7820,17 +8181,19 @@ export async function resolveInternalProductionRecoverySourceBootstrapRunReceipt
   return recursivelyFreeze(value as unknown as InternalProductionRecoverySourceBootstrapRunReceiptV1);
 }
 
-function recoverySourceBootstrapPairClosePathV1(hash: string): string {
-  requireSha256(hash, "recovery source bootstrap pair-close hash");
-  return fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1/records/source-run-launch-target-reservation-pair-closes/sha256", hash.slice(0, 2), `${hash}.json`);
+function recoverySourceBootstrapPairClosePathV1(context: SelectedCurrentEntryStoreContextV1, hash: string): string {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  const exactHash = requireSha256(hash, "recovery source bootstrap pair-close hash");
+  return path.join(state.storeRoot, "records", "source-run-launch-target-reservation-pair-closes", "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
 }
 
 async function publishRecoverySourceBootstrapPairCloseV1(
+  context: SelectedCurrentEntryStoreContextV1,
   value: InternalProductionSourceRunLaunchTargetReservationPairCloseV1,
 ): Promise<InternalProductionSourceRunLaunchTargetReservationPairCloseV1> {
   const validated = validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(value);
-  publishLegacyZeroRecordV1(recoverySourceBootstrapPairClosePathV1(validated.targetReservationPairCloseHash), await canonicalRecordBytes(validated));
-  return resolveInternalProductionSourceRunLaunchTargetReservationPairCloseV1({
+  publishLegacyZeroRecordV1(recoverySourceBootstrapPairClosePathV1(context, validated.targetReservationPairCloseHash), await canonicalRecordBytes(validated));
+  return resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, {
     targetReservationPairCloseRef: validated.targetReservationPairCloseRef,
     targetReservationPairCloseHash: validated.targetReservationPairCloseHash,
   });
@@ -7840,8 +8203,16 @@ export async function resolveInternalProductionSourceRunLaunchTargetReservationP
   targetReservationPairCloseRef: string;
   targetReservationPairCloseHash: string;
 }>): Promise<InternalProductionSourceRunLaunchTargetReservationPairCloseV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, input);
+}
+
+async function resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  input: Readonly<{ targetReservationPairCloseRef: string; targetReservationPairCloseHash: string }>,
+): Promise<InternalProductionSourceRunLaunchTargetReservationPairCloseV1> {
   const pair = requirePair(input, "targetReservationPairCloseRef", "targetReservationPairCloseHash", "setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/");
-  const value = validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapPairClosePathV1(String(pair.targetReservationPairCloseHash)), "recovery source bootstrap pair close"));
+  const value = validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(readRecoverySourceBootstrapRecordV1(recoverySourceBootstrapPairClosePathV1(context, String(pair.targetReservationPairCloseHash)), "recovery source bootstrap pair close"));
   if (value.targetReservationPairCloseRef !== pair.targetReservationPairCloseRef || value.targetReservationPairCloseHash !== pair.targetReservationPairCloseHash) currentEntryFail("recovery source bootstrap pair-close pair is crossed");
   return value;
 }
@@ -7864,42 +8235,49 @@ function recoverySourceBootstrapStatusV1(body: Record<string, unknown>): Interna
 }
 
 export async function observeInternalProductionRecoverySourceBootstrapStatusV1(): Promise<InternalProductionRecoverySourceBootstrapStatusV1> {
+  const context = await selectCurrentEntryStoreContextV1();
+  return observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
+}
+
+async function observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<InternalProductionRecoverySourceBootstrapStatusV1> {
   let head: RecoverySourceBootstrapVisibilityHeadV1;
-  try { head = recoverySourceBootstrapVisibilityPairV1(); }
+  try { head = recoverySourceBootstrapVisibilityPairV1(context); }
   catch (error) {
     if (!isEnoent(error)) throw error;
     return recoverySourceBootstrapStatusV1({ state: "absent", pendingInputRef: null, pendingInputHash: null, ...RECOVERY_SOURCE_BOOTSTRAP_STATUS_NULLS_V1, visibilityHeadRef: null, visibilityHeadHash: null });
   }
-  const pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputV1({ pendingInputRef: head.pendingInputRef, pendingInputHash: head.pendingInputHash });
+  const pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, { pendingInputRef: head.pendingInputRef, pendingInputHash: head.pendingInputHash });
   if (head.state === "pending-input") return recoverySourceBootstrapStatusV1({ state: "pending-input", pendingInputRef: pending.pendingInputRef, pendingInputHash: pending.pendingInputHash, ...RECOVERY_SOURCE_BOOTSTRAP_STATUS_NULLS_V1, visibilityHeadRef: head.visibilityHeadRef, visibilityHeadHash: head.visibilityHeadHash });
-  const operation = readRecoverySourceBootstrapOperationV1(String(head.operationHash));
+  const operation = readRecoverySourceBootstrapOperationV1(context, String(head.operationHash));
   const prepared = { state: head.state, pendingInputRef: pending.pendingInputRef, pendingInputHash: pending.pendingInputHash, targetSourceRunReservationRef: operation.targetSourceRunReservationRef, targetSourceRunReservationHash: operation.targetSourceRunReservationHash, targetRunReservationRef: operation.targetRunReservationRef, targetRunReservationHash: operation.targetRunReservationHash, targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash, ownerAdmissionFenceRef: operation.ownerAdmissionFenceRef, ownerAdmissionFenceHash: operation.ownerAdmissionFenceHash, startIntentRef: operation.startIntentRef, startIntentHash: operation.startIntentHash, startOutboxRef: operation.startOutboxRef, startOutboxHash: operation.startOutboxHash, operationRef: operation.operationRef, operationHash: operation.operationHash };
   if (head.state === "prepared") return recoverySourceBootstrapStatusV1({ ...prepared, runId: null, operationRunBindingHash: null, reciprocalRunOperationBindingHash: null, terminalOwnerRef: null, terminalOwnerHash: null, terminalSourceRunRef: null, terminalSourceRunHash: null, terminalRunLaunchRef: null, terminalRunLaunchHash: null, targetReservationPairCloseRef: null, targetReservationPairCloseHash: null, fenceReleaseRef: null, fenceReleaseHash: null, sourceRunRef: null, sourceRunHash: null, visibilityHeadRef: head.visibilityHeadRef, visibilityHeadHash: head.visibilityHeadHash });
   if (head.state === "terminal") {
-    const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptV1({ sourceRunRef: String(head.sourceRunRef), sourceRunHash: String(head.sourceRunHash) });
+    const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(context, { sourceRunRef: String(head.sourceRunRef), sourceRunHash: String(head.sourceRunHash) });
     if (receipt.operationRef !== operation.operationRef || receipt.operationHash !== operation.operationHash) currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
     return recoverySourceBootstrapStatusV1({ ...prepared, runId: receipt.runId, operationRunBindingHash: receipt.operationRunBindingHash, reciprocalRunOperationBindingHash: receipt.reciprocalRunOperationBindingHash, terminalOwnerRef: receipt.terminalOwnerRef, terminalOwnerHash: receipt.terminalOwnerHash, terminalSourceRunRef: receipt.terminalSourceRunRef, terminalSourceRunHash: receipt.terminalSourceRunHash, terminalRunLaunchRef: receipt.terminalRunLaunchRef, terminalRunLaunchHash: receipt.terminalRunLaunchHash, targetReservationPairCloseRef: receipt.targetReservationPairCloseRef, targetReservationPairCloseHash: receipt.targetReservationPairCloseHash, fenceReleaseRef: receipt.fenceReleaseRef, fenceReleaseHash: receipt.fenceReleaseHash, sourceRunRef: receipt.sourceRunRef, sourceRunHash: receipt.sourceRunHash, visibilityHeadRef: head.visibilityHeadRef, visibilityHeadHash: head.visibilityHeadHash });
   }
   currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
 }
 
-async function prepareRecoverySourceBootstrapHeldLockV1(): Promise<InternalProductionRecoverySourceBootstrapOperationV1> {
+async function prepareRecoverySourceBootstrapHeldLockV1(context: SelectedCurrentEntryStoreContextV1): Promise<InternalProductionRecoverySourceBootstrapOperationV1> {
   let pending: InternalProductionRecoverySourceBootstrapPendingInputV1;
   const pendingBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-pending-input.v1" as const, purpose: "recovery-d-source-delivery-v1" as const, repository: "setfarm" as const, workflow: "feature-dev" as const, protocol: "v3" as const, promptManifestHash: RECOVERY_SOURCE_BOOTSTRAP_PROMPT_MANIFEST_HASH_V1 };
   const pendingInputHash = hashCanonicalJson(pendingBody);
   const pendingInputRef = `setfarm://internal-production/recovery-source-bootstrap-pending-input/sha256/${pendingInputHash}`;
   const pendingValue = recursivelyFreeze({ ...pendingBody, pendingInputRef, pendingInputHash });
-  publishLegacyZeroRecordV1(path.join(recoverySourceBootstrapRootV1(), RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1), await canonicalRecordBytes(pendingValue));
-  pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputV1({ pendingInputRef, pendingInputHash });
+  publishLegacyZeroRecordV1(path.join(recoverySourceBootstrapRootV1(context), RECOVERY_SOURCE_BOOTSTRAP_PENDING_FILE_V1), await canonicalRecordBytes(pendingValue));
+  pending = await resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, { pendingInputRef, pendingInputHash });
   let visibility: RecoverySourceBootstrapVisibilityHeadV1;
-  try { visibility = recoverySourceBootstrapVisibilityPairV1(); }
+  try { visibility = recoverySourceBootstrapVisibilityPairV1(context); }
   catch (error) {
     if (!isEnoent(error)) throw error;
     visibility = createRecoverySourceBootstrapVisibilityHeadV1({ state: "pending-input", predecessorVisibilityHeadRef: null, predecessorVisibilityHeadHash: null, pendingInputRef, pendingInputHash, operationRef: null, operationHash: null, sourceRunRef: null, sourceRunHash: null });
-    await publishRecoverySourceBootstrapVisibilityV1(visibility, null);
+    await publishRecoverySourceBootstrapVisibilityV1(context, visibility, null);
   }
   if (visibility.pendingInputRef !== pending.pendingInputRef || visibility.pendingInputHash !== pending.pendingInputHash) currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
-  if (visibility.state === "prepared") return readRecoverySourceBootstrapOperationV1(String(visibility.operationHash));
+  if (visibility.state === "prepared") return readRecoverySourceBootstrapOperationV1(context, String(visibility.operationHash));
   if (visibility.state !== "pending-input") currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
   const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
   const acquire = db.acquireInternalProductionSourceRunLaunchOwnerAdmissionFenceV1;
@@ -7915,32 +8293,33 @@ async function prepareRecoverySourceBootstrapHeldLockV1(): Promise<InternalProdu
   const fence = acquired.fence; const sourceReservation = acquired.sourceRunReservation; const runReservation = acquired.runReservation; const family = fence.targetFamily as Record<string, unknown>;
   const intentBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-start-intent.v1", purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", protocol: "v3", promptManifestHash: pending.promptManifestHash, pendingInputRef, pendingInputHash, baseSourceSha: protocolAfter.compilerReleaseSha, baseSourceTreeHash: protocolAfter.baseSourceTreeHash, buildHash: protocolAfter.buildHash, activationPreflightHash: protocolAfter.activationPreflightHash, releaseAdmissionHash: protocolAfter.releaseAdmissionHash, targetSourceRunReservationRef: sourceReservation.reservationRef, targetSourceRunReservationHash: sourceReservation.reservationHash, targetRunReservationRef: runReservation.reservationRef, targetRunReservationHash: runReservation.reservationHash, targetRunLaunchCompositeHash: family.targetRunLaunchCompositeHash, ownerAdmissionFenceRef: fence.fenceRef, ownerAdmissionFenceHash: fence.fenceHash };
   const startIntentHash = hashCanonicalJson(intentBody); const startIntentRef = `setfarm://internal-production/recovery-source-bootstrap-start-intent/sha256/${startIntentHash}`; const intent = recursivelyFreeze({ ...intentBody, startIntentRef, startIntentHash });
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("start-intents", startIntentHash), await canonicalRecordBytes(intent));
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "start-intents", startIntentHash), await canonicalRecordBytes(intent));
   const outboxBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-start-outbox.v1", kind: "recovery-source-bootstrap", purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", protocol: "v3", pendingInputRef, pendingInputHash, startIntentRef, startIntentHash, targetRunLaunchCompositeHash: family.targetRunLaunchCompositeHash };
   const startOutboxHash = hashCanonicalJson(outboxBody); const startOutboxRef = `setfarm://internal-production/recovery-source-bootstrap-start-outbox/sha256/${startOutboxHash}`; const outbox = recursivelyFreeze({ ...outboxBody, startOutboxRef, startOutboxHash });
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("start-outboxes", startOutboxHash), await canonicalRecordBytes(outbox));
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "start-outboxes", startOutboxHash), await canonicalRecordBytes(outbox));
   const operationBody = { schema: "setfarm.internal-production-recovery-source-bootstrap-operation.v1" as const, purpose: "recovery-d-source-delivery-v1" as const, repository: "setfarm" as const, workflow: "feature-dev" as const, protocol: "v3" as const, promptManifestHash: pending.promptManifestHash, pendingInputRef, pendingInputHash, baseSourceSha: String(protocolAfter.compilerReleaseSha), baseSourceTreeHash: String(protocolAfter.baseSourceTreeHash), buildHash: String(protocolAfter.buildHash), activationPreflightHash: String(protocolAfter.activationPreflightHash), releaseAdmissionHash: String(protocolAfter.releaseAdmissionHash), targetSourceRunReservationRef: String(sourceReservation.reservationRef), targetSourceRunReservationHash: String(sourceReservation.reservationHash), targetRunReservationRef: String(runReservation.reservationRef), targetRunReservationHash: String(runReservation.reservationHash), targetRunLaunchCompositeHash: String(family.targetRunLaunchCompositeHash), ownerAdmissionFenceRef: String(fence.fenceRef), ownerAdmissionFenceHash: String(fence.fenceHash), startIntentRef, startIntentHash, startOutboxRef, startOutboxHash };
   const operationHash = hashCanonicalJson(operationBody); const operationRef = `setfarm://internal-production/recovery-source-bootstrap-operation/sha256/${operationHash}`; const operation = recursivelyFreeze({ ...operationBody, operationRef, operationHash });
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("operations", operationHash), await canonicalRecordBytes(operation));
-  const resolved = readRecoverySourceBootstrapOperationV1(operationHash);
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "operations", operationHash), await canonicalRecordBytes(operation));
+  const resolved = readRecoverySourceBootstrapOperationV1(context, operationHash);
   const prepared = createRecoverySourceBootstrapVisibilityHeadV1({ state: "prepared", predecessorVisibilityHeadRef: visibility.visibilityHeadRef, predecessorVisibilityHeadHash: visibility.visibilityHeadHash, pendingInputRef, pendingInputHash, operationRef, operationHash, sourceRunRef: null, sourceRunHash: null });
-  await publishRecoverySourceBootstrapVisibilityV1(prepared, visibility);
+  await publishRecoverySourceBootstrapVisibilityV1(context, prepared, visibility);
   return resolved;
 }
 
 export async function prepareInternalProductionRecoverySourceBootstrapRunV1(): Promise<Readonly<{ operationRef: string; operationHash: string }>> {
-  const currentEntryOperation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  const context = await selectCurrentEntryStoreContextV1();
+  const currentEntryOperation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!currentEntryOperation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");
-  const controllerLock = await acquireTask12ControllerLockV1(currentEntryOperation.operationHash);
-  try { const operation = await prepareRecoverySourceBootstrapHeldLockV1(); return Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }); }
+  const controllerLock = await acquireTask12ControllerLockV1(context, currentEntryOperation.operationHash);
+  try { const operation = await prepareRecoverySourceBootstrapHeldLockV1(context); return Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }); }
   finally { releaseTask12ControllerLockV1(controllerLock); }
 }
 
-async function resumeRecoverySourceBootstrapHeldLockV1(): Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>> {
-  const operation = await prepareRecoverySourceBootstrapHeldLockV1();
-  const visible = recoverySourceBootstrapVisibilityPairV1();
+async function resumeRecoverySourceBootstrapHeldLockV1(context: SelectedCurrentEntryStoreContextV1): Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>> {
+  const operation = await prepareRecoverySourceBootstrapHeldLockV1(context);
+  const visible = recoverySourceBootstrapVisibilityPairV1(context);
   if (visible.state === "terminal") {
-    const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptV1({ sourceRunRef: String(visible.sourceRunRef), sourceRunHash: String(visible.sourceRunHash) });
+    const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(context, { sourceRunRef: String(visible.sourceRunRef), sourceRunHash: String(visible.sourceRunHash) });
     return Object.freeze({ sourceRunRef: receipt.sourceRunRef, sourceRunHash: receipt.sourceRunHash });
   }
   if (visible.state !== "prepared" || visible.operationRef !== operation.operationRef || visible.operationHash !== operation.operationHash) currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
@@ -7965,15 +8344,15 @@ async function resumeRecoverySourceBootstrapHeldLockV1(): Promise<Readonly<{ sou
   const sourceTerminalBody = { schema: "setfarm.internal-production-recovery-source-run-terminal-authority.v1", operationRef: operation.operationRef, operationHash: operation.operationHash, targetSourceRunReservationRef: operation.targetSourceRunReservationRef, targetSourceRunReservationHash: operation.targetSourceRunReservationHash, targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash, runId, operationRunBindingHash, reciprocalRunOperationBindingHash, unrelatedReservationCount: 0 as const, unrelatedOwnerCount: 0 as const, terminalOwnerRef, terminalOwnerHash };
   const terminalSourceRunHash = hashCanonicalJson(sourceTerminalBody);
   const terminalSourceRunRef = `setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${terminalSourceRunHash}`;
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("terminal-source-runs", terminalSourceRunHash), await canonicalRecordBytes({ ...sourceTerminalBody, terminalSourceRunRef, terminalSourceRunHash }));
-  const sourceTerminal = await resolveInternalProductionRecoverySourceRunTerminalAuthorityV1({ terminalSourceRunRef, terminalSourceRunHash });
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "terminal-source-runs", terminalSourceRunHash), await canonicalRecordBytes({ ...sourceTerminalBody, terminalSourceRunRef, terminalSourceRunHash }));
+  const sourceTerminal = await resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalSourceRunRef, terminalSourceRunHash });
   const runReservationTerminalOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-recovery-run-launch-terminal-owner.v1", operationRef: operation.operationRef, operationHash: operation.operationHash, runId, runOwnerRef, runOwnerHash, operationRunBindingHash, reciprocalRunOperationBindingHash });
   const runReservationTerminalOwnerRef = `setfarm://internal-production/recovery-run-launch-terminal-owner/sha256/${runReservationTerminalOwnerHash}`;
   const runTerminalBody = { schema: "setfarm.internal-production-recovery-run-launch-terminal-authority.v1", operationRef: operation.operationRef, operationHash: operation.operationHash, targetRunReservationRef: operation.targetRunReservationRef, targetRunReservationHash: operation.targetRunReservationHash, targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash, runId, operationRunBindingHash, reciprocalRunOperationBindingHash, runReservationTerminalOwnerRef, runReservationTerminalOwnerHash };
   const terminalRunLaunchHash = hashCanonicalJson(runTerminalBody);
   const terminalRunLaunchRef = `setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/${terminalRunLaunchHash}`;
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("terminal-run-launches", terminalRunLaunchHash), await canonicalRecordBytes({ ...runTerminalBody, terminalRunLaunchRef, terminalRunLaunchHash }));
-  const runTerminal = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityV1({ terminalRunLaunchRef, terminalRunLaunchHash });
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "terminal-run-launches", terminalRunLaunchHash), await canonicalRecordBytes({ ...runTerminalBody, terminalRunLaunchRef, terminalRunLaunchHash }));
+  const runTerminal = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalRunLaunchRef, terminalRunLaunchHash });
   const pairClose = await (closeTargets as (input: unknown) => Promise<InternalProductionSourceRunLaunchTargetReservationPairCloseV1>)({
     fenceRef: operation.ownerAdmissionFenceRef, fenceHash: operation.ownerAdmissionFenceHash,
     sourceRunReservationRef: operation.targetSourceRunReservationRef, sourceRunReservationHash: operation.targetSourceRunReservationHash,
@@ -7981,7 +8360,7 @@ async function resumeRecoverySourceBootstrapHeldLockV1(): Promise<Readonly<{ sou
     terminalSourceRunRef: sourceTerminal.terminalSourceRunRef, terminalSourceRunHash: sourceTerminal.terminalSourceRunHash,
     terminalRunLaunchRef: runTerminal.terminalRunLaunchRef, terminalRunLaunchHash: runTerminal.terminalRunLaunchHash,
   });
-  const publishedPairClose = await publishRecoverySourceBootstrapPairCloseV1(pairClose);
+  const publishedPairClose = await publishRecoverySourceBootstrapPairCloseV1(context, pairClose);
   const releaseAuthority = recursivelyFreeze({
     purpose: "recovery-d-source-delivery-v1" as const, targetFamilyKind: "source-run-launch" as const,
     terminalCoreRef: null, terminalCoreHash: null, targetSetCloseRef: null, targetSetCloseHash: null,
@@ -8010,29 +8389,31 @@ async function resumeRecoverySourceBootstrapHeldLockV1(): Promise<Readonly<{ sou
     fenceReleaseRef, fenceReleaseHash,
   };
   const sourceRunHash = hashCanonicalJson(receiptBody); const sourceRunRef = `setfarm://internal-production/recovery-source-bootstrap-run-receipt/sha256/${sourceRunHash}`;
-  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1("run-receipts", sourceRunHash), await canonicalRecordBytes({ ...receiptBody, sourceRunRef, sourceRunHash }));
-  const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptV1({ sourceRunRef, sourceRunHash });
+  publishLegacyZeroRecordV1(recoverySourceBootstrapRecordPathV1(context, "run-receipts", sourceRunHash), await canonicalRecordBytes({ ...receiptBody, sourceRunRef, sourceRunHash }));
+  const receipt = await resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(context, { sourceRunRef, sourceRunHash });
   const terminal = createRecoverySourceBootstrapVisibilityHeadV1({ state: "terminal", predecessorVisibilityHeadRef: visible.visibilityHeadRef, predecessorVisibilityHeadHash: visible.visibilityHeadHash, pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash, operationRef: operation.operationRef, operationHash: operation.operationHash, sourceRunRef: receipt.sourceRunRef, sourceRunHash: receipt.sourceRunHash });
-  await publishRecoverySourceBootstrapVisibilityV1(terminal, visible);
+  await publishRecoverySourceBootstrapVisibilityV1(context, terminal, visible);
   return Object.freeze({ sourceRunRef: receipt.sourceRunRef, sourceRunHash: receipt.sourceRunHash });
 }
 
 export async function resumeActiveInternalProductionRecoverySourceBootstrapRunV1(): Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>> {
-  const currentEntryOperation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  const context = await selectCurrentEntryStoreContextV1();
+  const currentEntryOperation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!currentEntryOperation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");
-  const controllerLock = await acquireTask12ControllerLockV1(currentEntryOperation.operationHash);
+  const controllerLock = await acquireTask12ControllerLockV1(context, currentEntryOperation.operationHash);
   try {
-    return await resumeRecoverySourceBootstrapHeldLockV1();
+    return await resumeRecoverySourceBootstrapHeldLockV1(context);
   } finally { releaseTask12ControllerLockV1(controllerLock); }
 }
 
 export async function resumeInternalProductionCurrentEntryAuthorityV1(
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
-  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  const context = await selectCurrentEntryStoreContextV1();
+  const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!operation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");
-  const controllerLock = await acquireTask12ControllerLockV1(operation.operationHash);
+  const controllerLock = await acquireTask12ControllerLockV1(context, operation.operationHash);
   try {
-  let status = await observeInternalProductionCurrentEntryAuthorityStatusV1();
+  let status = await observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context);
   if (status.state === "ready") return status;
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Record<string, unknown>;
   const prepareRebind = startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1;
@@ -8041,18 +8422,18 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
   if (typeof prepareRebind !== "function" || prepareRebind.length !== 0 || typeof executeRebind !== "function" || executeRebind.length !== 1 || typeof observeRebind !== "function" || observeRebind.length !== 0) currentEntryFail("pre-schema spawner controller ports are unavailable");
   if (status.state === "operation_prepared" || status.state === "pre_schema_spawner_rebinding") {
     const authorization = await (prepareRebind as () => Promise<Record<string, unknown>>)();
-    if (status.state === "operation_prepared") status = await advanceTask12CurrentStatusV1(status, "pre_schema_spawner_rebinding", { preSchemaSpawnerRebindStatus: null, preSchemaSpawnerRebindStatusBody: null });
+    if (status.state === "operation_prepared") status = await advanceTask12CurrentStatusV1(context, status, "pre_schema_spawner_rebinding", { preSchemaSpawnerRebindStatus: null, preSchemaSpawnerRebindStatusBody: null });
     await (executeRebind as (pair: unknown) => Promise<unknown>)(authorization);
     const rebindStatus = await (observeRebind as () => Promise<Record<string, unknown>>)();
     if (rebindStatus.state !== "pre_manifest_bootstrap_sealed") currentEntryFail("pre-schema spawner did not reach the sealed boundary");
-    status = await advanceTask12CurrentStatusV1(status, "pre_manifest_bootstrap_sealed", {
+    status = await advanceTask12CurrentStatusV1(context, status, "pre_manifest_bootstrap_sealed", {
       preSchemaSpawnerRebindStatus: { statusRef: rebindStatus.statusRef, statusHash: rebindStatus.statusHash },
       preSchemaSpawnerRebindStatusBody: rebindStatus,
     });
   }
   if (status.state === "pre_manifest_bootstrap_sealed") {
     const authorization = await prepareInternalProductionPreManifestMigration32AuthorizationV1();
-    status = await advanceTask12CurrentStatusV1(status, "migration_applying", {
+    status = await advanceTask12CurrentStatusV1(context, status, "migration_applying", {
       migrationApplyingPhase: { phase: "prepared", authorization, consumption: null, migrationReceipt: null, currentAudit: null },
     });
   }
@@ -8070,7 +8451,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
       migrationReceipt = await applyInternalProductionBaselineBootstrapHandoffMigrationV1(authorization);
       const migrationStatus = await observeInternalProductionPreManifestMigration32AuthorizationStatusV1();
       if (migrationStatus.state !== "terminal" || !isPlainRecord(migrationStatus.consumption)) currentEntryFail("migration-32 terminal status is unavailable");
-      status = await advanceTask12CurrentStatusV1(status, "migration_applying", {
+      status = await advanceTask12CurrentStatusV1(context, status, "migration_applying", {
         migrationApplyingPhase: { phase: "receipt_published", authorization, consumption: migrationStatus.consumption, migrationReceipt, currentAudit: null },
       });
       const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
@@ -8081,7 +8462,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
       const audit = await publishTask12HashedRecordV1("current-audits", auditBody, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", TASK12_MIGRATION_PREFIXES_V1.currentAudit);
       const currentAudit = { bootstrapHandoffCurrentAuditRef: String(audit.bootstrapHandoffCurrentAuditRef), bootstrapHandoffCurrentAuditHash: String(audit.bootstrapHandoffCurrentAuditHash) };
       await resolveInternalProductionBootstrapHandoffCurrentAuditV1(currentAudit);
-      status = await advanceTask12CurrentStatusV1(status, "migration_applying", {
+      status = await advanceTask12CurrentStatusV1(context, status, "migration_applying", {
         migrationApplyingPhase: { phase: "current_audited", authorization, consumption: migrationStatus.consumption, migrationReceipt, currentAudit },
       });
     }
@@ -8091,14 +8472,14 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     const applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1 = db.applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1;
     if (typeof applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1 !== "function" || applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1.length !== 0) currentEntryFail("ordinary migration-33 controller port is unavailable");
     await (applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1 as () => Promise<unknown>)();
-    status = await advanceTask12CurrentStatusV1(status, "manifest_activating", {});
+    status = await advanceTask12CurrentStatusV1(context, status, "manifest_activating", {});
   }
   if (status.state === "manifest_activating") {
     const activationController = await import("./baseline-owner-producer-manifest-activation-controller-v1.js") as unknown as Record<string, unknown>;
     const activateInternalProductionBaselineOwnerProducerManifestV1 = activationController.activateInternalProductionBaselineOwnerProducerManifestV1;
     if (typeof activateInternalProductionBaselineOwnerProducerManifestV1 !== "function" || activateInternalProductionBaselineOwnerProducerManifestV1.length !== 0) currentEntryFail("manifest A activation controller is unavailable");
     const manifestActivation = await (activateInternalProductionBaselineOwnerProducerManifestV1 as () => Promise<Record<string, unknown>>)();
-    status = await advanceTask12CurrentStatusV1(status, "spawner_admission_transitioning", {
+    status = await advanceTask12CurrentStatusV1(context, status, "spawner_admission_transitioning", {
       manifestActivation: {
         ownerProducerManifestActivationRef: manifestActivation.successorActivationRef,
         ownerProducerManifestActivationHash: manifestActivation.successorActivationHash,
@@ -8109,7 +8490,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     });
   }
   if (status.state === "spawner_admission_transitioning") {
-    await prepareRecoverySourceBootstrapHeldLockV1();
+    await prepareRecoverySourceBootstrapHeldLockV1(context);
     const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
     const verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1 = db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1;
     const initializeInternalProductionCurrentEntryDatabaseV1 = db.initializeInternalProductionCurrentEntryDatabaseV1;
@@ -8123,7 +8504,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     const readyRebindStatus = await (observeRebind as () => Promise<Record<string, unknown>>)();
     if (readyRebindStatus.state !== "normal_task0_admission_ready" || !isPlainRecord(readyRebindStatus.admissionReady) || canonicalComparable(readyRebindStatus.admissionReady) !== canonicalComparable(admissionReady)) currentEntryFail("same-generation spawner ready status is crossed");
     const sealedAdmission = readyRebindStatus.sealedAdmission;
-    status = await advanceTask12CurrentStatusV1(status, "spawner_admission_transitioning", {
+    status = await advanceTask12CurrentStatusV1(context, status, "spawner_admission_transitioning", {
       preSchemaSpawnerRebindStatus: { statusRef: readyRebindStatus.statusRef, statusHash: readyRebindStatus.statusHash },
       preSchemaSpawnerRebindStatusBody: readyRebindStatus,
       spawnerAdmissionTransitionPhase: { phase: "admission_ready", sealedAdmission, admissionReady, loadedRuntimeServiceAuthority: null },
@@ -8132,14 +8513,14 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     const loadedBody = { schema: "setfarm.internal-production-loaded-runtime-service-authority.v1", currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, observedServiceCensusHash: loadedCensus.censusHash, spawner: loadedCensus.spawner, dashboard: loadedCensus.dashboard, missionControl: loadedCensus.missionControl, openClaw: loadedCensus.openClaw };
     const loadedRuntimeServiceAuthorityHash = hashCanonicalJson(loadedBody);
     const loadedRuntimeServiceAuthority = recursivelyFreeze({ loadedRuntimeServiceAuthorityRef: `setfarm://internal-production/loaded-runtime-service-authority/sha256/${loadedRuntimeServiceAuthorityHash}`, loadedRuntimeServiceAuthorityHash });
-    status = await advanceTask12CurrentStatusV1(status, "spawner_admission_transitioning", { spawnerAdmissionTransitionPhase: { phase: "runtime_observed", sealedAdmission, admissionReady, loadedRuntimeServiceAuthority } });
-    status = await advanceTask12CurrentStatusV1(status, "prepared", {});
+    status = await advanceTask12CurrentStatusV1(context, status, "spawner_admission_transitioning", { spawnerAdmissionTransitionPhase: { phase: "runtime_observed", sealedAdmission, admissionReady, loadedRuntimeServiceAuthority } });
+    status = await advanceTask12CurrentStatusV1(context, status, "prepared", {});
   }
   if (status.state === "prepared") {
-    const sourceRun = await resumeRecoverySourceBootstrapHeldLockV1();
-    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusV1();
+    const sourceRun = await resumeRecoverySourceBootstrapHeldLockV1(context);
+    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
     if (sourceStatus.state !== "terminal" || sourceStatus.sourceRunRef !== sourceRun.sourceRunRef || sourceStatus.sourceRunHash !== sourceRun.sourceRunHash) currentEntryFail("recovery source bootstrap terminal status is crossed");
-    status = await advanceTask12CurrentStatusV1(status, "canary_running", {
+    status = await advanceTask12CurrentStatusV1(context, status, "canary_running", {
       canaryRunningPhase: {
         phase: "running",
         ownerAdmissionFenceRef: sourceStatus.ownerAdmissionFenceRef,
@@ -8157,10 +8538,10 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     return status;
   }
   if (status.state === "canary_running" && isPlainRecord(status.canaryRunningPhase) && status.canaryRunningPhase.phase === "running") {
-    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusV1();
+    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
     if (sourceStatus.state !== "terminal") currentEntryFail("recovery source bootstrap terminal authority is unavailable");
     await observeCompleteInternalProductionZeroOwnerCensusV1();
-    status = await advanceTask12CurrentStatusV1(status, "canary_running", {
+    status = await advanceTask12CurrentStatusV1(context, status, "canary_running", {
       canaryRunningPhase: {
         ...status.canaryRunningPhase,
         phase: "terminal_settlement_published",
@@ -8170,9 +8551,9 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     });
   }
   if (status.state === "canary_running" && isPlainRecord(status.canaryRunningPhase) && status.canaryRunningPhase.phase === "terminal_settlement_published") {
-    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusV1();
+    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
     if (sourceStatus.state !== "terminal") currentEntryFail("recovery source bootstrap close authority is unavailable");
-    status = await advanceTask12CurrentStatusV1(status, "settled", {
+    status = await advanceTask12CurrentStatusV1(context, status, "settled", {
       settledPhase: {
         phase: "target_closed",
         terminalSettlementRef: sourceStatus.terminalSourceRunRef,
@@ -8187,9 +8568,9 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     });
   }
   if (status.state === "settled" && isPlainRecord(status.settledPhase) && status.settledPhase.phase === "target_closed") {
-    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusV1();
+    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
     if (sourceStatus.state !== "terminal") currentEntryFail("recovery source bootstrap release authority is unavailable");
-    status = await advanceTask12CurrentStatusV1(status, "settled", {
+    status = await advanceTask12CurrentStatusV1(context, status, "settled", {
       settledPhase: {
         ...status.settledPhase,
         phase: "fence_released",
@@ -8199,7 +8580,7 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     });
   }
   if (status.state === "settled" && isPlainRecord(status.settledPhase) && status.settledPhase.phase === "fence_released") {
-    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusV1();
+    const sourceStatus = await observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1(context);
     if (sourceStatus.state !== "terminal") currentEntryFail("recovery source bootstrap final authority is unavailable");
     const zero = await observeCompleteInternalProductionZeroOwnerCensusV1();
     const rebind = status.preSchemaSpawnerRebindStatusBody as Record<string, unknown>;
@@ -8253,9 +8634,9 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
     const entryAuthorityHash = hashCanonicalJson(authorityBody);
     const entryAuthorityRef = `${TASK12_AUTHORITY_PREFIX_V1}${entryAuthorityHash}`;
     const entryAuthority = recursivelyFreeze({ ...authorityBody, entryAuthorityRef, entryAuthorityHash });
-    publishLegacyZeroRecordV1(task12RecordPathV1("entry-authorities", entryAuthorityHash), await canonicalRecordBytes(entryAuthority));
-    await resolveInternalProductionCurrentEntryAuthorityV1({ entryAuthorityRef, entryAuthorityHash });
-    status = await advanceTask12CurrentStatusV1(status, "ready", { entryAuthority: { entryAuthorityRef, entryAuthorityHash } });
+    publishLegacyZeroRecordV1(task12RecordPathV1(context, "entry-authorities", entryAuthorityHash), await canonicalRecordBytes(entryAuthority));
+    await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, { entryAuthorityRef, entryAuthorityHash });
+    status = await advanceTask12CurrentStatusV1(context, status, "ready", { entryAuthority: { entryAuthorityRef, entryAuthorityHash } });
   }
     return status;
   } finally {
@@ -8265,10 +8646,11 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
 
 export async function verifyCurrentInternalProductionCurrentEntryV1(
 ): Promise<Readonly<Record<string, unknown>>> {
-  const status = await observeInternalProductionCurrentEntryAuthorityStatusV1();
+  const context = await selectCurrentEntryStoreContextV1();
+  const status = await observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context);
   if (status.state !== "ready" || !status.entryAuthority || typeof status.entryAuthority !== "object") currentEntryFail("current entry is not ready");
   const pair = status.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1;
-  const authority = await resolveInternalProductionCurrentEntryAuthorityV1(pair);
+  const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, pair);
   const serviceCensus = await observeInternalProductionServiceCensusV1();
   const completeZeroOwnerCensusObservationBody = await observeCompleteInternalProductionZeroOwnerCensusV1();
   const completeZeroOwnerCensusObservation = {
@@ -8296,16 +8678,16 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const freshRuntimeAndOwnerObservationHash = hashCanonicalJson(freshBody);
   const freshRuntimeAndOwnerObservationRef = `${TASK12_FRESH_OBSERVATION_PREFIX_V1}${freshRuntimeAndOwnerObservationHash}`;
   const freshValue = recursivelyFreeze({ ...freshBody, freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1("fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), await canonicalRecordBytes(freshValue));
-  await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1({ freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
-  const orderedPairs = await deriveTask12ResolvedAuthorityPairsV1(authority, pair, currentEntryStatus, completeZeroOwnerCensusObservation, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), await canonicalRecordBytes(freshValue));
+  await resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
+  const orderedPairs = await deriveTask12ResolvedAuthorityPairsV1(context, authority, pair, currentEntryStatus, completeZeroOwnerCensusObservation, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
   const resolvedAuthoritySetHash = hashCanonicalJson(orderedPairs);
   const body = { schema: "setfarm.internal-production-current-entry-verification.v1", currentStatus: "current", currentEntryStatus, entryAuthority: pair, resolvedAuthoritySetHash, freshRuntimeAndOwnerObservation: { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash } };
   const currentEntryVerificationHash = hashCanonicalJson(body);
   const currentEntryVerificationRef = `${TASK12_VERIFICATION_PREFIX_V1}${currentEntryVerificationHash}`;
   const value = recursivelyFreeze({ ...body, currentEntryVerificationRef, currentEntryVerificationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1("verifications", currentEntryVerificationHash), await canonicalRecordBytes(value));
-  return resolveInternalProductionCurrentEntryVerificationV1({ currentEntryVerificationRef, currentEntryVerificationHash });
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "verifications", currentEntryVerificationHash), await canonicalRecordBytes(value));
+  return resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1(context, { currentEntryVerificationRef, currentEntryVerificationHash });
 }
 
 export async function observeInternalProductionReviewedDSourceBuildGateV1(
