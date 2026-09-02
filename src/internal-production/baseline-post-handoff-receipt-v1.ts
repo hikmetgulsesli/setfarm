@@ -1367,6 +1367,7 @@ type ExactPoisonRecoveryPinnedSealChainV1 = Readonly<{
   disposition: ExactPoisonRecoveryPinnedRecordV1;
   successorRoot: string;
   successorOperationPair: CurrentEntryStoreRecordPairV1;
+  successorOperation: InternalProductionCurrentEntryOperationV1;
   seal: ExactPoisonRecoveryPinnedRecordV1;
   sealParent: ExactPoisonRecoveryPinnedParentV1;
   records: readonly ExactPoisonRecoveryPinnedRecordV1[];
@@ -2982,6 +2983,7 @@ type ExactPoisonRecoveryReadChainV1 = Readonly<{
   snapshots: readonly FileSnapshot[];
   successorRoot: string;
   successorOperationPair: CurrentEntryStoreRecordPairV1;
+  successorOperation: InternalProductionCurrentEntryOperationV1;
   sealTarget: string;
   commitTarget: string | null;
 }>;
@@ -3051,8 +3053,8 @@ async function readExactPoisonRecoveryChainV1(
       snapshots.push(snapshot);
       return snapshot;
     });
-    const successorOperation = await parseCurrentEntryStoreSuccessorOperationV1(successorSnapshots[0]!.observed.bytes, edge.successorOperation);
-    if (canonicalComparable(successorOperation) !== canonicalComparable(disposition.zeroEffectProof.successorOperation)) {
+    const successorOperationBody = await parseCurrentEntryStoreSuccessorOperationV1(successorSnapshots[0]!.observed.bytes, edge.successorOperation);
+    if (canonicalComparable(successorOperationBody) !== canonicalComparable(disposition.zeroEffectProof.successorOperation)) {
       currentEntryFail("successor operation differs from the zero-effect proof");
     }
     const auditBody = strictCanonicalRecord(successorSnapshots[1]!.observed.bytes, "successor authority-v31 audit");
@@ -3066,9 +3068,37 @@ async function readExactPoisonRecoveryChainV1(
       pendingBootstrapHandoffMigrationHash: successorPendingPair.hash,
     });
     if (
-      canonicalComparable(parsedAudit.controllerSource) !== canonicalComparable(successorOperation.controllerSource)
-      || canonicalComparable(parsedPending.controllerSource) !== canonicalComparable(successorOperation.controllerSource)
+      canonicalComparable(parsedAudit.controllerSource) !== canonicalComparable(successorOperationBody.controllerSource)
+      || canonicalComparable(parsedPending.controllerSource) !== canonicalComparable(successorOperationBody.controllerSource)
     ) currentEntryFail("successor prerequisite source is crossed");
+    const successorOperationPair = Object.freeze({
+      operationRef: edge.successorOperation.ref,
+      operationHash: edge.successorOperation.hash,
+    });
+    const successorOperation = await parseCurrentEntryOperationBodyCoreV1(
+      successorOperationBody,
+      successorOperationPair,
+      async (nested) => {
+        const observed = requireCurrentEntryStorePairV1(
+          nested,
+          "authorityV3Migration31AuditRef",
+          "authorityV3Migration31AuditHash",
+          "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+        );
+        assertCurrentEntryStorePairEqualV1(observed, successorAuditPair, "successor authority-v31 audit");
+        return parsedAudit;
+      },
+      async (nested) => {
+        const observed = requireCurrentEntryStorePairV1(
+          nested,
+          "pendingBootstrapHandoffMigrationRef",
+          "pendingBootstrapHandoffMigrationHash",
+          "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+        );
+        assertCurrentEntryStorePairEqualV1(observed, successorPendingPair, "successor pending migration");
+        return parsedPending;
+      },
+    );
 
     const sealCore = Object.freeze({
       schema: "setfarm.internal-production-current-entry-store-successor-activation-seal.v1",
@@ -3125,6 +3155,7 @@ async function readExactPoisonRecoveryChainV1(
       snapshots: Object.freeze(snapshots),
       successorRoot: path.join(exactPoisonQuarantinedStoreLocatorV1(), edge.successorStoreRelativeRoot),
       successorOperationPair: edge.successorOperation,
+      successorOperation,
       sealTarget,
       commitTarget,
     });
@@ -4260,6 +4291,7 @@ function assertExactPoisonRecoveryPinnedChainEqualV1(
     expected.successorRoot !== observed.successorRoot
     || expected.successorOperationPair.ref !== observed.successorOperationPair.ref
     || expected.successorOperationPair.hash !== observed.successorOperationPair.hash
+    || canonicalComparable(expected.successorOperation) !== canonicalComparable(observed.successorOperation)
     || expected.records.length !== observed.records.length
   ) currentEntryFail("exact-poison recovery semantic reopen is crossed");
   for (const [index, record] of expected.records.entries()) {
@@ -4305,7 +4337,11 @@ async function openExactPoisonRecoveryPinnedChainV1(
       "fixed legacy exact-poison pinned operation reopen",
     );
     const reparsed = await readExactPoisonRecoveryChainV1(reparsedOperation, includeCommit);
-    if (reparsed.snapshots.length !== records.length || reparsed.successorRoot !== parsed.successorRoot) {
+    if (
+      reparsed.snapshots.length !== records.length
+      || reparsed.successorRoot !== parsed.successorRoot
+      || canonicalComparable(reparsed.successorOperation) !== canonicalComparable(parsed.successorOperation)
+    ) {
       currentEntryFail("exact-poison pinned chain changed during semantic construction");
     }
     for (const [index, snapshot] of reparsed.snapshots.entries()) {
@@ -4338,6 +4374,7 @@ async function openExactPoisonRecoveryPinnedChainV1(
       disposition: records[2]!,
       successorRoot: parsed.successorRoot,
       successorOperationPair: parsed.successorOperationPair,
+      successorOperation: parsed.successorOperation,
       seal,
       sealParent: parents.get(path.dirname(parsed.sealTarget))!.pin,
       records: Object.freeze(records),
@@ -4944,13 +4981,35 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
   const store = readFixedLegacyCurrentEntryStoreIfPresentV1();
   if (store === null) currentEntryFail("fixed legacy current-entry store is absent");
   const target = Object.freeze({ ...store, basename: CURRENT_ENTRY_FILES.operation });
-  const body = strictCanonicalRecord(readCurrentEntryRecord(target.directory, target.basename, target.device), "current-entry operation");
-  return parseCurrentEntryOperationBodyCoreV1(
-    body,
-    expected,
-    (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, retained),
-    (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, retained),
-  );
+  const bytes = readCurrentEntryRecord(target.directory, target.basename, target.device);
+  const body = strictCanonicalRecord(bytes, "current-entry operation");
+  const fixedOperation = parsePreselectionCurrentEntryOperationV1(bytes);
+  if (
+    expected.operationRef === fixedOperation.operationRef
+    && expected.operationHash === fixedOperation.operationHash
+  ) {
+    return parseCurrentEntryOperationBodyCoreV1(
+      body,
+      expected,
+      (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, retained),
+      (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, retained),
+    );
+  }
+  const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try {
+    if (
+      expected.operationRef !== context.successorOperationPair.ref
+      || expected.operationHash !== context.successorOperationPair.hash
+      || expected.operationRef !== context.successorOperation.operationRef
+      || expected.operationHash !== context.successorOperation.operationHash
+    ) currentEntryFail("historical current-entry operation pair is unknown");
+    context.assertStable();
+    await durablyAuthenticateSuccessorActivationCommitV1(context);
+    context.assertStable();
+    return context.successorOperation;
+  } finally {
+    context.close();
+  }
 }
 
 async function resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(
@@ -4996,9 +5055,8 @@ async function parseCurrentEntryOperationBodyCoreV1(
   const v31 = await resolveV31(body.authorityV3Migration31Audit as InternalProductionAuthorityV3Migration31AuditPairV1, retainedPrerequisites);
   const pending = await resolvePending(body.pendingBootstrapHandoffMigration as InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1, retainedPrerequisites);
   if (canonicalComparable(v31.controllerSource) !== canonicalComparable(source) || canonicalComparable(pending.controllerSource) !== canonicalComparable(source)) currentEntryFail("current-entry nested source is crossed");
-  const pba = await import("./product-build-authority-v2-delivery-evidence-v1.js") as Readonly<{ parseProductBuildAuthorityV2DeliveryEvidenceResponseV1?: (value: unknown) => Readonly<Record<string, unknown>> }>;
-  if (!isPlainRecord(body.productBuildAuthorityV2Observation) || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"]) || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli" || typeof pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 !== "function") currentEntryFail("stored PBA observation is invalid");
-  const parsed = pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(body.productBuildAuthorityV2Observation.response);
+  if (!isPlainRecord(body.productBuildAuthorityV2Observation) || !hasExactKeys(body.productBuildAuthorityV2Observation, ["schema", "observationTransport", "response"]) || body.productBuildAuthorityV2Observation.schema !== "setfarm.product-build-authority-v2-delivery-evidence-observation.v1" || body.productBuildAuthorityV2Observation.observationTransport !== "source-cli") currentEntryFail("stored PBA observation is invalid");
+  const parsed = parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(body.productBuildAuthorityV2Observation.response);
   const parsedPair = pbaPair(Object.freeze({ schema: "setfarm.product-build-authority-v2-delivery-evidence-observation.v1", observationTransport: "source-cli", response: parsed }) as ProductBuildAuthorityObservationV1);
   if (!isPlainRecord(body.productBuildAuthorityV2DeliveryEvidence) || !hasExactKeys(body.productBuildAuthorityV2DeliveryEvidence, ["deliveryEvidenceRef", "deliveryEvidenceHash"]) || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceRef !== parsedPair.deliveryEvidenceRef || body.productBuildAuthorityV2DeliveryEvidence.deliveryEvidenceHash !== parsedPair.deliveryEvidenceHash || canonicalComparable(body.productBuildAuthorityV2Observation.response) !== canonicalComparable(parsed)) currentEntryFail("stored PBA pair/response is crossed");
   return recursivelyFreeze(body as unknown as InternalProductionCurrentEntryOperationV1);

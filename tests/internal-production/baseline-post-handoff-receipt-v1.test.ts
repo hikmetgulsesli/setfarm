@@ -2659,6 +2659,100 @@ function runPhase5bStrictCEntryFixtureV1(
   return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:${JSON.stringify(faultStage)}};const durability={events:[],matches:0,fault:${JSON.stringify(durabilityFault)}};Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",probe);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null,value=null;try{value=await m.p5bRunStrictCEntryFixtureV1()}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=probe;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,durabilityEvents:durability.events,durabilityMatches:durability.matches,descriptorDelta:after-before}))})()`);
 }
 
+type Phase5bHistoricalOperationPairFixtureV1 = Readonly<{ operationRef: string; operationHash: string }>;
+
+function instrumentPhase5bHistoricalOperationFixtureV1(root: string): void {
+  instrumentPhase5bStrictCEntryFixtureV1(root);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const publicResolver = "export async function resolveInternalProductionCurrentEntryOperationV1(";
+  const legacyV31Resolver = "async function resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(";
+  const wrapperMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  for (const [marker, label] of [
+    [publicResolver, "public historical operation resolver"],
+    [legacyV31Resolver, "fixed-legacy historical prerequisite resolver"],
+    [wrapperMarker, "private copied-module wrapper insertion point"],
+  ] as const) assert.equal(source.split(marker).length - 1, 1, `P5b-B2 requires one ${label}`);
+
+  const publicStart = source.indexOf(publicResolver);
+  const publicBody = source.indexOf("): Promise<InternalProductionCurrentEntryOperationV1> {", publicStart);
+  assert.ok(publicBody > publicStart, "P5b-B2 bounds the public historical operation resolver signature");
+  const publicInsertion = publicBody + "): Promise<InternalProductionCurrentEntryOperationV1> {".length;
+  source = source.slice(0, publicInsertion) + `
+  const p5bB2PublicProbe = Reflect.get(globalThis, "__p5bHistoricalOperationProbeV1") as undefined | {publicCalls:number};
+  if (p5bB2PublicProbe) p5bB2PublicProbe.publicCalls += 1;` + source.slice(publicInsertion);
+
+  const legacyStart = source.indexOf(legacyV31Resolver);
+  const legacyBody = source.indexOf("): Promise<InternalProductionAuthorityV3Migration31AuditV1> {", legacyStart);
+  assert.ok(legacyBody > legacyStart, "P5b-B2 bounds the fixed-legacy prerequisite resolver signature");
+  const legacyInsertion = legacyBody + "): Promise<InternalProductionAuthorityV3Migration31AuditV1> {".length;
+  source = source.slice(0, legacyInsertion) + `
+  const p5bB2LegacyProbe = Reflect.get(globalThis, "__p5bHistoricalOperationProbeV1") as undefined | {historicalActive:boolean;legacyRouteCalls:number};
+  if (p5bB2LegacyProbe?.historicalActive === true) p5bB2LegacyProbe.legacyRouteCalls += 1;` + source.slice(legacyInsertion);
+
+  const wrapper = `export async function p5bRunHistoricalCurrentEntryOperationFixtureV1(pair: InternalProductionCurrentEntryOperationPairV1): Promise<InternalProductionCurrentEntryOperationV1> {
+  const probe = Reflect.get(globalThis, "__p5bHistoricalOperationProbeV1") as {historicalActive:boolean};
+  probe.historicalActive = true;
+  try { return await resolveInternalProductionCurrentEntryOperationV1(pair); }
+  finally { probe.historicalActive = false; }
+}
+
+`;
+  source = source.replace(wrapperMarker, wrapper + wrapperMarker);
+  writeFileSync(modulePath, source);
+}
+
+function runPhase5bHistoricalOperationFixtureV1(
+  root: string,
+  pair: Phase5bHistoricalOperationPairFixtureV1,
+  faultStage: Phase5bStrictCEntryFaultStageV1 | null = null,
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  const pbaModule = pathToFileURL(path.join(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts")).href;
+  return runFixtureExpressionAsync(root, `(async()=>{await import(${JSON.stringify(pbaModule)});const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:${JSON.stringify(faultStage)}};const historical={historicalActive:false,publicCalls:0,legacyRouteCalls:0};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5bHistoricalOperationProbeV1",historical);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null,value=null;try{value=await m.p5bRunHistoricalCurrentEntryOperationFixtureV1(${JSON.stringify(pair)})}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...historical,durabilityEvents:durability.events,descriptorDelta:after-before}))})()`);
+}
+
+function phase5bOperationPairFixtureV1(value: Readonly<Record<string, unknown>>): Phase5bHistoricalOperationPairFixtureV1 {
+  assert.equal(typeof value.operationRef, "string");
+  assert.equal(typeof value.operationHash, "string");
+  return Object.freeze({ operationRef: value.operationRef, operationHash: value.operationHash });
+}
+
+function seedPhase5bOrdinaryHistoricalOperationFixtureV1(
+  root: string,
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1 }>,
+): Readonly<{ store: string; pair: Phase5bHistoricalOperationPairFixtureV1; operation: Readonly<Record<string, unknown>> }> {
+  const operation = admitted.chain.records.successorOperation.value;
+  const store = writeRawCurrentEntryOperationFixtureV1(root, admitted.chain.records.successorOperation.bytes);
+  fixtureFile(root, path.relative(root, path.join(store, "authority-v3-migration31-audit.json")), admitted.chain.records.successorAuthorityV31.bytes, 0o600);
+  fixtureFile(root, path.relative(root, path.join(store, "pending-bootstrap-handoff-migration.json")), admitted.chain.records.successorPending.bytes, 0o600);
+  return Object.freeze({ store, pair: phase5bOperationPairFixtureV1(operation), operation });
+}
+
+function configurePhase5bHistoricalStrictChainFixtureV1(
+  root: string,
+  through: "H" | "S" | "C",
+): Readonly<{
+  original: ExactOriginalPoisonStoreFixtureV1;
+  admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
+  seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>;
+}> {
+  installExactCurrentSuccessorGitFixtureV1(root);
+  const original = seedExactOriginalPoisonStoreV1(root);
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, through);
+  instrumentPhase5bHistoricalOperationFixtureV1(root);
+  return Object.freeze({ original, admitted, seeded });
+}
+
+function phase5bLegacyBaitPathV1(store: string, successorLocator: string): string {
+  const marker = `${path.sep}records${path.sep}`;
+  const normalized = successorLocator.split("/").join(path.sep);
+  const index = normalized.indexOf(marker);
+  assert.ok(index >= 0, "successor prerequisite locator must contain one records subtree");
+  return path.join(store, normalized.slice(index + 1));
+}
+
 function topLevelFunctionRegionV1(source: string, functionName: string): string {
   const starts = [...source.matchAll(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${functionName}\\(`, "gm"))]
     .map((match) => match.index);
@@ -5772,10 +5866,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.equal(source.split("durablyAuthenticateSuccessorActivationSealV1(").length - 1, 2, "only definition and publisher call S durability");
     const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
-    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 3, "C durability has exactly one definition, one publisher call, and one current-selector call");
+    const historicalResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 4, "C durability has exactly one definition, one publisher call, one current-selector call, and one historical-resolver call");
     assert.equal(commitRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "C durability retains one private definition");
     assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
     assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
+    assert.equal(historicalResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical strict-C resolution invokes C durability exactly once");
     assert.match(core, /heldWriter\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);/, "publisher fences the generic C helper immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
@@ -6695,6 +6791,247 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       removeFixture(root);
     }
   });
+
+  it("P5b-B2 freezes historical operation routing as generic fixed-predecessor legacy or strict pinned successor identity", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const resolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
+    assert.match(
+      resolver,
+      /const expected = requirePair\([\s\S]*?const (?:operation|fixedOperation) = [\s\S]*?parsePreselectionCurrentEntryOperationV1\([\s\S]*?expected\.operationRef === [A-Za-z0-9_.]+\.operationRef[\s\S]*?expected\.operationHash === [A-Za-z0-9_.]+\.operationHash[\s\S]*?parseCurrentEntryOperationBodyCoreV1\([\s\S]*?resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1[\s\S]*?resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1/,
+      "the requested pair matching the freshly authenticated fixed operation keeps the unchanged fixed-legacy historical parser for ordinary and poison predecessors",
+    );
+    assert.match(
+      resolver,
+      /const context = await openExactPoisonRecoveryPinnedCommitChainV1\(\);[\s\S]*?expected\.operationRef !== context\.successorOperationPair\.(?:ref|operationRef)[\s\S]*?expected\.operationHash !== context\.successorOperationPair\.(?:hash|operationHash)[\s\S]*?expected\.operationRef !== context\.successorOperation\.operationRef[\s\S]*?expected\.operationHash !== context\.successorOperation\.operationHash[\s\S]*?context\.assertStable\(\);[\s\S]*?await durablyAuthenticateSuccessorActivationCommitV1\(context\);[\s\S]*?context\.assertStable\(\);[\s\S]*?return context\.successorOperation;[\s\S]*?finally\s*\{\s*context\.close\(\);\s*\}/,
+      "every nonpredecessor request must equal both pinned successor identities before C durability and return only the pinned fully parsed operation",
+    );
+    assert.doesNotMatch(resolver, /\bcatch\b|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|requireSelectedCurrentEntryStoreContextStateV1|revalidatePostVisibleCurrentEntryStoreV1|resumeExactPoisonQuarantineBeforeSelectionV1|resumeExactPoisonQuarantinePublisherCoreV1|durablyAuthenticateSuccessorActivationSealV1|acquireExactPoisonRecoveryWriterV1/, "historical routing has no catch fallback, selected-current context, post-visible validator, prehook, publisher, S helper, or H lock");
+    assert.doesNotMatch(resolver, /readdirSync|opendirSync|mtime|latest|process\.env|globalThis|AsyncLocalStorage|fsyncSync|mkdir|writeFile|appendFile|truncate|chmod|chown|linkSync|symlink|rename|unlink|rmSync|rmdir/, "historical dispatch does not scan, consult ambient authority, or mutate outside the private C helper");
+
+    const rawChain = source.slice(source.indexOf("type ExactPoisonRecoveryReadChainV1 ="), source.indexOf("async function readExactPoisonRecoveryChainV1("));
+    assert.match(rawChain, /successorOperation: InternalProductionCurrentEntryOperationV1;/, "the raw chain carries one explicitly typed fully parsed successor operation");
+    assert.match(source.slice(source.indexOf("type ExactPoisonRecoveryPinnedSealChainV1 ="), source.indexOf("type ExactPoisonRecoveryChainInspectionV1 =")), /successorOperation: InternalProductionCurrentEntryOperationV1;/, "the pinned context exposes typed successor identity rather than record-array indexing");
+    const reader = topLevelFunctionRegionV1(source, "readExactPoisonRecoveryChainV1");
+    const deepParseStart = reader.indexOf("const successorOperation = await parseCurrentEntryOperationBodyCoreV1(");
+    const deepParseEnd = reader.indexOf("const sealCore", deepParseStart);
+    assert.ok(deepParseStart >= 0 && deepParseEnd > deepParseStart, "the successor deep parse is bounded before seal derivation");
+    const deepParse = reader.slice(deepParseStart, deepParseEnd);
+    assert.match(deepParse, /parseCurrentEntryOperationBodyCoreV1\([\s\S]*?successorOperationPair/, "the deep parser is bound to the edge-derived successor operation pair");
+    assert.match(deepParse, /assertCurrentEntryStorePairEqualV1\([^;]*successorAuditPair[^;]*\);\s*return parsedAudit;/, "the audit callback pair-checks then returns only the already pinned parsed audit");
+    assert.match(deepParse, /assertCurrentEntryStorePairEqualV1\([^;]*successorPendingPair[^;]*\);\s*return parsedPending;/, "the pending callback pair-checks then returns only the already pinned parsed pending record");
+    assert.doesNotMatch(deepParse, /resolveInternalProduction|WithSelectedCurrentEntryStore|readCurrentEntry|readFixedLegacy|openExactPoisonRecovery|requireExactPoisonRecoverySnapshotV1|readFileSync|openSync|readSync|lstatSync|statSync|fstatSync|selectCurrentEntryStoreContextV1/, "successor deep parsing cannot reopen or resolve either prerequisite from a current, legacy, selected, public, or raw filesystem authority path");
+    assert.match(reader, /return Object\.freeze\(\{[\s\S]*?successorOperation,[\s\S]*?\}\);/, "the raw chain returns the exact deeply parsed successor operation variable");
+    assert.doesNotMatch(reader, /as\s+(?:unknown\s+as\s+)?InternalProductionCurrentEntryOperationV1/, "the raw reader cannot satisfy the typed successor contract with an unsafe assertion");
+    const construction = topLevelFunctionRegionV1(source, "openExactPoisonRecoveryPinnedChainV1");
+    assert.match(construction, /canonicalComparable\(reparsed\.successorOperation\)[\s\S]*?canonicalComparable\(parsed\.successorOperation\)[\s\S]*?successorOperation: parsed\.successorOperation/, "pinned construction compares the deep operation across semantic reparse and stores that exact parsed value");
+    const equality = topLevelFunctionRegionV1(source, "assertExactPoisonRecoveryPinnedChainEqualV1");
+    assert.match(equality, /canonicalComparable\(expected\.successorOperation\)[\s\S]*?canonicalComparable\(observed\.successorOperation\)/, "fresh C-helper reopen compares the fully parsed successor operation semantically");
+    assert.doesNotMatch(source, /export\s+(?:async\s+)?function resolveSuccessorHistorical|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B2 adds no public test seam, runtime seam, or fourth marker family");
+  });
+
+  it("P5b-B2 ordinary fixed operation remains legacy while unknown no-chain requests fail closed", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+      instrumentPhase5bHistoricalOperationFixtureV1(root);
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const resolved = await runPhase5bHistoricalOperationFixtureV1(root, ordinary.pair);
+      assert.equal(resolved.status, 0, resolved.stderr);
+      const observed = JSON.parse(resolved.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned");
+      assert.deepEqual(observed.value, ordinary.operation);
+      assert.deepEqual(
+        { publicCalls: observed.publicCalls, legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, validatorCalls: observed.validatorCalls, descriptorDelta: observed.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 1, builderCalls: 0, helperCalls: 0, selectorCalls: 0, creatorCalls: 0, validatorCalls: 0, descriptorDelta: 0 },
+      );
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "ordinary historical resolution is byte/identity read-only");
+
+      const unknown = await runPhase5bHistoricalOperationFixtureV1(root, Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64) }));
+      assert.equal(unknown.status, 0, unknown.stderr);
+      const refused = JSON.parse(unknown.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(refused.outcome, "threw");
+      assert.deepEqual(
+        { publicCalls: refused.publicCalls, legacyRouteCalls: refused.legacyRouteCalls, builderCalls: refused.builderCalls, helperCalls: refused.helperCalls, selectorCalls: refused.selectorCalls, creatorCalls: refused.creatorCalls, validatorCalls: refused.validatorCalls, descriptorDelta: refused.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 0, builderCalls: 1, helperCalls: 0, selectorCalls: 0, creatorCalls: 0, validatorCalls: 0, descriptorDelta: 0 },
+        "a nonpredecessor request never falls through to the fixed legacy parser when no strict C chain exists",
+      );
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "unknown historical refusal is byte/identity read-only");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B2 exact poison predecessor ignores H/S/C while exact successor uses only pinned C identity", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+      mutateExactPoisonStrictChainRecordV1(harness.seeded.H, "H", "malformed");
+      const workspace = path.dirname(root);
+      const beforePredecessor = filesystemTreeSnapshot(workspace);
+      const predecessor = await runPhase5bHistoricalOperationFixtureV1(root, Object.freeze({ operationRef: EXACT_POISON_OPERATION_REF_V1, operationHash: EXACT_POISON_OPERATION_HASH_V1 }));
+      assert.equal(predecessor.status, 0, predecessor.stderr);
+      const predecessorObserved = JSON.parse(predecessor.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(predecessorObserved.outcome, "threw");
+      assert.match(String(predecessorObserved.message), /V3_GIT_COMMIT_UNAVAILABLE|SETFARM_SOURCE_BUILD_INVALID|historical git commit|git command failed/i);
+      assert.deepEqual(
+        { publicCalls: predecessorObserved.publicCalls, legacyRouteCalls: predecessorObserved.legacyRouteCalls, builderCalls: predecessorObserved.builderCalls, helperCalls: predecessorObserved.helperCalls, selectorCalls: predecessorObserved.selectorCalls, creatorCalls: predecessorObserved.creatorCalls, validatorCalls: predecessorObserved.validatorCalls, descriptorDelta: predecessorObserved.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 1, builderCalls: 0, helperCalls: 0, selectorCalls: 0, creatorCalls: 0, validatorCalls: 0, descriptorDelta: 0 },
+        "the exact fixed predecessor retains its deep legacy parser and never observes unrelated malformed H",
+      );
+      assert.deepEqual(filesystemTreeSnapshot(workspace), beforePredecessor);
+    } finally {
+      removeFixture(root);
+    }
+
+    const successorRoot = createFixture();
+    try {
+      const harness = configurePhase5bHistoricalStrictChainFixtureV1(successorRoot, "C");
+      const successorPair = phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value);
+      const workspace = path.dirname(successorRoot);
+      const before = filesystemTreeSnapshot(workspace);
+      const successor = await runPhase5bHistoricalOperationFixtureV1(successorRoot, successorPair);
+      assert.equal(successor.status, 0, successor.stderr);
+      const observed = JSON.parse(successor.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned");
+      assert.deepEqual(observed.value, harness.admitted.chain.records.successorOperation.value);
+      assert.deepEqual(
+        { publicCalls: observed.publicCalls, legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, contextCloseCalls: observed.contextCloseCalls, sealHelperCalls: observed.sealHelperCalls, writerCalls: observed.writerCalls, publisherCalls: observed.publisherCalls, descriptorDelta: observed.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 0, builderCalls: 2, helperCalls: 1, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, contextCloseCalls: 2, sealHelperCalls: 0, writerCalls: 0, publisherCalls: 0, descriptorDelta: 0 },
+      );
+      assert.deepEqual(observed.fsyncTargets, [path.dirname(harness.seeded.C)], "historical successor durability fsyncs only its exact C parent");
+      assert.deepEqual((observed.fsyncTargets as string[]).map((target) => realpathSync(target)), [realpathSync(path.dirname(harness.seeded.C))]);
+      assert.deepEqual(observed.durabilityEvents, ["commit:pre-fsync", "commit:post-fsync", "commit:post-reopen"]);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before, "successor historical identity resolution is byte/identity read-only apart from C-parent durability");
+    } finally {
+      removeFixture(successorRoot);
+    }
+  });
+
+  it("P5b-B2 unknown pair with a full strict C chain fails before helper and never falls back", async () => {
+    const root = createFixture();
+    try {
+      configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const pair = Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64) });
+      const result = await runPhase5bHistoricalOperationFixtureV1(root, pair);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.deepEqual(
+        { publicCalls: observed.publicCalls, legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, contextCloseCalls: observed.contextCloseCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 0, builderCalls: 1, helperCalls: 0, contextCloseCalls: 1, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, descriptorDelta: 0 },
+        "the full chain is pinned and closed, but pair mismatch precedes helper durability and any fallback",
+      );
+      assert.deepEqual(observed.fsyncTargets, []);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B2 historical successor helper failure closes its context without validation or fallback", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bHistoricalOperationFixtureV1(root, phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value), "helper");
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.match(String(observed.message), /P5B_B1_COMMIT_HELPER_FAULT/);
+      assert.deepEqual(
+        { publicCalls: observed.publicCalls, legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, contextCloseCalls: observed.contextCloseCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta },
+        { publicCalls: 1, legacyRouteCalls: 0, builderCalls: 1, helperCalls: 1, contextCloseCalls: 1, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, descriptorDelta: 0 },
+      );
+      assert.deepEqual(observed.fsyncTargets, [], "a helper-entry failure performs no historical durability syscall");
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B2 successor historical resolution ignores crossed legacy prerequisite bait", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+      const bait = phase5bLegacyBaitPathV1(harness.seeded.store, harness.admitted.chain.records.successorAuthorityV31.locator);
+      mkdirSync(path.dirname(bait), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(bait), 0o700);
+      writeFileSync(bait, "{\n", { mode: 0o600 });
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bHistoricalOperationFixtureV1(root, phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned");
+      assert.deepEqual(observed.value, harness.admitted.chain.records.successorOperation.value);
+      assert.deepEqual({ legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta }, { legacyRouteCalls: 0, builderCalls: 2, helperCalls: 1, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, descriptorDelta: 0 });
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5b-B2 corrupt successor prerequisite never falls back to valid legacy bait", async () => {
+    const root = createFixture();
+    try {
+      const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+      const bait = phase5bLegacyBaitPathV1(harness.seeded.store, harness.admitted.chain.records.successorAuthorityV31.locator);
+      mkdirSync(path.dirname(bait), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(bait), 0o700);
+      writeFileSync(bait, harness.admitted.chain.records.successorAuthorityV31.bytes, { mode: 0o600 });
+      writeFileSync(harness.seeded.GAuthorityV31, "{\n");
+      const workspace = path.dirname(root);
+      const before = filesystemTreeSnapshot(workspace);
+      const result = await runPhase5bHistoricalOperationFixtureV1(root, phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value));
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "threw");
+      assert.deepEqual(
+        { legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta },
+        { legacyRouteCalls: 0, builderCalls: 1, helperCalls: 0, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, descriptorDelta: 0 },
+      );
+      assert.deepEqual(observed.fsyncTargets, []);
+      assert.deepEqual(filesystemTreeSnapshot(workspace), before);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  const phase5bHistoricalInvalidChainCasesV1 = [
+    Object.freeze({ name: "H with seal absent", through: "H" as const, mutate: (_seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => undefined }),
+    Object.freeze({ name: "S with commit absent", through: "S" as const, mutate: (_seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => undefined }),
+    ...(["H", "S", "C"] as const).flatMap((kind) => (["malformed", "crossed", "wrong-link"] as const).map((fault) => Object.freeze({ name: `${kind} ${fault}`, through: "C" as const, mutate: (seeded: ReturnType<typeof seedExactPoisonStrictChainFixtureV1>) => mutateExactPoisonStrictChainRecordV1(seeded[kind], kind, fault) }))),
+  ];
+  for (const testCase of phase5bHistoricalInvalidChainCasesV1) {
+    it(`P5b-B2 historical successor refuses ${testCase.name} without fallback`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, testCase.through);
+        testCase.mutate(harness.seeded);
+        const workspace = path.dirname(root);
+        const before = filesystemTreeSnapshot(workspace);
+        const result = await runPhase5bHistoricalOperationFixtureV1(root, phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value));
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw");
+        assert.deepEqual(
+          { publicCalls: observed.publicCalls, legacyRouteCalls: observed.legacyRouteCalls, builderCalls: observed.builderCalls, helperCalls: observed.helperCalls, validatorCalls: observed.validatorCalls, selectorCalls: observed.selectorCalls, creatorCalls: observed.creatorCalls, sealHelperCalls: observed.sealHelperCalls, writerCalls: observed.writerCalls, publisherCalls: observed.publisherCalls, descriptorDelta: observed.descriptorDelta },
+          { publicCalls: 1, legacyRouteCalls: 0, builderCalls: 1, helperCalls: 0, validatorCalls: 0, selectorCalls: 0, creatorCalls: 0, sealHelperCalls: 0, writerCalls: 0, publisherCalls: 0, descriptorDelta: 0 },
+        );
+        assert.deepEqual(observed.fsyncTargets, []);
+        assert.deepEqual(filesystemTreeSnapshot(workspace), before, `${testCase.name} refusal preserves the disposable workspace`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
 
   for (const negative of exactPoisonAdmissionNegativeFixturesV1) {
     it(`P4 exact-poison publisher refuses ${negative.name} before recovery publication`, () => {
