@@ -2064,6 +2064,459 @@ function assertExactPoisonRecoveryConvergedV1(
   assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, `${label}: original file identities`);
 }
 
+type ExactPoisonRecoveryWriterBoundaryFixtureV1 =
+  | "post-scan"
+  | "pre-member-open"
+  | "pre-member-read"
+  | "post-member-read"
+  | "pre-temp-create"
+  | "temp-create"
+  | "partial-write"
+  | "complete-write"
+  | "file-fsync"
+  | "prelink"
+  | "postlink"
+  | "pre-stale-unlink-fence"
+  | "pre-member-unlink"
+  | "member-unlink"
+  | "selected-unlink"
+  | "fixed-reopen"
+  | "post-fixed-refresh"
+  | "fixed-unlink"
+  | "parent-fsync"
+  | "release-unlink"
+  | "release-parent-fsync"
+  | "release-reopen";
+type ExactPoisonRecoveryWriterFaultFixtureV1 = Readonly<{
+  action: "kill" | "throw" | "latch" | "record";
+  boundary: ExactPoisonRecoveryWriterBoundaryFixtureV1;
+  occurrence: number;
+  readyPath?: string;
+  releasePath?: string;
+  eventLogPath?: string;
+  ambiguousPid?: number;
+  secondReadyPath?: string;
+  secondReleasePath?: string;
+}>;
+
+function exactPoisonRecoveryWriterPathsFixtureV1(store: string): Readonly<{
+  target: string;
+  lockPath: string;
+  tempPrefix: string;
+}> {
+  const canonicalStore = realpathSync(store);
+  const target = path.join(
+    canonicalStore,
+    "records",
+    `current-entry-store-quarantine-recovery-by-predecessor-operation-${EXACT_POISON_OPERATION_HASH_V1}`,
+  );
+  const lockPath = path.join(path.dirname(target), `.${path.basename(target)}.writer.lock`);
+  return Object.freeze({ target, lockPath, tempPrefix: `${path.basename(lockPath)}.tmp-` });
+}
+
+function instrumentExactPoisonRecoveryWriterFixtureV1(
+  root: string,
+  fault: ExactPoisonRecoveryWriterFaultFixtureV1 | null,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const targetMarker = "function exactPoisonRecoveryWriterTargetV1(): string {";
+  const acquireMarker = "function acquireTask12ReceiptLocatorWriterV1(target: string):";
+  assert.equal(source.split(targetMarker).length - 1, 1, "production must retain one private H-derived virtual writer target");
+  assert.equal(source.split(acquireMarker).length - 1, 1, "production must retain one private Task12 receipt locator writer acquisition");
+  source = source.replace(targetMarker, `export ${targetMarker}`);
+  source = source.replace(acquireMarker, `export ${acquireMarker}`);
+  const hook = `const P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1 = ${JSON.stringify(fault)} as null | Readonly<{ action: "kill" | "throw" | "latch" | "record"; boundary: string; occurrence: number; readyPath?: string; releasePath?: string; eventLogPath?: string; ambiguousPid?: number; secondReadyPath?: string; secondReleasePath?: string }>;
+let p4bExactPoisonRecoveryWriterMatchCountV1 = 0;
+let p4bExactPoisonRecoveryWriterSecondTempCreateLatchedV1 = false;
+function p4bExactPoisonRecoveryWriterBoundaryV1(boundary: string, member = ""): void {
+  const expected = P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1;
+  if (expected?.eventLogPath) writeFileSync(expected.eventLogPath, boundary + "\\t" + member + "\\n", { flag: "a", mode: 0o600 });
+  if (expected?.secondReadyPath && expected.secondReleasePath && boundary === "temp-create" && !p4bExactPoisonRecoveryWriterSecondTempCreateLatchedV1) {
+    p4bExactPoisonRecoveryWriterSecondTempCreateLatchedV1 = true;
+    writeFileSync(expected.secondReadyPath, "ready\\n", { flag: "wx", mode: 0o600 });
+    const secondWait = new Int32Array(new SharedArrayBuffer(4));
+    let secondReleased = false;
+    while (!secondReleased) {
+      try { lstatSync(expected.secondReleasePath); secondReleased = true; }
+      catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(secondWait, 0, 0, 5); }
+    }
+  }
+  if (expected === null || expected.boundary !== boundary) return;
+  p4bExactPoisonRecoveryWriterMatchCountV1 += 1;
+  if (p4bExactPoisonRecoveryWriterMatchCountV1 !== expected.occurrence) return;
+  if (expected.action === "record") return;
+  if (expected.action === "latch") {
+    if (!expected.readyPath || !expected.releasePath) throw new Error("P4B_WRITER_LATCH_PATH_MISSING");
+    writeFileSync(expected.readyPath, "ready\\n", { flag: "wx", mode: 0o600 });
+    const wait = new Int32Array(new SharedArrayBuffer(4));
+    let released = false;
+    while (!released) {
+      try { lstatSync(expected.releasePath); released = true; }
+      catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); }
+    }
+    return;
+  }
+  if (expected.action === "throw") throw new Error("P4B_EXACT_POISON_RECOVERY_WRITER_FAULT:" + boundary);
+  process.kill(process.pid, "SIGKILL");
+}
+`;
+  source = source.replace(`export ${acquireMarker}`, `${hook}export ${acquireMarker}`);
+  const acquireStart = source.indexOf(`export ${acquireMarker}`);
+  const acquireEnd = source.indexOf("\n}\n\nfunction publishLegacyZeroRecordV1", acquireStart);
+  assert.ok(acquireStart >= 0 && acquireEnd > acquireStart, "the copied writer helper must have one exact private boundary");
+  let acquire = source.slice(acquireStart, acquireEnd);
+  const replaceOnce = (literal: string, replacement: string, label: string): void => {
+    assert.equal(acquire.split(literal).length - 1, 1, `writer acquisition must retain one ${label} boundary`);
+    acquire = acquire.replace(literal, replacement);
+  };
+  replaceOnce(
+    "const deadline = Date.now() + 10_000;",
+    `const deadline = Date.now() + ${fault?.action === "latch" ? 2_000 : 250};`,
+    "bounded fixture deadline",
+  );
+  replaceOnce(
+    "const observe = (pid: number): Readonly<",
+    "const observe = (pid: number): Readonly<",
+    "process observer declaration",
+  );
+  acquire = acquire.replace(
+    "    const result = spawnSync(\"/bin/ps\",",
+    "    if (P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1?.ambiguousPid === pid) return Object.freeze({ state: \"ambiguous\" as const });\n    const result = spawnSync(\"/bin/ps\",",
+  );
+  replaceOnce(
+    "const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);",
+    "p4bExactPoisonRecoveryWriterBoundaryV1(\"pre-member-open\", member); const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);",
+    "pinned member open",
+  );
+  replaceOnce(
+    "memberBytes = readTask12ReceiptDescriptorBytesV1(memberDescriptor, memberIdentity.size);",
+    "p4bExactPoisonRecoveryWriterBoundaryV1(\"pre-member-read\", member); memberBytes = readTask12ReceiptDescriptorBytesV1(memberDescriptor, memberIdentity.size); p4bExactPoisonRecoveryWriterBoundaryV1(\"post-member-read\", member);",
+    "pinned member read",
+  );
+  replaceOnce(
+    "const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);",
+    "const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes); p4bExactPoisonRecoveryWriterBoundaryV1(\"post-scan\", candidates.join(\"|\"));",
+    "pinned temp snapshot",
+  );
+  replaceOnce(
+    "unlinkSync(member);",
+    "p4bExactPoisonRecoveryWriterBoundaryV1(\"pre-member-unlink\", member); unlinkSync(member); p4bExactPoisonRecoveryWriterBoundaryV1(member === lockPath ? \"fixed-unlink\" : expectedLinkCount === 2n ? \"selected-unlink\" : \"member-unlink\", member);",
+    "authenticated member unlink",
+  );
+  replaceOnce(
+    "unlinkPinned(member.member, member.descriptor, member.identity, member.bytes);",
+    "p4bExactPoisonRecoveryWriterBoundaryV1(\"pre-stale-unlink-fence\", member.member); unlinkPinned(member.member, member.descriptor, member.identity, member.bytes);",
+    "stale member pre-unlink fence",
+  );
+  replaceOnce(
+    "descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "p4bExactPoisonRecoveryWriterBoundaryV1(\"pre-temp-create\", temp); descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); p4bExactPoisonRecoveryWriterBoundaryV1(\"temp-create\", temp);",
+    "O_EXCL temp create",
+  );
+  replaceOnce(
+    "writeFileSync(descriptor, bytes); fsyncSync(descriptor); identity = fstatSync(descriptor, { bigint: true });",
+    "writeFileSync(descriptor, bytes.subarray(0, Math.max(1, Math.floor(bytes.length / 2)))); p4bExactPoisonRecoveryWriterBoundaryV1(\"partial-write\", temp); writeFileSync(temp, bytes); p4bExactPoisonRecoveryWriterBoundaryV1(\"complete-write\", temp); fsyncSync(descriptor); p4bExactPoisonRecoveryWriterBoundaryV1(\"file-fsync\", temp); identity = fstatSync(descriptor, { bigint: true });",
+    "partial/full write and file fsync",
+  );
+  replaceOnce(
+    "        linkSync(temp, lockPath);\n        linked = true;",
+    "        p4bExactPoisonRecoveryWriterBoundaryV1(\"prelink\", temp);\n        linkSync(temp, lockPath);\n        linked = true;",
+    "fixed-lock link",
+  );
+  replaceOnce(
+    ") currentEntryFail(\"Task12 receipt writer linked identity is invalid\");",
+    ") currentEntryFail(\"Task12 receipt writer linked identity is invalid\"); p4bExactPoisonRecoveryWriterBoundaryV1(\"postlink\", temp);",
+    "authenticated fixed-lock postlink",
+  );
+  acquire = acquire.replaceAll(
+    "fsyncCurrentEntryDirectory(directory);",
+    "fsyncCurrentEntryDirectory(directory); p4bExactPoisonRecoveryWriterBoundaryV1(\"parent-fsync\", directory);",
+  );
+  const fixedReopenLiteral = "const heldAtPath = lstatSync(lockPath, { bigint: true });";
+  assert.ok(acquire.includes(fixedReopenLiteral), "writer acquisition must stably reopen its exact fixed lock");
+  acquire = acquire.replaceAll(
+    fixedReopenLiteral,
+    `p4bExactPoisonRecoveryWriterBoundaryV1("fixed-reopen", lockPath); ${fixedReopenLiteral}`,
+  );
+  replaceOnce(
+    "if (!readPinned(lockPath, fixed!.descriptor, fixedNow).equals(fixed!.bytes)) throw retryPinnedSnapshot;",
+    "if (!readPinned(lockPath, fixed!.descriptor, fixedNow).equals(fixed!.bytes)) throw retryPinnedSnapshot; p4bExactPoisonRecoveryWriterBoundaryV1(\"post-fixed-refresh\", lockPath);",
+    "selected-pair fixed metadata and byte refresh",
+  );
+  const closeStart = acquire.indexOf("        close: () => {");
+  const closeEnd = acquire.indexOf("        },\n      });", closeStart);
+  assert.ok(closeStart >= 0 && closeEnd > closeStart, "writer handle close must retain one copied-module region");
+  const closeRegion = acquire.slice(closeStart, closeEnd);
+  let hookedClose = closeRegion.replace(
+    "            unlinkSync(lockPath);",
+    "            unlinkSync(lockPath); p4bExactPoisonRecoveryWriterBoundaryV1(\"release-unlink\", lockPath);",
+  );
+  hookedClose = hookedClose.replace(
+    "            fsyncCurrentEntryDirectory(directory); p4bExactPoisonRecoveryWriterBoundaryV1(\"parent-fsync\", directory);",
+    "            fsyncCurrentEntryDirectory(directory); p4bExactPoisonRecoveryWriterBoundaryV1(\"parent-fsync\", directory); p4bExactPoisonRecoveryWriterBoundaryV1(\"release-parent-fsync\", directory);",
+  );
+  hookedClose = hookedClose.replace(
+    "            guard.assertStable();",
+    "            guard.assertStable(); p4bExactPoisonRecoveryWriterBoundaryV1(\"release-reopen\", lockPath);",
+  );
+  assert.notEqual(hookedClose, closeRegion, "writer release must expose unlink and parent-fsync response-loss boundaries");
+  acquire = acquire.slice(0, closeStart) + hookedClose + acquire.slice(closeEnd);
+  source = source.slice(0, acquireStart) + acquire + source.slice(acquireEnd);
+  writeFileSync(modulePath, source);
+}
+
+function setExactPoisonRecoveryWriterFaultFixtureV1(
+  root: string,
+  fault: ExactPoisonRecoveryWriterFaultFixtureV1 | null,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const literal = /const P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1 = .*? as null \| Readonly<\{ action: "kill" \| "throw" \| "latch" \| "record"; boundary: string; occurrence: number; readyPath\?: string; releasePath\?: string; eventLogPath\?: string; ambiguousPid\?: number; secondReadyPath\?: string; secondReleasePath\?: string \}>;/;
+  assert.equal((source.match(literal) ?? []).length, 1, "copied writer must retain one private literal fault configuration");
+  writeFileSync(
+    modulePath,
+    source.replace(
+      literal,
+      `const P4B_EXACT_POISON_RECOVERY_WRITER_FAULT_V1 = ${JSON.stringify(fault)} as null | Readonly<{ action: "kill" | "throw" | "latch" | "record"; boundary: string; occurrence: number; readyPath?: string; releasePath?: string; eventLogPath?: string; ambiguousPid?: number; secondReadyPath?: string; secondReleasePath?: string }>;`,
+    ),
+  );
+}
+
+function exactPoisonRecoveryWriterOwnerBytesFixtureV1(
+  target: string,
+  pid: number,
+  nonce: string,
+  overrides: Readonly<Record<string, unknown>> = Object.freeze({}),
+): Buffer {
+  const start = typeof overrides.start === "string" ? overrides.start : "Mon Jan 01 00:00:00 2001";
+  const commandHash = typeof overrides.commandHash === "string" ? overrides.commandHash : "8".repeat(64);
+  const identityHash = typeof overrides.identityHash === "string"
+    ? overrides.identityHash
+    : canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash });
+  return Buffer.from(`${canonical({
+    schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1",
+    targetHash: canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target }),
+    pid,
+    start,
+    commandHash,
+    identityHash,
+    nonce,
+    ...overrides,
+  })}\n`, "utf8");
+}
+
+function writeExactPoisonRecoveryWriterTempFixtureV1(
+  paths: ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1>,
+  pid: number,
+  nonce: string,
+  kind: "empty" | "partial" | "noncanonical" | "complete" = "complete",
+  overrides: Readonly<Record<string, unknown>> = Object.freeze({}),
+): string {
+  const bytes = exactPoisonRecoveryWriterOwnerBytesFixtureV1(paths.target, pid, nonce, overrides);
+  const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${pid}-${nonce}`);
+  const selected = kind === "empty"
+    ? Buffer.alloc(0)
+    : kind === "partial"
+      ? bytes.subarray(0, Math.max(1, Math.floor(bytes.length / 2)))
+      : kind === "noncanonical"
+        ? Buffer.from("{}\n", "utf8")
+        : bytes;
+  writeFileSync(target, selected, { flag: "wx", mode: 0o600 });
+  chmodSync(target, 0o600);
+  return target;
+}
+
+function crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+  paths: ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1>,
+  nonce: string,
+  kind: "empty" | "partial" | "noncanonical" | "complete",
+): string {
+  const before = new Set(readdirSync(path.dirname(paths.lockPath)));
+  const program = `import{spawnSync}from"node:child_process";import{createHash}from"node:crypto";import{writeFileSync}from"node:fs";const target=${JSON.stringify(paths.target)},prefix=${JSON.stringify(path.join(path.dirname(paths.lockPath), paths.tempPrefix))},nonce=${JSON.stringify(nonce)},kind=${JSON.stringify(kind)};const hash=(value)=>createHash("sha256").update(JSON.stringify(value,Object.keys(value).sort())).digest("hex");const ps=spawnSync("/bin/ps",["-p",String(process.pid),"-o","lstart=","-o","command="],{env:{PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"},encoding:"utf8"});const match=/^(.{24}) (.+)\\n$/.exec(ps.stdout);if(!match)throw new Error("P4B_CHILD_PS_UNAVAILABLE");const start=match[1],commandHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-command.v1",command:match[2]}),identityHash=hash({schema:"setfarm.internal-production-task12-receipt-writer-process.v1",pid:process.pid,start,commandHash}),targetHash=hash({schema:"setfarm.internal-production-task12-receipt-locator-writer-target.v1",target}),body={schema:"setfarm.internal-production-task12-receipt-locator-writer-lock.v1",targetHash,pid:process.pid,start,commandHash,identityHash,nonce},bytes=Buffer.from(JSON.stringify(body,Object.keys(body).sort())+"\\n"),selected=kind==="empty"?Buffer.alloc(0):kind==="partial"?bytes.subarray(0,Math.max(1,Math.floor(bytes.length/2))):kind==="noncanonical"?Buffer.from("{}\\n"):bytes;writeFileSync(prefix+process.pid+"-"+nonce,selected,{flag:"wx",mode:0o600});process.kill(process.pid,"SIGKILL")`;
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", program], { encoding: "utf8", env: { ...process.env } });
+  assert.equal(crashed.status, null, `${kind}: fixture owner must die without same-process cleanup`);
+  assert.equal(crashed.signal, "SIGKILL", `${kind}: fixture owner death signal`);
+  const created = readdirSync(path.dirname(paths.lockPath)).filter((entry) => !before.has(entry) && entry.endsWith(`-${nonce}`));
+  assert.equal(created.length, 1, `${kind}: one real-child acquisition temp must remain`);
+  const target = path.join(path.dirname(paths.lockPath), created[0]!);
+  if (kind === "complete") {
+    const bytes = readFileSync(target);
+    const value = JSON.parse(bytes.toString("utf8")) as Readonly<Record<string, unknown>>;
+    assert.equal(bytes.equals(Buffer.from(`${canonical(value)}\n`, "utf8")), true, "real-child complete owner body must be canonical LF");
+    assert.equal(value.targetHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: paths.target }));
+    assert.equal(value.nonce, nonce);
+    assert.equal(value.identityHash, canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid: value.pid, start: value.start, commandHash: value.commandHash }));
+  }
+  return target;
+}
+
+function exactPoisonRecoveryWriterArtifactsFixtureV1(
+  paths: ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1>,
+): readonly string[] {
+  return Object.freeze(readdirSync(path.dirname(paths.lockPath)).filter((entry) => (
+    entry === path.basename(paths.lockPath) || entry.startsWith(paths.tempPrefix)
+  )).sort());
+}
+
+function assertExactPoisonRecoveryWriterReleasedFixtureV1(
+  paths: ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1>,
+  label: string,
+): void {
+  assert.equal(existsSync(paths.target), false, `${label}: virtual target must never be created`);
+  assert.deepEqual(exactPoisonRecoveryWriterArtifactsFixtureV1(paths), [], `${label}: fixed and acquisition-temp writer family must be absent`);
+}
+
+function waitForFixturePredicateV1(predicate: () => boolean, label: string, timeoutMs = 5_000): void {
+  const deadline = Date.now() + timeoutMs;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  while (!predicate()) {
+    if (Date.now() >= deadline) assert.fail(`${label}: timed out`);
+    Atomics.wait(wait, 0, 0, 5);
+  }
+}
+
+function exactLiveWriterOwnerFixtureV1(target: string, pid: number, nonce: string): Buffer {
+  const observed = execFileSync(
+    "/bin/ps",
+    ["-p", String(pid), "-o", "lstart=", "-o", "command="],
+    { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), encoding: "utf8" },
+  );
+  const match = /^(.{24}) (.+)\n$/.exec(observed);
+  assert.notEqual(match, null, "fixture live process must have the exact writer-owner ps shape");
+  const start = match![1]!;
+  const commandHash = canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-command.v1", command: match![2]! });
+  const identityHash = canonicalHash({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash });
+  return exactPoisonRecoveryWriterOwnerBytesFixtureV1(target, pid, nonce, { start, commandHash, identityHash });
+}
+
+function spawnExactPoisonRecoveryLiveWriterTempFixtureV1(
+  paths: ReturnType<typeof exactPoisonRecoveryWriterPathsFixtureV1>,
+  nonce: string,
+): Readonly<{ owner: ReturnType<typeof spawn>; temp: string }> {
+  const owner = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+  assert.notEqual(owner.pid, undefined, "fixture live writer owner must have a PID");
+  const temp = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${owner.pid!}-${nonce}`);
+  writeFileSync(temp, exactLiveWriterOwnerFixtureV1(paths.target, owner.pid!, nonce), { flag: "wx", mode: 0o600 });
+  return Object.freeze({ owner, temp });
+}
+
+function runExactPoisonRecoveryWriterAcquireFixtureV1(root: string): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(
+    root,
+    `(async()=>{const fs=await import("node:fs");const target=m.exactPoisonRecoveryWriterTargetV1();const held=m.acquireTask12ReceiptLocatorWriterV1(target);const beforeClose={targetExists:fs.existsSync(target),members:fs.readdirSync((await import("node:path")).dirname(target)).filter((name)=>name.includes("current-entry-store-quarantine-recovery-by-predecessor-operation"))};held.assertStable();held.close();process.stdout.write(JSON.stringify({target,beforeClose,afterClose:fs.readdirSync((await import("node:path")).dirname(target)).filter((name)=>name.includes("current-entry-store-quarantine-recovery-by-predecessor-operation"))}))})()`,
+  );
+}
+
+function runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(
+  root: string,
+  attempts: number,
+  absorbFailures = false,
+): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
+  return runFixtureExpressionAsync(
+    root,
+    `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;let failures=0;for(let attempt=0;attempt<${attempts};attempt+=1){try{const held=m.acquireTask12ReceiptLocatorWriterV1(m.exactPoisonRecoveryWriterTargetV1());held.assertStable();held.close()}catch(error){failures+=1;if(!${absorbFailures})throw error}}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({before,after,failures}))})()`,
+  );
+}
+
+function instrumentExactPoisonRecoveryTransientObserverFixtureV1(
+  root: string,
+  original: ExactOriginalPoisonStoreFixtureV1,
+  scanLatch: Readonly<{ readyPath: string; releasePath: string; scanLogPath: string }> | null = null,
+  ambiguityProbe: Readonly<{ pid: number; observedPath: string }> | null = null,
+): void {
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  if (scanLatch !== null) {
+    const transientMarker = "function observeExactPoisonRecoveryWriterTransientsV1(";
+    const transientStart = source.indexOf(transientMarker);
+    const transientEndCandidates = ["\nfunction ", "\nasync function ", "\nexport function ", "\nexport async function "]
+      .map((marker) => source.indexOf(marker, transientStart + transientMarker.length))
+      .filter((offset) => offset >= 0);
+    const transientEnd = transientEndCandidates.length > 0 ? Math.min(...transientEndCandidates) : -1;
+    assert.ok(transientStart >= 0 && transientEnd > transientStart, "production must retain one private bounded recovery-writer transient observer");
+    let transient = source.slice(transientStart, transientEnd);
+    const scan = "const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);";
+    const firstRead = "bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);";
+    assert.ok(transient.includes(scan), "transient observer must fresh-enumerate its exact acquisition-temp family");
+    assert.ok(transient.includes(firstRead), "transient observer must pin and read each candidate before classification");
+    transient = transient.replaceAll(scan, `${scan} writeFileSync(${JSON.stringify(scanLatch.scanLogPath)}, "scan:" + String(p4bExactPoisonTransientInvocationV1) + ":" + String(candidates.length) + "\\n", { flag: "a", mode: 0o600 });`);
+    transient = transient.replace(firstRead, `${firstRead} if (!p4bExactPoisonTransientFirstReadLatchedV1) { p4bExactPoisonTransientFirstReadLatchedV1 = true; writeFileSync(${JSON.stringify(scanLatch.readyPath)}, "ready\\n", { flag: "wx", mode: 0o600 }); const p4bWait = new Int32Array(new SharedArrayBuffer(4)); let p4bReleased = false; while (!p4bReleased) { try { lstatSync(${JSON.stringify(scanLatch.releasePath)}); p4bReleased = true; } catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(p4bWait, 0, 0, 5); } } }`);
+    const bodyStart = transient.indexOf("{");
+    const bodyEnd = transient.lastIndexOf("}");
+    assert.ok(bodyStart >= 0 && bodyEnd > bodyStart, "transient observer body must remain fixture-wrappable");
+    transient = `${transient.slice(0, bodyStart + 1)}
+  const p4bExactPoisonTransientInvocationV1 = ++p4bExactPoisonTransientInvocationCounterV1;
+  writeFileSync(${JSON.stringify(scanLatch.scanLogPath)}, "enter:" + String(p4bExactPoisonTransientInvocationV1) + "\\n", { flag: "a", mode: 0o600 });
+  try {${transient.slice(bodyStart + 1, bodyEnd)}
+  } finally {
+    writeFileSync(${JSON.stringify(scanLatch.scanLogPath)}, "return:" + String(p4bExactPoisonTransientInvocationV1) + "\\n", { flag: "a", mode: 0o600 });
+  }
+${transient.slice(bodyEnd)}`;
+    source = source.slice(0, transientStart) + "let p4bExactPoisonTransientFirstReadLatchedV1 = false;\nlet p4bExactPoisonTransientInvocationCounterV1 = 0;\n" + transient + source.slice(transientEnd);
+  }
+  if (ambiguityProbe !== null) {
+    const processCall = 'const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="],';
+    assert.ok(source.includes(processCall), "production must retain a private exact process observer for writer ownership");
+    source = source.replaceAll(processCall, `if (pid === ${ambiguityProbe.pid}) { writeFileSync(${JSON.stringify(ambiguityProbe.observedPath)}, "ambiguous\\n", { flag: "a", mode: 0o600 }); return Object.freeze({ state: "ambiguous" as const }); } ${processCall}`);
+  }
+  const coreMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(coreMarker).length - 1, 1, "production must retain one exact-poison publisher core boundary");
+  const wrapper = `export async function p4bObserveExactPoisonRecoveryTransientFixtureV1(readyPath: string, releasePath: string, observeStartPath = "", observedPath = "", closeReleasePath = ""): Promise<string> {
+  const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
+  try {
+    heldWriter.assertStable();
+    writeFileSync(readyPath, "ready\\n", { flag: "wx", mode: 0o600 });
+    const wait = new Int32Array(new SharedArrayBuffer(4));
+    let released = false;
+    while (!released) {
+      try { lstatSync(releasePath); released = true; }
+      catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); }
+    }
+    if (observeStartPath !== "") writeFileSync(observeStartPath, "started\\n", { flag: "wx", mode: 0o600 });
+    const operation = requireExactPoisonRecoverySnapshotV1(fixedLegacyCurrentEntryOperationPathV1(), "P4b transient observer operation");
+    const observed = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter);
+    observed.assertStableOriginals();
+    heldWriter.assertStable();
+    if (observedPath !== "") writeFileSync(observedPath, "observed\\n", { flag: "wx", mode: 0o600 });
+    if (closeReleasePath !== "") {
+      let closeReleased = false;
+      while (!closeReleased) {
+        try { lstatSync(closeReleasePath); closeReleased = true; }
+        catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); }
+      }
+    }
+    return String(observed.inventoryHash);
+  } finally { heldWriter.close(); }
+}
+
+`;
+  writeFileSync(modulePath, source.replace(coreMarker, `${wrapper}${coreMarker}`));
+}
+
+function instrumentExactPoisonRecoveryCoreAdmissionOrderFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const coreMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
+  assert.equal(source.split(coreMarker).length - 1, 1, "production must retain one private exact-poison publisher core");
+  source = source.replace(coreMarker, `export ${coreMarker}`);
+  const coreStart = source.indexOf(`export ${coreMarker}`);
+  const coreEnd = source.indexOf("\n}\n\nasync function resumeExactPoisonQuarantineBeforeSelectionV1", coreStart);
+  assert.ok(coreStart >= 0 && coreEnd > coreStart, "the copied publisher core must retain an exact boundary");
+  let core = source.slice(coreStart, coreEnd);
+  const currentAcquire = "const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());";
+  const strengthenedAcquire = "const heldWriter = acquireExactPoisonRecoveryWriterV1();";
+  const acquireCount = core.split(currentAcquire).length - 1 + core.split(strengthenedAcquire).length - 1;
+  assert.equal(acquireCount, 1, "publisher core must have one private exact-poison writer acquisition");
+  core = core.replace(
+    core.includes(strengthenedAcquire) ? strengthenedAcquire : currentAcquire,
+    'const heldWriter = (() => { throw new Error("P4B_WRITER_ACQUIRE_CALLED"); })() as ExactPoisonRecoveryWriterV1;',
+  );
+  source = source.slice(0, coreStart) + core + source.slice(coreEnd);
+  writeFileSync(modulePath, source);
+}
+
 function buildExactPoisonPublisherAdmissionFixtureV1(
   root: string,
   original: ExactOriginalPoisonStoreFixtureV1,
@@ -3515,16 +3968,22 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       const canonicalRoot = realpathSync(root);
       const modulePath = path.join(canonicalRoot, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
       const original = readFileSync(modulePath, "utf8");
+      const authenticatedPostLinkAnchor = ") currentEntryFail(\"Task12 receipt writer linked identity is invalid\");";
+      assert.equal(
+        original.split(authenticatedPostLinkAnchor).length - 1,
+        1,
+        "the generic writer fault hook must target the sole authenticated linked temp/fixed boundary",
+      );
       const source = original
         .replace("function acquireTask12ReceiptLocatorWriterV1(", "export function acquireTask12ReceiptLocatorWriterV1(")
         .replace("function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 {", "function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 { (globalThis as Record<string, number>).__p4ReceiptGuardCreates=((globalThis as Record<string, number>).__p4ReceiptGuardCreates??0)+1;")
         .replace("        closed = true;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);", "        closed = true; (globalThis as Record<string, number>).__p4ReceiptGuardCloses=((globalThis as Record<string, number>).__p4ReceiptGuardCloses??0)+1;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);")
         .replace("const deadline = Date.now() + 10_000;", "const deadline = Date.now() + 75;")
         .replace(
-          "      }\n      unlinkPinned(temp, descriptor, identity, bytes, 2n);",
-          "      }\n      const hook=Reflect.get(globalThis,'__p4ReceiptPostLinkHook'); if(typeof hook==='function')hook(directory);\n      unlinkPinned(temp, descriptor, identity, bytes, 2n);",
+          authenticatedPostLinkAnchor,
+          `${authenticatedPostLinkAnchor} const hook=Reflect.get(globalThis,'__p4ReceiptPostLinkHook'); if(typeof hook==='function')hook(directory);`,
         );
-      assert.notEqual(source, original);
+      assert.equal(source.split("__p4ReceiptPostLinkHook").length - 1, 1, "the generic postlink fault hook must be inserted exactly once");
       writeFileSync(modulePath, source);
       const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-writer-faults");
       for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
@@ -4850,6 +5309,1259 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, "idempotent-second");
     } finally {
       removeFixture(root);
+    }
+  });
+
+  it("P4b exact-poison writer derives a never-created H target and releases its exact fixed lock", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+      const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<{
+        target: string;
+        beforeClose: Readonly<{ targetExists: boolean; members: readonly string[] }>;
+        afterClose: readonly string[];
+      }>;
+      assert.equal(observed.target, paths.target);
+      assert.equal(observed.beforeClose.targetExists, false, "the virtual target is a hash-derived lock locator only");
+      assert.deepEqual(observed.beforeClose.members, [path.basename(paths.lockPath)], "only the exact fixed dot-lock may exist while held");
+      assert.deepEqual(observed.afterClose, []);
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "normal release");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const boundary of ["temp-create", "partial-write", "complete-write", "file-fsync", "prelink", "postlink"] as const) {
+    it(`P4b exact-poison writer adopts a real child crash at ${boundary}`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "kill", boundary, occurrence: 1 }));
+        const crashed = runFixtureExpression(root, `m.acquireTask12ReceiptLocatorWriterV1(m.exactPoisonRecoveryWriterTargetV1())`);
+        assert.equal(crashed.status, null, `${boundary}: child must die rather than run same-process cleanup`);
+        assert.equal(crashed.signal, "SIGKILL", `${boundary}: real process death signal`);
+        assert.equal(existsSync(paths.target), false, `${boundary}: virtual target remains absent after death`);
+        const artifacts = exactPoisonRecoveryWriterArtifactsFixtureV1(paths);
+        const tempNames = artifacts.filter((member) => member.startsWith(paths.tempPrefix));
+        assert.deepEqual(tempNames.length, 1, `${boundary}: exactly one selected acquisition temp must remain`);
+        const tempPath = path.join(path.dirname(paths.lockPath), tempNames[0]!);
+        const tempStats = lstatSync(tempPath);
+        assert.equal(tempStats.isFile() && !tempStats.isSymbolicLink(), true, `${boundary}: selected temp physical kind`);
+        assert.equal(tempStats.mode & 0o7777, 0o600, `${boundary}: selected temp mode`);
+        if (boundary === "postlink") {
+          assert.deepEqual(artifacts, [path.basename(paths.lockPath), tempNames[0]!].sort(), "postlink crash must expose only the exact A2 pair");
+          const fixedStats = lstatSync(paths.lockPath);
+          assert.equal(tempStats.nlink, 2, "postlink selected temp link count");
+          assert.equal(fixedStats.nlink, 2, "postlink fixed link count");
+          assert.deepEqual({ dev: fixedStats.dev, ino: fixedStats.ino }, { dev: tempStats.dev, ino: tempStats.ino }, "postlink fixed/temp same inode");
+          assert.equal(readFileSync(paths.lockPath).equals(readFileSync(tempPath)), true, "postlink fixed/temp exact equal bytes");
+        } else {
+          assert.deepEqual(artifacts, [tempNames[0]!], `${boundary}: prelink crash must expose only exact A0 sole temp`);
+          assert.equal(tempStats.nlink, 1, `${boundary}: prelink temp link count`);
+          if (["complete-write", "file-fsync", "prelink"].includes(boundary)) {
+            const bytes = readFileSync(tempPath);
+            const value = JSON.parse(bytes.toString("utf8")) as Readonly<Record<string, unknown>>;
+            assert.equal(bytes.equals(Buffer.from(`${canonical(value)}\n`, "utf8")), true, `${boundary}: complete temp canonical LF`);
+          } else if (boundary === "temp-create") assert.equal(tempStats.size, 0, "temp-create crash must retain the exact empty prefix");
+          else assert.throws(() => JSON.parse(readFileSync(tempPath, "utf8")), `${boundary}: partial bytes must remain noncanonical`);
+        }
+        assert.deepEqual(
+          recoveryPhaseSnapshotV1(original.store, original.originalLocators).filter((entry) => {
+            const basename = path.posix.basename(String(entry.locator));
+            return basename !== path.basename(paths.lockPath) && !basename.startsWith(paths.tempPrefix);
+          }),
+          [],
+          `${boundary}: acquisition crash publishes no recovery authority`,
+        );
+        setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+        const retry = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(retry.status, 0, `${boundary}: ${retry.stderr}`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${boundary} retry`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer refreshes the fixed identity after normalizing a postlink crash", async () => {
+    const root = createFixture();
+    const fixtureParent = path.dirname(root);
+    const readyPath = path.join(fixtureParent, "p4b-postlink-fixed-reopen-ready");
+    const releasePath = path.join(fixtureParent, "p4b-postlink-fixed-reopen-release");
+    const eventLogPath = path.join(fixtureParent, "p4b-postlink-fixed-reopen-events");
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      const selected = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+        paths,
+        "0f000000-0000-4000-8000-000000000001",
+        "complete",
+      );
+      linkSync(selected, paths.lockPath);
+      const linked = lstatSync(paths.lockPath, { bigint: true });
+      assert.equal(linked.nlink, 2n, "the crash prefix starts as one exact same-inode A2 pair");
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "latch",
+        boundary: "post-fixed-refresh",
+        occurrence: 1,
+        readyPath,
+        releasePath,
+        eventLogPath,
+      }));
+      const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+      waitForFixturePredicateV1(() => existsSync(readyPath), "postlink fixed identity refresh latch");
+      assert.equal(existsSync(selected), false, "the authenticated selected alias is removed first");
+      const normalized = lstatSync(paths.lockPath, { bigint: true });
+      assert.deepEqual(
+        { dev: normalized.dev, ino: normalized.ino, nlink: normalized.nlink },
+        { dev: linked.dev, ino: linked.ino, nlink: 1n },
+        "the fixed name retains the linked inode and exposes the normalized one-link topology",
+      );
+      assert.equal(normalized.ctimeNs !== linked.ctimeNs, true, "the nlink transition must refresh authenticated ctime metadata");
+      writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+      const result = await acquisition;
+      assert.equal(result.status, 0, result.stderr);
+      const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+      assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+      const events = readFileSync(eventLogPath, "utf8").trim().split("\n");
+      const fixedReopen = events.findIndex((line) => line.startsWith("fixed-reopen\t"));
+      const fixedRefresh = events.findIndex((line) => line.startsWith("post-fixed-refresh\t"));
+      assert.ok(fixedReopen >= 0 && fixedRefresh > fixedReopen, "the normalized fixed path must be reopened before its successful metadata/byte refresh");
+      assert.equal(
+        events.slice(fixedReopen + 1, fixedRefresh).some((line) => line.startsWith("post-scan\t")),
+        false,
+        "the successful fixed refresh must not be replaced by a fresh-enumeration retry",
+      );
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "postlink fixed identity refresh");
+    } finally {
+      if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      removeFixture(root);
+    }
+  });
+
+  it("P4b exact-poison writer cleans an authenticated postlink response loss before reacquiring", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "throw", boundary: "postlink", occurrence: 1 }));
+      const first = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+      assert.notEqual(first.status, 0, "the authenticated postlink response loss must escape the first call");
+      assert.match(first.stderr, /P4B_EXACT_POISON_RECOVERY_WRITER_FAULT:postlink/);
+      assert.deepEqual(
+        exactPoisonRecoveryWriterArtifactsFixtureV1(paths),
+        [],
+        "fault cleanup must refresh and remove the nlink1 temp after removing the fixed alias",
+      );
+      setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+      const retry = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+      assert.equal(retry.status, 0, retry.stderr);
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "postlink response-loss reacquire");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (let count = 2; count <= 8; count += 1) {
+    it(`P4b exact-poison writer classifies and adopts all ${count} mixed dead acquisition temps before mutation`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        for (let index = 0; index < count; index += 1) {
+          const nonce = `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+          const kind = (["empty", "partial", "noncanonical", "complete"] as const)[index % 4]!;
+          crashExactPoisonRecoveryWriterTempOwnerFixtureV1(paths, nonce, kind);
+        }
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(result.status, 0, `${count}: ${result.stderr}`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${count} mixed stale temps`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer accepts exactly eight acquisition temps but refuses nine without cleanup", () => {
+    for (const count of [8, 9] as const) {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        for (let index = 0; index < count; index += 1) {
+          crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+            paths,
+            `20000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            index % 2 === 0 ? "partial" : "complete",
+          );
+        }
+        const before = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        if (count === 8) {
+          assert.equal(result.status, 0, result.stderr);
+          assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "exact-eight stale temps");
+        } else {
+          assert.notEqual(result.status, 0, "nine acquisition temps must exceed the exact cap");
+          assert.match(result.stderr, /cap|eight|8|writer/i);
+          assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), before, "over-cap classification must perform zero cleanup");
+        }
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  for (const extras of [0, 1, 3, 7] as const) {
+    it(`P4b exact-poison writer normalizes A2 selected nlink2 plus ${extras} stale extras before fresh acquisition`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        const selectedNonce = "30000000-0000-4000-8000-000000000001";
+        const selected = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(paths, selectedNonce, "complete");
+        linkSync(selected, paths.lockPath);
+        for (let index = 0; index < extras; index += 1) {
+          crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+            paths,
+            `30000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`,
+            index % 2 === 0 ? "partial" : "complete",
+          );
+        }
+        assert.equal(lstatSync(selected).nlink, 2);
+        assert.equal(lstatSync(paths.lockPath).nlink, 2);
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(result.status, 0, `${extras}: ${result.stderr}`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `A2 plus ${extras}`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const extras of [0, 1, 4, 8] as const) {
+    it(`P4b exact-poison writer normalizes A1 stale fixed nlink1 plus ${extras} independent temps`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        const staleFixedSource = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+          paths,
+          "40000000-0000-4000-8000-000000000001",
+          "complete",
+        );
+        renameSync(staleFixedSource, paths.lockPath);
+        for (let index = 0; index < extras; index += 1) {
+          crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+            paths,
+            `40000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`,
+            index % 3 === 0 ? "noncanonical" : "complete",
+          );
+        }
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(result.status, 0, `${extras}: ${result.stderr}`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `A1 plus ${extras}`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const fault of ["live", "ambiguous", "invalid"] as const) {
+    it(`P4b exact-poison writer performs zero cleanup when a pinned snapshot contains ${fault} evidence`, () => {
+      const root = createFixture();
+      let live: ReturnType<typeof spawn> | null = null;
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        crashExactPoisonRecoveryWriterTempOwnerFixtureV1(paths, "50000000-0000-4000-8000-000000000001", "complete");
+        let faultPid = 880_000;
+        let faultBytes: Buffer;
+        if (fault === "live") {
+          live = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+          assert.notEqual(live.pid, undefined);
+          faultPid = live.pid!;
+          faultBytes = exactLiveWriterOwnerFixtureV1(paths.target, faultPid, "50000000-0000-4000-8000-000000000002");
+        } else {
+          faultBytes = exactPoisonRecoveryWriterOwnerBytesFixtureV1(
+            paths.target,
+            faultPid,
+            "50000000-0000-4000-8000-000000000002",
+            fault === "invalid" ? { targetHash: "f".repeat(64) } : Object.freeze({}),
+          );
+        }
+        const faultTemp = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${faultPid}-50000000-0000-4000-8000-000000000002`);
+        writeFileSync(faultTemp, faultBytes, { flag: "wx", mode: 0o600 });
+        const before = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, fault === "ambiguous"
+          ? Object.freeze({ action: "record", boundary: "post-scan", occurrence: 999, ambiguousPid: faultPid })
+          : null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.notEqual(result.status, 0, `${fault} must block or fail closed`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), before, `${fault}: classify-all must mutate zero snapshot members`);
+      } finally {
+        if (live?.pid) {
+          live.kill("SIGKILL");
+          live = null;
+        }
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer adopts a complete owner body only after fresh process evidence proves PID reuse", () => {
+    const root = createFixture();
+    let reused: ReturnType<typeof spawn> | null = null;
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      reused = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+      assert.notEqual(reused.pid, undefined);
+      writeExactPoisonRecoveryWriterTempFixtureV1(
+        paths,
+        reused.pid!,
+        "50500000-0000-4000-8000-000000000001",
+        "complete",
+      );
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+      const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "proven PID reuse");
+    } finally {
+      if (reused?.pid) reused.kill("SIGKILL");
+      removeFixture(root);
+    }
+  });
+
+  for (const topology of ["A1-fixed", "A2-selected", "A2-bad-extra"] as const) {
+    for (const fault of ["live", "ambiguous", "invalid"] as const) {
+      it(`P4b exact-poison writer mutates zero ${topology} members when ${fault} evidence is present`, () => {
+        const root = createFixture();
+        let live: ReturnType<typeof spawn> | null = null;
+        try {
+          const original = seedExactOriginalPoisonStoreV1(root);
+          const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+          const nonce = topology === "A1-fixed"
+            ? "50600000-0000-4000-8000-000000000001"
+            : "50600000-0000-4000-8000-000000000002";
+          let pid = 882_000;
+          let bytes: Buffer;
+          if (fault === "live") {
+            live = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+            assert.notEqual(live.pid, undefined);
+            pid = live.pid!;
+            bytes = exactLiveWriterOwnerFixtureV1(paths.target, pid, nonce);
+          } else {
+            bytes = exactPoisonRecoveryWriterOwnerBytesFixtureV1(
+              paths.target,
+              pid,
+              nonce,
+              fault === "invalid" ? { targetHash: "f".repeat(64) } : Object.freeze({}),
+            );
+          }
+          if (topology === "A2-bad-extra") {
+            const selected = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+              paths,
+              "50600000-0000-4000-8000-000000000004",
+              "complete",
+            );
+            linkSync(selected, paths.lockPath);
+            const extra = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${pid}-${nonce}`);
+            writeFileSync(extra, bytes, { flag: "wx", mode: 0o600 });
+          } else if (topology === "A1-fixed") {
+            writeFileSync(paths.lockPath, bytes, { flag: "wx", mode: 0o600 });
+          } else {
+            const selected = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${pid}-${nonce}`);
+            writeFileSync(selected, bytes, { flag: "wx", mode: 0o600 });
+            linkSync(selected, paths.lockPath);
+          }
+          const before = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+          instrumentExactPoisonRecoveryWriterFixtureV1(root, fault === "ambiguous"
+            ? Object.freeze({ action: "record", boundary: "post-scan", occurrence: 999, ambiguousPid: pid })
+            : null);
+          const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+          assert.notEqual(result.status, 0, `${topology}/${fault} must block or fail closed`);
+          assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), before, `${topology}/${fault}: classify-all must mutate zero pinned members`);
+        } finally {
+          if (live?.pid) live.kill("SIGKILL");
+          removeFixture(root);
+        }
+      });
+    }
+  }
+
+  for (const fault of ["incomplete-live", "wrong-mode", "symlink", "ungrammatical", "second-alias-nlink3"] as const) {
+    it(`P4b exact-poison writer rejects ${fault} topology with zero cleanup`, () => {
+      const root = createFixture();
+      let live: ReturnType<typeof spawn> | null = null;
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        if (fault === "incomplete-live") {
+          live = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+          assert.notEqual(live.pid, undefined);
+          writeExactPoisonRecoveryWriterTempFixtureV1(
+            paths,
+            live.pid!,
+            "51000000-0000-4000-8000-000000000001",
+            "partial",
+          );
+        } else if (fault === "wrong-mode") {
+          const temp = writeExactPoisonRecoveryWriterTempFixtureV1(paths, 881_001, "51000000-0000-4000-8000-000000000002", "complete");
+          chmodSync(temp, 0o640);
+        } else if (fault === "symlink") {
+          const source = path.join(path.dirname(paths.lockPath), "p4b-writer-symlink-source");
+          writeFileSync(source, "not a lock\n", { flag: "wx", mode: 0o600 });
+          symlinkSync(
+            path.basename(source),
+            path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}881002-51000000-0000-4000-8000-000000000003`),
+          );
+        } else if (fault === "ungrammatical") {
+          writeFileSync(path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}not-a-valid-owner`), "{}\n", { flag: "wx", mode: 0o600 });
+        } else {
+          const selected = writeExactPoisonRecoveryWriterTempFixtureV1(paths, 881_003, "51000000-0000-4000-8000-000000000004", "complete");
+          linkSync(selected, paths.lockPath);
+          linkSync(selected, path.join(path.dirname(paths.lockPath), "p4b-second-same-inode-alias"));
+          assert.equal(lstatSync(selected).nlink, 3);
+        }
+        const before = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, null);
+        const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.notEqual(result.status, 0, `${fault} must fail closed`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), before, `${fault}: invalid topology must perform zero cleanup`);
+        assert.equal(existsSync(paths.target), false, `${fault}: virtual target remains absent`);
+      } finally {
+        if (live?.pid) live.kill("SIGKILL");
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer unlinks an all-stale set in unsigned basename order", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      const seeded = [4, 1, 3, 2].map((suffix) => crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+        paths,
+        `60000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`,
+        suffix % 2 === 0 ? "partial" : "complete",
+      ));
+      const eventLogPath = path.join(path.dirname(root), "p4b-writer-unlinks.log");
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "record", boundary: "member-unlink", occurrence: 999, eventLogPath }));
+      const result = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      const sorted = seeded.map((target) => path.basename(target)).sort();
+      const observed = readFileSync(eventLogPath, "utf8").trim().split("\n").map((line) => {
+        const [boundary, member = ""] = line.split("\t");
+        return Object.freeze({ boundary, member: boundary === "post-scan" ? member : path.basename(member) });
+      }).filter((event) => ["post-scan", "pre-member-unlink", "member-unlink", "parent-fsync"].includes(event.boundary));
+      const initialScan = observed.findIndex((event) => event.boundary === "post-scan" && event.member.split("|").filter(Boolean).length === sorted.length);
+      assert.notEqual(initialScan, -1, "cleanup must begin from one pinned exact-four snapshot");
+      const cleanup = observed.slice(initialScan, initialScan + 1 + sorted.length * 4);
+      const expected: Array<Readonly<{ boundary: string; member: string }>> = [];
+      for (let index = 0; index < sorted.length; index += 1) {
+        expected.push(Object.freeze({ boundary: "post-scan", member: sorted.slice(index).join("|") }));
+        expected.push(Object.freeze({ boundary: "pre-member-unlink", member: sorted[index]! }));
+        expected.push(Object.freeze({ boundary: "member-unlink", member: sorted[index]! }));
+        expected.push(Object.freeze({ boundary: "parent-fsync", member: path.basename(path.dirname(paths.lockPath)) }));
+      }
+      expected.push(Object.freeze({ boundary: "post-scan", member: "" }));
+      assert.deepEqual(cleanup, expected, "each sorted stale unlink must be followed by parent fsync and one fresh smaller enumeration");
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "sorted stale cleanup");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P4b exact-poison writer fresh-retries an identical same-size stale member rewrite after classification and before unlink", async () => {
+    const root = createFixture();
+    const fixtureParent = path.dirname(root);
+    const readyPath = path.join(fixtureParent, "p4b-identical-pre-unlink-ready");
+    const releasePath = path.join(fixtureParent, "p4b-identical-pre-unlink-release");
+    const eventLogPath = path.join(fixtureParent, "p4b-identical-pre-unlink-events");
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      const stale = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+        paths,
+        "6a000000-0000-4000-8000-000000000001",
+        "complete",
+      );
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "latch",
+        boundary: "pre-stale-unlink-fence",
+        occurrence: 1,
+        readyPath,
+        releasePath,
+        eventLogPath,
+      }));
+      const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+      waitForFixturePredicateV1(() => existsSync(readyPath), "identical stale rewrite pre-unlink latch");
+      const bytes = readFileSync(stale);
+      const before = lstatSync(stale, { bigint: true });
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+      writeFileSync(stale, bytes);
+      const after = lstatSync(stale, { bigint: true });
+      assert.deepEqual(
+        { dev: after.dev, ino: after.ino, mode: after.mode, uid: after.uid, nlink: after.nlink, size: after.size, bytes: readFileSync(stale).toString("base64") },
+        { dev: before.dev, ino: before.ino, mode: before.mode, uid: before.uid, nlink: before.nlink, size: before.size, bytes: bytes.toString("base64") },
+        "the race changes no content, inode, mode, owner, link count, or size",
+      );
+      assert.equal(
+        after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs,
+        true,
+        "the identical rewrite must change the authenticated time metadata",
+      );
+      writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+      const result = await acquisition;
+      assert.equal(result.status, 0, result.stderr);
+      const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+      assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+      const events = readFileSync(eventLogPath, "utf8").trim().split("\n");
+      const firstFence = events.findIndex((line) => line.startsWith("pre-stale-unlink-fence\t"));
+      const unlink = events.findIndex((line, index) => index > firstFence && line.startsWith("member-unlink\t"));
+      assert.ok(firstFence >= 0 && unlink > firstFence, "the stale member must eventually converge through one authenticated unlink");
+      assert.ok(
+        events.slice(firstFence + 1, unlink).some((line) => line === `post-scan\t${path.basename(stale)}`),
+        "mtime/ctime drift must force a fresh exact snapshot before the eventual unlink",
+      );
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "identical pre-unlink rewrite convergence");
+    } finally {
+      if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      removeFixture(root);
+    }
+  });
+
+  for (const fault of (["pre-member-unlink", "member-unlink", "parent-fsync"] as const).flatMap((boundary) => (
+    [1, 2, 3].map((occurrence) => Object.freeze({ boundary, occurrence }))
+  ))) {
+    it(`P4b exact-poison writer resumes ${fault.boundary} response loss at stale member ${fault.occurrence}`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        const seeded = [] as string[];
+        for (let index = 0; index < 3; index += 1) {
+          seeded.push(crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+            paths,
+            `70000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            "complete",
+          ));
+        }
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "throw", ...fault }));
+        const first = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.notEqual(first.status, 0, `${fault.boundary}/${fault.occurrence}: response loss must escape the first call`);
+        assert.match(first.stderr, /P4B_EXACT_POISON_RECOVERY_WRITER_FAULT/);
+        assert.equal(existsSync(paths.target), false);
+        const sorted = seeded.map((target) => path.basename(target)).sort();
+        const removed = fault.boundary === "pre-member-unlink" ? fault.occurrence - 1 : fault.occurrence;
+        assert.deepEqual(
+          exactPoisonRecoveryWriterArtifactsFixtureV1(paths),
+          sorted.slice(removed),
+          `${fault.boundary}/${fault.occurrence}: response loss must expose exactly one authenticated cleanup prefix`,
+        );
+        setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+        const retry = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(retry.status, 0, retry.stderr);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${fault.boundary}/${fault.occurrence} retry`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const boundary of ["selected-unlink", "fixed-reopen", "fixed-unlink"] as const) {
+    it(`P4b exact-poison writer resumes A2 ${boundary} response loss without losing stale-owner provenance`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        const selected = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+          paths,
+          "80000000-0000-4000-8000-000000000001",
+          "complete",
+        );
+        linkSync(selected, paths.lockPath);
+        crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+          paths,
+          "80000000-0000-4000-8000-000000000002",
+          "complete",
+        );
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "throw", boundary, occurrence: 1 }));
+        const first = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.notEqual(first.status, 0, `${boundary}: first normalization must surface response loss`);
+        assert.match(first.stderr, /P4B_EXACT_POISON_RECOVERY_WRITER_FAULT|writer lock/i);
+        assert.equal(existsSync(paths.target), false);
+        setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+        const retry = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(retry.status, 0, `${boundary}: ${retry.stderr}`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `A2 ${boundary} retry`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer fresh-retries an A0 contender that disappears between enumeration and open", async () => {
+    const root = createFixture();
+    const fixtureParent = path.dirname(root);
+    const readyPath = path.join(fixtureParent, "p4b-a0-pre-open-ready");
+    const releasePath = path.join(fixtureParent, "p4b-a0-pre-open-release");
+    const eventLogPath = path.join(fixtureParent, "p4b-a0-pre-open-events");
+    let live: ReturnType<typeof spawnExactPoisonRecoveryLiveWriterTempFixtureV1> | null = null;
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      live = spawnExactPoisonRecoveryLiveWriterTempFixtureV1(paths, "8a000000-0000-4000-8000-000000000001");
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "latch",
+        boundary: "pre-member-open",
+        occurrence: 1,
+        readyPath,
+        releasePath,
+        eventLogPath,
+      }));
+      const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+      waitForFixturePredicateV1(() => existsSync(readyPath), "A0 pre-open disappearance latch");
+      unlinkSync(live.temp);
+      writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+      const result = await acquisition;
+      assert.equal(result.status, 0, result.stderr);
+      const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+      assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+      const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+      assert.ok(scans[0]?.includes(path.basename(live.temp)), "the first pinned snapshot must contain the live contender");
+      assert.ok(scans.slice(1).some((line) => line === "post-scan\t"), "the same acquisition must fresh-scan the disappeared contender as absent");
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "A0 pre-open disappearance convergence");
+    } finally {
+      if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      if (live?.owner.pid) live.owner.kill("SIGKILL");
+      removeFixture(root);
+    }
+  });
+
+  for (const transition of ["bytes-restored", "mode-restored"] as const) {
+    it(`P4b exact-poison writer fresh-retries A0 when pinned ${transition} metadata changes before recheck`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-a0-${transition}-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-a0-${transition}-release`);
+      const eventLogPath = path.join(fixtureParent, `p4b-a0-${transition}-events`);
+      let live: ReturnType<typeof spawnExactPoisonRecoveryLiveWriterTempFixtureV1> | null = null;
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        live = spawnExactPoisonRecoveryLiveWriterTempFixtureV1(paths, transition === "bytes-restored"
+          ? "8b000000-0000-4000-8000-000000000001"
+          : "8b000000-0000-4000-8000-000000000002");
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+          action: "latch",
+          boundary: "post-member-read",
+          occurrence: 1,
+          readyPath,
+          releasePath,
+          eventLogPath,
+        }));
+        const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${transition}: pinned read latch`);
+        if (transition === "bytes-restored") {
+          const originalBytes = readFileSync(live.temp);
+          writeFileSync(live.temp, Buffer.concat([originalBytes, Buffer.from("x", "utf8")]));
+          writeFileSync(live.temp, originalBytes);
+        } else {
+          chmodSync(live.temp, 0o640);
+          chmodSync(live.temp, 0o600);
+        }
+        const exited = new Promise<void>((resolve) => live!.owner.once("exit", () => resolve()));
+        live.owner.kill("SIGKILL");
+        await exited;
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await acquisition;
+        assert.equal(result.status, 0, result.stderr);
+        const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+        assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+        const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+        assert.ok(scans.length >= 2, `${transition}: changed pinned metadata must cause a fresh snapshot before cleanup/acquire`);
+        assert.ok(scans[0]?.includes(path.basename(live.temp)));
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${transition} convergence`);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (live?.owner.pid) live.owner.kill("SIGKILL");
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer retries moving metadata once then terminally preserves stable invalid evidence without descriptor accumulation", async () => {
+    const root = createFixture();
+    const fixtureParent = path.dirname(root);
+    const readyPath = path.join(fixtureParent, "p4b-a0-stable-invalid-ready");
+    const releasePath = path.join(fixtureParent, "p4b-a0-stable-invalid-release");
+    const eventLogPath = path.join(fixtureParent, "p4b-a0-stable-invalid-events");
+    let live: ReturnType<typeof spawnExactPoisonRecoveryLiveWriterTempFixtureV1> | null = null;
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      live = spawnExactPoisonRecoveryLiveWriterTempFixtureV1(paths, "8c000000-0000-4000-8000-000000000001");
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "latch",
+        boundary: "post-member-read",
+        occurrence: 1,
+        readyPath,
+        releasePath,
+        eventLogPath,
+      }));
+      const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 16, true);
+      waitForFixturePredicateV1(() => existsSync(readyPath), "stable-invalid pinned read latch");
+      chmodSync(live.temp, 0o640);
+      const exited = new Promise<void>((resolve) => live!.owner.once("exit", () => resolve()));
+      live.owner.kill("SIGKILL");
+      await exited;
+      const invalidBefore = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+      writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+      const result = await acquisition;
+      assert.equal(result.status, 0, result.stderr);
+      const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+      assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 16, descriptorDelta: 0 });
+      const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+      assert.ok(scans.length >= 17, "the first moving snapshot must retry before all sixteen stable-invalid attempts terminate");
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), invalidBefore, "stable invalid mode must perform zero cleanup");
+      assert.equal(existsSync(paths.lockPath), false);
+    } finally {
+      if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      if (live?.owner.pid) live.owner.kill("SIGKILL");
+      removeFixture(root);
+    }
+  });
+
+  for (const transition of ["A1-fixed-removed", "A2-selected-removed", "A2-fixed-removed"] as const) {
+    it(`P4b exact-poison writer fresh-retries ${transition} after its pinned topology moves`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-${transition}-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-${transition}-release`);
+      const eventLogPath = path.join(fixtureParent, `p4b-${transition}-events`);
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        const selected = crashExactPoisonRecoveryWriterTempOwnerFixtureV1(
+          paths,
+          transition === "A1-fixed-removed"
+            ? "8d000000-0000-4000-8000-000000000001"
+            : "8d000000-0000-4000-8000-000000000002",
+          "complete",
+        );
+        if (transition === "A1-fixed-removed") renameSync(selected, paths.lockPath);
+        else linkSync(selected, paths.lockPath);
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+          action: "latch",
+          boundary: "post-member-read",
+          occurrence: transition === "A2-fixed-removed" ? 2 : 1,
+          readyPath,
+          releasePath,
+          eventLogPath,
+        }));
+        const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${transition}: pinned topology latch`);
+        if (transition === "A1-fixed-removed" || transition === "A2-fixed-removed") unlinkSync(paths.lockPath);
+        else unlinkSync(selected);
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await acquisition;
+        assert.equal(result.status, 0, result.stderr);
+        const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+        assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+        const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+        assert.ok(scans.length >= 2, `${transition}: a fresh legal A0/A1 snapshot must follow the moving pinned topology`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${transition} convergence`);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const transition of ["A0-truncated", "A1-appended", "A2-replaced"] as const) {
+    it(`P4b exact-poison writer fresh-retries ${transition} between pinned fstat and descriptor read`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-${transition}-read-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-${transition}-read-release`);
+      const eventLogPath = path.join(fixtureParent, `p4b-${transition}-read-events`);
+      let live: ReturnType<typeof spawnExactPoisonRecoveryLiveWriterTempFixtureV1> | null = null;
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        live = spawnExactPoisonRecoveryLiveWriterTempFixtureV1(
+          paths,
+          transition === "A0-truncated"
+            ? "8e000000-0000-4000-8000-000000000001"
+            : transition === "A1-appended"
+              ? "8e000000-0000-4000-8000-000000000002"
+              : "8e000000-0000-4000-8000-000000000003",
+        );
+        const selected = live.temp;
+        if (transition === "A1-appended") renameSync(selected, paths.lockPath);
+        else if (transition === "A2-replaced") linkSync(selected, paths.lockPath);
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+          action: "latch",
+          boundary: "pre-member-read",
+          occurrence: 1,
+          readyPath,
+          releasePath,
+          eventLogPath,
+        }));
+        const acquisition = runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 8);
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${transition}: fstat-before-read latch`);
+        if (transition === "A0-truncated") {
+          writeFileSync(selected, Buffer.alloc(0));
+          unlinkSync(selected);
+        } else if (transition === "A1-appended") {
+          writeFileSync(paths.lockPath, Buffer.concat([readFileSync(paths.lockPath), Buffer.from("x", "utf8")]));
+          unlinkSync(paths.lockPath);
+        } else {
+          const replacementBytes = readFileSync(selected);
+          unlinkSync(selected);
+          unlinkSync(paths.lockPath);
+          writeFileSync(selected, replacementBytes, { flag: "wx", mode: 0o600 });
+        }
+        const exited = new Promise<void>((resolve) => live!.owner.once("exit", () => resolve()));
+        live.owner.kill("SIGKILL");
+        await exited;
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await acquisition;
+        assert.equal(result.status, 0, result.stderr);
+        const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+        assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 0, descriptorDelta: 0 });
+        const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+        assert.ok(scans.length >= 2, `${transition}: changed descriptor/path identity must cause a fresh pinned snapshot`);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${transition} convergence`);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (live?.owner.pid) live.owner.kill("SIGKILL");
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b exact-poison writer treats a stable descriptor-read error as terminal with zero retry, cleanup, or descriptor leak", async () => {
+    const root = createFixture();
+    const eventLogPath = path.join(path.dirname(root), "p4b-stable-read-error-events");
+    let live: ReturnType<typeof spawnExactPoisonRecoveryLiveWriterTempFixtureV1> | null = null;
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      live = spawnExactPoisonRecoveryLiveWriterTempFixtureV1(paths, "8f000000-0000-4000-8000-000000000001");
+      const before = filesystemTreeSnapshot(path.dirname(paths.lockPath));
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "throw",
+        boundary: "pre-member-read",
+        occurrence: 1,
+        eventLogPath,
+      }));
+      const result = await runExactPoisonRecoveryWriterDescriptorAuditFixtureV1(root, 1, true);
+      assert.equal(result.status, 0, result.stderr);
+      const audit = JSON.parse(result.stdout) as Readonly<{ before: number; after: number; failures: number }>;
+      assert.deepEqual({ failures: audit.failures, descriptorDelta: audit.after - audit.before }, { failures: 1, descriptorDelta: 0 });
+      const scans = readFileSync(eventLogPath, "utf8").trim().split("\n").filter((line) => line.startsWith("post-scan\t"));
+      assert.equal(scans.length, 1, "a stable non-race descriptor error must not be reclassified as retryable movement");
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(paths.lockPath)), before, "stable descriptor error must preserve every writer member");
+    } finally {
+      if (live?.owner.pid) live.owner.kill("SIGKILL");
+      removeFixture(root);
+    }
+  });
+
+  it("P4b delayed pre-create contender remains zero-authority during winner phase-0 and later adopts", async () => {
+    const root = createFixture();
+    let loser: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+    let winner: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+    const releases: string[] = [];
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+      const fixtureParent = path.dirname(root);
+      const loserReady = path.join(fixtureParent, "p4b-loser-pre-create-ready");
+      const loserRelease = path.join(fixtureParent, "p4b-loser-pre-create-release");
+      const loserTempReady = path.join(fixtureParent, "p4b-loser-temp-ready");
+      const loserTempRelease = path.join(fixtureParent, "p4b-loser-temp-release");
+      const loserAcquired = path.join(fixtureParent, "p4b-loser-acquired");
+      const winnerReady = path.join(fixtureParent, "p4b-winner-ready");
+      const winnerObserveRelease = path.join(fixtureParent, "p4b-winner-observe-release");
+      const winnerObserveStart = path.join(fixtureParent, "p4b-winner-observe-start");
+      const winnerObserved = path.join(fixtureParent, "p4b-winner-observed");
+      const winnerCloseRelease = path.join(fixtureParent, "p4b-winner-close-release");
+      releases.push(loserRelease, loserTempRelease, winnerObserveRelease, winnerCloseRelease);
+      instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({
+        action: "latch",
+        boundary: "pre-temp-create",
+        occurrence: 1,
+        readyPath: loserReady,
+        releasePath: loserRelease,
+        secondReadyPath: loserTempReady,
+        secondReleasePath: loserTempRelease,
+      }));
+      loser = runFixtureExpressionAsync(
+        root,
+        `(async()=>{const fs=await import("node:fs");const held=m.acquireTask12ReceiptLocatorWriterV1(m.exactPoisonRecoveryWriterTargetV1());fs.writeFileSync(${JSON.stringify(loserAcquired)},"acquired\\n",{flag:"wx",mode:0o600});held.assertStable();held.close();process.stdout.write("loser-adopted")})()`,
+      );
+      waitForFixturePredicateV1(() => existsSync(loserReady), "delayed loser pre-create latch");
+      setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+      instrumentExactPoisonRecoveryTransientObserverFixtureV1(root, original);
+      winner = runFixtureExpressionAsync(
+        root,
+        `m.p4bObserveExactPoisonRecoveryTransientFixtureV1(${JSON.stringify(winnerReady)},${JSON.stringify(winnerObserveRelease)},${JSON.stringify(winnerObserveStart)},${JSON.stringify(winnerObserved)},${JSON.stringify(winnerCloseRelease)}).then(()=>process.stdout.write("winner-phase0-released"))`,
+      );
+      waitForFixturePredicateV1(() => existsSync(winnerReady), "winner fixed-lock acquisition");
+      writeFileSync(loserRelease, "release\n", { flag: "wx", mode: 0o600 });
+      waitForFixturePredicateV1(() => existsSync(loserTempReady), "loser exact acquisition temp while winner holds fixed lock");
+      const visibleFamily = exactPoisonRecoveryWriterArtifactsFixtureV1(paths);
+      assert.equal(visibleFamily.length, 2, "winner fixed lock and one loser temp must be simultaneously visible");
+      assert.ok(visibleFamily.includes(path.basename(paths.lockPath)), "winner fixed lock remains pinned");
+      assert.ok(visibleFamily.some((member) => member.startsWith(paths.tempPrefix)), "the delayed loser temp must be physically visible");
+      const authorityWhileContended = recoveryPhaseSnapshotV1(original.store, original.originalLocators)
+        .filter((entry) => {
+          const basename = path.posix.basename(String(entry.locator));
+          return basename !== path.basename(paths.lockPath) && !basename.startsWith(paths.tempPrefix);
+        });
+      assert.deepEqual(authorityWhileContended, [], "the loser creates no recovery authority before fixed-lock ownership");
+      writeFileSync(winnerObserveRelease, "observe\n", { flag: "wx", mode: 0o600 });
+      waitForFixturePredicateV1(() => existsSync(winnerObserveStart), "winner phase-0 start with loser temp visible");
+      waitForFixturePredicateV1(() => existsSync(winnerObserved), "winner phase-0 accepts the live zero-authority loser temp", 1_500);
+      assert.equal(existsSync(loserAcquired), false, "loser cannot acquire during winner phase-0");
+      writeFileSync(loserTempRelease, "release\n", { flag: "wx", mode: 0o600 });
+      waitForFixturePredicateV1(
+        () => exactPoisonRecoveryWriterArtifactsFixtureV1(paths).every((member) => member === path.basename(paths.lockPath)),
+        "loser EEXIST self-clean while winner stays held",
+      );
+      assert.deepEqual(exactPoisonRecoveryWriterArtifactsFixtureV1(paths), [path.basename(paths.lockPath)]);
+      writeFileSync(winnerCloseRelease, "close\n", { flag: "wx", mode: 0o600 });
+      const [winnerResult, loserResult] = await Promise.all([winner, loser]);
+      assert.equal(existsSync(paths.target), false);
+      assert.deepEqual({ status: winnerResult.status, stdout: winnerResult.stdout, stderr: winnerResult.stderr }, { status: 0, stdout: "winner-phase0-released", stderr: "" });
+      assert.deepEqual({ status: loserResult.status, stdout: loserResult.stdout, stderr: loserResult.stderr }, { status: 0, stdout: "loser-adopted", stderr: "" });
+      assert.equal(existsSync(loserAcquired), true, "loser later acquires and adopts after winner release");
+      assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, "delayed contender convergence");
+    } finally {
+      for (const release of releases) {
+        if (!existsSync(release)) writeFileSync(release, "release\n", { mode: 0o600 });
+      }
+      await Promise.allSettled([...(winner ? [winner] : []), ...(loser ? [loser] : [])]);
+      removeFixture(root);
+    }
+  });
+
+  for (const boundary of ["release-unlink", "release-parent-fsync", "release-reopen"] as const) {
+    it(`P4b exact-poison writer adopts ${boundary} response loss without retaining lock state`, () => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        instrumentExactPoisonRecoveryWriterFixtureV1(root, Object.freeze({ action: "throw", boundary, occurrence: 1 }));
+        const first = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.notEqual(first.status, 0, "the copied child must surface release response loss");
+        assert.match(first.stderr, /P4B_EXACT_POISON_RECOVERY_WRITER_FAULT/);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${boundary} response loss`);
+        setExactPoisonRecoveryWriterFaultFixtureV1(root, null);
+        const retry = runExactPoisonRecoveryWriterAcquireFixtureV1(root);
+        assert.equal(retry.status, 0, retry.stderr);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${boundary} retry`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (let count = 0; count <= 8; count += 1) {
+    it(`P4b recovery inventory admits exactly ${count} stable live acquisition temps as zero-authority transients`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-transient-${count}-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-transient-${count}-release`);
+      const contenders: string[] = [];
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        instrumentExactPoisonRecoveryTransientObserverFixtureV1(root, original);
+        const observer = runFixtureExpressionAsync(
+          root,
+          `m.p4bObserveExactPoisonRecoveryTransientFixtureV1(${JSON.stringify(readyPath)},${JSON.stringify(releasePath)}).then((hash)=>process.stdout.write(hash))`,
+        );
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${count}: held H writer before transient inventory observation`);
+        for (let index = 0; index < count; index += 1) {
+          const nonce = `b0000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+          const contender = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${process.pid}-${nonce}`);
+          writeFileSync(contender, exactLiveWriterOwnerFixtureV1(paths.target, process.pid, nonce), { flag: "wx", mode: 0o600 });
+          contenders.push(contender);
+        }
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await observer;
+        assert.deepEqual(
+          { status: result.status, stdout: result.stdout, stderr: result.stderr },
+          { status: 0, stdout: original.inventoryHash, stderr: "" },
+          `${count}: bounded live acquisition temps cannot change the poison inventory hash`,
+        );
+        assert.equal(existsSync(paths.target), false, "the virtual lock target remains absent while observing transients");
+        assert.deepEqual(
+          exactPoisonRecoveryWriterArtifactsFixtureV1(paths),
+          contenders.map((target) => path.basename(target)).sort(),
+          `${count}: the publisher releases only its fixed lock and never cleans contender temps`,
+        );
+        for (const contender of contenders) unlinkSync(contender);
+        contenders.length = 0;
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${count} transient fixture-owner cleanup`);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        for (const contender of contenders) if (existsSync(contender)) unlinkSync(contender);
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const fault of [
+    "nine",
+    "dead",
+    "reused",
+    "wrong-target",
+    "pid-crossed",
+    "nonce-crossed",
+    "noncanonical-body",
+    "wrong-mode",
+    "nlink2",
+    "symlink",
+    "unknown-name",
+    "ambiguous",
+  ] as const) {
+    it(`P4b recovery inventory rejects ${fault} transient evidence without cleanup or authority`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-invalid-transient-${fault}-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-invalid-transient-${fault}-release`);
+      const ambiguityObservedPath = path.join(fixtureParent, `p4b-invalid-transient-${fault}-ambiguity`);
+      let reused: ReturnType<typeof spawn> | null = null;
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        instrumentExactPoisonRecoveryTransientObserverFixtureV1(
+          root,
+          original,
+          null,
+          fault === "ambiguous" ? { pid: 880_000, observedPath: ambiguityObservedPath } : null,
+        );
+        const observer = runFixtureExpressionAsync(
+          root,
+          `m.p4bObserveExactPoisonRecoveryTransientFixtureV1(${JSON.stringify(readyPath)},${JSON.stringify(releasePath)}).then((hash)=>process.stdout.write(hash))`,
+        );
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${fault}: held H writer`);
+        const faultPaths: string[] = [];
+        const externalPaths: string[] = [];
+        const baseNonce = "b1000000-0000-4000-8000-000000000001";
+        const writeLive = (index: number): string => {
+          const nonce = `b1000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+          const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${process.pid}-${nonce}`);
+          writeFileSync(target, exactLiveWriterOwnerFixtureV1(paths.target, process.pid, nonce), { flag: "wx", mode: 0o600 });
+          faultPaths.push(target);
+          return target;
+        };
+        if (fault === "nine") {
+          for (let index = 0; index < 9; index += 1) writeLive(index);
+        } else if (fault === "dead") {
+          faultPaths.push(crashExactPoisonRecoveryWriterTempOwnerFixtureV1(paths, baseNonce, "complete"));
+        } else if (fault === "reused") {
+          reused = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+          assert.notEqual(reused.pid, undefined);
+          faultPaths.push(writeExactPoisonRecoveryWriterTempFixtureV1(paths, reused.pid!, baseNonce, "complete"));
+        } else if (fault === "wrong-target") {
+          faultPaths.push(writeExactPoisonRecoveryWriterTempFixtureV1(paths, process.pid, baseNonce, "complete", { targetHash: "f".repeat(64) }));
+        } else if (fault === "pid-crossed") {
+          const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${process.pid + 1}-${baseNonce}`);
+          writeFileSync(target, exactLiveWriterOwnerFixtureV1(paths.target, process.pid, baseNonce), { flag: "wx", mode: 0o600 });
+          faultPaths.push(target);
+        } else if (fault === "nonce-crossed") {
+          const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${process.pid}-b1000000-0000-4000-8000-000000000002`);
+          writeFileSync(target, exactLiveWriterOwnerFixtureV1(paths.target, process.pid, baseNonce), { flag: "wx", mode: 0o600 });
+          faultPaths.push(target);
+        } else if (fault === "noncanonical-body") {
+          faultPaths.push(writeExactPoisonRecoveryWriterTempFixtureV1(paths, process.pid, baseNonce, "noncanonical"));
+        } else if (fault === "wrong-mode") {
+          const target = writeLive(0); chmodSync(target, 0o640);
+        } else if (fault === "nlink2") {
+          const target = writeLive(0);
+          const alias = path.join(fixtureParent, `p4b-inventory-nlink2-alias-${path.basename(root)}`);
+          linkSync(target, alias);
+          externalPaths.push(alias);
+        } else if (fault === "symlink") {
+          const source = path.join(fixtureParent, `p4b-inventory-symlink-source-${path.basename(root)}`);
+          writeFileSync(source, "source\n", { flag: "wx", mode: 0o600 });
+          const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}${process.pid}-${baseNonce}`);
+          symlinkSync(source, target);
+          externalPaths.push(source);
+          faultPaths.push(target);
+        } else if (fault === "unknown-name") {
+          const target = path.join(path.dirname(paths.lockPath), `${paths.tempPrefix}unknown`);
+          writeFileSync(target, "{}\n", { flag: "wx", mode: 0o600 }); faultPaths.push(target);
+        } else {
+          faultPaths.push(writeExactPoisonRecoveryWriterTempFixtureV1(paths, 880_000, baseNonce, "complete"));
+        }
+        const records = path.dirname(paths.lockPath);
+        const locators = new Set(faultPaths.map((target) => path.relative(records, target).split(path.sep).join("/")));
+        const before = filesystemTreeSnapshot(records).filter((entry) => locators.has(String(entry.locator)));
+        const snapshotExternal = (): readonly unknown[] => Object.freeze(externalPaths.map((target) => {
+          const observed = lstatSync(target);
+          return Object.freeze({
+            target,
+            dev: observed.dev,
+            ino: observed.ino,
+            mode: observed.mode,
+            nlink: observed.nlink,
+            size: observed.size,
+            bytes: readFileSync(target).toString("base64"),
+          });
+        }));
+        const externalBefore = snapshotExternal();
+        const authorityBefore = recoveryPhaseSnapshotV1(original.store, original.originalLocators).filter((entry) => {
+          const basename = path.posix.basename(String(entry.locator));
+          return basename !== path.basename(paths.lockPath) && !basename.startsWith(paths.tempPrefix);
+        });
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = await observer;
+        assert.notEqual(result.status, 0, `${fault}: invalid transient topology must fail closed`);
+        assert.deepEqual(filesystemTreeSnapshot(records).filter((entry) => locators.has(String(entry.locator))), before, `${fault}: publisher performs zero transient cleanup`);
+        assert.deepEqual(snapshotExternal(), externalBefore, `${fault}: external alias/source evidence remains byte- and identity-exact`);
+        if (fault === "ambiguous") {
+          assert.equal(existsSync(ambiguityObservedPath), true, "ambiguous owner refusal must come from the exact process-identity classifier");
+        }
+        assert.deepEqual(
+          recoveryPhaseSnapshotV1(original.store, original.originalLocators).filter((entry) => {
+            const basename = path.posix.basename(String(entry.locator));
+            return basename !== path.basename(paths.lockPath) && !basename.startsWith(paths.tempPrefix);
+          }),
+          authorityBefore,
+          `${fault}: invalid transient topology publishes zero recovery authority`,
+        );
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (reused?.pid) reused.kill("SIGKILL");
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const transition of ["disappearing", "incomplete-to-complete"] as const) {
+    it(`P4b recovery inventory bounded-retries a ${transition} acquisition temp`, async () => {
+      const root = createFixture();
+      const fixtureParent = path.dirname(root);
+      const readyPath = path.join(fixtureParent, `p4b-changing-${transition}-ready`);
+      const releasePath = path.join(fixtureParent, `p4b-changing-${transition}-release`);
+      const scanReadyPath = path.join(fixtureParent, `p4b-changing-${transition}-scan-ready`);
+      const scanReleasePath = path.join(fixtureParent, `p4b-changing-${transition}-scan-release`);
+      const scanLogPath = path.join(fixtureParent, `p4b-changing-${transition}-scan-log`);
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const paths = exactPoisonRecoveryWriterPathsFixtureV1(original.store);
+        instrumentExactPoisonRecoveryTransientObserverFixtureV1(root, original, {
+          readyPath: scanReadyPath,
+          releasePath: scanReleasePath,
+          scanLogPath,
+        });
+        const observer = runFixtureExpressionAsync(
+          root,
+          `m.p4bObserveExactPoisonRecoveryTransientFixtureV1(${JSON.stringify(readyPath)},${JSON.stringify(releasePath)}).then((hash)=>process.stdout.write(hash))`,
+        );
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${transition}: held H writer`);
+        const nonce = "b2000000-0000-4000-8000-000000000001";
+        const temp = writeExactPoisonRecoveryWriterTempFixtureV1(paths, process.pid, nonce, "partial");
+        writeFileSync(releasePath, "observe\n", { flag: "wx", mode: 0o600 });
+        waitForFixturePredicateV1(() => existsSync(scanReadyPath), `${transition}: first pinned identity and bytes include incomplete temp`);
+        if (transition === "disappearing") unlinkSync(temp);
+        else writeFileSync(temp, exactLiveWriterOwnerFixtureV1(paths.target, process.pid, nonce));
+        writeFileSync(scanReleasePath, "rescan\n", { flag: "wx", mode: 0o600 });
+        const result = await observer;
+        assert.deepEqual(
+          { status: result.status, stdout: result.stdout, stderr: result.stderr },
+          { status: 0, stdout: original.inventoryHash, stderr: "" },
+          `${transition}: a bounded fresh retry must converge without changing durable inventory`,
+        );
+        const scanEvents = readFileSync(scanLogPath, "utf8").trim().split("\n");
+        const firstEnter = scanEvents.indexOf("enter:1");
+        const firstReturn = scanEvents.indexOf("return:1");
+        assert.equal(firstEnter, 0, `${transition}: the first transient-observer invocation is explicitly delimited`);
+        assert.ok(firstReturn > firstEnter, `${transition}: the first transient-observer invocation returns after convergence`);
+        const firstInvocationScans = scanEvents.slice(firstEnter + 1, firstReturn).filter((event) => event.startsWith("scan:1:"));
+        assert.ok(firstInvocationScans.length >= 2, `${transition}: the changed pinned member forces a fresh enumeration inside the same observer invocation`);
+        assert.equal(firstInvocationScans[0], "scan:1:1", `${transition}: first enumeration sees the pinned incomplete temp`);
+        assert.equal(firstInvocationScans.at(-1), transition === "disappearing" ? "scan:1:0" : "scan:1:1", `${transition}: final same-invocation enumeration sees the converged transient set`);
+        if (existsSync(temp)) unlinkSync(temp);
+        assertExactPoisonRecoveryWriterReleasedFixtureV1(paths, `${transition} owner cleanup`);
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (!existsSync(scanReleasePath)) writeFileSync(scanReleasePath, "rescan\n", { mode: 0o600 });
+        removeFixture(root);
+      }
+    });
+  }
+
+  it("P4b publisher authenticates the fixed poison operation before acquiring its H-derived writer", () => {
+    const absentRoot = createFixture();
+    try {
+      instrumentExactPoisonRecoveryCoreAdmissionOrderFixtureV1(absentRoot);
+      const absent = runFixtureExpression(absentRoot, "m.resumeExactPoisonQuarantinePublisherCoreV1()");
+      assert.notEqual(absent.status, 0, "a direct publisher call without the exact fixed poison operation must fail closed");
+      assert.doesNotMatch(absent.stderr, /P4B_WRITER_ACQUIRE_CALLED/, "operation ENOENT must fail before any writer acquisition attempt");
+      assert.match(absent.stderr, /operation|absent|current-entry/i);
+    } finally {
+      removeFixture(absentRoot);
+    }
+
+    const poisonRoot = createFixture();
+    try {
+      seedExactOriginalPoisonStoreV1(poisonRoot);
+      instrumentExactPoisonRecoveryCoreAdmissionOrderFixtureV1(poisonRoot);
+      const poison = runFixtureExpression(poisonRoot, "m.resumeExactPoisonQuarantinePublisherCoreV1()");
+      assert.notEqual(poison.status, 0, "the injected writer boundary must stop the exact poison call");
+      assert.match(poison.stderr, /P4B_WRITER_ACQUIRE_CALLED/, "exact poison bytes must be authenticated before the sole writer acquisition");
+    } finally {
+      removeFixture(poisonRoot);
+    }
+  });
+
+  it("P4b keeps one private zero-input recovery-writer wrapper and keeps selectors lock-free", async () => {
+    const controller = await import("../../src/internal-production/baseline-post-handoff-receipt-v1.js");
+    assert.equal(Reflect.get(controller, "acquireExactPoisonRecoveryWriterV1"), undefined, "the recovery writer wrapper must remain private");
+    assert.equal(Reflect.get(controller, "acquireTask12ReceiptLocatorWriterV1"), undefined, "the shared locator writer must remain private");
+    const source = readFileSync(observerSource, "utf8");
+    const wrapperMarker = "function acquireExactPoisonRecoveryWriterV1(): ExactPoisonRecoveryWriterV1 {";
+    assert.equal(source.split(wrapperMarker).length - 1, 1, "production must retain one private zero-input recovery writer wrapper");
+    const wrapperStart = source.indexOf(wrapperMarker);
+    const wrapperEnd = source.indexOf("\n}", wrapperStart);
+    const wrapper = source.slice(wrapperStart, wrapperEnd + 2);
+    assert.match(wrapper, /acquireTask12ReceiptLocatorWriterV1\(exactPoisonRecoveryWriterTargetV1\(\)\)/);
+    const coreStart = source.indexOf("async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {");
+    const coreEnd = source.indexOf("\n}\n\nasync function resumeExactPoisonQuarantineBeforeSelectionV1", coreStart);
+    assert.ok(coreStart >= 0 && coreEnd > coreStart);
+    const core = source.slice(coreStart, coreEnd);
+    assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "the publisher core must acquire the H writer exactly once");
+    assert.doesNotMatch(core, /acquireTask12ReceiptLocatorWriterV1\(/, "the publisher core must not bypass the thin recovery wrapper");
+    const selectorRegions = [
+      source.slice(
+        source.indexOf("async function inspectExactPoisonRecoveryChainBeforeSelectionV1("),
+        source.indexOf("\ntype ExactPoisonRecoveryWriterV1", source.indexOf("async function inspectExactPoisonRecoveryChainBeforeSelectionV1(")),
+      ),
+      source.slice(
+        source.indexOf("async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {"),
+        source.indexOf("\nexport async function prepareInternalProductionCurrentEntryOperationV1", source.indexOf("async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {")),
+      ),
+    ];
+    for (const region of selectorRegions) {
+      assert.doesNotMatch(region, /acquireExactPoisonRecoveryWriterV1|acquireTask12ReceiptLocatorWriterV1|writer\.lock/, "selectors and the pre-selection probe must never acquire or inspect the writer family");
     }
   });
 

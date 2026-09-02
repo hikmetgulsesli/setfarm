@@ -2870,6 +2870,83 @@ type ExactPoisonRecoveryWriterV1 = Readonly<{
   close: () => void;
 }>;
 
+type Task12ReceiptWriterProcessObservationV1 = Readonly<
+  | { state: "live"; start: string; commandHash: string; identityHash: string }
+  | { state: "dead" | "ambiguous" }
+>;
+
+type Task12ReceiptWriterOwnerV1 = Readonly<{
+  schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1";
+  targetHash: string;
+  pid: number;
+  start: string;
+  commandHash: string;
+  identityHash: string;
+  nonce: string;
+}>;
+
+const TASK12_RECEIPT_WRITER_OWNER_KEYS_V1 = Object.freeze([
+  "schema", "targetHash", "pid", "start", "commandHash", "identityHash", "nonce",
+] as const);
+const TASK12_RECEIPT_WRITER_UUID_V4_V1 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function parseTask12ReceiptWriterOwnerV1(
+  bytes: Buffer,
+  targetHash: string,
+  label: string,
+  expectedPid?: number,
+  expectedNonce?: string,
+): Readonly<{ state: "incomplete" } | { state: "complete"; owner: Task12ReceiptWriterOwnerV1 }> {
+  let value: Record<string, unknown>;
+  try {
+    value = strictCanonicalRecord(bytes, label);
+  } catch {
+    return Object.freeze({ state: "incomplete" as const });
+  }
+  if (!hasExactKeys(value, TASK12_RECEIPT_WRITER_OWNER_KEYS_V1)) {
+    return Object.freeze({ state: "incomplete" as const });
+  }
+  if (
+    value.schema !== "setfarm.internal-production-task12-receipt-locator-writer-lock.v1"
+    || value.targetHash !== targetHash
+    || !Number.isSafeInteger(value.pid)
+    || Number(value.pid) < 1
+    || typeof value.start !== "string"
+    || !SHA256.test(String(value.commandHash))
+    || !SHA256.test(String(value.identityHash))
+    || typeof value.nonce !== "string"
+    || !TASK12_RECEIPT_WRITER_UUID_V4_V1.test(value.nonce)
+  ) currentEntryFail(`${label} authority is invalid`);
+  const owner = value as Task12ReceiptWriterOwnerV1;
+  if (
+    owner.identityHash !== hashCanonicalJson({
+      schema: "setfarm.internal-production-task12-receipt-writer-process.v1",
+      pid: owner.pid,
+      start: owner.start,
+      commandHash: owner.commandHash,
+    })
+    || (expectedPid !== undefined && owner.pid !== expectedPid)
+    || (expectedNonce !== undefined && owner.nonce !== expectedNonce)
+  ) currentEntryFail(`${label} authority is crossed`);
+  return Object.freeze({ state: "complete" as const, owner });
+}
+
+function observeTask12ReceiptWriterProcessV1(pid: number): Task12ReceiptWriterProcessObservationV1 {
+  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), shell: false, encoding: "utf8", timeout: 2_000, maxBuffer: 65_536, stdio: ["ignore", "pipe", "pipe"] });
+  if (result.status === 1 && result.stdout === "" && result.stderr === "") return Object.freeze({ state: "dead" as const });
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || typeof result.stdout !== "string") return Object.freeze({ state: "ambiguous" as const });
+  const match = /^(.{24}) (.+)\n$/.exec(result.stdout);
+  if (!match) return Object.freeze({ state: "ambiguous" as const });
+  const start = match[1]!;
+  const commandHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-command.v1", command: match[2]! });
+  return Object.freeze({
+    state: "live" as const,
+    start,
+    commandHash,
+    identityHash: hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash }),
+  });
+}
+
 type ExactPoisonRecoveryPrerequisiteRecordV1 = Readonly<{
   value: Record<string, unknown>;
   bytes: Buffer;
@@ -2967,6 +3044,10 @@ function exactPoisonRecoveryWriterTargetV1(): string {
     "records",
     `current-entry-store-quarantine-recovery-by-predecessor-operation-${EXACT_POISON_OPERATION_HASH_V1}`,
   );
+}
+
+function acquireExactPoisonRecoveryWriterV1(): ExactPoisonRecoveryWriterV1 {
+  return acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
 }
 
 function exactPoisonQuarantinedStoreLocatorV1(): string {
@@ -3154,6 +3235,114 @@ function exactPoisonContaminationFingerprintV1(operation: FileSnapshot): Readonl
   return Object.freeze({ fingerprintBody, fingerprintHash: EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 });
 }
 
+function observeExactPoisonRecoveryWriterTransientsV1(heldWriter: ExactPoisonRecoveryWriterV1): readonly string[] {
+  const target = exactPoisonRecoveryWriterTargetV1();
+  const directory = path.dirname(target);
+  const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
+  const tempPrefix = `${path.basename(lockPath)}.tmp-`;
+  const escapedPrefix = tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
+  const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target });
+  const deadline = Date.now() + 250;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    heldWriter.assertStable();
+    const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
+    if (candidates.length > 8) currentEntryFail("exact-poison recovery writer transient cap exceeded");
+    let retry = false;
+    for (const entry of candidates) {
+      const match = pattern.exec(entry);
+      if (match === null) currentEntryFail("exact-poison recovery writer transient name is invalid");
+      const pid = Number(match[1]);
+      const nonce = match[2]!;
+      if (!Number.isSafeInteger(pid) || pid < 1) currentEntryFail("exact-poison recovery writer transient PID is invalid");
+      const member = path.join(directory, entry);
+      let descriptor = -1;
+      try {
+        descriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        const identity = fstatSync(descriptor, { bigint: true });
+        const atPath = lstatSync(member, { bigint: true });
+        if (
+          !identity.isFile()
+          || identity.isSymbolicLink()
+          || (identity.mode & 0o7777n) !== 0o600n
+          || identity.nlink !== 1n
+        ) currentEntryFail("exact-poison recovery writer transient identity is invalid");
+        if (!sameRegularMetadata(identity, atPath)) {
+          retry = true;
+          break;
+        }
+        let bytes: Buffer;
+        try {
+          bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+        } catch (error) {
+          const changed = fstatSync(descriptor, { bigint: true });
+          let changedAtPath: BigIntStats;
+          try { changedAtPath = lstatSync(member, { bigint: true }); }
+          catch (reopenError) { if (isEnoent(reopenError)) { retry = true; break; } throw reopenError; }
+          if (!sameRegularMetadata(identity, changed) || !sameRegularMetadata(identity, changedAtPath)) {
+            retry = true;
+            break;
+          }
+          throw error;
+        }
+        let after: BigIntStats;
+        let reopened: BigIntStats;
+        try {
+          after = fstatSync(descriptor, { bigint: true });
+          reopened = lstatSync(member, { bigint: true });
+        } catch (error) {
+          if (!isEnoent(error)) throw error;
+          retry = true;
+          break;
+        }
+        if (!sameRegularMetadata(identity, after) || !sameRegularMetadata(identity, reopened)) {
+          retry = true;
+          break;
+        }
+        const parsed = parseTask12ReceiptWriterOwnerV1(
+          bytes,
+          targetHash,
+          "exact-poison recovery writer transient",
+          pid,
+          nonce,
+        );
+        if (parsed.state === "incomplete") {
+          let stableCanonicalNonOwner = false;
+          try {
+            strictCanonicalRecord(bytes, "exact-poison recovery writer transient incomplete body");
+            stableCanonicalNonOwner = true;
+          } catch {}
+          if (stableCanonicalNonOwner) currentEntryFail("exact-poison recovery writer transient has a stable non-owner body");
+          const processObservation = observeTask12ReceiptWriterProcessV1(pid);
+          if (processObservation.state === "live") continue;
+          currentEntryFail("exact-poison recovery writer transient owner is not provably live");
+        }
+        const processObservation = observeTask12ReceiptWriterProcessV1(parsed.owner.pid);
+        if (
+          processObservation.state !== "live"
+          || processObservation.start !== parsed.owner.start
+          || processObservation.commandHash !== parsed.owner.commandHash
+          || processObservation.identityHash !== parsed.owner.identityHash
+        ) currentEntryFail("exact-poison recovery writer transient owner is not exact live authority");
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+        retry = true;
+        break;
+      } finally {
+        if (descriptor >= 0) closeSync(descriptor);
+      }
+    }
+    if (!retry) {
+      heldWriter.assertStable();
+      const fresh = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
+      if (canonicalComparable(fresh) === canonicalComparable(candidates)) return Object.freeze([...candidates]);
+    }
+    if (Date.now() >= deadline) currentEntryFail("exact-poison recovery writer transient did not stabilize");
+    Atomics.wait(wait, 0, 0, 5);
+  }
+}
+
 function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
@@ -3165,6 +3354,7 @@ function observeExactPoisonQuarantinedInventoryV1(
   assertStableOriginals: () => void;
 }> {
   heldWriter.assertStable();
+  const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
   const root = fixedLegacyCurrentEntryRootV1();
   const rootSnapshot = directorySnapshot(root, "exact-poison quarantined store");
   const recoveryLock = `.${path.basename(exactPoisonRecoveryWriterTargetV1())}.writer.lock`;
@@ -3204,10 +3394,11 @@ function observeExactPoisonQuarantinedInventoryV1(
     const expected = [...(exactEntries.get(locator) ?? new Set<string>())].sort(compareBytes);
     const observed = readdirSync(target).sort(compareBytes);
     const reserved = locator === "." ? reservedRootEntries : locator === "records" ? reservedRecordEntries : new Set<string>();
-    const originalObserved = observed.filter((entry) => !reserved.has(entry));
+    const transients = locator === "records" ? new Set(writerTransients) : new Set<string>();
+    const originalObserved = observed.filter((entry) => !reserved.has(entry) && !transients.has(entry));
     if (
       canonicalComparable(originalObserved) !== canonicalComparable(expected)
-      || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry))
+      || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry) && !transients.has(entry))
     ) currentEntryFail(`exact-poison inventory directory ${locator} is not exact`);
     return Object.freeze({ locator, target, snapshot, uid: stats.uid });
   });
@@ -3260,15 +3451,17 @@ function observeExactPoisonQuarantinedInventoryV1(
   }
   const assertStableOriginals = (): void => {
     heldWriter.assertStable();
+    const stableWriterTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
     for (const { locator, target, snapshot, uid } of topologyDirectorySnapshots) {
       assertDirectory(target, snapshot, `exact-poison stable directory ${locator}`);
       if (lstatSync(target, { bigint: true }).uid !== uid) currentEntryFail(`exact-poison stable directory ${locator} owner changed`);
       const expected = [...exactEntries.get(locator)!].sort(compareBytes);
       const reserved = locator === "." ? reservedRootEntries : locator === "records" ? reservedRecordEntries : new Set<string>();
+      const transients = locator === "records" ? new Set(stableWriterTransients) : new Set<string>();
       const observed = readdirSync(target).sort(compareBytes);
       if (
-        canonicalComparable(observed.filter((entry) => !reserved.has(entry))) !== canonicalComparable(expected)
-        || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry))
+        canonicalComparable(observed.filter((entry) => !reserved.has(entry) && !transients.has(entry))) !== canonicalComparable(expected)
+        || observed.some((entry) => !expected.includes(entry) && !reserved.has(entry) && !transients.has(entry))
       ) {
         currentEntryFail(`exact-poison stable directory ${locator} topology changed`);
       }
@@ -4068,13 +4261,19 @@ async function publishExactPoisonRecoveryCandidateV1(
 }
 
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
-  const heldWriter = acquireTask12ReceiptLocatorWriterV1(exactPoisonRecoveryWriterTargetV1());
+  const operation = requireExactPoisonRecoverySnapshotV1(
+    fixedLegacyCurrentEntryOperationPathV1(),
+    "fixed legacy exact-poison publisher operation",
+  );
+  const predecessorPair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+  if (
+    predecessorPair.operationRef !== EXACT_POISON_OPERATION_REF_V1
+    || predecessorPair.operationHash !== EXACT_POISON_OPERATION_HASH_V1
+    || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
+  ) currentEntryFail("fixed legacy exact-poison publisher operation is crossed");
+  const heldWriter = acquireExactPoisonRecoveryWriterV1();
   try {
     heldWriter.assertStable();
-    const operation = requireExactPoisonRecoverySnapshotV1(
-      fixedLegacyCurrentEntryOperationPathV1(),
-      "fixed legacy exact-poison publisher operation",
-    );
     const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
@@ -5399,6 +5598,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
   const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
   const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target });
+  const retryPinnedSnapshot = Symbol("Task12 receipt writer retry pinned snapshot");
   const observe = (pid: number): Readonly<{ state: "live"; start: string; commandHash: string; identityHash: string } | { state: "dead" | "ambiguous" }> => {
     const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], { env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }), shell: false, encoding: "utf8", timeout: 2_000, maxBuffer: 65_536, stdio: ["ignore", "pipe", "pipe"] });
     if (result.status === 1 && result.stdout === "" && result.stderr === "") return Object.freeze({ state: "dead" as const });
@@ -5408,17 +5608,48 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
     const start = match[1]!; const commandHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-command.v1", command: match[2]! });
     return Object.freeze({ state: "live" as const, start, commandHash, identityHash: hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-writer-process.v1", pid, start, commandHash }) });
   };
-  const parse = (bytes: Buffer): Record<string, unknown> => {
-    const value = strictCanonicalRecord(bytes, "Task12 receipt writer lock");
-    if (!hasExactKeys(value, ["schema", "targetHash", "pid", "start", "commandHash", "identityHash", "nonce"]) || value.schema !== "setfarm.internal-production-task12-receipt-locator-writer-lock.v1" || value.targetHash !== targetHash || !Number.isSafeInteger(value.pid) || Number(value.pid) < 1 || typeof value.start !== "string" || !SHA256.test(String(value.commandHash)) || !SHA256.test(String(value.identityHash)) || typeof value.nonce !== "string") currentEntryFail("Task12 receipt writer lock authority is invalid");
-    return value;
+  const readPinned = (member: string, descriptor: number, identity: BigIntStats): Buffer => {
+    let observed: Buffer;
+    try {
+      observed = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size);
+    } catch (error) {
+      const changed = fstatSync(descriptor, { bigint: true });
+      let changedAtPath: BigIntStats;
+      try { changedAtPath = lstatSync(member, { bigint: true }); }
+      catch (reopenError) { if (isEnoent(reopenError)) throw retryPinnedSnapshot; throw reopenError; }
+      if (!sameRegularMetadata(identity, changed) || !sameRegularMetadata(identity, changedAtPath)) throw retryPinnedSnapshot;
+      throw error;
+    }
+    const after = fstatSync(descriptor, { bigint: true });
+    let reopened: BigIntStats;
+    try { reopened = lstatSync(member, { bigint: true }); }
+    catch (error) { if (isEnoent(error)) throw retryPinnedSnapshot; throw error; }
+    if (!sameRegularMetadata(identity, after) || !sameRegularMetadata(identity, reopened)) throw retryPinnedSnapshot;
+    return observed;
   };
   const unlinkPinned = (member: string, descriptor: number, identity: BigIntStats, bytes: Buffer, expectedLinkCount = 1n): void => {
-    const atPath = lstatSync(member, { bigint: true }); const again = fstatSync(descriptor, { bigint: true }); const observed = readTask12ReceiptDescriptorBytesV1(descriptor, again.size);
-    if (!again.isFile() || (again.mode & 0o7777n) !== 0o600n || again.nlink !== expectedLinkCount || atPath.nlink !== expectedLinkCount || again.dev !== identity.dev || again.ino !== identity.ino || again.size !== identity.size || atPath.dev !== identity.dev || atPath.ino !== identity.ino || !observed.equals(bytes)) currentEntryFail("Task12 receipt writer lock changed");
+    const atPath = lstatSync(member, { bigint: true }); const again = fstatSync(descriptor, { bigint: true });
+    if (!again.isFile() || again.isSymbolicLink() || (again.mode & 0o7777n) !== 0o600n || again.nlink !== expectedLinkCount || atPath.nlink !== expectedLinkCount || !sameRegularMetadata(identity, again) || !sameRegularMetadata(identity, atPath)) throw retryPinnedSnapshot;
+    const observed = readPinned(member, descriptor, identity);
+    if (!observed.equals(bytes)) throw retryPinnedSnapshot;
     unlinkSync(member);
   };
+  type PinnedWriterMemberV1 = {
+    member: string;
+    descriptor: number;
+    identity: BigIntStats;
+    bytes: Buffer;
+    pid?: number;
+    nonce?: string;
+  };
+  const escapedPrefix = tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tempPattern = new RegExp(`^${escapedPrefix}([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`);
   const deadline = Date.now() + 10_000;
+  const waitForMovingSnapshot = (error: unknown): void => {
+    if (error !== retryPinnedSnapshot && !isEnoent(error)) throw error;
+    if (Date.now() >= deadline) currentEntryFail("Task12 receipt writer lock did not stabilize");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  };
   for (;;) {
     const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
     let guardTransferred = false;
@@ -5427,48 +5658,208 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
     let identity: BigIntStats | null = null;
     let bytes: Buffer | null = null;
     let linked = false;
+    const pinned: PinnedWriterMemberV1[] = [];
     try {
       guard.assertStable();
       const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
       if (candidates.length > 8) currentEntryFail("Task12 receipt writer lock temp cap exceeded");
-      let busy = false;
-      const inspectOwner = (member: string): void => {
-        const descriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const openPinned = (member: string, pid?: number, nonce?: string): PinnedWriterMemberV1 => {
+        const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         try {
-          const identity = fstatSync(descriptor, { bigint: true }); const atPath = lstatSync(member, { bigint: true });
-          if (!identity.isFile() || (identity.mode & 0o7777n) !== 0o600n || identity.nlink !== 1n || atPath.dev !== identity.dev || atPath.ino !== identity.ino || atPath.mode !== identity.mode || atPath.nlink !== 1n) currentEntryFail("Task12 receipt writer lock changed");
-          const bytes = readTask12ReceiptDescriptorBytesV1(descriptor, identity.size); const owner = parse(bytes); const live = observe(Number(owner.pid));
-          if (live.state === "ambiguous" || (live.state === "live" && live.start === owner.start && live.commandHash === owner.commandHash && live.identityHash === owner.identityHash)) busy = true;
-          else unlinkPinned(member, descriptor, identity, bytes);
-        } finally { closeSync(descriptor); }
+          const memberIdentity = fstatSync(memberDescriptor, { bigint: true });
+          const atPath = lstatSync(member, { bigint: true });
+          if (
+            !memberIdentity.isFile()
+            || memberIdentity.isSymbolicLink()
+            || ![1n, 2n].includes(memberIdentity.nlink)
+            || (memberIdentity.mode & 0o7777n) !== 0o600n
+          ) currentEntryFail("Task12 receipt writer lock member is invalid");
+          if (!sameRegularMetadata(memberIdentity, atPath)) throw retryPinnedSnapshot;
+          let memberBytes: Buffer;
+          try {
+            memberBytes = readTask12ReceiptDescriptorBytesV1(memberDescriptor, memberIdentity.size);
+          } catch (error) {
+            const changed = fstatSync(memberDescriptor, { bigint: true });
+            let reopened: BigIntStats;
+            try { reopened = lstatSync(member, { bigint: true }); }
+            catch (reopenError) { if (isEnoent(reopenError)) throw retryPinnedSnapshot; throw reopenError; }
+            if (!sameRegularMetadata(memberIdentity, changed) || !sameRegularMetadata(memberIdentity, reopened)) throw retryPinnedSnapshot;
+            throw error;
+          }
+          const after = fstatSync(memberDescriptor, { bigint: true });
+          const reopened = lstatSync(member, { bigint: true });
+          if (!sameRegularMetadata(memberIdentity, after) || !sameRegularMetadata(memberIdentity, reopened)) throw retryPinnedSnapshot;
+          return { member, descriptor: memberDescriptor, identity: memberIdentity, bytes: memberBytes, pid, nonce };
+        } catch (error) {
+          closeSync(memberDescriptor);
+          throw error;
+        }
       };
+      let movingSnapshot = false;
       for (const entry of candidates) {
-        if (!new RegExp(`^${tempPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).test(entry)) currentEntryFail("Task12 receipt writer lock temp name is invalid");
-        inspectOwner(path.join(directory, entry));
+        const match = tempPattern.exec(entry);
+        if (match === null) currentEntryFail("Task12 receipt writer lock temp name is invalid");
+        const pid = Number(match[1]);
+        if (!Number.isSafeInteger(pid) || pid < 1) currentEntryFail("Task12 receipt writer lock temp PID is invalid");
+        try { pinned.push(openPinned(path.join(directory, entry), pid, match[2]!)); }
+        catch (error) { waitForMovingSnapshot(error); movingSnapshot = true; break; }
       }
-      try { inspectOwner(lockPath); } catch (error) { if (!isEnoent(error)) throw error; }
-      if (busy) {
+      if (movingSnapshot) continue;
+      let fixed: PinnedWriterMemberV1 | null = null;
+      try {
+        fixed = openPinned(lockPath);
+        pinned.push(fixed);
+      } catch (error) {
+        if (!isEnoent(error)) {
+          waitForMovingSnapshot(error);
+          continue;
+        }
+      }
+      const assertCoherentPinnedSnapshot = (): void => {
+        guard.assertStable();
+        const freshCandidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
+        if (canonicalComparable(freshCandidates) !== canonicalComparable(candidates)) throw retryPinnedSnapshot;
+        for (const member of pinned) {
+          const now = fstatSync(member.descriptor, { bigint: true });
+          const atPath = lstatSync(member.member, { bigint: true });
+          if (
+            !sameRegularMetadata(member.identity, now)
+            || !sameRegularMetadata(member.identity, atPath)
+          ) throw retryPinnedSnapshot;
+          if (!readPinned(member.member, member.descriptor, now).equals(member.bytes)) throw retryPinnedSnapshot;
+        }
+        if (fixed === null) {
+          try {
+            lstatSync(lockPath, { bigint: true });
+          } catch (error) {
+            if (isEnoent(error)) return;
+            throw error;
+          }
+          throw retryPinnedSnapshot;
+        }
+      };
+      try { assertCoherentPinnedSnapshot(); }
+      catch (error) { waitForMovingSnapshot(error); continue; }
+      const candidateMembers = pinned.filter((member) => member.member !== lockPath);
+      const selected = fixed === null
+        ? []
+        : candidateMembers.filter((member) => member.identity.dev === fixed!.identity.dev && member.identity.ino === fixed!.identity.ino);
+      if (
+        (fixed === null && candidateMembers.some((member) => member.identity.nlink !== 1n))
+        || (fixed !== null && fixed.identity.nlink === 1n && (selected.length !== 0 || candidateMembers.some((member) => member.identity.nlink !== 1n)))
+        || (fixed !== null && fixed.identity.nlink === 2n && (selected.length !== 1 || selected[0]!.identity.nlink !== 2n || candidateMembers.some((member) => member !== selected[0] && member.identity.nlink !== 1n)))
+        || (fixed !== null && ![1n, 2n].includes(fixed.identity.nlink))
+      ) currentEntryFail("Task12 receipt writer lock topology is invalid");
+      if (selected.length === 1 && !selected[0]!.bytes.equals(fixed!.bytes)) {
+        currentEntryFail("Task12 receipt writer selected pair is crossed");
+      }
+      let busy = false;
+      let ambiguous = false;
+      for (const member of pinned) {
+        const parsed = parseTask12ReceiptWriterOwnerV1(
+          member.bytes,
+          targetHash,
+          "Task12 receipt writer lock",
+          member.pid,
+          member.nonce,
+        );
+        if (parsed.state === "incomplete") {
+          if (member.pid === undefined) currentEntryFail("Task12 receipt fixed writer lock is incomplete");
+          const processObservation = observe(member.pid);
+          if (processObservation.state === "live") busy = true;
+          else if (processObservation.state === "ambiguous") ambiguous = true;
+          continue;
+        }
+        const processObservation = observe(parsed.owner.pid);
+        if (processObservation.state === "ambiguous") ambiguous = true;
+        else if (
+          processObservation.state === "live"
+          && processObservation.start === parsed.owner.start
+          && processObservation.commandHash === parsed.owner.commandHash
+          && processObservation.identityHash === parsed.owner.identityHash
+        ) busy = true;
+      }
+      try { assertCoherentPinnedSnapshot(); }
+      catch (error) { waitForMovingSnapshot(error); continue; }
+      if (busy || ambiguous) {
         if (Date.now() >= deadline) currentEntryFail("Task12 receipt writer lock is busy");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+        continue;
+      }
+      const selectedMember = selected.length === 1 ? selected[0]! : null;
+      const independent = candidateMembers.filter((member) => member !== selectedMember);
+      if (independent.length > 0) {
+        const member = independent[0]!;
+        try {
+          unlinkPinned(member.member, member.descriptor, member.identity, member.bytes);
+          fsyncCurrentEntryDirectory(directory);
+          guard.assertStable();
+        } catch (error) { waitForMovingSnapshot(error); }
+        continue;
+      }
+      if (selectedMember !== null) {
+        try {
+          unlinkPinned(selectedMember.member, selectedMember.descriptor, selectedMember.identity, selectedMember.bytes, 2n);
+          fsyncCurrentEntryDirectory(directory);
+          guard.assertStable();
+          const heldAtPath = lstatSync(lockPath, { bigint: true });
+          const fixedNow = fstatSync(fixed!.descriptor, { bigint: true });
+          if (
+            !fixedNow.isFile()
+            || (fixedNow.mode & 0o7777n) !== 0o600n
+            || fixedNow.nlink !== 1n
+            || heldAtPath.dev !== fixedNow.dev
+            || heldAtPath.ino !== fixedNow.ino
+            || heldAtPath.mode !== fixedNow.mode
+            || heldAtPath.uid !== fixedNow.uid
+            || heldAtPath.nlink !== 1n
+          ) throw retryPinnedSnapshot;
+          if (!readPinned(lockPath, fixed!.descriptor, fixedNow).equals(fixed!.bytes)) throw retryPinnedSnapshot;
+        } catch (error) { waitForMovingSnapshot(error); }
+        continue;
+      }
+      if (fixed !== null) {
+        try {
+          const heldAtPath = lstatSync(lockPath, { bigint: true });
+          const fixedNow = fstatSync(fixed.descriptor, { bigint: true });
+          if (!sameRegularMetadata(fixed.identity, fixedNow) || !sameRegularMetadata(fixed.identity, heldAtPath)) throw retryPinnedSnapshot;
+          unlinkPinned(lockPath, fixed.descriptor, fixed.identity, fixed.bytes);
+          fsyncCurrentEntryDirectory(directory);
+          guard.assertStable();
+        } catch (error) { waitForMovingSnapshot(error); }
         continue;
       }
       const owner = observe(process.pid);
       if (owner.state !== "live") currentEntryFail("Task12 receipt writer process is unavailable");
       const nonce = randomUUID(); const body = { schema: "setfarm.internal-production-task12-receipt-locator-writer-lock.v1", targetHash, pid: process.pid, start: owner.start, commandHash: owner.commandHash, identityHash: owner.identityHash, nonce }; bytes = task12ReceiptCanonicalBytesV1(body);
-      temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`); descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+      temp = path.join(directory, `${tempPrefix}${process.pid}-${nonce}`);
+      descriptor = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
       writeFileSync(descriptor, bytes); fsyncSync(descriptor); identity = fstatSync(descriptor, { bigint: true });
       try {
         linkSync(temp, lockPath);
         linked = true;
       } catch (error) {
         unlinkPinned(temp, descriptor, identity, bytes);
-        temp = "";
+        temp = ""; fsyncCurrentEntryDirectory(directory); guard.assertStable();
         closeSync(descriptor);
         descriptor = -1;
         if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
         if (Date.now() >= deadline) currentEntryFail("Task12 receipt writer lock is busy");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
         continue;
+      }
+      {
+        identity = fstatSync(descriptor, { bigint: true });
+        const linkedAtTemp = lstatSync(temp, { bigint: true });
+        const linkedAtLock = lstatSync(lockPath, { bigint: true });
+        if (
+          !identity.isFile()
+          || (identity.mode & 0o7777n) !== 0o600n
+          || identity.nlink !== 2n
+          || !sameRegularMetadata(identity, linkedAtTemp)
+          || !sameRegularMetadata(identity, linkedAtLock)
+          || !readPinned(temp, descriptor, identity).equals(bytes)
+        ) currentEntryFail("Task12 receipt writer linked identity is invalid");
       }
       unlinkPinned(temp, descriptor, identity, bytes, 2n); temp = ""; fsyncCurrentEntryDirectory(directory); guard.assertStable();
       const heldDescriptor = descriptor;
@@ -5479,8 +5870,11 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         || !sameRegularMetadata(heldIdentity, heldAtPath)
         || (heldIdentity.mode & 0o7777n) !== 0o600n
         || heldIdentity.nlink !== 1n
-        || !readTask12ReceiptDescriptorBytesV1(heldDescriptor, heldIdentity.size).equals(bytes)
       ) currentEntryFail("Task12 receipt writer lock post-link identity is invalid");
+      let heldObserved: Buffer;
+      try { heldObserved = readPinned(lockPath, heldDescriptor, heldIdentity); }
+      catch { currentEntryFail("Task12 receipt writer lock post-link identity changed"); }
+      if (!heldObserved.equals(bytes)) currentEntryFail("Task12 receipt writer lock post-link bytes are invalid");
       const heldBytes = bytes;
       descriptor = -1;
       guardTransferred = true;
@@ -5490,7 +5884,9 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
         guard.assertStable();
         const atPath = lstatSync(lockPath, { bigint: true });
         const now = fstatSync(heldDescriptor, { bigint: true });
-        const reopened = readTask12ReceiptDescriptorBytesV1(heldDescriptor, now.size);
+        let reopened: Buffer;
+        try { reopened = readPinned(lockPath, heldDescriptor, now); }
+        catch { currentEntryFail("Task12 receipt writer lock changed while held"); }
         if (
           !now.isFile()
           || (now.mode & 0o7777n) !== 0o600n
@@ -5526,6 +5922,17 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
             if (!current.isFile() || (current.mode & 0o7777n) !== 0o600n || current.nlink !== expectedLinks || atLock.dev !== identity.dev || atLock.ino !== identity.ino || atLock.nlink !== expectedLinks || !readTask12ReceiptDescriptorBytesV1(descriptor, current.size).equals(bytes)) currentEntryFail("Task12 receipt writer lock changed after acquisition fault");
             unlinkSync(lockPath);
             linked = false;
+            if (temp !== "") {
+              identity = fstatSync(descriptor, { bigint: true });
+              const atTemp = lstatSync(temp, { bigint: true });
+              if (
+                !identity.isFile()
+                || (identity.mode & 0o7777n) !== 0o600n
+                || identity.nlink !== 1n
+                || !sameRegularMetadata(identity, atTemp)
+                || !readPinned(temp, descriptor, identity).equals(bytes)
+              ) currentEntryFail("Task12 receipt writer temp changed after acquisition fault");
+            }
           }
           if (temp !== "") {
             unlinkPinned(temp, descriptor, identity, bytes);
@@ -5539,6 +5946,7 @@ function acquireTask12ReceiptLocatorWriterV1(target: string): Readonly<{ assertS
       }
       throw error;
     } finally {
+      for (const member of pinned) closeSync(member.descriptor);
       if (descriptor >= 0) closeSync(descriptor);
       if (!guardTransferred) guard.close();
     }
