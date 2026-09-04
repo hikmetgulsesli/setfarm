@@ -24,6 +24,7 @@ import {
   detectOperationalFailureCauseAuthorityV3Constraint,
   OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_CONSTRAINT,
   OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS,
+  OperationalFailureCauseAuthorityV3MigrationError,
   verifyOperationalFailureCauseAuthorityV3Constraint,
 } from "../../src/db/operational-failure-cause-authority-v3-migration.js";
 import {
@@ -33,6 +34,31 @@ import {
 import {
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
+
+type OperationalFailureCauseAuthorityV3CatalogVerifierV1 =
+  (transaction: unknown) => Promise<void>;
+
+async function verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(
+  database: TestDatabase,
+): Promise<void> {
+  const catalogModuleSpecifier =
+    "../../src/db/operational-failure-cause-authority-v3-catalog.js";
+  const migration = await import(catalogModuleSpecifier);
+  const verifier = (migration as unknown as Readonly<{
+    verifyOperationalFailureCauseAuthorityV3CatalogV1?: unknown;
+  }>).verifyOperationalFailureCauseAuthorityV3CatalogV1;
+  assert.equal(
+    typeof verifier,
+    "function",
+    "migration 31 exports its transaction-parameter catalog-only verifier",
+  );
+  await database.sql.begin(
+    "isolation level repeatable read read only",
+    async (transaction) => {
+      await (verifier as OperationalFailureCauseAuthorityV3CatalogVerifierV1)(transaction);
+    },
+  );
+}
 
 async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
   await rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
@@ -140,6 +166,7 @@ describe("operational failure cause migration", () => {
       assert.deepEqual(upgraded.applied, ["031_operational_failure_cause_authority_v3"]);
       assert.equal(await detectOperationalFailureCauseAuthorityV3Constraint(database.sql), "present");
       await verifyOperationalFailureCauseAuthorityV3Constraint(database.sql);
+      await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
       const currentHead = await database.sql<Array<{ version: number }>>`
         SELECT version FROM setfarm_schema_migrations
          WHERE version >= 26 ORDER BY version
@@ -274,6 +301,17 @@ describe("operational failure cause migration", () => {
            VALIDATE CONSTRAINT ${OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_CONSTRAINT}`,
       );
       assert.equal(await detectOperationalFailureCauseAuthorityV3Constraint(database.sql), "partial");
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => (
+          error instanceof OperationalFailureCauseAuthorityV3MigrationError
+            && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH"
+        ) || (
+          error instanceof ContractSpineMigrationError
+            && error.code === "MIGRATION_ADOPTION_MISMATCH"
+        ),
+        "the read-only catalog verifier rejects a same-name validated constraint with drifted semantics",
+      );
       for (const statement of OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS) {
         await database.sql.unsafe(statement);
       }

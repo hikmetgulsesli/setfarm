@@ -2,7 +2,17 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveBundledWorkflowDir, resolveWorkflowDir } from "./paths.js";
-import { pgRun, pgGet, pgExec, pgNextRunNumber, now, resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1 } from "../db-pg.js";
+import {
+  classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1,
+  getSql,
+  pgRun,
+  pgGet,
+  pgExec,
+  pgNextRunNumber,
+  now,
+  resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1,
+  type PgTransactionSql as InternalProductionPgTransactionSql,
+} from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
 import { cleanAgentWorkspace } from "./worktree-ops.js";
@@ -16,10 +26,15 @@ import {
 } from "../execution/run-protocol.js";
 import {
   persistInternalProductionRecoverySourceBootstrapRunV1,
+  persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1,
   persistWorkflowRun,
   type PersistedWorkflowStep,
 } from "../execution/run-persistence.js";
 import { resolveInternalProductionRecoverySourceBootstrapOperationV1 } from "../internal-production/baseline-post-handoff-receipt-v1.js";
+import type {
+  InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  InternalProductionRecoverySourceBootstrapRunPersistenceV1,
+} from "../execution/recovery-source-bootstrap-run-authority-v1.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -228,3 +243,42 @@ export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(
     reciprocalRunOperationBindingHash: persisted.reciprocalRunOperationBindingHash,
   });
 }
+
+export async function dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1(
+  input: Readonly<{
+    recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  }>,
+): Promise<Readonly<{
+  runId: string;
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}>> {
+  const persisted = await persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1({
+    recoveryOperationAuthority: input.recoveryOperationAuthority,
+  });
+  return Object.freeze({
+    runId: persisted.run.id,
+    operationRunBindingHash: persisted.operationRunBindingHash,
+    reciprocalRunOperationBindingHash: persisted.reciprocalRunOperationBindingHash,
+  });
+}
+
+export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(
+  input: Readonly<{
+    recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  }>,
+): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> {
+  const sql = getSql();
+  return await sql.begin("isolation level repeatable read read only", async (transaction) => {
+    return await classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1(
+      transaction,
+      {
+        recoveryState: "prepared",
+        recoveryOperationAuthority: input.recoveryOperationAuthority,
+      }
+    );
+  }) as InternalProductionRecoverySourceBootstrapRunPersistenceV1;
+}
+
+export type ObservedInternalProductionRecoverySourceBootstrapRunPersistenceV1 =
+  InternalProductionRecoverySourceBootstrapRunPersistenceV1;

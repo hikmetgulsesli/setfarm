@@ -1,7 +1,9 @@
 import type postgres from "postgres";
 
 import {
+  assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1,
   closeInternalProductionOwnerReservationV1,
+  lockInternalProductionWorkflowRunInsertionFenceV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
@@ -31,6 +33,7 @@ import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-comple
 import {
   createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
   createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+  type PgTransactionSql as InternalProductionPgTransactionSql,
 } from "../internal-production/owner-admission-v1.js";
 
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
@@ -39,6 +42,7 @@ type RunRow = {
   id: string;
   status: string;
   protocol: string;
+  context: string | Record<string, unknown>;
   packet_hash: string | null;
   accepted_candidate_hash: string | null;
   meta: string | Record<string, unknown> | null;
@@ -348,7 +352,7 @@ async function authenticateTask5ClosedMandatoryEffectReplayInTransactionV1(
  * when their immutable packet/slice contract matches the run.
  */
 export async function transitionRunToTerminalInTransaction(
-  sql: postgres.TransactionSql,
+  sql: InternalProductionPgTransactionSql,
   input: Readonly<{
     runId: string;
     status: RunTerminalStatus;
@@ -362,13 +366,23 @@ export async function transitionRunToTerminalInTransaction(
   if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
     throw new Error("RUN_TERMINAL_TIME_INVALID");
   }
+  await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
   const runs = await sql.unsafe<RunRow[]>(
-    `SELECT id, status, protocol, packet_hash, accepted_candidate_hash, meta
+    `SELECT id, status, protocol, context, packet_hash, accepted_candidate_hash, meta
        FROM runs WHERE id = $1 FOR UPDATE`,
     [input.runId],
   );
   const run = runs[0];
   if (!run) throw new Error("RUN_TERMINAL_NOT_FOUND");
+  await assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(
+    sql,
+    {
+      runId: run.id,
+      workflowState: run.status,
+      protocol: run.protocol,
+      runContext: run.context,
+    },
+  );
   const terminations = await sql.unsafe<TerminationRow[]>(
     `SELECT request_id,target_status,state FROM run_termination_requests
       WHERE run_id = $1 ORDER BY requested_at,request_id FOR UPDATE`,
@@ -1043,5 +1057,5 @@ export async function transitionRunToTerminal(
     now?: Date;
   }>,
 ): Promise<RunTerminalTransitionResult> {
-  return sql.begin((transaction) => transitionRunToTerminalInTransaction(transaction, input)) as Promise<RunTerminalTransitionResult>;
+  return sql.begin((transaction) => transitionRunToTerminalInTransaction(transaction as InternalProductionPgTransactionSql, input)) as Promise<RunTerminalTransitionResult>;
 }

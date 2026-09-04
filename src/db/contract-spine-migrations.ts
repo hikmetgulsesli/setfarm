@@ -16504,6 +16504,7 @@ async function planContractSpineMigrationsOnConnection(
   };
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END
+export { verifyV3RecoveryClaimRuntimePublicationV1 };
 
 export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
   return sql.begin(async (transaction) => {

@@ -30,6 +30,29 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
 const recoveryPublicationMigrationId = "033_v3_recovery_claim_runtime_publication_v1";
 
+type V3RecoveryClaimRuntimePublicationVerifierV1 =
+  (transaction: unknown) => Promise<void>;
+
+async function verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(
+  database: TestDatabase,
+): Promise<void> {
+  const migration = await import("../../src/db/contract-spine-migrations.js");
+  const verifier = (migration as unknown as Readonly<{
+    verifyV3RecoveryClaimRuntimePublicationV1?: unknown;
+  }>).verifyV3RecoveryClaimRuntimePublicationV1;
+  assert.equal(
+    typeof verifier,
+    "function",
+    "migration 33 exports its transaction-parameter full catalog verifier",
+  );
+  await database.sql.begin(
+    "isolation level repeatable read read only",
+    async (transaction) => {
+      await (verifier as V3RecoveryClaimRuntimePublicationVerifierV1)(transaction);
+    },
+  );
+}
+
 function quoteIdentifier(value: string): string {
   assert.ok(value.length > 0 && !value.includes("\0"));
   return `"${value.replaceAll('"', '""')}"`;
@@ -47,11 +70,33 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     readFile(path.join(repoRoot, "src/db/contract-spine-migration-digests.generated.ts")),
   ]);
   const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const guardedText = guardedSource.toString("utf8");
+  assert.equal(
+    guardedText.match(/async function verifyV3RecoveryClaimRuntimePublicationV1\s*\(/g)?.length,
+    1,
+    "migration 33 has one byte-stable private authoritative verifier definition",
+  );
+  assert.doesNotMatch(
+    guardedText,
+    /export\s+async function verifyV3RecoveryClaimRuntimePublicationV1\s*\(/,
+    "the historical migration-33 semantic projector is never changed merely to export its verifier",
+  );
+  const verifierReExport = "export { verifyV3RecoveryClaimRuntimePublicationV1 };";
+  assert.equal(
+    guardedText.split(verifierReExport).length - 1,
+    1,
+    "the verifier has exactly one external re-export",
+  );
+  assert.match(
+    guardedText,
+    /\/\/ SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END\nexport \{ verifyV3RecoveryClaimRuntimePublicationV1 \};\n\nexport async function planContractSpineMigrations/,
+    "the verifier re-export lives immediately after, never inside, the outer historical semantic region",
+  );
   assert.deepEqual(
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "a2ae3847427ea087c5a850a9263d89c810815c7e006b2c7e4ecababf6963fad6",
+      "102f7ffd14454a082530d603a1158113046990288438c3c9a5e8e87b12f5a0e0",
       "366a60b471443d89e386365fa58d35e36277baad654dab596e3a2335af01219d",
     ],
   );
@@ -861,6 +906,7 @@ describe("contract spine migration journal", () => {
       function_body: "BEGIN\n  RAISE EXCEPTION 'V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE';\nEND",
       function_config: ["search_path=pg_catalog, public"],
     });
+    await verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database);
   });
 
   it("rejects extra migration 33 indexes instead of accepting expanded topology", async () => {
@@ -872,7 +918,7 @@ describe("contract spine migration journal", () => {
       ON internal_production_v3_recovery_claim_publications_v1 (run_id)
     `;
     await assert.rejects(
-      verifyContractSpineMigrations(database.sql),
+      verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
@@ -902,12 +948,12 @@ describe("contract spine migration journal", () => {
     ] as const) {
       await database.sql.unsafe(grant);
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
       );
       await database.sql.unsafe(revoke);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      await verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database);
     }
   });
 
@@ -929,6 +975,10 @@ describe("contract spine migration journal", () => {
         `ALTER FUNCTION ip_v3_recovery_publication_immutable_v1() OWNER TO ${quoteIdentifier(ownerName)}`,
       ],
       [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE ROW LEVEL SECURITY",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE ROW LEVEL SECURITY",
+      ],
+      [
         "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DISABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1",
         "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ENABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1",
       ],
@@ -940,15 +990,23 @@ describe("contract spine migration journal", () => {
         "CREATE OR REPLACE FUNCTION ip_v3_recovery_publication_immutable_v1() RETURNS trigger LANGUAGE plpgsql SET search_path TO pg_catalog,public AS $$BEGIN RAISE EXCEPTION 'DRIFTED_RECOVERY_PUBLICATION_FUNCTION'; END$$",
         "CREATE OR REPLACE FUNCTION ip_v3_recovery_publication_immutable_v1() RETURNS trigger LANGUAGE plpgsql SET search_path TO pg_catalog,public AS $$BEGIN\n  RAISE EXCEPTION 'V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_IMMUTABLE';\nEND$$",
       ],
+      [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ALTER COLUMN status DROP NOT NULL",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ALTER COLUMN status SET NOT NULL",
+      ],
+      [
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DROP CONSTRAINT ip_v3_recovery_publications_status_check; ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ADD CONSTRAINT ip_v3_recovery_publications_status_check CHECK (TRUE)",
+        "ALTER TABLE internal_production_v3_recovery_claim_publications_v1 DROP CONSTRAINT ip_v3_recovery_publications_status_check; ALTER TABLE internal_production_v3_recovery_claim_publications_v1 ADD CONSTRAINT ip_v3_recovery_publications_status_check CHECK (status = ANY (ARRAY['lease_acquired'::text, 'lease_reissued'::text]))",
+      ],
     ] as const) {
       await database.sql.unsafe(mutate);
       await assert.rejects(
-        verifyContractSpineMigrations(database.sql),
+        verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH",
       );
       await database.sql.unsafe(restore);
-      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+      await verifyV3RecoveryClaimRuntimePublicationReadOnlyV1(database);
     }
   });
 
