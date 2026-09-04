@@ -786,7 +786,7 @@ function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
       "prepareP3FixtureCurrentEntryOperationV1",
     )
     .replace(
-      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(context, resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(context, resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
       () => {
         continuationReplacements += 1;
         return "\n    return resolved;";
