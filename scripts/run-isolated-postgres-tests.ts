@@ -51,6 +51,7 @@ const P3_TRACKED_SCOPE = new Set([
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
   "src/execution/runtime-completion-effect-repository.ts",
