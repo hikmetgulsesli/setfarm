@@ -4997,7 +4997,7 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
                'authorityBody',authority.authority_body
              ) ORDER BY authority.authority_kind,authority.authority_ref),'[]'::jsonb) AS "allAuthorityRows"
              FROM public.internal_production_owner_admission_authorities_v1 authority
-     ) inventory ON TRUE
+     ) inventory
        FOR UPDATE OF head
   `;
   const reservationRows = await sql<RecoverySourceBootstrapReservationProjectionRowV1[]>`
