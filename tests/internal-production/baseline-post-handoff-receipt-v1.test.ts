@@ -25977,7 +25977,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             `${expected.label}: raw authority never owns fixed-01 classification; the S-aware pass observes incoming and outgoing Q after raw is complete`);
           if (immediateDerivations.length === 1) assert.equal(immediateDerivations[0]!.contextBound, true, `${expected.label}: immediate derivation receives the exact pinned successor context`);
           assert.equal(publications.length, expected.immediateTarget === null ? 0 : 1, `${expected.label}: only a nonterminal row projects one immediate publication family`);
-          assert.equal(writers.length, expected.immediateTarget === null ? 1 : 2, `${expected.label}: controller writer is universal while next-publication writer exists only for a nonterminal row`);
+          assert.equal(writers.length, expected.immediateTarget === null ? 2 : 3, `${expected.label}: controller writer is reobserved at both final fences while next-publication writer exists only for a nonterminal row`);
           if (expected.immediateTarget !== null) {
             assert.deepEqual(
               { target: publications[0]!.target, expectedBytes: publications[0]!.expectedBytes },
@@ -25987,8 +25987,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           }
           assert.deepEqual(
             writers.map((writer) => writer.target),
-            expected.immediateTarget === null ? [topology.controllerTarget] : [topology.controllerTarget, expected.immediateTarget],
-            `${expected.label}: controller lock and any next-publication writer targets are distinct and ordered`,
+            expected.immediateTarget === null ? [topology.controllerTarget, topology.controllerTarget] : [topology.controllerTarget, expected.immediateTarget, topology.controllerTarget],
+            `${expected.label}: both controller-lock fences and any next-publication writer target are exact and ordered`,
           );
           const zeroInputPorts = new Set([
             "resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1",
@@ -26007,7 +26007,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             if (port.includes("AtRoot")) assert.equal(call.contextBound, true, `${expected.label}: ${port} receives the exact pinned successor-root context`);
             if (port === PHASE5C_S_COMPLETED_RETAINED_STATUS_PORT_V1) assert.equal(call.ordinal, expected.expectedCompletedRetainedOrdinal, `${expected.label}: completed evidence owns the exact adjacent retained status ordinal before Q classification`);
           }
-          assert.equal(calledPorts.length, expected.expectedPorts.length + (expected.immediateTarget === null ? 1 : 4) + builders.length, `${expected.label}: no unexpected lower authority port is consulted`);
+          assert.equal(calledPorts.length, expected.expectedPorts.length + (expected.immediateTarget === null ? 3 : 6) + builders.length, `${expected.label}: no unexpected lower authority port is consulted: ${JSON.stringify(calledPorts)}`);
         } else {
           assert.equal(row.outcome, "threw", `${expected.label}: changing one actual lower-port result is rejected by the real arm/binder path`);
           assert.match(String(row.message), /operation|raw|crossed|successor|schema|state|phase|semantic|invalid|missing|out.of.order/i);
@@ -26283,7 +26283,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const outer = observed[valid.length + offset]!;
         assert.equal(outer.outcome, "returned", "copied wrapper records a pass-level refusal without harness failure");
         const value = outer.value as Readonly<Record<string, unknown>>;
-        assert.equal(value.outcome, "threw", "premature raw or simultaneous F/writer and Q evidence is terminal");
+        assert.equal(value.outcome, "threw", `${expected.expectedRow}/${expected.evidence}/${expected.qState}/${expected.conflict}/${expected.qRoute}: premature raw or simultaneous F/writer and Q evidence is terminal`);
         assert.match(String(value.message), /raw|publication|content|durable|writer|current.status|Q|prior|next|terminal|progress/i);
         assert.deepEqual(value.closes, { status: 1, raw: 1, q: 1 }, "invalid combined evidence closes status, raw, and its S-aware current-status owner before equality or mint");
         assert.deepEqual(value.qArguments, [value.expectedQ], "every rejected route uses the exact authenticated current lineage and nullable successor once");

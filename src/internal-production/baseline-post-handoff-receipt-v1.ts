@@ -42,6 +42,7 @@ import {
   validateInternalProductionBoundOwnerReservationV1,
   validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
   validateInternalProductionGlobalOwnerAdmissionFenceV1,
+  validateInternalProductionOwnerProducerManifestSetActivationHeadV1,
   validateInternalProductionOwnerReservationCloseV1,
   validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
   type InternalProductionCompleteZeroOwnerCensusV1,
@@ -10396,6 +10397,57 @@ function requireExactPoisonPostVisibleProgressRecoverySourceStatusV1(
   return recursivelyFreeze(value as unknown as InternalProductionRecoverySourceBootstrapStatusV1);
 }
 
+function requireExactPoisonPostVisiblePreSchemaRawStatusV1(
+  value: unknown,
+  operation: InternalProductionCurrentEntryOperationV1,
+): void {
+  if (!isPlainRecord(value)) currentEntryFail("pre-schema raw status is invalid");
+  const body = { ...value };
+  delete body.statusRef;
+  delete body.statusHash;
+  const allowedStates = new Set(["absent", "prepared", "startup_token_published", "dispatching", "pre_manifest_bootstrap_sealed", "normal_task0_admission_ready", "blocked"]);
+  const allowedDispatchPhases = new Set(["restart_authority_published", "predecessor_terminated", "replacement_observed"]);
+  if (
+    !hasExactKeys(value, ["schema", "state", "currentEntryOperation", "authorization", "startupToken", "restartAuthority", "dispatchPrefix", "sealedAdmission", "admissionReady", "refusalCode", "statusRef", "statusHash"])
+    || value.schema !== "setfarm.internal-production-pre-schema-spawner-rebind-status.v1"
+    || !allowedStates.has(String(value.state))
+    || typeof value.statusHash !== "string"
+    || value.statusRef !== `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${value.statusHash}`
+    || hashCanonicalJson(body) !== value.statusHash
+    || value.state === "absent" && value.currentEntryOperation !== null
+    || value.state !== "absent" && (!isPlainRecord(value.currentEntryOperation) || value.currentEntryOperation.operationRef !== operation.operationRef || value.currentEntryOperation.operationHash !== operation.operationHash)
+    || value.state === "dispatching" && (!isPlainRecord(value.dispatchPrefix) || !allowedDispatchPhases.has(String(value.dispatchPrefix.phase)))
+    || value.state === "blocked" && (!isPlainRecord(value.dispatchPrefix) || value.dispatchPrefix.phase !== "restart_authority_published" || value.refusalCode !== "HELPER_DISPATCH_SETTLEMENT_UNKNOWN")
+  ) currentEntryFail("pre-schema raw status is crossed");
+}
+
+function requireExactPoisonPostVisibleMigration32RawStatusV1(
+  value: unknown,
+  operation: InternalProductionCurrentEntryOperationV1,
+): void {
+  if (!isPlainRecord(value)) currentEntryFail("migration-32 raw status is invalid");
+  const body = { ...value };
+  delete body.statusRef;
+  delete body.statusHash;
+  const state = String(value.state);
+  const operationBound = isPlainRecord(value.currentEntryOperation)
+    && value.currentEntryOperation.operationRef === operation.operationRef
+    && value.currentEntryOperation.operationHash === operation.operationHash;
+  if (
+    !hasExactKeys(value, ["schema", "state", "currentEntryOperation", "authorization", "consumption", "migrationReceipt", "refusalCode", "statusRef", "statusHash"])
+    || value.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1"
+    || !new Set(["absent", "prepared", "consumed", "terminal", "blocked"]).has(state)
+    || typeof value.statusHash !== "string"
+    || value.statusRef !== `${TASK12_MIGRATION_PREFIXES_V1.status}${value.statusHash}`
+    || hashCanonicalJson(body) !== value.statusHash
+    || state === "absent" && (value.currentEntryOperation !== null || value.authorization !== null || value.consumption !== null || value.migrationReceipt !== null || value.refusalCode !== null)
+    || state !== "absent" && !operationBound
+    || state === "prepared" && (!isPlainRecord(value.authorization) || value.consumption !== null || value.migrationReceipt !== null || value.refusalCode !== null)
+    || state === "consumed" && (!isPlainRecord(value.authorization) || !isPlainRecord(value.consumption) || value.migrationReceipt !== null || value.refusalCode !== null)
+    || state === "terminal" && (!isPlainRecord(value.authorization) || !isPlainRecord(value.consumption) || !isPlainRecord(value.migrationReceipt) || value.refusalCode !== null)
+  ) currentEntryFail("migration-32 raw status is crossed");
+}
+
 function requireExactPoisonPostVisibleProgressRawCurrentV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
   rawKind: ExactPoisonPostVisibleProgressRawKindV1,
@@ -10515,6 +10567,67 @@ function requireExactPoisonPostVisibleProgressRawCurrentV1(
   if (recoverySource !== undefined) {
     const terminalRequired = rawKind === "canary" || rawKind === "settlement" || rawKind === "entry-authority" || rawKind === "ready";
     requireExactPoisonPostVisibleProgressRecoverySourceStatusV1(recoverySource.value, terminalRequired);
+  }
+  const preSchemaSource = sources.find((source) => source.port === "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1");
+  if (preSchemaSource !== undefined) requireExactPoisonPostVisiblePreSchemaRawStatusV1(preSchemaSource.value, operation);
+  for (const migrationSource of sources.filter((source) => source.port === "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1" || source.port === "readExactRetainedMigration32StatusV1")) {
+    requireExactPoisonPostVisibleMigration32RawStatusV1(migrationSource.value, operation);
+  }
+  const manifestSource = sources.find((source) => source.port === "resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1");
+  if (manifestSource !== undefined && manifestSource.value !== null) {
+    if (!isPlainRecord(manifestSource.value) || !isPlainRecord(manifestSource.value.head) || !isPlainRecord(manifestSource.value.receipt)) currentEntryFail("manifest raw activation is invalid");
+    const head = validateInternalProductionOwnerProducerManifestSetActivationHeadV1(manifestSource.value.head);
+    const receipt = manifestSource.value.receipt;
+    const receiptBody = { ...receipt };
+    delete receiptBody.activationRef;
+    delete receiptBody.activationHash;
+    if (
+      typeof receipt.activationHash !== "string"
+      || receipt.activationRef !== `setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${receipt.activationHash}`
+      || hashCanonicalJson(receiptBody) !== receipt.activationHash
+      || head.activationRef !== receipt.activationRef
+      || head.activationHash !== receipt.activationHash
+      || head.predecessorHeadRef !== receipt.predecessorHeadRef
+      || head.predecessorHeadHash !== receipt.predecessorHeadHash
+    ) currentEntryFail("manifest raw activation is crossed");
+  }
+  const databaseSource = sources.find((source) => source.port === "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1");
+  if (databaseSource !== undefined) {
+    if (!isPlainRecord(databaseSource.value)) currentEntryFail("current-entry raw database verification is invalid");
+    const verification = databaseSource.value;
+    const verificationBody = { ...verification };
+    delete verificationBody.verificationHash;
+    if (
+      verification.schema !== "setfarm.internal-production-current-entry-database-verification.v1"
+      || verification.maximumMigrationOrdinal !== 33
+      || typeof verification.verificationHash !== "string"
+      || hashCanonicalJson(verificationBody) !== verification.verificationHash
+      || typeof verification.manifestActivationRef !== "string"
+      || typeof verification.manifestActivationHash !== "string"
+      || verification.manifestActivationRef !== `setfarm://internal-production/owner-producer-manifest-set-activation/sha256/${verification.manifestActivationHash}`
+    ) currentEntryFail("current-entry raw database verification is crossed");
+  }
+  const zeroOwnerSource = sources.find((source) => source.port === "observeCompleteInternalProductionZeroOwnerCensusV1");
+  if (zeroOwnerSource !== undefined) requireExactPoisonPostVisibleZeroOwnerEffectV1(zeroOwnerSource.value);
+  const serviceCensusSource = sources.find((source) => source.port === "observeInternalProductionServiceCensusV1");
+  if (serviceCensusSource !== undefined) requireExactPoisonPostVisibleServiceCensusEffectV1(serviceCensusSource.value);
+  const entryAuthoritySource = sources.find((source) => source.port === "observeInternalProductionCurrentEntryAuthorityAtRootV1");
+  if (entryAuthoritySource !== undefined && entryAuthoritySource.value !== null) {
+    const entryAuthority = requireExactPoisonPostVisibleProgressCurrentEntryAuthorityV1(entryAuthoritySource.value);
+    const entryPair = requirePair(
+      { entryAuthorityRef: entryAuthority.entryAuthorityRef, entryAuthorityHash: entryAuthority.entryAuthorityHash },
+      "entryAuthorityRef",
+      "entryAuthorityHash",
+      TASK12_AUTHORITY_PREFIX_V1,
+    );
+    const entryBody = { ...entryAuthority } as Record<string, unknown>;
+    delete entryBody.entryAuthorityRef;
+    delete entryBody.entryAuthorityHash;
+    if (
+      hashCanonicalJson(entryBody) !== entryPair.entryAuthorityHash
+      || entryAuthority.currentEntryOperation.operationRef !== operation.operationRef
+      || entryAuthority.currentEntryOperation.operationHash !== operation.operationHash
+    ) currentEntryFail("entry-authority raw content is crossed");
   }
   for (const source of observed.sources) {
     if (source.operationRef !== operation.operationRef || source.operationHash !== operation.operationHash) currentEntryFail("progress raw source operation is crossed");
@@ -14771,13 +14884,40 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
       statusLineage.nextPairBytes,
       raw.evidence,
     );
+    const row = selection.state === "blocked" ? selection.lastValidRow : selection.row;
+    if (raw.evidence === "prior-only" && !new Set<ExactPoisonPostVisibleProgressRowV1>([
+      "operation_prepared",
+      "pre_manifest_bootstrap_sealed",
+      "migration_applying/prepared",
+      "migration_applying/receipt_published",
+      "migration_applying/current_audited",
+      "manifest_activating",
+      "spawner_admission_transitioning/sealed",
+      "prepared",
+      "settled/fence_released",
+    ]).has(row)) currentEntryFail("selected progress raw prior-only evidence is impossible for current row");
     const publicationState = raw.publication === null ? "F0" : raw.publication.state;
     const writerState = raw.writer === null ? "A0" : raw.writer.state;
-    if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("selected progress raw publication or writer conflicts with current-status CAS");
+    const outgoingNormalization = currentStatusCas.state === "Q1" || currentStatusCas.state === "Q2";
+    if (outgoingNormalization) {
+      const publicationMembers = raw.publication?.members;
+      const publishedMember = Array.isArray(publicationMembers) && publicationMembers.length === 1 && isPlainRecord(publicationMembers[0]) ? publicationMembers[0] : null;
+      if (
+        raw.evidence !== "completed"
+        || raw.immediate === null
+        || !["F2u", "F3", "F4"].includes(String(publicationState))
+        || writerState !== "A0"
+        || !Array.isArray(raw.writer?.members)
+        || raw.writer.members.length !== 0
+        || publishedMember === null
+        || publishedMember.target !== raw.immediate.target
+        || !Buffer.isBuffer(publishedMember.bytes)
+        || !publishedMember.bytes.equals(raw.immediate.bytes)
+      ) currentEntryFail("selected progress outgoing current-status CAS lacks durable immediate content");
+    } else if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("selected progress raw publication or writer conflicts with current-status CAS");
     if (currentStatusCas.transition === "current-to-next" && !new Set(["Q0", "Q1", "Q2"]).has(currentStatusCas.state)) currentEntryFail("selected progress outgoing current-status CAS is invalid");
-    if (currentStatusCas.state === "Q3" && currentStatusCas.transition !== "prior-to-current-cleanup") currentEntryFail("selected progress incoming cleanup route is invalid");
+    if (currentStatusCas.state === "Q3" && (currentStatusCas.transition !== "prior-to-current-cleanup" || statusLineage.previousPairBytes === null)) currentEntryFail("selected progress incoming cleanup route is invalid");
     if (currentStatusCas.selectedRoute !== "current") currentEntryFail("selected progress current-status route is not current");
-    const row = selection.state === "blocked" ? selection.lastValidRow : selection.row;
     const pass = Object.freeze({
       row,
       pair: status.pair as InternalProductionCurrentEntryAuthorityStatusPairV1,
@@ -14886,16 +15026,43 @@ async function observeExactPoisonPostVisibleProgressPassNoWriteV1(
       statusLineage.nextPairBytes,
       raw.evidence,
     );
+    const row = selection.state === "blocked" ? selection.lastValidRow : selection.row;
+    if (raw.evidence === "prior-only" && !new Set<ExactPoisonPostVisibleProgressRowV1>([
+      "operation_prepared",
+      "pre_manifest_bootstrap_sealed",
+      "migration_applying/prepared",
+      "migration_applying/receipt_published",
+      "migration_applying/current_audited",
+      "manifest_activating",
+      "spawner_admission_transitioning/sealed",
+      "prepared",
+      "settled/fence_released",
+    ]).has(row)) currentEntryFail("progress raw prior-only evidence is impossible for current row");
     const publicationState = raw.publication === null ? "F0" : raw.publication.state;
     const writerState = raw.writer === null ? "A0" : raw.writer.state;
-    if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("progress raw publication or writer conflicts with current-status CAS");
+    const outgoingNormalization = currentStatusCas.state === "Q1" || currentStatusCas.state === "Q2";
+    if (outgoingNormalization) {
+      const publicationMembers = raw.publication?.members;
+      const publishedMember = Array.isArray(publicationMembers) && publicationMembers.length === 1 && isPlainRecord(publicationMembers[0]) ? publicationMembers[0] : null;
+      if (
+        raw.evidence !== "completed"
+        || raw.immediate === null
+        || !["F2u", "F3", "F4"].includes(String(publicationState))
+        || writerState !== "A0"
+        || !Array.isArray(raw.writer?.members)
+        || raw.writer.members.length !== 0
+        || publishedMember === null
+        || publishedMember.target !== raw.immediate.target
+        || !Buffer.isBuffer(publishedMember.bytes)
+        || !publishedMember.bytes.equals(raw.immediate.bytes)
+      ) currentEntryFail("progress outgoing current-status CAS lacks durable immediate content");
+    } else if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("progress raw publication or writer conflicts with current-status CAS");
     if (currentStatusCas.transition === "current-to-next" && !new Set(["Q0", "Q1", "Q2"]).has(currentStatusCas.state)) currentEntryFail("progress outgoing current-status CAS is invalid");
-    if (currentStatusCas.state === "Q3" && currentStatusCas.transition !== "prior-to-current-cleanup") currentEntryFail("progress incoming cleanup route is invalid");
+    if (currentStatusCas.state === "Q3" && (currentStatusCas.transition !== "prior-to-current-cleanup" || statusLineage.previousPairBytes === null)) currentEntryFail("progress incoming cleanup route is invalid");
     if (currentStatusCas.selectedRoute !== "current") currentEntryFail("progress current-status route is not current");
     status.assertStable();
     await raw.assertStable();
     currentStatusCas.assertStable();
-    const row = selection.state === "blocked" ? selection.lastValidRow : selection.row;
     return Object.freeze({ row, pair: status.pair as InternalProductionCurrentEntryAuthorityStatusPairV1, status: status.status, nested: Object.freeze({ ...status.nested, ...rawDerivedNested }), raw, physical: status.physical, publication: raw.publication, writer: raw.writer, currentStatusCas });
   } catch (error) {
     primary = error;
