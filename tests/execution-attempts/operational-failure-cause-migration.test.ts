@@ -224,6 +224,19 @@ describe("operational failure cause migration", () => {
         "the catalog verifier rejects a same-name immutability function with drifted behavior",
       );
       await database.sql.unsafe(canonicalFunctionDefinition);
+      const caseCrossedFunctionDefinition = canonicalFunctionDefinition.replaceAll(
+        "operationalFailureCause",
+        "operationalfailurecause",
+      );
+      assert.notEqual(caseCrossedFunctionDefinition, canonicalFunctionDefinition);
+      await database.sql.unsafe(caseCrossedFunctionDefinition);
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => error instanceof OperationalFailureCauseAuthorityV3MigrationError
+          && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH",
+        "the catalog verifier preserves quoted JSON-key case in the function identity",
+      );
+      await database.sql.unsafe(canonicalFunctionDefinition);
       await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
       const currentHead = await database.sql<Array<{ version: number }>>`
         SELECT version FROM setfarm_schema_migrations
