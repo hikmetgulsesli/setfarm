@@ -4,6 +4,12 @@ import {
   ExecutionAttemptReservationV1Schema,
   type ExecutionAttemptReservationV1,
 } from "./schemas/execution-attempt-v1.js";
+import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-envelope.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  ImplementationSliceV1Schema,
+  type ImplementationRecoveryDirectiveV1,
+} from "../product-compiler/schemas/implementation-slice-v1.js";
 
 export const OperationalRetryPredecessorFenceV1Schema = z.object({
   attemptId: z.string().regex(/^ATT_[A-Za-z0-9-]{16,160}$/),
@@ -17,6 +23,10 @@ export type OperationalRetryPredecessorFenceV1 = z.infer<
 
 export type OperationalRetryAwareAttemptReservation = ExecutionAttemptReservationV1 & Readonly<{
   predecessorAttempt?: OperationalRetryPredecessorFenceV1;
+  recoveryExecutionSliceAuthority?: Readonly<{
+    executionSliceHash: string;
+    recovery: ImplementationRecoveryDirectiveV1;
+  }>;
 }>;
 
 /**
@@ -30,13 +40,49 @@ export function parseOperationalRetryAwareAttemptReservation(
     return ExecutionAttemptReservationV1Schema.parse(input);
   }
   const raw = input as Record<string, unknown>;
-  const { predecessorAttempt, ...baseRaw } = raw;
+  const { predecessorAttempt, recoveryExecutionSliceEnvelope, ...baseRaw } = raw;
   const base = ExecutionAttemptReservationV1Schema.parse(baseRaw);
+  let parsedRecoveryExecutionSliceAuthority:
+    | OperationalRetryAwareAttemptReservation["recoveryExecutionSliceAuthority"]
+    | undefined;
+  if (recoveryExecutionSliceEnvelope !== undefined) {
+    const envelope = SemanticArtifactEnvelopeV1Schema.parse(recoveryExecutionSliceEnvelope);
+    const slice = ImplementationSliceV1Schema.parse(envelope.payload);
+    if (
+      envelope.artifactType !== "setfarm.implementation-slice.v1"
+      || hashCanonicalJson(envelope) !== base.sliceHash
+      || slice.packetHash !== base.packetHash
+      || slice.storyId !== base.storyId
+      || slice.sourceRevision.baseSha !== base.sourceBefore.sha
+      || slice.sourceRevision.treeHash !== base.sourceBefore.treeHash
+      || !slice.recovery
+    ) {
+      throw new Error("ATTEMPT_RECOVERY_EXECUTION_SLICE_AUTHORITY_INVALID");
+    }
+    parsedRecoveryExecutionSliceAuthority = Object.freeze({
+      executionSliceHash: base.sliceHash!,
+      recovery: slice.recovery,
+    });
+  }
+  if (parsedRecoveryExecutionSliceAuthority) {
+    if (
+      !base.recoveryDispatchId
+      || base.attemptClass === "evidence_only"
+      || parsedRecoveryExecutionSliceAuthority.recovery.recoveryCaseRevisionId !== base.recoveryCaseRevisionId
+      || parsedRecoveryExecutionSliceAuthority.recovery.recoveryDispatchId !== base.recoveryDispatchId
+      || parsedRecoveryExecutionSliceAuthority.recovery.dispatchClass !== base.attemptClass
+      || parsedRecoveryExecutionSliceAuthority.recovery.findingSetHash !== base.findingSetHash
+    ) {
+      throw new Error("ATTEMPT_RECOVERY_EXECUTION_SLICE_AUTHORITY_INVALID");
+    }
+  }
   if (base.attemptClass !== "infrastructure_retry") {
     if (predecessorAttempt !== undefined) {
       throw new Error("ATTEMPT_PREDECESSOR_FENCE_FORBIDDEN");
     }
-    return base;
+    return parsedRecoveryExecutionSliceAuthority
+      ? { ...base, recoveryExecutionSliceAuthority: parsedRecoveryExecutionSliceAuthority }
+      : base;
   }
   if (predecessorAttempt === undefined) {
     throw new Error("ATTEMPT_PREDECESSOR_FENCE_REQUIRED");

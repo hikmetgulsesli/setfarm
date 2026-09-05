@@ -241,7 +241,7 @@ function sameCanonical(left: unknown, right: unknown): boolean {
 async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
   transaction: TransactionSql,
   reservation: ReturnType<typeof parseOperationalRetryAwareAttemptReservation>,
-): Promise<string | undefined> {
+): Promise<ReturnType<typeof V3RecoveryClaimHandoffV1Schema.parse> | undefined> {
   if (
     !reservation.recoveryDispatchId
     || !reservation.recoveryCaseRevisionId
@@ -515,7 +515,12 @@ async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
     || row.delivery_story_id !== reservation.storyId
     || !row.delivery_authorization_matches_dispatch
     || (row.delivery_claim_id !== null && String(row.delivery_claim_id) !== row.claim_id)
-    || (row.delivery_execution_slice_hash !== null && row.delivery_execution_slice_hash !== directive.contractSliceHash)
+    || (
+      row.delivery_execution_slice_hash !== null
+      && row.delivery_execution_slice_hash !== (
+        reservation.recoveryExecutionSliceAuthority?.executionSliceHash ?? directive.contractSliceHash
+      )
+    )
     || ![0, 1].includes(row.delivery_attempt_count)
     || row.run_protocol !== "v3"
     || !["running", "resuming"].includes(row.run_status)
@@ -558,7 +563,7 @@ async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
         : {}),
     })
   ) throw new Error("RECOVERY_ATTEMPT_CLAIM_PUBLICATION_MISMATCH");
-  return directive.contractSliceHash;
+  return handoff;
 }
 
 function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
@@ -700,7 +705,11 @@ export async function reserveAttemptInTransaction(
   }> = {},
 ): Promise<AttemptReservationResult> {
   const reservation = parseOperationalRetryAwareAttemptReservation(input);
-  const { predecessorAttempt: _predecessorAttempt, ...baseReservation } = reservation;
+  const {
+    predecessorAttempt: _predecessorAttempt,
+    recoveryExecutionSliceAuthority: _recoveryExecutionSliceAuthority,
+    ...baseReservation
+  } = reservation;
   const dedupeKey = computeAttemptDedupeKey(baseReservation);
   if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
     throw new Error("ATTEMPT_TIME_INVALID");
@@ -749,7 +758,7 @@ export async function reserveAttemptInTransaction(
   let leaseClock: Date | undefined;
   let recoveryDeliveryLeaseExpiresAt: Date | string | undefined;
   if (reservation.recoveryDispatchId) {
-    const authenticatedModelSliceHash = await lockAndAssertRecoveryClaimPublicationForAttemptBirth(
+    const authenticatedRecoveryHandoff = await lockAndAssertRecoveryClaimPublicationForAttemptBirth(
       transaction,
       reservation,
     );
@@ -781,8 +790,33 @@ export async function reserveAttemptInTransaction(
     const delivery = deliveryRows[0];
     const leaseIdentity = reservation.recoveryDeliveryLease!;
     if (!delivery) throw new Error("RECOVERY_DELIVERY_NOT_FOUND");
-    const authoritativeSliceHash = authenticatedModelSliceHash ?? delivery.contract_slice_hash;
-    if (reservation.sliceHash !== authoritativeSliceHash) {
+    const authoritativeContractSliceHash = authenticatedRecoveryHandoff?.directive.contractSliceHash
+      ?? delivery.contract_slice_hash;
+    const executionSliceAuthority = reservation.recoveryExecutionSliceAuthority;
+    if (
+      executionSliceAuthority
+        ? executionSliceAuthority.executionSliceHash !== reservation.sliceHash
+          || !authenticatedRecoveryHandoff
+          || !sameCanonical(executionSliceAuthority.recovery, {
+            schema: "setfarm.implementation-recovery-directive.v1",
+            recoveryCaseRevisionId: authenticatedRecoveryHandoff.revisionId,
+            recoveryDispatchId: authenticatedRecoveryHandoff.dispatchId,
+            dispatchClass: authenticatedRecoveryHandoff.dispatchClass,
+            findingSetHash: authenticatedRecoveryHandoff.directive.findingSetHash,
+            findingIds: authenticatedRecoveryHandoff.directive.findingIds,
+            contractSliceHash: authoritativeContractSliceHash,
+            sourceRevision: {
+              baseSha: authenticatedRecoveryHandoff.directive.sourceRevision.sha,
+              treeHash: authenticatedRecoveryHandoff.directive.sourceRevision.treeHash,
+            },
+            expectedDelta: authenticatedRecoveryHandoff.directive.expectedDelta,
+            allowedPaths: authenticatedRecoveryHandoff.directive.allowedPaths,
+            ...(authenticatedRecoveryHandoff.directive.evidencePlanArtifactHash
+              ? { evidencePlanArtifactHash: authenticatedRecoveryHandoff.directive.evidencePlanArtifactHash }
+              : {}),
+          })
+        : reservation.sliceHash !== authoritativeContractSliceHash
+    ) {
       throw new Error("RECOVERY_DELIVERY_SLICE_AUTHORITY_MISMATCH");
     }
     if (existingRecoveryAttempt) {
