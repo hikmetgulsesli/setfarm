@@ -5114,10 +5114,6 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
   `;
   let parsedRunContext: Readonly<Record<string, unknown>>;
   if (typeof input.runContext === "string") {
-    if (
-      Buffer.byteLength(input.runContext, "utf8") < 2
-      || Buffer.byteLength(input.runContext, "utf8") > 65_536
-    ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
     let parsed: unknown;
     try { parsed = JSON.parse(input.runContext); } catch {
       throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");

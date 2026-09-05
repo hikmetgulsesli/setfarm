@@ -3617,7 +3617,11 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
           canonicalOwnerIdentity: identity,
         });
       });
-      const ordinaryContext = '{"task":"ordinary migration 32 context ordering","repo":"/tmp/setfarm-ordinary-context"}';
+      const ordinaryContext = JSON.stringify({
+        task: `ordinary migration 32 context ordering ${"x".repeat(70_000)}`,
+        repo: "/tmp/setfarm-ordinary-context",
+      });
+      assert.ok(Buffer.byteLength(ordinaryContext, "utf8") > 65_536);
       await database.sql`
         UPDATE runs
            SET context=${ordinaryContext}
