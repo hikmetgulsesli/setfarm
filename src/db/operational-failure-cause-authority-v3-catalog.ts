@@ -20,10 +20,14 @@ const expectedOperationalFailureCauseAuthorityV3TriggerName =
 const expectedOperationalFailureCauseAuthorityV3TriggerDefinitionHash =
   "d02b5e95eb2cf5668228415fee74a8d3ad0a8a960906e66b584e0fea01e8396a";
 const expectedOperationalFailureCauseAuthorityV3FunctionSourceHash =
-  "01306dd989960d1f795ae16d38886dbd36a1abb5f4275722ad4bac4d7e0f383d";
+  "7e10ffacda335b3e87f65e6fb7a5e95b8f59ac450294b1f3298f1063f1791f2f";
 
 function normalizeCatalogSource(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeCatalogFunctionSource(value: string): string {
+  return value.trim().replace(/\r\n?/g, "\n");
 }
 
 export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
@@ -112,7 +116,7 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
     ? createHash("sha256").update(normalizeCatalogSource(seal.triggerDefinition)).digest("hex")
     : null;
   const functionSourceHash = seal
-    ? createHash("sha256").update(normalizeCatalogSource(seal.functionSource)).digest("hex")
+    ? createHash("sha256").update(normalizeCatalogFunctionSource(seal.functionSource)).digest("hex")
     : null;
   if (
     sealRows.length !== 1
