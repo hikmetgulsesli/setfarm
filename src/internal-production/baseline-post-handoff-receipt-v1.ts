@@ -12650,7 +12650,7 @@ async function observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1
           (32, 3, 'ip_op_enforce_current_update_v1'),
           (33, 1, 'ip_v3_recovery_publication_immutable_v1')
         ), expected_triggers(version, ordinal, trigger_name) AS (VALUES
-          (31, 1, 'trg_run_termination_requests_operational_failure_cause_immutable'),
+          (31, 1, 'trg_run_termination_requests_operational_failure_cause_immutabl'),
           (32, 1, 'trg_internal_production_owner_admission_authority_immutable'),
           (32, 2, 'trg_internal_production_owner_admission_authority_truncate_forbidden'),
           (32, 3, 'ip_op_sba_v1_immutable_trg'),
@@ -12742,7 +12742,7 @@ async function observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1
           || (journal.state === "current" ? journal.checksum !== expectedJournal[index]!.checksum : journal.checksum !== null)) currentEntryFail("progress raw row-tail migration journal is crossed");
         const empty = Object.freeze([]);
         const expectedCatalog = version === 31
-          ? Object.freeze({ relationNames: Object.freeze(["run_termination_requests"]), functionNames: Object.freeze(["setfarm_enforce_operational_failure_cause_immutable"]), triggerNames: Object.freeze(["trg_run_termination_requests_operational_failure_cause_immutable"]), relationColumns: empty, relationMetadata: empty, columnNames: empty, keyNames: empty })
+          ? Object.freeze({ relationNames: Object.freeze(["run_termination_requests"]), functionNames: Object.freeze(["setfarm_enforce_operational_failure_cause_immutable"]), triggerNames: Object.freeze(["trg_run_termination_requests_operational_failure_cause_immutabl"]), relationColumns: empty, relationMetadata: empty, columnNames: empty, keyNames: empty })
           : version === 32
             ? Object.freeze({ ...expectedMigration32Catalog, columnNames: empty, keyNames: empty })
             : Object.freeze({ ...expectedMigration33Catalog, relationColumns: empty, relationMetadata: empty });
