@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -145,6 +145,15 @@ it("P4 recovery source bootstrap uses dedicated persistence and dispatch ports",
   assert.match(persistenceSource, /bindInternalProductionRecoverySourceBootstrapRunInTransactionV1/);
   assert.match(persistenceSource, /resolveBundledWorkflowDir\("feature-dev"\)/);
   assert.match(persistenceSource, /RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1/);
+  assert.match(persistenceSource, /const\s+RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1\s*=\s*path\.resolve\([\s\S]*fileURLToPath\(import\.meta\.url\)[\s\S]*["']\.\.\/\.\.["'][\s\S]*\)/,
+    "recovery persistence derives the Setfarm checkout from its code-owned module location");
+  assert.match(persistenceSource, /repo:\s*RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1[\s\S]*branch:\s*runId/,
+    "the persisted recovery context pins the authenticated Setfarm checkout and its deterministic managed branch");
+  assert.doesNotMatch(persistenceSource.slice(
+    persistenceSource.indexOf("const RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1"),
+    persistenceSource.indexOf("async function persistRecoverySourceBootstrapRunInTransactionV1"),
+  ), /process\.cwd\(|process\.env|SETFARM_PROJECTS_ROOT|OPENCLAW_PROJECTS_ROOT/,
+  "the recovery checkout and branch do not come from ambient working-directory or project-root configuration");
 });
 
 it("P4 recovery source bootstrap held authority reaches dispatch and persistence without current-entry reselection", () => {
@@ -310,7 +319,7 @@ export async function observePersistedInternalProductionRecoverySourceBootstrapR
   }
 });
 
-it("P4 recovery source bootstrap persistence executes lock-first exact31 bind and commit withholding", async () => {
+it("P4 recovery source bootstrap persistence executes lock-first exact33 bind and commit withholding", async () => {
   const production = readFileSync(new URL("../../src/execution/run-persistence.ts", import.meta.url), "utf8");
   const start = production.indexOf("const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1");
   const end = production.indexOf("export async function persistInternalProductionRecoverySourceBootstrapRunV1", start);
@@ -323,6 +332,8 @@ it("P4 recovery source bootstrap persistence executes lock-first exact31 bind an
     const modulePath = path.join(execution, "run-persistence-kernel.ts");
     await writeFile(modulePath, `
 import {createHash} from "node:crypto";
+import path from "node:path";
+import {fileURLToPath} from "node:url";
 type PgTransactionSql=any; type WorkflowSpec=any; type RunProtocolIdentity=any; type PersistedWorkflowStep=any; type PersistedWorkflowRunRowV1=any;
 const g=globalThis as any;
 const canonicalJsonStringify=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonicalJsonStringify).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonicalJsonStringify(v[k])).join(",")+"}";
@@ -332,7 +343,7 @@ const resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorit
 const resolveBundledWorkflowDir=()=>"feature-dev";
 const loadWorkflowSpec=async()=>g.__p4PersistWorkflow;
 const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=async(_sql:any)=>{g.__p4PersistLedger.push("lock");return g.__p4PersistAuthority};
-const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==31)throw new Error("EXACT31_CONTEXT_REQUIRED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
+const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==33)throw new Error("EXACT33_CONTEXT_REQUIRED");const expectedRepo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");if(context.repo!==expectedRepo||context.branch!==input.runId)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUNTIME_IDENTITY_CROSSED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
 const readDatabaseWallClock=async()=>{g.__p4PersistLedger.push("clock");return new Date("2026-08-26T12:00:00.000Z")};
 const persistedWorkflowRunResultV1=(row:any,pair:any)=>({run:{id:row.id,runNumber:row.run_number,workflowId:row.workflow_id,task:row.task,status:"running",context:row.context,notifyUrl:row.notify_url,protocol:row.protocol,protocolVersion:row.protocol_version,compilerReleaseSha:row.compiler_release_sha,activationPreflightHash:row.activation_preflight_hash,releaseAdmissionHash:row.release_admission_hash,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()},...pair});
 const pgBegin=async(cb:any)=>{const prior=structuredClone(g.__p4PersistState);const tx=structuredClone(prior);g.__p4PersistTx=tx;const sql:any={unsafe:async(q:string,p:any[]=[])=>{if(q.includes("FROM runs")&&q.includes("FOR UPDATE")){g.__p4PersistLedger.push("select-run");return tx.runs[p[0]]?[tx.runs[p[0]]]:[]}if(q.includes("nextval")){g.__p4PersistLedger.push("nextval");return [{next:41}]}if(q.includes("INSERT INTO runs")){g.__p4PersistLedger.push("insert-run");tx.runs[p[0]]={id:p[0],run_number:p[1],workflow_id:"feature-dev",task:p[2],status:"running",context:p[3],notify_url:null,protocol:"v3",protocol_version:1,compiler_release_sha:p[4],activation_preflight_hash:p[5],release_admission_hash:p[6],created_at:p[7],updated_at:p[7]};return []}if(q.includes("INSERT INTO steps")){g.__p4PersistLedger.push("insert-step");tx.steps.push({id:p[0],run_id:p[1],step_id:p[2],agent_id:p[3],step_index:p[4],input_template:p[5],expects:p[6],status:p[7],max_retries:p[8],type:p[9],loop_config:p[10],created_at:p[11],updated_at:p[11]});return []}if(q.includes("FROM steps")){g.__p4PersistLedger.push("select-steps");return tx.steps}throw new Error("UNEXPECTED_SQL:"+q)}};const value=await cb(sql);if(g.__p4PersistRejectCommit)throw new Error("INJECT_COMMIT_ACK_LOSS");g.__p4PersistState=tx;g.__p4PersistLedger.push("commit");return value};
@@ -353,7 +364,10 @@ export function p4State(){return structuredClone(g.__p4PersistState)}
     assert.equal(persisted.run.id, runId);
     const ledger = (globalThis as any).__p4PersistLedger as string[];
     assert.deepEqual(ledger, ["lock", "select-run", "nextval", "clock", "insert-run", "insert-step", "insert-step", "bind", "select-run", "select-steps", "commit"]);
-    assert.equal(Object.keys(JSON.parse(persisted.run.context)).length, 31);
+    const persistedContext = JSON.parse(persisted.run.context);
+    assert.equal(Object.keys(persistedContext).length, 33);
+    assert.equal(persistedContext.repo, realpathSync(fixture));
+    assert.equal(persistedContext.branch, runId);
     const committed = kernel.p4State();
     (globalThis as any).__p4PersistState = { runs: {}, steps: [] };
     (globalThis as any).__p4PersistLedger = [];

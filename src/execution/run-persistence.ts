@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   beginOrAdoptInternalProductionOwnerReservationV1,
@@ -584,6 +587,10 @@ export async function persistWorkflowRun(
 
 const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 =
   "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
+const RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1 = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 export type PersistInternalProductionRecoverySourceBootstrapRunResultV1 = Readonly<{
   run: PersistedWorkflowRunV1;
@@ -677,6 +684,8 @@ function recoverySourceBootstrapRunCandidateV1(
   const context = canonicalJsonStringify({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
     task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
+    repo: RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1,
+    branch: runId,
     purpose: operation.purpose,
     repository: operation.repository,
     workflow: operation.workflow,
