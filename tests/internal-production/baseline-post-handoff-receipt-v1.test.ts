@@ -11162,7 +11162,7 @@ function phase5cSRowTailPhysicalQueryRowsFixtureV1(
       state,
       relationNames: state !== "current" ? Object.freeze([]) : version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.relations : version === 33 ? PHASE5C_S_MIGRATION_33_CATALOG_V1.relations : Object.freeze(["run_termination_requests"]),
       functionNames: state !== "current" ? Object.freeze([]) : version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.functions : version === 33 ? PHASE5C_S_MIGRATION_33_CATALOG_V1.functions : Object.freeze(["setfarm_enforce_operational_failure_cause_immutable"]),
-      triggerNames: state !== "current" ? Object.freeze([]) : version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.triggers : version === 33 ? PHASE5C_S_MIGRATION_33_CATALOG_V1.triggers : Object.freeze(["trg_run_termination_requests_operational_failure_cause_immutable"]),
+      triggerNames: state !== "current" ? Object.freeze([]) : version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.triggers : version === 33 ? PHASE5C_S_MIGRATION_33_CATALOG_V1.triggers : Object.freeze(["trg_run_termination_requests_operational_failure_cause_immutabl"]),
       relationColumns: state === "current" && version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.relationColumns : Object.freeze([]),
       relationMetadata: state === "current" && version === 32 ? PHASE5C_S_MIGRATION_32_CATALOG_V1.relationMetadata : Object.freeze([]),
       columnNames: state === "current" && version === 33 ? PHASE5C_S_MIGRATION_33_CATALOG_V1.columns : Object.freeze([]),
@@ -29686,6 +29686,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.doesNotMatch(preSchemaAtRoot, /resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1|selectCurrentEntryStoreContextV1/,
       "the borrowed AtRoot observer cannot reselect or substitute a mutable current-entry store context");
+  });
+
+  it("P5c-S queries PostgreSQL's exact stored v31 immutability-trigger identifier", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const databaseLeaf = topLevelFunctionRegionV1(
+      source,
+      "observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1",
+    );
+    assert.match(databaseLeaf, /\(31,\s*1,\s*'trg_run_termination_requests_operational_failure_cause_immutabl'\)/,
+      "the v31 catalog query uses PostgreSQL's exact stored 63-byte trigger identifier");
+    assert.doesNotMatch(databaseLeaf, /\(31,\s*1,\s*'trg_run_termination_requests_operational_failure_cause_immutable'\)/,
+      "the v31 catalog query never joins on the pre-truncation source identifier");
   });
 
   it("P5c-S pins status and nested authority, compares complete A/B raw passes, and mints only nonblocked progress", () => {
