@@ -17,6 +17,8 @@ const expectedOperationalFailureCauseAuthorityV3CanonicalConstraintHash =
   "0b72d87583d2b2556e403cf5a5dc12b177d8bfcb89370815bcd584a190916d0b";
 const expectedOperationalFailureCauseAuthorityV3TriggerName =
   "trg_run_termination_requests_operational_failure_cause_immutable".slice(0, 63);
+const expectedOperationalFailureCauseAuthorityV3TriggerDefinitionHash =
+  "d02b5e95eb2cf5668228415fee74a8d3ad0a8a960906e66b584e0fea01e8396a";
 const expectedOperationalFailureCauseAuthorityV3FunctionSourceHash =
   "01306dd989960d1f795ae16d38886dbd36a1abb5f4275722ad4bac4d7e0f383d";
 
@@ -51,6 +53,7 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
   }
   const sealRows = await transaction.unsafe<Array<{
     triggerName: string;
+    triggerDefinition: string;
     enabled: string;
     typeBits: number;
     relationSchema: string;
@@ -69,6 +72,7 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
     functionSource: string;
   }>>(
     `SELECT trigger_row.tgname AS "triggerName",
+            pg_get_triggerdef(trigger_row.oid, true) AS "triggerDefinition",
             trigger_row.tgenabled AS enabled,
             trigger_row.tgtype::integer AS "typeBits",
             relation_namespace.nspname AS "relationSchema",
@@ -104,6 +108,9 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
     [expectedOperationalFailureCauseAuthorityV3TriggerName],
   );
   const seal = sealRows[0];
+  const triggerDefinitionHash = seal
+    ? createHash("sha256").update(normalizeCatalogSource(seal.triggerDefinition)).digest("hex")
+    : null;
   const functionSourceHash = seal
     ? createHash("sha256").update(normalizeCatalogSource(seal.functionSource)).digest("hex")
     : null;
@@ -111,6 +118,7 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
     sealRows.length !== 1
     || !seal
     || seal.triggerName !== expectedOperationalFailureCauseAuthorityV3TriggerName
+    || triggerDefinitionHash !== expectedOperationalFailureCauseAuthorityV3TriggerDefinitionHash
     || seal.enabled !== "O"
     || seal.typeBits !== 19
     || seal.relationSchema !== "public"
