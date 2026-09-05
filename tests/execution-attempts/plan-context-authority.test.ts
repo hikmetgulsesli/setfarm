@@ -3,9 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   COMPILER_OWNED_CONTEXT_KEYS,
+  RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS,
   isStepOutputContextKeyProtected,
 } from "../../src/installer/constants.js";
-import { mergeContextSafe } from "../../src/installer/context-ops.js";
+import { mergeContextSafe, parseOutputKeyValues } from "../../src/installer/context-ops.js";
 
 describe("PLAN compiler-owned context authority", () => {
   it("rejects model introduction as well as overwrite of canonical PLAN keys", () => {
@@ -37,5 +38,32 @@ describe("PLAN compiler-owned context authority", () => {
     assert.equal(isStepOutputContextKeyProtected("design_required", context), true);
     mergeContextSafe(context, { design_required: "false" });
     assert.equal(context.design_required, "true");
+  });
+
+  it("rejects every normalized agent-output alias of recovery run authority", () => {
+    const context: Record<string, string> = {
+      schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
+      task: "recover the source bootstrap",
+      repo: "/setfarm",
+      branch: "run-recovery",
+      purpose: "recovery-d-source-delivery-v1",
+      repository: "setfarm",
+      workflow: "feature-dev",
+      protocol: "v3",
+    };
+    const output = JSON.stringify(Object.fromEntries(
+      [...RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS]
+        .map((key) => [key.toUpperCase(), `forged:${key}`]),
+    ));
+    const parsed = parseOutputKeyValues(output);
+    assert.deepEqual(Object.keys(parsed).sort(), [...RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS].sort());
+    const before = structuredClone(context);
+
+    mergeContextSafe(context, parsed);
+
+    assert.deepEqual(context, before);
+    for (const key of RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS) {
+      assert.equal(isStepOutputContextKeyProtected(key, context), true, key);
+    }
   });
 });
