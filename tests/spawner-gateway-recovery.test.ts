@@ -844,7 +844,10 @@ describe("spawner gateway recovery wiring", () => {
 
   it("runs PostgreSQL migration guards before startup recovery", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    assert.match(source, /import \{ getSql, pgBegin, pgClose, pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
+    const databaseImport = source.match(/import \{([\s\S]*?)\} from "\.\/db-pg\.js"/)?.[1] ?? "";
+    for (const binding of ["getSql", "pgBegin", "pgClose", "pgGet", "pgMigrate", "pgQuery", "pgRun"]) {
+      assert.match(databaseImport, new RegExp(`\\b${binding}\\b`), `spawner must import ${binding} from db-pg`);
+    }
     const migrate = source.indexOf("await pgMigrate();");
     const reconciler = source.indexOf("terminalAttemptReconciler = createPostgresTerminalAttemptReconciler", migrate);
     const kill = source.indexOf("killStartupOrphanSpawnerAgents();", reconciler);
