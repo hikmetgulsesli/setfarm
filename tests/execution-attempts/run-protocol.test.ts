@@ -472,13 +472,33 @@ describe("run-pinned product compiler protocol", () => {
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
     assert.match(dbSource, /470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db/);
     assert.match(dbSource, /currentResolution\.nodes/);
-    assert.doesNotMatch(dbSource, /current\.receipt\.phase\s*!==\s*"A"/);
+    const readinessStart = dbSource.indexOf("async function requireWorkflowRunAdmissionReadyV1(");
+    const readinessEnd = dbSource.indexOf(
+      "\ntype InternalProductionCompletionBootstrapHeadLockModeV1",
+      readinessStart,
+    );
+    assert.ok(readinessStart >= 0 && readinessEnd > readinessStart);
+    const readinessSource = dbSource.slice(readinessStart, readinessEnd);
+    assert.doesNotMatch(readinessSource, /current\.receipt\.phase\s*!==\s*"A"/);
 
     const installerSource = readFileSync(
       path.resolve(import.meta.dirname, "../../src/installer/run.ts"),
       "utf8",
     );
-    assert.match(installerSource, /import \{\s*persistWorkflowRun,\s*type PersistedWorkflowStep,?\s*\} from "\.\.\/execution\/run-persistence\.js";/s);
+    const persistenceImportEnd = installerSource.indexOf(
+      '} from "../execution/run-persistence.js";',
+    );
+    const persistenceImportStart = installerSource.lastIndexOf(
+      "import {",
+      persistenceImportEnd,
+    );
+    assert.ok(persistenceImportStart >= 0 && persistenceImportEnd > persistenceImportStart);
+    const persistenceImport = installerSource.slice(
+      persistenceImportStart,
+      persistenceImportEnd,
+    );
+    assert.match(persistenceImport, /\bpersistWorkflowRun,/);
+    assert.match(persistenceImport, /\btype PersistedWorkflowStep,/);
     assert.doesNotMatch(installerSource, /persistWorkflowRunInTransaction/);
   });
 
