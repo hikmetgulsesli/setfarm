@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import postgres from "postgres";
 
 import {
-  applyContractSpineMigrations,
+  applyContractSpineMigrationsIfNeeded,
   auditCurrentArtifactPublicationAuthorityLedgerAtV31Data,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   planContractSpineMigrations,
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
       )}\n`);
       return;
     }
-    const applied = await applyContractSpineMigrations(sql, {
+    const applied = await applyContractSpineMigrationsIfNeeded(sql, {
       releaseSha: resolveReleaseSha(),
     });
     const verified = await verifyContractSpineMigrations(sql);

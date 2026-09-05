@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
+  applyContractSpineMigrationsIfNeeded,
   contractSpineMigrationLockKey,
   readContractSpineMigrationAttestation,
   planContractSpineMigrations,
@@ -96,7 +97,7 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "102f7ffd14454a082530d603a1158113046990288438c3c9a5e8e87b12f5a0e0",
+      "e67b7c65da5c80033a5d9865c65472899fdc1dd79993f2f7cfee22e9e966378e",
       "366a60b471443d89e386365fa58d35e36277baad654dab596e3a2335af01219d",
     ],
   );
@@ -111,6 +112,25 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
   );
   assert.match(kernel, /property === ["']begin["'][\s\S]*transaction\.savepoint\(callback\)/);
   assert.doesNotMatch(kernel, /export[^\n]*(?:Sql|savepoint|callback|facade)/i);
+});
+
+it("routes the supported apply CLI through current-head-aware reapplication", async () => {
+  const [migrationSource, cliSource] = await Promise.all([
+    readFile(path.join(repoRoot, "src/db/contract-spine-migrations.ts"), "utf8"),
+    readFile(path.join(repoRoot, "scripts/contract-spine-migrate.ts"), "utf8"),
+  ]);
+  assert.match(
+    migrationSource,
+    /export async function applyContractSpineMigrationsIfNeeded\s*\(/,
+  );
+  assert.match(
+    cliSource,
+    /applyContractSpineMigrationsIfNeeded\(sql,\s*\{[\s\S]*?releaseSha:\s*resolveReleaseSha\(\)/,
+  );
+  assert.doesNotMatch(
+    cliSource,
+    /const applied = await applyContractSpineMigrations\(sql,/,
+  );
 });
 
 async function snapshotMigration33RollbackBoundary(database: TestDatabase) {
@@ -1264,7 +1284,7 @@ describe("contract spine migration journal", () => {
     const first = await capability.call(database);
     assert.equal(first.status, "applied");
     const descendantReleaseSha = "d".repeat(40);
-    const reattested = await applyContractSpineMigrations(database.sql, {
+    const reattested = await applyContractSpineMigrationsIfNeeded(database.sql, {
       releaseSha: descendantReleaseSha,
     });
     assert.deepEqual(reattested.guardedPending, []);
@@ -1289,6 +1309,24 @@ describe("contract spine migration journal", () => {
     assert.deepEqual(journal.map((row) => ({ ...row })), [{ version: 32, name: guardedMigrationId }]);
     const complete = await applyContractSpineMigrations(database.sql);
     assert.deepEqual(complete.guardedPending, []);
+    const currentReleaseSha = "e".repeat(40);
+    const currentReattested = await applyContractSpineMigrationsIfNeeded(database.sql, {
+      releaseSha: currentReleaseSha,
+    });
+    assert.equal(currentReattested.alreadyApplied.length, 33);
+    const currentAttestation = await database.sql<Array<{
+      release_count: number;
+      current_release: string | null;
+    }>>`
+      SELECT COUNT(DISTINCT verified_release_sha)::integer AS release_count,
+             MIN(verified_release_sha) AS current_release
+        FROM setfarm_schema_migrations
+       WHERE verified_at IS NOT NULL
+    `;
+    assert.deepEqual(currentAttestation.map((row) => ({ ...row })), [{
+      release_count: 1,
+      current_release: currentReleaseSha,
+    }]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 
     const module = await import("../../src/db/bootstrap-main-claim-handoff-v1-migration.js");
@@ -1440,6 +1478,12 @@ describe("contract spine migration journal", () => {
        WHERE source_build_authority_ref = 'setfarm://tests/canonical-text-preservation'
     `;
     assert.equal(rolledBackTextRows[0]?.count, "0");
+    const pristineHead = await database.sql<Array<{ head_payload: Record<string, unknown> }>>`
+      SELECT head_payload
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton = TRUE
+    `;
+    const pristineHeadPayload = pristineHead[0]!.head_payload;
     await database.sql`
       UPDATE internal_production_owner_admission_head_v1
          SET head_payload = head_payload || ${{
@@ -1448,6 +1492,22 @@ describe("contract spine migration journal", () => {
              headVersion: 1,
            },
          }}::jsonb
+       WHERE singleton = TRUE
+    `;
+    const extraHeadMemberDrift = await planContractSpineMigrations(database.sql);
+    assert.equal(extraHeadMemberDrift.status, "drift");
+    assert.equal(
+      extraHeadMemberDrift.migrations.find((migration) => migration.version === 32)?.state,
+      "adoption_mismatch",
+    );
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+    await database.sql`
+      UPDATE internal_production_owner_admission_head_v1
+         SET head_payload = ${pristineHeadPayload}::jsonb
        WHERE singleton = TRUE
     `;
     assert.equal((await planContractSpineMigrations(database.sql)).status, "current");

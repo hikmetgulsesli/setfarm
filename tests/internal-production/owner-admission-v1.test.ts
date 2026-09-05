@@ -5313,6 +5313,81 @@ test("real PostgreSQL owner admission begins adopts binds and rejects an unauthe
   const [first, concurrent] = await Promise.all([begin(), begin()]);
   assert.deepEqual(concurrent, first);
   assert.deepEqual(await begin(), first);
+  const migrations = await import(
+    `${pathToFileURL(path.join(root, "src/db/contract-spine-migrations.js")).href}?evolvedHead=${Date.now()}`
+  );
+  const migrationSnapshot = async () => {
+    const [head] = await sql<Array<{
+      head_version: string;
+      head_hash: string;
+      head_payload: unknown;
+      advancing_authorities: string;
+      reservation_count: string;
+      authority_count: string;
+    }>>`
+      SELECT head.head_version::text,
+             head.head_hash,
+             head.head_payload,
+             (SELECT COUNT(*)::text
+                FROM internal_production_owner_admission_authorities_v1 authority
+               WHERE authority.successor_head_hash=head.head_hash
+                 AND authority.predecessor_head_hash<>authority.successor_head_hash)
+               AS advancing_authorities,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1)
+               AS reservation_count,
+             (SELECT COUNT(*)::text FROM internal_production_owner_admission_authorities_v1)
+               AS authority_count
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `;
+    assert.ok(head);
+    return head;
+  };
+  const evolvedHeadBeforeMigrationReobservation = await migrationSnapshot();
+  assert.ok(Number(evolvedHeadBeforeMigrationReobservation.head_version) > 0);
+  assert.notEqual(evolvedHeadBeforeMigrationReobservation.head_hash, "0".repeat(64));
+  assert.equal(
+    hashCanonicalJson(evolvedHeadBeforeMigrationReobservation.head_payload),
+    evolvedHeadBeforeMigrationReobservation.head_hash,
+  );
+  assert.equal(Number(evolvedHeadBeforeMigrationReobservation.advancing_authorities) > 0, true);
+  const evolvedPlan = await migrations.planContractSpineMigrations(sql);
+  assert.equal(evolvedPlan.status, "current");
+  assert.deepEqual(
+    evolvedPlan.migrations.slice(-2).map((migration: { version: number; state: string }) => ({
+      version: migration.version,
+      state: migration.state,
+    })),
+    [{ version: 32, state: "applied" }, { version: 33, state: "applied" }],
+  );
+  assert.equal((await migrations.verifyContractSpineMigrations(sql)).status, "verified");
+  const firstReapply = await migrations.applyContractSpineMigrationsIfNeeded(sql, {
+    releaseSha: "a".repeat(40),
+  });
+  const secondReapply = await migrations.applyContractSpineMigrationsIfNeeded(sql, {
+    releaseSha: "b".repeat(40),
+  });
+  assert.deepEqual(firstReapply.applied, []);
+  assert.deepEqual(firstReapply.adopted, []);
+  assert.deepEqual(firstReapply.guardedPending, []);
+  assert.equal(firstReapply.alreadyApplied.length, 33);
+  assert.deepEqual(secondReapply, firstReapply);
+  const [evolvedHeadAttestation] = await sql<Array<{
+    attested_rows: number;
+    release_count: number;
+    current_release: string | null;
+  }>>`
+    SELECT COUNT(*) FILTER (WHERE verified_at IS NOT NULL)::integer AS attested_rows,
+           COUNT(DISTINCT verified_release_sha)::integer AS release_count,
+           MIN(verified_release_sha) AS current_release
+      FROM setfarm_schema_migrations
+  `;
+  assert.deepEqual(evolvedHeadAttestation, {
+    attested_rows: 33,
+    release_count: 1,
+    current_release: "b".repeat(40),
+  });
+  assert.deepEqual(await migrationSnapshot(), evolvedHeadBeforeMigrationReobservation);
   const storedCreationVersion = (await sql<Array<{ head_version: string }>>`
     SELECT head_version::text FROM internal_production_owner_reservations_v1
      WHERE reservation_ref=${first.reservationRef}
