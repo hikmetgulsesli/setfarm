@@ -406,17 +406,31 @@ describe("canonical run terminal owner", () => {
       "migration 32 journal presence is checked before recovery-only locking or catalog reads");
     assert.match(deliveryBarrier.slice(migration32Gate, insertionFenceLock), /WHERE\s+version\s*=\s*32[\s\S]*migrationRows\.length\s*===\s*0\s*\)\s*return/,
       "a migration-31 database bypasses only the unavailable recovery-source authority barrier");
+    const specialReservationRowsBinding = /const\s+specialReservationRows\s*=\s*await/.exec(deliveryBarrier);
     const ownerRowsBinding = /const\s+ownerRows\s*=\s*await/.exec(deliveryBarrier);
     const reservationRowsBinding = /const\s+reservationRows\s*=\s*await/.exec(deliveryBarrier);
     const expectedRunRowsBinding = /const\s+expectedRunRows\s*=\s*await/.exec(deliveryBarrier);
     const activeRunRowsBinding = /const\s+activeRunRows\s*=\s*await/.exec(deliveryBarrier);
-    assert.ok(ownerRowsBinding && reservationRowsBinding && expectedRunRowsBinding && activeRunRowsBinding,
-      "the locking adapter projects all four inventories before invoking the shared pure classifier");
+    assert.ok(specialReservationRowsBinding && ownerRowsBinding && reservationRowsBinding && expectedRunRowsBinding && activeRunRowsBinding,
+      "the locking adapter discriminates the exact run before projecting all four recovery inventories");
     const serializationLock = /await\s+lockInternalProduction(?:RecoverySourceBootstrapRun|WorkflowRun)InsertionFenceV1\(\s*sql\s*\)\s*;/.exec(deliveryBarrier);
-    assert.ok(serializationLock && serializationLock.index < ownerRowsBinding.index,
-      "the READ COMMITTED terminal caller serializes recovery-run insertion before projecting any H1 owner/run inventory");
-    assert.ok(ownerRowsBinding.index < reservationRowsBinding.index && reservationRowsBinding.index < expectedRunRowsBinding.index && expectedRunRowsBinding.index < activeRunRowsBinding.index,
-      "the terminal adapter's locked projection has one explicit owner/reservation/durable/active order");
+    assert.ok(serializationLock && serializationLock.index < specialReservationRowsBinding.index,
+      "the READ COMMITTED terminal caller serializes recovery-run insertion before the exact recovery-owner discriminator");
+    const specialOwnerEvidenceBinding = deliveryBarrier.indexOf("const specialOwnerEvidence");
+    assert.ok(specialReservationRowsBinding.index < specialOwnerEvidenceBinding
+      && specialOwnerEvidenceBinding < ownerRowsBinding.index
+      && ownerRowsBinding.index < reservationRowsBinding.index
+      && reservationRowsBinding.index < expectedRunRowsBinding.index
+      && expectedRunRowsBinding.index < activeRunRowsBinding.index,
+    "ordinary terminalization returns before the explicit recovery-only owner/reservation/durable/active projection order");
+    const specialReservationRowsQuery = deliveryBarrier.slice(
+      specialReservationRowsBinding.index,
+      specialOwnerEvidenceBinding,
+    );
+    assert.match(specialReservationRowsQuery, /FROM\s+(?:public\.)?internal_production_owner_reservations_v1[\s\S]*producer_implementation_id\s*=\s*['"]a-recovery-source-bootstrap-run-v1['"][\s\S]*category\s*=\s*['"]run['"][\s\S]*owner_key\s*=\s*\$\{input\.runId\}[\s\S]*FOR\s+UPDATE/i,
+      "the ordinary discriminator locks only the exact specialized run reservation for the already locked run");
+    assert.doesNotMatch(specialReservationRowsQuery, /a-recovery-source-run-v1/,
+      "closed source history for another run cannot poison the ordinary discriminator");
     const ownerRowsQuery = deliveryBarrier.slice(ownerRowsBinding.index, reservationRowsBinding.index);
     const reservationRowsQuery = deliveryBarrier.slice(reservationRowsBinding.index, expectedRunRowsBinding.index);
     const expectedRunRowsQuery = deliveryBarrier.slice(expectedRunRowsBinding.index, activeRunRowsBinding.index);
@@ -443,22 +457,20 @@ describe("canonical run terminal owner", () => {
       "the terminal adapter's global active census filters only the canonical active statuses");
     assert.doesNotMatch(activeRunRowsQuery, /(?:id|run_id)\s*=\s*\$\{/i,
       "the terminal active census cannot prefilter unrelated active work by run id");
-    const specialOwnerEvidenceBinding = deliveryBarrier.indexOf("const specialOwnerEvidence");
     const expectedRunIdBinding = deliveryBarrier.indexOf("const expectedRunId");
     staticCheck("ordinary discriminator before deterministic run id", () => assert.ok(
-      specialOwnerEvidenceBinding > reservationRowsBinding.index
-      && expectedRunIdBinding > specialOwnerEvidenceBinding
+      specialOwnerEvidenceBinding > specialReservationRowsBinding.index
+      && ownerRowsBinding.index > specialOwnerEvidenceBinding
+      && expectedRunIdBinding > reservationRowsBinding.index
       && expectedRunRowsBinding.index > expectedRunIdBinding
       && activeRunRowsBinding.index > expectedRunRowsBinding.index,
-      "the ordinary-run discriminator consumes the unfiltered owner inventory before deriving a recovery-only deterministic run id"));
+      "the exact-run discriminator returns ordinary work before global recovery inventory and derives recovery-only ids only afterward"));
     const specialOwnerEvidenceRegion = deliveryBarrier.slice(
       specialOwnerEvidenceBinding,
       deliveryBarrier.indexOf("const specialContext", specialOwnerEvidenceBinding),
     );
-    staticCheck("exact specialized run discriminator", () => assert.match(specialOwnerEvidenceRegion, /producerImplementationId\s*===\s*["']a-recovery-source-bootstrap-run-v1["'][\s\S]*category\s*===\s*["']run["'][\s\S]*ownerKey\s*===\s*input\.runId/,
-      "only the exact specialized run reservation for the locked run marks terminalization as recovery-owned"));
-    staticCheck("source history is not a special-run discriminator", () => assert.doesNotMatch(specialOwnerEvidenceRegion, /a-recovery-source-run-v1/,
-      "a source reservation or closed recovery history for another run cannot poison an ordinary run discriminator"));
+    staticCheck("exact specialized run discriminator", () => assert.match(specialOwnerEvidenceRegion, /specialReservationRows\.length\s*>\s*0/,
+      "only the exact specialized query result marks terminalization as recovery-owned"));
     const reconstructedOperationBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*Object\.freeze\(\s*\{([\s\S]*?)\}\s*\)\s*;/.exec(deliveryBarrier.slice(activeRunRowsBinding.index));
     staticCheck("reconstructed operation binding", () => assert.ok(reconstructedOperationBinding,
       "the terminal adapter reconstructs one immutable recovery operation from locked expected-run and H1 owner truth"));
@@ -605,6 +617,14 @@ ${barrier}
           const normalized = text.replace(/\/\*[\s\S]*?\*\//g, " ").trimStart();
           if (/^(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP)\b/i.test(normalized)) throw new Error("BARRIER_WRITE_ATTEMPTED");
           if (/setfarm_schema_migrations/i.test(text) && /version\s*=\s*32/i.test(text)) return [AUTHENTIC_MIGRATION_32_JOURNAL_ROW];
+          if (/internal_production_owner_reservations_v1/i.test(text)
+            && /producer_implementation_id\s*=\s*['"]a-recovery-source-bootstrap-run-v1['"]/i.test(text)
+            && /owner_key\s*=\s*/i.test(text)) {
+            return (rows.reservationRows as readonly any[]).filter((row) =>
+              row.producerImplementationId === "a-recovery-source-bootstrap-run-v1"
+              && row.category === "run"
+              && row.ownerKey === barrierInput.runId);
+          }
           if (/internal_production_owner_reservations_v1/i.test(text)) return rows.reservationRows;
           if (/internal_production_owner_admission_(?:head|authorities)_v1/i.test(text)) return rows.ownerRows;
           if (/FROM\s+(?:public\.)?runs/i.test(text) && /running[\s\S]*resuming[\s\S]*cancelling[\s\S]*failing/i.test(text)) return rows.activeRunRows;
@@ -791,7 +811,7 @@ ${barrier}
       runtimeCheck("ordinary run discriminator", () => {
         assert.equal(ordinary.outcome, "returned", `a non-special ordinary run remains eligible for its ordinary terminal owner (${String(ordinary.message)})`);
         assert.deepEqual(ordinary.events, ["lock"],
-          "the ordinary discriminator reads global owner truth but never reconstructs, projects, or validates a recovery authority");
+          "the ordinary discriminator reads only its exact specialized reservation candidate and never projects global recovery authority");
         assert.deepEqual(ordinary.hashInputs, [],
           "an ordinary run exits before deriving a recovery-only deterministic id from its intentionally absent recovery context");
       });
@@ -3755,6 +3775,66 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
         { runStatus: "failed", stepStatus: "failed" },
       ]);
     } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("does not serialize an ordinary terminal barrier on an unrelated owner reservation", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const blocker = postgresClient(database.url, { max: 1 });
+    let releaseLock!: () => void;
+    const lockRelease = new Promise<void>((resolve) => { releaseLock = resolve; });
+    let markLockReady!: () => void;
+    const lockReady = new Promise<void>((resolve) => { markLockReady = resolve; });
+    try {
+      const unrelated = await database.sql.begin((transaction) =>
+        beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          {
+            producerImplementationId: "a-runtime-run-v1",
+            ownerKey: "run-terminal-unrelated-owner-lock",
+          },
+        ));
+      const heldLock = blocker.begin(async (transaction) => {
+        await transaction`
+          SELECT reservation_ref
+            FROM internal_production_owner_reservations_v1
+           WHERE reservation_ref=${unrelated.reservationRef}
+             AND reservation_hash=${unrelated.reservationHash}
+           FOR UPDATE
+        `;
+        markLockReady();
+        await lockRelease;
+      });
+      await lockReady;
+      try {
+        await database.sql.begin(async (transaction) => {
+          await transaction.unsafe("SELECT set_config('statement_timeout', '500ms', true)");
+          await assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(
+            transaction as PgTransactionSql,
+            {
+              runId: "run-terminal-ordinary-unrelated-owner-lock",
+              workflowState: "running",
+              protocol: "legacy",
+              runContext: {},
+            },
+          );
+        });
+      } finally {
+        releaseLock();
+        await heldLock;
+      }
+      const rows = await database.sql<Array<{ state: string }>>`
+        SELECT state
+          FROM internal_production_owner_reservations_v1
+         WHERE reservation_ref=${unrelated.reservationRef}
+           AND reservation_hash=${unrelated.reservationHash}
+      `;
+      assert.deepEqual(rows.map((row) => ({ ...row })), [{ state: "pending" }]);
+    } finally {
+      releaseLock();
+      await blocker.end();
       await database.cleanup();
     }
   });

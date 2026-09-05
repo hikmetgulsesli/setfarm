@@ -4798,6 +4798,40 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
     || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])
   ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  let parsedRunContext: Readonly<Record<string, unknown>>;
+  if (typeof input.runContext === "string") {
+    let parsed: unknown;
+    try { parsed = JSON.parse(input.runContext); } catch {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    parsedRunContext = parsed as Readonly<Record<string, unknown>>;
+  } else {
+    parsedRunContext = input.runContext;
+  }
+  const specialReservationRows = await sql<Array<{
+    producerImplementationId: string;
+    category: string;
+    ownerKey: string;
+  }>>`
+    SELECT producer_implementation_id AS "producerImplementationId",
+           category,
+           owner_key AS "ownerKey"
+      FROM public.internal_production_owner_reservations_v1
+     WHERE producer_implementation_id='a-recovery-source-bootstrap-run-v1'
+       AND category='run'
+       AND owner_key=${input.runId}
+       FOR UPDATE
+  `;
+  const specialOwnerEvidence = specialReservationRows.length > 0;
+  const specialContext = parsedRunContext.schema
+    === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
+  if (!specialOwnerEvidence && !specialContext) return;
+  if (!specialOwnerEvidence || !specialContext) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_DISCRIMINATOR_CORRUPTION");
+  }
   const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
     SELECT head.head_version::integer AS "headVersion",
            head.head_hash AS "headHash",
@@ -4841,29 +4875,6 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
      ORDER BY reservation_ref
        FOR UPDATE
   `;
-  let parsedRunContext: Readonly<Record<string, unknown>>;
-  if (typeof input.runContext === "string") {
-    let parsed: unknown;
-    try { parsed = JSON.parse(input.runContext); } catch {
-      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
-    }
-    parsedRunContext = parsed as Readonly<Record<string, unknown>>;
-  } else {
-    parsedRunContext = input.runContext;
-  }
-  const specialOwnerEvidence = reservationRows.some((candidate) => (
-    candidate.producerImplementationId === "a-recovery-source-bootstrap-run-v1"
-    && candidate.category === "run"
-    && candidate.ownerKey === input.runId
-  ));
-  const specialContext = parsedRunContext.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
-  if (!specialOwnerEvidence && !specialContext) return;
-  if (!specialOwnerEvidence || !specialContext) {
-    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_DISCRIMINATOR_CORRUPTION");
-  }
   const expectedRunContext = parsedRunContext;
   const expectedRunId = hashCanonicalJson({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
