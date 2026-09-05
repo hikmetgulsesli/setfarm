@@ -22013,7 +22013,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const source = readFileSync(observerSource, "utf8");
       const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
       const policy = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
-      assert.match(atRoot, /value\.state\s*===\s*"pending-input"[\s\S]*exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.set\(\s*value\s*,\s*capability\s*\)/,
+      assert.match(atRoot, /value\.state\s*===\s*"pending-input"[\s\S]*exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.set\(\s*value\s*,\s*new\s+Map[\s\S]*capability/,
         "the retained recovery owner registers only the exact pending-input endpoint capability");
       assert.match(atRoot, /exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.delete\(\s*capabilityCurrent\s*\)[\s\S]*closeExactPoisonPostVisibleProgressRecoveryResourcesV1\(\s*resources\s*,\s*null\s*\)/,
         "the recovery owner revokes its borrowed capability before closing the physical record graph");
@@ -22270,7 +22270,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P5c-S observes the prepared recovery H1 database endpoint without projecting future close or release state", async () => {
+  it("P5c-S separates the incoming prepared proof from the outgoing recovery prefix", async () => {
     const root = createFixture();
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
@@ -22302,14 +22302,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
       assert.equal(result.status, 0, result.stderr);
       const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
-      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      assert.equal(observed.outcome, "threw", "an absent H1 database prefix cannot prove the incoming prepared arrow");
+      assert.match(String(observed.message), /external endpoint prefix is crossed/);
       assert.equal(observed.databaseObserverCalls, 1);
       assert.deepEqual(observed.databaseObserverInputs, [Object.freeze({ recoveryOperationAuthority: recoveryOperation })]);
-      const external = observed.external as Readonly<Record<string, unknown>>;
-      assert.deepEqual(
-        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
-        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 5, current: seeded.value },
-      );
       const content = (material: string, kind: string, hashKey: string): Readonly<Record<string, unknown>> => {
         const value = materials[material]!;
         const hash = String(value[hashKey]);
@@ -22318,16 +22314,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const pendingHead = materials["pending-visibility-head"]!;
       const pointerBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: seeded.value.visibilityHeadRef, visibilityHeadHash: seeded.value.visibilityHeadHash }));
       const predecessorBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: pendingHead.visibilityHeadRef, visibilityHeadHash: pendingHead.visibilityHeadHash }));
-      assert.deepEqual(external.endpoints, Object.freeze([
-        Object.freeze({ material: "database-fence-reservations", role: "database", policy: "database-atomic", target: null, expectedBytesBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), publication: null, writer: null, database: Object.freeze({ state: "current", expectedProjectionBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), artifactCount: 1, laterArtifactCount: 0 }) }),
-        content("start-intent", "start-intents", "startIntentHash"),
-        content("start-outbox", "start-outboxes", "startOutboxHash"),
-        content("recovery-operation", "operations", "operationHash"),
-        content("prepared-visibility-head", "visibility-heads", "visibilityHeadHash"),
-        Object.freeze({ material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas", target: seeded.visibilityPointerTarget, expectedBytesBase64: pointerBytes.toString("base64"), publication: null, writer: null, cas: Object.freeze({ state: "Q3", route: "next", predecessorBytesBase64: predecessorBytes.toString("base64"), successorBytesBase64: pointerBytes.toString("base64"), laterFixedCount: 0 }) }),
-      ]), "prepared exposes only the exact H1 database projection followed by retained content and CAS");
-      assert.equal(observed.releaseCalls, 0);
-      assert.equal(observed.closeCount, 1);
       const runBinding = materials["database-run-binding"]!;
       const activeInput = Object.freeze({ ...input, databaseObservation: Object.freeze({ state: "active", workflowState: "resuming", ...runBinding }) });
       const activeResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(activeInput)});process.stdout.write(JSON.stringify(value))})()`);
@@ -22335,7 +22321,22 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const activeObserved = JSON.parse(activeResult.stdout) as Readonly<Record<string, unknown>>;
       assert.equal(activeObserved.outcome, "returned", String(activeObserved.message ?? ""));
       assert.equal(activeObserved.databaseObserverCalls, 1,
-        "a response-loss active run preserves the same exact H1 database endpoint");
+        "an exact response-loss run preserves the incoming H1 database proof");
+      const incomingExternal = activeObserved.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: incomingExternal.state, family: incomingExternal.family, activeEndpointOrdinal: incomingExternal.activeEndpointOrdinal, current: incomingExternal.current },
+        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 5, current: seeded.value },
+      );
+      assert.deepEqual(incomingExternal.endpoints, Object.freeze([
+        Object.freeze({ material: "database-fence-reservations", role: "database", policy: "database-atomic", target: null, expectedBytesBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), publication: null, writer: null, database: Object.freeze({ state: "current", expectedProjectionBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), artifactCount: 1, laterArtifactCount: 0 }) }),
+        content("start-intent", "start-intents", "startIntentHash"),
+        content("start-outbox", "start-outboxes", "startOutboxHash"),
+        content("recovery-operation", "operations", "operationHash"),
+        content("prepared-visibility-head", "visibility-heads", "visibilityHeadHash"),
+        Object.freeze({ material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas", target: seeded.visibilityPointerTarget, expectedBytesBase64: pointerBytes.toString("base64"), publication: null, writer: null, cas: Object.freeze({ state: "Q3", route: "next", predecessorBytesBase64: predecessorBytes.toString("base64"), successorBytesBase64: pointerBytes.toString("base64"), laterFixedCount: 0 }) }),
+      ]), "prepared exposes only the exact H1 database projection followed by retained content and CAS");
+      assert.equal(activeObserved.releaseCalls, 0);
+      assert.equal(activeObserved.closeCount, 1);
 
       const futureInput = Object.freeze({ ...input, databaseObservation: Object.freeze({ state: "pair_closed" }) });
       const futureResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(futureInput)});process.stdout.write(JSON.stringify(value))})()`);
@@ -22346,6 +22347,80 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         "prepared visibility never projects a future H3/H4 database disposition as H1 current");
       assert.equal(futureObserved.databaseObserverCalls, 1);
       assert.equal(futureObserved.closeCount, 1);
+
+      const outgoingAbsentInput = Object.freeze({ ...input, externalOrdinal: 2 as const, databaseObservation: Object.freeze({ state: "absent" }) });
+      const outgoingAbsentResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(outgoingAbsentInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(outgoingAbsentResult.status, 0, outgoingAbsentResult.stderr);
+      const outgoingAbsent = JSON.parse(outgoingAbsentResult.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(outgoingAbsent.outcome, "returned", String(outgoingAbsent.message ?? ""));
+      assert.equal(outgoingAbsent.databaseObserverCalls, 1);
+      assert.deepEqual(outgoingAbsent.databaseObserverInputs, [Object.freeze({ recoveryOperationAuthority: recoveryOperation })]);
+      assert.deepEqual(outgoingAbsent.external, Object.freeze({
+        state: "none",
+        family: "recovery-source",
+        activeEndpointOrdinal: null,
+        current: seeded.value,
+        endpoints: Object.freeze([Object.freeze({
+          material: "database-run-binding",
+          role: "database",
+          policy: "database-atomic",
+          target: null,
+          expectedBytesBase64: canonicalFixtureRecordV1(Object.freeze({ state: "absent" })).toString("base64"),
+          publication: null,
+          writer: null,
+          database: Object.freeze({ state: "absent", expectedProjectionBase64: null, artifactCount: 0, laterArtifactCount: 0 }),
+        })]),
+      }), "the outgoing prepared arrow exposes only its observed absent database prefix");
+
+      const outgoingActiveInput = Object.freeze({ ...outgoingAbsentInput, databaseObservation: Object.freeze({ state: "active", workflowState: "resuming", ...runBinding }) });
+      const outgoingActiveResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(outgoingActiveInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(outgoingActiveResult.status, 0, outgoingActiveResult.stderr);
+      const outgoingActive = JSON.parse(outgoingActiveResult.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(outgoingActive.outcome, "returned", String(outgoingActive.message ?? ""));
+      const outgoingActiveExternal = outgoingActive.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: outgoingActiveExternal.state, family: outgoingActiveExternal.family, activeEndpointOrdinal: outgoingActiveExternal.activeEndpointOrdinal, current: outgoingActiveExternal.current },
+        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 0, current: seeded.value },
+      );
+      assert.deepEqual(outgoingActiveExternal.endpoints, Object.freeze([Object.freeze({
+        material: "database-run-binding",
+        role: "database",
+        policy: "database-atomic",
+        target: null,
+        expectedBytesBase64: canonicalFixtureRecordV1(runBinding).toString("base64"),
+        publication: null,
+        writer: null,
+        database: Object.freeze({ state: "current", expectedProjectionBase64: canonicalFixtureRecordV1(runBinding).toString("base64"), artifactCount: 1, laterArtifactCount: 0 }),
+      })]), "the active outgoing prefix binds only the exact persisted run without fabricating later terminal artifacts");
+
+      const crossedActiveInput = Object.freeze({ ...outgoingAbsentInput, databaseObservation: Object.freeze({ state: "active", workflowState: "completed", ...runBinding }) });
+      const crossedActiveResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(crossedActiveInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(crossedActiveResult.status, 0, crossedActiveResult.stderr);
+      const crossedActive = JSON.parse(crossedActiveResult.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(crossedActive.outcome, "threw");
+      assert.match(String(crossedActive.message), /recovery-source outgoing database observation is crossed/,
+        "an active disposition cannot smuggle a terminal workflow state into the outgoing prefix");
+
+      const source = readFileSync(observerSource, "utf8");
+      const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
+      const databaseEndpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1");
+      const externalObserver = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1");
+      const externalValidator = topLevelFunctionRegionV1(source, "requireExactPoisonPostVisibleExternalRawPublicationV1");
+      const decisive = topLevelFunctionRegionV1(source, "hasExactPoisonPostVisibleDecisiveExternalEndpointV1");
+      assert.match(atRoot, /incomingArrow[\s\S]*prior:\s*"pending-input"[\s\S]*next:\s*"prepared"[\s\S]*ordinal:\s*1[\s\S]*outgoingArrow[\s\S]*prior:\s*"prepared"[\s\S]*next:\s*"terminal"[\s\S]*ordinal:\s*2[\s\S]*new\s+Map[\s\S]*incomingCapability[\s\S]*outgoingCapability/,
+        "one retained prepared owner exposes distinct incoming and outgoing arrow capabilities");
+      assert.match(atRoot, /outgoingCapability[\s\S]*endpointCount:\s*1[\s\S]*observeDatabase:\s*observeOutgoingDatabase/,
+        "the outgoing prepared capability exposes only its exact observable database prefix");
+      assert.match(databaseEndpoint, /await\s+capability\.observeDatabase\(\)[\s\S]*capability\.assertStable\(\)[\s\S]*authority\.assertStable\(\)[\s\S]*capability\.databaseEndpoints\.get[\s\S]*databaseState\s*===\s*"absent"[\s\S]*state:\s*"absent"/,
+        "the database endpoint observes durable state before projecting absent or current evidence");
+      assert.match(externalObserver, /capability\.endpointCount[\s\S]*endpointDescriptors\.slice\(\s*0\s*,\s*capability\.endpointCount\s*\)[\s\S]*for\s*\(\s*const\s+endpointDescriptor\s+of\s+observedEndpointDescriptors\s*\)/,
+        "the outgoing reader never fabricates unobservable future terminal endpoints");
+      assert.match(externalValidator, /preparedRecoveryPrefix[\s\S]*value\.arrow\.ordinal\s*===\s*2[\s\S]*value\.current\.state\s*===\s*"prepared"[\s\S]*value\.endpoints\.length\s*===\s*1/,
+        "only the prepared outgoing recovery arrow admits the exact one-endpoint prefix");
+      assert.match(externalValidator, /successorVisible\s*=\s*!preparedRecoveryPrefix\s*&&\s*activeState\?\.decisive\s*===\s*true/,
+        "a partial outgoing prefix never impersonates terminal successor visibility");
+      assert.match(decisive, /expectedEndpointCount[\s\S]*value\.endpoints\.length\s*!==\s*expectedEndpointCount[\s\S]*return\s+false/,
+        "effect projection accepts only a complete external arrow as decisive");
     } finally {
       removeFixture(root);
     }

@@ -10866,6 +10866,7 @@ type ExactPoisonPostVisibleRecoveryEndpointCapabilityV1 = Readonly<{
   operationRef: string;
   operationHash: string;
   arrow: Readonly<{ prior: string; next: string; ordinal: number }>;
+  endpointCount: number;
   endpoints: ReadonlyMap<string, Readonly<{
     target: string;
     expectedBytes: Buffer;
@@ -10884,14 +10885,20 @@ type ExactPoisonPostVisibleRecoveryEndpointCapabilityV1 = Readonly<{
     }>;
   }>>;
   databaseEndpoints: ReadonlyMap<string, Buffer>;
-  observeDatabase: (() => Promise<void>) | null;
+  observeDatabase: (() => Promise<"absent" | "current">) | null;
   assertStable(): void;
 }>;
 
 const exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1 = new WeakMap<
   Readonly<Record<string, unknown>>,
-  ExactPoisonPostVisibleRecoveryEndpointCapabilityV1
+  ReadonlyMap<string, ExactPoisonPostVisibleRecoveryEndpointCapabilityV1>
 >();
+
+function exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(
+  arrow: Readonly<{ prior: string; next: string; ordinal: number }>,
+): string {
+  return `${arrow.ordinal}:${arrow.prior}:${arrow.next}`;
+}
 
 const EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 = Object.freeze({
   "pre-schema:0:absent:prepared": 6,
@@ -12104,13 +12111,16 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
         operationRef: operation.operationRef,
         operationHash: operation.operationHash,
         arrow: Object.freeze({ prior: "absent", next: "pending-input", ordinal: 0 }),
+        endpointCount: 3,
         endpoints,
         casEndpoints: new Map(),
         databaseEndpoints: new Map(),
         observeDatabase: null,
         assertStable,
       });
-      exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, capability);
+      exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, new Map<string, ExactPoisonPostVisibleRecoveryEndpointCapabilityV1>([
+        [exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(capability.arrow), capability],
+      ]));
       capabilityCurrent = value;
     }
     if (value.state === "prepared" || value.state === "terminal") {
@@ -12176,12 +12186,11 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
           cas: Object.freeze({ state: "Q3", route: "next", predecessorBytes, successorBytes, laterFixedCount: 0 }),
         })],
       ]);
-      const databaseEndpoints = new Map<string, Buffer>();
-      let observeDatabase: (() => Promise<void>) | null = null;
       const recoveryOperationAuthority = retainedRecoveryOperation;
       if (recoveryOperationAuthority === null) currentEntryFail("recovery-source database operation authority is absent");
       if (value.state === "prepared") {
-        databaseEndpoints.set("database-fence-reservations:database", task12ReceiptCanonicalBytesV1(Object.freeze({
+        const incomingDatabaseEndpoints = new Map<string, Buffer>();
+        incomingDatabaseEndpoints.set("database-fence-reservations:database", task12ReceiptCanonicalBytesV1(Object.freeze({
           ownerAdmissionFenceRef: recoveryOperationAuthority.ownerAdmissionFenceRef,
           ownerAdmissionFenceHash: recoveryOperationAuthority.ownerAdmissionFenceHash,
           targetSourceRunReservationRef: recoveryOperationAuthority.targetSourceRunReservationRef,
@@ -12190,25 +12199,82 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
           targetRunReservationHash: recoveryOperationAuthority.targetRunReservationHash,
           targetRunLaunchCompositeHash: recoveryOperationAuthority.targetRunLaunchCompositeHash,
         })));
-        let databaseObservation: Promise<void> | null = null;
-        observeDatabase = (): Promise<void> => {
+        let databaseObservation: Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> | null = null;
+        const observePersistedDatabase = (): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> => {
           if (databaseObservation !== null) return databaseObservation;
-          databaseObservation = (async (): Promise<void> => {
+          databaseObservation = (async (): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> => {
             const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
             const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
             if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source prepared database observer is unavailable");
             const observed = await (observer as (input: Readonly<{ recoveryOperationAuthority: ReturnType<typeof createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1> }>) => Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1>)({
               recoveryOperationAuthority: createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(recoveryOperationAuthority),
             });
-            if (!isPlainRecord(observed) || (observed.state !== "absent" && observed.state !== "active")) currentEntryFail("recovery-source prepared database observation is crossed");
-            if (observed.state === "active" && !new Set(["running", "resuming", "cancelling", "failing"]).has(String(observed.workflowState))) currentEntryFail("recovery-source prepared active database observation is crossed");
+            if (!isPlainRecord(observed) || !new Set(["absent", "active", "pair_closed", "released"]).has(String(observed.state))) currentEntryFail("recovery-source prepared database observation is crossed");
+            return observed;
           })();
           return databaseObservation;
         };
+        const observeIncomingDatabase = async (): Promise<"absent" | "current"> => {
+          const observed = await observePersistedDatabase();
+          if (observed.state === "absent") return "absent";
+          if (observed.state !== "active" || !new Set(["running", "resuming", "cancelling", "failing"]).has(String(observed.workflowState))) currentEntryFail("recovery-source prepared database observation is crossed");
+          return "current";
+        };
+        const outgoingDatabaseEndpoints = new Map<string, Buffer>();
+        const observeOutgoingDatabase = async (): Promise<"absent" | "current"> => {
+          const observed = await observePersistedDatabase();
+          if (observed.state === "absent") {
+            outgoingDatabaseEndpoints.set("database-run-binding:database", task12ReceiptCanonicalBytesV1(Object.freeze({ state: "absent" })));
+            return "absent";
+          }
+          if (
+            (observed.state !== "active" && observed.state !== "pair_closed" && observed.state !== "released")
+            || (observed.state === "active" && !new Set(["running", "resuming", "cancelling", "failing"]).has(String(observed.workflowState)))
+            || (observed.state !== "active" && !new Set(["running", "resuming", "cancelling", "failing", "completed", "failed", "cancelled"]).has(String(observed.workflowState)))
+            || !SHA256.test(observed.runId)
+            || !SHA256.test(observed.operationRunBindingHash)
+            || !SHA256.test(observed.reciprocalRunOperationBindingHash)
+          ) currentEntryFail("recovery-source outgoing database observation is crossed");
+          outgoingDatabaseEndpoints.set("database-run-binding:database", task12ReceiptCanonicalBytesV1(Object.freeze({
+            runId: observed.runId,
+            operationRunBindingHash: observed.operationRunBindingHash,
+            reciprocalRunOperationBindingHash: observed.reciprocalRunOperationBindingHash,
+          })));
+          return "current";
+        };
+        const incomingArrow = Object.freeze({ prior: "pending-input", next: "prepared", ordinal: 1 });
+        const outgoingArrow = Object.freeze({ prior: "prepared", next: "terminal", ordinal: 2 });
+        const incomingCapability = Object.freeze({
+          operationRef: operation.operationRef,
+          operationHash: operation.operationHash,
+          arrow: incomingArrow,
+          endpointCount: 6,
+          endpoints,
+          casEndpoints,
+          databaseEndpoints: incomingDatabaseEndpoints,
+          observeDatabase: observeIncomingDatabase,
+          assertStable,
+        });
+        const outgoingCapability = Object.freeze({
+          operationRef: operation.operationRef,
+          operationHash: operation.operationHash,
+          arrow: outgoingArrow,
+          endpointCount: 1,
+          endpoints: new Map(),
+          casEndpoints: new Map(),
+          databaseEndpoints: outgoingDatabaseEndpoints,
+          observeDatabase: observeOutgoingDatabase,
+          assertStable,
+        });
+        exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, new Map<string, ExactPoisonPostVisibleRecoveryEndpointCapabilityV1>([
+          [exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(incomingArrow), incomingCapability],
+          [exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(outgoingArrow), outgoingCapability],
+        ]));
       } else {
         const pairClose = retainedPairClose;
         const release = retainedRelease;
         if (pairClose === null || release === null) currentEntryFail("recovery-source terminal database authority is absent");
+        const databaseEndpoints = new Map<string, Buffer>();
         databaseEndpoints.set("database-run-binding:database", task12ReceiptCanonicalBytesV1(Object.freeze({
           runId: value.runId,
           operationRunBindingHash: value.operationRunBindingHash,
@@ -12216,10 +12282,10 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
         })));
         databaseEndpoints.set("database-target-close:database", task12ReceiptCanonicalBytesV1(pairClose));
         databaseEndpoints.set("database-fence-release:database", task12ReceiptCanonicalBytesV1(release));
-        let databaseObservation: Promise<void> | null = null;
-        observeDatabase = (): Promise<void> => {
+        let databaseObservation: Promise<"current"> | null = null;
+        const observeDatabase = (): Promise<"current"> => {
           if (databaseObservation !== null) return databaseObservation;
-          databaseObservation = (async (): Promise<void> => {
+          databaseObservation = (async (): Promise<"current"> => {
             const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
             const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
             if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source terminal database observer is unavailable");
@@ -12246,23 +12312,26 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
               || observed.sourceRunRef !== value.sourceRunRef
               || observed.sourceRunHash !== value.sourceRunHash
             ) currentEntryFail("recovery-source terminal database observation is crossed");
+            return "current";
           })();
           return databaseObservation;
         };
+        const arrow = Object.freeze({ prior: "prepared", next: "terminal", ordinal: 2 });
+        const capability = Object.freeze({
+          operationRef: operation.operationRef,
+          operationHash: operation.operationHash,
+          arrow,
+          endpointCount: 9,
+          endpoints,
+          casEndpoints,
+          databaseEndpoints,
+          observeDatabase,
+          assertStable,
+        });
+        exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, new Map<string, ExactPoisonPostVisibleRecoveryEndpointCapabilityV1>([
+          [exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow), capability],
+        ]));
       }
-      const capability = Object.freeze({
-        operationRef: operation.operationRef,
-        operationHash: operation.operationHash,
-        arrow: value.state === "prepared"
-          ? Object.freeze({ prior: "pending-input", next: "prepared", ordinal: 1 })
-          : Object.freeze({ prior: "prepared", next: "terminal", ordinal: 2 }),
-        endpoints,
-        casEndpoints,
-        databaseEndpoints,
-        observeDatabase,
-        assertStable,
-      });
-      exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, capability);
       capabilityCurrent = value;
     }
     assertStable();
@@ -12476,7 +12545,18 @@ function requireExactPoisonPostVisibleExternalRawPublicationV1(
   if (value.arrow === null || !hasExactKeys(value.arrow, ["prior", "next", "ordinal"]) || !Number.isInteger(value.arrow.ordinal) || value.arrow.ordinal < 0) currentEntryFail("external publication arrow is invalid");
   const arrowKey = `${value.family}:${value.arrow.ordinal}:${value.arrow.prior}:${value.arrow.next}`;
   const expectedEndpointCount = (EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 as Readonly<Record<string, number>>)[arrowKey];
-  if (expectedEndpointCount === undefined || value.endpoints.length !== expectedEndpointCount) currentEntryFail("external publication endpoint cardinality is invalid");
+  const preparedRecoveryPrefix = value.family === "recovery-source"
+    && value.arrow.ordinal === 2
+    && isPlainRecord(value.current)
+    && value.current.state === "prepared"
+    && value.endpoints.length === 1;
+  if (expectedEndpointCount === undefined || value.endpoints.length !== expectedEndpointCount && !preparedRecoveryPrefix) currentEntryFail("external publication endpoint cardinality is invalid");
+  const expectedEndpointDescriptors = EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[arrowKey];
+  if (expectedEndpointDescriptors === undefined) currentEntryFail("external publication endpoint descriptors are absent");
+  for (const [index, endpoint] of value.endpoints.entries()) {
+    const expected = expectedEndpointDescriptors[index];
+    if (expected === undefined || endpoint.material !== expected.material || endpoint.role !== expected.role || endpoint.policy !== expected.policy) currentEntryFail("external publication endpoint descriptor is crossed");
+  }
   const requireBuffer = (candidate: unknown, label: string): Buffer => {
     if (!Buffer.isBuffer(candidate)) currentEntryFail(`${label} bytes are invalid`);
     return candidate;
@@ -12804,7 +12884,7 @@ function requireExactPoisonPostVisibleExternalRawPublicationV1(
     return String(value.current.state);
   })();
   const activeState = value.activeEndpointOrdinal === null ? null : states[value.activeEndpointOrdinal]!;
-  const successorVisible = activeState?.decisive === true;
+  const successorVisible = !preparedRecoveryPrefix && activeState?.decisive === true;
   if (currentStage !== (successorVisible ? value.arrow.next : value.arrow.prior)) currentEntryFail("external current/arrow stage is crossed");
   return value;
 }
@@ -12818,6 +12898,8 @@ function hasExactPoisonPostVisibleDecisiveExternalEndpointV1(
 ): boolean {
   if (value.family === null) return value.state === "none" && value.activeEndpointOrdinal === null && value.endpoints.length === 0;
   if (value.family !== family || value.arrow?.ordinal !== ordinal || value.activeEndpointOrdinal !== value.endpoints.length - 1) return false;
+  const expectedEndpointCount = (EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 as Readonly<Record<string, number>>)[`${value.family}:${value.arrow.ordinal}:${value.arrow.prior}:${value.arrow.next}`];
+  if (expectedEndpointCount === undefined || value.endpoints.length !== expectedEndpointCount) return false;
   const endpoint = value.endpoints[value.activeEndpointOrdinal];
   if (endpoint === undefined) return false;
   if (isPlainRecord(endpoint.publication)) {
@@ -12901,7 +12983,9 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external Task12 operation is crossed");
   if (arrow.family === "recovery-source") {
-    const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+    const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
+      exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
+    );
     if (capability === undefined) currentEntryFail("external recovery-source physical endpoint authority is unavailable");
     capability.assertStable();
     if (
@@ -13155,7 +13239,9 @@ async function observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(
     });
   }
   if (arrow.family !== "recovery-source" || (arrow.ordinal !== 1 && arrow.ordinal !== 2) || current === null || endpointDescriptor.policy !== "database-atomic" || endpointDescriptor.role !== "database") currentEntryFail("external database endpoint authority is crossed");
-  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
+    exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
+  );
   if (capability === undefined || capability.observeDatabase === null) currentEntryFail("external database physical endpoint authority is unavailable");
   authority.assertStable();
   capability.assertStable();
@@ -13168,9 +13254,11 @@ async function observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(
     || capability.arrow.next !== arrow.next
     || capability.arrow.ordinal !== arrow.ordinal
   ) currentEntryFail("external database operation or arrow authority is crossed");
+  const databaseState = await capability.observeDatabase();
+  capability.assertStable();
+  authority.assertStable();
   const expectedBytes = capability.databaseEndpoints.get(`${endpointDescriptor.material}:${endpointDescriptor.role}`);
   if (expectedBytes === undefined) currentEntryFail("external database endpoint descriptor is absent");
-  await capability.observeDatabase();
   capability.assertStable();
   authority.assertStable();
   let closed = false;
@@ -13189,7 +13277,9 @@ async function observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(
     expectedBytes,
     publication: null,
     writer: null,
-    database: Object.freeze({ state: "current", expectedProjection: expectedBytes, artifactCount: 1, laterArtifactCount: 0 }),
+    database: databaseState === "absent"
+      ? Object.freeze({ state: "absent", expectedProjection: null, artifactCount: 0, laterArtifactCount: 0 })
+      : Object.freeze({ state: "current", expectedProjection: expectedBytes, artifactCount: 1, laterArtifactCount: 0 }),
     cas: null,
     assertStable,
     close(): void {
@@ -13207,7 +13297,9 @@ async function observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1
   endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
 ): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
   if (arrow.family !== "recovery-source" || current === null || endpointDescriptor.policy !== "expected-predecessor-cas") currentEntryFail("external expected-predecessor endpoint authority is crossed");
-  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
+    exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
+  );
   if (capability === undefined) currentEntryFail("external expected-predecessor physical endpoint authority is unavailable");
   authority.assertStable();
   capability.assertStable();
@@ -13334,6 +13426,16 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
   const arrowKey = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}`;
   const endpointDescriptors = EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[arrowKey];
   if (endpointDescriptors === undefined) currentEntryFail("external endpoint descriptor family is absent");
+  const observedEndpointDescriptors = arrow.family === "recovery-source" && current !== null
+    ? (() => {
+        const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
+          exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
+        );
+        if (capability === undefined) return endpointDescriptors;
+        if (!Number.isSafeInteger(capability.endpointCount) || capability.endpointCount < 1 || capability.endpointCount > endpointDescriptors.length) currentEntryFail("external recovery-source endpoint prefix authority is invalid");
+        return endpointDescriptors.slice(0, capability.endpointCount);
+      })()
+    : endpointDescriptors;
   if (EXACT_POISON_POST_VISIBLE_EXTERNAL_FIXED_ENDPOINT_BASENAMES_V1.length !== 9) currentEntryFail("external fixed endpoint catalog is crossed");
   let retainedEntryPair: Readonly<{ entryAuthorityRef: string; entryAuthorityHash: string }> | null = null;
   if (arrow.rawKind === "entry-authority") {
@@ -13381,7 +13483,7 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
   let transferred = false;
   let primary: unknown = null;
   try {
-    for (const endpointDescriptor of endpointDescriptors) {
+    for (const endpointDescriptor of observedEndpointDescriptors) {
       authority.assertStable();
       if (entryOwner !== null) entryOwner.assertStable();
       const endpointOrdinal = endpointDescriptor.endpointOrdinal;
