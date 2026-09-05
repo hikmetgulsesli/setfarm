@@ -463,8 +463,14 @@ describe("canonical run terminal owner", () => {
       "targetRunLaunchCompositeHash", "ownerAdmissionFenceRef", "ownerAdmissionFenceHash", "startIntentRef", "startIntentHash",
       "startOutboxRef", "startOutboxHash", "operationRef", "operationHash",
     ] as const) staticCheck(`reconstructed operation field ${field}`, () => assert.match(reconstructedOperation, new RegExp(`\\b${field}\\b`), `${field}: terminal H1 reconstruction retains the complete immutable recovery operation body`));
-    staticCheck("reconstructed operation input domains", () => assert.match(reconstructedOperation, /(?=[\s\S]*expectedRunContext)(?=[\s\S]*(?:ownerRows|activeFence|fence))(?=[\s\S]*(?:reservationRows|sourceReservation|runReservation))[\s\S]*/,
-      "terminal authority reconstruction cross-binds exact durable context, H1 fence, and both specialized reservations"));
+    staticCheck("reconstructed operation input domains", () => assert.match(reconstructedOperation, /(?=[\s\S]*expectedRunContext)(?=[\s\S]*(?:reservationRows|sourceReservation|runReservation))[\s\S]*/,
+      "terminal authority reconstruction cross-binds exact durable context and both specialized reservations"));
+    staticCheck("historical target fence reconstruction", () => {
+      assert.match(reconstructedOperation, /ownerAdmissionFenceRef:\s*expectedRunContext\.ownerAdmissionFenceRef[\s\S]*ownerAdmissionFenceHash:\s*expectedRunContext\.ownerAdmissionFenceHash/,
+        "the terminal barrier retains the target fence from the locked run context even after the live owner head advances");
+      assert.doesNotMatch(reconstructedOperation, /ownerAdmissionFence(?:Ref|Hash):\s*(?:owner|ownerRows|activeFence)/,
+        "a later live-head fence cannot replace the immutable target fence before historical projection");
+    });
     const operationAuthorityBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1\\(\\s*${reconstructedOperationAlias}\\s*\\)\\s*;`).exec(deliveryBarrier);
     staticCheck("operation authority constructor", () => assert.ok(operationAuthorityBinding,
       "the terminal adapter validates its reconstructed operation body/ref/hash through the same pure authority constructor as held resume"));
@@ -511,17 +517,19 @@ const currentEntryFail=(message:string):never=>{throw new Error(message)};
 const lockInternalProductionWorkflowRunInsertionFenceV1=async(sql:any)=>{if(sql!==g.__p4BarrierSql)throw new Error("BARRIER_LOCK_SQL_CROSSED");g.__p4BarrierEvents.push("lock")};
 const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=lockInternalProductionWorkflowRunInsertionFenceV1;
 const createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1=(value:any)=>{g.__p4BarrierEvents.push("authority");if(!same(value,g.__p4BarrierOperation))throw new Error("RECOVERY_SOURCE_BOOTSTRAP_OPERATION_AUTHORITY_CROSSED");g.__p4BarrierOperationAuthority=value;return value};
-const projectRecoverySourceBootstrapPersistenceRowsV1=(operation:any,ownerRows:any,reservationRows:any)=>{g.__p4BarrierEvents.push("project");if(operation!==g.__p4BarrierOperationAuthority||ownerRows!==g.__p4BarrierRows.ownerRows||reservationRows!==g.__p4BarrierRows.reservationRows)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_BARRIER_PROJECTION_CROSSED");return Object.freeze({ownerRows,reservationRows})};
+const projectRecoverySourceBootstrapPersistenceRowsV1=(operation:any,ownerRows:any,reservationRows:any)=>{g.__p4BarrierEvents.push("project");if(operation!==g.__p4BarrierOperationAuthority||ownerRows!==g.__p4BarrierRows.ownerRows||reservationRows!==g.__p4BarrierRows.reservationRows)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_BARRIER_PROJECTION_CROSSED");return g.__p4BarrierRows.projectedRows??Object.freeze({ownerRows,reservationRows})};
 const requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1=(input:any)=>{
   g.__p4BarrierEvents.push("validate");
-  if(input.recoveryOperationAuthority!==g.__p4BarrierOperationAuthority||input.ownerRows!==g.__p4BarrierRows.ownerRows||input.reservationRows!==g.__p4BarrierRows.reservationRows||input.expectedRunRows!==g.__p4BarrierRows.expectedRunRows||input.activeRunRows!==g.__p4BarrierRows.activeRunRows)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_BARRIER_ROWS_CROSSED");
+  const projected=g.__p4BarrierRows.projectedRows??g.__p4BarrierRows;
+  if(input.recoveryOperationAuthority!==g.__p4BarrierOperationAuthority||input.ownerRows!==projected.ownerRows||input.reservationRows!==projected.reservationRows||input.expectedRunRows!==g.__p4BarrierRows.expectedRunRows||input.activeRunRows!==g.__p4BarrierRows.activeRunRows)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_BARRIER_ROWS_CROSSED");
   const authority=input.recoveryOperationAuthority;
   if(input.ownerRows.length===1&&input.ownerRows[0].headVersion===3){
     if(input.ownerRows[0].headHash!=="3".repeat(64)||input.ownerRows[0].activeFenceRef!==authority.ownerAdmissionFenceRef||input.ownerRows[0].activeFenceHash!==authority.ownerAdmissionFenceHash||input.ownerRows[0].allAuthorityRows.length!==7||input.reservationRows.length!==2||input.reservationRows.some((row:any)=>row.state!=="closed")||input.expectedRunRows.length!==1||input.expectedRunRows[0].id!==g.__p4BarrierInput.runId||input.expectedRunRows[0].context!==g.__p4BarrierInput.runContext||input.activeRunRows.length!==1||input.activeRunRows[0]!==input.expectedRunRows[0])throw new Error("RECOVERY_SOURCE_BOOTSTRAP_PAIR_CLOSED_OWNER_CROSSED");
     return {state:"pair_closed",workflowState:input.expectedRunRows[0].status,runId:g.__p4BarrierInput.runId,operationRunBindingHash:g.__p4BarrierContext.operationRunBindingHash,reciprocalRunOperationBindingHash:g.__p4BarrierContext.reciprocalRunOperationBindingHash,terminalOwnerRef:"setfarm://tests/p4/terminal-owner",terminalOwnerHash:"0".repeat(64),terminalSourceRunRef:"setfarm://tests/p4/terminal-source",terminalSourceRunHash:"1".repeat(64),terminalRunLaunchRef:"setfarm://tests/p4/terminal-run",terminalRunLaunchHash:"2".repeat(64),targetReservationPairCloseRef:"setfarm://tests/p4/pair-close",targetReservationPairCloseHash:"3".repeat(64)};
   }
   if(input.ownerRows.length===1&&input.ownerRows[0].headVersion===4){
-    if(input.ownerRows[0].activeFenceRef!==null||input.ownerRows[0].activeFenceHash!==null||input.ownerRows[0].allAuthorityRows.length!==8||input.reservationRows.length!==2||input.reservationRows.some((row:any)=>row.state!=="closed")||input.expectedRunRows.length!==1||input.expectedRunRows[0].id!==g.__p4BarrierInput.runId||input.expectedRunRows[0].context!==g.__p4BarrierInput.runContext||input.activeRunRows.length!==1||input.activeRunRows[0]!==input.expectedRunRows[0])throw new Error("RECOVERY_SOURCE_BOOTSTRAP_CLOSED_OWNER_CROSSED");
+    const matchingActiveRuns=input.activeRunRows.filter((row:any)=>row.id===g.__p4BarrierInput.runId);
+    if(input.ownerRows[0].activeFenceRef!==null||input.ownerRows[0].activeFenceHash!==null||input.ownerRows[0].allAuthorityRows.length!==8||input.reservationRows.length!==2||input.reservationRows.some((row:any)=>row.state!=="closed")||input.expectedRunRows.length!==1||input.expectedRunRows[0].id!==g.__p4BarrierInput.runId||input.expectedRunRows[0].context!==g.__p4BarrierInput.runContext||matchingActiveRuns.length!==1||matchingActiveRuns[0]!==input.expectedRunRows[0])throw new Error("RECOVERY_SOURCE_BOOTSTRAP_CLOSED_OWNER_CROSSED");
     return {state:"released",workflowState:input.expectedRunRows[0].status,runId:g.__p4BarrierInput.runId,operationRunBindingHash:g.__p4BarrierContext.operationRunBindingHash,reciprocalRunOperationBindingHash:g.__p4BarrierContext.reciprocalRunOperationBindingHash,terminalOwnerRef:"setfarm://tests/p4/terminal-owner",terminalOwnerHash:"0".repeat(64),terminalSourceRunRef:"setfarm://tests/p4/terminal-source",terminalSourceRunHash:"1".repeat(64),terminalRunLaunchRef:"setfarm://tests/p4/terminal-run",terminalRunLaunchHash:"2".repeat(64),targetReservationPairCloseRef:"setfarm://tests/p4/pair-close",targetReservationPairCloseHash:"3".repeat(64),fenceReleaseRef:"setfarm://tests/p4/release",fenceReleaseHash:"4".repeat(64),sourceRunRef:"setfarm://tests/p4/receipt",sourceRunHash:"5".repeat(64)};
   }
   if(input.ownerRows.length!==1||input.ownerRows[0].headVersion!==1||input.ownerRows[0].headHash!==authority.ownerAdmissionFenceHash||input.ownerRows[0].activeFenceRef!==authority.ownerAdmissionFenceRef||input.ownerRows[0].activeFenceHash!==authority.ownerAdmissionFenceHash)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_BOUND_OWNER_HEAD_CROSSED");
@@ -599,16 +607,16 @@ ${barrier}
       const crossedContextRun = Object.freeze({ ...run, context: JSON.stringify({ ...context, buildHash: sha("9") }) });
       for (const crossed of [
         Object.freeze({ label: "context", expectedEvents: Object.freeze(["lock"]), rows: Object.freeze({ ...baseRows, expectedRunRows: Object.freeze([crossedContextRun]), activeRunRows: Object.freeze([crossedContextRun]) }) }),
-        Object.freeze({ label: "fence", expectedEvents: Object.freeze(["lock", "authority"]), rows: Object.freeze({ ...baseRows, ownerRows: Object.freeze([Object.freeze({ ...ownerRows[0]!, activeFenceHash: sha("9") })]) }) }),
+        Object.freeze({ label: "fence", expectedEvents: Object.freeze(["lock", "authority", "project", "validate"]), rows: Object.freeze({ ...baseRows, ownerRows: Object.freeze([Object.freeze({ ...ownerRows[0]!, activeFenceHash: sha("9") })]) }) }),
         Object.freeze({ label: "reservation", expectedEvents: Object.freeze(["lock", "authority"]), rows: Object.freeze({ ...baseRows, reservationRows: Object.freeze([Object.freeze({ ...reservationRows[0]!, reservationHash: sha("9") }), reservationRows[1]!]) }) }),
       ]) {
         const result = await execute(crossed.rows);
         runtimeCheck(`crossed H1 ${crossed.label}`, () => {
           assert.equal(result.outcome, "threw", `${crossed.label}: crossed locked H1 evidence is terminal`);
           assert.deepEqual(result.events, crossed.expectedEvents,
-            `${crossed.label}: caller/SQL context is rejected before reconstruction, while fence/reservation crossings are rejected by the reconstructed retained pair`);
-          assert.equal(result.events.includes("project") || result.events.includes("validate"), false,
-            `${crossed.label}: no crossed H1 input reaches row projection or pure classification`);
+            `${crossed.label}: caller/SQL context and reservation crossings fail before projection, while the live-head fence alias is authenticated by the scoped pure classifier`);
+          assert.equal(crossed.label === "fence" || (!result.events.includes("project") && !result.events.includes("validate")), true,
+            `${crossed.label}: only a crossed live-head alias reaches scoped projection; crossed operation inputs do not`);
           assert.doesNotMatch(String(result.message), /RECOVERY_SOURCE_BOOTSTRAP_DELIVERY_PENDING$/,
             `${crossed.label}: corruption remains primary over the valid delivery-pending disposition`);
           assert.doesNotMatch(String(result.message), /BARRIER_WRITE_ATTEMPTED/,
@@ -676,6 +684,36 @@ ${barrier}
         assert.equal(h4.outcome, "returned", `exact H4 closed owner bypasses the H1 barrier (${String(h4.message)})`);
         assert.deepEqual(h4.events, ["lock", "authority", "project", "validate"],
           "H4 returns only after the same raw-row enrichment and pure released classification");
+      });
+      const laterActiveRun = Object.freeze({
+        ...run,
+        id: sha("7"),
+        runId: sha("7"),
+        context: JSON.stringify(Object.freeze({ schema: "setfarm.workflow-run-context.v1", task: "later legitimate run" })),
+      });
+      const laterOwnerRows = Object.freeze([Object.freeze({
+        ...h4Rows.ownerRows[0]!,
+        headVersion: 5,
+        headHash: sha("8"),
+        activeFenceRef: "setfarm://tests/p4/later-fence",
+        activeFenceHash: sha("9"),
+        allAuthorityRows: Object.freeze([
+          ...h4AuthorityRows,
+          Object.freeze({ authorityRef: "setfarm://tests/p4/later-fence", authorityHash: sha("9"), authorityKind: "fence", predecessorHeadHash: sha("4"), successorHeadHash: sha("8") }),
+        ]),
+      })]);
+      const historicalH4Rows = Object.freeze({
+        ownerRows: laterOwnerRows,
+        reservationRows: h4Rows.reservationRows,
+        expectedRunRows: h4Rows.expectedRunRows,
+        activeRunRows: Object.freeze([run, laterActiveRun]),
+        projectedRows: Object.freeze({ ownerRows: h4Rows.ownerRows, reservationRows: h4Rows.reservationRows }),
+      });
+      const historicalH4 = await execute(historicalH4Rows);
+      runtimeCheck("historical H4 with later active run", () => {
+        assert.equal(historicalH4.outcome, "returned", `the pre-mutation barrier terminalizes the exact released recovery run after later owner activity (${String(historicalH4.message)})`);
+        assert.deepEqual(historicalH4.events, ["lock", "authority", "project", "validate"],
+          "the barrier reconstructs the target fence from the locked run context before the raw projector scopes historical H4");
       });
       for (const crossedH4 of [
         Object.freeze({ ...h4Rows, ownerRows: Object.freeze([Object.freeze({ ...h4Rows.ownerRows[0]!, allAuthorityRows: Object.freeze(h4AuthorityRows.slice(0, 7)) })]) }),

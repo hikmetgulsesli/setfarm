@@ -22630,8 +22630,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the shared validator authenticates each reservation self-hash and bound canonical identity");
     assert.match(sharedValidatorRegion, /allAuthorityRows[\s\S]*(?:authorityBody|authority_body)[\s\S]*(?:bindingBody|validatedBound)[\s\S]*(?:predecessorHeadHash|predecessor_head_hash)[\s\S]*(?:successorHeadHash|successor_head_hash)[\s\S]*(?:headHash|ownerAdmissionHeadHash)/,
       "the shared validator binds every unfiltered authority body to its exact H1 self-loop");
-    assert.match(sharedValidatorRegion, /(?:unrelatedAuthority|unexpectedAuthority)[\s\S]*(?:unrelatedOwner|unexpectedOwner)[\s\S]*(?:unrelatedActiveRun|unexpectedActiveRun)[\s\S]*(?:currentEntryFail|throw)/,
-      "the shared validator fails closed on unfiltered unrelated authorities, owners, and active runs");
+    assert.match(sharedValidatorRegion, /(?:unrelatedAuthority|unexpectedAuthority)[\s\S]*(?:unrelatedOwner|unexpectedOwner)[\s\S]*allAuthorityRows\.length[\s\S]*(?:currentEntryFail|fail|throw)/,
+      "the shared validator always fails closed on unfiltered unrelated authorities and owners");
+    assert.match(sharedValidatorRegion, /matchingActiveRuns[\s\S]*length\s*!==?\s*1[\s\S]*(?:same|equal)[\s\S]*!terminalReleased[\s\S]*input\.activeRunRows\.length\s*!==?\s*1[\s\S]*(?:currentEntryFail|fail|throw)/,
+      "an active recovery run is exactly present and byte-equal, while unrelated active work is tolerated only after its H4 release");
+    assert.match(sharedValidatorRegion, /input\.activeRunRows\.some[\s\S]*(?:runId|id)[\s\S]*expectedRunId[\s\S]*!terminalReleased[\s\S]*(?:unrelatedActiveRun|unexpectedActiveRun)[\s\S]*(?:currentEntryFail|fail|throw)/,
+      "a terminal recovery run is absent from the active census and unrelated active work is tolerated only after its H4 release");
     assert.match(sharedValidatorRegion, /state:\s*["']active["'][\s\S]*workflowState:\s*(?:expectedRun|run)\.(?:state|status)[\s\S]*runId:[\s\S]*operationRunBindingHash:[\s\S]*reciprocalRunOperationBindingHash:/,
       "the shared validator returns one explicit active discriminant plus the exact workflow state and authenticated recovery triple");
     assert.match(sharedValidatorSource, /state:\s*["']released["'][\s\S]*workflowState:\s*["']running["']\s*\|\s*["']resuming["']\s*\|\s*["']cancelling["']\s*\|\s*["']failing["']\s*\|\s*["']completed["']\s*\|\s*["']failed["']\s*\|\s*["']cancelled["'][\s\S]*terminalOwnerRef:\s*string[\s\S]*terminalOwnerHash:\s*string[\s\S]*terminalSourceRunRef:\s*string[\s\S]*terminalSourceRunHash:\s*string[\s\S]*terminalRunLaunchRef:\s*string[\s\S]*terminalRunLaunchHash:\s*string[\s\S]*targetReservationPairCloseRef:\s*string[\s\S]*targetReservationPairCloseHash:\s*string[\s\S]*fenceReleaseRef:\s*string[\s\S]*fenceReleaseHash:\s*string[\s\S]*sourceRunRef:\s*string[\s\S]*sourceRunHash:\s*string/,
@@ -23465,12 +23469,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       released(terminalPersisted.expectedCompletedRun),
       "a terminal recovery run with exact historical H4 remains released after a later legitimate run becomes active",
     );
-    assert.throws(() => requirePersistence(terminalInput(Object.freeze({
+    const historicalActiveReleasedRows = Object.freeze({
       ...terminalPersisted.queryRows,
       "expected-run": Object.freeze([terminalPersisted.expectedFailingRun]),
       "active-runs": Object.freeze([terminalPersisted.expectedFailingRun, terminalPersisted.unrelatedRun]),
-    }), "prepared")), /active|run|unrelated|owner/i,
-    "historical H4 cannot hide an unrelated active run while the recovery run itself remains active");
+    });
+    assert.deepEqual(
+      requirePersistence(terminalInput(historicalActiveReleasedRows, "prepared")),
+      released(terminalPersisted.expectedFailingRun),
+      "an active recovery run with exact historical H4 remains terminalizable while a later legitimate run is also active",
+    );
     assert.throws(() => requirePersistence(Object.freeze({ ...input(persisted.queryRows), recoveryState: "terminal" })), /state|phase|H1|bound|owner/i,
       "a bound H1 authority inventory cannot be consumed under the terminal/H4 recovery discriminant");
 

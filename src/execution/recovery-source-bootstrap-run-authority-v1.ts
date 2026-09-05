@@ -977,7 +977,14 @@ export function requireExactInternalProductionRecoverySourceBootstrapRunPersiste
     ) fail("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_ACTIVE_RUN_INVALID");
   } else {
     if (!activeStates.has(validatedRun.workflowState)) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_STATE_INVALID");
-    if (input.activeRunRows.length !== 1 || !same(input.activeRunRows[0], input.expectedRunRows[0])) {
+    const matchingActiveRuns = input.activeRunRows.filter((candidate) => (
+      String(candidate.runId ?? candidate.id) === expectedRunId
+    ));
+    if (
+      matchingActiveRuns.length !== 1
+      || !same(matchingActiveRuns[0], input.expectedRunRows[0])
+      || (!terminalReleased && input.activeRunRows.length !== 1)
+    ) {
       fail("RECOVERY_SOURCE_BOOTSTRAP_BOUND_ACTIVE_RUN_INVALID");
     }
   }
