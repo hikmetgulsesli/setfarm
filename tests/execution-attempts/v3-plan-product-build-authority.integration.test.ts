@@ -3,6 +3,11 @@ import fs from "node:fs";
 import { test } from "node:test";
 
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
@@ -160,12 +165,28 @@ test("atomic PLAN completion persists exact build and behavior authority", async
         'feature-dev_designer', 2, '', '', 'waiting', 'single', 0, 3
       )
     `;
-    const claimRows = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'plan', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
+    const claimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-single-runtime-v1",
+        rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "plan",
+        storyId: null,
+        claimAgentId,
+        claimedAt: new Date("2026-07-21T17:59:00.000Z"),
+      });
+    });
+    const boundClaimOwners = await database.sql<Array<{ state: string }>>`
+      SELECT state FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(claimId)}
     `;
-    const claimId = claimRows[0]!.id;
+    assert.deepEqual(boundClaimOwners.map((row) => row.state), ["bound"]);
     const sessions = createRuntimeSessionRepository(database.sql);
     const session = await sessions.reserve({
       sessionId: "RTS_v3-plan-product-build-0001",
@@ -303,6 +324,11 @@ test("atomic PLAN completion persists exact build and behavior authority", async
     );
     assert.equal(row.behavior_contract, expected.runtimeBehaviorCanonicalBytes);
     assert.equal(row.behavior_contract_hash, expected.runtimeBehaviorContract.contractHash);
+    const closedClaimOwners = await database.sql<Array<{ state: string }>>`
+      SELECT state FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(claimId)}
+    `;
+    assert.deepEqual(closedClaimOwners.map((entry) => entry.state), ["closed"]);
     assert.equal(row.semantics_version, "v2");
     assert.equal(row.product_spec_schema, "setfarm.product-spec.v2");
     assert.equal(

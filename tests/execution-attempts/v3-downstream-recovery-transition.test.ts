@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import {
   computeEvidenceBundleHash,
   computeObservationRef,
@@ -9,6 +10,10 @@ import {
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { evaluateOperationalFailureCauseAuthorityV1 } from "../../src/execution/operational-failure-cause-authority-v1.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
@@ -104,13 +109,39 @@ describe("v3 downstream recovery transition", () => {
                  'https://github.com/example/project/pull/1', 'merged')`,
       [storyDbId, runId, slice.storyId],
     );
-    const parentRows = await database.sql.unsafe<Array<{ id: string }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-       VALUES ($1, 'qa-test', NULL, 'qa-tester', $2)
-       RETURNING id::text`,
-      [runId, new Date("2026-07-13T09:59:00.000Z")],
-    );
-    const parentClaimId = Number(parentRows[0]!.id);
+    const parentClaimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-single-runtime-v1",
+        rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "qa-test",
+        storyId: null,
+        claimAgentId: "qa-tester",
+        claimedAt: new Date("2026-07-13T09:59:00.000Z"),
+      });
+    }) as number;
+    const parentOwners = await database.sql<Array<{
+      producer_implementation_id: string;
+      category: string;
+      owner_key: string;
+      state: string;
+    }>>`
+      SELECT producer_implementation_id, category, owner_key, state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(parentClaimId)}
+    `;
+    assert.deepEqual(parentOwners.map((row) => ({ ...row })), [{
+      producer_implementation_id: "a-claim-single-runtime-v1",
+      category: "claim",
+      owner_key: String(parentClaimId),
+      state: "bound",
+    }]);
     const envelope = ClaimEnvelopeV1Schema.parse({
       schema: "setfarm.claim-envelope.v1",
       protocol: "v3",
@@ -333,6 +364,7 @@ describe("v3 downstream recovery transition", () => {
       qa_status: string;
       final_status: string;
       parent_outcome: string;
+      parent_owner_state: string;
       run_context: string;
       qa_fix_count: number;
       delivery_state: string;
@@ -346,6 +378,7 @@ describe("v3 downstream recovery transition", () => {
               qa.status AS qa_status,
               final.status AS final_status,
               parent.outcome AS parent_outcome,
+              parent_owner.state AS parent_owner_state,
               run_row.context AS run_context,
               (SELECT COUNT(*)::integer FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%') AS qa_fix_count,
               delivery.state AS delivery_state
@@ -354,6 +387,8 @@ describe("v3 downstream recovery transition", () => {
          JOIN steps qa ON qa.id = $3
          JOIN steps final ON final.id = $4
          JOIN claim_log parent ON parent.id = $5
+         JOIN internal_production_owner_reservations_v1 parent_owner
+           ON parent_owner.category = 'claim' AND parent_owner.owner_key = parent.id::text
          JOIN runs run_row ON run_row.id = $1
          JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id = $6
         WHERE story.id = $7`,
@@ -377,6 +412,7 @@ describe("v3 downstream recovery transition", () => {
       qa_status: "waiting",
       final_status: "waiting",
       parent_outcome: "completed",
+      parent_owner_state: "closed",
       run_context: JSON.stringify(value.context),
       qa_fix_count: 0,
       delivery_state: "authorized",
@@ -438,6 +474,7 @@ describe("v3 downstream recovery transition", () => {
       run_status: string;
       qa_status: string;
       parent_outcome: string;
+      parent_owner_state: string;
       story_status: string;
       story_retry_count: number;
       scope_files: string;
@@ -452,6 +489,7 @@ describe("v3 downstream recovery transition", () => {
       `SELECT run_row.status AS run_status,
               qa.status AS qa_status,
               parent.outcome AS parent_outcome,
+              parent_owner.state AS parent_owner_state,
               story.status AS story_status,
               story.retry_count AS story_retry_count,
               story.scope_files,
@@ -467,6 +505,8 @@ describe("v3 downstream recovery transition", () => {
          FROM runs run_row
          JOIN steps qa ON qa.id = $2
          JOIN claim_log parent ON parent.id = $3
+         JOIN internal_production_owner_reservations_v1 parent_owner
+           ON parent_owner.category = 'claim' AND parent_owner.owner_key = parent.id::text
          JOIN stories story ON story.id = $4
          JOIN run_termination_requests termination ON termination.run_id = run_row.id
         WHERE run_row.id = $1`,
@@ -484,6 +524,7 @@ describe("v3 downstream recovery transition", () => {
       run_status: "failing",
       qa_status: "failed",
       parent_outcome: "failed",
+      parent_owner_state: "closed",
       story_status: "done",
       story_retry_count: 0,
       scope_files: '["src/App.tsx"]',

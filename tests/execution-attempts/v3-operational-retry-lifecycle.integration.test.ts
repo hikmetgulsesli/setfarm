@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import {
   createOperationalRetryDirectiveV1,
   parseOperationalRetryDirectiveStoryOutput,
@@ -11,6 +16,46 @@ import {
   terminalizeOperationalRetryExhaustionInTransaction,
 } from "../../src/execution/operational-retry-transition.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+type TestDatabase = Awaited<ReturnType<typeof createIsolatedTestDatabase>>;
+
+async function insertOwnedLoopClaim(
+  database: TestDatabase,
+  input: Readonly<{ runId: string; storyId: string; agentId: string }>,
+): Promise<number> {
+  return database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: "implement",
+      storyId: input.storyId,
+      claimAgentId: input.agentId,
+      claimedAt: new Date("2026-07-13T12:00:00.000Z"),
+    });
+  }) as Promise<number>;
+}
+
+async function ownerStates(
+  database: TestDatabase,
+  claimId: number,
+  attemptId?: string,
+): Promise<Array<{ category: string; state: string }>> {
+  const rows = await database.sql<Array<{ category: string; state: string }>>`
+    SELECT category, state
+      FROM internal_production_owner_reservations_v1
+     WHERE (category = 'claim' AND owner_key = ${String(claimId)})
+        OR (category = 'execution-attempt' AND owner_key = ${attemptId ?? ""})
+     ORDER BY category
+  `;
+  return rows.map((row) => ({ ...row }));
+}
 
 test("one terminal product attempt authorizes one concurrency-fenced infrastructure retry", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
@@ -52,18 +97,14 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
         'running', ${agentId}, 1
       )
     `;
-    const firstClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-      VALUES (${runId}, 'implement', ${storyId}, ${agentId}, NOW())
-      RETURNING id::integer AS id
-    `;
+    const firstClaimId = await insertOwnedLoopClaim(database, { runId, storyId, agentId });
     let identity = 0;
     const attempts = createAttemptRepository(database.sql, {
       attemptId: () => `ATT_v3-operational-retry-${String(++identity).padStart(4, "0")}`,
       fenceToken: () => String(identity).padStart(64, "0"),
     });
     const first = await attempts.reserve({
-      claimId: firstClaims[0]!.id,
+      claimId: firstClaimId,
       runId,
       stepId: "implement",
       storyId,
@@ -76,15 +117,19 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
       agentId,
       branch: "run-operational-retry-us-001",
       worktree: "/tmp/run-operational-retry-us-001",
-      evidenceRefs: [`setfarm://claim-log/${firstClaims[0]!.id}`],
+      evidenceRefs: [`setfarm://claim-log/${firstClaimId}`],
     });
     assert.equal(first.status, "reserved");
+    assert.deepEqual(await ownerStates(database, firstClaimId, first.attempt.attemptId), [
+      { category: "claim", state: "bound" },
+      { category: "execution-attempt", state: "bound" },
+    ]);
     const directive = createOperationalRetryDirectiveV1({
       runId,
       stepId: "implement",
       storyId,
       priorAttempt: {
-        claimId: firstClaims[0]!.id,
+        claimId: firstClaimId,
         attemptId: first.attempt.attemptId,
         generation: first.attempt.generation,
         attemptClass: "product_implementation",
@@ -103,7 +148,7 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
     await assert.rejects(
       database.sql.begin((transaction) =>
         publishOperationalRetryDirectiveInTransaction(transaction, {
-          claimId: firstClaims[0]!.id,
+          claimId: firstClaimId,
           attemptId: first.attempt.attemptId,
           attemptGeneration: first.attempt.generation,
           runId,
@@ -129,7 +174,7 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
         FROM claim_log claim
         JOIN execution_attempts attempt ON attempt.claim_id = claim.id
         JOIN stories story ON story.run_id = claim.run_id AND story.story_id = claim.story_id
-       WHERE claim.id = ${firstClaims[0]!.id}
+       WHERE claim.id = ${firstClaimId}
     `;
     assert.deepEqual({ ...rolledBack[0]! }, {
       claim_outcome: null,
@@ -137,9 +182,13 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
       story_status: "running",
       story_output: null,
     });
+    assert.deepEqual(await ownerStates(database, firstClaimId, first.attempt.attemptId), [
+      { category: "claim", state: "bound" },
+      { category: "execution-attempt", state: "bound" },
+    ]);
     const terminal = await database.sql.begin((transaction) =>
       publishOperationalRetryDirectiveInTransaction(transaction, {
-        claimId: firstClaims[0]!.id,
+        claimId: firstClaimId,
         attemptId: first.attempt.attemptId,
         attemptGeneration: first.attempt.generation,
         runId,
@@ -154,6 +203,10 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
     );
     assert.equal(terminal.status, "closed");
     assert.equal(terminal.attemptDisposition, "inconclusive");
+    assert.deepEqual(await ownerStates(database, firstClaimId, first.attempt.attemptId), [
+      { category: "claim", state: "closed" },
+      { category: "execution-attempt", state: "closed" },
+    ]);
     const publishedStates = await database.sql<Array<{
       story_status: string;
       claimed_by: string | null;
@@ -195,13 +248,9 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
          SET status = 'running', current_story_id = 'story-v3-operational-retry'
        WHERE id = 'step-v3-operational-retry'
     `;
-    const secondClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-      VALUES (${runId}, 'implement', ${storyId}, ${agentId}, NOW())
-      RETURNING id::integer AS id
-    `;
+    const secondClaimId = await insertOwnedLoopClaim(database, { runId, storyId, agentId });
     const retryReservation = {
-      claimId: secondClaims[0]!.id,
+      claimId: secondClaimId,
       runId,
       stepId: "implement",
       storyId,
@@ -220,7 +269,7 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
       branch: "run-operational-retry-us-001",
       worktree: "/tmp/run-operational-retry-us-001",
       evidenceRefs: [
-        `setfarm://claim-log/${secondClaims[0]!.id}`,
+        `setfarm://claim-log/${secondClaimId}`,
         `setfarm://operational-retry/${directive.directiveHash}`,
       ],
     };
@@ -240,6 +289,10 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
     ]);
     assert.deepEqual(raced.map((item) => item.status).sort(), ["active_conflict", "reserved"]);
     const retry = raced.find((item) => item.status === "reserved")!.attempt;
+    assert.deepEqual(await ownerStates(database, secondClaimId, retry.attemptId), [
+      { category: "claim", state: "bound" },
+      { category: "execution-attempt", state: "bound" },
+    ]);
     assert.equal(retry.attemptClass, "infrastructure_retry");
     assert.equal(retry.generation, first.attempt.generation + 1);
     assert.deepEqual(retry.sourceBefore, first.attempt.sourceBefore);
@@ -247,7 +300,7 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
     const exhaustedDiagnostic = "SCOPE_WRITE_VIOLATION: fallback escaped its exact implementation slice";
     const exhausted = await database.sql.begin((transaction) =>
       terminalizeOperationalRetryExhaustionInTransaction(transaction, {
-        claimId: secondClaims[0]!.id,
+        claimId: secondClaimId,
         attemptId: retry.attemptId,
         attemptGeneration: retry.generation,
         runId,
@@ -262,6 +315,10 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
     );
     assert.equal(exhausted.status, "closed");
     assert.equal(exhausted.attemptDisposition, "failed");
+    assert.deepEqual(await ownerStates(database, secondClaimId, retry.attemptId), [
+      { category: "claim", state: "closed" },
+      { category: "execution-attempt", state: "closed" },
+    ]);
 
     const rows = await database.sql<Array<{
       attempt_class: string;
@@ -308,22 +365,21 @@ test("one terminal product attempt authorizes one concurrency-fenced infrastruct
       current_story_id: null,
     });
 
-    const forbiddenClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-      VALUES (${runId}, 'implement', ${storyId}, ${agentId}, NOW())
-      RETURNING id::integer AS id
-    `;
+    const forbiddenClaimId = await insertOwnedLoopClaim(database, { runId, storyId, agentId });
     await assert.rejects(
       attempts.reserve({
         ...retryReservation,
-        claimId: forbiddenClaims[0]!.id,
+        claimId: forbiddenClaimId,
         evidenceRefs: [
-          `setfarm://claim-log/${forbiddenClaims[0]!.id}`,
+          `setfarm://claim-log/${forbiddenClaimId}`,
           `setfarm://operational-retry/${directive.directiveHash}`,
         ],
       }),
       /ATTEMPT_PREDECESSOR_FENCE_INVALID/,
     );
+    assert.deepEqual(await ownerStates(database, forbiddenClaimId), [
+      { category: "claim", state: "bound" },
+    ]);
   } finally {
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;

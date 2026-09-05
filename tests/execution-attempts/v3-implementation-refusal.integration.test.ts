@@ -6,8 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import {
   createV3ImplementationClaimHandoffV1,
   createV3ImplementationContextV1,
@@ -34,6 +39,7 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
   const repo = path.join(root, "repo");
   const previousPgUrl = process.env.SETFARM_PG_URL;
   let database: Awaited<ReturnType<typeof createIsolatedTestDatabase>> | undefined;
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
     fs.mkdirSync(path.join(repo, "src"), { recursive: true });
     const originalSource = "export const App = () => 'sealed';\n";
@@ -45,6 +51,8 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
     git(repo, ["commit", "-qm", "sealed source"]);
 
     database = await createIsolatedTestDatabase();
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const { handleV3ImplementationRefusal } = await import("../../src/recovery/v3-implementation-refusal.js");
     const sourceBefore = await captureShadowSourceRevision(repo);
     const values = buildMinimalValidContracts();
@@ -117,12 +125,23 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
         'running', ${agentId}, 1, 0, 3
       )
     `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-      VALUES (${runId}, 'implement', ${slice.storyId}, ${agentId}, NOW())
-      RETURNING id::integer AS id
-    `;
-    const claimId = claims[0]!.id;
+    const claimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-loop-runtime-v1",
+        rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "implement",
+        storyId: slice.storyId,
+        claimAgentId: agentId,
+        claimedAt: new Date("2026-07-13T12:00:00.000Z"),
+      });
+    }) as number;
     const attempts = createAttemptRepository(database.sql, {
       attemptId: () => "ATT_v3-refusal-pg-native-0001",
       fenceToken: () => "7".repeat(64),
@@ -145,6 +164,17 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
     });
     assert.equal(reserved.status, "reserved");
     const attempt = reserved.attempt;
+    const boundOwners = await database.sql<Array<{ category: string; owner_key: string; state: string }>>`
+      SELECT category, owner_key, state
+        FROM internal_production_owner_reservations_v1
+       WHERE (category = 'claim' AND owner_key = ${String(claimId)})
+          OR (category = 'execution-attempt' AND owner_key = ${attempt.attemptId})
+       ORDER BY category
+    `;
+    assert.deepEqual(boundOwners.map((row) => ({ ...row })), [
+      { category: "claim", owner_key: String(claimId), state: "bound" },
+      { category: "execution-attempt", owner_key: attempt.attemptId, state: "bound" },
+    ]);
     const handoff = createV3ImplementationClaimHandoffV1({
       schema: "setfarm.v3-implementation-claim-handoff.v1",
       protocol: "v3",
@@ -229,6 +259,8 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
       step_status: string;
       current_story_id: string | null;
       verify_status: string;
+      claim_owner_state: string;
+      attempt_owner_state: string;
     }>>`
       SELECT cl.outcome AS claim_outcome,
              ea.disposition AS attempt_disposition,
@@ -236,7 +268,11 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
              st.claimed_by AS story_claimed_by,
              impl.status AS step_status,
              impl.current_story_id,
-             verify.status AS verify_status
+             verify.status AS verify_status,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = cl.id::text) AS claim_owner_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'execution-attempt' AND owner_key = ea.attempt_id) AS attempt_owner_state
         FROM claim_log cl
         JOIN execution_attempts ea ON ea.claim_id = cl.id
         JOIN stories st ON st.id = ${storyDbId}
@@ -252,6 +288,8 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
       step_status: "running",
       current_story_id: null,
       verify_status: "waiting",
+      claim_owner_state: "closed",
+      attempt_owner_state: "closed",
     });
     const counts = await database.sql<Array<{
       finding_sets: number;
@@ -296,6 +334,7 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
       decisionRefs: handled.recoveryCase.decisionRefs,
     })).status, "duplicate");
   } finally {
+    await runtimeDb?.pgClose().catch(() => {});
     if (database) await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;
