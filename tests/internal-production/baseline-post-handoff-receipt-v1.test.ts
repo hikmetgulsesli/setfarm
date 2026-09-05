@@ -2724,7 +2724,7 @@ function phase5cSRowTailPhysicalQueryClassesFixtureV1(
 
 const PHASE5C_S_EXTERNAL_OBSERVER_POLICY_CALLS_V1 = Object.freeze([
   "observeExactPoisonPostVisiblePreSchemaNoReplaceEndpointNoWriteV1",
-  "observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1",
+  "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1",
   "observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1",
   "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1",
   "observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1",
@@ -7519,9 +7519,10 @@ export async function p5cSRequireProgressRawDerivedStatusAwaitFixtureV1(..._args
     if (values === undefined || ordinal >= values.length) currentEntryFail("P5C_S_EXTERNAL_POLICY_VALUE_MISSING:" + port + ":" + ordinal);
     cursors.set(port, ordinal + 1);
     const records = args.filter((argument): argument is Readonly<Record<string,unknown>> => typeof argument === "object" && argument !== null);
-      const target = args.find((argument) => typeof argument === "string" && path.isAbsolute(argument)) ?? records.find((record) => typeof record.target === "string")?.target ?? null;
-      const expectedBytes = args.find(Buffer.isBuffer) ?? records.find((record) => Buffer.isBuffer(record.expectedBytes))?.expectedBytes;
-    calls.push(Object.freeze({ port, ordinal, argCount: args.length, contextBound: args.includes(authority) || args.includes(context) || records.some((record) => record.authority === authority || record.context === context || record.root === context), operationBound: args.includes(operation) || records.some((record) => record.operation === operation || record.currentEntryOperation === operation), arrowBound: args.includes(input.arrow) || records.some((record) => record.arrow === input.arrow || record.descriptor === input.arrow), currentBound: args.includes(input.current) || records.some((record) => record.current === input.current), target, expectedBytesBase64: expectedBytes === undefined ? null : expectedBytes.toString("base64") }));
+    const target = args.find((argument) => typeof argument === "string" && path.isAbsolute(argument)) ?? records.find((record) => typeof record.target === "string")?.target ?? null;
+    const expectedBytes = args.find(Buffer.isBuffer) ?? records.find((record) => Buffer.isBuffer(record.expectedBytes))?.expectedBytes;
+    const endpointDescriptor = records.find((record) => Number.isInteger(record.endpointOrdinal) && typeof record.material === "string" && typeof record.role === "string" && typeof record.policy === "string") ?? null;
+    calls.push(Object.freeze({ port, ordinal, argCount: args.length, contextBound: args.includes(authority) || args.includes(context) || records.some((record) => record.authority === authority || record.context === context || record.root === context), operationBound: args.includes(operation) || records.some((record) => record.operation === operation || record.currentEntryOperation === operation), arrowBound: args.includes(input.arrow) || records.some((record) => record.arrow === input.arrow || record.descriptor === input.arrow), currentBound: args.includes(input.current) || records.some((record) => record.current === input.current), endpointDescriptor, target, expectedBytesBase64: expectedBytes === undefined ? null : expectedBytes.toString("base64") }));
     const key = port + ":" + ordinal;
     if (input.fault?.port === port && input.fault.ordinal === ordinal && input.fault.kind === "open") currentEntryFail("P5C_S_EXTERNAL_POLICY_OPEN_FAULT:" + key);
     const hydrated = hydrate(values[ordinal]) as Readonly<Record<string,unknown>>;
@@ -24929,7 +24930,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       instrumentPhase5cProgressFixtureV1(root);
       const policyPortFor = (endpoint: Readonly<Record<string, unknown>>): typeof PHASE5C_S_EXTERNAL_OBSERVER_POLICY_CALLS_V1[number] => {
         if (endpoint.policy === "pre-schema-no-replace") return "observeExactPoisonPostVisiblePreSchemaNoReplaceEndpointNoWriteV1";
-        if (endpoint.policy === "task12-receipt") return "observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1";
+        if (endpoint.policy === "task12-receipt") return "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1";
         if (endpoint.policy === "spawner-admission") return "observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1";
         if (endpoint.policy === "database-atomic") return "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1";
         if (endpoint.policy === "expected-predecessor-cas") return "observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1";
@@ -24982,8 +24983,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           successorRoot: path.join(root, "p5c-s-real-raw"),
           expectedPorts: Object.freeze(expectedPorts),
           expectedPolicyKeys: Object.freeze(expectedPolicyKeys),
-          expectedTargets: Object.freeze(endpoints.map((endpoint) => endpoint.target)),
-          expectedBytes: Object.freeze(endpoints.map((endpoint) => endpoint.expectedBytesBase64)),
+          expectedDescriptors: Object.freeze(endpoints.map((endpoint, endpointOrdinal) => Object.freeze({ endpointOrdinal, material: endpoint.material, role: endpoint.role, policy: endpoint.policy }))),
           endpointStates: Object.freeze(endpointStates),
           activeEndpointOrdinal: absentEntry ? null : observation.activeEndpointOrdinal,
           family: absentEntry ? null : observation.family,
@@ -25068,8 +25068,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.deepEqual(calls.map((call) => call.port), input.expectedPorts, `${input.label}: exact policy dispatch order/count is load-bearing`);
         assert.equal(calls.every((call) => call.contextBound === true && call.operationBound === true && call.arrowBound === true && call.currentBound === true), true,
           `${input.label}: every endpoint policy is bound to the same pinned root, operation, arrow, and authenticated current state`);
-        assert.deepEqual(calls.map((call) => call.target), input.expectedTargets, `${input.label}: every physical policy receives its exact root-authorized target`);
-        assert.deepEqual(calls.map((call) => call.expectedBytesBase64), input.expectedBytes, `${input.label}: every policy receives the independently derived canonical endpoint bytes`);
+        assert.deepEqual(calls.map((call) => call.endpointDescriptor), input.expectedDescriptors,
+          `${input.label}: dispatcher routes only the finite endpoint ordinal/material/role/policy descriptor`);
+        assert.equal(calls.every((call) => call.target === null && call.expectedBytesBase64 === null), true,
+          `${input.label}: dispatcher never supplies a future target or canonical-byte echo to a policy helper`);
         const value = wrapped.value as Readonly<Record<string, unknown>>;
         assert.equal(value.family, input.family);
         assert.equal(value.activeEndpointOrdinal, input.activeEndpointOrdinal);
@@ -30729,7 +30731,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "a null owned AtRoot value produces exact external none with no future targets or bytes");
     assert.match(entryExternal, new RegExp(`${entryOwnerAlias}\\.contentTarget[\\s\\S]*${entryOwnerAlias}\\.(?:value|pairBytes)[\\s\\S]*${entryOwnerAlias}\\.locatorTarget[\\s\\S]*${entryOwnerAlias}\\.pairBytes|${entryOwnerAlias}\\.locatorTarget[\\s\\S]*${entryOwnerAlias}\\.pairBytes[\\s\\S]*${entryOwnerAlias}\\.contentTarget[\\s\\S]*${entryOwnerAlias}\\.(?:value|pairBytes)`),
       "present entry external endpoints derive exact content and locator targets/bytes only from the live AtRoot owner");
-    assert.match(entryExternal, new RegExp(`${entryOwnerAlias}\\.assertStable\\(\\)[\\s\\S]*observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1\\([\\s\\S]*${entryOwnerAlias}\\.assertStable\\(\\)`),
+    assert.match(entryExternal, new RegExp(`${entryOwnerAlias}\\.assertStable\\(\\)[\\s\\S]*observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1\\([\\s\\S]*${entryOwnerAlias}\\.assertStable\\(\\)`),
       "present entry external topology fences its borrowed owner before and after awaited endpoint observations");
     assert.match(entryExternal, new RegExp(`${entryOwnerAlias}\\.pair[\\s\\S]*(?:current|entryAuthority)[\\s\\S]*(?:canonicalComparable|assert.*Equal|currentEntryFail|fail)`),
       "the owned fixed-02 pair is cross-bound to the entry external current projection");
@@ -30737,14 +30739,32 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the borrowed AtRoot owner remains owned by the outer raw lifetime");
     for (const port of PHASE5C_S_EXTERNAL_OBSERVER_POLICY_CALLS_V1) {
       assert.equal(externalObserver.split(`${port}(`).length - 1, 1, `${port}: the external observer owns one real policy-dispatch call site`);
+      assert.match(externalObserver, new RegExp(`${port}\\(\\s*authority\\s*,\\s*operation\\s*,\\s*(?:descriptor|arrow)\\s*,\\s*current\\s*,\\s*endpointDescriptor(?:\\s*,\\s*entryOwner)?\\s*\\)`),
+        `${port}: dispatcher passes only retained authority, exact operation/arrow/current, and the finite endpoint descriptor`);
+      const helper = topLevelFunctionRegionV1(source, port);
+      const helperHeader = helper.slice(0, helper.indexOf("{"));
+      assert.match(helperHeader, /authority:\s*ExactPoisonPostVisibleProgressObservationAuthorityV1[\s\S]*operation:\s*InternalProductionCurrentEntryOperationV1[\s\S]*(?:descriptor|arrow)[\s\S]*current[\s\S]*endpointDescriptor:\s*ExactPoisonPostVisibleExternalEndpointDescriptorV1/,
+        `${port}: policy helper owns derivation from retained physical authority instead of accepting a future endpoint echo`);
+      assert.doesNotMatch(helperHeader, /\btarget\s*:|\bexpectedBytes\s*:/,
+        `${port}: policy helper ABI contains no caller-supplied future target or bytes`);
     }
     assert.match(externalObserver, /assertStable\(\)[\s\S]*finally[\s\S]*close\(\)/,
       "the external observer retains every policy owner through its final stability fence and closes on every exit");
-    for (const token of ["status-00-prepared.pair.json", "status-05-pre-manifest-bootstrap-sealed.pair.json", "status-06-normal-task0-admission-ready.pair.json", "status-blocked-helper-dispatch-settlement-unknown.pair.json", "status-00.pair.json", "status-01.pair.json", "status-02.pair.json", "recovery-source-bootstrap-visibility-head.json", "02-entry-authority.pair.json"] as const) assert.match(externalObserver, new RegExp(token.replaceAll(".", "\\.")), `${token}: exact external fixed endpoint is owned by the finite descriptor table`);
+    const externalEndpointDescriptorTypeStart = source.indexOf("type ExactPoisonPostVisibleExternalEndpointDescriptorV1 = Readonly<{");
+    const externalEndpointDescriptorTypeEnd = source.indexOf("}>;", externalEndpointDescriptorTypeStart) + 3;
+    assert.ok(externalEndpointDescriptorTypeStart >= 0 && externalEndpointDescriptorTypeEnd > externalEndpointDescriptorTypeStart,
+      "external dispatcher owns one private finite policy-routing descriptor type");
+    const externalEndpointDescriptorType = source.slice(externalEndpointDescriptorTypeStart, externalEndpointDescriptorTypeEnd);
+    for (const field of ["endpointOrdinal", "material", "role", "policy"] as const) assert.match(externalEndpointDescriptorType, new RegExp(`\\b${field}\\b`), `external routing descriptor retains exact ${field}`);
+    assert.doesNotMatch(externalEndpointDescriptorType, /\btarget\b|\bexpectedBytes\b|\bpublication\b|\bwriter\b|\bdatabase\b|\bcas\b/,
+      "finite routing descriptor contains no future target, bytes, or physical observation echo");
+    for (const token of ["status-00-prepared.pair.json", "status-05-pre-manifest-bootstrap-sealed.pair.json", "status-06-normal-task0-admission-ready.pair.json", "status-blocked-helper-dispatch-settlement-unknown.pair.json", "status-00.pair.json", "status-01.pair.json", "status-02.pair.json", "recovery-source-bootstrap-visibility-head.json", "02-entry-authority.pair.json"] as const) assert.match(source, new RegExp(token.replaceAll(".", "\\.")), `${token}: an exact policy helper owns the finite physical endpoint`);
     assert.match(externalObserver, /pre-schema-no-replace[\s\S]*(?:dot|\.tmp)[\s\S]*(?:writerForbidden|A0)[\s\S]*task12-receipt[\s\S]*spawner-admission[\s\S]*database-atomic[\s\S]*expected-predecessor-cas/,
       "each external endpoint dispatches to its frozen publisher, controller-lock, database, or expected-predecessor policy");
-    assert.match(externalObserver, /current[\s\S]*(?:prior|preceding)[\s\S]*(?:next|successor)[\s\S]*(?:canonicalRecordBytes|hashCanonicalJson)[\s\S]*(?:endpoint|material)[\s\S]*(?:target|recordPath)/,
-      "each ordered external endpoint is reconstructed from its exact preceding state and one authentic causal material chain");
+    assert.match(externalObserver, /endpointOrdinal[\s\S]*material[\s\S]*role[\s\S]*policy[\s\S]*(?:switch|case|if)/,
+      "generic external observer performs only finite endpoint-policy routing over authenticated prior state");
+    assert.doesNotMatch(externalObserver, /(?:canonicalRecordBytes|hashCanonicalJson)\([\s\S]{0,480}(?:endpointDescriptor|expectedBytes|target)/,
+      "generic external observer never invents future endpoint bytes or targets before policy-owned physical discovery");
     assert.match(externalObserver, /(?:wrong|unequal|second|multiple|later|out.?of.?order|crossed)[\s\S]*(?:currentEntryFail|fail)/i,
       "wrong, unequal, multiple, later, or crossed external evidence is terminal");
     assert.doesNotMatch(externalObserver, /selectCurrentEntryStoreContextV1|observeInternalProductionPreSchemaSpawnerRebindStatusV1\(|prepareInternalProduction|executeOrRecover|applyInternalProduction|advanceTask12CurrentStatusV1|task12ReceiptExpectedPredecessorCasV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
