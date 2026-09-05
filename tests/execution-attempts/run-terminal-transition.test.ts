@@ -3599,6 +3599,68 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
     }
   });
 
+  it("terminalizes an ordinary migration 32 run with a noncanonical multi-field context", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-migration32-ordinary-context";
+      const requestId = "RTR_terminal-migration32-ordinary-context";
+      await database.insertRun(runId);
+      await database.sql.begin(async (transaction) => {
+        const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+        const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+          transaction as PgTransactionSql,
+          { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+        );
+        await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+          reservationRef: reservation.reservationRef,
+          reservationHash: reservation.reservationHash,
+          canonicalOwnerIdentity: identity,
+        });
+      });
+      await database.sql`
+        UPDATE runs
+           SET context=${'{"zeta":"last","alpha":"first"}'}
+         WHERE id=${runId}
+      `;
+      await seedBoundDrainedTermination(database, {
+        runId,
+        requestId,
+        targetStatus: "failed",
+        diagnostic: "ordinary migration 32 context ordering",
+      });
+
+      const result = await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "ordinary migration 32 context ordering",
+        drainedTerminationRequestId: requestId,
+      });
+
+      assert.equal(result.status, "failed");
+      const rows = await database.sql<Array<{
+        run_status: string;
+        request_state: string;
+        run_owner_state: string;
+      }>>`
+        SELECT run_row.status AS run_status,
+               request.state AS request_state,
+               owner.state AS run_owner_state
+          FROM runs run_row
+          JOIN run_termination_requests request ON request.run_id=run_row.id
+          JOIN internal_production_owner_reservations_v1 owner
+            ON owner.category='run' AND owner.owner_key=run_row.id
+         WHERE run_row.id=${runId}
+      `;
+      assert.deepEqual(rows.map((row) => ({ ...row })), [{
+        run_status: "failed",
+        request_state: "terminalized",
+        run_owner_state: "closed",
+      }]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("keeps ordinary migration 31 terminalization available while guarded migration 32 is pending", async () => {
     const database = await createIsolatedMigration31TestDatabase();
     try {

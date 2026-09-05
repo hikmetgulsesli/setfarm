@@ -5112,19 +5112,36 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
      ORDER BY reservation_ref
        FOR UPDATE
   `;
-  const expectedRunContext = typeof input.runContext === "string"
-    ? strictCanonicalText(input.runContext, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID")
-    : input.runContext;
+  let parsedRunContext: Readonly<Record<string, unknown>>;
+  if (typeof input.runContext === "string") {
+    if (
+      Buffer.byteLength(input.runContext, "utf8") < 2
+      || Buffer.byteLength(input.runContext, "utf8") > 65_536
+    ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    let parsed: unknown;
+    try { parsed = JSON.parse(input.runContext); } catch {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    parsedRunContext = parsed as Readonly<Record<string, unknown>>;
+  } else {
+    parsedRunContext = input.runContext;
+  }
   const specialOwnerEvidence = reservationRows.some((candidate) => (
     candidate.producerImplementationId === "a-recovery-source-bootstrap-run-v1"
     && candidate.category === "run"
     && candidate.ownerKey === input.runId
   ));
-  const specialContext = expectedRunContext.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
+  const specialContext = parsedRunContext.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
   if (!specialOwnerEvidence && !specialContext) return;
   if (!specialOwnerEvidence || !specialContext) {
     throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_DISCRIMINATOR_CORRUPTION");
   }
+  const expectedRunContext = typeof input.runContext === "string"
+    ? strictCanonicalText(input.runContext, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID")
+    : parsedRunContext;
   const expectedRunId = hashCanonicalJson({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
     pendingInputRef: expectedRunContext.pendingInputRef,
