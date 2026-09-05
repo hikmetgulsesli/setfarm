@@ -25417,6 +25417,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const absentEntry = arrow.family === "entry-authority" && stage === "none";
         const entryFixedPresent = arrow.family === "entry-authority" && (stage === "publication-f2-independent" || stage.includes("publication-f2u") || stage.includes("publication-f3") || stage.includes("publication-f4"));
         const entryAuthorityValue = entryFixedPresent ? chain.materials["entry-authority"] as Readonly<Record<string, unknown>> : null;
+        const authenticatedCurrent = arrow.family === "database-33"
+          ? phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "current-audit")!).next
+          : arrow.family === "entry-authority" ? entryAuthorityValue : observation.current;
         const endpoints = absentEntry ? Object.freeze([]) : observation.endpoints as readonly Readonly<Record<string, unknown>>[];
         const policyValues: Record<string, unknown[]> = Object.fromEntries(PHASE5C_S_EXTERNAL_OBSERVER_POLICY_CALLS_V1.map((port) => [port, []]));
         const policyOrdinals = new Map<string, number>();
@@ -25426,7 +25429,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const policyOrdinal = policyOrdinals.get(port) ?? 0;
           policyOrdinals.set(port, policyOrdinal + 1);
           expectedPolicyKeys.push(`${port}:${policyOrdinal}`);
-          policyValues[port]!.push(endpoint);
+          policyValues[port]!.push(arrow.family === "database-33" && corruption === "none"
+            ? Object.freeze({ ...endpoint, expectedBytesBase64: canonicalFixtureRecordV1(observation.current).toString("base64") })
+            : endpoint);
           return port;
         });
         const endpointStates = endpoints.map((endpoint) => Object.freeze({
@@ -25444,7 +25449,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           valid,
           status: phase5cSCanonicalProgressStatusFixtureV1(descriptor.row),
           arrow,
-          current: arrow.family === "entry-authority" ? entryAuthorityValue : observation.current,
+          current: authenticatedCurrent,
           entryAuthorityValue,
           expectedReturnedCurrent: absentEntry ? null : observation.current,
           policyValues: Object.freeze(Object.fromEntries(Object.entries(policyValues).map(([port, values]) => [port, Object.freeze(values)]))),
@@ -28540,8 +28545,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     const databaseSource = readFileSync(path.join(sourceRoot, "src/db-pg.ts"), "utf8");
     const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1");
-    assert.match(databaseSource, /export\s+async\s+function\s+observeInternalProductionCurrentEntryMigration33ReadOnlyV1[\s\S]*isolation level repeatable read read only[\s\S]*version\s+IN\s*\(32,\s*33\)[\s\S]*verifyV3RecoveryClaimRuntimePublicationV1/,
-      "migration-33 exposes one authoritative repeatable-read absent/current observer");
+    assert.match(databaseSource, /export\s+async\s+function\s+observeInternalProductionCurrentEntryMigration33ReadOnlyV1[\s\S]*isolation level repeatable read read only[\s\S]*version\s*>=\s*32[\s\S]*verifyV3RecoveryClaimRuntimePublicationV1/,
+      "migration-33 exposes one authoritative repeatable-read observer that cannot hide a source-newer migration");
     assert.match(endpoint, /arrow\.family\s*===\s*"database-33"[\s\S]*observeInternalProductionCurrentEntryMigration33ReadOnlyV1[\s\S]*expectedProjection/,
       "the database endpoint projects only the authoritative migration-33 observation");
     assert.doesNotMatch(endpoint, /applyOrAdopt|applyContractSpineMigrations|INSERT|UPDATE|DELETE/,

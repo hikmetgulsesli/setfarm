@@ -5895,9 +5895,12 @@ export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1
     const rows = await sql<Array<CurrentEntryMigrationJournalRowV1>>`
       SELECT version, name, checksum, state
       FROM public.setfarm_schema_migrations
-      WHERE version IN (32, 33)
+      WHERE version >= 32
       ORDER BY version
     `;
+    if (rows.some((row) => Number(row.version) !== 32 && Number(row.version) !== 33)) {
+      throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_UNKNOWN_VERSION");
+    }
     const migration32 = rows.find((row) => Number(row.version) === 32);
     const migration33 = rows.find((row) => Number(row.version) === 33);
     if (rows.length !== (migration33 === undefined ? 1 : 2)

@@ -454,6 +454,24 @@ describe("contract spine migration journal", () => {
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
+  it("rejects a source-newer journal row from the migration 33 read-only endpoint", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    assert.equal(
+      (await database.db.observeInternalProductionCurrentEntryMigration33ReadOnlyV1()).state,
+      "current",
+    );
+    await database.sql`
+      INSERT INTO public.setfarm_schema_migrations (version, name, checksum, state)
+      VALUES (34, 'test-source-newer-migration-v34', ${"f".repeat(64)}, 'applied')
+    `;
+    await assert.rejects(
+      database.db.observeInternalProductionCurrentEntryMigration33ReadOnlyV1(),
+      /INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_UNKNOWN_VERSION/,
+    );
+  });
+
   it("applies new migration 33 with the exact undefined metadata triple", async () => {
     await applyContractSpineMigrations(database.sql);
     await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
