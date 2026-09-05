@@ -16,7 +16,7 @@
     "test:cleanup-ops": "env -u SETFARM_PG_URL node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/cleanup-ops.test.ts",
     "test:operational-snapshot": "env -u SETFARM_PG_URL node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/run-operational-snapshot.test.ts",
     "test:product-compiler": "node --import tsx --test tests/product-compiler/*.test.ts",
-    "test:execution-attempts": "node --import tsx --test tests/execution-attempts/*.test.ts",
+    "test:execution-attempts": "node --import tsx scripts/run-execution-attempt-tests.ts",
     "test:findings": "node --import tsx --test tests/findings/*.test.ts",
     "test:evidence": "node --import tsx --test tests/evidence/*.test.ts",
     "test:recovery": "node --import tsx --test tests/recovery/*.test.ts",

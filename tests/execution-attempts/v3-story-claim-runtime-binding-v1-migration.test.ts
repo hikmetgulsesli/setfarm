@@ -1121,7 +1121,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
       });
       await assert.rejects(
         applyContractSpineMigrations(isolated.sql),
-        /Migration 29 is partially present/,
+        /Migration 29 failed successor preflight/,
       );
       const journal = await isolated.sql.unsafe<Array<{ present: boolean }>>(
         `SELECT EXISTS (
@@ -1147,7 +1147,7 @@ describe("v3 story claim/runtime binding migration 29", () => {
       );
       await assert.rejects(
         applyContractSpineMigrations(isolated.sql),
-        /Migration 29 is partially present/,
+        /Migration 29 failed successor preflight/,
       );
       const journal = await isolated.sql.unsafe<Array<{ present: boolean }>>(
         `SELECT EXISTS (

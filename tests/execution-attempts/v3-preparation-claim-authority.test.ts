@@ -334,7 +334,7 @@ describe("v3 preparation claim authority", () => {
           database.sql,
           publicationInput(fixture, authority, duplicateSessionId),
         ),
-        /duplicate key value|unique constraint/i,
+        /INTERNAL_PRODUCTION_RUNTIME_SESSION_ADOPTION_INVALID/,
       );
       const rows = await database.sql<Array<{
         story_status: string;
