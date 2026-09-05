@@ -17,7 +17,6 @@ import {
   CLEANUP_THROTTLE_MS,
   RUN_STATUS,
   STORY_STATUS,
-  PROTECTED_CONTEXT_KEYS,
   isStepOutputContextKeyProtected,
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
@@ -13456,8 +13455,8 @@ async function handleSuperviseEachCompletion(
   authenticatedRuntimeSessionId?: string,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const parsedOutput = parseOutputKeyValues(output);
-  for (const key of PROTECTED_CONTEXT_KEYS) {
-    if (key in parsedOutput) {
+  for (const key of Object.keys(parsedOutput)) {
+    if (isStepOutputContextKeyProtected(key, context)) {
       logger.warn(`[handleSuperviseEach] Stripped protected key "${key}" from output`, { runId: superviseStep.run_id });
       delete parsedOutput[key];
     }
@@ -14349,8 +14348,8 @@ async function handleVerifyEachCompletion(
   );
 
   // Guard: strip protected keys from parsed output to prevent seed value corruption
-  for (const key of PROTECTED_CONTEXT_KEYS) {
-    if (key in parsedOutput) {
+  for (const key of Object.keys(parsedOutput)) {
+    if (isStepOutputContextKeyProtected(key, context)) {
       logger.warn(`[handleVerifyEach] Stripped protected key "${key}" from output`, { runId: verifyStep.run_id });
       delete parsedOutput[key];
     }
