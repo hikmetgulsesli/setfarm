@@ -470,7 +470,7 @@ describe("run-pinned product compiler protocol", () => {
     assert.match(dbSource, /Reflect\.ownKeys\(namespace\)/);
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
-    assert.match(dbSource, /6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17/);
+    assert.match(dbSource, /470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db/);
     assert.match(dbSource, /currentResolution\.nodes/);
     assert.doesNotMatch(dbSource, /current\.receipt\.phase\s*!==\s*"A"/);
 
@@ -493,6 +493,8 @@ describe("run-pinned product compiler protocol", () => {
       assert.match(wrapper, /^export async function persistWorkflowRun\(/);
       const modulePath = path.join(root, "wrapper.ts");
       await writeFile(modulePath, `
+import path from "node:path";
+import {fileURLToPath} from "node:url";
 type PersistWorkflowRunInputV1 = unknown;
 type PersistWorkflowRunResultV1 = Readonly<{ run: Readonly<{ id: string }> }>;
 let acknowledgeCommit;
