@@ -377,6 +377,14 @@ describe("canonical run terminal owner", () => {
       "the specialized terminal resolver admits only the exact recovery run after bootstrap has closed both H1 reservations");
     assert.doesNotMatch(recoveryTerminal, /state='bound'|\[\s*["']bound["']\s*\]/,
       "a bound H1 recovery run cannot be terminalized through the specialized closed-pair authority");
+    const storedResolverStart = dbSource.indexOf("async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(");
+    const storedResolverEnd = dbSource.indexOf("async function resolveLockedWorkflowRunOwnerByRunIdV1(", storedResolverStart);
+    assert.ok(storedResolverStart >= 0 && storedResolverEnd > storedResolverStart);
+    const storedResolver = dbSource.slice(storedResolverStart, storedResolverEnd);
+    assert.doesNotMatch(storedResolver, /strictCanonicalText\(\s*run\.context|exactObjectKeys\(\s*context/,
+      "workflow-owned context additions cannot invalidate an already released recovery run");
+    assert.match(storedResolver, /createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1\(\s*\{[\s\S]*pendingInputRef:\s*context\.pendingInputRef[\s\S]*targetSourceRunReservationRef:\s*context\.targetSourceRunReservationRef[\s\S]*operationHash:\s*context\.operationHash[\s\S]*\}\s*\)/,
+      "the closed-owner proof validates the immutable recovery operation independently from mutable workflow context fields");
     const deliveryBarrierStart = dbSource.indexOf("export async function assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(");
     const deliveryBarrierEnd = dbSource.indexOf("\nexport ", deliveryBarrierStart + 1);
     assert.ok(deliveryBarrierStart >= 0 && deliveryBarrierEnd > deliveryBarrierStart,
@@ -471,6 +479,20 @@ describe("canonical run terminal owner", () => {
       assert.doesNotMatch(reconstructedOperation, /ownerAdmissionFence(?:Ref|Hash):\s*(?:owner|ownerRows|activeFence)/,
         "a later live-head fence cannot replace the immutable target fence before historical projection");
     });
+    staticCheck("mutable recovery context", () => {
+      assert.doesNotMatch(deliveryBarrier, /strictCanonicalText\(\s*input\.runContext/,
+        "the locked recovery run may carry workflow-owned context additions beyond its immutable seed authority");
+      assert.doesNotMatch(deliveryBarrier, /strictCanonicalText\(\s*String\(\s*expectedRun\.(?:context|runContext)/,
+        "the expected run is authenticated by immutable recovery fields rather than whole-context canonical bytes");
+    });
+    const sourceReservationStart = deliveryBarrier.indexOf("const sourceReservation");
+    const runReservationStart = deliveryBarrier.indexOf("const runReservation", sourceReservationStart);
+    const sourceReservationSelection = deliveryBarrier.slice(sourceReservationStart, runReservationStart);
+    staticCheck("historical target source reservation selection", () => assert.match(
+      sourceReservationSelection,
+      /category\s*===\s*["']source-run["'][\s\S]*reservationRef\s*===\s*expectedRunContext\.targetSourceRunReservationRef[\s\S]*reservationHash\s*===\s*expectedRunContext\.targetSourceRunReservationHash/,
+      "the unfiltered historical inventory selects the exact target source reservation pair retained by the run context",
+    ));
     const operationAuthorityBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1\\(\\s*${reconstructedOperationAlias}\\s*\\)\\s*;`).exec(deliveryBarrier);
     staticCheck("operation authority constructor", () => assert.ok(operationAuthorityBinding,
       "the terminal adapter validates its reconstructed operation body/ref/hash through the same pure authority constructor as held resume"));
@@ -512,7 +534,7 @@ const same=(left:any,right:any)=>JSON.stringify(left)===JSON.stringify(right);
 const sameJsonValueV1=same;
 const hashCanonicalJson=(value:any)=>{g.__p4BarrierHashInputs.push(value);if(value?.schema==="setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1"){if(value.pendingInputRef===undefined||value.pendingInputHash===undefined)throw new Error("RECOVERY_ONLY_HASH_INPUT_INVALID");return g.__p4BarrierInput.runId}return JSON.stringify(value)};
 const canonicalJsonStringify=(value:any)=>JSON.stringify(value);
-const strictCanonicalText=(value:string)=>JSON.parse(value);
+const strictCanonicalText=(value:string)=>{const parsed=JSON.parse(value);if(parsed&&typeof parsed==="object"&&"plan_output" in parsed)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");return parsed};
 const currentEntryFail=(message:string):never=>{throw new Error(message)};
 const lockInternalProductionWorkflowRunInsertionFenceV1=async(sql:any)=>{if(sql!==g.__p4BarrierSql)throw new Error("BARRIER_LOCK_SQL_CROSSED");g.__p4BarrierEvents.push("lock")};
 const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=lockInternalProductionWorkflowRunInsertionFenceV1;
@@ -608,13 +630,13 @@ ${barrier}
       for (const crossed of [
         Object.freeze({ label: "context", expectedEvents: Object.freeze(["lock"]), rows: Object.freeze({ ...baseRows, expectedRunRows: Object.freeze([crossedContextRun]), activeRunRows: Object.freeze([crossedContextRun]) }) }),
         Object.freeze({ label: "fence", expectedEvents: Object.freeze(["lock", "authority", "project", "validate"]), rows: Object.freeze({ ...baseRows, ownerRows: Object.freeze([Object.freeze({ ...ownerRows[0]!, activeFenceHash: sha("9") })]) }) }),
-        Object.freeze({ label: "reservation", expectedEvents: Object.freeze(["lock", "authority"]), rows: Object.freeze({ ...baseRows, reservationRows: Object.freeze([Object.freeze({ ...reservationRows[0]!, reservationHash: sha("9") }), reservationRows[1]!]) }) }),
+        Object.freeze({ label: "reservation", expectedEvents: Object.freeze(["lock"]), rows: Object.freeze({ ...baseRows, reservationRows: Object.freeze([Object.freeze({ ...reservationRows[0]!, reservationHash: sha("9") }), reservationRows[1]!]) }) }),
       ]) {
         const result = await execute(crossed.rows);
         runtimeCheck(`crossed H1 ${crossed.label}`, () => {
           assert.equal(result.outcome, "threw", `${crossed.label}: crossed locked H1 evidence is terminal`);
           assert.deepEqual(result.events, crossed.expectedEvents,
-            `${crossed.label}: caller/SQL context and reservation crossings fail before projection, while the live-head fence alias is authenticated by the scoped pure classifier`);
+            `${crossed.label}: caller/SQL context and exact target-reservation crossings fail before reconstruction, while the live-head fence alias is authenticated by the scoped pure classifier`);
           assert.equal(crossed.label === "fence" || (!result.events.includes("project") && !result.events.includes("validate")), true,
             `${crossed.label}: only a crossed live-head alias reaches scoped projection; crossed operation inputs do not`);
           assert.doesNotMatch(String(result.message), /RECOVERY_SOURCE_BOOTSTRAP_DELIVERY_PENDING$/,
@@ -685,6 +707,20 @@ ${barrier}
         assert.deepEqual(h4.events, ["lock", "authority", "project", "validate"],
           "H4 returns only after the same raw-row enrichment and pure released classification");
       });
+      const evolvedContext = Object.freeze({ ...context, plan_output: "workflow-owned terminal evidence" });
+      const evolvedInput = Object.freeze({ ...input, runContext: JSON.stringify(evolvedContext) });
+      const evolvedRun = Object.freeze({ ...run, context: evolvedInput.runContext, runContext: evolvedContext });
+      const evolvedH4 = await execute(Object.freeze({
+        ...h4Rows,
+        expectedRunRows: Object.freeze([evolvedRun]),
+        activeRunRows: Object.freeze([evolvedRun]),
+      }), evolvedInput);
+      runtimeCheck("H4 recovery run after workflow context evolution", () => {
+        assert.equal(evolvedH4.outcome, "returned",
+          `workflow-owned context additions cannot invalidate the immutable recovery binding (${String(evolvedH4.message)})`);
+        assert.deepEqual(evolvedH4.events, ["lock", "authority", "project", "validate"],
+          "the evolved run still reconstructs and validates the exact immutable recovery operation before terminalization");
+      });
       const laterActiveRun = Object.freeze({
         ...run,
         id: sha("7"),
@@ -714,6 +750,22 @@ ${barrier}
         assert.equal(historicalH4.outcome, "returned", `the pre-mutation barrier terminalizes the exact released recovery run after later owner activity (${String(historicalH4.message)})`);
         assert.deepEqual(historicalH4.events, ["lock", "authority", "project", "validate"],
           "the barrier reconstructs the target fence from the locked run context before the raw projector scopes historical H4");
+      });
+      const laterSourceReservation = Object.freeze({
+        ...h4Rows.reservationRows[0]!,
+        reservationRef: "setfarm://tests/p4/000-later-source-reservation",
+        reservationHash: sha("7"),
+        ownerKey: "later-source-operation",
+      });
+      const historicalH4WithLaterSource = await execute(Object.freeze({
+        ...historicalH4Rows,
+        reservationRows: Object.freeze([laterSourceReservation, ...h4Rows.reservationRows]),
+      }));
+      runtimeCheck("historical H4 with a later source reservation", () => {
+        assert.equal(historicalH4WithLaterSource.outcome, "returned",
+          `a later source reservation cannot replace the exact target pair retained by the locked run (${String(historicalH4WithLaterSource.message)})`);
+        assert.deepEqual(historicalH4WithLaterSource.events, ["lock", "authority", "project", "validate"],
+          "the barrier selects the target source reservation by exact ref and hash before historical projection");
       });
       for (const crossedH4 of [
         Object.freeze({ ...h4Rows, ownerRows: Object.freeze([Object.freeze({ ...h4Rows.ownerRows[0]!, allAuthorityRows: Object.freeze(h4AuthorityRows.slice(0, 7)) })]) }),
@@ -1172,6 +1224,7 @@ const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
 const isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1=(value:any)=>value?.version===32&&value?.name==="contract-spine-bootstrap-main-claim-handoff-v1"&&value?.checksum==="d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d"&&value?.state==="applied";
 const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
 const strictCanonicalText=(v:string)=>JSON.parse(v);
+const createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1=(value:any)=>value;
 const validateOwnerAdmissionPairV1=(input:any,refKey:string,hashKey:string)=>({[refKey]:input[refKey],[hashKey]:input[hashKey]});
 const resolveOwnerReservationInTransactionV1=async(_sql:any,pair:any)=>pair.reservationRef===g.__p4RunReservation.reservationRef?g.__p4RunReservation:g.__p4SourceReservation;
 const validateBoundOwnerReservationRowV1=async()=>g.__p4Bound;
@@ -1225,6 +1278,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
       const runClose = { reservationRef: runReservation.reservationRef, reservationHash: runReservation.reservationHash, terminalOwnerRef: runTerminal.terminalRunLaunchRef, terminalOwnerHash: runTerminal.terminalRunLaunchHash, ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadSuccessorHash, ownerAdmissionHeadSuccessorHash: sha("b"), preservedFenceRef: fenceRef, preservedFenceHash: fenceHash };
       const context = {
         schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1", task: "task", purpose: "recovery-d-source-delivery-v1", repository: "setfarm", workflow: "feature-dev", protocol: "v3", promptManifestHash: sha("c"),
+        plan_output: "workflow-owned terminal evidence",
         baseSourceSha: "1".repeat(40), baseSourceTreeHash: "2".repeat(40), buildHash: sha("d"), activationPreflightHash: sha("e"), releaseAdmissionHash: sha("f"),
         pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: sha("1"), startIntentRef: "setfarm://tests/p4/intent", startIntentHash: sha("2"), startOutboxRef: "setfarm://tests/p4/outbox", startOutboxHash: sha("3"),
         operationRef: sourceTerminal.operationRef, operationHash: sourceTerminal.operationHash, targetSourceRunReservationRef: sourceReservation.reservationRef, targetSourceRunReservationHash: sourceReservation.reservationHash,

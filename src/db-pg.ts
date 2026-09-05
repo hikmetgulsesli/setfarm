@@ -2331,15 +2331,44 @@ async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(
       `;
       const run = runRows[0];
       if (runRows.length !== 1 || !run || run.id !== reservation.ownerKey || !["running", "completed", "failed", "cancelled"].includes(run.status)) throw new Error();
-      const context = strictCanonicalText(run.context, "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
-      exactObjectKeys(context, [
-        "schema", "task", "purpose", "repository", "workflow", "protocol", "promptManifestHash",
-        "baseSourceSha", "baseSourceTreeHash", "buildHash", "activationPreflightHash", "releaseAdmissionHash",
-        "pendingInputRef", "pendingInputHash", "startIntentRef", "startIntentHash", "startOutboxRef", "startOutboxHash",
-        "operationRef", "operationHash", "targetSourceRunReservationRef", "targetSourceRunReservationHash",
-        "targetRunReservationRef", "targetRunReservationHash", "targetRunLaunchCompositeHash", "sourceRunOwnerRef",
-        "sourceRunOwnerHash", "runOwnerRef", "runOwnerHash", "operationRunBindingHash", "reciprocalRunOperationBindingHash",
-      ], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      let parsedContext: unknown;
+      try { parsedContext = JSON.parse(run.context); } catch {
+        throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      }
+      if (!parsedContext || typeof parsedContext !== "object" || Array.isArray(parsedContext)) {
+        throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      }
+      const context = parsedContext as Readonly<Record<string, unknown>>;
+      createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1({
+        schema: context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
+          ? "setfarm.internal-production-recovery-source-bootstrap-operation.v1"
+          : context.schema,
+        purpose: context.purpose,
+        repository: context.repository,
+        workflow: context.workflow,
+        protocol: context.protocol,
+        promptManifestHash: context.promptManifestHash,
+        pendingInputRef: context.pendingInputRef,
+        pendingInputHash: context.pendingInputHash,
+        baseSourceSha: context.baseSourceSha,
+        baseSourceTreeHash: context.baseSourceTreeHash,
+        buildHash: context.buildHash,
+        activationPreflightHash: context.activationPreflightHash,
+        releaseAdmissionHash: context.releaseAdmissionHash,
+        targetSourceRunReservationRef: context.targetSourceRunReservationRef,
+        targetSourceRunReservationHash: context.targetSourceRunReservationHash,
+        targetRunReservationRef: context.targetRunReservationRef,
+        targetRunReservationHash: context.targetRunReservationHash,
+        targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash,
+        ownerAdmissionFenceRef: context.ownerAdmissionFenceRef,
+        ownerAdmissionFenceHash: context.ownerAdmissionFenceHash,
+        startIntentRef: context.startIntentRef,
+        startIntentHash: context.startIntentHash,
+        startOutboxRef: context.startOutboxRef,
+        startOutboxHash: context.startOutboxHash,
+        operationRef: context.operationRef,
+        operationHash: context.operationHash,
+      });
       if (
         context.schema !== "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
         || context.runOwnerRef !== bound.canonicalOwnerIdentity.ownerRef
@@ -5135,9 +5164,7 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
   if (!specialOwnerEvidence || !specialContext) {
     throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_DISCRIMINATOR_CORRUPTION");
   }
-  const expectedRunContext = typeof input.runContext === "string"
-    ? strictCanonicalText(input.runContext, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID")
-    : parsedRunContext;
+  const expectedRunContext = parsedRunContext;
   const expectedRunId = hashCanonicalJson({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
     pendingInputRef: expectedRunContext.pendingInputRef,
@@ -5171,9 +5198,18 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
   }
   const expectedRun = expectedRunRows[0]!;
   const expectedRunState = expectedRun.state ?? expectedRun.status;
-  const expectedRunContextRow = typeof (expectedRun.context ?? expectedRun.runContext) === "string"
-    ? strictCanonicalText(String(expectedRun.context ?? expectedRun.runContext), "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID")
-    : expectedRun.context ?? expectedRun.runContext;
+  const rawExpectedRunContext = expectedRun.context ?? expectedRun.runContext;
+  let expectedRunContextRow: unknown;
+  if (typeof rawExpectedRunContext === "string") {
+    try { expectedRunContextRow = JSON.parse(rawExpectedRunContext); } catch {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+  } else {
+    expectedRunContextRow = rawExpectedRunContext;
+  }
+  if (!expectedRunContextRow || typeof expectedRunContextRow !== "object" || Array.isArray(expectedRunContextRow)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  }
   if (
     (expectedRun.runId ?? expectedRun.id) !== input.runId
     || expectedRunState !== input.workflowState
@@ -5181,8 +5217,17 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
     || !sameJsonValueV1(expectedRunContextRow, expectedRunContext)
   ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_RUN_CROSSED");
   const owner = ownerRows[0];
-  const sourceReservation = reservationRows.find((candidate) => candidate.category === "source-run");
-  const runReservation = reservationRows.find((candidate) => candidate.category === "run" && candidate.ownerKey === expectedRunId);
+  const sourceReservation = reservationRows.find((candidate) => (
+    candidate.category === "source-run"
+    && candidate.reservationRef === expectedRunContext.targetSourceRunReservationRef
+    && candidate.reservationHash === expectedRunContext.targetSourceRunReservationHash
+  ));
+  const runReservation = reservationRows.find((candidate) => (
+    candidate.category === "run"
+    && candidate.ownerKey === expectedRunId
+    && candidate.reservationRef === expectedRunContext.targetRunReservationRef
+    && candidate.reservationHash === expectedRunContext.targetRunReservationHash
+  ));
   if (!owner || !sourceReservation || !runReservation) {
     throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_OWNER_CORRUPTION");
   }
