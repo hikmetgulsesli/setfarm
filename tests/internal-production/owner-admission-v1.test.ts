@@ -493,7 +493,7 @@ const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).diges
 const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
 const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
 const createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1=({requestId}:{requestId:string})=>Object.freeze({schema:"setfarm.internal-production-canonical-owner-identity.v1",category:"completion-owner",ownerKey:requestId,ownerRef:"setfarm://runtime-completion/"+requestId,ownerHash:hashCanonicalJson({schema:"setfarm.internal-production-completion-owner.v1",requestId})});
-const validateOwnerAdmissionMigrationApplicationV1=(value:any)=>value; const validateOwnerAdmissionAncestryToGenesisV1=async()=>[];
+const validateCurrentInternalProductionOwnerAdmissionHeadV1=async(_sql:any,row:any)=>Object.freeze({version:Number(row.head_version),hash:row.head_hash,migrationApplication:row.head_payload.migrationApplication,activeFenceRef:row.active_fence_ref,activeFenceHash:row.active_fence_hash,activeTargetFamilyHash:row.active_target_family_hash});
 const resolveOwnerReservationInTransactionV1=async()=>(globalThis as any).__p4BarrierReservation;
 ${production.slice(start, end)}
 ${production.slice(end, targetEnd)}
@@ -1089,6 +1089,7 @@ function p3TestGit(root: string, args: readonly string[], input?: string): strin
 function p3TestGitBytes(root: string, args: readonly string[]): Buffer {
   const result = spawnSync("/usr/bin/git", args, {
     cwd: root,
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       PATH: "/usr/bin:/bin",
       LANG: "C",
@@ -2817,7 +2818,7 @@ function activationFixtureReceiptWithOperationPublisherV1(source: string): strin
       "prepareActivationFixtureCurrentEntryOperationV1",
     )
     .replace(
-      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(context,\s*resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(context,\s*resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
       () => {
         continuationReplacements += 1;
         return "\n    return resolved;";
@@ -5314,7 +5315,7 @@ test("real PostgreSQL owner admission begins adopts binds and rejects an unauthe
   assert.deepEqual(concurrent, first);
   assert.deepEqual(await begin(), first);
   const migrations = await import(
-    `${pathToFileURL(path.join(root, "src/db/contract-spine-migrations.js")).href}?evolvedHead=${Date.now()}`
+    pathToFileURL(path.join(root, "src/db/contract-spine-migrations.js")).href
   );
   const migrationSnapshot = async () => {
     const [head] = await sql<Array<{
