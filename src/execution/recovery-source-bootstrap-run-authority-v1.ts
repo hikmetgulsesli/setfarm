@@ -959,7 +959,7 @@ export function requireExactInternalProductionRecoverySourceBootstrapRunPersiste
   const unrelatedOwner = reservations.filter((reservation) => reservation !== sourceRow && reservation !== runRow);
   const activeStates = new Set(["running", "resuming", "cancelling", "failing"]);
   const unrelatedActiveRun = input.activeRunRows.filter((candidate) => String(candidate.runId ?? candidate.id) !== expectedRunId);
-  if (unrelatedAuthority.length !== 0 || unrelatedOwner.length !== 0 || unrelatedActiveRun.length !== 0 || allAuthorityRows.length !== expectedAuthority.size) {
+  if (unrelatedAuthority.length !== 0 || unrelatedOwner.length !== 0 || allAuthorityRows.length !== expectedAuthority.size) {
     fail("RECOVERY_SOURCE_BOOTSTRAP_UNRELATED_AUTHORITY_OWNER_RUN");
   }
   if (preparedPending) {
@@ -971,7 +971,10 @@ export function requireExactInternalProductionRecoverySourceBootstrapRunPersiste
   const validatedRun = validateExpectedRunV1(operation, expectedRunId, expectedRun);
   if (["completed", "failed", "cancelled"].includes(validatedRun.workflowState)) {
     if (!terminalClosed) fail("RECOVERY_SOURCE_BOOTSTRAP_DELIVERY_PENDING");
-    if (input.activeRunRows.length !== 0) fail("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_ACTIVE_RUN_INVALID");
+    if (
+      input.activeRunRows.some((candidate) => String(candidate.runId ?? candidate.id) === expectedRunId)
+      || (!terminalReleased && unrelatedActiveRun.length !== 0)
+    ) fail("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_ACTIVE_RUN_INVALID");
   } else {
     if (!activeStates.has(validatedRun.workflowState)) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_STATE_INVALID");
     if (input.activeRunRows.length !== 1 || !same(input.activeRunRows[0], input.expectedRunRows[0])) {

@@ -4793,9 +4793,23 @@ function projectRecoverySourceBootstrapPersistenceRowsV1(
   ];
   const headHistory: Readonly<Record<string, unknown>>[] = [];
   const currentVersion = Number(rawOwner.headVersion);
+  // The SQL inventories stay global. Scope them only after the exact target
+  // fence and both target reservations identify one immutable release chain.
+  const targetReleaseAuthorities = allAuthorityRows.filter((candidate) => (
+    candidate.authorityKind === "release"
+    && candidate.phaseKey === fence.fenceRef
+  ));
+  if (targetReleaseAuthorities.length > 1) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_DUPLICATE");
+  }
+  const targetReleaseAuthority = targetReleaseAuthorities[0] ?? null;
+  const historicalReleased = currentVersion >= 4
+    && sourceReservation.state === "closed"
+    && runReservation.state === "closed"
+    && targetReleaseAuthority !== null;
   if (currentVersion === 1) {
     headHistory.push(head(1, h1Hash, h1Payload, true));
-  } else if (currentVersion === 3 || currentVersion === 4) {
+  } else if (currentVersion === 3 || currentVersion === 4 || historicalReleased) {
     const sourceClose = recoverySourceBootstrapProjectionRecordV1(
       sourceReservation.closeBody,
       "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_SOURCE_CLOSE_INVALID",
@@ -4841,7 +4855,6 @@ function projectRecoverySourceBootstrapPersistenceRowsV1(
       head(2, sourceClose.ownerAdmissionHeadSuccessorHash, h2Payload, true),
       head(3, runClose.ownerAdmissionHeadSuccessorHash, h3Payload, true),
     );
-    if (currentVersion === 4) headHistory.push(head(4, rawOwner.headHash, currentHeadPayload, false));
     const sourceCloseAuthority = authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(
       sourceClose.closeRef,
       sourceClose.closeHash,
@@ -4854,16 +4867,40 @@ function projectRecoverySourceBootstrapPersistenceRowsV1(
       throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_CLOSE_AUTHORITY_MISSING");
     }
     authorityHistory.push(sourceCloseAuthority, runCloseAuthority);
-    if (currentVersion === 4) {
-      const releaseAuthority = allAuthorityRows.find((candidate) => candidate.authorityKind === "release");
-      if (!releaseAuthority) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_MISSING");
-      authorityHistory.push(releaseAuthority);
+    if (currentVersion === 4 || historicalReleased) {
+      if (!targetReleaseAuthority) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_MISSING");
+      const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(targetReleaseAuthority.authorityBody);
+      const releaseTransitionHash = hashCanonicalJson({
+        schema: "setfarm.internal-production-global-owner-admission-fence-release-transition.v1",
+        fenceRef: release.fenceRef,
+        fenceHash: release.fenceHash,
+        releaseAuthority: release.releaseAuthority,
+      });
+      const h4Payload = Object.freeze({
+        schema: "setfarm.internal-production-owner-admission-head.v1",
+        version: 4,
+        predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
+        transitionKind: "release",
+        transitionRef: `setfarm://internal-production/global-owner-admission-fence-release-transition/sha256/${releaseTransitionHash}`,
+        transitionHash: releaseTransitionHash,
+        migrationApplication,
+      });
+      headHistory.push(currentVersion === 4
+        ? head(4, rawOwner.headHash, currentHeadPayload, false)
+        : head(4, release.ownerAdmissionHeadSuccessorHash, h4Payload, false));
+      authorityHistory.push(targetReleaseAuthority);
     }
   }
+  const projectionReleased = headHistory.length === 4;
+  // A released operation is historical authority: later global owner work may
+  // advance the live head, but it cannot replace or amend this exact H1-H4 set.
+  const projectionReservations = projectionReleased
+    ? Object.freeze([sourceReservation, runReservation])
+    : Object.freeze(projectedReservations);
   const expectedAuthorityKeys = new Set<string>(authorityHistory.map((authority) => (
     recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash)
   )));
-  for (const reservation of projectedReservations) {
+  for (const reservation of projectionReservations) {
     if (typeof reservation.bindingHash === "string" && OWNER_ADMISSION_SHA256_V1.test(reservation.bindingHash)) {
       expectedAuthorityKeys.add(recoverySourceBootstrapAuthorityKeyV1(
         `setfarm://internal-production/bound-owner-reservations/${reservation.bindingHash}`,
@@ -4871,28 +4908,44 @@ function projectRecoverySourceBootstrapPersistenceRowsV1(
       ));
     }
   }
-  const unrelatedAuthorityCount = allAuthorityRows.filter((authority) => !expectedAuthorityKeys.has(
+  const projectionAuthorityRows = projectionReleased
+    ? Object.freeze(allAuthorityRows.filter((authority) => expectedAuthorityKeys.has(
+        recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash),
+      )))
+    : Object.freeze(allAuthorityRows);
+  const unrelatedAuthorityCount = projectionAuthorityRows.filter((authority) => !expectedAuthorityKeys.has(
     recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash),
   )).length;
-  const activeFenceBody = currentVersion === 1 || currentVersion === 3 ? fence : null;
+  const projectedHead = projectionReleased && currentVersion > 4
+    ? headHistory[3]!
+    : rawOwner;
+  const projectedHeadVersion = Number(projectedHead.headVersion);
+  const activeFenceBody = projectedHeadVersion === 1 || projectedHeadVersion === 3 ? fence : null;
   const projectedOwner = Object.freeze({
     ...rawOwner,
+    headVersion: projectedHead.headVersion,
+    headHash: projectedHead.headHash,
+    activeFenceRef: projectedHead.activeFenceRef,
+    activeFenceHash: projectedHead.activeFenceHash,
+    activeTargetFamilyHash: projectedHead.activeTargetFamilyHash,
+    migrationApplicationEvidenceHash: projectedHead.migrationApplicationEvidenceHash,
+    headPayload: projectedHead.headPayload,
     activeFenceCount: activeFenceBody === null ? 0 : 1,
     activeFenceBody,
     authorityKind: activeFenceBody === null ? null : fenceAuthority.authorityKind,
     phaseKey: activeFenceBody === null ? null : fenceAuthority.phaseKey,
     predecessorHeadHash: activeFenceBody === null ? null : fenceAuthority.predecessorHeadHash,
     successorHeadHash: activeFenceBody === null ? null : fenceAuthority.successorHeadHash,
-    headActiveFenceRef: rawOwner.activeFenceRef,
-    headActiveFenceHash: rawOwner.activeFenceHash,
+    headActiveFenceRef: projectedHead.activeFenceRef,
+    headActiveFenceHash: projectedHead.activeFenceHash,
     headHistory: Object.freeze(headHistory),
     authorityHistory: Object.freeze(authorityHistory),
-    allAuthorityRows: Object.freeze(allAuthorityRows),
+    allAuthorityRows: projectionAuthorityRows,
     unrelatedAuthorityCount,
   }) as unknown as RecoverySourceBootstrapOwnerProjectionRowV1;
   return Object.freeze({
     ownerRows: Object.freeze([projectedOwner]),
-    reservationRows: Object.freeze(projectedReservations),
+    reservationRows: projectionReservations,
   });
 }
 

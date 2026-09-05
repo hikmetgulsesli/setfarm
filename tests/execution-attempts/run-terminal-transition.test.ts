@@ -723,8 +723,10 @@ ${barrier}
     try {
       const modulePath = path.join(fixture, "projection.ts");
       const canonicalJsonUrl = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/product-compiler/canonical-json.ts")).href;
+      const ownerAdmissionUrl = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/internal-production/owner-admission-v1.ts")).href;
       writeFileSync(modulePath, `
 import { hashCanonicalJson } from ${JSON.stringify(canonicalJsonUrl)};
+import { validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1 } from ${JSON.stringify(ownerAdmissionUrl)};
 const g=globalThis as any;
 const OWNER_ADMISSION_REF_V1=new RegExp("^setfarm://[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$");
 const OWNER_ADMISSION_SHA256_V1=/^[0-9a-f]{64}$/;
@@ -738,9 +740,12 @@ const requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1=(inp
   if(input.recoveryOperationAuthority!==g.__p4ProjectionOperation||input.ownerRows.length!==1||owner.unrelatedAuthorityCount!==0)throw new Error("RAW_PROJECTION_OWNER_CROSSED");
   if(owner.headVersion!==expected.version||owner.headHash!==expected.headHash||owner.headActiveFenceRef!==expected.activeFenceRef||owner.headActiveFenceHash!==expected.activeFenceHash)throw new Error("RAW_PROJECTION_HEAD_ALIAS_CROSSED");
   if(owner.headHistory.length!==expected.headHashes.length||owner.headHistory.some((head:any,index:number)=>head.headHash!==expected.headHashes[index]))throw new Error("RAW_PROJECTION_HEAD_HISTORY_CROSSED");
-  if(owner.authorityHistory.length!==expected.authorityHistoryLength||JSON.stringify(owner.allAuthorityRows)!==JSON.stringify(g.__p4ProjectionRows.ownerRows[0].allAuthorityRows))throw new Error("RAW_PROJECTION_AUTHORITY_HISTORY_CROSSED");
-  if(input.reservationRows.length!==2||input.reservationRows.some((row:any,index:number)=>row.authorityRef!==g.__p4ProjectionRows.reservationRows[index].reservationRef||row.authorityHash!==g.__p4ProjectionRows.reservationRows[index].reservationHash||row.authorityBody!==g.__p4ProjectionRows.ownerRows[0].allAuthorityRows.find((authority:any)=>authority.authorityRef===row.reservationRef).authorityBody))throw new Error("RAW_PROJECTION_RESERVATION_AUTHORITY_CROSSED");
+  const expectedAuthorityRows=expected.authorityRows??g.__p4ProjectionRows.ownerRows[0].allAuthorityRows;
+  const expectedReservationRows=expected.reservationRows??g.__p4ProjectionRows.reservationRows;
+  if(owner.authorityHistory.length!==expected.authorityHistoryLength||JSON.stringify(owner.allAuthorityRows)!==JSON.stringify(expectedAuthorityRows))throw new Error("RAW_PROJECTION_AUTHORITY_HISTORY_CROSSED");
+  if(input.reservationRows.length!==expectedReservationRows.length||input.reservationRows.some((row:any,index:number)=>row.reservationRef!==expectedReservationRows[index].reservationRef||row.reservationHash!==expectedReservationRows[index].reservationHash||row.authorityRef!==expectedReservationRows[index].reservationRef||row.authorityHash!==expectedReservationRows[index].reservationHash||row.authorityBody!==g.__p4ProjectionRows.ownerRows[0].allAuthorityRows.find((authority:any)=>authority.authorityRef===row.reservationRef).authorityBody))throw new Error("RAW_PROJECTION_RESERVATION_AUTHORITY_CROSSED");
   if(expected.version>=3&&input.reservationRows.some((row:any)=>row.closeAuthority?.authorityRef!==row.closeRef||row.closeAuthority?.authorityHash!==row.closeHash))throw new Error("RAW_PROJECTION_CLOSE_AUTHORITY_CROSSED");
+  if(JSON.stringify(input.expectedRunRows)!==JSON.stringify(g.__p4ProjectionExpectedRunRows)||JSON.stringify(input.activeRunRows)!==JSON.stringify(g.__p4ProjectionActiveRunRows))throw new Error("RAW_PROJECTION_RUN_ROWS_CROSSED");
   return g.__p4ProjectionDisposition;
 };
 ${copiedProjectionAndClassifier}
@@ -827,21 +832,36 @@ ${copiedProjectionAndClassifier}
         headPayload: h1Payload, allAuthorityRows: h1AuthorityRows,
       })]);
       const execute = async (
-        rows: Readonly<{ ownerRows: readonly Readonly<Record<string, unknown>>[]; reservationRows: readonly Readonly<Record<string, unknown>>[] }>,
+        rows: Readonly<{
+          ownerRows: readonly Readonly<Record<string, unknown>>[];
+          reservationRows: readonly Readonly<Record<string, unknown>>[];
+          expectedRunRows?: readonly Readonly<Record<string, unknown>>[];
+          activeRunRows?: readonly Readonly<Record<string, unknown>>[];
+        }>,
         expected: Readonly<Record<string, unknown>>,
         disposition: Readonly<Record<string, unknown>>,
       ): Promise<Readonly<{ outcome: string; message: string | null; events: readonly string[]; queries: readonly string[]; value: unknown }>> => {
         const queries: string[] = [];
+        const expectedRunRows = rows.expectedRunRows ?? Object.freeze([run]);
+        const activeRunRows = rows.activeRunRows ?? Object.freeze([run]);
         const sql = async (strings: TemplateStringsArray): Promise<unknown> => {
           const text = strings.join("?");
           queries.push(text);
           if (/internal_production_owner_reservations_v1/i.test(text)) return rows.reservationRows;
           if (/internal_production_owner_admission_(?:head|authorities)_v1/i.test(text)) return rows.ownerRows;
-          if (/FROM\s+(?:public\.)?runs/i.test(text) && /running[\s\S]*resuming[\s\S]*cancelling[\s\S]*failing/i.test(text)) return [run];
-          if (/FROM\s+(?:public\.)?runs/i.test(text)) return [run];
+          if (/FROM\s+(?:public\.)?runs/i.test(text) && /WHERE\s+id=/i.test(text)) return expectedRunRows;
+          if (/FROM\s+(?:public\.)?runs/i.test(text) && /status\s+IN/i.test(text)) return activeRunRows;
           throw new Error(`UNEXPECTED_RAW_PROJECTION_SQL:${text}`);
         };
-        Object.assign(globalThis as any, { __p4ProjectionEvents: [], __p4ProjectionExpected: expected, __p4ProjectionDisposition: disposition, __p4ProjectionOperation: operation, __p4ProjectionRows: rows });
+        Object.assign(globalThis as any, {
+          __p4ProjectionEvents: [],
+          __p4ProjectionExpected: expected,
+          __p4ProjectionDisposition: disposition,
+          __p4ProjectionOperation: operation,
+          __p4ProjectionRows: rows,
+          __p4ProjectionExpectedRunRows: expectedRunRows,
+          __p4ProjectionActiveRunRows: activeRunRows,
+        });
         let outcome = "returned", message: string | null = null, value: unknown;
         try { value = await kernel.classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1(sql, { recoveryState: "prepared", recoveryOperationAuthority: operation }); }
         catch (error) { outcome = "threw"; message = String(error); }
@@ -870,11 +890,48 @@ ${copiedProjectionAndClassifier}
       const h3Payload = Object.freeze({ schema: "setfarm.internal-production-owner-admission-head.v1", version: 3, predecessorHeadHash: h2Hash, transitionKind: "close", transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${runTransitionHash}`, transitionHash: runTransitionHash, migrationApplication });
       const h3Hash = hashCanonicalJson(h3Payload);
       const runClose = Object.freeze({ reservationRef: runReservationRef, reservationHash: runReservationHash, terminalOwnerRef: runTerminalRef, terminalOwnerHash: runTerminalHash, ownerAdmissionHeadPredecessorHash: h2Hash, ownerAdmissionHeadSuccessorHash: h3Hash, closeRef: "setfarm://tests/p4/run-close", closeHash: sha("4") });
-      const h4Payload = Object.freeze({ schema: "setfarm.internal-production-owner-admission-head.v1", version: 4, predecessorHeadHash: h3Hash, transitionKind: "release", transitionRef: "setfarm://tests/p4/release-transition", transitionHash: sha("5"), migrationApplication });
+      const releaseAuthorityBody = Object.freeze({
+        purpose: "recovery-d-source-delivery-v1",
+        targetFamilyKind: "source-run-launch",
+        terminalCoreRef: null,
+        terminalCoreHash: null,
+        targetSetCloseRef: null,
+        targetSetCloseHash: null,
+        occurrenceRef: null,
+        occurrenceHash: null,
+        headRef: null,
+        headHash: null,
+        targetReservationPairCloseRef: "setfarm://tests/p4/pair-close",
+        targetReservationPairCloseHash: sha("5"),
+        purposeTerminalKind: null,
+        purposeTerminalRef: null,
+        purposeTerminalHash: null,
+      });
+      const releaseTransitionHash = hashCanonicalJson(Object.freeze({
+        schema: "setfarm.internal-production-global-owner-admission-fence-release-transition.v1",
+        fenceRef: fenceBody.fenceRef,
+        fenceHash: fenceBody.fenceHash,
+        releaseAuthority: releaseAuthorityBody,
+      }));
+      const h4Payload = Object.freeze({ schema: "setfarm.internal-production-owner-admission-head.v1", version: 4, predecessorHeadHash: h3Hash, transitionKind: "release", transitionRef: `setfarm://internal-production/global-owner-admission-fence-release-transition/sha256/${releaseTransitionHash}`, transitionHash: releaseTransitionHash, migrationApplication });
       const h4Hash = hashCanonicalJson(h4Payload);
       const sourceCloseAuthority = authority({ authorityRef: sourceClose.closeRef, authorityHash: sourceClose.closeHash, authorityKind: "close", phaseKey: sourceReservationRef, predecessorHeadHash: h1Hash, successorHeadHash: h2Hash, authorityBody: sourceClose });
       const runCloseAuthority = authority({ authorityRef: runClose.closeRef, authorityHash: runClose.closeHash, authorityKind: "close", phaseKey: runReservationRef, predecessorHeadHash: h2Hash, successorHeadHash: h3Hash, authorityBody: runClose });
-      const releaseAuthority = authority({ authorityRef: "setfarm://tests/p4/release", authorityHash: sha("6"), authorityKind: "release", phaseKey: fenceBody.fenceRef, predecessorHeadHash: h3Hash, successorHeadHash: h4Hash, authorityBody: Object.freeze({ schema: "setfarm.test.release.v1" }) });
+      const releaseProjection = Object.freeze({
+        schema: "setfarm.internal-production-global-owner-admission-fence-release.v1",
+        fenceRef: fenceBody.fenceRef,
+        fenceHash: fenceBody.fenceHash,
+        releaseAuthority: releaseAuthorityBody,
+        ownerAdmissionHeadPredecessorHash: h3Hash,
+        ownerAdmissionHeadSuccessorHash: h4Hash,
+      });
+      const releaseHash = hashCanonicalJson(releaseProjection);
+      const releaseBody = Object.freeze({
+        ...releaseProjection,
+        releaseRef: `setfarm://internal-production/global-owner-admission-fence-release/sha256/${releaseHash}`,
+        releaseHash,
+      });
+      const releaseAuthority = authority({ authorityRef: releaseBody.releaseRef, authorityHash: releaseBody.releaseHash, authorityKind: "release", phaseKey: fenceBody.fenceRef, predecessorHeadHash: h3Hash, successorHeadHash: h4Hash, authorityBody: releaseBody });
       const h4AuthorityRows = Object.freeze([...h1AuthorityRows, sourceCloseAuthority, runCloseAuthority, releaseAuthority]);
       const h4ReservationRows = Object.freeze([
         Object.freeze({ ...baseReservationRows[0]!, state: "closed", closeRef: sourceClose.closeRef, closeHash: sourceClose.closeHash, closeBody: sourceClose }),
@@ -923,6 +980,98 @@ ${copiedProjectionAndClassifier}
       assert.equal(h4.outcome, "returned", `raw H4 rows enrich full close/release history before pure classification (${String(h4.message)})`);
       assert.deepEqual(h4.value, releasedDisposition);
       assert.deepEqual(h4.events, ["validate"]);
+
+      const laterPendingInputRef = "setfarm://tests/p4/later-pending";
+      const laterPendingInputHash = sha("7");
+      const laterTargetFamilyHash = sha("9");
+      const laterFenceTransitionHash = hashCanonicalJson(Object.freeze({
+        schema: "setfarm.internal-production-global-owner-admission-fence-transition.v1",
+        purpose: "recovery-d-source-delivery-v1",
+        pendingInputRef: laterPendingInputRef,
+        pendingInputHash: laterPendingInputHash,
+        targetFamilyHash: laterTargetFamilyHash,
+        ownerIdentitySetHash: sha("a"),
+      }));
+      const h5Payload = Object.freeze({
+        schema: "setfarm.internal-production-owner-admission-head.v1",
+        version: 5,
+        predecessorHeadHash: h4Hash,
+        transitionKind: "fence",
+        transitionRef: `setfarm://internal-production/global-owner-admission-fence-transition/sha256/${laterFenceTransitionHash}`,
+        transitionHash: laterFenceTransitionHash,
+        migrationApplication,
+      });
+      const h5Hash = hashCanonicalJson(h5Payload);
+      const laterFenceAuthority = authority({
+        authorityRef: "setfarm://tests/p4/later-fence",
+        authorityHash: sha("b"),
+        authorityKind: "fence",
+        phaseKey: laterPendingInputRef,
+        predecessorHeadHash: h4Hash,
+        successorHeadHash: h5Hash,
+        authorityBody: Object.freeze({ schema: "setfarm.test.later-fence.v1" }),
+      });
+      const laterRun = Object.freeze({ runId: sha("f"), status: "running" });
+      const historicalReleasedDisposition = Object.freeze({ state: "released", workflowState: "completed", runId });
+      const historicalH4 = await execute(
+        Object.freeze({
+          ownerRows: Object.freeze([Object.freeze({
+            headVersion: 5,
+            headHash: h5Hash,
+            activeFenceRef: laterFenceAuthority.authorityRef,
+            activeFenceHash: laterFenceAuthority.authorityHash,
+            activeTargetFamilyHash: laterTargetFamilyHash,
+            migrationApplicationEvidenceHash: migrationApplication.evidenceHash,
+            headPayload: h5Payload,
+            allAuthorityRows: Object.freeze([...h4AuthorityRows, laterFenceAuthority]),
+          })]),
+          reservationRows: h4ReservationRows,
+          expectedRunRows: Object.freeze([Object.freeze({ ...run, status: "completed" })]),
+          activeRunRows: Object.freeze([laterRun]),
+        }),
+        Object.freeze({
+          version: 4,
+          headHash: h4Hash,
+          activeFenceRef: null,
+          activeFenceHash: null,
+          headHashes: Object.freeze([h1Hash, h2Hash, h3Hash, h4Hash]),
+          authorityHistoryLength: 6,
+          authorityRows: h4AuthorityRows,
+          reservationRows: h4ReservationRows,
+        }),
+        historicalReleasedDisposition,
+      );
+      assert.equal(historicalH4.outcome, "returned", `exact historical H4 survives a later legitimate owner generation and active run (${String(historicalH4.message)})`);
+      assert.deepEqual(historicalH4.value, historicalReleasedDisposition);
+      assert.deepEqual(historicalH4.events, ["validate"]);
+
+      const ambiguousReleaseAuthority = authority({
+        ...releaseAuthority,
+        authorityRef: "setfarm://tests/p4/ambiguous-release",
+        authorityHash: sha("e"),
+      });
+      const ambiguousHistoricalH4 = await execute(
+        Object.freeze({
+          ownerRows: Object.freeze([Object.freeze({
+            ...h4OwnerRows[0]!,
+            headVersion: 5,
+            headHash: h5Hash,
+            activeFenceRef: laterFenceAuthority.authorityRef,
+            activeFenceHash: laterFenceAuthority.authorityHash,
+            activeTargetFamilyHash: laterTargetFamilyHash,
+            headPayload: h5Payload,
+            allAuthorityRows: Object.freeze([...h4AuthorityRows, ambiguousReleaseAuthority, laterFenceAuthority]),
+          })]),
+          reservationRows: h4ReservationRows,
+          expectedRunRows: Object.freeze([Object.freeze({ ...run, status: "completed" })]),
+          activeRunRows: Object.freeze([laterRun]),
+        }),
+        Object.freeze({ version: 4 }),
+        historicalReleasedDisposition,
+      );
+      assert.equal(ambiguousHistoricalH4.outcome, "threw", "historical H4 cannot choose among two release authorities for the same exact fence");
+      assert.match(String(ambiguousHistoricalH4.message), /RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_DUPLICATE/);
+      assert.deepEqual(ambiguousHistoricalH4.events, []);
 
       const missingAuthorityRows = Object.freeze(h1AuthorityRows.filter((entry) => entry !== sourceReservationAuthority));
       const missing = await execute(

@@ -23455,6 +23455,22 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(requirePersistence(terminalInput(rows, "terminal")), released(terminalRun),
         `${String(terminalRun.state)}: already-terminal physical observation retains the same released authority`);
     }
+    const historicalReleasedRows = Object.freeze({
+      ...terminalPersisted.queryRows,
+      "expected-run": Object.freeze([terminalPersisted.expectedCompletedRun]),
+      "active-runs": Object.freeze([terminalPersisted.unrelatedRun]),
+    });
+    assert.deepEqual(
+      requirePersistence(terminalInput(historicalReleasedRows, "prepared")),
+      released(terminalPersisted.expectedCompletedRun),
+      "a terminal recovery run with exact historical H4 remains released after a later legitimate run becomes active",
+    );
+    assert.throws(() => requirePersistence(terminalInput(Object.freeze({
+      ...terminalPersisted.queryRows,
+      "expected-run": Object.freeze([terminalPersisted.expectedFailingRun]),
+      "active-runs": Object.freeze([terminalPersisted.expectedFailingRun, terminalPersisted.unrelatedRun]),
+    }), "prepared")), /active|run|unrelated|owner/i,
+    "historical H4 cannot hide an unrelated active run while the recovery run itself remains active");
     assert.throws(() => requirePersistence(Object.freeze({ ...input(persisted.queryRows), recoveryState: "terminal" })), /state|phase|H1|bound|owner/i,
       "a bound H1 authority inventory cannot be consumed under the terminal/H4 recovery discriminant");
 
