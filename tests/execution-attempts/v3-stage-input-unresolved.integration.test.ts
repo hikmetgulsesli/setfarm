@@ -59,33 +59,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
       )
     `;
 
-    // Single-step publication has no compiler attempt of its own today. This
-    // fixture binds one exact active attempt at claim insert so the common
-    // pre-dispatch authority must close claim + attempt + runtime together.
-    await database.sql.unsafe(`
-      CREATE FUNCTION bind_v3_stage_input_attempt() RETURNS trigger AS $$
-      BEGIN
-        IF NEW.run_id IN ('${successRunId}', '${rollbackRunId}') THEN
-          INSERT INTO execution_attempts (
-            attempt_id, run_id, step_id, story_id, generation, fence_token,
-            attempt_class, compilation_report_hash, source_before_sha,
-            source_before_tree_hash, role, agent_id, lease_acquired_at,
-            lease_expires_at, heartbeat_at, disposition, evidence_refs, claim_id
-          ) VALUES (
-            'ATT_' || NEW.run_id, NEW.run_id, NEW.step_id, '', 1, repeat('a', 64),
-            'infrastructure_retry', repeat('b', 64), repeat('c', 40),
-            repeat('d', 64), 'builder', NEW.agent_id, NOW(),
-            NOW() + INTERVAL '5 minutes', NOW(), 'claimed', '[]', NEW.id
-          );
-        END IF;
-        RETURN NEW;
-      END;
-      $$ LANGUAGE plpgsql;
-      CREATE TRIGGER bind_v3_stage_input_attempt_after_claim
-        AFTER INSERT ON claim_log
-        FOR EACH ROW EXECUTE FUNCTION bind_v3_stage_input_attempt();
-    `);
-
     const { claimStep } = await import("../../src/installer/step-ops.js");
     const success = await claimStep(successAgent, undefined, {
       schema: "setfarm.runtime-claim-intent.v1",
@@ -104,7 +77,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
       claim_outcome: string | null;
       claim_diagnostic: string | null;
       abandoned_at: Date | null;
-      attempt_disposition: string;
       runtime_state: string;
       termination_state: string;
       requested_by: string;
@@ -118,7 +90,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
              claim.outcome AS claim_outcome,
              claim.diagnostic AS claim_diagnostic,
              claim.abandoned_at,
-             attempt.disposition AS attempt_disposition,
              runtime.state AS runtime_state,
              termination.state AS termination_state,
              termination.requested_by,
@@ -128,7 +99,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
         FROM runs run
         JOIN steps step ON step.id = ${successStepId}
         JOIN claim_log claim ON claim.run_id = run.id AND claim.step_id = step.step_id
-        JOIN execution_attempts attempt ON attempt.claim_id = claim.id
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
         JOIN run_termination_requests termination ON termination.run_id = run.id
        WHERE run.id = ${successRunId}
@@ -141,7 +111,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
     assert.equal(terminal.claim_outcome, "failed");
     assert.equal(terminal.claim_diagnostic, terminal.step_output);
     assert.ok(terminal.abandoned_at);
-    assert.equal(terminal.attempt_disposition, "inconclusive");
     assert.equal(terminal.runtime_state, "released");
     assert.equal(terminal.termination_state, "requested");
     assert.equal(terminal.requested_by, "setfarm.v3-stage-input-authority");
@@ -225,7 +194,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
       claim_outcome: string | null;
       claim_diagnostic: string | null;
       abandoned_at: Date | null;
-      attempt_disposition: string;
       runtime_state: string;
       termination_count: number;
     }>>`
@@ -236,14 +204,12 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
              claim.outcome AS claim_outcome,
              claim.diagnostic AS claim_diagnostic,
              claim.abandoned_at,
-             attempt.disposition AS attempt_disposition,
              runtime.state AS runtime_state,
              (SELECT COUNT(*)::integer FROM run_termination_requests termination
                WHERE termination.run_id = run.id) AS termination_count
         FROM runs run
         JOIN steps step ON step.id = ${rollbackStepId}
         JOIN claim_log claim ON claim.run_id = run.id AND claim.step_id = step.step_id
-        JOIN execution_attempts attempt ON attempt.claim_id = claim.id
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
        WHERE run.id = ${rollbackRunId}
     `;
@@ -255,7 +221,6 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
       claim_outcome: null,
       claim_diagnostic: null,
       abandoned_at: null,
-      attempt_disposition: "claimed",
       runtime_state: "reserved",
       termination_count: 0,
     });

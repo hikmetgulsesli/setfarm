@@ -15,6 +15,7 @@ import type { PgTransactionSql } from "../../src/db-pg.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
+import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -454,6 +455,106 @@ describe("atomic claim-attempt terminal transition", () => {
         disposition: "inconclusive",
         claim_owner_state: "closed",
         attempt_owner_state: "closed",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("withdraws a story-less claim, attempt, and reserved runtime under one owner transaction", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-storyless-pre-dispatch-withdrawal";
+      const stepDbId = `${runId}-step`;
+      const workflowStepId = "contract-stage";
+      const claimAgentId = "feature-dev_storyless-withdrawal";
+      const attemptId = "ATT_storyless-withdrawal-01";
+      const sessionId = "RTS_storyless-withdrawal-01";
+      const ownerInstanceId = "spawner-storyless-withdrawal";
+      await database.insertRun(runId);
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status)
+        VALUES
+          (${stepDbId}, ${runId}, ${workflowStepId}, ${claimAgentId}, 1, '', '', 'running')
+      `;
+      const claimId = await insertClaim(database, {
+        runId,
+        workflowStepId,
+        storyId: null,
+        agentId: claimAgentId,
+      });
+      await createAttemptRepository(database.sql, {
+        attemptId: () => attemptId,
+        fenceToken: () => "9".repeat(64),
+      }).reserve(exactProductReservation({
+        claimId,
+        runId,
+        stepId: workflowStepId,
+        storyId: "",
+        agentId: claimAgentId,
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      await createRuntimeSessionRepository(database.sql).reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId,
+        claimId,
+        attemptId,
+        claimAgentId,
+        runtimeAgentId: "storyless-runtime",
+        runtimeKind: "local_process",
+        ownerInstanceId,
+      });
+
+      const result = await database.sql.begin((transaction) => (
+        withdrawPreDispatchClaimInTransaction(transaction, {
+          identity: {
+            claimId,
+            runId,
+            workflowStepId,
+            storyId: null,
+            claimAgentId,
+            runtime: { sessionId, ownerInstanceId },
+          },
+          outcome: "failed",
+          diagnostic: "story-less input unresolved",
+        })
+      ));
+      assert.deepEqual(result, { status: "withdrawn" });
+      const rows = await database.sql<Array<{
+        claim_outcome: string;
+        attempt_disposition: string;
+        runtime_state: string;
+        claim_owner_state: string;
+        attempt_owner_state: string;
+        runtime_owner_state: string;
+      }>>`
+        SELECT claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               runtime.state AS runtime_state,
+               claim_owner.state AS claim_owner_state,
+               attempt_owner.state AS attempt_owner_state,
+               runtime_owner.state AS runtime_owner_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id=claim.id
+          JOIN runtime_sessions runtime ON runtime.claim_id=claim.id
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category='claim' AND claim_owner.owner_key=claim.id::text
+          JOIN internal_production_owner_reservations_v1 attempt_owner
+            ON attempt_owner.category='execution-attempt' AND attempt_owner.owner_key=attempt.attempt_id
+          JOIN internal_production_owner_reservations_v1 runtime_owner
+            ON runtime_owner.category='runtime-session' AND runtime_owner.owner_key=runtime.session_id
+         WHERE claim.id=${claimId}
+      `;
+      assert.deepEqual({ ...rows[0]! }, {
+        claim_outcome: "failed",
+        attempt_disposition: "inconclusive",
+        runtime_state: "released",
+        claim_owner_state: "closed",
+        attempt_owner_state: "closed",
+        runtime_owner_state: "closed",
       });
     } finally {
       await database.cleanup();
