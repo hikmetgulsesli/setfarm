@@ -27,6 +27,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/db/contract-spine-migration-digests.generated.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
   "src/db/contract-spine-migrations.ts",
+  "src/db/operational-failure-cause-authority-v3-catalog.ts",
   "src/execution/attempt-reconciler.ts",
   "src/execution/attempt-repository.ts",
   "src/execution/claim-attempt-transition.ts",
@@ -34,6 +35,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   "src/execution/run-persistence.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
@@ -141,6 +143,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
   "src/execution/runtime-completion-effect-repository.ts",
@@ -232,19 +235,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 57, "P3 source path cardinality differs");
+  assert.equal(actual.length, 58, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen115");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen117");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen115 order");
+    "P3 source paths do not preserve frozen117 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 57, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 58, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -300,6 +303,15 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
   ]);
+  const currentEntryClosure = "The current-entry poison recovery closure amendment supersedes";
+  assert.equal(plan.split(currentEntryClosure).length - 1, 1,
+    "approved plan current-entry closure amendment differs");
+  insertAfter(base, "src/db/contract-spine-migrations.ts", [
+    "src/db/operational-failure-cause-authority-v3-catalog.ts",
+  ]);
+  insertAfter(base, "src/execution/pre-dispatch-withdrawal-authority.ts", [
+    "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+  ]);
   return base;
 }
 
@@ -325,6 +337,12 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
     "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  ]);
+  const currentEntryClosure = "The current-entry poison recovery closure amendment supersedes";
+  assert.equal(plan.split(currentEntryClosure).length - 1, 1,
+    "approved plan current-entry closure amendment differs");
+  insertAfter("src/execution/pre-dispatch-withdrawal-authority.ts", [
+    "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   ]);
   return base;
 }
@@ -499,7 +517,7 @@ function p3ExecutableSqlLiteralOccurrences(
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
-    "Task 8 must parse all exact29 production/package paths");
+    "Task 8 must parse all exact30 production/package paths");
 
   const ownerCore = sources["src/internal-production/owner-admission-v1.ts"]!;
   assert.equal(countMatches(ownerCore, /BigInt\(value\) > 9_007_199_254_740_991n/g), 1,
@@ -857,15 +875,15 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact57 subset of frozen115", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 57);
+  it("freezes P3 as an ordered exact58 subset of frozen117", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 58);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(production.length, 29);
+    assert.equal(production.length, 30);
     assert.equal(tests.length, 28);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 57);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 58);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
@@ -877,6 +895,7 @@ describe("Task 0 exact source manifest", () => {
       "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
       "src/internal-production/owner-admission-v1.ts",
       "src/execution/runtime-completion-effect-runner.ts",
+      "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
       "src/db/contract-spine-migrations.ts",
       "src/db/contract-spine-migration-digests.generated.ts",
       "src/db/contract-spine-migration-source-integrity.ts",
@@ -898,7 +917,7 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 57);
+    assert.equal(countOnly.length, 58);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
@@ -1041,12 +1060,12 @@ describe("Task 0 exact source manifest", () => {
     )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 115-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 115);
+  it("accepts the literal 117-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 117);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
-  it("matches frozen115 and every approved exact57 member exists", () => {
+  it("matches frozen117 and every approved exact58 member exists", () => {
     const approved = extractApprovedTask0SourcePathsV1(readFileSync(APPROVED_PLAN_PATH, "utf8"));
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
     const p3Approved = new Set(P3_EXACT_SOURCE_PATHS_V1);

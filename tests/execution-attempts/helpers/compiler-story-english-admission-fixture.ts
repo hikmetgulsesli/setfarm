@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+import type { PgTransactionSql } from "../../../src/db-pg.js";
 import { completeSingleStepClaimAndState } from "../../../src/execution/claim-attempt-transition.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../../src/execution/claim-runtime-publication.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../src/execution/compiler-english-admission-ledger-v1.js";
 import {
   createCompilerStoryEnglishAdmissionClaimProofV1,
@@ -66,12 +71,23 @@ async function prepareCompilerAdmissionCompletion(
   const claimAgentId = `feature-dev_${input.workflowStepId}`;
   const runtimeAgentId = `${input.workflowStepId}-admission-fixture-runtime`;
   const ownerInstanceId = `${input.workflowStepId}-admission-fixture-owner`;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
-    RETURNING id::integer AS id
-  `;
-  const claimId = claims[0]!.id;
+  const claimId = await database.sql.begin(async (sql) => {
+    const rows = await sql<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      sql as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(sql as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId,
+      claimedAt: new Date("2026-07-13T09:58:00.000Z"),
+    });
+  });
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: `RTS_${token}`,

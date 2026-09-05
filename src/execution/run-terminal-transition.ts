@@ -1,7 +1,10 @@
 import type postgres from "postgres";
 
 import {
+  assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1,
   closeInternalProductionOwnerReservationV1,
+  lockInternalProductionWorkflowRunInsertionFenceV1,
+  isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
@@ -31,6 +34,7 @@ import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-comple
 import {
   createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1,
   createInternalProductionMandatoryEffectCanonicalOwnerIdentityV1,
+  type PgTransactionSql as InternalProductionPgTransactionSql,
 } from "../internal-production/owner-admission-v1.js";
 
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
@@ -39,6 +43,7 @@ type RunRow = {
   id: string;
   status: string;
   protocol: string;
+  context: string | Record<string, unknown>;
   packet_hash: string | null;
   accepted_candidate_hash: string | null;
   meta: string | Record<string, unknown> | null;
@@ -348,7 +353,7 @@ async function authenticateTask5ClosedMandatoryEffectReplayInTransactionV1(
  * when their immutable packet/slice contract matches the run.
  */
 export async function transitionRunToTerminalInTransaction(
-  sql: postgres.TransactionSql,
+  sql: InternalProductionPgTransactionSql,
   input: Readonly<{
     runId: string;
     status: RunTerminalStatus;
@@ -362,13 +367,41 @@ export async function transitionRunToTerminalInTransaction(
   if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
     throw new Error("RUN_TERMINAL_TIME_INVALID");
   }
+  await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  const ownerAdmissionMigrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (
+    ownerAdmissionMigrationRows.length > 1
+    || (ownerAdmissionMigrationRows.length === 1
+      && !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(
+        ownerAdmissionMigrationRows[0],
+      ))
+  ) throw new Error("RUN_TERMINAL_OWNER_ADMISSION_MIGRATION32_JOURNAL_INVALID");
+  const ownerAdmissionAvailable = ownerAdmissionMigrationRows.length === 1;
   const runs = await sql.unsafe<RunRow[]>(
-    `SELECT id, status, protocol, packet_hash, accepted_candidate_hash, meta
+    `SELECT id, status, protocol, context, packet_hash, accepted_candidate_hash, meta
        FROM runs WHERE id = $1 FOR UPDATE`,
     [input.runId],
   );
   const run = runs[0];
   if (!run) throw new Error("RUN_TERMINAL_NOT_FOUND");
+  await assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(
+    sql,
+    {
+      runId: run.id,
+      workflowState: run.status,
+      protocol: run.protocol,
+      runContext: run.context,
+    },
+  );
   const terminations = await sql.unsafe<TerminationRow[]>(
     `SELECT request_id,target_status,state FROM run_termination_requests
       WHERE run_id = $1 ORDER BY requested_at,request_id FOR UPDATE`,
@@ -888,28 +921,36 @@ export async function transitionRunToTerminalInTransaction(
   // Resolve all only after every terminal mutation.
   const ownerSql = sql as unknown as Parameters<typeof closeInternalProductionOwnerReservationV1>[0];
   const claimCloses = [];
-  for (const claim of claims) {
-    claimCloses.push(await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(ownerSql, {
-      claimIdText: claim.id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const claim of claims) {
+      claimCloses.push(await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(ownerSql, {
+        claimIdText: claim.id,
+      }));
+    }
   }
   const attemptCloses = [];
-  for (const attempt of attempts) {
-    attemptCloses.push(await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(ownerSql, {
-      attemptId: attempt.attempt_id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const attempt of attempts) {
+      attemptCloses.push(await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(ownerSql, {
+        attemptId: attempt.attempt_id,
+      }));
+    }
   }
   const runtimeCloses = [];
-  for (const runtime of runtimes) {
-    runtimeCloses.push(await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(ownerSql, {
-      sessionId: runtime.session_id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const runtime of runtimes) {
+      runtimeCloses.push(await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(ownerSql, {
+        sessionId: runtime.session_id,
+      }));
+    }
   }
   const completionCloses = [];
-  for (const requestId of completionOwnerIds) {
-    completionCloses.push(await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(ownerSql, {
-      requestId,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const requestId of completionOwnerIds) {
+      completionCloses.push(await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(ownerSql, {
+        requestId,
+      }));
+    }
   }
   // Consume every exact read-only preflight fact in the mandatory-effect
   // resolve slot. Task 6 still performs no effect resolver, mutation, or close.
@@ -922,16 +963,18 @@ export async function transitionRunToTerminalInTransaction(
     throw new Error("RUN_TERMINAL_EFFECT_PREFLIGHT_FACT_AMBIGUOUS");
   }
   const terminationCloses = [];
-  if (terminationRequestId) {
+  if (ownerAdmissionAvailable && terminationRequestId) {
     terminationCloses.push(await resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1(ownerSql, {
       requestId: terminationRequestId,
     }));
   }
-  const recoverySourceBootstrapTerminal = await resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
-    ownerSql,
-    { runId: input.runId },
-  );
-  const terminalPair = recoverySourceBootstrapTerminal === null
+  const recoverySourceBootstrapTerminal = ownerAdmissionAvailable
+    ? await resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
+        ownerSql,
+        { runId: input.runId },
+      )
+    : null;
+  const terminalPair = ownerAdmissionAvailable && recoverySourceBootstrapTerminal === null
     ? await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
         ownerSql,
         { runId: input.runId },
@@ -1043,5 +1086,5 @@ export async function transitionRunToTerminal(
     now?: Date;
   }>,
 ): Promise<RunTerminalTransitionResult> {
-  return sql.begin((transaction) => transitionRunToTerminalInTransaction(transaction, input)) as Promise<RunTerminalTransitionResult>;
+  return sql.begin((transaction) => transitionRunToTerminalInTransaction(transaction as InternalProductionPgTransactionSql, input)) as Promise<RunTerminalTransitionResult>;
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -123,11 +123,20 @@ it("P4 recovery source bootstrap uses dedicated persistence and dispatch ports",
   const persistence = await import("../../src/execution/run-persistence.js");
   const installer = await import("../../src/installer/run.js");
   const persistSpecial = Reflect.get(persistence, "persistInternalProductionRecoverySourceBootstrapRunV1");
+  const persistSpecialForAuthority = Reflect.get(persistence, "persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1");
+  const installerObservePersistedSpecial = Reflect.get(installer, "observePersistedInternalProductionRecoverySourceBootstrapRunV1");
   const dispatchSpecial = Reflect.get(installer, "dispatchInternalProductionRecoverySourceBootstrapRunV1");
+  const dispatchSpecialForAuthority = Reflect.get(installer, "dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1");
   assert.equal(typeof persistSpecial, "function");
   assert.equal((persistSpecial as Function).length, 1);
+  assert.equal(typeof persistSpecialForAuthority, "function");
+  assert.equal((persistSpecialForAuthority as Function).length, 1);
+  assert.equal(typeof installerObservePersistedSpecial, "function");
+  assert.equal((installerObservePersistedSpecial as Function).length, 1);
   assert.equal(typeof dispatchSpecial, "function");
   assert.equal((dispatchSpecial as Function).length, 1);
+  assert.equal(typeof dispatchSpecialForAuthority, "function");
+  assert.equal((dispatchSpecialForAuthority as Function).length, 1);
   const persistenceSource = readFileSync(
     new URL("../../src/execution/run-persistence.ts", import.meta.url),
     "utf8",
@@ -136,9 +145,181 @@ it("P4 recovery source bootstrap uses dedicated persistence and dispatch ports",
   assert.match(persistenceSource, /bindInternalProductionRecoverySourceBootstrapRunInTransactionV1/);
   assert.match(persistenceSource, /resolveBundledWorkflowDir\("feature-dev"\)/);
   assert.match(persistenceSource, /RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1/);
+  assert.match(persistenceSource, /const\s+RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1\s*=\s*path\.resolve\([\s\S]*fileURLToPath\(import\.meta\.url\)[\s\S]*["']\.\.\/\.\.["'][\s\S]*\)/,
+    "recovery persistence derives the Setfarm checkout from its code-owned module location");
+  assert.match(persistenceSource, /repo:\s*RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1[\s\S]*branch:\s*runId/,
+    "the persisted recovery context pins the authenticated Setfarm checkout and its deterministic managed branch");
+  assert.doesNotMatch(persistenceSource.slice(
+    persistenceSource.indexOf("const RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1"),
+    persistenceSource.indexOf("async function persistRecoverySourceBootstrapRunInTransactionV1"),
+  ), /process\.cwd\(|process\.env|SETFARM_PROJECTS_ROOT|OPENCLAW_PROJECTS_ROOT/,
+  "the recovery checkout and branch do not come from ambient working-directory or project-root configuration");
 });
 
-it("P4 recovery source bootstrap persistence executes lock-first exact31 bind and commit withholding", async () => {
+it("P4 recovery source bootstrap held authority reaches dispatch and persistence without current-entry reselection", () => {
+  const installerSource = readFileSync(new URL("../../src/installer/run.ts", import.meta.url), "utf8");
+  const persistenceSource = readFileSync(new URL("../../src/execution/run-persistence.ts", import.meta.url), "utf8");
+  const region = (source: string, name: string): string => {
+    const start = source.indexOf(`export async function ${name}(`);
+    assert.ok(start >= 0, `${name}: authority-owned implementation exists`);
+    const end = source.indexOf("\nexport ", start + 1);
+    assert.ok(end > start, `${name}: authority-owned implementation is bounded`);
+    return source.slice(start, end);
+  };
+  const dispatch = region(installerSource, "dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1");
+  const persist = region(persistenceSource, "persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1");
+  assert.match(dispatch, /^export async function dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1\(\s*input:\s*Readonly<\{\s*recoveryOperationAuthority:\s*InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;?\s*\}>/);
+  assert.match(persist, /^export async function persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1\(\s*input:\s*Readonly<\{\s*recoveryOperationAuthority:\s*InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;?\s*\}>/);
+  assert.doesNotMatch(`${dispatch}\n${persist}`, /resolveInternalProductionRecoverySourceBootstrapOperationV1|selectCurrentEntryStoreContextV1/,
+    "authority-owned dispatch and persistence cannot ambiently reselect mutable current-entry state");
+  assert.doesNotMatch(dispatch, /\bdispatchInternalProductionRecoverySourceBootstrapRunV1\s*\(/,
+    "the authority-owned dispatch implementation cannot delegate back to the ambient pair-only public dispatcher");
+  assert.doesNotMatch(persist, /\bpersistInternalProductionRecoverySourceBootstrapRunV1\s*\(/,
+    "the authority-owned persistence implementation cannot delegate back to the ambient pair-only public persistence wrapper");
+  assert.match(dispatch, /persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1\(\s*\{\s*recoveryOperationAuthority:\s*input\.recoveryOperationAuthority\s*,?\s*\}\s*\)/,
+    "dispatch transfers the exact authority object to persistence without pair reconstruction");
+  assert.match(persist, /recoverySourceBootstrapRunCandidateV1\(\s*input\.recoveryOperationAuthority\s*,/,
+    "persistence derives its durable candidate directly from the held authority");
+  assert.match(installerSource, /import\s*\{[^}]*persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1[^}]*\}\s*from\s*["']\.\.\/execution\/run-persistence\.js["']/,
+    "the authority-owned dispatcher imports its exact persistence port");
+  assert.doesNotMatch(`${dispatch}\n${persist}`, /operationRef:\s*input\.|operationHash:\s*input\.|\{\s*operationRef\s*,\s*operationHash\s*\}/,
+    "the held path never degrades its authority back into a pair-only public-wrapper input");
+});
+
+it("P4 recovery source bootstrap persisted observer delegates the held operation authority without ambient reselection", async () => {
+  const production = readFileSync(new URL("../../src/installer/run.ts", import.meta.url), "utf8");
+  const marker = "export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(";
+  const start = production.indexOf(marker);
+  assert.ok(start >= 0, "the installer exports one durable recovery observer before resume can adopt a response-loss run");
+  const nextExport = production.indexOf("\nexport ", start + marker.length);
+  assert.ok(nextExport > start, "the durable recovery observer has one bounded implementation region");
+  const observer = production.slice(start, nextExport);
+  assert.match(observer, /^export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1\(\s*input:\s*Readonly<\{\s*recoveryOperationAuthority:\s*InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;?\s*\}>/);
+  assert.doesNotMatch(observer, /resolveInternalProductionRecoverySourceBootstrapOperationV1|selectCurrentEntryStoreContextV1|createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1/,
+    "the database observer cannot reselect mutable current-entry state or replace the authority already held by resume");
+  const sqlBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*getSql\(\)\s*;/.exec(observer);
+  assert.ok(sqlBinding, "the public observer binds its sole SQL owner after filesystem operation authentication");
+  const transactionBinding = new RegExp(`${sqlBinding[1]!}\\.begin\\(\\s*["']isolation level repeatable read read only["']\\s*,\\s*async\\s*\\(([A-Za-z_$][A-Za-z0-9_$]*)\\)\\s*=>`).exec(observer);
+  assert.ok(transactionBinding, "the public observer owns one explicit repeatable-read/read-only transaction");
+  assert.equal(observer.split(".begin(").length - 1, 1, "the public observer owns exactly one PostgreSQL snapshot");
+  assert.match(observer, new RegExp(`return\\s+await\\s+${sqlBinding[1]!}\\.begin\\([\\s\\S]*return\\s+await\\s+classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1\\(\\s*${transactionBinding[1]!}\\s*,\\s*\\{[\\s\\S]*recoveryState:\\s*["']prepared["'][\\s\\S]*recoveryOperationAuthority:\\s*input\\.recoveryOperationAuthority[\\s\\S]*\\}\\s*\\)\\s*;`),
+    "the observer returns only the shared in-transaction classifier result for that exact operation authority");
+  assert.match(production, /import\s*\{[^}]*classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1[^}]*\}\s*from\s*["']\.\.\/db-pg\.js["']/,
+    "the public adapter imports its classifier from the exact database module");
+  assert.doesNotMatch(observer, /persistInternalProductionRecoverySourceBootstrapRunV1|dispatchInternalProductionRecoverySourceBootstrapRunV1|(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP)\s/i,
+    "the public observer cannot persist, dispatch, or mutate while deciding response-loss adoption");
+
+  const functionHeader = /^export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1\([\s\S]*?\):\s*Promise<[^\n]+>\s*\{/.exec(observer);
+  assert.ok(functionHeader, "the observer body remains fixture-executable behind its exact authority-only input");
+  const bodyStart = observer.indexOf("{", functionHeader.index + functionHeader[0].length - 1);
+  const bodyEnd = observer.lastIndexOf("}");
+  assert.ok(bodyStart >= 0 && bodyEnd > bodyStart);
+  const fixture = await mkdtemp(path.join(tmpdir(), "setfarm-p4-source-bootstrap-observer-"));
+  try {
+    const modulePath = path.join(fixture, "observer.ts");
+    await writeFile(modulePath, `
+const g=globalThis as any;
+type PgTransactionSql=any; type InternalProductionPgTransactionSql=any;
+type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1=any;
+const resolveInternalProductionRecoverySourceBootstrapOperationV1=async()=>{g.__p4ObserveCalls.push({port:"ambient-reselection"});return g.__p4AmbientOperation};
+const transaction={kind:"rr-ro"};
+const getSql=()=>({begin:async(mode:string,callback:(sql:any)=>Promise<any>)=>{g.__p4ObserveCalls.push({port:"begin",mode});return callback(transaction)}});
+const classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1=async(sql:any,input:any)=>{g.__p4ObserveCalls.push({port:"classify",sameTransaction:sql===transaction,input});return g.__p4ObserveResult};
+export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(input:any) ${observer.slice(bodyStart, bodyEnd + 1)}
+`, "utf8");
+    const kernel = await import(`${pathToFileURL(modulePath).href}?observer=${Date.now()}`) as any;
+    const authority = Object.freeze({ operationRef: "setfarm://tests/p4/recovery-operation", operationHash: "1".repeat(64), pendingInputRef: "setfarm://tests/p4/pending", pendingInputHash: "2".repeat(64) });
+    const input = Object.freeze({ recoveryOperationAuthority: authority });
+    const ambientOperation = Object.freeze({ ...authority, operationHash: "9".repeat(64), pendingInputHash: "8".repeat(64) });
+    const result = Object.freeze({ state: "active", workflowState: "running", runId: "3".repeat(64), operationRunBindingHash: "4".repeat(64), reciprocalRunOperationBindingHash: "5".repeat(64) });
+    Object.assign(globalThis as any, { __p4ObserveCalls: [], __p4AmbientOperation: ambientOperation, __p4ObserveResult: result });
+    assert.equal(await kernel.observePersistedInternalProductionRecoverySourceBootstrapRunV1(input), result);
+    assert.deepEqual((globalThis as any).__p4ObserveCalls, [
+      { port: "begin", mode: "isolation level repeatable read read only" },
+      { port: "classify", sameTransaction: true, input: { recoveryState: "prepared", recoveryOperationAuthority: authority } },
+    ], "a crossed ambient current-entry operation is never read; the exact held authority flows through one RR/RO snapshot unchanged");
+    const released = Object.freeze({
+      state: "released",
+      workflowState: "completed",
+      runId: "3".repeat(64),
+      operationRunBindingHash: "4".repeat(64),
+      reciprocalRunOperationBindingHash: "5".repeat(64),
+      terminalOwnerRef: `setfarm://internal-production/recovery-source-run-terminal-owner/sha256/${"6".repeat(64)}`,
+      terminalOwnerHash: "6".repeat(64),
+      terminalSourceRunRef: `setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${"7".repeat(64)}`,
+      terminalSourceRunHash: "7".repeat(64),
+      terminalRunLaunchRef: `setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/${"8".repeat(64)}`,
+      terminalRunLaunchHash: "8".repeat(64),
+      targetReservationPairCloseRef: `setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/${"9".repeat(64)}`,
+      targetReservationPairCloseHash: "9".repeat(64),
+      fenceReleaseRef: `setfarm://internal-production/global-owner-admission-fence-release/sha256/${"a".repeat(64)}`,
+      fenceReleaseHash: "a".repeat(64),
+      sourceRunRef: `setfarm://internal-production/recovery-source-bootstrap-run-receipt/sha256/${"b".repeat(64)}`,
+      sourceRunHash: "b".repeat(64),
+    });
+    Object.assign(globalThis as any, { __p4ObserveCalls: [], __p4ObserveResult: released });
+    assert.equal(await kernel.observePersistedInternalProductionRecoverySourceBootstrapRunV1(input), released,
+      "the public RR/RO observer returns flat released database authority without remapping it to absent or a filesystem receipt");
+    assert.deepEqual((globalThis as any).__p4ObserveCalls, [
+      { port: "begin", mode: "isolation level repeatable read read only" },
+      { port: "classify", sameTransaction: true, input: { recoveryState: "prepared", recoveryOperationAuthority: authority } },
+    ], "prepared filesystem current can observe an exact H4 release in the same single RR/RO snapshot");
+    const targetReservationPairClose = Object.freeze({
+      schema: "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1",
+      fenceRef: `setfarm://internal-production/global-owner-admission-fence/sha256/${"c".repeat(64)}`,
+      fenceHash: "c".repeat(64),
+      targetRunLaunchCompositeHash: "d".repeat(64),
+      sourceRunReservationRef: `setfarm://internal-production/owner-reservations/${"e".repeat(64)}`,
+      sourceRunReservationHash: "e".repeat(64),
+      runReservationRef: `setfarm://internal-production/owner-reservations/${"f".repeat(64)}`,
+      runReservationHash: "f".repeat(64),
+      terminalSourceRunRef: `setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${"7".repeat(64)}`,
+      terminalSourceRunHash: "7".repeat(64),
+      terminalRunLaunchRef: `setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/${"8".repeat(64)}`,
+      terminalRunLaunchHash: "8".repeat(64),
+      ownerAdmissionHeadPredecessorHash: "1".repeat(64),
+      ownerAdmissionHeadSuccessorHash: "2".repeat(64),
+      preservedFenceRef: `setfarm://internal-production/global-owner-admission-fence/sha256/${"c".repeat(64)}`,
+      preservedFenceHash: "c".repeat(64),
+      targetReservationPairCloseRef: `setfarm://internal-production/source-run-launch-target-reservation-pair-close/sha256/${"9".repeat(64)}`,
+      targetReservationPairCloseHash: "9".repeat(64),
+    });
+    const pairClosed = Object.freeze({
+      state: "pair_closed",
+      workflowState: "resuming",
+      runId: "3".repeat(64),
+      operationRunBindingHash: "4".repeat(64),
+      reciprocalRunOperationBindingHash: "5".repeat(64),
+      terminalOwnerRef: `setfarm://internal-production/recovery-source-run-terminal-owner/sha256/${"6".repeat(64)}`,
+      terminalOwnerHash: "6".repeat(64),
+      terminalSourceRunRef: `setfarm://internal-production/recovery-source-run-terminal-authority/sha256/${"7".repeat(64)}`,
+      terminalSourceRunHash: "7".repeat(64),
+      terminalRunLaunchRef: `setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/${"8".repeat(64)}`,
+      terminalRunLaunchHash: "8".repeat(64),
+      targetReservationPairClose,
+    });
+    Object.assign(globalThis as any, { __p4ObserveCalls: [], __p4ObserveResult: pairClosed });
+    assert.equal(await kernel.observePersistedInternalProductionRecoverySourceBootstrapRunV1(input), pairClosed,
+      "the public RR/RO observer preserves the exact full pair-close H3 authority without fabricating release or receipt fields");
+    assert.deepEqual(Object.keys(targetReservationPairClose).sort(), [
+      "fenceHash", "fenceRef", "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
+      "preservedFenceHash", "preservedFenceRef", "runReservationHash", "runReservationRef", "schema",
+      "sourceRunReservationHash", "sourceRunReservationRef", "targetReservationPairCloseHash",
+      "targetReservationPairCloseRef", "targetRunLaunchCompositeHash", "terminalRunLaunchHash",
+      "terminalRunLaunchRef", "terminalSourceRunHash", "terminalSourceRunRef",
+    ], "the public H3 passthrough retains the exact 18-key canonical pair-close object");
+    assert.equal(Object.isFrozen(targetReservationPairClose), true,
+      "the nested pair-close authority remains immutable through the public observer");
+    assert.deepEqual((globalThis as any).__p4ObserveCalls, [
+      { port: "begin", mode: "isolation level repeatable read read only" },
+      { port: "classify", sameTransaction: true, input: { recoveryState: "prepared", recoveryOperationAuthority: authority } },
+    ], "prepared filesystem current can observe an exact H3 pair-close response-loss window in the same snapshot");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+it("P4 recovery source bootstrap persistence executes lock-first exact33 bind and commit withholding", async () => {
   const production = readFileSync(new URL("../../src/execution/run-persistence.ts", import.meta.url), "utf8");
   const start = production.indexOf("const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1");
   const end = production.indexOf("export async function persistInternalProductionRecoverySourceBootstrapRunV1", start);
@@ -151,6 +332,8 @@ it("P4 recovery source bootstrap persistence executes lock-first exact31 bind an
     const modulePath = path.join(execution, "run-persistence-kernel.ts");
     await writeFile(modulePath, `
 import {createHash} from "node:crypto";
+import path from "node:path";
+import {fileURLToPath} from "node:url";
 type PgTransactionSql=any; type WorkflowSpec=any; type RunProtocolIdentity=any; type PersistedWorkflowStep=any; type PersistedWorkflowRunRowV1=any;
 const g=globalThis as any;
 const canonicalJsonStringify=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonicalJsonStringify).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonicalJsonStringify(v[k])).join(",")+"}";
@@ -160,7 +343,7 @@ const resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorit
 const resolveBundledWorkflowDir=()=>"feature-dev";
 const loadWorkflowSpec=async()=>g.__p4PersistWorkflow;
 const lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1=async(_sql:any)=>{g.__p4PersistLedger.push("lock");return g.__p4PersistAuthority};
-const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==31)throw new Error("EXACT31_CONTEXT_REQUIRED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
+const bindInternalProductionRecoverySourceBootstrapRunInTransactionV1=async(_sql:any,input:any)=>{g.__p4PersistLedger.push("bind");const context=JSON.parse(g.__p4PersistTx.runs[input.runId].context);if(Object.keys(context).length!==33)throw new Error("EXACT33_CONTEXT_REQUIRED");const expectedRepo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");if(context.repo!==expectedRepo||context.branch!==input.runId)throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUNTIME_IDENTITY_CROSSED");if(g.__p4PersistTx.steps.length!==g.__p4PersistWorkflow.steps.length)throw new Error("EXACT_STEPS_REQUIRED");return {runOwnerReservationRef:g.__p4PersistOperation.targetRunReservationRef,runOwnerReservationHash:g.__p4PersistOperation.targetRunReservationHash}};
 const readDatabaseWallClock=async()=>{g.__p4PersistLedger.push("clock");return new Date("2026-08-26T12:00:00.000Z")};
 const persistedWorkflowRunResultV1=(row:any,pair:any)=>({run:{id:row.id,runNumber:row.run_number,workflowId:row.workflow_id,task:row.task,status:"running",context:row.context,notifyUrl:row.notify_url,protocol:row.protocol,protocolVersion:row.protocol_version,compilerReleaseSha:row.compiler_release_sha,activationPreflightHash:row.activation_preflight_hash,releaseAdmissionHash:row.release_admission_hash,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()},...pair});
 const pgBegin=async(cb:any)=>{const prior=structuredClone(g.__p4PersistState);const tx=structuredClone(prior);g.__p4PersistTx=tx;const sql:any={unsafe:async(q:string,p:any[]=[])=>{if(q.includes("FROM runs")&&q.includes("FOR UPDATE")){g.__p4PersistLedger.push("select-run");return tx.runs[p[0]]?[tx.runs[p[0]]]:[]}if(q.includes("nextval")){g.__p4PersistLedger.push("nextval");return [{next:41}]}if(q.includes("INSERT INTO runs")){g.__p4PersistLedger.push("insert-run");tx.runs[p[0]]={id:p[0],run_number:p[1],workflow_id:"feature-dev",task:p[2],status:"running",context:p[3],notify_url:null,protocol:"v3",protocol_version:1,compiler_release_sha:p[4],activation_preflight_hash:p[5],release_admission_hash:p[6],created_at:p[7],updated_at:p[7]};return []}if(q.includes("INSERT INTO steps")){g.__p4PersistLedger.push("insert-step");tx.steps.push({id:p[0],run_id:p[1],step_id:p[2],agent_id:p[3],step_index:p[4],input_template:p[5],expects:p[6],status:p[7],max_retries:p[8],type:p[9],loop_config:p[10],created_at:p[11],updated_at:p[11]});return []}if(q.includes("FROM steps")){g.__p4PersistLedger.push("select-steps");return tx.steps}throw new Error("UNEXPECTED_SQL:"+q)}};const value=await cb(sql);if(g.__p4PersistRejectCommit)throw new Error("INJECT_COMMIT_ACK_LOSS");g.__p4PersistState=tx;g.__p4PersistLedger.push("commit");return value};
@@ -181,7 +364,10 @@ export function p4State(){return structuredClone(g.__p4PersistState)}
     assert.equal(persisted.run.id, runId);
     const ledger = (globalThis as any).__p4PersistLedger as string[];
     assert.deepEqual(ledger, ["lock", "select-run", "nextval", "clock", "insert-run", "insert-step", "insert-step", "bind", "select-run", "select-steps", "commit"]);
-    assert.equal(Object.keys(JSON.parse(persisted.run.context)).length, 31);
+    const persistedContext = JSON.parse(persisted.run.context);
+    assert.equal(Object.keys(persistedContext).length, 33);
+    assert.equal(persistedContext.repo, realpathSync(fixture));
+    assert.equal(persistedContext.branch, runId);
     const committed = kernel.p4State();
     (globalThis as any).__p4PersistState = { runs: {}, steps: [] };
     (globalThis as any).__p4PersistLedger = [];
@@ -284,15 +470,35 @@ describe("run-pinned product compiler protocol", () => {
     assert.match(dbSource, /Reflect\.ownKeys\(namespace\)/);
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);
-    assert.match(dbSource, /6cf01b73fab3004670c98f71ef0c2ac9ee4852f697cfbd976d359807f65abf17/);
+    assert.match(dbSource, /470fae4c76397f54be2adfeaeec14adca9afe062a855833a50034b16aff975db/);
     assert.match(dbSource, /currentResolution\.nodes/);
-    assert.doesNotMatch(dbSource, /current\.receipt\.phase\s*!==\s*"A"/);
+    const readinessStart = dbSource.indexOf("async function requireWorkflowRunAdmissionReadyV1(");
+    const readinessEnd = dbSource.indexOf(
+      "\ntype InternalProductionCompletionBootstrapHeadLockModeV1",
+      readinessStart,
+    );
+    assert.ok(readinessStart >= 0 && readinessEnd > readinessStart);
+    const readinessSource = dbSource.slice(readinessStart, readinessEnd);
+    assert.doesNotMatch(readinessSource, /current\.receipt\.phase\s*!==\s*"A"/);
 
     const installerSource = readFileSync(
       path.resolve(import.meta.dirname, "../../src/installer/run.ts"),
       "utf8",
     );
-    assert.match(installerSource, /import \{\s*persistWorkflowRun,\s*type PersistedWorkflowStep,?\s*\} from "\.\.\/execution\/run-persistence\.js";/s);
+    const persistenceImportEnd = installerSource.indexOf(
+      '} from "../execution/run-persistence.js";',
+    );
+    const persistenceImportStart = installerSource.lastIndexOf(
+      "import {",
+      persistenceImportEnd,
+    );
+    assert.ok(persistenceImportStart >= 0 && persistenceImportEnd > persistenceImportStart);
+    const persistenceImport = installerSource.slice(
+      persistenceImportStart,
+      persistenceImportEnd,
+    );
+    assert.match(persistenceImport, /\bpersistWorkflowRun,/);
+    assert.match(persistenceImport, /\btype PersistedWorkflowStep,/);
     assert.doesNotMatch(installerSource, /persistWorkflowRunInTransaction/);
   });
 
@@ -307,6 +513,8 @@ describe("run-pinned product compiler protocol", () => {
       assert.match(wrapper, /^export async function persistWorkflowRun\(/);
       const modulePath = path.join(root, "wrapper.ts");
       await writeFile(modulePath, `
+import path from "node:path";
+import {fileURLToPath} from "node:url";
 type PersistWorkflowRunInputV1 = unknown;
 type PersistWorkflowRunResultV1 = Readonly<{ run: Readonly<{ id: string }> }>;
 let acknowledgeCommit;
