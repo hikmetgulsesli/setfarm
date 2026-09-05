@@ -24874,6 +24874,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const entryOwnerIndex = expectedOwned.indexOf("observeInternalProductionCurrentEntryAuthorityAtRootV1");
         const entryExternalIndex = expectedOwned.indexOf("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1");
         const earlyEntryFence = fault?.kind === "stable" && fault.port === "observeInternalProductionCurrentEntryAuthorityAtRootV1" && entryExternalIndex > entryOwnerIndex;
+        const retainedIndex = expectedOwned.indexOf(PHASE5C_S_COMPLETED_RETAINED_STATUS_PORT_V1);
+        const downstreamIndex = expectedOwned.indexOf(PHASE5C_S_POST_EFFECT_DOWNSTREAM_PORT_V1);
+        const earlyCompletedRetainedFence = fault?.kind === "stable" && fault.port === PHASE5C_S_COMPLETED_RETAINED_STATUS_PORT_V1 && downstreamIndex > retainedIndex;
         if (fault?.kind === "open") {
           const failingPort = String(fault.port);
           const before = expectedOwned.slice(0, expectedOwned.indexOf(failingPort));
@@ -24887,11 +24890,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           assert.equal(opened.every((port) => closes[port] === 1), true, `${String(input.label)}: pre-external AtRoot failure closes recovery then entry ownership exactly once`);
           assert.equal(later.every((port) => (closes[port] ?? 0) === 0), true, `${String(input.label)}: pre-external AtRoot failure never fabricates external or row-tail ownership`);
           assert.deepEqual(diagnostic.childCloseOrder, [...opened].reverse(), `${String(input.label)}: pre-external AtRoot failure closes entry then recovery in reverse order`);
+        } else if (earlyCompletedRetainedFence) {
+          const opened = expectedOwned.slice(0, retainedIndex + 1);
+          const later = expectedOwned.slice(retainedIndex + 1);
+          assert.equal(stable[String(fault.port)], 1, `${String(input.label)}: retained-status/current join fence is load-bearing before downstream construction`);
+          assert.equal(opened.every((port) => closes[port] === 1), true, `${String(input.label)}: retained-status join failure closes every already-constructed raw owner`);
+          assert.equal(later.every((port) => (closes[port] ?? 0) === 0), true, `${String(input.label)}: retained-status join failure never fabricates downstream ownership`);
+          assert.deepEqual(diagnostic.childCloseOrder, [...opened].reverse(), `${String(input.label)}: retained-status join failure closes constructed owners in reverse order`);
         } else {
           if (fault?.kind === "stable") assert.equal(stable[String(fault.port)], 1, `${String(input.label)}: selected child participates in the final raw stability fence`);
           else assert.equal(expectedOwned.every((port) => stable[port] >= 1), true, `${String(input.label)}: raw assertStable reaches every child immediately before return`);
-          assert.equal(expectedOwned.every((port) => closes[port] === 1), true, `${String(input.label)}: raw cleanup closes every child once through failures`);
-          assert.deepEqual(diagnostic.childCloseOrder, [...expectedOwned].reverse(), `${String(input.label)}: raw cleanup is reverse construction order`);
+          assert.equal(expectedOwned.every((port) => closes[port] === 1), true, `${String(input.label)}: raw cleanup closes every child once through failures: ${JSON.stringify({ stable, closes, closeOrder: diagnostic.childCloseOrder })}`);
+          assert.deepEqual(diagnostic.childCloseOrder, [...expectedOwned].reverse(), `${String(input.label)}: raw cleanup is reverse construction order: ${JSON.stringify({ stable, closes })}`);
           if (fault === null) {
             const ports = calls.map((call) => call.port);
             const effectIndex = ports.indexOf("deriveExactPoisonPostVisibleProgressImmediatePublicationV1");
@@ -24899,7 +24909,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             assert.equal(downstreamIndex >= 0, true, `${String(input.label)}: every nonblocked raw pass opens one post-effect downstream owner`);
             if (effectIndex >= 0) assert.equal(downstreamIndex > effectIndex, true, `${String(input.label)}: downstream opens only after immediate effect projection`);
             const topology = calls[downstreamIndex]!.postEffectTopology as Readonly<Record<string, unknown>>;
-            assert.equal(topology.currentStatusBytesBase64, task12ReceiptCanonicalBytesV1(Object.freeze({ statusRef: input.status.statusRef, statusHash: input.status.statusHash })).toString("base64"),
+            assert.equal(topology.currentStatusBytesBase64, canonicalFixtureRecordV1(Object.freeze({ statusRef: input.status.statusRef, statusHash: input.status.statusHash })).toString("base64"),
               `${String(input.label)}: topology always carries the selected current status pair bytes`);
             assert.equal(topology.nextStatusBytesBase64, diagnostic.observedNextPairBytesBase64,
               `${String(input.label)}: topology carries exactly the already-projected adjacent pair or null`);
@@ -25631,6 +25641,49 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const seed = phase5cSExternalRawPublicationFixtureV1(arrow, 0, "none", "none", root);
         const endpointDescriptors = seed.endpoints as readonly Readonly<Record<string, unknown>>[];
         const endpointCount = endpointDescriptors.length;
+        const bindExternalDatabaseTail = (
+          tail: Readonly<Record<string, unknown>>,
+          observedCurrent: Readonly<Record<string, unknown>> | null,
+        ): Readonly<Record<string, unknown>> => {
+          const database = tail.database as Readonly<Record<string, unknown>>;
+          if (arrow.family === "migration-32") {
+            const current = observedCurrent !== null && ["consumed", "terminal"].includes(String(observedCurrent.state));
+            return Object.freeze({ ...tail, database: Object.freeze({ ...database,
+              migration32: current ? "current" : "absent",
+              migration32JournalChecksum: current ? PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum : null,
+            }) });
+          }
+          if (arrow.family === "database-33") {
+            const current = observedCurrent?.state === "current";
+            return Object.freeze({ ...tail, database: Object.freeze({ ...database,
+              migration33: current ? "current" : "absent",
+              migration33JournalChecksum: current ? PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[33].checksum : null,
+            }) });
+          }
+          if (arrow.family === "manifest-a") {
+            const receipt = observedCurrent?.receipt as Readonly<Record<string, unknown>> | undefined;
+            const head = observedCurrent?.head as Readonly<Record<string, unknown>> | undefined;
+            return Object.freeze({ ...tail, database: Object.freeze({ ...database,
+              manifestA: observedCurrent === null ? "seeded-null" : "current",
+              manifestActivationRef: receipt?.activationRef ?? null,
+              manifestActivationHash: receipt?.activationHash ?? null,
+              manifestHeadRef: head?.headRef ?? null,
+              manifestHeadHash: head?.headHash ?? null,
+            }) });
+          }
+          if (arrow.family === "recovery-source") {
+            const ownerCensus = tail.ownerCensus as Readonly<Record<string, unknown>>;
+            const prepared = observedCurrent?.state === "prepared";
+            return Object.freeze({ ...tail, ownerCensus: Object.freeze({ ...ownerCensus,
+              state: prepared ? "recovery-source-prepared" : "zero",
+              ownerAdmissionFenceCount: prepared ? 1 : 0,
+              sourceReservationCount: prepared ? 1 : 0,
+              runReservationCount: prepared ? 1 : 0,
+              activeRunCount: prepared ? ownerCensus.activeRunCount : 0,
+            }) });
+          }
+          return tail;
+        };
         const make = (endpointOrdinal: number, stage: Parameters<typeof phase5cSExternalRawPublicationFixtureV1>[2], corruption: "none" | "wrong-target" | "unequal" | "canonical-unequal" | "canonical-wrong-shape" | "second" | "later" | "crossed", valid: boolean): Readonly<Record<string, unknown>> => {
           const external = phase5cSExternalRawPublicationFixtureV1(arrow, endpointOrdinal, stage, corruption, root);
           const baseValues = phase5cSRawPortValuesFixtureV1(descriptor, null, successorRoot);
@@ -25640,8 +25693,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             ? entryFixedPresent ? chain.materials["entry-authority"] as Readonly<Record<string, unknown>> : null
             : actualCurrent;
           const tail = baseValues.observeExactPoisonPostVisibleProgressRowTailNoWriteV1 as Readonly<Record<string, unknown>>;
-          const databasePrefix = arrow.family === "database-33" || arrow.family === "manifest-a" || (arrow.family === "recovery-source" && (external.endpoints as readonly Readonly<Record<string, unknown>>[])[endpointOrdinal]!.role === "database") ? actualCurrent : null;
-          const boundTail = Object.freeze({ ...tail, databasePrefix });
+          const boundTail = bindExternalDatabaseTail(tail, external.current as Readonly<Record<string, unknown>> | null);
           const initialPortValues = currentPort === null
             ? { ...baseValues, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: boundTail, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: external }
             : lowerCurrent === null ? { ...baseValues, ...(arrow.family === "entry-authority" ? { [currentPort]: null } : {}), observeExactPoisonPostVisibleProgressRowTailNoWriteV1: boundTail, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: external }
@@ -25656,7 +25708,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             || arrow.family === "migration-32" && arrow.ordinal === 2;
           const strictFinal = endpointOrdinal === endpointCount - 1
             && canonical(actualCurrent) === canonical(chain.next)
-            && ((publicationState !== null && ["F2u", "F3", "F4"].includes(publicationState) && (!requiresRetainedCompletion || writerState === null || writerState === "A0") && (arrow.family !== "entry-authority" || writerState === "A0" && writerMemberCount === 0))
+            && ((publicationState !== null && ["F2u", "F3", "F4"].includes(publicationState) && (!requiresRetainedCompletion || writerState === "A0" && writerMemberCount === 0) && (arrow.family !== "entry-authority" || writerState === "A0" && writerMemberCount === 0))
               || databaseState === "current"
               || casState === "Q3" || casState === "Q4");
           const completedByThisStage = valid && strictFinal && (
@@ -25688,8 +25740,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const expectedPredecessorCas = endpoint.policy === "expected-predecessor-cas";
           const preSchemaStages = ["publication-f-1", "publication-f1", "publication-f2", "publication-f2u", "publication-f3", "publication-f4"] as const;
           const ownedPublicationStages = ["writer-a1", "publication-f-1-writer-a1", "publication-f1-writer-a1", "publication-f2-writer-a1", "publication-f2-independent", "publication-f2u-writer-a0-temp1", "publication-f2u-writer-a1", "publication-f2u-writer-a2", "publication-f3-writer-a1", "publication-f4-writer-a1", "publication-f2u", "publication-f3", "publication-f4"] as const;
+          const spawnerPublicationStages = ["writer-a1", "publication-f-1-writer-a1", "publication-f1-writer-a1", "publication-f2-writer-a1", "publication-f2-independent", "publication-f2u-writer-a1", "publication-f3-writer-a1", "publication-f4-writer-a1", "publication-f2u", "publication-f3", "publication-f4"] as const;
           const entryAuthorityPresentStages = ["publication-f2-independent", "publication-f2u-writer-a0-temp1", "publication-f2u-writer-a1", "publication-f2u-writer-a2", "publication-f3-writer-a1", "publication-f4-writer-a1", "publication-f2u", "publication-f3", "publication-f4"] as const;
-          const validStages = database ? ["database"] as const : expectedPredecessorCas ? ["cas-q0", "cas-q1", "cas-q2", "cas-q3", "cas-q4"] as const : arrow.family === "entry-authority" ? entryAuthorityPresentStages : arrow.policy === "pre-schema-no-replace" ? preSchemaStages : ownedPublicationStages;
+          const validStages = database ? ["database"] as const : expectedPredecessorCas ? ["cas-q1", "cas-q2", "cas-q3", "cas-q4"] as const : arrow.family === "entry-authority" ? entryAuthorityPresentStages : arrow.policy === "pre-schema-no-replace" ? preSchemaStages : arrow.policy === "spawner-admission" ? spawnerPublicationStages : ownedPublicationStages;
           const applicableValidStages = validStages.filter((stage) => !(arrow.next === "blocked" && endpointOrdinal === endpointCount - 1 && ["publication-f2u", "publication-f3", "publication-f4"].includes(stage)));
           const corruptionStage = database ? "database" as const : expectedPredecessorCas ? "cas-q1" as const : arrow.family === "entry-authority" ? "publication-f2u-writer-a1" as const : arrow.policy === "pre-schema-no-replace" ? "publication-f1" as const : "publication-f1-writer-a1" as const;
           const noneBaseValues = phase5cSRawPortValuesFixtureV1(descriptor, null, successorRoot);
@@ -25697,7 +25750,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             ? Object.freeze({ ...(noneBaseValues.observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1 as Readonly<Record<string, unknown>>), current: null })
             : phase5cSExternalRawPublicationFixtureV1(arrow, endpointOrdinal, "none", "none", root);
           const noneTail = noneBaseValues.observeExactPoisonPostVisibleProgressRowTailNoWriteV1 as Readonly<Record<string, unknown>>;
-          const noneBoundTail = Object.freeze({ ...noneTail, databasePrefix: arrow.family === "database-33" || arrow.family === "manifest-a" || (arrow.family === "recovery-source" && endpoint.role === "database") ? chain.prior : null });
+          const noneBoundTail = bindExternalDatabaseTail(noneTail, chain.prior);
           const nonePortValues = Object.freeze(currentPort === null
             ? { ...noneBaseValues, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: noneBoundTail, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: none }
             : arrow.family === "entry-authority" ? { ...noneBaseValues, [currentPort]: null, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: noneBoundTail, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: none }
@@ -25724,9 +25777,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         }).flat());
       });
       const observed: Readonly<Record<string, unknown>>[] = [];
-      for (let offset = 0; offset < inputs.length; offset += 8) {
-        const result = await runPhase5cSRawRouteFixtureV1(root, Object.freeze(inputs.slice(offset, offset + 8)));
-        assert.equal(result.status, 0, result.stderr);
+      for (let offset = 0; offset < inputs.length; offset += 4) {
+        const result = await runPhase5cSRawRouteFixtureV1(root, Object.freeze(inputs.slice(offset, offset + 4)));
+        assert.equal(result.status, 0, `${inputs.slice(offset, offset + 4).map((input) => input.label).join("\n")}\n${result.stderr}`);
         observed.push(...JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[]);
       }
       assert.equal(observed.length, inputs.length);
@@ -25753,8 +25806,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const expectedImmediateCount = input.immediateTarget === null ? 0 : 1;
           assert.equal(immediatePublications.length, expectedImmediateCount,
             `${input.label}: only completed external evidence observes its one derived next Task12 status content prefix`);
-          assert.equal(receiptWriters.length, 1 + expectedImmediateCount,
-            `${input.label}: the universal operation-controller writer is joined only by a completed next-status writer`);
+          assert.equal(receiptWriters.length, 2 + expectedImmediateCount,
+            `${input.label}: the current-status and operation-controller writers are joined only by a completed next-status writer`);
           if (input.immediateTarget !== null) {
             assert.deepEqual({ target: immediatePublications[0]!.target, expectedBytes: immediatePublications[0]!.expectedBytes }, { target: input.immediateTarget, expectedBytes: input.immediateBytesBase64 },
               `${input.label}: completed external evidence observes the exact derived immediate target and bytes`);
