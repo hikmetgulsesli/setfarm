@@ -13,6 +13,7 @@ import {
   auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
+  verifyV3RecoveryClaimRuntimePublicationV1,
   verifyContractSpineMigrations,
   type BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1,
 } from "./db/contract-spine-migrations.js";
@@ -5873,6 +5874,70 @@ async function observeExactCurrentEntryMigration33V1(): Promise<InternalProducti
     migrationState: "current",
     schemaProjectionHash: hashCanonicalJson(projection),
   });
+}
+
+export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1(): Promise<Readonly<{
+  schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1";
+  state: "absent" | "current";
+  migrationName: "033_v3_recovery_claim_runtime_publication_v1";
+  journal: null | Readonly<{ ordinal: 33; state: "current"; checksum: string }>;
+  catalog: null | Readonly<{
+    bootstrapHandoffOperationTablePresent: true;
+    bootstrapHandoffOperationIdUnique: true;
+    bootstrapHandoffClaimIdUnique: true;
+    terminalReceiptPairColumnsPresent: true;
+    ownerReservationSidecarPresent: true;
+    ownerAdmissionHeadPresent: true;
+  }>;
+}>> {
+  return getSql().begin("isolation level repeatable read read only", async (rawSql) => {
+    const sql = rawSql as InternalProductionPgTransactionSql;
+    const rows = await sql<Array<CurrentEntryMigrationJournalRowV1>>`
+      SELECT version, name, checksum, state
+      FROM public.setfarm_schema_migrations
+      WHERE version IN (32, 33)
+      ORDER BY version
+    `;
+    const migration32 = rows.find((row) => Number(row.version) === 32);
+    const migration33 = rows.find((row) => Number(row.version) === 33);
+    if (rows.length !== (migration33 === undefined ? 1 : 2)
+      || !migration32
+      || migration32.name !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+      || migration32.checksum !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM
+      || migration32.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
+    const migrationName = "033_v3_recovery_claim_runtime_publication_v1" as const;
+    if (migration33 === undefined) return Object.freeze({
+      schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
+      state: "absent" as const,
+      migrationName,
+      journal: null,
+      catalog: null,
+    });
+    if (migration33.name !== migrationName
+      || migration33.checksum !== "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf"
+      || migration33.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
+    await verifyV3RecoveryClaimRuntimePublicationV1(sql);
+    return Object.freeze({
+      schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
+      state: "current" as const,
+      migrationName,
+      journal: Object.freeze({ ordinal: 33 as const, state: "current" as const, checksum: migration33.checksum }),
+      catalog: Object.freeze({
+        bootstrapHandoffOperationTablePresent: true as const,
+        bootstrapHandoffOperationIdUnique: true as const,
+        bootstrapHandoffClaimIdUnique: true as const,
+        terminalReceiptPairColumnsPresent: true as const,
+        ownerReservationSidecarPresent: true as const,
+        ownerAdmissionHeadPresent: true as const,
+      }),
+    });
+  }) as unknown as Promise<Readonly<{
+    schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1";
+    state: "absent" | "current";
+    migrationName: "033_v3_recovery_claim_runtime_publication_v1";
+    journal: null | Readonly<{ ordinal: 33; state: "current"; checksum: string }>;
+    catalog: null | Readonly<{ bootstrapHandoffOperationTablePresent: true; bootstrapHandoffOperationIdUnique: true; bootstrapHandoffClaimIdUnique: true; terminalReceiptPairColumnsPresent: true; ownerReservationSidecarPresent: true; ownerAdmissionHeadPresent: true }>;
+  }>>;
 }
 
 /** Applies only source-known ordinary successors; guarded migration 32 remains controller-owned. */

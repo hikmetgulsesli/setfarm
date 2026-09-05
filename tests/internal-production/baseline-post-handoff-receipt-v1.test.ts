@@ -3430,7 +3430,7 @@ function assertPhase5cSNarrowQStaticsV1(source: string, scope: Phase5cSNarrowQSt
   if (scope === "q3-continuity") {
     const awaitedAuthority = /await\s+[A-Za-z_$][A-Za-z0-9_$]*\.assertStableWithoutCurrentStatusCas\(\)\s*;/.exec(progressNormalizer);
     assert.ok(awaitedAuthority?.index !== undefined, "P5c-S Q normalization awaits full non-Q authority before its synchronous mutation frontier");
-    const firstMutation = Math.min(...["unlinkSync(", "normalizeTask12CurrentStatusCasV1(", "claimTask12CurrentStatusCasCleanupCapabilityV1("].map((marker) => {
+    const firstMutation = Math.min(...["acquireTask12ReceiptLocatorWriterV1(", "unlinkSync(", "normalizeTask12CurrentStatusCasV1(", "claimTask12CurrentStatusCasCleanupCapabilityV1("].map((marker) => {
       const index = progressNormalizer.indexOf(marker, awaitedAuthority.index + awaitedAuthority[0].length);
       return index < 0 ? Number.MAX_SAFE_INTEGER : index;
     }));
@@ -7275,7 +7275,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     source = source.slice(0, helperStart) + transformed + source.slice(helperEnd);
   }
   const recoveryAtRootWrapper = source.includes("async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(")
-    ? `export async function p5cSObserveRecoverySourceAtRootFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;successorRoot:string;release:Readonly<Record<string,unknown>>;mutation:"none"|"visibility-member-aba"|"pair-close-parent-aba";mutationTarget:string;missingTarget?:string|null;closeFault?:boolean;internalCloseFaultMode?:"construction"|"returned"|null;internalCloseFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
+    ? `export async function p5cSObserveRecoverySourceAtRootFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;successorRoot:string;release:Readonly<Record<string,unknown>>;mutation:"none"|"visibility-member-aba"|"pair-close-parent-aba";mutationTarget:string;missingTarget?:string|null;closeFault?:boolean;internalCloseFaultMode?:"construction"|"returned"|null;internalCloseFaultAt?:number|null;observeExternal?:boolean;externalOrdinal?:0|1|2;databaseObservation?:Readonly<Record<string,unknown>>;observeTask12Only?:boolean;observeCasOnly?:boolean}>): Promise<Readonly<Record<string,unknown>>> {
   const controllerSourceAuthority = input.status.controllerSourceAuthority as Readonly<Record<string,unknown>>;
   const operationHash = String(input.status.operationHash);
   const operationRef = String(input.status.operationRef);
@@ -7284,8 +7284,14 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   const authority = ${progressObservationAuthorityPresent ? "exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1(context)" : "context"};
   const releaseState = { calls:0, inputs:[] as unknown[] };
   const releaseProbe = { internalCloseFaultMode:input.internalCloseFaultMode??null,internalCloseFaultAt:input.internalCloseFaultAt??null,internalCloseCalls:{construction:0,returned:0},events:[] as string[],async resolve(value:unknown):Promise<Readonly<Record<string,unknown>>>{ releaseState.calls += 1; releaseState.inputs.push(value); return input.release; } };
+  const databaseState={calls:0,inputs:[] as unknown[]};
+  const databaseProbe={async observe(value:unknown):Promise<Readonly<Record<string,unknown>>>{databaseState.calls+=1;databaseState.inputs.push(value);if(input.databaseObservation===undefined)currentEntryFail("P5C_S_RECOVERY_DATABASE_OBSERVATION_MISSING");return input.databaseObservation;}};
   Reflect.set(globalThis,"__p5cSRecoveryAtRootProbeV1",releaseProbe);
+  Reflect.set(globalThis,"__p5cSRecoveryAtRootDatabaseProbeV1",databaseProbe);
   let owner: null | {value:Readonly<Record<string,unknown>>;assertStable:()=>void;close:()=>void} = null;
+  let external: ExactPoisonPostVisibleExternalRawPublicationObservationV1 | null = null;
+  const task12Endpoints: ExactPoisonPostVisibleExternalEndpointOwnerV1[] = [];
+  const casEndpoints: ExactPoisonPostVisibleExternalEndpointOwnerV1[] = [];
   let outcome:"returned"|"threw"="returned"; let message:string|null=null; let closeCount=0; let mutationApplied=false; let missingApplied=false;
   const memberBackup=input.mutationTarget+".p5c-s-recovery-owner-aba-backup";
   const parentBackup=path.dirname(input.mutationTarget)+".p5c-s-recovery-owner-aba-backup";
@@ -7297,18 +7303,23 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     if(input.mutation==="visibility-member-aba"){const bytes=readFileSync(input.mutationTarget);renameSync(input.mutationTarget,memberBackup);writeFileSync(input.mutationTarget,bytes,{flag:"wx",mode:0o600});mutationApplied=true;}
     if(input.mutation==="pair-close-parent-aba"){const parent=path.dirname(input.mutationTarget);renameSync(parent,parentBackup);mkdirSync(parent,{mode:0o700});for(const name of readdirSync(parentBackup))linkSync(path.join(parentBackup,name),path.join(parent,name));mutationApplied=true;}
     owner.assertStable();
+    if(input.observeExternal){const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===(input.externalOrdinal??0))!;external=await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority,operation,arrow,owner.value,null);external.assertStable();owner.assertStable();}
+    if(input.observeTask12Only){const ordinal=owner.value.state==="pending-input"?0:owner.value.state==="prepared"?1:owner.value.state==="terminal"?2:-1;if(ordinal<0)currentEntryFail("P5C_S_RECOVERY_TASK12_STATE_UNAVAILABLE");const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===ordinal)!;const descriptors=EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[\`recovery-source:\${ordinal}:\${arrow.prior}:\${arrow.next}\`]!;for(const descriptor of descriptors.filter((candidate)=>candidate.policy==="task12-receipt")){const endpoint=await observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(authority,operation,arrow,owner.value,descriptor,null);task12Endpoints.push(endpoint);endpoint.assertStable();owner.assertStable();}}
+    if(input.observeCasOnly){const ordinal=owner.value.state==="prepared"?1:owner.value.state==="terminal"?2:-1;if(ordinal<0)currentEntryFail("P5C_S_RECOVERY_CAS_STATE_UNAVAILABLE");const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===ordinal)!;const descriptors=EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[\`recovery-source:\${ordinal}:\${arrow.prior}:\${arrow.next}\`]!;for(const descriptor of descriptors.filter((candidate)=>candidate.policy==="expected-predecessor-cas")){const endpoint=await observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1(authority,operation,arrow,owner.value,descriptor);casEndpoints.push(endpoint);endpoint.assertStable();owner.assertStable();}}
   } catch(error){outcome="threw";message=String(error);}
   finally {
-    try { if(owner!==null){closeCount+=1;owner.close();if(input.closeFault)currentEntryFail("P5C_S_RECOVERY_AT_ROOT_CLOSE_FAULT");} }
+    try { for(let index=casEndpoints.length-1;index>=0;index-=1)casEndpoints[index]!.close();for(let index=task12Endpoints.length-1;index>=0;index-=1)task12Endpoints[index]!.close();if(external!==null)external.close();if(owner!==null){closeCount+=1;owner.close();if(input.closeFault)currentEntryFail("P5C_S_RECOVERY_AT_ROOT_CLOSE_FAULT");} }
     catch(error){outcome="threw";message??=String(error);}
     finally {
       Reflect.deleteProperty(globalThis,"__p5cSRecoveryAtRootProbeV1");
+      Reflect.deleteProperty(globalThis,"__p5cSRecoveryAtRootDatabaseProbeV1");
       if(mutationApplied&&input.mutation==="visibility-member-aba"){unlinkSync(input.mutationTarget);renameSync(memberBackup,input.mutationTarget);}
       if(mutationApplied&&input.mutation==="pair-close-parent-aba"){const parent=path.dirname(input.mutationTarget);for(const name of readdirSync(parent)){unlinkSync(path.join(parent,name));}rmdirSync(parent);renameSync(parentBackup,parent);}
       if(missingApplied&&input.missingTarget)renameSync(missingBackup,input.missingTarget);
     }
   }
-  return Object.freeze({outcome,message,value:owner?.value??null,closeCount,releaseCalls:releaseState.calls,releaseInputs:Object.freeze([...releaseState.inputs]),selectedOperationRef:operationRef,selectedOperationHash:operationHash,mutationApplied,internalCloseCalls:Object.freeze({...releaseProbe.internalCloseCalls}),events:Object.freeze([...releaseProbe.events])});
+  const summarize=(endpoint:ExactPoisonPostVisibleExternalEndpointOwnerV1)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null,...(isPlainRecord(endpoint.database)?{database:Object.freeze({state:endpoint.database.state,expectedProjectionBase64:Buffer.isBuffer(endpoint.database.expectedProjection)?endpoint.database.expectedProjection.toString("base64"):null,artifactCount:endpoint.database.artifactCount,laterArtifactCount:endpoint.database.laterArtifactCount})}:{}),...(isPlainRecord(endpoint.cas)?{cas:Object.freeze({state:endpoint.cas.state,route:endpoint.cas.route,predecessorBytesBase64:Buffer.isBuffer(endpoint.cas.predecessorBytes)?endpoint.cas.predecessorBytes.toString("base64"):null,successorBytesBase64:Buffer.isBuffer(endpoint.cas.successorBytes)?endpoint.cas.successorBytes.toString("base64"):null,laterFixedCount:endpoint.cas.laterFixedCount})}:{})});
+  return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map(summarize))}),task12Endpoints:Object.freeze(task12Endpoints.map(summarize)),casEndpoints:Object.freeze(casEndpoints.map(summarize)),closeCount,releaseCalls:releaseState.calls,releaseInputs:Object.freeze([...releaseState.inputs]),databaseObserverCalls:databaseState.calls,databaseObserverInputs:Object.freeze([...databaseState.inputs]),selectedOperationRef:operationRef,selectedOperationHash:operationHash,mutationApplied,internalCloseCalls:Object.freeze({...releaseProbe.internalCloseCalls}),events:Object.freeze([...releaseProbe.events])});
 }
 
 `
@@ -7318,12 +7329,13 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   const preSchemaAtRootWrapper = source.includes("async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(")
     ? `export function p5cSPrewarmFixedRepositoryRootFixtureV1(): string { return fixedRepositoryRoot(); }
 
-export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;mutation:"none"|"absent-child-appearance"|"absent-parent-aba"|"status-member-aba"|"content-member-aba"|"content-parent-aba"|"content-drift"|"material-locator-aba"|"operation-directory-aba";mutationTarget:string;internalCloseFaultAt?:number|null;internalCloseFaultTarget?:string|null;authorityFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
+export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;mutation:"none"|"absent-child-appearance"|"absent-parent-aba"|"status-member-aba"|"content-member-aba"|"content-parent-aba"|"content-drift"|"material-locator-aba"|"operation-directory-aba";mutationTarget:string;observeExternal?:boolean;externalOrdinal?:number;internalCloseFaultAt?:number|null;internalCloseFaultTarget?:string|null;authorityFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
   const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
   let authorityStableCalls=0;const authorityEvents:string[]=[];
   const context=Object.freeze({successorRoot:input.successorRoot,successorOperation:operation,assertStable():void{authorityStableCalls+=1;authorityEvents.push("authority-stable:"+authorityStableCalls);if(input.authorityFaultAt===authorityStableCalls)currentEntryFail("P5C_S_PRE_SCHEMA_AUTHORITY_STABLE_FAULT:"+authorityStableCalls);}}) as unknown as ExactPoisonRecoveryPinnedCommitChainV1;
   const authority=${progressObservationAuthorityPresent ? "exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1(context)" : "context as unknown as ExactPoisonPostVisibleProgressObservationAuthorityV1"};
   let owner:null|{value:InternalProductionPreSchemaSpawnerRebindStatusV1;assertStable():void;close():void}=null;
+  let external:null|ExactPoisonPostVisibleExternalRawPublicationObservationV1=null;
   let outcome:"returned"|"threw"="returned";let message:string|null=null;let closeCount=0;let mutationApplied=false;let memberBytesEqual=false;let memberGenerationChanged=false;let driftOriginal:Buffer|null=null;
   const memberBackup=path.join(input.successorRoot,".p5c-s-pre-schema-member-backup");
   const directoryBackup=input.mutationTarget+".p5c-s-pre-schema-directory-backup";
@@ -7345,9 +7357,10 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
     if(input.mutation==="absent-child-appearance"){mkdirSync(input.mutationTarget,{mode:0o700});writeFileSync(path.join(input.mutationTarget,"status-00-prepared.pair.json"),Buffer.from("appeared\\n","utf8"),{mode:0o600});mutationApplied=true;}
     if(input.mutation==="content-drift"){driftOriginal=readFileSync(input.mutationTarget);const changed=Buffer.from(driftOriginal);changed[0]=changed[0]===0x7b?0x5b:0x7b;writeFileSync(input.mutationTarget,changed,{mode:0o600});mutationApplied=true;}
     owner.assertStable();
+    if(input.observeExternal){const descriptor=EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1.find((entry)=>entry.row==="operation_prepared")!;const arrow=input.externalOrdinal===undefined?selectExactPoisonPostVisibleExternalArrowV1(descriptor,owner.value):EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((entry)=>entry.family==="pre-schema"&&entry.ordinal===input.externalOrdinal)!;external=await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority,operation,arrow,owner.value,null);external.assertStable();owner.assertStable();}
   }catch(error){outcome="threw";message=String(error);}
   finally{
-    try{if(owner!==null){closeCount+=1;owner.close();}}
+    try{if(external!==null)external.close();if(owner!==null){closeCount+=1;owner.close();}}
     catch(error){outcome="threw";message??=String(error);}
     finally{
       Reflect.deleteProperty(globalThis,"__p5cSPreSchemaAtRootProbeV1");
@@ -7359,11 +7372,40 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
       if(mutationApplied&&input.mutation==="content-drift"&&driftOriginal!==null)writeFileSync(input.mutationTarget,driftOriginal,{mode:0o600});
     }
   }
-  return Object.freeze({outcome,message,value:owner?.value??null,closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events])});
+  return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null})))}),closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events])});
 }
 
 `
     : `export async function p5cSObservePreSchemaAtRootFixtureV1(..._args:readonly unknown[]):Promise<never>{currentEntryFail("P5C_S_PRE_SCHEMA_AT_ROOT_READER_MISSING")}
+
+`;
+  const task12PolicyEndpointWrapper = source.includes("async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(")
+    ? `export async function p5cSObserveTask12PolicyEndpointFixtureV1(input:Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;arrow:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>;descriptor:Readonly<Record<string,unknown>>}>):Promise<Readonly<Record<string,unknown>>>{
+  const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
+  const authority=Object.freeze({successorRoot:input.successorRoot,operationDirectory:path.join(input.successorRoot,"operations","sha256",operation.operationHash.slice(0,2),operation.operationHash),successorOperation:operation,assertStable():void{}}) as unknown as ExactPoisonPostVisibleProgressObservationAuthorityV1;
+  let endpoint:ExactPoisonPostVisibleExternalEndpointOwnerV1|null=null;
+  try{endpoint=await observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(authority,operation,input.arrow as unknown as ExactPoisonPostVisibleExternalArrowV1,input.current,input.descriptor as unknown as ExactPoisonPostVisibleExternalEndpointDescriptorV1,null);endpoint.assertStable();return Object.freeze({outcome:"returned",message:null,material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null});}
+  catch(error){return Object.freeze({outcome:"threw",message:String(error)});}
+  finally{endpoint?.close();}
+}
+
+`
+    : `export async function p5cSObserveTask12PolicyEndpointFixtureV1(..._args:readonly unknown[]):Promise<never>{currentEntryFail("P5C_S_TASK12_POLICY_ENDPOINT_MISSING")}
+
+`;
+  const externalDatabaseWrapper = source.includes("async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(")
+    ? `export async function p5cSObserveExternalDatabaseFixtureV1(input:Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;arrow:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>|null;databaseObservation:Readonly<Record<string,unknown>>}>):Promise<Readonly<Record<string,unknown>>>{
+  const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
+  const authority=Object.freeze({successorRoot:input.successorRoot,operationDirectory:path.join(input.successorRoot,"operations","sha256",operation.operationHash.slice(0,2),operation.operationHash),currentStatusTarget:path.join(input.successorRoot,"01-current-status.pair.json"),successorOperation:operation,async buildPreparedPublicationSet(){currentEntryFail("P5C_S_EXTERNAL_DATABASE_PREPARED_SET_UNEXPECTED")},assertStable():void{}}) as unknown as ExactPoisonPostVisibleProgressObservationAuthorityV1;
+  const probe={calls:0,observation:input.databaseObservation};Reflect.set(globalThis,"__p5cSExternalDatabaseProbeV1",probe);
+  let observed:ExactPoisonPostVisibleExternalRawPublicationObservationV1|null=null;
+  try{observed=await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority,operation,input.arrow as unknown as ExactPoisonPostVisibleExternalArrowV1,input.current,null);observed.assertStable();return Object.freeze({outcome:"returned",message:null,calls:probe.calls,state:observed.state,family:observed.family,current:observed.current,activeEndpointOrdinal:observed.activeEndpointOrdinal,endpoints:Object.freeze(observed.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),database:isPlainRecord(endpoint.database)?Object.freeze({state:endpoint.database.state,expectedProjectionBase64:Buffer.isBuffer(endpoint.database.expectedProjection)?endpoint.database.expectedProjection.toString("base64"):null,artifactCount:endpoint.database.artifactCount,laterArtifactCount:endpoint.database.laterArtifactCount}):null})))});}
+  catch(error){return Object.freeze({outcome:"threw",message:String(error),calls:probe.calls});}
+  finally{try{observed?.close();}finally{Reflect.deleteProperty(globalThis,"__p5cSExternalDatabaseProbeV1");}}
+}
+
+`
+    : `export async function p5cSObserveExternalDatabaseFixtureV1(..._args:readonly unknown[]):Promise<never>{currentEntryFail("P5C_S_EXTERNAL_DATABASE_OBSERVER_MISSING")}
 
 `;
   const rawDerivedNestedWrapper = rawRoutePresent
@@ -7483,7 +7525,7 @@ export async function p5cSRequireProgressRawDerivedStatusAwaitFixtureV1(..._args
 
 `;
   const externalObserverWrapper = externalObserverPresent
-    ? `export async function p5cSObserveExternalRawPublicationFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;arrow:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>|null;entryAuthorityValue?:Readonly<Record<string,unknown>>|null;policyValues:Readonly<Record<string,readonly unknown[]>>;successorRoot:string;fault?:Readonly<{port:string;ordinal:number;kind:"open"|"stable"|"close"}>}>): Promise<Readonly<Record<string,unknown>>> {
+    ? `export async function p5cSObserveExternalRawPublicationFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;arrow:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>|null;entryAuthorityValue?:Readonly<Record<string,unknown>>|null;policyValues:Readonly<Record<string,readonly unknown[]>>;physicalPolicy?:boolean;successorRoot:string;fault?:Readonly<{port:string;ordinal:number;kind:"open"|"stable"|"close"}>}>): Promise<Readonly<Record<string,unknown>>> {
   const controllerSourceAuthority = input.status.controllerSourceAuthority as Readonly<Record<string,unknown>>;
   const operationHash = String(input.status.operationHash);
   const operationRef = String(input.status.operationRef);
@@ -7528,7 +7570,7 @@ export async function p5cSRequireProgressRawDerivedStatusAwaitFixtureV1(..._args
     const hydrated = hydrate(values[ordinal]) as Readonly<Record<string,unknown>>;
     return Object.freeze({ ...hydrated, assertStable(): void { policyStableCounts[key] = (policyStableCounts[key] ?? 0) + 1; if (input.fault?.port === port && input.fault.ordinal === ordinal && input.fault.kind === "stable") currentEntryFail("P5C_S_EXTERNAL_POLICY_STABLE_FAULT:" + key); }, close(): void { policyCloseCounts[key] = (policyCloseCounts[key] ?? 0) + 1; if (input.fault?.port === port && input.fault.ordinal === ordinal && input.fault.kind === "close") currentEntryFail("P5C_S_EXTERNAL_POLICY_CLOSE_FAULT:" + key); } });
   } });
-  Reflect.set(globalThis, "__p5cSExternalObserverProbeV1", probe);
+  if(!input.physicalPolicy)Reflect.set(globalThis, "__p5cSExternalObserverProbeV1", probe);
   let observed: Awaited<ReturnType<typeof observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1>> | null = null;
   let closeCount = 0;
   let outcome: "returned" | "threw" = "returned";
@@ -7821,6 +7863,7 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
 `;
   const rowTailPhysicalLeafWrapper = rowTailPhysicalLeavesPresent
     ? `export async function p5cSObserveProgressRowTailPhysicalLeafFixtureV1(input: Readonly<{kind:"database"|"owner"|"downstream";status:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>|null;topology?:Readonly<Record<string,unknown>>;successorRoot:string;queryRows?:Readonly<Record<string,readonly unknown[]>>;stableQueryRows?:Readonly<Record<string,readonly unknown[]>>;fault?:"open"|"stable"|"close";closeFault?:boolean;probePostClose?:boolean;mutation?:"none"|"current-member-aba"|"operation-directory-aba";borrowController?:boolean;controllerWriterMutation?:"none"|"crossed-live-owner"|"same-bytes-new-inode";schemaVerifierFault?:"v31"|"v32"|"v33"}>): Promise<Readonly<Record<string,unknown>>> {
+  const fs = await import("node:fs");
   const controllerSourceAuthority = input.status.controllerSourceAuthority as Readonly<Record<string,unknown>>;
   const operationHash = String(input.status.operationHash);
   const operationRef = String(input.status.operationRef);
@@ -7914,7 +7957,7 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
   let controllerWriterTarget: string | null = null;
   let controllerWriterBackup: string | null = null;
   let mutationApplied = false;
-  const copyTree = (sourceDirectory: string, targetDirectory: string): void => { mkdirSync(targetDirectory, { mode: 0o700 }); for (const name of readdirSync(sourceDirectory)) { const sourceTarget = path.join(sourceDirectory, name); const target = path.join(targetDirectory, name); const stat = lstatSync(sourceTarget); if (stat.isDirectory()) copyTree(sourceTarget, target); else { copyFileSync(sourceTarget, target); chmodSync(target, stat.mode & 0o7777); } } };
+  const copyTree = (sourceDirectory: string, targetDirectory: string): void => { mkdirSync(targetDirectory, { mode: 0o700 }); for (const name of readdirSync(sourceDirectory)) { const sourceTarget = path.join(sourceDirectory, name); const target = path.join(targetDirectory, name); const stat = lstatSync(sourceTarget); if (stat.isDirectory()) copyTree(sourceTarget, target); else { copyFileSync(sourceTarget, target); fs.chmodSync(target, stat.mode & 0o7777); } } };
   try {
     if (input.kind === "downstream" && input.borrowController === true) {
       controller = await acquireTask12ControllerLockV1(selectedContext, operationHash);
@@ -7937,7 +7980,7 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
       });
       postEffectTopology = Object.freeze({ ...decodedPostEffectTopology, controllerWriterAuthority: instrumentedControllerWriter });
       if (input.controllerWriterMutation === "crossed-live-owner") {
-        controllerWriterTarget = controllerWriter.target;
+        controllerWriterTarget = path.join(path.dirname(controllerWriter.target), "." + path.basename(controllerWriter.target) + ".writer.lock");
         controllerWriterBackup = path.join(path.dirname(input.successorRoot), "." + path.basename(input.successorRoot) + "-p5c-s-post-effect-controller-writer-crossed-owner-backup-" + process.pid);
         const crossedOwner = Object.freeze({ ...controllerWriter.owner, nonce: controllerWriter.owner.nonce === "60000000-0000-4000-8000-000000000060" ? "61000000-0000-4000-8000-000000000061" : "60000000-0000-4000-8000-000000000060" });
         renameSync(controllerWriterTarget, controllerWriterBackup);
@@ -7956,7 +7999,7 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
     }
     if (input.kind === "downstream" && input.controllerWriterMutation === "same-bytes-new-inode") {
       if (controllerState === null) currentEntryFail("P5C_S_POST_EFFECT_DOWNSTREAM_CONTROLLER_MUTATION_WITHOUT_HANDLE");
-      controllerWriterTarget = controllerState.writer.target;
+      controllerWriterTarget = path.join(path.dirname(controllerState.writer.target), "." + path.basename(controllerState.writer.target) + ".writer.lock");
       controllerWriterBackup = path.join(path.dirname(input.successorRoot), "." + path.basename(input.successorRoot) + "-p5c-s-post-effect-controller-writer-aba-backup-" + process.pid);
       const bytes = readFileSync(controllerWriterTarget);
       const stats = lstatSync(controllerWriterTarget);
@@ -7965,7 +8008,7 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
       controllerWriterMutationApplied = true;
     }
     if (input.kind === "downstream" && input.mutation === "current-member-aba") { const bytes = readFileSync(mutationTarget); renameSync(mutationTarget, mutationBackup); writeFileSync(mutationTarget, bytes, { flag: "wx", mode: 0o600 }); mutationApplied = true; }
-    else if (input.kind === "downstream" && input.mutation === "operation-directory-aba") { renameSync(mutationTarget, mutationBackup); copyTree(mutationBackup, mutationTarget); mutationApplied = true; }
+    else if (input.kind === "downstream" && input.mutation === "operation-directory-aba") { renameSync(mutationTarget, mutationBackup); mutationApplied = true; copyTree(mutationBackup, mutationTarget); }
     await observed.assertStable();
   } catch (error) { outcome = "threw"; message = String(error); preReleaseFailureStage = controllerWriterPrimaryBeforeRelease ? "controller-writer-fence" : "leaf-before-release"; }
   finally {
@@ -7986,11 +8029,11 @@ export function p5cSRequireExternalTask12WriterFixtureV1(..._args: readonly unkn
       Reflect.deleteProperty(globalThis, "__p5cSRowTailLeafProbeV1");
       Reflect.deleteProperty(globalThis, "__p5cSCatalogSchemaVerifierProbeV1");
       if (mutationApplied && input.mutation === "current-member-aba") { unlinkSync(mutationTarget); renameSync(mutationBackup, mutationTarget); }
-      if (mutationApplied && input.mutation === "operation-directory-aba") { rmSync(mutationTarget, { recursive: true, force: true }); renameSync(mutationBackup, mutationTarget); }
+      if (mutationApplied && input.mutation === "operation-directory-aba") { fs.rmSync(mutationTarget, { recursive: true, force: true }); renameSync(mutationBackup, mutationTarget); }
       if (controllerWriterMutationApplied && controllerWriterTarget !== null && controllerWriterBackup !== null) {
         controllerReplacementStillPresentAtRelease = existsSync(controllerWriterTarget);
-        rmSync(controllerWriterTarget, { force: true });
-        rmSync(controllerWriterBackup, { force: true });
+        fs.rmSync(controllerWriterTarget, { force: true });
+        fs.rmSync(controllerWriterBackup, { force: true });
       }
       controllerArtifactsAfterCleanup = input.kind === "downstream"
         ? Object.freeze(readdirSync(operationDirectory).filter((name) => name.includes("current-entry-controller.lock")).sort())
@@ -8944,7 +8987,7 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
     : authenticateTask12ReceiptDirectoryChainV1(directory);`);
   source = source.slice(0, controllerAcquireStart) + instrumentedControllerAcquire + source.slice(controllerAcquireStart + controllerAcquireRegion.length);
   const publisherMarker = exportedPublisherCount === 1 ? exportedPublisherMarker : privatePublisherMarker;
-  source = source.replace(publisherMarker, `\n${rowWrapper}${effectPlanWrapper}${progressObservationAuthorityWrapper}${selectedPassOpenWrapper}${effectAdvanceWrapper}${entryPublicationBinderWrapper}${physicalEffectRootAbaWrapper}${candidateAdvancePhysicalAbaWrapper}${retainedReaderWrappers}${completedRetainedOwnerWrapper}${rawRouteWrapper}${recoveryAtRootWrapper}${preSchemaAtRootWrapper}${rawDerivedNestedWrapper}${externalObserverWrapper}${rowTailWrapper}${rowTailAuthorityWrapper}${rowTailPhysicalLeafWrapper}${rowTailBinderWrapper}${rawCurrentWrapper}${migration33EffectNormalizerWrapper}${immediateDerivationWrapper}${nextStatusBuilderWrapper}${nestedWrapper}${nestedRouteWrapper}${nestedOpenWrapper}${progressStatusCompositionWrapper}${physicalQPassWrapper}${progressQRetainedCapabilityPrimeHelper}${progressQNormalizerWrapper}${progressQStabilityWrapper}${progressQAuthorityWrapper}${passRouteWrapper}${passDriftWrapper}${publisherMarker.slice(1)}`);
+  source = source.replace(publisherMarker, `\n${rowWrapper}${effectPlanWrapper}${progressObservationAuthorityWrapper}${selectedPassOpenWrapper}${effectAdvanceWrapper}${entryPublicationBinderWrapper}${physicalEffectRootAbaWrapper}${candidateAdvancePhysicalAbaWrapper}${retainedReaderWrappers}${completedRetainedOwnerWrapper}${rawRouteWrapper}${recoveryAtRootWrapper}${preSchemaAtRootWrapper}${task12PolicyEndpointWrapper}${externalDatabaseWrapper}${rawDerivedNestedWrapper}${externalObserverWrapper}${rowTailWrapper}${rowTailAuthorityWrapper}${rowTailPhysicalLeafWrapper}${rowTailBinderWrapper}${rawCurrentWrapper}${migration33EffectNormalizerWrapper}${immediateDerivationWrapper}${nextStatusBuilderWrapper}${nestedWrapper}${nestedRouteWrapper}${nestedOpenWrapper}${progressStatusCompositionWrapper}${physicalQPassWrapper}${progressQRetainedCapabilityPrimeHelper}${progressQNormalizerWrapper}${progressQStabilityWrapper}${progressQAuthorityWrapper}${passRouteWrapper}${passDriftWrapper}${publisherMarker.slice(1)}`);
   const publisherStart = source.indexOf("async function resumeExactPoisonQuarantinePublisherCoreV1(");
   const publisherEnd = source.indexOf("\nasync function resumeExactPoisonQuarantineBeforeSelectionV1(", publisherStart);
   assert.ok(publisherStart >= 0 && publisherEnd > publisherStart, "P5c-S copied H-lifetime probe bounds the publisher core");
@@ -9118,7 +9161,8 @@ export async function p5cSObserveLinkedEntryAuthorityRawFixtureV1(input: Readonl
     if (entryOwner.value === null) currentEntryFail("P5C_S_E2_LINKED_ENTRY_OWNER_ABSENT");
     const descriptor = EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1.find((candidate) => candidate.rawKind === "entry-authority");
     if (descriptor === undefined) currentEntryFail("P5C_S_E2_ENTRY_DESCRIPTOR_ABSENT");
-    external = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, entryOwner.value, entryOwner);
+    const arrow = selectExactPoisonPostVisibleExternalArrowV1(descriptor, entryOwner.value);
+    external = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, arrow, entryOwner.value, entryOwner);
     external.assertStable();
   } catch (error) { failure = error; }
   finally {
@@ -10034,7 +10078,7 @@ function phase5cSEntryAuthorityForRecoveryRawDerivedFixtureV1(
 function phase5cSSeedRecoveryAtRootFixtureV1(
   successorRoot: string,
   variant: "A" | "B",
-  state: "prepared" | "terminal" = "terminal",
+  state: "pending-input" | "prepared" | "terminal" = "terminal",
   pairCloseCross: "source" | "run" | "fence" | "composite" | null = null,
 ): Readonly<{
   value: Readonly<Record<string, unknown>>;
@@ -10055,6 +10099,8 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
   const chain = phase5cSExternalRawCausalChainFixtureV1(arrow, variant);
   const materials = chain.materials;
   const terminal = chain.next;
+  const pendingArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 0)!;
+  const pendingStatus = phase5cSExternalRawCausalChainFixtureV1(pendingArrow, variant).next;
   const recoveryRoot = path.join(successorRoot, "recovery-source-bootstrap-v1");
   const writeRecoveryRecord = (kind: string, value: Readonly<Record<string, unknown>>, hashKey: string): string => {
     const hash = String(value[hashKey]);
@@ -10089,18 +10135,24 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
     return Object.freeze({ ...body, [refKey]: `${prefix}${hash}`, [hashKey]: hash });
   };
   const terminalSource = pairCloseCross === "source"
-    ? rehash(Object.freeze({
-      ...originalTerminalSource,
-      targetSourceRunReservationRef: alternateMaterials!["terminal-source-run"]!.targetSourceRunReservationRef,
-      targetSourceRunReservationHash: alternateMaterials!["terminal-source-run"]!.targetSourceRunReservationHash,
-    }), "terminalSourceRunRef", "terminalSourceRunHash", "setfarm://internal-production/recovery-source-run-terminal-authority/sha256/")
+    ? (() => {
+      const targetSourceRunReservationHash = canonicalHash(Object.freeze({ schema: "setfarm.p5c-s-crossed-owner-reservation.v1", category: "source-run", variant }));
+      return rehash(Object.freeze({
+        ...originalTerminalSource,
+        targetSourceRunReservationRef: `setfarm://internal-production/owner-reservations/${targetSourceRunReservationHash}`,
+        targetSourceRunReservationHash,
+      }), "terminalSourceRunRef", "terminalSourceRunHash", "setfarm://internal-production/recovery-source-run-terminal-authority/sha256/");
+    })()
     : originalTerminalSource;
   const terminalRun = pairCloseCross === "run"
-    ? rehash(Object.freeze({
-      ...originalTerminalRun,
-      targetRunReservationRef: alternateMaterials!["terminal-run-launch"]!.targetRunReservationRef,
-      targetRunReservationHash: alternateMaterials!["terminal-run-launch"]!.targetRunReservationHash,
-    }), "terminalRunLaunchRef", "terminalRunLaunchHash", "setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/")
+    ? (() => {
+      const targetRunReservationHash = canonicalHash(Object.freeze({ schema: "setfarm.p5c-s-crossed-owner-reservation.v1", category: "run", variant }));
+      return rehash(Object.freeze({
+        ...originalTerminalRun,
+        targetRunReservationRef: `setfarm://internal-production/owner-reservations/${targetRunReservationHash}`,
+        targetRunReservationHash,
+      }), "terminalRunLaunchRef", "terminalRunLaunchHash", "setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/");
+    })()
     : originalTerminalRun;
   const alternateCompositeHash = canonicalHash(Object.freeze({
     schema: "setfarm.internal-production-source-run-launch-target-composite.v1",
@@ -10156,15 +10208,17 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
   });
   const value = state === "terminal"
     ? pairCloseCross === null ? terminal : Object.freeze({ ...crossedTerminalValue, statusHash: canonicalHash(crossedTerminalValue) })
-    : chain.prior!;
+    : state === "prepared" ? chain.prior! : pendingStatus;
   const pendingTarget = path.join(recoveryRoot, "recovery-source-bootstrap-pending-input.json");
   fixtureFile(successorRoot, path.relative(successorRoot, pendingTarget), canonicalFixtureRecordV1(pending), 0o600);
-  for (const visibility of state === "terminal" ? [pendingVisibility, preparedVisibility, terminalVisibility] : [pendingVisibility, preparedVisibility]) {
+  for (const visibility of state === "terminal" ? [pendingVisibility, preparedVisibility, terminalVisibility] : state === "prepared" ? [pendingVisibility, preparedVisibility] : [pendingVisibility]) {
     writeRecoveryRecord("visibility-heads", visibility, "visibilityHeadHash");
   }
-  writeRecoveryRecord("operations", operation, "operationHash");
-  writeRecoveryRecord("start-intents", startIntent, "startIntentHash");
-  writeRecoveryRecord("start-outboxes", startOutbox, "startOutboxHash");
+  if (state !== "pending-input") {
+    writeRecoveryRecord("operations", operation, "operationHash");
+    writeRecoveryRecord("start-intents", startIntent, "startIntentHash");
+    writeRecoveryRecord("start-outboxes", startOutbox, "startOutboxHash");
+  }
   let terminalRunTarget: string | null = null;
   let pairCloseTarget: string | null = null;
   if (state === "terminal") {
@@ -10183,8 +10237,8 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
   }
   const visibilityPointerTarget = path.join(recoveryRoot, "recovery-source-bootstrap-visibility-head.json");
   fixtureFile(successorRoot, path.relative(successorRoot, visibilityPointerTarget), canonicalFixtureRecordV1(Object.freeze({
-    visibilityHeadRef: (state === "terminal" ? terminalVisibility : preparedVisibility).visibilityHeadRef,
-    visibilityHeadHash: (state === "terminal" ? terminalVisibility : preparedVisibility).visibilityHeadHash,
+    visibilityHeadRef: (state === "terminal" ? terminalVisibility : state === "prepared" ? preparedVisibility : pendingVisibility).visibilityHeadRef,
+    visibilityHeadHash: (state === "terminal" ? terminalVisibility : state === "prepared" ? preparedVisibility : pendingVisibility).visibilityHeadHash,
   })), 0o600);
   const release = state === "terminal" ? Object.freeze({
     releaseRef: fenceRelease.releaseRef,
@@ -14263,7 +14317,7 @@ function createFixture(options: FixtureOptions = {}): string {
   fixtureFile(root, "src/db/operational-failure-cause-authority-v3-catalog.ts", 'export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V31_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
   fixtureFile(root, "src/db/contract-spine-migrations.ts", 'export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V33_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
   fixtureFile(root, "src/db-pg.ts", fixtureDatabasePortSource(options));
-  fixtureFile(root, "src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); }
+  fixtureFile(root, "src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(input: unknown): Promise<Readonly<Record<string,unknown>>> { const probe=Reflect.get(globalThis,"__p5cSRecoveryAtRootDatabaseProbeV1") as undefined|{observe:(input:unknown)=>Promise<Readonly<Record<string,unknown>>>}; if(probe===undefined)throw new Error("P5C_S_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); return await probe.observe(input); }
 export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_DISPATCH_NOT_INSTRUMENTED"); }
 export async function dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_AUTHORITY_DISPATCH_NOT_INSTRUMENTED"); }
 `);
@@ -15005,9 +15059,41 @@ function assertPhase5cSNonEntryExternalOwnerAbiStaticsV1(source: string): void {
     const arm = raw.slice(start, next < 0 ? raw.length : next);
     assert.equal([...arm.matchAll(/observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1\(/g)].length, 1,
       `${rawKind}: P5c-S E2 performs one external topology observation`);
-    assert.match(arm, /observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1\(\s*authority\s*,\s*operation\s*,\s*descriptor\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*null\s*\)/,
-      `${rawKind}: P5c-S E2 passes literal null instead of fabricating an entry-authority owner`);
+    const selected = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*selectExactPoisonPostVisibleExternalArrowV1\(\s*descriptor\s*,/.exec(arm);
+    assert.ok(selected, `${rawKind}: P5c-S E2 derives one finite external frontier from its owned lower state`);
+    assert.match(arm, new RegExp(`observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1\\(\\s*authority\\s*,\\s*operation\\s*,\\s*${selected?.[1] ?? "__missingExternalArrow"}\\s*,\\s*[A-Za-z_$][A-Za-z0-9_$]*\\s*,\\s*null\\s*\\)`),
+      `${rawKind}: P5c-S E2 passes the selected frontier and literal null instead of fabricating an entry-authority owner`);
   }
+}
+
+function assertPhase5cSExternalArrowSelectionStaticsV1(source: string): void {
+  const selector = topLevelFunctionRegionV1(source, "selectExactPoisonPostVisibleExternalArrowV1");
+  const selectorHeader = selector.slice(0, selector.indexOf("{"));
+  assert.match(selectorHeader, /descriptor:\s*typeof\s+EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1\[number\]/,
+    "external frontier selection starts from the admitted Task12 row descriptor");
+  assert.match(selectorHeader, /current:\s*Readonly<Record<string,\s*unknown>>\s*\|\s*null/,
+    "external frontier selection consumes the exact already-owned lower current value");
+  assert.match(selectorHeader, /admissionPreSchemaCurrent\??:\s*Readonly<Record<string,\s*unknown>>\s*\|\s*null/,
+    "the admission frontier additionally consumes its already-owned pre-schema current value");
+  assert.match(selector, /EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1\.filter\([\s\S]*descriptor\.row[\s\S]*descriptor\.rawKind/,
+    "frontier selection is bounded by one finite row/raw-kind arrow catalog");
+  assert.match(selector, /normal_task0_admission_ready[\s\S]*recovery-source|recovery-source[\s\S]*normal_task0_admission_ready/,
+    "the shared admission row orders pre-schema admission before recovery-source publication");
+  assert.match(selector, /(?:candidate|arrow)\.prior\s*===\s*[A-Za-z_$][A-Za-z0-9_$]*[\s\S]*(?:candidate|arrow)\.next\s*===\s*[A-Za-z_$][A-Za-z0-9_$]*/,
+    "ambiguous multi-arrow rows prefer the still-active prior frontier and fall back only to its completed successor");
+  assert.doesNotMatch(selector, /openSync|readFileSync|readdirSync|opendirSync|selectCurrent|process\.env|globalThis|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+    "frontier selection is pure over already-owned semantic observations");
+
+  const raw = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressRawNoWriteV1");
+  assert.doesNotMatch(raw, /observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1\(\s*authority\s*,\s*operation\s*,\s*descriptor\s*,/,
+    "real raw arms never pass a Task12 row descriptor as if it were an external arrow");
+  assert.match(raw, /case\s+"admission"[\s\S]*selectExactPoisonPostVisibleExternalArrowV1\(\s*descriptor\s*,\s*recoveryCurrent\s*,\s*preSchemaCurrent\s*\)[\s\S]*observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1\(\s*authority\s*,\s*operation\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*recoveryCurrent\s*,\s*null\s*\)/,
+    "admission cross-binds both owned lower histories before observing its external frontier");
+  const observer = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1");
+  assert.match(observer.slice(0, observer.indexOf("{")), /arrow:\s*ExactPoisonPostVisibleExternalArrowV1\s*\|\s*null/,
+    "the physical dispatcher accepts only a selected finite arrow or an exact no-frontier result");
+  assert.doesNotMatch(observer, /requireExactPoisonPostVisibleExternalArrowV1\(\s*descriptor\s*\)/,
+    "the physical dispatcher never reinterprets an unrelated Task12 row as an arrow");
 }
 
 describe("OA17 zero-input current Setfarm source/build observation", () => {
@@ -21886,6 +21972,385 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("P5c-S observes the pending recovery input and visibility endpoints through the retained AtRoot owner", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const successorRoot = path.join(root, "p5c-s-recovery-pending-external");
+      const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", "pending-input");
+      const input = Object.freeze({
+        status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
+        successorRoot,
+        release: Object.freeze({}),
+        mutation: "none" as const,
+        mutationTarget: seeded.visibilityPointerTarget,
+        observeExternal: true,
+      });
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const value = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: value.state, family: value.family, activeEndpointOrdinal: value.activeEndpointOrdinal, current: value.current },
+        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 2, current: seeded.value },
+      );
+      const endpoints = value.endpoints as readonly Readonly<Record<string, unknown>>[];
+      const materials = phase5cSExternalRawCausalChainFixtureV1(
+        PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 0)!,
+        "A",
+      ).materials;
+      const recoveryRoot = path.join(successorRoot, "recovery-source-bootstrap-v1");
+      const pendingHead = materials["pending-visibility-head"]!;
+      assert.deepEqual(endpoints, Object.freeze([
+        Object.freeze({ material: "pending-input", role: "fixed", policy: "task12-receipt", target: path.join(recoveryRoot, "recovery-source-bootstrap-pending-input.json"), expectedBytesBase64: canonicalFixtureRecordV1(materials["pending-input"]!).toString("base64"), publication: "F2u", writer: "A0" }),
+        Object.freeze({ material: "pending-visibility-head", role: "content", policy: "task12-receipt", target: path.join(recoveryRoot, "records", "visibility-heads", "sha256", String(pendingHead.visibilityHeadHash).slice(0, 2), `${String(pendingHead.visibilityHeadHash)}.json`), expectedBytesBase64: canonicalFixtureRecordV1(pendingHead).toString("base64"), publication: "F2u", writer: "A0" }),
+        Object.freeze({ material: "visibility-pointer", role: "fixed", policy: "task12-receipt", target: seeded.visibilityPointerTarget, expectedBytesBase64: canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: seeded.value.visibilityHeadRef, visibilityHeadHash: seeded.value.visibilityHeadHash })).toString("base64"), publication: "F2u", writer: "A0" }),
+      ]), "the pending recovery arrow is the exact three-endpoint durable prefix owned by the retained reader");
+      assert.equal(observed.closeCount, 1);
+      assert.equal(observed.releaseCalls, 0);
+      const source = readFileSync(observerSource, "utf8");
+      const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
+      const policy = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
+      assert.match(atRoot, /value\.state\s*===\s*"pending-input"[\s\S]*exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.set\(\s*value\s*,\s*capability\s*\)/,
+        "the retained recovery owner registers only the exact pending-input endpoint capability");
+      assert.match(atRoot, /exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.delete\(\s*capabilityCurrent\s*\)[\s\S]*closeExactPoisonPostVisibleProgressRecoveryResourcesV1\(\s*resources\s*,\s*null\s*\)/,
+        "the recovery owner revokes its borrowed capability before closing the physical record graph");
+      assert.match(policy, /exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.get\(\s*current\s*\)[\s\S]*capability\.arrow\.ordinal\s*!==\s*arrow\.ordinal/,
+        "the Task12 policy consumes the capability attached to the exact current object and cross-binds its finite arrow");
+      const recoveryBranch = policy.slice(policy.indexOf('arrow.family === "recovery-source"'), policy.indexOf("let target: string;"));
+      assert.doesNotMatch(recoveryBranch, /selectCurrentEntry|fixedRepositoryRoot|readFileSync|readdirSync|lstatSync|openSync/,
+        "the borrowed recovery endpoint branch never reselects or rescans ambient filesystem state");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes every prepared and terminal recovery Task12 content endpoint through the retained AtRoot owner", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const rows = [] as Readonly<Record<string, unknown>>[];
+      for (const state of ["prepared", "terminal"] as const) {
+        const successorRoot = path.join(root, `p5c-s-recovery-${state}-task12`);
+        const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "B", state);
+        const input = Object.freeze({
+          status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
+          successorRoot,
+          release: seeded.release ?? Object.freeze({}),
+          mutation: "none" as const,
+          mutationTarget: seeded.visibilityPointerTarget,
+          observeTask12Only: true,
+        });
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+        assert.equal(result.status, 0, result.stderr);
+        rows.push(JSON.parse(result.stdout) as Readonly<Record<string, unknown>>);
+      }
+      const arrow = (ordinal: 1 | 2) => PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === ordinal)!;
+      const preparedMaterials = phase5cSExternalRawCausalChainFixtureV1(arrow(1), "B").materials;
+      const terminalMaterials = phase5cSExternalRawCausalChainFixtureV1(arrow(2), "B").materials;
+      const expected = (
+        successorRoot: string,
+        materials: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+        specifications: readonly Readonly<{ material: string; kind: string; hashKey: string; root?: "successor" }>[]
+      ): readonly Readonly<Record<string, unknown>>[] => specifications.map((specification) => {
+        const value = materials[specification.material]!;
+        const hash = String(value[specification.hashKey]);
+        const target = specification.root === "successor"
+          ? path.join(successorRoot, "records", specification.kind, "sha256", hash.slice(0, 2), `${hash}.json`)
+          : path.join(successorRoot, "recovery-source-bootstrap-v1", "records", specification.kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+        return Object.freeze({ material: specification.material, role: "content", policy: "task12-receipt", target, expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), publication: "F2u", writer: "A0" });
+      });
+      const preparedExpected = expected(path.join(root, "p5c-s-recovery-prepared-task12"), preparedMaterials, Object.freeze([
+        Object.freeze({ material: "start-intent", kind: "start-intents", hashKey: "startIntentHash" }),
+        Object.freeze({ material: "start-outbox", kind: "start-outboxes", hashKey: "startOutboxHash" }),
+        Object.freeze({ material: "recovery-operation", kind: "operations", hashKey: "operationHash" }),
+        Object.freeze({ material: "prepared-visibility-head", kind: "visibility-heads", hashKey: "visibilityHeadHash" }),
+      ]));
+      const terminalExpected = expected(path.join(root, "p5c-s-recovery-terminal-task12"), terminalMaterials, Object.freeze([
+        Object.freeze({ material: "terminal-source-run", kind: "terminal-source-runs", hashKey: "terminalSourceRunHash" }),
+        Object.freeze({ material: "terminal-run-launch", kind: "terminal-run-launches", hashKey: "terminalRunLaunchHash" }),
+        Object.freeze({ material: "target-pair-close", kind: "source-run-launch-target-reservation-pair-closes", hashKey: "targetReservationPairCloseHash", root: "successor" as const }),
+        Object.freeze({ material: "run-receipt", kind: "run-receipts", hashKey: "sourceRunHash" }),
+        Object.freeze({ material: "terminal-visibility-head", kind: "visibility-heads", hashKey: "visibilityHeadHash" }),
+      ]));
+      assert.deepEqual(rows.map((row) => row.outcome), ["returned", "returned"]);
+      assert.deepEqual(rows.map((row) => row.task12Endpoints), [preparedExpected, terminalExpected],
+        "prepared and terminal recovery states expose only their exact retained canonical content records");
+      assert.deepEqual(rows.map((row) => row.releaseCalls), [0, 1]);
+      assert.deepEqual(rows.map((row) => row.closeCount), [1, 1]);
+      const source = readFileSync(observerSource, "utf8");
+      const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
+      assert.match(atRoot, /value\.state\s*===\s*"prepared"\s*\|\|\s*value\.state\s*===\s*"terminal"[\s\S]*retainedRecords\.get\(\s*target\s*\)[\s\S]*observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1\(\s*target\s*,\s*retained\.member\.bytes\s*\)/,
+        "prepared and terminal content projections reuse only exact records already pinned by the retained AtRoot graph");
+      assert.match(atRoot, /"target-pair-close:content"[\s\S]*value\.targetReservationPairCloseHash[\s\S]*"terminal-visibility-head:content"/,
+        "the terminal capability includes the full exact Task12 content prefix through the terminal visibility head");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the prepared and terminal recovery visibility CAS through the retained AtRoot owner", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const rows = [] as Readonly<Record<string, unknown>>[];
+      for (const state of ["prepared", "terminal"] as const) {
+        const successorRoot = path.join(root, `p5c-s-recovery-${state}-cas`);
+        const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", state);
+        const input = Object.freeze({
+          status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
+          successorRoot,
+          release: seeded.release ?? Object.freeze({}),
+          mutation: "none" as const,
+          mutationTarget: seeded.visibilityPointerTarget,
+          observeCasOnly: true,
+        });
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+        assert.equal(result.status, 0, result.stderr);
+        rows.push(JSON.parse(result.stdout) as Readonly<Record<string, unknown>>);
+      }
+      const arrow = (ordinal: 1 | 2) => PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === ordinal)!;
+      const preparedMaterials = phase5cSExternalRawCausalChainFixtureV1(arrow(1), "A").materials;
+      const terminalMaterials = phase5cSExternalRawCausalChainFixtureV1(arrow(2), "A").materials;
+      const expectedCas = (
+        row: Readonly<Record<string, unknown>>,
+        predecessor: Readonly<Record<string, unknown>>,
+      ): Readonly<Record<string, unknown>> => {
+        const value = row.value as Readonly<Record<string, unknown>>;
+        return Object.freeze({
+          material: "visibility-pointer",
+          role: "fixed",
+          policy: "expected-predecessor-cas",
+          target: path.join(String(row.successorRoot), "recovery-source-bootstrap-v1", "recovery-source-bootstrap-visibility-head.json"),
+          expectedBytesBase64: canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: value.visibilityHeadRef, visibilityHeadHash: value.visibilityHeadHash })).toString("base64"),
+          publication: null,
+          writer: null,
+          cas: Object.freeze({
+            state: "Q3",
+            route: "next",
+            predecessorBytesBase64: canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: predecessor.visibilityHeadRef, visibilityHeadHash: predecessor.visibilityHeadHash })).toString("base64"),
+            successorBytesBase64: canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: value.visibilityHeadRef, visibilityHeadHash: value.visibilityHeadHash })).toString("base64"),
+            laterFixedCount: 0,
+          }),
+        });
+      };
+      const comparableRows = rows.map((row, index) => Object.freeze({ ...row, successorRoot: path.join(root, `p5c-s-recovery-${index === 0 ? "prepared" : "terminal"}-cas`) }));
+      assert.deepEqual(rows.map((row) => row.outcome), ["returned", "returned"]);
+      assert.deepEqual(rows.map((row) => row.casEndpoints), [
+        Object.freeze([expectedCas(comparableRows[0]!, preparedMaterials["pending-visibility-head"]!)]),
+        Object.freeze([expectedCas(comparableRows[1]!, terminalMaterials["prepared-visibility-head"]!)]),
+      ], "the two durable visibility pointers are exact Q3 successors of their retained predecessor heads");
+      assert.deepEqual(rows.map((row) => row.closeCount), [1, 1]);
+      const source = readFileSync(observerSource, "utf8");
+      const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
+      const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1");
+      assert.match(atRoot, /currentHeadRecord\.value\.predecessorVisibilityHeadHash[\s\S]*predecessorHeadRecord\.value\.visibilityHeadHash\s*!==\s*currentHeadRecord\.value\.predecessorVisibilityHeadHash[\s\S]*pointerRecord\.member\.bytes\.equals\(\s*successorBytes\s*\)/,
+        "the retained visibility chain and fixed pointer generation jointly authorize the Q3 predecessor/successor projection");
+      assert.match(endpoint, /exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.get\(\s*current\s*\)[\s\S]*capability\.casEndpoints\.get\(/,
+        "the CAS helper consumes only the capability attached to the exact retained current object");
+      assert.doesNotMatch(endpoint, /selectCurrentEntry|fixedRepositoryRoot|readFileSync|readdirSync|lstatSync|openSync/,
+        "the borrowed CAS helper never reselects or rescans mutable ambient filesystem state");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the complete terminal recovery arrow from one retained filesystem and database authority", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const successorRoot = path.join(root, "p5c-s-recovery-terminal-external");
+      const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", "terminal");
+      const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 2)!;
+      const materials = phase5cSExternalRawCausalChainFixtureV1(arrow, "A").materials;
+      const terminal = seeded.value;
+      const databaseObservation = Object.freeze({
+        state: "released",
+        workflowState: "completed",
+        runId: terminal.runId,
+        operationRunBindingHash: terminal.operationRunBindingHash,
+        reciprocalRunOperationBindingHash: terminal.reciprocalRunOperationBindingHash,
+        terminalOwnerRef: terminal.terminalOwnerRef,
+        terminalOwnerHash: terminal.terminalOwnerHash,
+        terminalSourceRunRef: terminal.terminalSourceRunRef,
+        terminalSourceRunHash: terminal.terminalSourceRunHash,
+        terminalRunLaunchRef: terminal.terminalRunLaunchRef,
+        terminalRunLaunchHash: terminal.terminalRunLaunchHash,
+        targetReservationPairCloseRef: terminal.targetReservationPairCloseRef,
+        targetReservationPairCloseHash: terminal.targetReservationPairCloseHash,
+        fenceReleaseRef: terminal.fenceReleaseRef,
+        fenceReleaseHash: terminal.fenceReleaseHash,
+        sourceRunRef: terminal.sourceRunRef,
+        sourceRunHash: terminal.sourceRunHash,
+      });
+      const input = Object.freeze({
+        status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
+        successorRoot,
+        release: materials["database-fence-release"]!,
+        mutation: "none" as const,
+        mutationTarget: seeded.visibilityPointerTarget,
+        observeExternal: true,
+        externalOrdinal: 2 as const,
+        databaseObservation,
+      });
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      assert.equal(observed.databaseObserverCalls, 1, "all three database endpoints share one exact durable-run observation");
+      assert.deepEqual(observed.databaseObserverInputs, [Object.freeze({ recoveryOperationAuthority: seeded.graph.operation })],
+        "the database observation receives the exact recovery operation retained under the AtRoot owner");
+      const external = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
+        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 8, current: seeded.value },
+      );
+      const content = (material: string, kind: string, hashKey: string, rootKind: "recovery" | "successor" = "recovery"): Readonly<Record<string, unknown>> => {
+        const value = materials[material]!;
+        const hash = String(value[hashKey]);
+        const base = rootKind === "successor" ? successorRoot : path.join(successorRoot, "recovery-source-bootstrap-v1");
+        return Object.freeze({ material, role: "content", policy: "task12-receipt", target: path.join(base, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`), expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), publication: "F2u", writer: "A0" });
+      };
+      const database = (material: string): Readonly<Record<string, unknown>> => Object.freeze({
+        material,
+        role: "database",
+        policy: "database-atomic",
+        target: null,
+        expectedBytesBase64: canonicalFixtureRecordV1(materials[material]!).toString("base64"),
+        publication: null,
+        writer: null,
+        database: Object.freeze({ state: "current", expectedProjectionBase64: canonicalFixtureRecordV1(materials[material]!).toString("base64"), artifactCount: 1, laterArtifactCount: 0 }),
+      });
+      const predecessor = materials["prepared-visibility-head"]!;
+      const pointerBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: terminal.visibilityHeadRef, visibilityHeadHash: terminal.visibilityHeadHash }));
+      const predecessorBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: predecessor.visibilityHeadRef, visibilityHeadHash: predecessor.visibilityHeadHash }));
+      const expectedEndpoints = Object.freeze([
+        database("database-run-binding"),
+        content("terminal-source-run", "terminal-source-runs", "terminalSourceRunHash"),
+        content("terminal-run-launch", "terminal-run-launches", "terminalRunLaunchHash"),
+        database("database-target-close"),
+        content("target-pair-close", "source-run-launch-target-reservation-pair-closes", "targetReservationPairCloseHash", "successor"),
+        database("database-fence-release"),
+        content("run-receipt", "run-receipts", "sourceRunHash"),
+        content("terminal-visibility-head", "visibility-heads", "visibilityHeadHash"),
+        Object.freeze({ material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas", target: seeded.visibilityPointerTarget, expectedBytesBase64: pointerBytes.toString("base64"), publication: null, writer: null, cas: Object.freeze({ state: "Q3", route: "next", predecessorBytesBase64: predecessorBytes.toString("base64"), successorBytesBase64: pointerBytes.toString("base64"), laterFixedCount: 0 }) }),
+      ]);
+      assert.deepEqual(external.endpoints, expectedEndpoints,
+        "the terminal arrow exposes its exact database/content/CAS order without a fabricated phase");
+      assert.equal(observed.closeCount, 1);
+      assert.equal(observed.releaseCalls, 1);
+      const source = readFileSync(observerSource, "utf8");
+      const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
+      const databaseEndpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1");
+      assert.match(atRoot, /databaseEndpoints\.set\(\s*"database-run-binding:database"[\s\S]*databaseEndpoints\.set\(\s*"database-target-close:database"[\s\S]*databaseEndpoints\.set\(\s*"database-fence-release:database"/,
+        "the retained terminal capability freezes the exact three database projections in causal order");
+      assert.match(atRoot, /let\s+databaseObservation[\s\S]*if\s*\(\s*databaseObservation\s*!==\s*null\s*\)\s*return\s+databaseObservation[\s\S]*observePersistedInternalProductionRecoverySourceBootstrapRunV1[\s\S]*observed\.state\s*!==\s*"released"/,
+        "all database endpoints share one fail-closed released-run observation");
+      assert.match(databaseEndpoint, /exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1\.get\(\s*current\s*\)[\s\S]*await\s+capability\.observeDatabase\(\)[\s\S]*capability\.assertStable\(\)[\s\S]*authority\.assertStable\(\)/,
+        "the database helper rechecks the retained filesystem authority after its shared awaited observation");
+      assert.doesNotMatch(databaseEndpoint, /selectCurrentEntry|fixedRepositoryRoot|readFileSync|readdirSync|lstatSync|openSync/,
+        "the borrowed database helper never reselects or rescans ambient filesystem state");
+
+      const crossedInput = Object.freeze({ ...input, databaseObservation: Object.freeze({ ...databaseObservation, runId: "9".repeat(64) }) });
+      const crossed = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(crossedInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(crossed.status, 0, crossed.stderr);
+      const crossedObserved = JSON.parse(crossed.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(crossedObserved.outcome, "threw");
+      assert.match(String(crossedObserved.message), /recovery-source terminal database observation is crossed/,
+        "a released row with a crossed durable run identity is rejected before an endpoint escapes");
+      assert.equal(crossedObserved.databaseObserverCalls, 1);
+      assert.equal(crossedObserved.closeCount, 1);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the prepared recovery H1 database endpoint without projecting future close or release state", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const successorRoot = path.join(root, "p5c-s-recovery-prepared-external");
+      const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "B", "prepared");
+      const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 1)!;
+      const materials = phase5cSExternalRawCausalChainFixtureV1(arrow, "B").materials;
+      const recoveryOperation = seeded.graph.operation;
+      const databaseProjection = Object.freeze({
+        ownerAdmissionFenceRef: recoveryOperation.ownerAdmissionFenceRef,
+        ownerAdmissionFenceHash: recoveryOperation.ownerAdmissionFenceHash,
+        targetSourceRunReservationRef: recoveryOperation.targetSourceRunReservationRef,
+        targetSourceRunReservationHash: recoveryOperation.targetSourceRunReservationHash,
+        targetRunReservationRef: recoveryOperation.targetRunReservationRef,
+        targetRunReservationHash: recoveryOperation.targetRunReservationHash,
+        targetRunLaunchCompositeHash: recoveryOperation.targetRunLaunchCompositeHash,
+      });
+      const input = Object.freeze({
+        status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
+        successorRoot,
+        release: Object.freeze({}),
+        mutation: "none" as const,
+        mutationTarget: seeded.visibilityPointerTarget,
+        observeExternal: true,
+        externalOrdinal: 1 as const,
+        databaseObservation: Object.freeze({ state: "absent" }),
+      });
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      assert.equal(observed.databaseObserverCalls, 1);
+      assert.deepEqual(observed.databaseObserverInputs, [Object.freeze({ recoveryOperationAuthority: recoveryOperation })]);
+      const external = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
+        { state: "publishing", family: "recovery-source", activeEndpointOrdinal: 5, current: seeded.value },
+      );
+      const content = (material: string, kind: string, hashKey: string): Readonly<Record<string, unknown>> => {
+        const value = materials[material]!;
+        const hash = String(value[hashKey]);
+        return Object.freeze({ material, role: "content", policy: "task12-receipt", target: path.join(successorRoot, "recovery-source-bootstrap-v1", "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`), expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), publication: "F2u", writer: "A0" });
+      };
+      const pendingHead = materials["pending-visibility-head"]!;
+      const pointerBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: seeded.value.visibilityHeadRef, visibilityHeadHash: seeded.value.visibilityHeadHash }));
+      const predecessorBytes = canonicalFixtureRecordV1(Object.freeze({ visibilityHeadRef: pendingHead.visibilityHeadRef, visibilityHeadHash: pendingHead.visibilityHeadHash }));
+      assert.deepEqual(external.endpoints, Object.freeze([
+        Object.freeze({ material: "database-fence-reservations", role: "database", policy: "database-atomic", target: null, expectedBytesBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), publication: null, writer: null, database: Object.freeze({ state: "current", expectedProjectionBase64: canonicalFixtureRecordV1(databaseProjection).toString("base64"), artifactCount: 1, laterArtifactCount: 0 }) }),
+        content("start-intent", "start-intents", "startIntentHash"),
+        content("start-outbox", "start-outboxes", "startOutboxHash"),
+        content("recovery-operation", "operations", "operationHash"),
+        content("prepared-visibility-head", "visibility-heads", "visibilityHeadHash"),
+        Object.freeze({ material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas", target: seeded.visibilityPointerTarget, expectedBytesBase64: pointerBytes.toString("base64"), publication: null, writer: null, cas: Object.freeze({ state: "Q3", route: "next", predecessorBytesBase64: predecessorBytes.toString("base64"), successorBytesBase64: pointerBytes.toString("base64"), laterFixedCount: 0 }) }),
+      ]), "prepared exposes only the exact H1 database projection followed by retained content and CAS");
+      assert.equal(observed.releaseCalls, 0);
+      assert.equal(observed.closeCount, 1);
+      const runBinding = materials["database-run-binding"]!;
+      const activeInput = Object.freeze({ ...input, databaseObservation: Object.freeze({ state: "active", workflowState: "resuming", ...runBinding }) });
+      const activeResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(activeInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(activeResult.status, 0, activeResult.stderr);
+      const activeObserved = JSON.parse(activeResult.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(activeObserved.outcome, "returned", String(activeObserved.message ?? ""));
+      assert.equal(activeObserved.databaseObserverCalls, 1,
+        "a response-loss active run preserves the same exact H1 database endpoint");
+
+      const futureInput = Object.freeze({ ...input, databaseObservation: Object.freeze({ state: "pair_closed" }) });
+      const futureResult = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(futureInput)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(futureResult.status, 0, futureResult.stderr);
+      const futureObserved = JSON.parse(futureResult.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(futureObserved.outcome, "threw");
+      assert.match(String(futureObserved.message), /recovery-source prepared database observation is crossed/,
+        "prepared visibility never projects a future H3/H4 database disposition as H1 current");
+      assert.equal(futureObserved.databaseObserverCalls, 1);
+      assert.equal(futureObserved.closeCount, 1);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
   it("P5c-S owns the complete at-root recovery graph through terminal projection and cleanup", async () => {
     const root = createFixture();
     try {
@@ -24065,7 +24530,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const ownerAdmissionFence = current.ownerAdmissionFence as Readonly<Record<string, unknown>>;
             const sourceRunReservation = current.sourceRunReservation as Readonly<Record<string, unknown>>;
             const runReservation = current.runReservation as Readonly<Record<string, unknown>>;
-            inputs.push(Object.freeze({ ...base, label: `${descriptor.row}:${kind}:recovery-operation-selected-alias`, valid: false, current: Object.freeze({ ...current, recoverySourceOperation: selectedCurrentEntryOperation }) }));
+            inputs.push(Object.freeze({ ...base, label: `${descriptor.row}:${kind}:recovery-operation-selected-alias`, valid: false, current: Object.freeze({ ...current, recoverySourceOperation: selectedCurrentEntryOperation }), expectedQueryClasses: Object.freeze(["owner-admission", "owner-reservations"]) }));
             inputs.push(Object.freeze({ ...base, label: `${descriptor.row}:${kind}:recovery-operation-body-crossed`, valid: false, current: Object.freeze({ ...current, recoverySourceOperation: Object.freeze({ ...recoverySourceOperation, buildHash: "9".repeat(64) }) }) }));
             inputs.push(Object.freeze({ ...base, label: `${descriptor.row}:${kind}:current-fence-pair-crossed`, valid: false, current: Object.freeze({ ...current, ownerAdmissionFence: Object.freeze({ ...ownerAdmissionFence, fenceHash: "9".repeat(64) }) }) }));
             inputs.push(Object.freeze({ ...base, label: `${descriptor.row}:${kind}:current-source-reservation-pair-crossed`, valid: false, current: Object.freeze({ ...current, sourceRunReservation: Object.freeze({ ...sourceRunReservation, reservationHash: "9".repeat(64) }) }) }));
@@ -24608,7 +25073,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
               assert.equal(priorClasses.includes("migration-catalog"), true, `${String(input.label)}: catalog name/column projection precedes each authoritative same-transaction verifier call`);
             }
           }
-          if (input.fault !== "open") {
+          if (sqlExpected && input.fault !== "open") {
             assert.deepEqual(queryClasses, [...expectedQueryClasses].sort(), `${String(input.label)}: only physically available phase-aware SQL domains are read`);
             const guards = queryCalls.filter((call) => call.queryClass === "session-guard").map((call) => String(call.query));
             assert.equal(guards.some((query) => /statement_timeout\s*=\s*'5s'/i.test(query)), true, `${String(input.label)}: transaction bounds statement time`);
@@ -24622,7 +25087,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             if (input.probePostClose === true) assert.deepEqual(diagnostic.postCloseOutcomes, ["threw", "threw"],
               `${String(input.label)}: stable-after-close and double-close both refuse without ending the client twice`);
           } else {
-            assert.match(String(diagnostic.message), /database|migration|manifest|catalog|owner|authority|reservation|run|binding|crossed|changed|drift|unexpected|phase|leaf|sql|fault|operation|fence|canonical|alias/i);
+            assert.match(String(diagnostic.message), /database|migration|manifest|catalog|owner|authority|reservation|run|binding|crossed|changed|drift|unexpected|phase|leaf|sql|fault|operation|fence|canonical|alias|delivery.pending/i);
             if ("stableQueryRows" in input) assert.match(String(diagnostic.message), /changed|drift|stable|snapshot|database/i,
               `${String(input.label)}: an independently valid changed snapshot is rejected by exact A/B comparison`);
             if (String(input.label).endsWith("query-primary-over-close")) assert.doesNotMatch(String(diagnostic.message), /P5C_S_ROW_TAIL_LEAF_SQL_CLOSE_FAULT/,
@@ -24641,7 +25106,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       type DownstreamPhysicalStageV1 = "stable" | "q-temporary" | "q-writer" | "q-temporary-writer" | "q-unequal" | "q-crossed" | "q-with-f" | "controller-writer" | "controller-writer-crossed-owner" | "controller-writer-aba" | "entry-02-fixed" | "entry-02-temporary" | "entry-02-writer" | "entry-02-unequal" | "entry-02-second" | "later" | "unknown" | "over-cap";
       const seedDownstream = (descriptor: typeof PHASE5C_S_NONBLOCKED_ROWS_V1[number], kind: DownstreamPhysicalStageV1): void => {
         const status = phase5cSCanonicalProgressStatusFixtureV1(descriptor.row);
-        const successorRoot = path.join(root, `p5c-s-leaf-downstream-${PHASE5C_S_NONBLOCKED_ROWS_V1.indexOf(descriptor)}-${kind}`);
+        const successorRoot = path.join(realpathSync(root), `p5c-s-leaf-downstream-${PHASE5C_S_NONBLOCKED_ROWS_V1.indexOf(descriptor)}-${kind}`);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const topology = phase5cSNextStatusContentTopologyFixtureV1(descriptor, status, successorRoot);
         mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
@@ -24723,25 +25188,28 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const downstreamTreeBefore = filesystemTreeSnapshot(root);
       for (let offset = 0; offset < downstreamInputs.length; offset += 8) {
         const batch = downstreamInputs.slice(offset, offset + 8);
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const rows=[];for(const input of ${JSON.stringify(batch)}){const before=count();try{rows.push({label:input.label,outcome:"returned",value:await m.p5cSObserveProgressRowTailPhysicalLeafFixtureV1(input),descriptorDelta:count()-before})}catch(error){rows.push({label:input.label,outcome:"threw",message:String(error),descriptorDelta:count()-before})}}process.stdout.write(JSON.stringify(rows))})()`);
+        const batchTarget = path.join(path.dirname(root), `.p5c-s-downstream-batch-${offset}.json`);
+        fixtureFile(path.dirname(root), path.basename(batchTarget), `${JSON.stringify(batch)}\n`, 0o600);
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const rows=[];const batch=JSON.parse(fs.readFileSync(${JSON.stringify(batchTarget)},"utf8"));for(const input of batch){const before=count();try{rows.push({label:input.label,outcome:"returned",value:await m.p5cSObserveProgressRowTailPhysicalLeafFixtureV1(input),descriptorDelta:count()-before})}catch(error){rows.push({label:input.label,outcome:"threw",message:String(error),descriptorDelta:count()-before})}}process.stdout.write(JSON.stringify(rows))})()`);
+        unlinkSync(batchTarget);
         assert.equal(result.status, 0, result.stderr);
         downstreamObserved.push(...JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[]);
       }
       for (const [index, input] of downstreamInputs.entries()) {
         try {
           const outer = downstreamObserved[index]!;
-          assert.equal(outer.outcome, "returned", `${String(input.label)}: copied operation-directory leaf executes on the disposable root`);
+          assert.equal(outer.outcome, "returned", `${String(input.label)}: copied operation-directory leaf executes on the disposable root (${String(outer.message ?? "")})`);
           const diagnostic = outer.value as Readonly<Record<string, unknown>>;
           assert.equal(outer.descriptorDelta, 0, `${String(input.label)}: post-effect downstream owner closes every descriptor on success and failure`);
           assert.equal(diagnostic.outcome, input.valid ? "returned" : "threw", `${String(input.label)}: row-specific bounded member inventory is load-bearing (${String(diagnostic.message)})`);
           assert.equal(diagnostic.postgresCalls, 0, `${String(input.label)}: operation-directory authority never opens SQL`);
-          assert.equal(diagnostic.topologyBound, true, `${String(input.label)}: direct downstream leaf receives the one independently hydrated post-effect topology object`);
+          assert.equal(diagnostic.topologyBound, true, `${String(input.label)}: direct downstream leaf receives the one independently hydrated post-effect topology object (observed=${String(outer.label)}; outcome=${String(diagnostic.outcome)}; message=${String(diagnostic.message)})`);
           const borrowedController = input.borrowController === true;
           assert.equal(diagnostic.controllerReleaseAttempts, borrowedController ? 1 : 0, `${String(input.label)}: the exact borrowed controller is released once after the downstream owner closes`);
           assert.equal(diagnostic.controllerReleases, borrowedController ? 1 : 0, `${String(input.label)}: controller state cleanup is never detached from downstream cleanup`);
           assert.deepEqual(diagnostic.controllerArtifactsAfterCleanup, [], `${String(input.label)}: controller acquisition and fail-closed release leave no writer artifact`);
           if (input.stage === "controller-writer-crossed-owner" || input.stage === "controller-writer-aba") {
-            assert.equal(diagnostic.controllerWriterMutationApplied, true, `${String(input.label)}: the canonical crossed writer lands at its exact pre-open or post-open boundary`);
+            assert.equal(diagnostic.controllerWriterMutationApplied, true, `${String(input.label)}: the canonical crossed writer lands at its exact pre-open or post-open boundary (observed=${String(outer.label)}; outcome=${String(diagnostic.outcome)}; message=${String(diagnostic.message)})`);
             assert.equal(diagnostic.controllerReplacementStillPresentAtRelease, true, `${String(input.label)}: fail-closed release never unlinks the crossed replacement generation`);
             assert.match(String(diagnostic.controllerReleaseMessage), /controller|writer|changed|stable|metadata|identity/i, `${String(input.label)}: compromised writer release itself fails closed after removing controller state`);
             assert.equal(diagnostic.preReleaseFailureStage, "controller-writer-fence", `${String(input.label)}: the tagged borrowed-handle fence, not generic parent inventory drift, supplies the pre-release primary`);
@@ -25053,7 +25521,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           assert.equal(wrapped.closeCount, input.faultKind === "open" ? 0 : 1, `${input.label}: the composite close is attempted exactly when construction returned an owner`);
           continue;
         }
-        assert.equal(wrapped.outcome, "returned", `${input.label}: the composite observer reaches its final stable state`);
+        assert.equal(wrapped.outcome, "returned", `${input.label}: the composite observer reaches its final stable state: ${String(wrapped.message)}`);
         if ((input.arrow as Readonly<Record<string, unknown>>).family === "entry-authority") {
           assert.equal(wrapped.entryAuthorityOwnerPassed, true,
             `${input.label}: entry external observation receives the one live AtRoot owner`);
@@ -27785,6 +28253,358 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("P5c-S observes the exact blocked pre-schema content and locator endpoints through the retained AtRoot owner", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1");
+    const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreSchemaNoReplaceEndpointNoWriteV1");
+    assert.match(atRoot, /exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1\.set\(\s*value\s*,\s*capability\s*\)/,
+      "the retained AtRoot owner registers its exact physical endpoint capability against the returned current object");
+    assert.match(atRoot, /close\s*=\s*\(\)\s*:\s*void\s*=>[\s\S]*exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1\.delete\(\s*capabilityCurrent\s*\)[\s\S]*closeResources\(\s*null\s*\)/,
+      "closing the AtRoot owner revokes its borrowed endpoint capability before releasing physical pins");
+    assert.match(endpoint, /exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1\.get\(\s*current\s*\)/,
+      "the endpoint helper consumes only the capability attached to the exact owned current object");
+    assert.match(endpoint, /capability\.operationRef\s*!==\s*operation\.operationRef[\s\S]*capability\.arrow\.ordinal\s*!==\s*arrow\.ordinal/,
+      "the borrowed capability is cross-bound to the selected operation and finite arrow");
+    assert.doesNotMatch(endpoint, /fixedRepositoryRoot|selectCurrentEntry|lstatSync|openSync|readFileSync|readdirSync/,
+      "the endpoint helper never reselects or rescans mutable ambient filesystem state");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 2, true);
+      const input = Object.freeze({
+        operation: seeded.operation,
+        successorRoot: seeded.successorRoot,
+        mutation: "none" as const,
+        mutationTarget: seeded.currentStatusTarget,
+        observeExternal: true,
+      });
+      const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const presentedContentTarget = realpathSync(seeded.currentStatusContentTarget);
+      assert.deepEqual(observed.external, Object.freeze({
+        state: "publishing",
+        family: "pre-schema",
+        activeEndpointOrdinal: 1,
+        current: seeded.current,
+        endpoints: Object.freeze([
+          Object.freeze({
+            material: "blocked-status",
+            role: "content",
+            policy: "pre-schema-no-replace",
+            target: presentedContentTarget,
+            expectedBytesBase64: canonicalFixtureRecordV1(seeded.current).toString("base64"),
+            publication: "F2u",
+            writer: "A0",
+          }),
+          Object.freeze({
+            material: "blocked-status",
+            role: "locator",
+            policy: "pre-schema-no-replace",
+            target: seeded.currentStatusTarget,
+            expectedBytesBase64: canonicalFixtureRecordV1(Object.freeze({ statusRef: seeded.current.statusRef, statusHash: seeded.current.statusHash })).toString("base64"),
+            publication: "F2u",
+            writer: "A0",
+          }),
+        ]),
+      }), "the blocked frontier returns the two exact fixed physical endpoint observations owned by the retained reader");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the completed sealed pre-schema endpoint prefix through the retained AtRoot owner", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 5);
+      const input = Object.freeze({ operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none" as const, mutationTarget: seeded.currentStatusTarget, observeExternal: true });
+      const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const external = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
+        { state: "publishing", family: "pre-schema", activeEndpointOrdinal: 5, current: seeded.current },
+      );
+      const endpoints = external.endpoints as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(endpoints.map((endpoint) => [endpoint.material, endpoint.role, endpoint.policy, endpoint.publication, endpoint.writer]), [
+        ["post-termination-legacy-zero-content", "content", "pre-schema-no-replace", "F2u", "A0"],
+        ["post-termination-legacy-zero", "locator", "pre-schema-no-replace", "F2u", "A0"],
+        ["sealed-admission", "content", "pre-schema-no-replace", "F2u", "A0"],
+        ["sealed-admission", "locator", "pre-schema-no-replace", "F2u", "A0"],
+        ["status", "content", "pre-schema-no-replace", "F2u", "A0"],
+        ["status", "locator", "pre-schema-no-replace", "F2u", "A0"],
+      ], "the completed arrow is the exact six-endpoint durable prefix");
+      assert.deepEqual(endpoints.slice(0, 4).map((endpoint) => endpoint.expectedBytesBase64), [
+        canonicalFixtureRecordV1(phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((arrow) => arrow.family === "pre-schema" && arrow.ordinal === 5)!, "B").materials["post-termination-legacy-zero-content"]!).toString("base64"),
+        readFileSync(path.join(seeded.operationDirectory, "06-post-termination-legacy-zero.pair.json")).toString("base64"),
+        canonicalFixtureRecordV1(phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((arrow) => arrow.family === "pre-schema" && arrow.ordinal === 5)!, "B").materials["sealed-admission"]!).toString("base64"),
+        readFileSync(path.join(seeded.operationDirectory, "07-sealed-admission.pair.json")).toString("base64"),
+      ], "the completed material content and locator bytes remain the exact pinned canonical values");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the admission-ready spawner endpoints through the retained AtRoot owner", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const atRoot = topLevelFunctionRegionV1(source, "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1");
+    const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1");
+    assert.match(atRoot, /inventory\.ordinal\s*===\s*6[\s\S]*admission-ready:content[\s\S]*admission-ready:locator[\s\S]*status:content[\s\S]*status:locator/,
+      "the ready AtRoot owner registers the exact four-endpoint admission capability");
+    assert.match(endpoint, /exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1\.get\(\s*current\s*\)/,
+      "the spawner endpoint consumes only the capability of the exact retained current object");
+    assert.match(endpoint, /capability\.operationRef\s*!==\s*operation\.operationRef[\s\S]*capability\.arrow\.ordinal\s*!==\s*arrow\.ordinal/,
+      "the spawner endpoint cross-binds the retained capability to the selected operation and arrow");
+    assert.doesNotMatch(endpoint, /fixedRepositoryRoot|selectCurrentEntry|lstatSync|openSync|readFileSync|readdirSync/,
+      "the spawner endpoint never reselects or rescans ambient filesystem state");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6);
+      const input = Object.freeze({ operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none" as const, mutationTarget: seeded.currentStatusTarget, observeExternal: true, externalOrdinal: 6 });
+      const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const external = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
+        { state: "publishing", family: "pre-schema", activeEndpointOrdinal: 3, current: seeded.current },
+      );
+      const endpoints = external.endpoints as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(endpoints.map((value) => [value.material, value.role, value.policy, value.publication, value.writer]), [
+        ["admission-ready", "content", "spawner-admission", "F2u", "A0"],
+        ["admission-ready", "locator", "spawner-admission", "F2u", "A0"],
+        ["status", "content", "spawner-admission", "F2u", "A0"],
+        ["status", "locator", "spawner-admission", "F2u", "A0"],
+      ]);
+      const readyArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((arrow) => arrow.family === "pre-schema" && arrow.ordinal === 6)!;
+      const admissionReady = phase5cSExternalRawCausalChainFixtureV1(readyArrow, "B").materials["admission-ready"]!;
+      assert.deepEqual(endpoints.map((value) => value.expectedBytesBase64), [
+        canonicalFixtureRecordV1(admissionReady).toString("base64"),
+        readFileSync(path.join(seeded.operationDirectory, "08-admission-ready.pair.json")).toString("base64"),
+        canonicalFixtureRecordV1(seeded.current).toString("base64"),
+        readFileSync(seeded.currentStatusTarget).toString("base64"),
+      ]);
+      assert.equal(observed.closeCount, 1, "the ready retained owner closes exactly once after endpoint use");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the completed migration-32 receipt and terminal status through real Task12 endpoint owners", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const policy = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
+    const shard = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1");
+    assert.match(policy, /arrow\.family\s*===\s*"migration-32"[\s\S]*\[0,\s*1,\s*2\]\.includes\(arrow\.ordinal\)[\s\S]*arrow\.ordinal\s*===\s*0\s*\?\s*"prepared"\s*:\s*arrow\.ordinal\s*===\s*1\s*\?\s*"consumed"\s*:\s*"terminal"[\s\S]*current\.state\s*!==\s*expectedState/,
+      "the real Task12 policy binds every migration-32 arrow to its exact prepared, consumed, or terminal lower authority");
+    assert.match(policy, /hashCanonicalJson\(\s*statusBody\s*\)\s*!==\s*current\.statusHash[\s\S]*resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1\([\s\S]*operation\s*\)/,
+      "terminal status and receipt content remain self-hashed and operation-bound before physical observation");
+    assert.match(policy, /observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1\(\s*target\s*,\s*expectedBytes\s*\)[\s\S]*requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1\(\s*owner\s*,\s*target\s*,\s*expectedBytes\s*\)/,
+      "content shards and the status locator enter the shared exact Task12 publication binder");
+    assert.match(shard, /openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1\(\s*target\s*\)[\s\S]*directoryOwner\.directoryMembers[\s\S]*observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1\(\s*directoryOwner/,
+      "the content shard family is enumerated only inside one retained directory owner");
+    assert.doesNotMatch(shard, /readdirSync|readFileSync|selectCurrentEntry/,
+      "the shard projection never performs an ambient second inventory or current-entry selection");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!;
+      const chain = phase5cSExternalRawCausalChainFixtureV1(arrow, "B");
+      const current = chain.next;
+      const receipt = chain.materials.receipt!;
+      const workspace = path.dirname(root);
+      const migrationRoot = path.join(workspace, "data/internal-production-baseline/pre-manifest-migration32-v1");
+      const writeRecord = (kind: string, hash: string, value: Readonly<Record<string, unknown>>): void => {
+        const target = path.join(migrationRoot, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+      };
+      writeRecord("receipts", String(receipt.migrationReceiptHash), receipt);
+      writeRecord("statuses", String(current.statusHash), current);
+      const locatorTarget = path.join(migrationRoot, "operations", "sha256", "aa", "a".repeat(64), "status-02.pair.json");
+      phase5cEnsurePublicationParentV1(locatorTarget);
+      writeFileSync(locatorTarget, canonicalFixtureRecordV1(Object.freeze({ statusRef: current.statusRef, statusHash: current.statusHash })), { mode: 0o600 });
+      const input = Object.freeze({
+        status: phase5cSBuildCanonicalProgressStatusFixtureV1("migration_applying/prepared"),
+        arrow,
+        current,
+        policyValues: Object.freeze({}),
+        physicalPolicy: true,
+        successorRoot: path.join(workspace, "data/internal-production-baseline/current-entry-poison-successor-v1"),
+      });
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.p5cSObserveExternalRawPublicationFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const value = observed.value as Readonly<Record<string, unknown>>;
+      assert.deepEqual({ state: value.state, family: value.family, activeEndpointOrdinal: value.activeEndpointOrdinal, current: value.current }, { state: "publishing", family: "migration-32", activeEndpointOrdinal: 2, current });
+      const endpoints = value.endpoints as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(endpoints.map((endpoint) => [endpoint.material, endpoint.role, endpoint.policy, (endpoint.publication as Readonly<Record<string, unknown>>).state, (endpoint.writer as Readonly<Record<string, unknown>>).state]), [
+        ["receipt", "content", "task12-receipt", "F2u", "A0"],
+        ["status", "content", "task12-receipt", "F2u", "A0"],
+        ["status", "locator", "task12-receipt", "F2u", "A0"],
+      ]);
+      assert.equal((observed.calls as readonly unknown[]).length, 0, "the physical run executes the real Task12 endpoint policy instead of fixture policy values");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the prepared, consumed, and current-audit Task12 endpoints through real owners", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const policy = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
+    assert.match(policy, /arrow\.family\s*===\s*"migration-32"[\s\S]*arrow\.ordinal\s*===\s*0[\s\S]*resolveInternalProductionPreManifestMigration32AuthorizationV1/,
+      "the prepared migration endpoint resolves its exact authorization content");
+    assert.match(policy, /arrow\.family\s*===\s*"migration-32"[\s\S]*arrow\.ordinal\s*===\s*1[\s\S]*resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1/,
+      "the consumed migration endpoint resolves its exact consumption content");
+    assert.match(policy, /arrow\.family\s*===\s*"current-audit"[\s\S]*resolveInternalProductionBootstrapHandoffCurrentAuditV1/,
+      "the current-audit endpoint resolves its exact operation-bound audit content");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const databaseFixtureTarget = path.join(root, "src/db-pg.ts");
+      const databaseFixtureSource = readFileSync(databaseFixtureTarget, "utf8");
+      if (!databaseFixtureSource.includes("auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1")) writeFileSync(databaseFixtureTarget, `${databaseFixtureSource}\nexport async function auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1(){const probe=Reflect.get(globalThis,"__p5cSResumeProbeV1") as {auditCalls:number;databaseAudit:Readonly<Record<string,unknown>>}|undefined;if(!probe)throw new Error("P5C_S_MIGRATION_AUDIT_PROBE_MISSING");probe.auditCalls+=1;return probe.databaseAudit}\n`);
+      const workspace = path.dirname(root);
+      const migrationRoot = path.join(workspace, "data/internal-production-baseline/pre-manifest-migration32-v1");
+      const operation = Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64) });
+      const arrows = [
+        PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 0)!,
+        PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 1)!,
+        PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "current-audit")!,
+      ] as const;
+      const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B"));
+      const writeRecord = (kind: string, hash: string, value: Readonly<Record<string, unknown>>): void => {
+        const target = path.join(migrationRoot, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+      };
+      const prepared = chains[0]!;
+      const consumed = chains[1]!;
+      const audited = chains[2]!;
+      writeRecord("authorizations", String(prepared.materials.authorization!.authorizationHash), prepared.materials.authorization!);
+      writeRecord("statuses", String(prepared.next.statusHash), prepared.next);
+      writeRecord("consumptions", String(consumed.materials.consumption!.consumptionHash), consumed.materials.consumption!);
+      writeRecord("statuses", String(consumed.next.statusHash), consumed.next);
+      writeRecord("current-audits", String(audited.materials["current-audit"]!.bootstrapHandoffCurrentAuditHash), audited.materials["current-audit"]!);
+      const operationDirectory = path.join(migrationRoot, "operations", "sha256", "aa", "a".repeat(64));
+      phase5cEnsurePublicationParentV1(path.join(operationDirectory, "status-00.pair.json"));
+      const migrationTerminalChain = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!, "B");
+      const migrationTerminal = migrationTerminalChain.next;
+      writeRecord("receipts", String(migrationTerminalChain.materials.receipt!.migrationReceiptHash), migrationTerminalChain.materials.receipt!);
+      for (const [ordinal, status] of [prepared.next, consumed.next, migrationTerminal].entries()) {
+        writeFileSync(path.join(operationDirectory, `status-0${ordinal}.pair.json`), canonicalFixtureRecordV1(Object.freeze({ statusRef: status.statusRef, statusHash: status.statusHash })), { mode: 0o600 });
+      }
+      const calls = arrows.flatMap((arrow, arrowIndex) => {
+        let endpointOrdinal = 0;
+        const descriptors = arrow.materials.flatMap((material) => Object.freeze([
+          ...(material.kind === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "content", policy: arrow.policy })]),
+          ...(material.locator === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "locator", policy: arrow.policy })]),
+        ]));
+        return descriptors.map((descriptor) => Object.freeze({ operation, successorRoot: root, arrow, current: chains[arrowIndex]!.next, descriptor }));
+      });
+      const expression = `(async()=>{Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audited.materials["current-audit"]!.databaseAudit)}});const values=[];try{for(const input of ${JSON.stringify(calls)})values.push(await m.p5cSObserveTask12PolicyEndpointFixtureV1(input));}finally{Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1");}process.stdout.write(JSON.stringify(values))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
+      assert.equal(observed.length, 7);
+      assert.equal(observed[6]!.outcome, "returned", String(observed[6]!.message ?? ""));
+      assert.deepEqual(observed.map((value) => [value.outcome, value.material, value.role, value.policy, value.publication, value.writer]), [
+        ["returned", "authorization", "content", "task12-receipt", "F2u", "A0"],
+        ["returned", "status", "content", "task12-receipt", "F2u", "A0"],
+        ["returned", "status", "locator", "task12-receipt", "F2u", "A0"],
+        ["returned", "consumption", "content", "task12-receipt", "F2u", "A0"],
+        ["returned", "status", "content", "task12-receipt", "F2u", "A0"],
+        ["returned", "status", "locator", "task12-receipt", "F2u", "A0"],
+        ["returned", "current-audit", "content", "task12-receipt", "F2u", "A0"],
+      ]);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes the migration-33 database endpoint through one exact read-only projection", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const databaseSource = readFileSync(path.join(sourceRoot, "src/db-pg.ts"), "utf8");
+    const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1");
+    assert.match(databaseSource, /export\s+async\s+function\s+observeInternalProductionCurrentEntryMigration33ReadOnlyV1[\s\S]*isolation level repeatable read read only[\s\S]*version\s+IN\s*\(32,\s*33\)[\s\S]*verifyV3RecoveryClaimRuntimePublicationV1/,
+      "migration-33 exposes one authoritative repeatable-read absent/current observer");
+    assert.match(endpoint, /arrow\.family\s*===\s*"database-33"[\s\S]*observeInternalProductionCurrentEntryMigration33ReadOnlyV1[\s\S]*expectedProjection/,
+      "the database endpoint projects only the authoritative migration-33 observation");
+    assert.doesNotMatch(endpoint, /applyOrAdopt|applyContractSpineMigrations|INSERT|UPDATE|DELETE/,
+      "the external database endpoint is strictly read-only");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const databaseFixtureTarget = path.join(root, "src/db-pg.ts");
+      const databaseFixtureSource = readFileSync(databaseFixtureTarget, "utf8");
+      if (!databaseFixtureSource.includes("observeInternalProductionCurrentEntryMigration33ReadOnlyV1")) writeFileSync(databaseFixtureTarget, `${databaseFixtureSource}\nexport async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1(){const probe=Reflect.get(globalThis,"__p5cSExternalDatabaseProbeV1") as {calls:number;observation:Readonly<Record<string,unknown>>}|undefined;if(!probe)throw new Error("P5C_S_EXTERNAL_DATABASE_PROBE_MISSING");probe.calls+=1;return probe.observation}\n`);
+      const operation = Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64) });
+      const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "database-33")!;
+      const lower = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "current-audit")!, "B").next;
+      const chain = phase5cSExternalRawCausalChainFixtureV1(arrow, "B");
+      const calls = [chain.prior, chain.next, Object.freeze({ ...chain.next, journal: Object.freeze({ ...(chain.next.journal as Readonly<Record<string, unknown>>), checksum: "9".repeat(64) }) })]
+        .map((databaseObservation) => Object.freeze({ operation, successorRoot: root, arrow, current: lower, databaseObservation }));
+      const expression = `(async()=>{const values=[];for(const input of ${JSON.stringify(calls)})values.push(await m.p5cSObserveExternalDatabaseFixtureV1(input));process.stdout.write(JSON.stringify(values))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(observed.slice(0, 2).map((value) => [value.outcome, value.calls, value.state, value.family, value.activeEndpointOrdinal, (value.current as Readonly<Record<string, unknown>>).state]), [
+        ["returned", 1, "none", "database-33", null, "absent"],
+        ["returned", 1, "publishing", "database-33", 0, "current"],
+      ]);
+      assert.equal(observed[2]!.outcome, "threw", "a crossed current journal checksum fails closed");
+      assert.match(String(observed[2]!.message), /migration-33|database|checksum|crossed|invalid/i);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S observes manifest A as seeded-null or exact current without fabricating a future activation", async () => {
+    const source = readFileSync(observerSource, "utf8");
+    const endpoint = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1");
+    assert.match(endpoint, /arrow\.family\s*===\s*"manifest-a"[\s\S]*current\s*===\s*null[\s\S]*state:\s*"seeded-null"[\s\S]*expectedProjection:\s*null/,
+      "seeded-null is represented explicitly without inventing future manifest refs or hashes");
+    assert.match(endpoint, /currentRevision\s*!==\s*1[\s\S]*receipt\.phase\s*!==\s*"A"[\s\S]*head\.phase\s*!==\s*"A"/,
+      "the current endpoint accepts only the exact phase-A manifest head and receipt");
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const operation = Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64) });
+      const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "manifest-a")!;
+      const current = phase5cSExternalRawCausalChainFixtureV1(arrow, "B").next;
+      const crossed = Object.freeze({ ...current, currentRevision: 2 });
+      const calls = [null, current, crossed].map((value) => Object.freeze({ operation, successorRoot: root, arrow, current: value, databaseObservation: Object.freeze({}) }));
+      const expression = `(async()=>{const values=[];for(const input of ${JSON.stringify(calls)})values.push(await m.p5cSObserveExternalDatabaseFixtureV1(input));process.stdout.write(JSON.stringify(values))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(observed.slice(0, 2).map((value) => [value.outcome, value.state, value.family, value.activeEndpointOrdinal, value.current]), [
+        ["returned", "none", "manifest-a", null, null],
+        ["returned", "publishing", "manifest-a", 0, current],
+      ]);
+      assert.equal(observed[2]!.outcome, "threw");
+      assert.match(String(observed[2]!.message), /manifest|current|crossed|invalid/i);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
   it("P5c-S authenticates retained pre-schema and migration status locators through one pinned reader", async () => {
     const root = createFixture();
     try {
@@ -29149,6 +29969,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
 
   it("P5c-S E2 passes no fabricated entry owner through non-entry raw arms", () => {
     assertPhase5cSNonEntryExternalOwnerAbiStaticsV1(readFileSync(observerSource, "utf8"));
+  });
+
+  it("P5c-S E2 selects each external frontier from its owned lower state instead of retyping the Task12 row", () => {
+    assertPhase5cSExternalArrowSelectionStaticsV1(readFileSync(observerSource, "utf8"));
   });
 
   it("P5c-S E4/E5 freezes fresh owned entry-authority publication and response-loss adoption", () => {
@@ -30756,7 +31580,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "external dispatcher owns one private finite policy-routing descriptor type");
     const externalEndpointDescriptorType = source.slice(externalEndpointDescriptorTypeStart, externalEndpointDescriptorTypeEnd);
     for (const field of ["endpointOrdinal", "material", "role", "policy"] as const) assert.match(externalEndpointDescriptorType, new RegExp(`\\b${field}\\b`), `external routing descriptor retains exact ${field}`);
-    assert.doesNotMatch(externalEndpointDescriptorType, /\btarget\b|\bexpectedBytes\b|\bpublication\b|\bwriter\b|\bdatabase\b|\bcas\b/,
+    assert.doesNotMatch(externalEndpointDescriptorType, /\b(?:target|expectedBytes|publication|writer|database|cas)\s*:/,
       "finite routing descriptor contains no future target, bytes, or physical observation echo");
     for (const token of ["status-00-prepared.pair.json", "status-05-pre-manifest-bootstrap-sealed.pair.json", "status-06-normal-task0-admission-ready.pair.json", "status-blocked-helper-dispatch-settlement-unknown.pair.json", "status-00.pair.json", "status-01.pair.json", "status-02.pair.json", "recovery-source-bootstrap-visibility-head.json", "02-entry-authority.pair.json"] as const) assert.match(source, new RegExp(token.replaceAll(".", "\\.")), `${token}: an exact policy helper owns the finite physical endpoint`);
     assert.match(externalObserver, /pre-schema-no-replace[\s\S]*(?:dot|\.tmp)[\s\S]*(?:writerForbidden|A0)[\s\S]*task12-receipt[\s\S]*spawner-admission[\s\S]*database-atomic[\s\S]*expected-predecessor-cas/,
@@ -30774,7 +31598,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the load-bearing binder validates operation, prior/visible state, active endpoint, and every policy-specific observation");
     assert.match(externalBinder, /(?:F-1|F0|F1|F2|F2u|F3|F4)[\s\S]*(?:A0|A1|A2)/,
       "the binder admits only the frozen physical F and per-target writer automata");
-    assert.doesNotMatch(externalBinder, /openSync|readFileSync|readdirSync|opendirSync|selectCurrent|prepare|execute|apply|publish|advance|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+    assert.doesNotMatch(externalBinder, /\b(?:openSync|readFileSync|readdirSync|opendirSync|selectCurrent[A-Za-z0-9_]*|prepare[A-Za-z0-9_]*|execute[A-Za-z0-9_]*|apply[A-Za-z0-9_]*|publish[A-Za-z0-9_]*|advance[A-Za-z0-9_]*|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync)\s*\(/,
       "the binder is a pure validation boundary over the physical observer result");
     const rowTail = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressRowTailNoWriteV1");
     assert.match(rowTail.slice(0, rowTail.indexOf("{")), /authority:\s*ExactPoisonPostVisibleProgressObservationAuthorityV1[\s\S]*selection:\s*ExactPoisonPostVisibleProgressRowSelectionV1[\s\S]*current/,
@@ -30788,21 +31612,35 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.doesNotMatch(rowTail, /observeExactPoisonPostVisibleProgressDownstreamTopologyNoWriteV1\(/,
       "the foundational row tail owns only pre-effect source, database, owner, service, and physical authority");
-    const rowTailDatabaseBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+observeExactPoisonPostVisibleProgressDatabaseNoWriteV1\(/.exec(rowTail);
+    const rowTailDatabaseBinding = /(?:const\s+)?([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:[^=;]+)?\s*=\s*await\s+observeExactPoisonPostVisibleProgressDatabaseNoWriteV1\(/.exec(rowTail);
     assert.ok(rowTailDatabaseBinding, "row tail owns one authenticated database generation before owner census");
     const rowTailDatabaseOwner = rowTailDatabaseBinding?.[1] ?? "__missingRowTailDatabaseOwner";
     assert.match(rowTail, new RegExp(`observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1\\([^;]*\\b${rowTailDatabaseOwner}\\b`),
       "owner census consumes the exact already-open database owner rather than racing a second migration snapshot");
-    assert.match(rowTail, /controllerSource[\s\S]*successorOperation\.controllerSource[\s\S]*productBuildAuthority[\s\S]*successorOperation\.productBuildAuthorityV2DeliveryEvidence[\s\S]*authorityV3Migration31Audit[\s\S]*pendingBootstrapHandoffMigration/,
+    const rowTailOperationBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*authority\.successorOperation\s*;/.exec(rowTail);
+    assert.ok(rowTailOperationBinding, "row tail retains the authenticated successor operation under one exact alias");
+    const rowTailOperation = rowTailOperationBinding?.[1] ?? "__missingRowTailOperation";
+    assert.match(rowTail, new RegExp(`controllerSource[\\s\\S]*${rowTailOperation}\\.controllerSource[\\s\\S]*productBuildAuthority[\\s\\S]*${rowTailOperation}\\.productBuildAuthorityV2DeliveryEvidence[\\s\\S]*authorityV3Migration31Audit[\\s\\S]*pendingBootstrapHandoffMigration`),
       "the row tail compares fresh source/PBA and both prerequisites to the authenticated successor operation");
-    assert.match(rowTail, /migration31[\s\S]*migration32[\s\S]*migration33[\s\S]*manifestA[\s\S]*manifestActivationRef[\s\S]*manifestActivationHash[\s\S]*manifestHeadRef[\s\S]*manifestHeadHash[\s\S]*ownerAdmissionFenceCount[\s\S]*sourceReservationCount[\s\S]*runReservationCount/,
-      "the foundational row tail preserves bounded phase-aware database and owner fields without pre-projecting downstream status topology");
+    const rowTailDatabaseLeaf = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1");
+    const rowTailOwnerLeaf = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1");
+    const rowTailOwnerDatabaseLeaf = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressOwnerDatabaseNoWriteV1");
+    const rowTailLeafProjection = `${rowTailDatabaseLeaf}\n${rowTailOwnerLeaf}\n${rowTailOwnerDatabaseLeaf}`;
+    for (const field of ["migration31", "migration32", "migration33", "manifestA", "manifestActivationRef", "manifestActivationHash", "manifestHeadRef", "manifestHeadHash", "ownerAdmissionFenceCount", "sourceReservationCount", "runReservationCount"] as const) {
+      assert.match(rowTailLeafProjection, new RegExp(`\\b${field}\\b`), `the foundational child leaves expose bounded phase-aware ${field}`);
+    }
+    assert.match(rowTail, /\.\.\.database[\s\S]*\.\.\.ownerCensus/,
+      "the row tail strips only child lifecycle methods from the validated database and owner projections");
+    assert.match(rowTail, /database:\s*Object\.freeze\(database\)[\s\S]*ownerCensus:\s*Object\.freeze\(ownerCensus\)/,
+      "the row tail preserves the complete validated database and owner projections without field loss");
     assert.doesNotMatch(rowTail, /downstreamTopology|controllerWriterMemberCount|nextStatusTemporaryMemberCount|entryAuthorityPublication02FixedMemberCount/,
       "no downstream filesystem projection escapes through the pre-effect row tail");
-    for (const port of ["observeExactPoisonPostVisibleProgressDatabaseNoWriteV1", "observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1"] as const) {
-      const owned = new RegExp(`const\\s+([A-Za-z0-9_]+)\\s*=\\s*await\\s+${port}\\([^;]+;[\\s\\S]*\\1\\.assertStable\\(\\)[\\s\\S]*finally[\\s\\S]*\\1\\.close\\(\\)`);
-      assert.match(rowTail, owned, `${port}: the child owner is retained through the row-tail final fence and reverse finally cleanup`);
-    }
+    assert.match(rowTail, /databaseOwner\s*=\s*await\s+observeExactPoisonPostVisibleProgressDatabaseNoWriteV1\([^;]+;[\s\S]*const\s+databaseAuthority\s*=\s*databaseOwner\s*;[\s\S]*await\s+databaseAuthority\.assertStable\(\)[\s\S]*await\s+databaseAuthority\.close\(\)/,
+      "the database child owner is retained under its narrowed authority alias through the row-tail final fence and transferred cleanup");
+    assert.match(rowTail, /ownerCensusOwner\s*=\s*await\s+observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1\([^;]+;[\s\S]*const\s+ownerAuthority\s*=\s*ownerCensusOwner\s*;[\s\S]*await\s+ownerAuthority\.assertStable\(\)[\s\S]*await\s+ownerAuthority\.close\(\)[\s\S]*await\s+databaseAuthority\.close\(\)/,
+      "the transferred owner-census child remains retained and closes before the database child in reverse acquisition order");
+    assert.match(rowTail, /finally\s*\{[\s\S]*ownerCensusOwner\s*!==\s*null[\s\S]*ownerCensusOwner\.close\(\)[\s\S]*databaseOwner\s*!==\s*null[\s\S]*databaseOwner\.close\(\)/,
+      "failed construction closes the original child owners in reverse acquisition order");
     assert.doesNotMatch(rowTail, /selectCurrentEntryStoreContextV1|verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1|observeCompleteInternalProductionZeroOwnerCensusV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the row-aware tail never substitutes a maximum-33/zero-only verifier, reselects, or mutates");
     const postEffectTopologyTypeStart = source.indexOf("type ExactPoisonPostVisibleProgressPostEffectTopologyV1 = Readonly<{");
@@ -30834,7 +31672,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       /nextStatusBytes[\s\S]*nextPairBytes/,
       /entryAuthorityPublication02(?:Target|Bytes)[\s\S]*(?:entryOwner|entryAuthorityOwner|sourceValues)/,
       /externalActiveEndpointCount[\s\S]*(?:externalPublication|externalRaw|sourceValues)/,
-      /controllerWriterAuthority[\s\S]*controllerWriterAuthority/,
+      /controllerWriterAuthority\s*,/,
     ] as const) assert.match(topologyRegion, binding, "post-effect topology is derived only from retained live authorities and exact projected bytes");
     assert.doesNotMatch(topologyRegion, /nextStatusTarget[\s\S]*immediate(?:\?|\.)\.target/,
       "the next-status writer family stays on the fixed-01 locator rather than the immediate content-record target");
@@ -30879,8 +31717,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.doesNotMatch(leaf.slice(0, leaf.indexOf("{")), /ExactPoisonRecoveryPinnedCommitChainV1|SelectedCurrentEntryPrerequisiteRootReaderV1|SelectedCurrentEntryStoreContextV1/,
         `${name}: the physical leaf cannot demand, cast, or reconstruct either full authority origin`);
     }
-    assert.match(databaseLeaf, /postgres[\s\S]*repeatable read read only[\s\S]*schema_migrations[\s\S]*(?:31[\s\S]*32[\s\S]*33|migration31[\s\S]*migration32[\s\S]*migration33)[\s\S]*manifest/i,
-      "database tail authority comes from one exact read-only transaction over migration journals/catalog and manifest A");
+    assert.match(databaseLeaf, /import\(["']postgres["']\)/,
+      "database tail authority owns its PostgreSQL observation client");
+    assert.match(databaseLeaf, /schema_migrations[\s\S]*(?:31[\s\S]*32[\s\S]*33|migration31[\s\S]*migration32[\s\S]*migration33)[\s\S]*manifest/i,
+      "database tail authority projects migration journals/catalog and manifest A together");
+    assert.match(databaseLeaf, /sql\.begin\(["']isolation level repeatable read read only["'][\s\S]*return\s+project\(connection\)/,
+      "the complete database projection executes inside one exact read-only transaction");
     assert.match(databaseLeaf, /setfarm_schema_migrations[\s\S]*(?:migration32|version\s*=\s*32)[\s\S]*(?:===?\s*["']current["']|state\s*===?\s*["']applied["'])[\s\S]*(?:manifestRows|internal_production_owner_producer_manifest_set_current_v1)/i,
       "manifest relations are queried only after the same snapshot authenticates migration 32 current");
     for (const { name, checksum } of Object.values(PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1)) {
@@ -30982,55 +31824,68 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "catalog validation compares the exact artifact name sets, including both immutable triggers, rather than trusting aggregate counts");
     assert.match(databaseLeaf, /SET LOCAL statement_timeout\s*=\s*'5s'[\s\S]*SET LOCAL lock_timeout\s*=\s*'1s'/i,
       "database tail SQL bounds statement and lock acquisition before reading authority");
-    for (const alias of ["migrationRows", "catalogRows", "manifestRows"] as const) {
-      assert.match(databaseLeaf, new RegExp(`const\\s+${alias}\\s*=\\s*await[\\s\\S]*return[\\s\\S]*\\b${alias}\\b`), `${alias}: exact query rows feed the returned database phase projection`);
-    }
+    assert.match(databaseLeaf, /const\s+migrationRows\s*=\s*await[\s\S]*migrationRows\[index\][\s\S]*states\.push\(journal\.state\)[\s\S]*migration31:\s*states\[0\]/,
+      "migrationRows: exact journal rows feed the returned database phase projection");
+    assert.match(databaseLeaf, /const\s+catalogRows\s*=\s*await[\s\S]*catalogRows\[index\][\s\S]*(?:relationNames|columnNames|metadataHash)[\s\S]*(?:currentEntryFail|throw)/,
+      "catalogRows: exact live catalog rows are validated before the database phase projection returns");
+    assert.match(databaseLeaf, /const\s+manifestRows[\s\S]*await[\s\S]*manifestRows\[0\][\s\S]*manifestActivationRef[\s\S]*manifestHeadHash[\s\S]*return\s+Object\.freeze/,
+      "manifestRows: the exact current/activation/head row feeds the returned manifest projection");
     assert.match(databaseLeaf, /manifestRows[\s\S]*activationRef[\s\S]*activationHash[\s\S]*headRef[\s\S]*headHash[\s\S]*manifestActivationRef[\s\S]*manifestActivationHash[\s\S]*manifestHeadRef[\s\S]*manifestHeadHash/,
       "the same repeatable-read SQL row projects nullable exact manifest activation and head pairs without a second resolver");
-    assert.match(databaseLeaf, /migration31[\s\S]*(?:absent|current)[\s\S]*migration32[\s\S]*(?:absent|current)[\s\S]*migration33[\s\S]*(?:absent|current)[\s\S]*manifestA[\s\S]*(?:seeded-null|current)/,
-      "database projection uses only the exact phase-state allowlists");
+    assert.match(databaseLeaf, /const\s+expectedMigration32\s*=[^;]+\?\s*["']current["']\s*:\s*["']absent["'][\s\S]*const\s+expectedMigration33\s*=[^;]+\?\s*["']current["']\s*:\s*["']absent["']/,
+      "database projection derives migration 32/33 from the exact absent/current phase-state allowlist");
+    assert.match(databaseLeaf, /const\s+expectedManifest\s*=[\s\S]*?["']current["'][\s\S]*?["']seeded-null["'][\s\S]*manifestA:\s*expectedManifest/,
+      "database projection derives and returns only the exact seeded-null/current manifest state");
     assert.match(databaseLeaf, /databasePrefixOrdinal\s*===?\s*11[\s\S]*current\s*===?\s*null[\s\S]*seeded-null[\s\S]*current|databasePrefixOrdinal\s*===?\s*11[\s\S]*current[\s\S]*seeded-null/,
       "manifest-activating derives seeded-null versus current from the exact manifest observation passed into the row-tail leaf");
     assert.match(databaseLeaf, /databasePrefixOrdinal\s*>=\s*12[\s\S]*["']current["']/,
       "rows after manifest activation require the durable manifest current generation");
-    assert.match(databaseLeaf, /finally[\s\S]*(?:end|close)/, "database tail transaction closes its SQL owner on every exit");
+    assert.match(databaseLeaf, /const\s+close\s*=\s*async[\s\S]*await\s+sql\.end\(\)[\s\S]*return\s+Object\.freeze\(\{\s*\.\.\.initial[\s\S]*close\s*\}\)/,
+      "a successful database observation transfers one close method that ends its SQL owner");
+    assert.match(databaseLeaf, /catch\s*\(error\)[\s\S]*try\s*\{\s*await\s+close\(\)[\s\S]*throw\s+primary/,
+      "database observation construction closes SQL while preserving its first failure");
     const rowTailBinder = topLevelFunctionRegionV1(source, "requireExactPoisonPostVisibleProgressRowTailV1");
-    const activeRunZeroGate = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*tail\.ownerCensus\.activeRunCount\s*===?\s*0\s*;/.exec(rowTailBinder);
-    assert.ok(activeRunZeroGate,
-      "the strict consumer binder derives one exact zero-owner gate from the physical leaf's active-run count");
-    assert.match(rowTailBinder.slice(activeRunZeroGate.index + activeRunZeroGate[0].length), new RegExp(`!${activeRunZeroGate[1]}[\\s\\S]*(?:currentEntryFail|throw)`),
-      "the exact active-run-zero value is load-bearing in the owner-census refusal before any raw current escapes");
-    assert.doesNotMatch(rowTailBinder, /activeRunCount\s*===?\s*1|activeRunCount\s*<=\s*1|activeRunCount\s*[!=]==?\s*0\s*\|\|/,
-      "physical prepared/terminal active-run observations cannot cross the consumer-visible zero-owner gate");
-    const rowTailGateCalls = [...raw.matchAll(/\brequireExactPoisonPostVisibleProgressRowTailV1\(/g)];
+    const activeRunGate = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*recoveryPrepared\s*\?\s*\(tail\.ownerCensus\.activeRunCount\s*===?\s*0\s*\|\|\s*tail\.ownerCensus\.activeRunCount\s*===?\s*1\)\s*:\s*tail\.ownerCensus\.activeRunCount\s*===?\s*0\s*;/.exec(rowTailBinder);
+    assert.ok(activeRunGate,
+      "the strict consumer binder admits only authenticated prepared response-loss active0/1, and exact active0 otherwise");
+    assert.match(rowTailBinder.slice(activeRunGate.index + activeRunGate[0].length), new RegExp(`!${activeRunGate[1]}[\\s\\S]*(?:currentEntryFail|throw)`),
+      "the phase-aware active-run gate is load-bearing in the owner-census refusal before any raw current escapes");
+    assert.doesNotMatch(rowTailBinder, /activeRunCount\s*(?:<|<=|>|>=)\s*[12]|activeRunCount\s*===?\s*2/,
+      "the consumer never broadens the authenticated prepared active0/1 contract to a range or second active run");
+    const rowTailGateCalls = [...rawCurrent.matchAll(/\brequireExactPoisonPostVisibleProgressRowTailV1\(/g)];
     assert.equal(rowTailGateCalls.length, 1,
-      "raw current owns exactly one strict row-tail zero-owner gate rather than a dead or branch-local check");
+      "raw current owns exactly one strict phase-aware row-tail owner gate rather than a dead or branch-local check");
     const rowTailGateCall = rowTailGateCalls[0]!.index;
-    const rawCurrentShape = raw.indexOf("observed.current", rowTailGateCall);
-    const rawCurrentEscape = raw.lastIndexOf("return observed.current");
+    const rawCurrentShape = rawCurrent.indexOf("observed.current", rowTailGateCall);
+    const rawCurrentEscape = rawCurrent.lastIndexOf("return observed.current");
     assert.ok(rowTailGateCall >= 0 && rawCurrentShape > rowTailGateCall && rawCurrentEscape > rawCurrentShape,
-      "the exact row-tail zero-owner binder consumes the observed source vector before raw-current validation and escape");
-    assert.match(raw.slice(rowTailGateCall, rawCurrentShape), /requireExactPoisonPostVisibleProgressRowTailV1\(\s*authority\s*,\s*rawKind\s*,\s*sources\s*\)/,
-      "the zero-owner gate receives the exact authority, selected raw kind, and unmodified observed source vector");
+      "the exact row-tail owner binder consumes the observed source vector before raw-current validation and escape");
+    assert.match(rawCurrent.slice(rowTailGateCall, rawCurrentShape), /requireExactPoisonPostVisibleProgressRowTailV1\(\s*authority\s*,\s*rawKind\s*,\s*sources\s*\)/,
+      "the owner gate receives the exact authority, selected raw kind, and unmodified observed source vector");
     const ownerPhysicalLeaf = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressOwnerDatabaseNoWriteV1");
     const ownerPersistenceValidatorPath = path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts");
     assert.equal(existsSync(ownerPersistenceValidatorPath), true,
       "the physical owner leaf shares one dependency-leaf recovery-run validator");
+    const ownerPersistenceSource = readFileSync(ownerPersistenceValidatorPath, "utf8");
     const ownerPersistenceValidator = topLevelFunctionRegionV1(
-      readFileSync(ownerPersistenceValidatorPath, "utf8"),
+      ownerPersistenceSource,
       "requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1",
     );
+    const ownerReservationRowValidator = topLevelFunctionRegionV1(ownerPersistenceSource, "requireReservationRowV1");
+    const ownerAuthorityRowValidator = topLevelFunctionRegionV1(ownerPersistenceSource, "requireAuthorityRowV1");
     const ownerLeaf = `${ownerPhysicalLeaf}\n${ownerPersistenceValidator}`;
     assert.match(ownerLeaf.slice(0, ownerLeaf.indexOf("{")), /database:\s*ExactPoisonPostVisibleProgressDatabase(?:ReadOnly)?ObservationV1/,
       "owner SQL leaf receives the already-authenticated migration database owner");
-    const ownerPostgresIndex = ownerLeaf.indexOf("postgres(");
-    const ownerPhaseGateIndex = Math.max(ownerLeaf.indexOf("database.migration32"), ownerLeaf.indexOf("database[\"migration32\"]"));
+    const ownerPostgresIndex = ownerPhysicalLeaf.indexOf('await import("postgres")');
+    const ownerPhaseGateIndex = Math.max(ownerPhysicalLeaf.indexOf("database.migration32"), ownerPhysicalLeaf.indexOf("database[\"migration32\"]"));
     assert.ok(ownerPhaseGateIndex >= 0 && ownerPostgresIndex > ownerPhaseGateIndex,
       "owner SQL first checks migration-32 availability and never opens relations that do not yet exist");
-    assert.match(ownerLeaf.slice(ownerPhaseGateIndex, ownerPostgresIndex), /(?:!==?\s*["']current["']|===?\s*["']absent["'])[\s\S]*return/,
+    assert.match(ownerPhysicalLeaf.slice(ownerPhaseGateIndex, ownerPostgresIndex), /(?:!==?\s*["']current["']|===?\s*["']absent["'])[\s\S]*return/,
       "pre-migration-32 owner zero is derived from authenticated catalog absence without opening Postgres owner relations");
-    assert.match(ownerLeaf, /postgres[\s\S]*repeatable read read only[\s\S]*(?:owner|fence)[\s\S]*reservation[\s\S]*(?:run|binding)/i,
-      "owner tail authority is one same-transaction read-only projection of exact owner/fence/reservation/run evidence");
+    assert.match(ownerPhysicalLeaf, /import\(["']postgres["']\)[\s\S]*(?:owner|fence)[\s\S]*reservation[\s\S]*(?:run|binding)/i,
+      "owner tail authority projects exact owner/fence/reservation/run evidence through its PostgreSQL client");
+    assert.match(ownerPhysicalLeaf, /sql\.begin\(["']isolation level repeatable read read only["'][\s\S]*return\s+project\(connection\)/,
+      "the complete owner projection executes inside one same-snapshot read-only transaction");
     assert.match(ownerLeaf, /SET LOCAL statement_timeout\s*=\s*'5s'[\s\S]*SET LOCAL lock_timeout\s*=\s*'1s'/i,
       "owner tail SQL bounds statement and lock acquisition before reading authority");
     for (const alias of ["ownerRows", "reservationRows", "expectedRunRows", "activeRunRows"] as const) {
@@ -31057,8 +31912,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the all-authority projection reads canonical authority identities and bodies from the live relation");
     assert.doesNotMatch(allAuthorityProjection, /\bWHERE\b/i,
       "the all-authority projection cannot prefilter rows by the expected H1-H4 path or identity");
-    assert.match(ownerLeaf, /allAuthorityRows[\s\S]*for\s*\([^)]*\bof\s+(?:owner\.)?allAuthorityRows\s*\)[\s\S]*(?:unrelatedAuthorityCount|unexpected[A-Za-z0-9_$]*Authority)[\s\S]*(?:currentEntryFail|throw)/,
-      "every unfiltered authority row is classified and contributes to fail-closed unrelated-authority accounting");
+    assert.match(ownerPersistenceValidator, /allAuthorityRows[\s\S]*for\s*\([^)]*\bof\s+allAuthorityRows\s*\)[\s\S]*authorityRowsByKey\.set/,
+      "every unfiltered authority row is classified into the exact authority-key inventory");
+    assert.match(ownerPersistenceValidator, /unrelatedAuthority\s*=\s*allAuthorityRows\.filter[\s\S]*unrelatedAuthority\.length\s*!==\s*0[\s\S]*(?:fail|throw)/,
+      "every authority outside the exact expected inventory contributes to fail-closed unrelated-authority accounting");
     for (const column of [
       "id", "workflow_id", "task", "status", "context", "notify_url", "protocol", "protocol_version",
       "compiler_release_sha", "activation_preflight_hash", "release_admission_hash", "created_at", "updated_at",
@@ -31066,7 +31923,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.match(expectedRunQuery, new RegExp(`\\b${column}\\b`, "i"), `${column}: the exact expected-run lookup projects the durable recovery-run identity column`);
       assert.match(activeRunQuery, new RegExp(`\\b${column}\\b`, "i"), `${column}: the unfiltered active-run census projects the same durable identity column`);
     }
-    assert.match(expectedRunQuery, /FROM\s+(?:public\.)?runs[\s\S]*WHERE[\s\S]*(?:run\.)?id\s*=\s*\$\{expectedRunId\}/i,
+    assert.match(expectedRunQuery, /FROM\s+(?:public\.)?runs[\s\S]*WHERE[\s\S]*(?:run\.)?id\s*=\s*\$\{(?:projected)?ExpectedRunId\}/i,
       "the durable expected-run lookup is keyed only by the deterministic authenticated recovery run id");
     assert.match(activeRunQuery, /FROM\s+(?:public\.)?runs[\s\S]*status\s+IN\s*\(\s*["']running["']\s*,\s*["']resuming["']\s*,\s*["']cancelling["']\s*,\s*["']failing["']\s*\)/i,
       "the active-run census uses the exact canonical active workflow state set");
@@ -31078,101 +31935,84 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the active authority row kind, phase key, predecessor, and successor heads are exact aliases of the authenticated fence body");
     assert.match(ownerLeaf, /activeFenceRef[\s\S]*fenceRef[\s\S]*activeFenceHash[\s\S]*fenceHash[\s\S]*(?:strictCanonicalRecord|validateInternalProductionGlobalOwnerAdmissionFence|hashCanonicalJson)/,
       "the active authority pair is joined to one canonical self-hashed global owner-admission fence body");
-    assert.match(ownerLeaf, /reservation_payload[\s\S]*owner_key[\s\S]*owner_key_hash[\s\S]*producer_purpose_hash[\s\S]*producer_implementation_id[\s\S]*producer_implementation_hash[\s\S]*reservation_head_predecessor_hash/i,
-      "reservation SQL projects the complete canonical row identity rather than count-only categories");
-    assert.match(ownerLeaf, /reservationRef[\s\S]*reservationHash[\s\S]*reservationBody[\s\S]*ownerKey[\s\S]*ownerKeyHash[\s\S]*producerPurposeHash[\s\S]*producerImplementationId[\s\S]*producerImplementationHash[\s\S]*ownerAdmissionHeadPredecessorHash/,
+    for (const column of ["reservation_payload", "owner_key", "owner_key_hash", "producer_purpose_hash", "producer_implementation_id", "producer_implementation_hash", "reservation_head_predecessor_hash"] as const) {
+      assert.match(ownerLeaf, new RegExp(`\\b${column}\\b`, "i"), `${column}: reservation SQL projects the complete canonical row identity rather than count-only categories`);
+    }
+    assert.match(ownerReservationRowValidator, /reservationRow\.ownerKey\s*!==\s*reservation\.ownerKey[\s\S]*reservationRow\.ownerKeyHash\s*!==\s*reservation\.ownerKeyHash[\s\S]*reservationRow\.producerPurposeHash\s*!==\s*reservation\.producerPurposeHash[\s\S]*reservationRow\.producerImplementationId\s*!==\s*reservation\.producerImplementationId[\s\S]*reservationRow\.producerImplementationHash\s*!==\s*reservation\.producerImplementationHash[\s\S]*reservationRow\.reservationHeadPredecessorHash\s*!==\s*reservation\.ownerAdmissionHeadPredecessorHash[\s\S]*reservationRow\.reservationRef\s*!==\s*reservation\.reservationRef[\s\S]*reservationRow\.reservationHash\s*!==\s*reservation\.reservationHash[\s\S]*same\(reservationRow\.reservationBody,\s*reservation\)/,
       "each admitted source-run/run reservation row is exactly equal to its canonical self-hashed body");
     assert.match(ownerLeaf, /internal_production_owner_admission_authorities_v1[\s\S]*authority_kind[\s\S]*["']reservation["'][\s\S]*authority_ref[\s\S]*reservationRef[\s\S]*authority_hash[\s\S]*reservationHash[\s\S]*phaseKey[\s\S]*reservationRef/i,
       "each source-run/run reservation is joined to exactly one immutable reservation authority row by its exact pair and phase key");
-    assert.match(ownerLeaf, /authorityPredecessorHeadHash[\s\S]*(?:reservationHeadPredecessorHash|ownerAdmissionHeadPredecessorHash)[\s\S]*authoritySuccessorHeadHash[\s\S]*(?:headHash|ownerAdmissionHeadHash)[\s\S]*authorityBody[\s\S]*reservationBody/,
+    assert.match(ownerReservationRowValidator, /authorityPredecessorHeadHash\s*!==\s*reservationAuthority\.predecessorHeadHash[\s\S]*authoritySuccessorHeadHash\s*!==\s*reservationAuthority\.successorHeadHash[\s\S]*same\(reservationRow\.authorityBody,\s*reservationAuthority\.authorityBody\)/,
       "each immutable reservation edge binds its canonical body and exact predecessor/successor owner-admission heads");
     assert.match(ownerLeaf, /canonical_owner_identity[\s\S]*binding_hash[\s\S]*binding_payload[\s\S]*close_kind[\s\S]*terminal_owner_ref[\s\S]*terminal_owner_hash[\s\S]*close_head_predecessor_hash[\s\S]*close_head_successor_hash[\s\S]*preserved_fence_ref[\s\S]*preserved_fence_hash[\s\S]*close_ref[\s\S]*close_hash[\s\S]*close_payload/i,
       "terminal owner SQL projects the complete bound-and-closed reservation rows rather than collapsing released owner zero to genesis");
     assert.match(ownerLeaf, /(?:create|validate)InternalProductionBoundOwnerReservationV1[\s\S]*(?:create|validate)InternalProductionOwnerReservationCloseV1/,
       "each historical source-run/run row is authenticated through its exact reservation, binding, and close bodies");
-    assert.match(ownerLeaf, /sourceRunCanonicalOwnerIdentity[\s\S]*recoverySourceOperation[\s\S]*(?:operationRef|ownerRef)[\s\S]*(?:operationHash|ownerHash)[\s\S]*runCanonicalOwnerIdentity[\s\S]*internal-production-workflow-run-owner\.v1/,
-      "terminal bindings reconstruct the production source-operation owner and canonical workflow-run owner identities exactly");
-    assert.match(ownerLeaf, /headHistory[\s\S]*(?:headVersion|version)[\s\S]*1[\s\S]*(?:sourceClose|sourceReservationClose)[\s\S]*(?:headVersion|version)[\s\S]*2[\s\S]*(?:runClose|runReservationClose)[\s\S]*(?:headVersion|version)[\s\S]*3[\s\S]*(?:fenceRelease|release)[\s\S]*(?:headVersion|version)[\s\S]*4/,
-      "released owner zero authenticates the connected H1-to-H4 source-close, run-close, and fence-release ancestry");
-    assert.match(ownerLeaf, /authorityHistory[\s\S]*["']close["'][\s\S]*ownerAdmissionHeadPredecessorHash[\s\S]*ownerAdmissionHeadSuccessorHash[\s\S]*["']release["'][\s\S]*ownerAdmissionHeadPredecessorHash[\s\S]*ownerAdmissionHeadSuccessorHash/,
-      "close and release authority rows bind their canonical bodies to every exact head edge");
-    assert.match(ownerLeaf, /recoverySourceBootstrap[\s\S]*(?:(?:fenceReleaseRef[\s\S]*!==?[\s\S]*(?:releaseRef|authorityRef)[\s\S]*fenceReleaseHash[\s\S]*!==?[\s\S]*(?:releaseHash|authorityHash))|(?:(?:releaseRef|authorityRef)[\s\S]*!==?[\s\S]*fenceReleaseRef[\s\S]*(?:releaseHash|authorityHash)[\s\S]*!==?[\s\S]*fenceReleaseHash))[\s\S]*(?:currentEntryFail|throw)/,
-      "the H3-to-H4 release authority is explicitly pair-equal to terminal recovery status or fails closed");
-    assert.match(ownerLeaf, /recoverySourceBootstrap[\s\S]*(?:(?:terminalSourceRunRef[\s\S]*!==?[\s\S]*terminalOwnerRef[\s\S]*terminalSourceRunHash[\s\S]*!==?[\s\S]*terminalOwnerHash)|(?:terminalOwnerRef[\s\S]*!==?[\s\S]*terminalSourceRunRef[\s\S]*terminalOwnerHash[\s\S]*!==?[\s\S]*terminalSourceRunHash))[\s\S]*(?:currentEntryFail|throw)/,
-      "the source reservation close terminal-owner pair is explicitly equal to the independently authenticated terminal source pair");
-    assert.match(ownerLeaf, /recoverySourceBootstrap[\s\S]*(?:(?:terminalRunLaunchRef[\s\S]*!==?[\s\S]*terminalOwnerRef[\s\S]*terminalRunLaunchHash[\s\S]*!==?[\s\S]*terminalOwnerHash)|(?:terminalOwnerRef[\s\S]*!==?[\s\S]*terminalRunLaunchRef[\s\S]*terminalOwnerHash[\s\S]*!==?[\s\S]*terminalRunLaunchHash))[\s\S]*(?:currentEntryFail|throw)/,
-      "the run reservation close terminal-owner pair is explicitly equal to the independently authenticated terminal run pair");
-    assert.match(ownerLeaf, /internal_production_owner_admission_head_v1[\s\S]*head_version[\s\S]*head_hash[\s\S]*active_fence_ref[\s\S]*active_fence_hash[\s\S]*active_target_family_hash[\s\S]*migration_application_evidence_hash[\s\S]*head_payload/i,
-      "owner census authenticates the singleton owner-admission head rather than trusting only its active-fence pair");
-    assert.match(ownerLeaf, /headHash[\s\S]*ownerAdmissionHeadHash[\s\S]*activeTargetFamilyHash[\s\S]*targetFamilyHash[\s\S]*(?:hashCanonicalJson|canonicalComparable)[\s\S]*headPayload/,
-      "the exact canonical head hash, fence successor, reservation successors, target family, and migration evidence form one joined authority generation");
-    assert.match(ownerLeaf, /selectedCurrentEntryOperation[\s\S]*recoverySourceOperation[\s\S]*(?:!==|not|crossed|nonalias)[\s\S]*(?:ownerAdmissionFence|recoverySourceBootstrap)/i,
-      "the selected current-entry operation remains intentionally nonalias to the independently authenticated recovery-bootstrap operation");
-    assert.match(ownerLeaf, /ownerAdmissionFenceCount[\s\S]*(?:===\s*0|===\s*1)[\s\S]*sourceReservationCount[\s\S]*(?:===\s*0|===\s*1)[\s\S]*runReservationCount[\s\S]*(?:===\s*0|===\s*1)[\s\S]*(?:activeRunCount|activeRunRows)[\s\S]*(?:unrelated|unexpected)/,
-      "owner projection enforces exact zero-or-one phase counts and rejects unrelated rows");
-    assert.match(ownerLeaf, /let\s+sourceReservationRowCount\s*=\s*0[\s\S]*let\s+runReservationRowCount\s*=\s*0[\s\S]*sourceReservationRowCount\s*\+=\s*1[\s\S]*runReservationRowCount\s*\+=\s*1/,
-      "source-run and run reservation rows are counted independently of whether they remain active");
-    assert.match(ownerLeaf, /(?:prepared\s*\|\|\s*terminal|terminal\s*\|\|\s*prepared)[\s\S]*sourceReservationRowCount[\s\S]*runReservationRowCount[\s\S]*(?:!==?|===?)[\s\S]*(?:currentEntryFail|throw)/,
-      "prepared H1 and terminal H4 each require exactly one source-run and one run reservation row, while active counts may fall to zero");
-    assert.match(ownerLeaf, /["']bound["'][\s\S]*bindingBody[\s\S]*validateInternalProductionBoundOwnerReservationV1[\s\S]*(?:canonicalOwnerIdentity|bindingHash)[\s\S]*(?:currentEntryFail|throw)/,
-      "prepared response-loss admits bound reservations only after authenticating each exact canonical identity and binding body");
-    assert.match(ownerLeaf, /["']closed["'][\s\S]*validateInternalProductionBoundOwnerReservationV1[\s\S]*(?:validatedSourceBoundReservation|sourceBoundReservation)\s*=\s*(?:validatedBound|bound)[\s\S]*(?:validatedRunBoundReservation|runBoundReservation)\s*=\s*(?:validatedBound|bound)/,
-      "terminal H4 retains both validated closed-reservation binding bodies as immutable authority inputs");
-    assert.match(ownerLeaf, /["']binding["'][\s\S]*(?:bound-owner-reservations|bindingHash)[\s\S]*(?:predecessorHeadHash|predecessor_head_hash)[\s\S]*(?:successorHeadHash|successor_head_hash)[\s\S]*(?:ownerAdmissionHead|headHash)/,
-      "the all-authority census recognizes both immutable binding authorities at the unchanged prepared H1 generation");
-    assert.match(ownerLeaf, /if\s*\(\s*(?:preparedBound\s*\|\|\s*terminal|terminal\s*\|\|\s*preparedBound)\s*\)[\s\S]*for\s*\([^)]*(?:validatedSourceBoundReservation|sourceBoundReservation)[\s\S]*(?:validatedRunBoundReservation|runBoundReservation)[\s\S]*expectedAuthorityRows\.set/,
-      "prepared-bound H1 and released H4 both require the two persistent binding-authority self-loops in the unfiltered exact authority set");
-    assert.match(ownerLeaf, /bindingAuthorit[A-Za-z0-9_$]*[\s\S]*(?:authorityBody|authority_body)[\s\S]*(?:canonicalComparable|equal)[\s\S]*(?:validatedBound|boundReservation|bindingBody)[\s\S]*(?:currentEntryFail|throw)|(?:validatedBound|boundReservation|bindingBody)[\s\S]*(?:canonicalComparable|equal)[\s\S]*bindingAuthorit[A-Za-z0-9_$]*[\s\S]*(?:authorityBody|authority_body)[\s\S]*(?:currentEntryFail|throw)/,
-      "each unfiltered binding authority body and H1 edge is exactly equal to the validated bound reservation rather than merely counted");
-    assert.match(ownerLeaf, /bindingAuthorit[A-Za-z0-9_$]*[\s\S]*predecessorHeadHash\s*!==?\s*(?:ownerAdmissionHead|head)[A-Za-z0-9_$]*\.headHash[\s\S]*bindingAuthorit[A-Za-z0-9_$]*[\s\S]*successorHeadHash\s*!==?\s*(?:ownerAdmissionHead|head)[A-Za-z0-9_$]*\.headHash[\s\S]*(?:currentEntryFail|throw)/,
-      "each expected binding authority explicitly joins both immutable edge hashes to the unchanged prepared H1 head or fails closed");
-    assert.match(ownerLeaf, /recovery-source-bootstrap-run-owner-key\.v1[\s\S]*pendingInputRef[\s\S]*pendingInputHash[\s\S]*(?:expectedRunId|runId)/,
-      "the expected response-loss run id is deterministically reconstructed from the authenticated recovery pending input");
-    assert.match(ownerLeaf, /recoverySourceOperation[\s\S]*runReservation[\s\S]*ownerKey[\s\S]*(?:expectedRunId|runId)[\s\S]*(?:workflowId|workflow_id)[\s\S]*["']feature-dev["'][\s\S]*expectedRunContext[\s\S]*operationRunBindingHash[\s\S]*reciprocalRunOperationBindingHash/,
-      "the durable response-loss run is reconstructed from the authenticated recovery operation, run reservation, and reciprocal canonical binding context");
-    for (const field of [
-      "runId", "workflowId", "task", "notifyUrl", "protocol", "protocolVersion",
-      "compilerReleaseSha", "activationPreflightHash", "releaseAdmissionHash",
-    ] as const) assert.match(ownerLeaf, new RegExp(`\\.${field}\\s*!==?`), `${field}: the observed durable run field is explicitly equal to the reconstructed recovery identity`);
-    assert.match(ownerLeaf, /Object\.entries\(\s*expectedRunContext\s*\)[\s\S]*(?:observedRunContext|runContext)\s*\[[^\]]+\]\s*!==?\s*[^;\n]+[\s\S]*(?:currentEntryFail|throw)/,
-      "the durable run context contains every exact immutable recovery binding key while allowing spawner-owned merged context keys");
-    assert.match(ownerLeaf, /new\s+Set\(\s*\[[^\]]*["']running["'][^\]]*["']resuming["'][^\]]*["']cancelling["'][^\]]*["']failing["'][^\]]*\]\s*\)[\s\S]*new\s+Set\(\s*\[[^\]]*["']completed["'][^\]]*["']failed["'][^\]]*["']cancelled["'][^\]]*\]\s*\)/,
-      "the exact expected durable row admits only the canonical active and terminal workflow states");
-    assert.match(ownerLeaf, /Date\.parse\([^)]*updatedAt[^)]*\)\s*<\s*Date\.parse\([^)]*createdAt[^)]*\)[\s\S]*(?:currentEntryFail|throw)/,
-      "the durable row permits later spawner updates but never time reversal");
-    assert.match(ownerLeaf, /preparedPending[\s\S]*expectedRunRows\.length\s*!==?\s*0[\s\S]*(?:currentEntryFail|throw)/,
-      "the prepared pending/no-dispatch window contains no durable expected run");
-    assert.match(ownerLeaf, /(?:preparedBound\s*\|\|\s*terminal|terminal\s*\|\|\s*preparedBound)[\s\S]*expectedRunRows\.length\s*!==?\s*1[\s\S]*(?:currentEntryFail|throw)/,
-      "bound prepared H1 and terminal H4 each require exactly one durable expected run");
-    assert.match(ownerLeaf, /for\s*\([^)]*\bof\s+activeRunRows\s*\)[\s\S]*(?:runId|\.id)[\s\S]*expectedRunId[\s\S]*(?:unexpectedActiveRunCount|unrelatedActiveRunCount)[\s\S]*(?:currentEntryFail|throw)/,
-      "every unfiltered canonical-active run is classified against the authenticated deterministic recovery id");
-    assert.match(ownerLeaf, /expectedRunIsActive[\s\S]*activeRunRows\.length\s*!==?\s*1[\s\S]*expectedRunIsTerminal[\s\S]*activeRunRows\.length\s*!==?\s*0[\s\S]*(?:currentEntryFail|throw)/,
-      "the active census contains the expected row exactly iff its durable state is canonical-active and is empty after canonical terminal completion");
-    assert.match(ownerLeaf, /preparedBound[\s\S]*!expectedRunIsActive[\s\S]*(?:currentEntryFail|throw)/,
-      "prepared H1 cannot authenticate a terminal durable run because terminalization must first leave both recovery targets bound for bootstrap closure");
-    assert.match(ownerLeaf, /activeRunCount\s*:\s*activeRunRows\.length/,
+    assert.match(ownerPersistenceValidator, /category\s*===?\s*["']source-run["'][\s\S]*ownerRef:\s*operation\.operationRef[\s\S]*ownerHash:\s*operation\.operationHash/,
+      "source-run bindings reconstruct the exact recovery-operation canonical owner identity");
+    assert.match(ownerPersistenceValidator, /category\s*,[\s\S]*ownerKey:\s*expectedRunId[\s\S]*internal-production-workflow-run-owner\.v1/,
+      "run bindings reconstruct the deterministic canonical workflow-run owner identity");
+    const h1ValidationIndex = ownerPersistenceValidator.indexOf("validateHeadV1(headHistory[0], 1)");
+    const h2ValidationIndex = ownerPersistenceValidator.indexOf("validateHeadV1(headHistory[1], 2)", h1ValidationIndex);
+    const h3ValidationIndex = ownerPersistenceValidator.indexOf("validateHeadV1(headHistory[2], 3)", h2ValidationIndex);
+    const h4ValidationIndex = ownerPersistenceValidator.indexOf("validateHeadV1(headHistory[3], 4)", h3ValidationIndex);
+    assert.ok(h1ValidationIndex >= 0 && h2ValidationIndex > h1ValidationIndex && h3ValidationIndex > h2ValidationIndex && h4ValidationIndex > h3ValidationIndex,
+      "released owner zero authenticates the ordered H1-to-H4 owner-admission head ancestry");
+    const pairCloseProjectionIndex = ownerPersistenceValidator.indexOf("const pairCloseProjection", h4ValidationIndex);
+    assert.match(ownerPersistenceValidator.slice(h2ValidationIndex, pairCloseProjectionIndex), /sourceClose\.ownerAdmissionHeadPredecessorHash\s*!==\s*h1Hash[\s\S]*sourceClose\.ownerAdmissionHeadSuccessorHash\s*!==\s*h2Hash[\s\S]*runClose\.ownerAdmissionHeadPredecessorHash\s*!==\s*h2Hash[\s\S]*runClose\.ownerAdmissionHeadSuccessorHash\s*!==\s*h3Hash/,
+      "the exact source and run close bodies connect H1 through H3 before fence release");
+    assert.match(ownerAuthorityRowValidator, /authority\.authorityRef\s*!==\s*expected\.authorityRef[\s\S]*authority\.authorityHash\s*!==\s*expected\.authorityHash[\s\S]*authority\.authorityKind\s*!==\s*expected\.authorityKind[\s\S]*authority\.phaseKey\s*!==\s*expected\.phaseKey[\s\S]*authority\.predecessorHeadHash\s*!==\s*expected\.predecessorHeadHash[\s\S]*authority\.successorHeadHash\s*!==\s*expected\.successorHeadHash[\s\S]*same\(authority\.authorityBody,\s*expected\.authorityBody\)/,
+      "every fence, reservation, binding, close, and release authority is exact by pair, kind, phase, edge, and canonical body");
+    assert.match(ownerPersistenceValidator, /validateInternalProductionOwnerReservationCloseV1\(sourceRow\.closeBody\)[\s\S]*validateInternalProductionOwnerReservationCloseV1\(runRow\.closeBody\)[\s\S]*validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1/,
+      "terminal owner history authenticates both close bodies and the H3-to-H4 fence release");
+    assert.match(ownerPhysicalLeaf, /requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1\(\{[\s\S]*recoveryState:\s*projectedRecoveryState[\s\S]*recoveryOperationAuthority:\s*projectedRecoveryOperationAuthority[\s\S]*ownerRows[\s\S]*reservationRows[\s\S]*expectedRunRows[\s\S]*activeRunRows/,
+      "the physical owner leaf passes the complete same-snapshot projection and exact recovery authority to the shared validator");
+    const preparedOwnerAliasStart = ownerPhysicalLeaf.indexOf("if (prepared) {");
+    const preparedOwnerAliasEnd = ownerPhysicalLeaf.indexOf("} else if", preparedOwnerAliasStart);
+    const preparedOwnerAliases = ownerPhysicalLeaf.slice(preparedOwnerAliasStart, preparedOwnerAliasEnd);
+    for (const field of ["activeFenceBody", "authorityKind", "phaseKey", "predecessorHeadHash", "successorHeadHash", "sourceRunReservation", "runReservation"] as const) {
+      assert.match(preparedOwnerAliases, new RegExp(`\\b${field}\\b`), `${field}: prepared filesystem authority is cross-bound to the same-snapshot H1 owner projection`);
+    }
+    assert.match(preparedOwnerAliases, /currentEntryFail\(["']progress raw row-tail prepared owner aliases are crossed["']\)/,
+      "any prepared filesystem-to-database owner alias crossing fails closed");
+    const terminalOwnerAliasStart = ownerPhysicalLeaf.indexOf("if (terminal) {");
+    const terminalOwnerAliasEnd = ownerPhysicalLeaf.indexOf("if (activeRunRows.length", terminalOwnerAliasStart);
+    const terminalOwnerAliases = ownerPhysicalLeaf.slice(terminalOwnerAliasStart, terminalOwnerAliasEnd);
+    for (const field of ["runId", "terminalOwnerRef", "terminalOwnerHash", "terminalSourceRunRef", "terminalSourceRunHash", "terminalRunLaunchRef", "terminalRunLaunchHash", "targetReservationPairCloseRef", "targetReservationPairCloseHash", "fenceReleaseRef", "fenceReleaseHash", "sourceRunRef", "sourceRunHash"] as const) {
+      assert.match(terminalOwnerAliases, new RegExp(`validatedRecoverySourceBootstrap\\.${field}\\s*!==\\s*persistence\\.${field}`), `${field}: terminal filesystem status is cross-bound to the exact released H4 persistence result`);
+    }
+    assert.match(ownerPhysicalLeaf, /activeRunRows\.length\s*>\s*1[\s\S]*activeRunRows\.some\(\(candidate\)\s*=>\s*candidate\.runId\s*!==\s*projectedExpectedRunId\)[\s\S]*currentEntryFail/,
+      "the returned active-run count comes only from the unfiltered census and rejects every unrelated active run");
+    assert.match(ownerPhysicalLeaf, /activeRunCount:\s*activeRunRows\.length/,
       "the returned physical count is the exact unfiltered canonical-active census rather than durable-row existence");
-    assert.match(ownerLeaf, /["']pending["'][\s\S]*expectedRunRows[\s\S]*(?:0|length)[\s\S]*activeRunRows[\s\S]*(?:0|length)/,
-      "owner projection retains the authentic pending/no-run, bound-active H1, and terminal H4 durability windows");
-    assert.match(ownerLeaf, /terminal[\s\S]*owner\.headVersion\s*!==?\s*4[\s\S]*owner\.authorityHistory\.length\s*!==?\s*6[\s\S]*owner\.allAuthorityRows\.length\s*!==?\s*8[\s\S]*(?:currentEntryFail|throw)/,
-      "terminal H4 keeps six connected transition authorities plus both immutable binding self-loops in exact unfiltered truth");
-    assert.match(ownerLeaf, /finally[\s\S]*(?:end|close)/, "owner tail transaction closes its SQL owner on every exit");
+    assert.match(ownerPhysicalLeaf, /owner\.headVersion\s*!==\s*0[\s\S]*owner\.authorityHistory\.length\s*!==\s*0[\s\S]*owner\.allAuthorityRows\.length\s*!==\s*0[\s\S]*reservationRows\.length\s*!==\s*0[\s\S]*expectedRunRows\.length\s*!==\s*0[\s\S]*activeRunRows\.length\s*!==\s*0/,
+      "the pre-recovery H0 path admits only an exact empty owner, reservation, durable-run, and active-run inventory");
+    assert.match(ownerPhysicalLeaf, /const\s+close\s*=\s*async[\s\S]*await\s+sql\.end\(\)/,
+      "the returned owner retains an exact asynchronous SQL close capability");
+    assert.match(ownerPhysicalLeaf, /catch\s*\(error\)[\s\S]*const\s+primary\s*=\s*error[\s\S]*await\s+close\(\)[\s\S]*throw\s+primary/,
+      "owner construction closes its SQL client without replacing the primary failure");
     const downstreamLeaf = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressOperationDirectoryNoWriteV1");
     assert.match(downstreamLeaf.slice(0, downstreamLeaf.indexOf("{")), /authority:\s*ExactPoisonPostVisibleProgressObservationAuthorityV1[\s\S]*selection:\s*ExactPoisonPostVisibleProgressRowSelectionV1[\s\S]*topology:\s*ExactPoisonPostVisibleProgressPostEffectTopologyV1/,
       "the downstream leaf accepts only the explicit immutable post-effect topology, never the mutable semantic raw current");
     assert.doesNotMatch(downstreamLeaf.slice(0, downstreamLeaf.indexOf("{")), /\bcurrent\s*:/,
       "the downstream syscall boundary cannot reconstruct status topology from a pre-effect current record");
-    assert.match(downstreamLeaf, /authority\.successorRoot[\s\S]*successorOperation\.operationHash[\s\S]*authenticateTask12ReceiptDirectoryChainV1[\s\S]*current-entry-controller\.lock[\s\S]*(?:temporary|tmp)[\s\S]*(?:writer|unknown|crossed)/,
-      "downstream tail authority enumerates only the exact guarded successor operation directory and bounded known families");
+    assert.match(downstreamLeaf, /const\s+operationHash\s*=\s*authority\.successorOperation\.operationHash[\s\S]*path\.join\(authority\.successorRoot,\s*["']operations["'],\s*["']sha256["'][\s\S]*authenticateTask12ReceiptDirectoryChainV1\(operationDirectory\)/,
+      "downstream tail authority opens only the exact guarded successor operation directory");
+    assert.match(downstreamLeaf, /current-entry-controller\.lock[\s\S]*TemporaryMembers[\s\S]*const\s+known\s*=\s*new\s+Set[\s\S]*foreign\.length\s*!==\s*0[\s\S]*currentEntryFail/,
+      "the guarded directory admits only the bounded fixed, temporary, and writer families and rejects foreign members");
     assert.match(downstreamLeaf, /const\s+(?:members|operationMembers)\s*=\s*(?:readdirSync|opendirSync)[\s\S]*(?:members|operationMembers)[\s\S]*(?:controllerWriterMemberCount|nextStatusTemporaryMemberCount)[\s\S]*return/,
       "the exact readdir result, rather than the row token, feeds every downstream count");
-    assert.match(downstreamLeaf, /00-pre-mutation-loaded-runtime-service-authority\.pair\.json[\s\S]*01-current-status\.pair\.json[\s\S]*02-entry-authority\.pair\.json[\s\S]*(?:next|adjacent)[\s\S]*(?:8|MAX)[\s\S]*(?:later|unknown|crossed)/,
-      "downstream leaf admits exact retained/current/entry-authority families, applies the finite cap, and rejects later or foreign members for every row");
-    assert.match(downstreamLeaf, /01-current-status\.pair\.json\.tmp-[\s\S]*\.01-current-status\.pair\.json\.writer\.lock[\s\S]*(?:nextStatusTemporaryMemberCount|currentStatusCasTemporaryMemberCount)[\s\S]*(?:nextStatusWriterMemberCount|currentStatusCasWriterMemberCount)/,
+    assert.match(downstreamLeaf, /00-pre-mutation-loaded-runtime-service-authority\.pair\.json[\s\S]*01-current-status\.pair\.json[\s\S]*02-entry-authority\.pair\.json/,
+      "downstream leaf admits only the exact retained, current, and entry-authority fixed families");
+    assert.match(downstreamLeaf, /nextStatusTemporaryMembers\.length\s*>\s*8[\s\S]*entryAuthorityTemporaryMembers\.length\s*>\s*1/,
+      "downstream leaf applies the exact finite temporary-member caps");
+    assert.match(downstreamLeaf, /foreign\.length\s*!==\s*0[\s\S]*later, crossed, or unknown operation member is present/,
+      "downstream leaf rejects every later, crossed, or foreign member for every row");
+    assert.match(downstreamLeaf, /qTemporaryPattern[\s\S]*nextStatusTemporaryMembers[\s\S]*["']\.01-current-status\.pair\.json\.writer\.lock["'][\s\S]*currentStatusWriterMemberCount[\s\S]*nextStatusWriterMemberCount/,
       "the direct operation-directory inventory classifies the exact fixed-01 Q temporary and per-target writer families");
-    assert.match(downstreamLeaf, /02-entry-authority\.pair\.json\.tmp-[\s\S]*\.02-entry-authority\.pair\.json\.writer\.lock[\s\S]*entryAuthorityPublication02FixedMemberCount[\s\S]*entryAuthorityPublication02TemporaryMemberCount[\s\S]*entryAuthorityPublication02WriterMemberCount/,
+    assert.match(downstreamLeaf, /entryTemporaryPattern[\s\S]*entryAuthorityTemporaryMembers[\s\S]*["']\.02-entry-authority\.pair\.json\.writer\.lock["'][\s\S]*entryAuthorityPublication02FixedMemberCount[\s\S]*entryAuthorityPublication02TemporaryMemberCount[\s\S]*entryAuthorityPublication02WriterMemberCount/,
       "the direct operation-directory inventory classifies the exact late/ready entry-authority 02 fixed, temporary, and writer families");
-    assert.match(downstreamLeaf, /externalActiveEndpointCount[\s\S]*(?:nextStatusTemporaryMemberCount|currentStatusCasTemporaryMemberCount)[\s\S]*currentEntryFail|(?:nextStatusTemporaryMemberCount|currentStatusCasTemporaryMemberCount)[\s\S]*externalActiveEndpointCount[\s\S]*currentEntryFail/,
+    assert.match(downstreamLeaf, /externalActiveEndpointCount\s*!==\s*0[\s\S]*nextStatusTemporaryMembers\.length\s*!==\s*0[\s\S]*nextStatusWriterMemberCount\s*!==\s*0[\s\S]*currentEntryFail/,
       "an active external F prefix cannot coexist with the fixed-01 expected-predecessor CAS family");
     const downstreamControllerAuthority = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*topology\.controllerWriterAuthority\s*;/.exec(downstreamLeaf);
     assert.ok(downstreamControllerAuthority, "the direct downstream syscall boundary binds the exact nullable borrowed controller-writer handle");
@@ -31181,7 +32021,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const authorityFence = downstreamLeaf.indexOf("authority.assertStable()");
     const directoryOpen = downstreamLeaf.indexOf("authenticateTask12ReceiptDirectoryChainV1(");
     const finalControllerFence = downstreamLeaf.lastIndexOf(`${downstreamControllerAlias}?.assertStable()`);
-    const downstreamReturn = downstreamLeaf.lastIndexOf("return Object.freeze(");
+    const downstreamReturn = downstreamLeaf.lastIndexOf("return observed;");
     assert.ok(firstControllerFence >= 0 && authorityFence > firstControllerFence && authorityFence < directoryOpen && finalControllerFence > directoryOpen && finalControllerFence < downstreamReturn,
       "the exact borrowed controller writer is fenced before authority/root and operation-directory generations, then again immediately before owned return");
     assert.ok(downstreamLeaf.split(`${downstreamControllerAlias}?.assertStable()`).length - 1 >= 2,
@@ -31203,9 +32043,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the pre-mint migration observer accepts pinned root/operation authority, never a fabricated selected handle");
     assert.match(raw, /observeInternalProductionRecoverySourceBootstrapStatusAtRootV1\([^,]+,\s*(?:context\.)?successorOperation|observeInternalProductionRecoverySourceBootstrapStatusAtRootV1\([^,]+,\s*operation/,
       "recovery-source rows reuse a pinned-root operation-bound lower observer before any selected handle exists");
-    assert.match(raw, /operationRef[\s\S]*authority\.successorOperation\.operationRef[\s\S]*operationHash[\s\S]*authority\.successorOperation\.operationHash/,
-      "every borrowed raw observation is bound back to the pinned successor operation");
-    assert.doesNotMatch(raw, /normalizeTask12CurrentStatusCasV1|task12ReceiptExpectedPredecessorCasV1|acquireTask12|ensureTask12|selectCurrentEntryStoreContextV1|resolveInternalProductionCurrentEntry|observeInternalProductionCurrentEntry|observeInternalProductionPreSchemaSpawnerRebindStatusV1\(|observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1|readdirSync\([^)]*(?:disposition|edge|seal|commit)|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+    assert.match(raw, /const\s+operation\s*=\s*authority\.successorOperation[\s\S]*const\s+source\s*=.*operationRef:\s*operation\.operationRef,\s*operationHash:\s*operation\.operationHash/,
+      "every borrowed raw observation is bound through the exact pinned successor-operation alias");
+    assert.doesNotMatch(raw, /normalizeTask12CurrentStatusCasV1|task12ReceiptExpectedPredecessorCasV1|acquireTask12|ensureTask12|selectCurrentEntryStoreContextV1|resolveInternalProductionCurrentEntry|observeInternalProductionCurrentEntryAuthorityStatusV1\(|observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1|observeInternalProductionPreSchemaSpawnerRebindStatusV1\(|observeInternalProductionRecoverySourceBootstrapStatusWithSelectedCurrentEntryStoreContextV1|readdirSync\([^)]*(?:disposition|edge|seal|commit)|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "S raw observation never repairs Q, selects, recurses through public current APIs, or mutates");
     assert.doesNotMatch(raw, /recursivelyFreeze\([\s\S]*(?:completedRetained|nextPairBytes|pairBytes|publication|writer)/,
       "raw ownership never deep-freezes Buffer-backed retained, pair, publication, or writer observations");
@@ -31222,8 +32062,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "lineage is derived only from the narrow live operation authority, authenticated status row, and completed raw projection");
     assert.match(deriveLineage, /reconstructExactPoisonPostVisibleProgressPreviousStatusV1\(\s*currentStatus,\s*index\s*\)[\s\S]*task12ReceiptCanonicalBytesV1\(\s*Object\.freeze\(\s*\{\s*statusRef:\s*previousStatus\.statusRef,\s*statusHash:\s*previousStatus\.statusHash\s*\}\s*\)\s*\)/,
       "lineage delegates exact previous-row reconstruction and canonicalizes only the returned authenticated status pair");
-    assert.match(deriveLineage, /operation_prepared[\s\S]*previousPairBytes[\s\S]*null|previousPairBytes[\s\S]*operation_prepared[\s\S]*null/);
-    assert.match(deriveLineage, /raw\.evidence[\s\S]*completed[\s\S]*raw\.nextPairBytes[\s\S]*(?:prior-only|terminal)[\s\S]*null|(?:prior-only|terminal)[\s\S]*null[\s\S]*raw\.evidence[\s\S]*completed/,
+    assert.match(deriveLineage, /previousStatus\s*=\s*index\s*===\s*0\s*\?\s*null\s*:\s*reconstructExactPoisonPostVisibleProgressPreviousStatusV1/,
+      "only the first exact progress row has no authenticated predecessor");
+    assert.match(deriveLineage, /nextPairBytes\s*=\s*raw\.evidence\s*===\s*["']completed["']\s*\?\s*raw\.nextPairBytes\s*:\s*null[\s\S]*raw\.evidence\s*!==\s*["']completed["'][\s\S]*raw\.nextPairBytes\s*!==\s*null/,
       "only completed evidence contributes an authenticated adjacent successor; prior-only and terminal evidence remain nullable");
     assert.match(deriveLineage, /status\.pairBytes[\s\S]*(?:equal|compareBytes|timingSafeEqual)[\s\S]*currentPairBytes|currentPairBytes[\s\S]*(?:equal|compareBytes|timingSafeEqual)[\s\S]*status\.pairBytes/,
       "the derived current lineage member is byte-equal to the still-pinned fixed status");
@@ -31247,9 +32088,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const progressQ = topLevelFunctionRegionV1(source, "observeTask12CurrentStatusCasForProgressNoWriteV1");
     assert.match(progressQ.slice(0, progressQ.indexOf("{")), /target:\s*string,\s*previousPairBytes:\s*Buffer\s*\|\s*null,\s*currentPairBytes:\s*Buffer,\s*nextPairBytes:\s*Buffer\s*\|\s*null,\s*evidence:\s*ExactPoisonPostVisibleProgressRawObservationV1\["evidence"\][\s\S]*Task12CurrentStatusCasForProgressNoWriteObservationV1/,
       "the S-aware classifier receives deterministic nullable lineage plus its explicit raw evidence discriminator");
-    assert.match(progressQ, /requireTask12CurrentStatusPairBytesV1[\s\S]*authenticateTask12ReceiptDirectoryChainV1[\s\S]*openExactPoisonRecoveryMemberV1/,
+    assert.match(progressQ, /requireTask12CurrentStatusPairBytesV1[\s\S]*authenticateTask12ReceiptDirectoryChainV1[\s\S]*openTask12CurrentStatusCasPinnedMemberV1/,
       "the classifier strictly parses the lineage and retains its directory/member pins");
-    assert.match(progressQ, /state:\s*"Q0"[\s\S]*state:\s*"Q1"[\s\S]*state:\s*"Q2"[\s\S]*state:\s*"Q3"/);
+    for (const state of ["Q0", "Q1", "Q2", "Q3"] as const) assert.match(progressQ, new RegExp(`state\\s*=\\s*["']${state}["']`));
     assert.doesNotMatch(progressQ, /state:\s*"Q4"/, "S does not invent a fifth physical state");
     for (const token of ["prior-to-current-cleanup", "current-to-next", "terminal-current", "current", "next", "requiresNormalization"] as const) assert.match(progressQ, new RegExp(token));
     assert.match(progressQ, /length\s*>\s*7[\s\S]*(?:currentPairBytes|previousPairBytes)|(?:currentPairBytes|previousPairBytes)[\s\S]*length\s*>\s*7/,
@@ -31262,7 +32103,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "a retained same-process Q1 capability is read-only matched by exact target and adjacent pair bytes before selection");
     assert.match(progressQ, /assertTask12CurrentStatusCasCleanupCapabilityStableV1\([\s\S]*(?:predecessorBytes|currentPairBytes)[\s\S]*(?:successorBytes|nextPairBytes)[\s\S]*(?:targetHash|target)/,
       "the retained Q1 path reasserts its pinned capability owner before exact target/current/next equality");
-    assert.match(progressQ, /observeTask12ReceiptLocatorWriterNoWriteV1\([\s\S]*(?:ownerState|state)[\s\S]*(?:dead|reused)[\s\S]*(?:pid|PID)[\s\S]*nonce/,
+    assert.match(progressQ, /observeTask12ReceiptLocatorWriterNoWriteV1\([\s\S]*const\s+pid\s*=[\s\S]*const\s+nonce\s*=[\s\S]*member\.pid\s*===\s*pid[\s\S]*member\.nonce\s*===\s*nonce[\s\S]*member\.ownerState\s*===\s*["']dead["'][\s\S]*member\.ownerState\s*===\s*["']reuse["']/,
       "physical Q1 authority reuses the shared no-write writer observer and binds its dead/reused owner PID and nonce to the sole temporary");
     const fixedWriterTargetBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*path\.join\(\s*(?:directory|path\.dirname\(target\))\s*,\s*`\.\$\{path\.basename\(target\)\}\.writer\.lock`\s*\)/.exec(progressQ);
     assert.ok(fixedWriterTargetBinding, "physical Q1 derives the one exact fixed writer member target from fixed 01");
@@ -31279,12 +32120,17 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "prior-only evidence cannot authorize outgoing Q1/Q2 successor normalization without completed effect evidence");
     assert.match(progressQ, /evidence\s*===\s*"terminal"[\s\S]*(?:terminal-current|Q3|prior-to-current-cleanup)[\s\S]*(?:Q1|Q2|current-to-next)[\s\S]*(?:currentEntryFail|fail)|(?:terminal-current|Q3)[\s\S]*evidence\s*===\s*"terminal"/,
       "terminal ready admits only clean current or bounded incoming cleanup and never outgoing successor evidence");
-    assert.match(progressQ, /evidence\s*===\s*"completed"[\s\S]*(?:Q0|Q1|Q2|current-to-next)/,
-      "outgoing Q0/Q1/Q2 authority is reachable only with an authenticated completed result and adjacent bytes");
+    assert.match(progressQ, /evidence\s*!==\s*["']completed["']\s*&&\s*nextPairBytes\s*!==\s*null[\s\S]*currentEntryFail/,
+      "only authenticated completed evidence may carry an adjacent successor pair");
+    assert.match(progressQ, /allNext[\s\S]*evidence\s*===\s*["']prior-only["'][\s\S]*nextPairBytes\s*===\s*null[\s\S]*state\s*=\s*["']Q2["'][\s\S]*incomplete\.length\s*===\s*1[\s\S]*evidence\s*!==\s*["']completed["'][\s\S]*state\s*=\s*["']Q1["']/,
+      "outgoing Q1/Q2 normalization requires completed evidence and exact adjacent bytes");
     assert.match(progressQ, /(?:fixed|current)[\s\S]*(?:mixed|unequal|crossed|second|multiple)[\s\S]*(?:currentEntryFail|fail)|(?:currentEntryFail|fail)[\s\S]*(?:mixed|unequal|crossed|second|multiple)/,
       "mixed current/next, canonical-unequal, crossed, and second-incomplete families are terminal");
-    assert.match(progressQ, /assertStable[\s\S]*(?:readdirSync|opendirSync)[\s\S]*(?:fstatSync|lstatSync)[\s\S]*close/,
+    const pinnedMemberStable = topLevelFunctionRegionV1(source, "assertTask12CurrentStatusCasPinnedMemberStableV1");
+    assert.match(progressQ, /const\s+assertStable[\s\S]*readdirSync\(directory\)[\s\S]*assertTask12CurrentStatusCasPinnedMemberStableV1\(fixed![\s\S]*for\s*\(const\s+temporary\s+of\s+temporaries\)\s*assertTask12CurrentStatusCasPinnedMemberStableV1\(temporary\)[\s\S]*close:/,
       "the returned owner reasserts the parent, fixed member, and complete temporary/writer inventory before reverse close");
+    assert.match(pinnedMemberStable, /fstatSync\([\s\S]*sameRegularMetadata[\s\S]*bytes\.equals\(member\.bytes\)/,
+      "each retained Q member is reauthenticated by descriptor metadata and exact bytes");
     assert.doesNotMatch(progressQ, /activeTask12ControllerOperationsV1|parseTask12ReceiptWriterOwnerV1|observeTask12ReceiptWriterProcessV1|claimTask12CurrentStatusCasCleanupCapabilityV1|consumeTask12CurrentStatusCasCleanupCapabilityV1|transferTask12CurrentStatusCasCleanupCapabilityV1|normalizeTask12|acquireTask12|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|selectCurrent|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the selector-side classifier may inspect only its exact retained Q1 authority; it never requires controller ownership, claims, consumes, acquires, or mutates it");
 
@@ -31295,9 +32141,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "all 21 rows, including ready, share exactly one S-aware classifier call site");
     assert.equal([...pass.matchAll(/observeTask12CurrentStatusCasNoWriteV1\(/g)].length, 0,
       "the pass never applies the old two-byte outgoing-only classifier to incoming cleanup evidence");
-    assert.match(pass, /observeTask12CurrentStatusCasForProgressNoWriteV1\(\s*status\.target,\s*(?:statusLineage|lineage)\.previousPairBytes,\s*(?:statusLineage|lineage)\.currentPairBytes,\s*(?:statusLineage|lineage)\.nextPairBytes,\s*raw\.evidence\s*\)/,
+    assert.match(pass, /observeTask12CurrentStatusCasForProgressNoWriteV1\(\s*status\.target,\s*(?:statusLineage|lineage)\.previousPairBytes,\s*(?:statusLineage|lineage)\.currentPairBytes,\s*(?:statusLineage|lineage)\.nextPairBytes,\s*raw\.evidence,?\s*\)/,
       "the physical classifier consumes deterministic lineage together with the raw evidence that governs outgoing authority");
-    assert.match(pass, /raw\.immediate\.target[\s\S]*(?:raw\.publication|raw\.writer)[\s\S]*raw\.immediate\.bytes|raw\.immediate\.bytes[\s\S]*(?:raw\.publication|raw\.writer)[\s\S]*raw\.immediate\.target/,
+    assert.match(pass, /publishedMember\.target\s*!==\s*raw\.immediate\.target[\s\S]*publishedMember\.bytes\.equals\(raw\.immediate\.bytes\)/,
       "the pass accepts publication/writer evidence only for the exact immediate target and bytes authenticated by its raw arm");
     assert.match(pass, /(?:currentStatusCas|statusCas)[\s\S]*(?:"Q1"|"Q2")[\s\S]*raw\.publication[\s\S]*(?:"F2u"|"F3"|"F4")[\s\S]*raw\.writer[\s\S]*"A0"|raw\.publication[\s\S]*(?:"F2u"|"F3"|"F4")[\s\S]*raw\.writer[\s\S]*"A0"[\s\S]*(?:"Q1"|"Q2")/,
       "outgoing Q1/Q2 is authoritative only when the exact adjacent content is already durably final and its content writer is absent");
@@ -31309,7 +32155,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "Q3 is only bounded incoming cleanup on the fixed row already authenticated as current");
     assert.match(pass, /raw\.evidence[\s\S]*"prior-only"[\s\S]*(?:Q1|Q2|current-to-next)[\s\S]*(?:currentEntryFail|fail)|(?:Q1|Q2)[\s\S]*raw\.evidence[\s\S]*"prior-only"[\s\S]*(?:currentEntryFail|fail)/,
       "the pass rejects physical successor normalization when its raw arm has no completed effect result");
-    assert.match(pass, /raw\.evidence[\s\S]*"completed"[\s\S]*raw\.effectResult[\s\S]*raw\.nextPairBytes[\s\S]*raw\.immediate/,
+    assert.match(raw, /const\s+effectResult\s*=\s*projectExactPoisonPostVisibleProgressEffectResultV1[\s\S]*effectResult\s*===\s*null\s*\?\s*["']prior-only["']\s*:\s*["']completed["'][\s\S]*const\s+immediate\s*=\s*effectResult\s*===\s*null\s*\?\s*null\s*:\s*await\s+deriveExactPoisonPostVisibleProgressImmediatePublicationV1[\s\S]*const\s+nextPairBytes\s*=\s*immediate\s*===\s*null\s*\?\s*null[\s\S]*const\s+publication\s*=\s*immediate\s*===\s*null\s*\?\s*null/,
       "completed pass authority keeps its exact effect result, adjacent pair, and publication target causally connected");
     assert.doesNotMatch(pass, /(?:selectedRoute|route)\s*===?\s*"next"|(?:selectedRoute|route):\s*"next"/,
       "a pass never treats a different fixed pair as next; a fresh dispatcher pass authenticates it as current");
@@ -31333,8 +32179,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "no asynchronous gap follows the final status/raw/Q fences");
     const qOwnerBinding = /let\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*Task12CurrentStatusCasForProgressNoWriteObservationV1\s*\|\s*null\s*=\s*null\s*;/.exec(pass);
     assert.ok(qOwnerBinding, "the pass declares a nullable Q owner for partial-open cleanup");
-    assert.match(pass, new RegExp(`finally\\s*\\{\\s*try\\s*\\{\\s*${qOwnerBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*finally\\s*\\{\\s*try\\s*\\{\\s*await\\s+${rawBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*finally\\s*\\{\\s*${statusBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*\\}\\s*\\}`),
-      "reverse finalizers always close the S-aware Q owner, then raw, then status, including ready");
+    assert.match(pass, new RegExp(`finally\\s*\\{[\\s\\S]*try\\s*\\{\\s*${qOwnerBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*try\\s*\\{\\s*await\\s+${rawBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*try\\s*\\{\\s*${statusBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*primary\\s*===\\s*null\\s*&&\\s*cleanupError\\s*!==\\s*null`),
+      "reverse finalizers close the S-aware Q owner, then raw, then status while preserving the construction primary");
 
     const passTypeStart = source.indexOf("type ExactPoisonPostVisibleProgressPassV1 = Readonly<{");
     const passTypeEnd = source.indexOf("}>;", passTypeStart) + 3;
@@ -31405,8 +32251,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(canonicalHash(typeExports), "c655b478e687a8df2f04f49017de4e288e108a97a2c2428fcab97dbf3978f998",
       "S preserves the exact ordered public type export set while every S contract remains private");
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2);
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 12,
-      "S adds no twelfth exact11 active-store semantic consumer");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 13,
+      "S adds only the selected-operation recheck at the Q normalization frontier to the exact active-store consumers");
   });
 
   it("P5c-S resumes retained pre-schema and migration history in exact CAS order before later effects", () => {

@@ -36,6 +36,7 @@ import * as recoverySourceBootstrapInstallerV1 from "../installer/run.js";
 import { replayV3HistoricalGitCommitAncestryV1 } from "../execution/v3-git-revision.js";
 import {
   createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1,
   type InternalProductionRecoverySourceBootstrapRunPersistenceV1,
 } from "../execution/recovery-source-bootstrap-run-authority-v1.js";
 import {
@@ -10798,6 +10799,100 @@ type ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Readonly<{
   close(): void;
 }>;
 
+type ExactPoisonPostVisibleExternalEndpointDescriptorV1 = Readonly<{
+  endpointOrdinal: number;
+  material: string;
+  role: "content" | "locator" | "fixed" | "database";
+  policy: "pre-schema-no-replace" | "task12-receipt" | "spawner-admission" | "database-atomic" | "expected-predecessor-cas";
+}>;
+
+type ExactPoisonPostVisibleExternalArrowV1 = Readonly<{
+  family: Exclude<ExactPoisonPostVisibleExternalRawPublicationObservationV1["family"], null>;
+  prior: string;
+  next: string;
+  ordinal: number;
+  rawKind: ExactPoisonPostVisibleProgressRawKindV1;
+}>;
+
+const EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1: readonly Readonly<ExactPoisonPostVisibleExternalArrowV1 & {
+  row: ExactPoisonPostVisibleProgressRowV1;
+}>[] = Object.freeze([
+  Object.freeze({ family: "pre-schema", prior: "absent", next: "prepared", ordinal: 0, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "prepared", next: "startup_token_published", ordinal: 1, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "startup_token_published", next: "restart_authority_published", ordinal: 2, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "restart_authority_published", next: "predecessor_terminated", ordinal: 3, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "predecessor_terminated", next: "replacement_observed", ordinal: 4, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "replacement_observed", next: "pre_manifest_bootstrap_sealed", ordinal: 5, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "pre-schema", prior: "pre_manifest_bootstrap_sealed", next: "normal_task0_admission_ready", ordinal: 6, row: "spawner_admission_transitioning/sealed", rawKind: "admission" }),
+  Object.freeze({ family: "pre-schema", prior: "restart_authority_published", next: "blocked", ordinal: 7, row: "operation_prepared", rawKind: "pre-schema-current" }),
+  Object.freeze({ family: "migration-32", prior: "absent", next: "prepared", ordinal: 0, row: "pre_manifest_bootstrap_sealed", rawKind: "pre-manifest" }),
+  Object.freeze({ family: "migration-32", prior: "prepared", next: "consumed", ordinal: 1, row: "migration_applying/prepared", rawKind: "migration-current" }),
+  Object.freeze({ family: "migration-32", prior: "consumed", next: "terminal", ordinal: 2, row: "migration_applying/prepared", rawKind: "migration-current" }),
+  Object.freeze({ family: "current-audit", prior: "terminal", next: "current", ordinal: 0, row: "migration_applying/receipt_published", rawKind: "migration-current" }),
+  Object.freeze({ family: "database-33", prior: "migration-32-current", next: "migration-33-current", ordinal: 0, row: "migration_applying/current_audited", rawKind: "migration-current" }),
+  Object.freeze({ family: "manifest-a", prior: "seeded-null", next: "activation-current", ordinal: 0, row: "manifest_activating", rawKind: "manifest" }),
+  Object.freeze({ family: "recovery-source", prior: "absent", next: "pending-input", ordinal: 0, row: "spawner_admission_transitioning/sealed", rawKind: "admission" }),
+  Object.freeze({ family: "recovery-source", prior: "pending-input", next: "prepared", ordinal: 1, row: "spawner_admission_transitioning/sealed", rawKind: "admission" }),
+  Object.freeze({ family: "recovery-source", prior: "prepared", next: "terminal", ordinal: 2, row: "prepared", rawKind: "recovery-source" }),
+  Object.freeze({ family: "entry-authority", prior: "fence-released", next: "ready", ordinal: 0, row: "settled/fence_released", rawKind: "entry-authority" }),
+]);
+
+type ExactPoisonPostVisibleExternalEndpointOwnerV1 = Readonly<
+  ExactPoisonPostVisibleExternalRawPublicationObservationV1["endpoints"][number] & {
+    assertStable(): void;
+    close(): void;
+  }
+>;
+
+type ExactPoisonPostVisiblePreSchemaEndpointCapabilityV1 = Readonly<{
+  operationRef: string;
+  operationHash: string;
+  arrow: Readonly<{ prior: string; next: string; ordinal: number }>;
+  endpoints: ReadonlyMap<string, Readonly<{
+    target: string;
+    expectedBytes: Buffer;
+    publication: Task12ReceiptPublicationNoWriteObservationV1;
+    writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+  }>>;
+  assertStable(): void;
+}>;
+
+const exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1 = new WeakMap<
+  Readonly<Record<string, unknown>>,
+  ExactPoisonPostVisiblePreSchemaEndpointCapabilityV1
+>();
+
+type ExactPoisonPostVisibleRecoveryEndpointCapabilityV1 = Readonly<{
+  operationRef: string;
+  operationHash: string;
+  arrow: Readonly<{ prior: string; next: string; ordinal: number }>;
+  endpoints: ReadonlyMap<string, Readonly<{
+    target: string;
+    expectedBytes: Buffer;
+    publication: Task12ReceiptPublicationNoWriteObservationV1;
+    writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+  }>>;
+  casEndpoints: ReadonlyMap<string, Readonly<{
+    target: string;
+    expectedBytes: Buffer;
+    cas: Readonly<{
+      state: "Q3";
+      route: "next";
+      predecessorBytes: Buffer;
+      successorBytes: Buffer;
+      laterFixedCount: 0;
+    }>;
+  }>>;
+  databaseEndpoints: ReadonlyMap<string, Buffer>;
+  observeDatabase: (() => Promise<void>) | null;
+  assertStable(): void;
+}>;
+
+const exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1 = new WeakMap<
+  Readonly<Record<string, unknown>>,
+  ExactPoisonPostVisibleRecoveryEndpointCapabilityV1
+>();
+
 const EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 = Object.freeze({
   "pre-schema:0:absent:prepared": 6,
   "pre-schema:1:prepared:startup_token_published": 5,
@@ -10818,6 +10913,125 @@ const EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 = Object.fre
   "recovery-source:2:prepared:terminal": 9,
   "entry-authority:0:fence-released:ready": 2,
 } as const);
+
+const EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1: Readonly<Record<string, readonly ExactPoisonPostVisibleExternalEndpointDescriptorV1[]>> = Object.freeze({
+  "pre-schema:0:absent:prepared": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "pre-dispatch-legacy-zero-content", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "authorization", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "pre-dispatch-legacy-zero", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "authorization", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 4, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 5, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:1:prepared:startup_token_published": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "predecessor-process-identity", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "startup-token", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "startup-token", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 4, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:2:startup_token_published:restart_authority_published": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "restart-authority", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "restart-authority", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:3:restart_authority_published:predecessor_terminated": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "predecessor-termination", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "predecessor-termination", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:4:predecessor_terminated:replacement_observed": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "replacement-process-identity", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "replacement-process", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "replacement-process", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 4, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:5:replacement_observed:pre_manifest_bootstrap_sealed": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "post-termination-legacy-zero-content", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "post-termination-legacy-zero", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 2, material: "sealed-admission", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 3, material: "sealed-admission", role: "locator", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 4, material: "status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 5, material: "status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "pre-schema:6:pre_manifest_bootstrap_sealed:normal_task0_admission_ready": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "admission-ready", role: "content", policy: "spawner-admission" }),
+    Object.freeze({ endpointOrdinal: 1, material: "admission-ready", role: "locator", policy: "spawner-admission" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "content", policy: "spawner-admission" }),
+    Object.freeze({ endpointOrdinal: 3, material: "status", role: "locator", policy: "spawner-admission" }),
+  ]),
+  "pre-schema:7:restart_authority_published:blocked": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "blocked-status", role: "content", policy: "pre-schema-no-replace" }),
+    Object.freeze({ endpointOrdinal: 1, material: "blocked-status", role: "locator", policy: "pre-schema-no-replace" }),
+  ]),
+  "migration-32:0:absent:prepared": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "authorization", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 1, material: "status", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "locator", policy: "task12-receipt" }),
+  ]),
+  "migration-32:1:prepared:consumed": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "consumption", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 1, material: "status", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "locator", policy: "task12-receipt" }),
+  ]),
+  "migration-32:2:consumed:terminal": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "receipt", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 1, material: "status", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "status", role: "locator", policy: "task12-receipt" }),
+  ]),
+  "current-audit:0:terminal:current": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "current-audit", role: "content", policy: "task12-receipt" }),
+  ]),
+  "database-33:0:migration-32-current:migration-33-current": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "database-33", role: "database", policy: "database-atomic" }),
+  ]),
+  "manifest-a:0:seeded-null:activation-current": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "manifest-a", role: "database", policy: "database-atomic" }),
+  ]),
+  "recovery-source:0:absent:pending-input": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "pending-input", role: "fixed", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 1, material: "pending-visibility-head", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "visibility-pointer", role: "fixed", policy: "task12-receipt" }),
+  ]),
+  "recovery-source:1:pending-input:prepared": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "database-fence-reservations", role: "database", policy: "database-atomic" }),
+    Object.freeze({ endpointOrdinal: 1, material: "start-intent", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "start-outbox", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 3, material: "recovery-operation", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 4, material: "prepared-visibility-head", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 5, material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas" }),
+  ]),
+  "recovery-source:2:prepared:terminal": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "database-run-binding", role: "database", policy: "database-atomic" }),
+    Object.freeze({ endpointOrdinal: 1, material: "terminal-source-run", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 2, material: "terminal-run-launch", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 3, material: "database-target-close", role: "database", policy: "database-atomic" }),
+    Object.freeze({ endpointOrdinal: 4, material: "target-pair-close", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 5, material: "database-fence-release", role: "database", policy: "database-atomic" }),
+    Object.freeze({ endpointOrdinal: 6, material: "run-receipt", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 7, material: "terminal-visibility-head", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 8, material: "visibility-pointer", role: "fixed", policy: "expected-predecessor-cas" }),
+  ]),
+  "entry-authority:0:fence-released:ready": Object.freeze([
+    Object.freeze({ endpointOrdinal: 0, material: "entry-authority", role: "content", policy: "task12-receipt" }),
+    Object.freeze({ endpointOrdinal: 1, material: "entry-authority", role: "locator", policy: "task12-receipt" }),
+  ]),
+});
+
+const EXACT_POISON_POST_VISIBLE_EXTERNAL_FIXED_ENDPOINT_BASENAMES_V1 = Object.freeze([
+  "status-00-prepared.pair.json",
+  "status-05-pre-manifest-bootstrap-sealed.pair.json",
+  "status-06-normal-task0-admission-ready.pair.json",
+  "status-blocked-helper-dispatch-settlement-unknown.pair.json",
+  "status-00.pair.json",
+  "status-01.pair.json",
+  "status-02.pair.json",
+  "recovery-source-bootstrap-visibility-head.json",
+  "02-entry-authority.pair.json",
+] as const);
 
 type ExactPoisonPostVisibleProgressPreSchemaObservationV1 = Readonly<{
   value: InternalProductionPreSchemaSpawnerRebindStatusV1;
@@ -10933,6 +11147,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
   const contentResources: ContentResource[] = [];
   let transferred = false;
   let closed = false;
+  let capabilityCurrent: Readonly<Record<string, unknown>> | null = null;
   const closeResources = (primary: unknown | null): void => {
     let firstCloseError: unknown = null;
     for (let index = contentResources.length - 1; index >= 0; index -= 1) {
@@ -10960,6 +11175,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
   const close = (): void => {
     if (closed) currentEntryFail("pre-schema observation closed twice");
     closed = true;
+    if (capabilityCurrent !== null) exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.delete(capabilityCurrent);
     closeResources(null);
   };
   try {
@@ -11244,6 +11460,88 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     };
     for (const target of inventory.dynamicTargets) await validateDynamicTarget(target);
     const value = inventory.ordinal === -1 ? absentValue() : statuses.at(-1)!;
+    if (inventory.ordinal === "blocked" || inventory.ordinal === 5 || inventory.ordinal === 6) {
+      const endpoint = (
+        target: string,
+        expectedBytes: Buffer,
+        directoryIdentity: Task12ReceiptPhysicalIdentityObservationV1,
+        identity: BigIntStats,
+      ): Readonly<{
+        target: string;
+        expectedBytes: Buffer;
+        publication: Task12ReceiptPublicationNoWriteObservationV1;
+        writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+      }> => Object.freeze({
+        target,
+        expectedBytes,
+        publication: Object.freeze({
+          state: "F2u" as const,
+          temporaryTarget: null,
+          temporaryTargets: Object.freeze([]),
+          selectedTemporaryTarget: null,
+          directoryIdentity,
+          members: Object.freeze([Object.freeze({ target, identity: observeTask12ReceiptPhysicalIdentityV1(identity), bytes: expectedBytes })]),
+        }),
+        writer: Object.freeze({
+          state: "A0" as const,
+          targetHash: inventory.ordinal === 6
+            ? hashCanonicalJson(Object.freeze({ schema: "setfarm.internal-production-task12-locator-mutation-target.v1", target }))
+            : hashCanonicalJson(Object.freeze({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: task12ReceiptLocatorWriterAuthorityTargetV1(target) })),
+          directoryIdentity,
+          members: Object.freeze([]),
+        }),
+      });
+      const endpoints = new Map<string, ReturnType<typeof endpoint>>();
+      const addContentEndpoint = (key: string, expectedValue: Readonly<Record<string, unknown>>, expectedTarget: string): void => {
+        const expectedBytes = task12ReceiptCanonicalBytesV1(expectedValue);
+        const resource = contentResources.find((candidate) => candidate.target === expectedTarget);
+        if (resource === undefined || !resource.member.bytes.equals(expectedBytes)) currentEntryFail("pre-schema complete content endpoint authority is crossed");
+        const directoryStats = lstatSync(path.dirname(resource.target), { bigint: true });
+        if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink() || (directoryStats.mode & 0o7777n) !== 0o700n) currentEntryFail("pre-schema complete content directory identity is invalid");
+        endpoints.set(key, endpoint(resource.target, resource.member.bytes, observeTask12ReceiptPhysicalIdentityV1(directoryStats), resource.member.identity));
+      };
+      const addLocatorEndpoint = (key: string, name: string): void => {
+        const locator = operationPins.get(name);
+        if (locator === undefined) currentEntryFail("pre-schema complete locator endpoint authority is absent");
+        endpoints.set(key, endpoint(locator.target, locator.bytes, directoryOwner.directoryIdentity, locator.identity));
+      };
+      const capabilityArrow = inventory.ordinal === "blocked"
+        ? Object.freeze({ prior: "restart_authority_published", next: "blocked", ordinal: 7 })
+        : inventory.ordinal === 5
+          ? Object.freeze({ prior: "replacement_observed", next: "pre_manifest_bootstrap_sealed", ordinal: 5 })
+          : Object.freeze({ prior: "pre_manifest_bootstrap_sealed", next: "normal_task0_admission_ready", ordinal: 6 });
+      if (inventory.ordinal === "blocked") {
+        const statusHash = String(value.statusHash);
+        addContentEndpoint("blocked-status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addLocatorEndpoint("blocked-status:locator", blockedLocator);
+      } else if (inventory.ordinal === 5) {
+        const legacyHash = String(bodies[6]!.observationHash);
+        const sealedHash = String(bodies[7]!.sealedAdmissionHash);
+        const statusHash = String(value.statusHash);
+        addContentEndpoint("post-termination-legacy-zero-content:content", bodies[6]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1", "records", "sha256", legacyHash.slice(0, 2), `${legacyHash}.json`));
+        addLocatorEndpoint("post-termination-legacy-zero:locator", materialLocators[6]);
+        addContentEndpoint("sealed-admission:content", bodies[7]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", sealedHash.slice(0, 2), `${sealedHash}.json`));
+        addLocatorEndpoint("sealed-admission:locator", materialLocators[7]);
+        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addLocatorEndpoint("status:locator", statusLocators[5]);
+      } else {
+        const admissionReadyHash = String(bodies[8]!.admissionReadyHash);
+        const statusHash = String(value.statusHash);
+        addContentEndpoint("admission-ready:content", bodies[8]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`));
+        addLocatorEndpoint("admission-ready:locator", materialLocators[8]);
+        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addLocatorEndpoint("status:locator", statusLocators[6]);
+      }
+      const capability = Object.freeze({
+        operationRef: operation.operationRef,
+        operationHash: operation.operationHash,
+        arrow: capabilityArrow,
+        endpoints,
+        assertStable,
+      });
+      exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.set(value, capability);
+      capabilityCurrent = value;
+    }
     assertStable();
     transferred = true;
     return Object.freeze({ value, assertStable, close });
@@ -11590,6 +11888,13 @@ async function verifyInternalProductionCurrentEntryDatabaseThroughMigration33And
   return (port as () => Promise<Readonly<Record<string, unknown>>>)();
 }
 
+async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1(): Promise<Readonly<Record<string, unknown>>> {
+  const database = await import("../db-pg.js") as unknown as Readonly<Record<string, unknown>>;
+  const port = database.observeInternalProductionCurrentEntryMigration33ReadOnlyV1;
+  if (typeof port !== "function" || port.length !== 0) currentEntryFail("migration-33 read-only database observer is unavailable");
+  return (port as () => Promise<Readonly<Record<string, unknown>>>)();
+}
+
 type ExactPoisonPostVisibleProgressRecoveryResourceV1 = Readonly<{
   assertStable(): void;
   close(): void;
@@ -11634,6 +11939,13 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
   operation: InternalProductionCurrentEntryOperationV1,
 ): Promise<ExactPoisonPostVisibleProgressRecoverySourceObservationV1> {
   const resources: ExactPoisonPostVisibleProgressRecoveryResourceV1[] = [];
+  type RetainedRecordV1 = Readonly<{ target: string; value: Readonly<Record<string, unknown>>; member: ExactPoisonRecoveryPinnedMemberV1 }>;
+  const retainedRecords = new Map<string, RetainedRecordV1>();
+  let recoveryRootInventory: Readonly<{ names: readonly string[]; identity: BigIntStats }> | null = null;
+  let capabilityCurrent: Readonly<Record<string, unknown>> | null = null;
+  let retainedRecoveryOperation: InternalProductionRecoverySourceBootstrapOperationV1 | null = null;
+  let retainedPairClose: InternalProductionSourceRunLaunchTargetReservationPairCloseV1 | null = null;
+  let retainedRelease: Readonly<Record<string, unknown>> | null = null;
   const recoveryRoot = path.join(authority.successorRoot, "recovery-source-bootstrap-v1");
   const recordTarget = (kind: string, hash: string): string => {
     const exactHash = requireSha256(hash, `recovery-source ${kind} hash`);
@@ -11660,12 +11972,17 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     if (pinned.identity.nlink !== 1n) currentEntryFail(`${label} is not a one-link fixed recovery record`);
     member.assertStable();
     guard.assertStable();
-    return strictCanonicalRecord(pinned.bytes, label);
+    const value = strictCanonicalRecord(pinned.bytes, label);
+    retainedRecords.set(target, Object.freeze({ target, value, member: pinned }));
+    return value;
   };
   const retainRootInventory = (target: string): void => {
     const guard = authenticateTask12ReceiptDirectoryChainV1(target);
     resources.push(guard);
     const names = Object.freeze([...readdirSync(target)].sort());
+    const identity = lstatSync(target, { bigint: true });
+    if (!identity.isDirectory() || identity.isSymbolicLink() || (identity.mode & 0o7777n) !== 0o700n) currentEntryFail("recovery-source root inventory identity is invalid");
+    if (target === recoveryRoot) recoveryRootInventory = Object.freeze({ names, identity });
     let closed = false;
     resources.push(Object.freeze({
       assertStable(): void {
@@ -11703,6 +12020,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     }));
   };
   const retainRelease = (release: Readonly<Record<string, unknown>>): void => {
+    retainedRelease = release;
     let closed = false;
     resources.push(Object.freeze({
       assertStable(): void {
@@ -11726,8 +12044,227 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     const close = (): void => {
       if (closed) currentEntryFail("recovery-source at-root owner closed twice");
       closed = true;
+      if (capabilityCurrent !== null) exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.delete(capabilityCurrent);
       closeExactPoisonPostVisibleProgressRecoveryResourcesV1(resources, null);
     };
+    if (value.state === "pending-input") {
+      const rootInventory = recoveryRootInventory;
+      if (rootInventory === null || canonicalComparable(rootInventory.names) !== canonicalComparable([
+        "records",
+        "recovery-source-bootstrap-pending-input.json",
+        "recovery-source-bootstrap-visibility-head.json",
+      ].sort(compareBytes))) currentEntryFail("recovery-source pending endpoint root inventory is crossed");
+      const pendingTarget = path.join(recoveryRoot, "recovery-source-bootstrap-pending-input.json");
+      const pointerTarget = path.join(recoveryRoot, "recovery-source-bootstrap-visibility-head.json");
+      const headTarget = recordTarget("visibility-heads", String(value.visibilityHeadHash));
+      const pendingRecord = retainedRecords.get(pendingTarget);
+      const pointerRecord = retainedRecords.get(pointerTarget);
+      const headRecord = retainedRecords.get(headTarget);
+      if (pendingRecord === undefined || pointerRecord === undefined || headRecord === undefined) currentEntryFail("recovery-source pending endpoint retained record is absent");
+      const rootEndpoint = (record: RetainedRecordV1): Readonly<{
+        target: string;
+        expectedBytes: Buffer;
+        publication: Task12ReceiptPublicationNoWriteObservationV1;
+        writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+      }> => {
+        const directoryIdentity = observeTask12ReceiptPhysicalIdentityV1(rootInventory.identity);
+        const expectedBytes = record.member.bytes;
+        return Object.freeze({
+          target: record.target,
+          expectedBytes,
+          publication: Object.freeze({
+            state: "F2u" as const,
+            temporaryTarget: null,
+            temporaryTargets: Object.freeze([]),
+            selectedTemporaryTarget: null,
+            directoryIdentity,
+            members: Object.freeze([Object.freeze({ target: record.target, identity: observeTask12ReceiptPhysicalIdentityV1(record.member.identity), bytes: expectedBytes })]),
+          }),
+          writer: Object.freeze({
+            state: "A0" as const,
+            targetHash: hashCanonicalJson(Object.freeze({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: task12ReceiptLocatorWriterAuthorityTargetV1(record.target) })),
+            directoryIdentity,
+            members: Object.freeze([]),
+          }),
+        });
+      };
+      const headOwner = observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(headTarget, headRecord.member.bytes);
+      resources.push(headOwner);
+      const endpoints = new Map<string, Readonly<{
+        target: string;
+        expectedBytes: Buffer;
+        publication: Task12ReceiptPublicationNoWriteObservationV1;
+        writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+      }>>([
+        ["pending-input:fixed", rootEndpoint(pendingRecord)],
+        ["pending-visibility-head:content", Object.freeze({ target: headOwner.target, expectedBytes: headOwner.expectedBytes, publication: headOwner.publication, writer: headOwner.writer })],
+        ["visibility-pointer:fixed", rootEndpoint(pointerRecord)],
+      ]);
+      const capability = Object.freeze({
+        operationRef: operation.operationRef,
+        operationHash: operation.operationHash,
+        arrow: Object.freeze({ prior: "absent", next: "pending-input", ordinal: 0 }),
+        endpoints,
+        casEndpoints: new Map(),
+        databaseEndpoints: new Map(),
+        observeDatabase: null,
+        assertStable,
+      });
+      exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, capability);
+      capabilityCurrent = value;
+    }
+    if (value.state === "prepared" || value.state === "terminal") {
+      const endpoints = new Map<string, Readonly<{
+        target: string;
+        expectedBytes: Buffer;
+        publication: Task12ReceiptPublicationNoWriteObservationV1;
+        writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+      }>>();
+      const addContentEndpoint = (key: string, target: string): void => {
+        const retained = retainedRecords.get(target);
+        if (retained === undefined) currentEntryFail("recovery-source content endpoint retained record is absent");
+        const contentOwner = observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(target, retained.member.bytes);
+        resources.push(contentOwner);
+        endpoints.set(key, Object.freeze({
+          target: contentOwner.target,
+          expectedBytes: contentOwner.expectedBytes,
+          publication: contentOwner.publication,
+          writer: contentOwner.writer,
+        }));
+      };
+      if (value.state === "prepared") {
+        addContentEndpoint("start-intent:content", recordTarget("start-intents", String(value.startIntentHash)));
+        addContentEndpoint("start-outbox:content", recordTarget("start-outboxes", String(value.startOutboxHash)));
+        addContentEndpoint("recovery-operation:content", recordTarget("operations", String(value.operationHash)));
+        addContentEndpoint("prepared-visibility-head:content", recordTarget("visibility-heads", String(value.visibilityHeadHash)));
+      } else {
+        addContentEndpoint("terminal-source-run:content", recordTarget("terminal-source-runs", String(value.terminalSourceRunHash)));
+        addContentEndpoint("terminal-run-launch:content", recordTarget("terminal-run-launches", String(value.terminalRunLaunchHash)));
+        addContentEndpoint("target-pair-close:content", path.join(authority.successorRoot, "records", "source-run-launch-target-reservation-pair-closes", "sha256", String(value.targetReservationPairCloseHash).slice(0, 2), `${String(value.targetReservationPairCloseHash)}.json`));
+        addContentEndpoint("run-receipt:content", recordTarget("run-receipts", String(value.sourceRunHash)));
+        addContentEndpoint("terminal-visibility-head:content", recordTarget("visibility-heads", String(value.visibilityHeadHash)));
+      }
+      const rootInventory = recoveryRootInventory;
+      if (rootInventory === null || canonicalComparable(rootInventory.names) !== canonicalComparable([
+        "records",
+        "recovery-source-bootstrap-pending-input.json",
+        "recovery-source-bootstrap-visibility-head.json",
+      ].sort(compareBytes))) currentEntryFail("recovery-source visibility CAS root inventory is crossed");
+      const pointerTarget = path.join(recoveryRoot, "recovery-source-bootstrap-visibility-head.json");
+      const pointerRecord = retainedRecords.get(pointerTarget);
+      const currentHeadTarget = recordTarget("visibility-heads", String(value.visibilityHeadHash));
+      const currentHeadRecord = retainedRecords.get(currentHeadTarget);
+      if (pointerRecord === undefined || currentHeadRecord === undefined
+        || typeof currentHeadRecord.value.predecessorVisibilityHeadHash !== "string"
+        || typeof currentHeadRecord.value.predecessorVisibilityHeadRef !== "string") currentEntryFail("recovery-source visibility CAS current authority is absent");
+      const predecessorHeadTarget = recordTarget("visibility-heads", currentHeadRecord.value.predecessorVisibilityHeadHash);
+      const predecessorHeadRecord = retainedRecords.get(predecessorHeadTarget);
+      if (predecessorHeadRecord === undefined
+        || predecessorHeadRecord.value.visibilityHeadRef !== currentHeadRecord.value.predecessorVisibilityHeadRef
+        || predecessorHeadRecord.value.visibilityHeadHash !== currentHeadRecord.value.predecessorVisibilityHeadHash) currentEntryFail("recovery-source visibility CAS predecessor authority is crossed");
+      const successorBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ visibilityHeadRef: value.visibilityHeadRef, visibilityHeadHash: value.visibilityHeadHash }));
+      const predecessorBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ visibilityHeadRef: predecessorHeadRecord.value.visibilityHeadRef, visibilityHeadHash: predecessorHeadRecord.value.visibilityHeadHash }));
+      if (!pointerRecord.member.bytes.equals(successorBytes) || predecessorBytes.equals(successorBytes)) currentEntryFail("recovery-source visibility CAS pair bytes are crossed");
+      const casEndpoints = new Map<string, Readonly<{
+        target: string;
+        expectedBytes: Buffer;
+        cas: Readonly<{ state: "Q3"; route: "next"; predecessorBytes: Buffer; successorBytes: Buffer; laterFixedCount: 0 }>;
+      }>>([
+        ["visibility-pointer:fixed", Object.freeze({
+          target: pointerTarget,
+          expectedBytes: successorBytes,
+          cas: Object.freeze({ state: "Q3", route: "next", predecessorBytes, successorBytes, laterFixedCount: 0 }),
+        })],
+      ]);
+      const databaseEndpoints = new Map<string, Buffer>();
+      let observeDatabase: (() => Promise<void>) | null = null;
+      const recoveryOperationAuthority = retainedRecoveryOperation;
+      if (recoveryOperationAuthority === null) currentEntryFail("recovery-source database operation authority is absent");
+      if (value.state === "prepared") {
+        databaseEndpoints.set("database-fence-reservations:database", task12ReceiptCanonicalBytesV1(Object.freeze({
+          ownerAdmissionFenceRef: recoveryOperationAuthority.ownerAdmissionFenceRef,
+          ownerAdmissionFenceHash: recoveryOperationAuthority.ownerAdmissionFenceHash,
+          targetSourceRunReservationRef: recoveryOperationAuthority.targetSourceRunReservationRef,
+          targetSourceRunReservationHash: recoveryOperationAuthority.targetSourceRunReservationHash,
+          targetRunReservationRef: recoveryOperationAuthority.targetRunReservationRef,
+          targetRunReservationHash: recoveryOperationAuthority.targetRunReservationHash,
+          targetRunLaunchCompositeHash: recoveryOperationAuthority.targetRunLaunchCompositeHash,
+        })));
+        let databaseObservation: Promise<void> | null = null;
+        observeDatabase = (): Promise<void> => {
+          if (databaseObservation !== null) return databaseObservation;
+          databaseObservation = (async (): Promise<void> => {
+            const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
+            const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
+            if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source prepared database observer is unavailable");
+            const observed = await (observer as (input: Readonly<{ recoveryOperationAuthority: ReturnType<typeof createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1> }>) => Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1>)({
+              recoveryOperationAuthority: createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(recoveryOperationAuthority),
+            });
+            if (!isPlainRecord(observed) || (observed.state !== "absent" && observed.state !== "active")) currentEntryFail("recovery-source prepared database observation is crossed");
+            if (observed.state === "active" && !new Set(["running", "resuming", "cancelling", "failing"]).has(String(observed.workflowState))) currentEntryFail("recovery-source prepared active database observation is crossed");
+          })();
+          return databaseObservation;
+        };
+      } else {
+        const pairClose = retainedPairClose;
+        const release = retainedRelease;
+        if (pairClose === null || release === null) currentEntryFail("recovery-source terminal database authority is absent");
+        databaseEndpoints.set("database-run-binding:database", task12ReceiptCanonicalBytesV1(Object.freeze({
+          runId: value.runId,
+          operationRunBindingHash: value.operationRunBindingHash,
+          reciprocalRunOperationBindingHash: value.reciprocalRunOperationBindingHash,
+        })));
+        databaseEndpoints.set("database-target-close:database", task12ReceiptCanonicalBytesV1(pairClose));
+        databaseEndpoints.set("database-fence-release:database", task12ReceiptCanonicalBytesV1(release));
+        let databaseObservation: Promise<void> | null = null;
+        observeDatabase = (): Promise<void> => {
+          if (databaseObservation !== null) return databaseObservation;
+          databaseObservation = (async (): Promise<void> => {
+            const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
+            const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
+            if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source terminal database observer is unavailable");
+            const observed = await (observer as (input: Readonly<{ recoveryOperationAuthority: ReturnType<typeof createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1> }>) => Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1>)({
+              recoveryOperationAuthority: createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(recoveryOperationAuthority),
+            });
+            if (
+              !isPlainRecord(observed)
+              || observed.state !== "released"
+              || !new Set(["running", "resuming", "cancelling", "failing", "completed", "failed", "cancelled"]).has(String(observed.workflowState))
+              || observed.runId !== value.runId
+              || observed.operationRunBindingHash !== value.operationRunBindingHash
+              || observed.reciprocalRunOperationBindingHash !== value.reciprocalRunOperationBindingHash
+              || observed.terminalOwnerRef !== value.terminalOwnerRef
+              || observed.terminalOwnerHash !== value.terminalOwnerHash
+              || observed.terminalSourceRunRef !== value.terminalSourceRunRef
+              || observed.terminalSourceRunHash !== value.terminalSourceRunHash
+              || observed.terminalRunLaunchRef !== value.terminalRunLaunchRef
+              || observed.terminalRunLaunchHash !== value.terminalRunLaunchHash
+              || observed.targetReservationPairCloseRef !== pairClose.targetReservationPairCloseRef
+              || observed.targetReservationPairCloseHash !== pairClose.targetReservationPairCloseHash
+              || observed.fenceReleaseRef !== release.releaseRef
+              || observed.fenceReleaseHash !== release.releaseHash
+              || observed.sourceRunRef !== value.sourceRunRef
+              || observed.sourceRunHash !== value.sourceRunHash
+            ) currentEntryFail("recovery-source terminal database observation is crossed");
+          })();
+          return databaseObservation;
+        };
+      }
+      const capability = Object.freeze({
+        operationRef: operation.operationRef,
+        operationHash: operation.operationHash,
+        arrow: value.state === "prepared"
+          ? Object.freeze({ prior: "pending-input", next: "prepared", ordinal: 1 })
+          : Object.freeze({ prior: "prepared", next: "terminal", ordinal: 2 }),
+        endpoints,
+        casEndpoints,
+        databaseEndpoints,
+        observeDatabase,
+        assertStable,
+      });
+      exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.set(value, capability);
+      capabilityCurrent = value;
+    }
     assertStable();
     return Object.freeze({ value, assertStable, close });
   };
@@ -11774,6 +12311,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     }
     if (visibilityChain.at(-1)?.state !== "pending-input" || visibilityHead.operationRef === null || visibilityHead.operationHash === null) currentEntryFail("recovery-source prepared visibility ancestry is invalid");
     const recoveryOperation = validateRecoverySourceBootstrapOperationV1(retainRecord(recordTarget("operations", visibilityHead.operationHash), "recovery-source operation"));
+    retainedRecoveryOperation = recoveryOperation;
     if (recoveryOperation.operationRef !== visibilityHead.operationRef || recoveryOperation.operationHash !== visibilityHead.operationHash) currentEntryFail("recovery-source operation pair is crossed");
     if (recoveryOperation.operationRef === operation.operationRef || recoveryOperation.operationHash === operation.operationHash) currentEntryFail("recovery-source bootstrap operation aliases current-entry operation");
     if (recoveryOperation.pendingInputRef !== pendingInput.pendingInputRef || recoveryOperation.pendingInputHash !== pendingInput.pendingInputHash) currentEntryFail("recovery-source operation pending input is crossed");
@@ -11812,6 +12350,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     if (!hasExactKeys(terminalRunLaunch, terminalRunKeys) || terminalRunLaunch.schema !== "setfarm.internal-production-recovery-run-launch-terminal-authority.v1" || terminalRunLaunch.terminalRunLaunchRef !== receipt.terminalRunLaunchRef || terminalRunLaunch.terminalRunLaunchHash !== receipt.terminalRunLaunchHash || hashCanonicalJson(terminalRunBody) !== receipt.terminalRunLaunchHash || terminalRunLaunch.targetRunReservationRef !== recoveryOperation.targetRunReservationRef || terminalRunLaunch.targetRunReservationHash !== recoveryOperation.targetRunReservationHash || terminalRunLaunch.targetRunReservationRef !== receipt.targetRunReservationRef || terminalRunLaunch.targetRunReservationHash !== receipt.targetRunReservationHash) currentEntryFail("recovery-source terminal run launch is crossed");
     const pairCloseTarget = path.join(authority.successorRoot, "records", "source-run-launch-target-reservation-pair-closes", "sha256", String(receipt.targetReservationPairCloseHash).slice(0, 2), `${String(receipt.targetReservationPairCloseHash)}.json`);
     const targetReservationPairClose = validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1(retainRecord(pairCloseTarget, "recovery-source target reservation pair close"));
+    retainedPairClose = targetReservationPairClose;
     if (targetReservationPairClose.targetReservationPairCloseRef !== receipt.targetReservationPairCloseRef || targetReservationPairClose.targetReservationPairCloseHash !== receipt.targetReservationPairCloseHash || targetReservationPairClose.sourceRunReservationRef !== recoveryOperation.targetSourceRunReservationRef || targetReservationPairClose.sourceRunReservationHash !== recoveryOperation.targetSourceRunReservationHash || targetReservationPairClose.sourceRunReservationRef !== terminalSourceRun.targetSourceRunReservationRef || targetReservationPairClose.sourceRunReservationHash !== terminalSourceRun.targetSourceRunReservationHash || targetReservationPairClose.runReservationRef !== recoveryOperation.targetRunReservationRef || targetReservationPairClose.runReservationHash !== recoveryOperation.targetRunReservationHash || targetReservationPairClose.runReservationRef !== terminalRunLaunch.targetRunReservationRef || targetReservationPairClose.runReservationHash !== terminalRunLaunch.targetRunReservationHash || targetReservationPairClose.terminalSourceRunRef !== receipt.terminalSourceRunRef || targetReservationPairClose.terminalSourceRunHash !== receipt.terminalSourceRunHash || targetReservationPairClose.terminalRunLaunchRef !== receipt.terminalRunLaunchRef || targetReservationPairClose.terminalRunLaunchHash !== receipt.terminalRunLaunchHash) currentEntryFail("recovery-source target reservation pair close is crossed");
     for (const candidate of [receipt, terminalSourceRun, terminalRunLaunch]) {
       if (candidate.operationRef !== recoveryOperation.operationRef || candidate.operationHash !== recoveryOperation.operationHash || candidate.targetRunLaunchCompositeHash !== recoveryOperation.targetRunLaunchCompositeHash || candidate.runId !== receipt.runId || candidate.operationRunBindingHash !== receipt.operationRunBindingHash || candidate.reciprocalRunOperationBindingHash !== receipt.reciprocalRunOperationBindingHash) currentEntryFail("recovery-source terminal operation/run authority is crossed");
@@ -11825,6 +12364,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
     if (release.releaseRef !== receipt.fenceReleaseRef || release.releaseHash !== receipt.fenceReleaseHash || release.fenceRef !== recoveryOperation.ownerAdmissionFenceRef || release.fenceHash !== recoveryOperation.ownerAdmissionFenceHash || !isPlainRecord(release.releaseAuthority) || release.releaseAuthority.targetReservationPairCloseRef !== receipt.targetReservationPairCloseRef || release.releaseAuthority.targetReservationPairCloseHash !== receipt.targetReservationPairCloseHash) currentEntryFail("recovery-source fence release is crossed");
     return returnOwner(recoverySourceBootstrapStatusV1({ ...prepared, runId: receipt.runId, operationRunBindingHash: receipt.operationRunBindingHash, reciprocalRunOperationBindingHash: receipt.reciprocalRunOperationBindingHash, terminalOwnerRef: receipt.terminalOwnerRef, terminalOwnerHash: receipt.terminalOwnerHash, terminalSourceRunRef: receipt.terminalSourceRunRef, terminalSourceRunHash: receipt.terminalSourceRunHash, terminalRunLaunchRef: receipt.terminalRunLaunchRef, terminalRunLaunchHash: receipt.terminalRunLaunchHash, targetReservationPairCloseRef: receipt.targetReservationPairCloseRef, targetReservationPairCloseHash: receipt.targetReservationPairCloseHash, fenceReleaseRef: receipt.fenceReleaseRef, fenceReleaseHash: receipt.fenceReleaseHash, sourceRunRef: receipt.sourceRunRef, sourceRunHash: receipt.sourceRunHash, visibilityHeadRef: visibilityHead.visibilityHeadRef, visibilityHeadHash: visibilityHead.visibilityHeadHash }));
   } catch (error) {
+    if (capabilityCurrent !== null) exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.delete(capabilityCurrent);
     closeExactPoisonPostVisibleProgressRecoveryResourcesV1(resources, error);
     throw error;
   }
@@ -12299,17 +12839,505 @@ function hasExactPoisonPostVisibleCompletedExternalEndpointV1(
   return endpoint !== undefined && (!isPlainRecord(endpoint.publication) || isPlainRecord(endpoint.writer) && endpoint.writer.state === "A0" && Array.isArray(endpoint.writer.members) && endpoint.writer.members.length === 0);
 }
 
+async function observeExactPoisonPostVisiblePreSchemaNoReplaceEndpointNoWriteV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+  arrow: ExactPoisonPostVisibleExternalArrowV1,
+  current: Readonly<Record<string, unknown>> | null,
+  endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
+): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
+  if (arrow.family !== "pre-schema" || current === null || endpointDescriptor.policy !== "pre-schema-no-replace") currentEntryFail("external pre-schema endpoint authority is crossed");
+  const capability = exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.get(current);
+  if (capability === undefined) currentEntryFail("external pre-schema physical endpoint authority is unavailable");
+  authority.assertStable();
+  capability.assertStable();
+  if (
+    operation.operationRef !== authority.successorOperation.operationRef
+    || operation.operationHash !== authority.successorOperation.operationHash
+    || capability.operationRef !== operation.operationRef
+    || capability.operationHash !== operation.operationHash
+    || capability.arrow.prior !== arrow.prior
+    || capability.arrow.next !== arrow.next
+    || capability.arrow.ordinal !== arrow.ordinal
+  ) currentEntryFail("external pre-schema operation or arrow authority is crossed");
+  const key = `${endpointDescriptor.material}:${endpointDescriptor.role}`;
+  const endpoint = capability.endpoints.get(key);
+  if (endpoint === undefined) currentEntryFail("external pre-schema endpoint descriptor is absent");
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("external pre-schema endpoint observation is closed");
+    authority.assertStable();
+    capability.assertStable();
+    authority.assertStable();
+  };
+  assertStable();
+  return Object.freeze({
+    material: endpointDescriptor.material,
+    role: endpointDescriptor.role,
+    policy: endpointDescriptor.policy,
+    target: endpoint.target,
+    expectedBytes: endpoint.expectedBytes,
+    publication: endpoint.publication,
+    writer: endpoint.writer,
+    database: null,
+    cas: null,
+    assertStable,
+    close: (): void => {
+      if (closed) currentEntryFail("external pre-schema endpoint observation closed twice");
+      closed = true;
+    },
+  });
+}
+
+async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+  arrow: ExactPoisonPostVisibleExternalArrowV1,
+  current: Readonly<Record<string, unknown>> | null,
+  endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
+  entryOwner: ExactPoisonPostVisibleProgressCurrentEntryAuthorityObservationV1 | null,
+): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
+  if (current === null || endpointDescriptor.policy !== "task12-receipt") currentEntryFail("external Task12 endpoint authority is crossed");
+  authority.assertStable();
+  if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external Task12 operation is crossed");
+  if (arrow.family === "recovery-source") {
+    const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+    if (capability === undefined) currentEntryFail("external recovery-source physical endpoint authority is unavailable");
+    capability.assertStable();
+    if (
+      capability.operationRef !== operation.operationRef
+      || capability.operationHash !== operation.operationHash
+      || capability.arrow.prior !== arrow.prior
+      || capability.arrow.next !== arrow.next
+      || capability.arrow.ordinal !== arrow.ordinal
+    ) currentEntryFail("external recovery-source operation or arrow authority is crossed");
+    const endpoint = capability.endpoints.get(`${endpointDescriptor.material}:${endpointDescriptor.role}`);
+    if (endpoint === undefined) currentEntryFail("external recovery-source endpoint descriptor is absent");
+    let closed = false;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("external recovery-source endpoint observation is closed");
+      authority.assertStable();
+      capability.assertStable();
+      authority.assertStable();
+    };
+    assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material,
+      role: endpointDescriptor.role,
+      policy: endpointDescriptor.policy,
+      target: endpoint.target,
+      expectedBytes: endpoint.expectedBytes,
+      publication: endpoint.publication,
+      writer: endpoint.writer,
+      database: null,
+      cas: null,
+      assertStable,
+      close: (): void => {
+        if (closed) currentEntryFail("external recovery-source endpoint observation closed twice");
+        closed = true;
+      },
+    });
+  }
+  let target: string;
+  let expectedBytes: Buffer;
+  let content = false;
+  let locator = false;
+  let contentShard = false;
+  if (arrow.family === "entry-authority") {
+    if (entryOwner === null || entryOwner.value === null) currentEntryFail("entry external topology owner is absent");
+    entryOwner.assertStable();
+    content = endpointDescriptor.endpointOrdinal === 0 && endpointDescriptor.material === "entry-authority" && endpointDescriptor.role === "content";
+    locator = endpointDescriptor.endpointOrdinal === 1 && endpointDescriptor.material === "entry-authority" && endpointDescriptor.role === "locator";
+    if (!content && !locator) currentEntryFail("entry external endpoint descriptor is crossed");
+    if (entryOwner.pair === null || entryOwner.pairBytes === null || entryOwner.contentTarget === null) currentEntryFail("entry external endpoint authority is incomplete");
+    target = content ? entryOwner.contentTarget : entryOwner.locatorTarget;
+    expectedBytes = content ? task12ReceiptCanonicalBytesV1(entryOwner.value) : entryOwner.pairBytes;
+  } else if (arrow.family === "migration-32" && [0, 1, 2].includes(arrow.ordinal)) {
+    const expectedState = arrow.ordinal === 0 ? "prepared" : arrow.ordinal === 1 ? "consumed" : "terminal";
+    if (entryOwner !== null || current.state !== expectedState || !isPlainRecord(current.currentEntryOperation)
+      || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
+      || typeof current.statusHash !== "string" || !SHA256.test(current.statusHash)
+      || current.statusRef !== `${TASK12_MIGRATION_PREFIXES_V1.status}${current.statusHash}`) currentEntryFail("migration-32 endpoint authority is crossed");
+    const statusBody = { ...current }; delete statusBody.statusRef; delete statusBody.statusHash;
+    if (hashCanonicalJson(statusBody) !== current.statusHash) currentEntryFail("migration-32 status self-hash is crossed");
+    if (arrow.ordinal === 0 && endpointDescriptor.endpointOrdinal === 0 && endpointDescriptor.material === "authorization" && endpointDescriptor.role === "content" && isPlainRecord(current.authorization)) {
+      const authorization = await resolveInternalProductionPreManifestMigration32AuthorizationV1(current.authorization as InternalProductionPreManifestMigration32AuthorizationPairV1);
+      if (authorization.currentEntryOperationRef !== operation.operationRef || authorization.currentEntryOperationHash !== operation.operationHash) currentEntryFail("migration-32 authorization operation is crossed");
+      target = task12MigrationRecordPathV1("authorizations", String(authorization.authorizationHash));
+      expectedBytes = task12ReceiptCanonicalBytesV1(authorization);
+      content = true;
+      contentShard = true;
+    } else if (arrow.ordinal === 1 && endpointDescriptor.endpointOrdinal === 0 && endpointDescriptor.material === "consumption" && endpointDescriptor.role === "content" && isPlainRecord(current.consumption)) {
+      const consumption = await resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1(current.consumption as InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1);
+      if (consumption.currentEntryOperationRef !== operation.operationRef || consumption.currentEntryOperationHash !== operation.operationHash) currentEntryFail("migration-32 consumption operation is crossed");
+      target = task12MigrationRecordPathV1("consumptions", String(consumption.consumptionHash));
+      expectedBytes = task12ReceiptCanonicalBytesV1(consumption);
+      content = true;
+      contentShard = true;
+    } else if (arrow.ordinal === 2 && endpointDescriptor.endpointOrdinal === 0 && endpointDescriptor.material === "receipt" && endpointDescriptor.role === "content" && isPlainRecord(current.migrationReceipt)) {
+      const receipt = await resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(current.migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1, operation);
+      const receiptHash = String(receipt.migrationReceiptHash);
+      target = task12MigrationRecordPathV1("receipts", receiptHash);
+      expectedBytes = task12ReceiptCanonicalBytesV1(receipt);
+      content = true;
+      contentShard = true;
+    } else if (endpointDescriptor.endpointOrdinal === 1 && endpointDescriptor.material === "status" && endpointDescriptor.role === "content") {
+      target = task12MigrationRecordPathV1("statuses", current.statusHash);
+      expectedBytes = task12ReceiptCanonicalBytesV1(current);
+      content = true;
+      contentShard = true;
+    } else if (endpointDescriptor.endpointOrdinal === 2 && endpointDescriptor.material === "status" && endpointDescriptor.role === "locator") {
+      target = path.join(task12MigrationOperationDirectoryV1(operation.operationHash), `status-0${arrow.ordinal}.pair.json`);
+      expectedBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ statusRef: current.statusRef, statusHash: current.statusHash }));
+      locator = true;
+    } else currentEntryFail("migration-32 endpoint descriptor is crossed");
+  } else if (arrow.family === "current-audit" && arrow.ordinal === 0 && arrow.prior === "terminal" && arrow.next === "current") {
+    if (entryOwner !== null || !isPlainRecord(current.currentEntryOperation)
+      || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
+      || !isPlainRecord(current.currentAudit)
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content") currentEntryFail("migration-32 current-audit endpoint authority is crossed");
+    const audit = await resolveInternalProductionBootstrapHandoffCurrentAuditV1(current.currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>, operation);
+    target = task12MigrationRecordPathV1("current-audits", String(audit.bootstrapHandoffCurrentAuditHash));
+    expectedBytes = task12ReceiptCanonicalBytesV1(audit);
+    content = true;
+    contentShard = true;
+  } else currentEntryFail("external Task12 physical endpoint discovery is unavailable");
+  target = task12ReceiptPresentedPathV1(target);
+  const family = (familyTarget: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target: familyTarget, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true });
+  const controllerWriter = (familyTarget: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target: familyTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true });
+  const directoryPolicy = arrow.family === "entry-authority" && content ? Object.freeze([family(target)])
+    : arrow.family === "entry-authority" ? Object.freeze([
+      family(path.join(authority.operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json")),
+      family(path.join(authority.operationDirectory, "01-current-status.pair.json")),
+      family(target),
+      controllerWriter(path.join(authority.operationDirectory, "current-entry-controller.lock")),
+    ])
+      : locator ? Object.freeze([0, 1, 2].map((ordinal) => family(path.join(task12MigrationOperationDirectoryV1(operation.operationHash), `status-0${ordinal}.pair.json`))))
+        : Object.freeze([family(target)]);
+  const owner = contentShard
+    ? observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(target, expectedBytes)
+    : observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(target, expectedBytes, directoryPolicy);
+  const projection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(owner, target, expectedBytes);
+  owner.assertStable();
+  return Object.freeze({
+    material: endpointDescriptor.material,
+    role: endpointDescriptor.role,
+    policy: endpointDescriptor.policy,
+    target,
+    expectedBytes,
+    publication: projection.publication,
+    writer: projection.writer,
+    database: null,
+    cas: null,
+    assertStable: owner.assertStable,
+    close: owner.close,
+  });
+}
+
+async function observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+  arrow: ExactPoisonPostVisibleExternalArrowV1,
+  current: Readonly<Record<string, unknown>> | null,
+  endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
+): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
+  if (arrow.family !== "pre-schema" || arrow.ordinal !== 6 || current === null || endpointDescriptor.policy !== "spawner-admission") currentEntryFail("external spawner-admission endpoint authority is crossed");
+  const capability = exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.get(current);
+  if (capability === undefined) currentEntryFail("external spawner-admission physical endpoint authority is unavailable");
+  authority.assertStable();
+  capability.assertStable();
+  if (
+    capability.operationRef !== operation.operationRef
+    || capability.operationHash !== operation.operationHash
+    || operation.operationRef !== authority.successorOperation.operationRef
+    || operation.operationHash !== authority.successorOperation.operationHash
+    || capability.arrow.prior !== arrow.prior
+    || capability.arrow.next !== arrow.next
+    || capability.arrow.ordinal !== arrow.ordinal
+  ) currentEntryFail("external spawner-admission operation or arrow authority is crossed");
+  const endpoint = capability.endpoints.get(`${endpointDescriptor.material}:${endpointDescriptor.role}`);
+  if (endpoint === undefined) currentEntryFail("external spawner-admission endpoint descriptor is absent");
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("external spawner-admission endpoint observation is closed");
+    authority.assertStable();
+    capability.assertStable();
+    authority.assertStable();
+  };
+  assertStable();
+  return Object.freeze({
+    material: endpointDescriptor.material,
+    role: endpointDescriptor.role,
+    policy: endpointDescriptor.policy,
+    target: endpoint.target,
+    expectedBytes: endpoint.expectedBytes,
+    publication: endpoint.publication,
+    writer: endpoint.writer,
+    database: null,
+    cas: null,
+    assertStable,
+    close: (): void => {
+      if (closed) currentEntryFail("external spawner-admission endpoint observation closed twice");
+      closed = true;
+    },
+  });
+}
+
+async function observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+  arrow: ExactPoisonPostVisibleExternalArrowV1,
+  current: Readonly<Record<string, unknown>> | null,
+  endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
+): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
+  if (arrow.family === "manifest-a") {
+    if (arrow.ordinal !== 0 || arrow.prior !== "seeded-null" || arrow.next !== "activation-current"
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "manifest-a"
+      || endpointDescriptor.policy !== "database-atomic" || endpointDescriptor.role !== "database") currentEntryFail("external manifest database endpoint authority is crossed");
+    authority.assertStable();
+    let projection: Readonly<Record<string, unknown>>;
+    if (current === null) {
+      projection = Object.freeze({ schema: "setfarm.internal-production-owner-producer-manifest-set-current-observation.v1", state: "seeded-null" });
+    } else {
+      if (!isPlainRecord(current.receipt) || !isPlainRecord(current.head)
+        || current.currentRevision !== 1 || current.receipt.phase !== "A" || current.head.phase !== "A"
+        || current.receipt.activationRef !== current.head.activationRef || current.receipt.activationHash !== current.head.activationHash) currentEntryFail("external manifest current projection is crossed");
+      requirePair({ ownerProducerManifestActivationRef: current.receipt.activationRef, ownerProducerManifestActivationHash: current.receipt.activationHash }, "ownerProducerManifestActivationRef", "ownerProducerManifestActivationHash", "setfarm://internal-production/owner-producer-manifest-set-activation/sha256/");
+      requirePair({ ownerProducerManifestHeadRef: current.head.headRef, ownerProducerManifestHeadHash: current.head.headHash }, "ownerProducerManifestHeadRef", "ownerProducerManifestHeadHash", "setfarm://internal-production/owner-producer-manifest-set-activation-head/sha256/");
+      projection = current;
+    }
+    authority.assertStable();
+    const expectedBytes = task12ReceiptCanonicalBytesV1(projection);
+    let closed = false;
+    const assertStable = (): void => { if (closed) currentEntryFail("external manifest database observation is closed"); authority.assertStable(); };
+    assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material, role: endpointDescriptor.role, policy: endpointDescriptor.policy,
+      target: null, expectedBytes, publication: null, writer: null,
+      database: current === null
+        ? Object.freeze({ state: "absent", expectedProjection: null, artifactCount: 0, laterArtifactCount: 0 })
+        : Object.freeze({ state: "current", expectedProjection: expectedBytes, artifactCount: 1, laterArtifactCount: 0 }),
+      cas: null, assertStable,
+      close: (): void => { if (closed) currentEntryFail("external manifest database observation closed twice"); closed = true; },
+    });
+  }
+  if (arrow.family === "database-33") {
+    if (arrow.ordinal !== 0 || arrow.prior !== "migration-32-current" || arrow.next !== "migration-33-current"
+      || current === null || current.state !== "terminal" || !isPlainRecord(current.currentEntryOperation)
+      || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "database-33"
+      || endpointDescriptor.policy !== "database-atomic" || endpointDescriptor.role !== "database") currentEntryFail("external migration-33 database endpoint authority is crossed");
+    authority.assertStable();
+    const observed = await observeInternalProductionCurrentEntryMigration33ReadOnlyV1();
+    authority.assertStable();
+    if (!hasExactKeys(observed, ["schema", "state", "migrationName", "journal", "catalog"])
+      || observed.schema !== "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1"
+      || observed.migrationName !== "033_v3_recovery_claim_runtime_publication_v1"
+      || (observed.state !== "absent" && observed.state !== "current")) currentEntryFail("external migration-33 database observation is invalid");
+    if (observed.state === "absent") {
+      if (observed.journal !== null || observed.catalog !== null) currentEntryFail("external migration-33 database absence is crossed");
+    } else {
+      if (!isPlainRecord(observed.journal) || !isPlainRecord(observed.catalog)
+        || observed.journal.ordinal !== 33 || observed.journal.state !== "current"
+        || observed.journal.checksum !== "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf"
+        || canonicalComparable(observed.catalog) !== canonicalComparable(Object.freeze({ bootstrapHandoffOperationTablePresent: true, bootstrapHandoffOperationIdUnique: true, bootstrapHandoffClaimIdUnique: true, terminalReceiptPairColumnsPresent: true, ownerReservationSidecarPresent: true, ownerAdmissionHeadPresent: true }))) currentEntryFail("external migration-33 database current projection is crossed");
+    }
+    const expectedBytes = task12ReceiptCanonicalBytesV1(observed);
+    let closed = false;
+    const assertStable = (): void => { if (closed) currentEntryFail("external migration-33 database observation is closed"); authority.assertStable(); };
+    assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material, role: endpointDescriptor.role, policy: endpointDescriptor.policy,
+      target: null, expectedBytes, publication: null, writer: null,
+      database: Object.freeze({ state: observed.state, expectedProjection: observed.state === "current" ? expectedBytes : null, artifactCount: observed.state === "current" ? 1 : 0, laterArtifactCount: 0 }),
+      cas: null, assertStable,
+      close: (): void => { if (closed) currentEntryFail("external migration-33 database observation closed twice"); closed = true; },
+    });
+  }
+  if (arrow.family !== "recovery-source" || (arrow.ordinal !== 1 && arrow.ordinal !== 2) || current === null || endpointDescriptor.policy !== "database-atomic" || endpointDescriptor.role !== "database") currentEntryFail("external database endpoint authority is crossed");
+  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+  if (capability === undefined || capability.observeDatabase === null) currentEntryFail("external database physical endpoint authority is unavailable");
+  authority.assertStable();
+  capability.assertStable();
+  if (
+    operation.operationRef !== authority.successorOperation.operationRef
+    || operation.operationHash !== authority.successorOperation.operationHash
+    || capability.operationRef !== operation.operationRef
+    || capability.operationHash !== operation.operationHash
+    || capability.arrow.prior !== arrow.prior
+    || capability.arrow.next !== arrow.next
+    || capability.arrow.ordinal !== arrow.ordinal
+  ) currentEntryFail("external database operation or arrow authority is crossed");
+  const expectedBytes = capability.databaseEndpoints.get(`${endpointDescriptor.material}:${endpointDescriptor.role}`);
+  if (expectedBytes === undefined) currentEntryFail("external database endpoint descriptor is absent");
+  await capability.observeDatabase();
+  capability.assertStable();
+  authority.assertStable();
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("external database endpoint observation is closed");
+    authority.assertStable();
+    capability.assertStable();
+    authority.assertStable();
+  };
+  assertStable();
+  return Object.freeze({
+    material: endpointDescriptor.material,
+    role: endpointDescriptor.role,
+    policy: endpointDescriptor.policy,
+    target: null,
+    expectedBytes,
+    publication: null,
+    writer: null,
+    database: Object.freeze({ state: "current", expectedProjection: expectedBytes, artifactCount: 1, laterArtifactCount: 0 }),
+    cas: null,
+    assertStable,
+    close(): void {
+      if (closed) currentEntryFail("external database endpoint observation closed twice");
+      closed = true;
+    },
+  });
+}
+
+async function observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+  arrow: ExactPoisonPostVisibleExternalArrowV1,
+  current: Readonly<Record<string, unknown>> | null,
+  endpointDescriptor: ExactPoisonPostVisibleExternalEndpointDescriptorV1,
+): Promise<ExactPoisonPostVisibleExternalEndpointOwnerV1> {
+  if (arrow.family !== "recovery-source" || current === null || endpointDescriptor.policy !== "expected-predecessor-cas") currentEntryFail("external expected-predecessor endpoint authority is crossed");
+  const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current);
+  if (capability === undefined) currentEntryFail("external expected-predecessor physical endpoint authority is unavailable");
+  authority.assertStable();
+  capability.assertStable();
+  if (
+    operation.operationRef !== authority.successorOperation.operationRef
+    || operation.operationHash !== authority.successorOperation.operationHash
+    || capability.operationRef !== operation.operationRef
+    || capability.operationHash !== operation.operationHash
+    || capability.arrow.prior !== arrow.prior
+    || capability.arrow.next !== arrow.next
+    || capability.arrow.ordinal !== arrow.ordinal
+  ) currentEntryFail("external expected-predecessor operation or arrow authority is crossed");
+  const endpoint = capability.casEndpoints.get(`${endpointDescriptor.material}:${endpointDescriptor.role}`);
+  if (endpoint === undefined) currentEntryFail("external expected-predecessor endpoint descriptor is absent");
+  let closed = false;
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("external expected-predecessor endpoint observation is closed");
+    authority.assertStable();
+    capability.assertStable();
+    authority.assertStable();
+  };
+  assertStable();
+  return Object.freeze({
+    material: endpointDescriptor.material,
+    role: endpointDescriptor.role,
+    policy: endpointDescriptor.policy,
+    target: endpoint.target,
+    expectedBytes: endpoint.expectedBytes,
+    publication: null,
+    writer: null,
+    database: null,
+    cas: endpoint.cas,
+    assertStable,
+    close: (): void => {
+      if (closed) currentEntryFail("external expected-predecessor endpoint observation closed twice");
+      closed = true;
+    },
+  });
+}
+
+function requireExactPoisonPostVisibleExternalArrowV1(
+  candidate: ExactPoisonPostVisibleExternalArrowV1,
+): ExactPoisonPostVisibleExternalArrowV1 {
+  if (typeof candidate.family !== "string" || typeof candidate.prior !== "string" || typeof candidate.next !== "string"
+    || !Number.isInteger(candidate.ordinal) || typeof candidate.rawKind !== "string") currentEntryFail("external raw arrow descriptor is absent");
+  const arrowKey = `${candidate.family}:${candidate.ordinal}:${candidate.prior}:${candidate.next}`;
+  const endpoints = EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[arrowKey];
+  const cardinality = (EXACT_POISON_POST_VISIBLE_EXTERNAL_RAW_ARROW_CARDINALITIES_V1 as Readonly<Record<string, number>>)[arrowKey];
+  if (endpoints === undefined || cardinality === undefined || endpoints.length !== cardinality) currentEntryFail("external raw arrow descriptor is invalid");
+  return candidate;
+}
+
+function selectExactPoisonPostVisibleExternalArrowV1(
+  descriptor: typeof EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1[number],
+  current: Readonly<Record<string, unknown>> | null,
+  admissionPreSchemaCurrent?: Readonly<Record<string, unknown>> | null,
+): ExactPoisonPostVisibleExternalArrowV1 | null {
+  const candidates = EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.filter((candidate) => candidate.row === descriptor.row && candidate.rawKind === descriptor.rawKind);
+  if (candidates.length === 0) return null;
+  if (descriptor.rawKind === "admission") {
+    if (!isPlainRecord(admissionPreSchemaCurrent) || !isPlainRecord(current)) currentEntryFail("admission external lower authority is absent");
+    const preSchemaStage = admissionPreSchemaCurrent.state === "dispatching" && isPlainRecord(admissionPreSchemaCurrent.dispatchPrefix)
+      ? String(admissionPreSchemaCurrent.dispatchPrefix.phase)
+      : String(admissionPreSchemaCurrent.state);
+    if (preSchemaStage !== "normal_task0_admission_ready") {
+      const arrow = candidates.find((candidate) => candidate.family === "pre-schema" && (candidate.prior === preSchemaStage || candidate.next === preSchemaStage));
+      if (arrow === undefined) currentEntryFail("admission pre-schema external frontier is crossed");
+      return requireExactPoisonPostVisibleExternalArrowV1(arrow);
+    }
+    const recoveryStage = String(current.state);
+    const arrow = candidates.find((candidate) => candidate.family === "recovery-source" && candidate.prior === recoveryStage)
+      ?? candidates.find((candidate) => candidate.family === "recovery-source" && candidate.next === recoveryStage)
+      ?? null;
+    return arrow === null ? null : requireExactPoisonPostVisibleExternalArrowV1(arrow);
+  }
+  if (candidates.length === 1) return requireExactPoisonPostVisibleExternalArrowV1(candidates[0]!);
+  if (!isPlainRecord(current)) currentEntryFail("external lower authority is absent");
+  const currentStage = current.state === "dispatching" && isPlainRecord(current.dispatchPrefix)
+    ? String(current.dispatchPrefix.phase)
+    : String(current.state);
+  const selected = candidates.find((candidate) => candidate.prior === currentStage)
+    ?? candidates.find((candidate) => candidate.next === currentStage);
+  if (selected === undefined) currentEntryFail("external lower authority has no exact frontier");
+  return requireExactPoisonPostVisibleExternalArrowV1(selected);
+}
+
+function classifyExactPoisonPostVisibleExternalEndpointStateV1(
+  endpoint: ExactPoisonPostVisibleExternalEndpointOwnerV1,
+): Readonly<{ idle: boolean; complete: boolean }> {
+  if (endpoint.role === "database") {
+    if (!isPlainRecord(endpoint.database)) currentEntryFail("external database endpoint observation is absent");
+    return Object.freeze({ idle: endpoint.database.state === "absent", complete: endpoint.database.state === "current" });
+  }
+  if (endpoint.policy === "expected-predecessor-cas") {
+    if (!isPlainRecord(endpoint.cas)) currentEntryFail("external expected-predecessor endpoint observation is absent");
+    return Object.freeze({ idle: endpoint.cas.state === "Q0", complete: endpoint.cas.state === "Q3" || endpoint.cas.state === "Q4" });
+  }
+  if (!isPlainRecord(endpoint.publication) || !isPlainRecord(endpoint.writer) || !Array.isArray(endpoint.writer.members)) currentEntryFail("external publication endpoint observation is absent");
+  const writerQuiescent = endpoint.writer.state === "A0" && endpoint.writer.members.length === 0;
+  const durable = endpoint.publication.state === "F2u" || endpoint.publication.state === "F3" || endpoint.publication.state === "F4";
+  return Object.freeze({ idle: endpoint.publication.state === "F0" && writerQuiescent, complete: durable && writerQuiescent });
+}
+
 async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
   operation: InternalProductionCurrentEntryOperationV1,
-  descriptor: typeof EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1[number],
+  arrow: ExactPoisonPostVisibleExternalArrowV1 | null,
   current: Readonly<Record<string, unknown>> | null,
   entryOwner: ExactPoisonPostVisibleProgressCurrentEntryAuthorityObservationV1 | null,
 ): Promise<ExactPoisonPostVisibleExternalRawPublicationObservationV1> {
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external raw operation is crossed");
-  if (descriptor.rawKind === "entry-authority") {
-    if (entryOwner === null) currentEntryFail("entry external topology owner is absent");
+  if (arrow === null) {
+    if (entryOwner !== null) currentEntryFail("empty external frontier received an entry owner");
+    let closed = false;
+    return Object.freeze({
+      state: "none", family: null, operationRef: operation.operationRef, operationHash: operation.operationHash,
+      arrow: null, current: null, activeEndpointOrdinal: null, endpoints: Object.freeze([]),
+      assertStable(): void { if (closed) currentEntryFail("external empty observation is closed"); authority.assertStable(); },
+      close(): void { if (closed) currentEntryFail("external empty observation closed twice"); closed = true; },
+    });
+  }
+  requireExactPoisonPostVisibleExternalArrowV1(arrow);
+  const arrowKey = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}`;
+  const endpointDescriptors = EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[arrowKey];
+  if (endpointDescriptors === undefined) currentEntryFail("external endpoint descriptor family is absent");
+  if (EXACT_POISON_POST_VISIBLE_EXTERNAL_FIXED_ENDPOINT_BASENAMES_V1.length !== 9) currentEntryFail("external fixed endpoint catalog is crossed");
+  let retainedEntryPair: Readonly<{ entryAuthorityRef: string; entryAuthorityHash: string }> | null = null;
+  if (arrow.rawKind === "entry-authority") {
+    if (arrow.family !== "entry-authority" || entryOwner === null) currentEntryFail("entry external topology owner is absent");
     entryOwner.assertStable();
     if (entryOwner.value === null) {
       if (current !== null || entryOwner.pair !== null || entryOwner.pairBytes !== null || entryOwner.contentTarget !== null) currentEntryFail("absent entry external topology is crossed");
@@ -12321,14 +13349,9 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
         arrow: null, current: null, activeEndpointOrdinal: null, endpoints: Object.freeze([]),
         assertStable(): void {
           if (closed) currentEntryFail("entry external topology observation is closed");
-          authority.assertStable();
-          entryOwner.assertStable();
-          authority.assertStable();
+          authority.assertStable(); entryOwner.assertStable(); authority.assertStable();
         },
-        close(): void {
-          if (closed) currentEntryFail("entry external topology observation closed twice");
-          closed = true;
-        },
+        close(): void { if (closed) currentEntryFail("entry external topology observation closed twice"); closed = true; },
       });
       entryOwner.assertStable();
       requireExactPoisonPostVisibleExternalRawPublicationV1(observed, operation);
@@ -12337,95 +13360,127 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
     }
     if (entryOwner.pair === null || entryOwner.pairBytes === null || entryOwner.contentTarget === null || current === null) currentEntryFail("present entry external topology is incomplete");
     if (canonicalComparable(current) !== canonicalComparable(entryOwner.value)) currentEntryFail("entry external current and owned content are crossed");
-    const entryPair = requirePair(
-      { entryAuthorityRef: entryOwner.pair.entryAuthorityRef, entryAuthorityHash: entryOwner.pair.entryAuthorityHash },
-      "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1,
-    );
+    const entryPair = requirePair({ entryAuthorityRef: entryOwner.pair.entryAuthorityRef, entryAuthorityHash: entryOwner.pair.entryAuthorityHash }, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1);
+    retainedEntryPair = Object.freeze({
+      entryAuthorityRef: String(entryPair.entryAuthorityRef),
+      entryAuthorityHash: String(entryPair.entryAuthorityHash),
+    });
     if (entryOwner.value.entryAuthorityRef !== entryPair.entryAuthorityRef || entryOwner.value.entryAuthorityHash !== entryPair.entryAuthorityHash) currentEntryFail("entry external content and pair are crossed");
     if (entryOwner.value.currentEntryOperation.operationRef !== operation.operationRef || entryOwner.value.currentEntryOperation.operationHash !== operation.operationHash) currentEntryFail("entry external content operation is crossed");
-    const expectedPairBytes = task12ReceiptCanonicalBytesV1(entryPair);
-    if (!entryOwner.pairBytes.equals(expectedPairBytes)) currentEntryFail("entry external locator bytes are crossed");
+    if (!entryOwner.pairBytes.equals(task12ReceiptCanonicalBytesV1(entryPair))) currentEntryFail("entry external locator bytes are crossed");
+    const entryContentTarget = entryOwner.contentTarget;
     const expectedContentBytes = task12ReceiptCanonicalBytesV1(entryOwner.value);
+    const entryLocatorTarget = entryOwner.locatorTarget;
+    const entryLocatorBytes = entryOwner.pairBytes;
     const expectedLocatorTarget = path.join(authority.operationDirectory, "02-entry-authority.pair.json");
     const expectedContentTarget = path.join(authority.successorRoot, "records", "entry-authorities", "sha256", entryPair.entryAuthorityHash.slice(0, 2), `${entryPair.entryAuthorityHash}.json`);
-    if (entryOwner.locatorTarget !== expectedLocatorTarget || entryOwner.contentTarget !== expectedContentTarget) currentEntryFail("entry external target authority is crossed");
-    const family = (target: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true });
-    const controllerWriter = (target: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true });
-    const policies = Object.freeze({
-      content: Object.freeze([family(entryOwner.contentTarget)]),
-      locator: Object.freeze([
-        family(path.join(authority.operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json")),
-        family(path.join(authority.operationDirectory, "01-current-status.pair.json")),
-        family(entryOwner.locatorTarget),
-        controllerWriter(path.join(authority.operationDirectory, "current-entry-controller.lock")),
-      ]),
-    });
-    const children: ExactPoisonPostVisibleTask12ReceiptEndpointObservationV1[] = [];
-    try {
-      const observeEntryEndpoint = (target: string, bytes: Buffer, directoryPolicy: readonly Task12ReceiptPublicationDirectoryFamilyV1[]): ExactPoisonPostVisibleTask12ReceiptEndpointObservationV1 => observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(target, bytes, directoryPolicy);
-      entryOwner.assertStable();
-      const content = observeEntryEndpoint(entryOwner.contentTarget, expectedContentBytes, policies.content);
-      children.push(content);
-      entryOwner.assertStable();
-      const locator = observeEntryEndpoint(entryOwner.locatorTarget, entryOwner.pairBytes, policies.locator);
-      children.push(locator);
-      entryOwner.assertStable();
-      const contentProjection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(content, entryOwner.contentTarget, expectedContentBytes);
-      const locatorProjection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(locator, entryOwner.locatorTarget, entryOwner.pairBytes);
-      entryOwner.assertStable();
-      const endpoints = Object.freeze([
-        Object.freeze({ material: "entry-authority", role: "content" as const, policy: "task12-receipt" as const, target: entryOwner.contentTarget, expectedBytes: expectedContentBytes, publication: contentProjection.publication, writer: contentProjection.writer, database: null, cas: null }),
-        Object.freeze({ material: "entry-authority", role: "locator" as const, policy: "task12-receipt" as const, target: entryOwner.locatorTarget, expectedBytes: entryOwner.pairBytes, publication: locatorProjection.publication, writer: locatorProjection.writer, database: null, cas: null }),
-      ]);
-      const endpointState = (endpoint: typeof endpoints[number]): Readonly<{ idle: boolean; complete: boolean; decisive: boolean }> => {
-        const publicationState = endpoint.publication.state;
-        const writerQuiescent = endpoint.writer.state === "A0" && endpoint.writer.members.length === 0;
-        const durable = publicationState === "F2u" || publicationState === "F3" || publicationState === "F4";
-        return Object.freeze({ idle: publicationState === "F0" && writerQuiescent, complete: durable && writerQuiescent, decisive: durable });
-      };
-      const states = endpoints.map(endpointState);
-      const firstIncomplete = states.findIndex((state) => !state.complete);
-      const activeEndpointOrdinal = firstIncomplete < 0 ? endpoints.length - 1 : firstIncomplete;
-      if (states.slice(0, activeEndpointOrdinal).some((state) => !state.complete) || states[activeEndpointOrdinal]!.idle || states.slice(activeEndpointOrdinal + 1).some((state) => !state.idle)) currentEntryFail("entry external endpoint prefix is crossed");
-      const visiblePair = Object.freeze({ entryAuthorityRef: entryPair.entryAuthorityRef, entryAuthorityHash: entryPair.entryAuthorityHash });
-      const visibleCurrent = states[activeEndpointOrdinal]!.decisive
-        ? Object.freeze({ state: "ready", entryAuthority: visiblePair })
+    if (entryContentTarget !== expectedContentTarget || entryLocatorTarget !== expectedLocatorTarget || !entryLocatorBytes.equals(task12ReceiptCanonicalBytesV1(entryPair)) || expectedContentBytes.length === 0) currentEntryFail("entry external target authority is crossed");
+  } else if (entryOwner !== null) currentEntryFail("non-entry external topology received an entry owner");
+
+  const children: ExactPoisonPostVisibleExternalEndpointOwnerV1[] = [];
+  let transferred = false;
+  let primary: unknown = null;
+  try {
+    for (const endpointDescriptor of endpointDescriptors) {
+      authority.assertStable();
+      if (entryOwner !== null) entryOwner.assertStable();
+      const endpointOrdinal = endpointDescriptor.endpointOrdinal;
+      const material = endpointDescriptor.material;
+      const role = endpointDescriptor.role;
+      const policy = endpointDescriptor.policy;
+      if (!Number.isInteger(endpointOrdinal) || endpointOrdinal < 0 || material.length === 0 || role.length === 0 || policy.length === 0) currentEntryFail("external endpoint routing descriptor is invalid");
+      let child: ExactPoisonPostVisibleExternalEndpointOwnerV1;
+      switch (policy) {
+        case "pre-schema-no-replace": {
+          const dotTemporarySuffix = ".tmp";
+          const writerForbidden = true;
+          if (!writerForbidden || dotTemporarySuffix.length === 0) currentEntryFail("external pre-schema policy is invalid");
+          child = await observeExactPoisonPostVisiblePreSchemaNoReplaceEndpointNoWriteV1(authority, operation, arrow, current, endpointDescriptor);
+          break;
+        }
+        case "task12-receipt":
+          child = await observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(authority, operation, arrow, current, endpointDescriptor, entryOwner);
+          break;
+        case "spawner-admission":
+          child = await observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1(authority, operation, arrow, current, endpointDescriptor);
+          break;
+        case "database-atomic":
+          child = await observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(authority, operation, arrow, current, endpointDescriptor);
+          break;
+        case "expected-predecessor-cas":
+          child = await observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1(authority, operation, arrow, current, endpointDescriptor);
+          break;
+        default: currentEntryFail("external endpoint policy is unsupported");
+      }
+      if (child.material !== material || child.role !== role || child.policy !== policy) currentEntryFail("external endpoint policy result is crossed");
+      if (entryOwner !== null && entryOwner.value !== null) {
+        if (entryOwner.pairBytes === null || entryOwner.contentTarget === null) currentEntryFail("entry external endpoint authority is incomplete");
+        const expectedTarget = endpointDescriptor.endpointOrdinal === 0 ? entryOwner.contentTarget : entryOwner.locatorTarget;
+        const expectedBytes = endpointDescriptor.endpointOrdinal === 0 ? task12ReceiptCanonicalBytesV1(entryOwner.value) : entryOwner.pairBytes;
+        if (child.target !== expectedTarget || !Buffer.isBuffer(child.expectedBytes) || !child.expectedBytes.equals(expectedBytes)) currentEntryFail("entry external endpoint target or bytes are crossed");
+      }
+      children.push(child);
+      if (entryOwner !== null) entryOwner.assertStable();
+      authority.assertStable();
+    }
+    const states = children.map(classifyExactPoisonPostVisibleExternalEndpointStateV1);
+    let activeEndpointOrdinal: number | null = null;
+    for (let index = states.length - 1; index >= 0; index -= 1) if (!states[index]!.idle) { activeEndpointOrdinal = index; break; }
+    if (activeEndpointOrdinal !== null && (states.slice(0, activeEndpointOrdinal).some((state) => !state.complete) || states.slice(activeEndpointOrdinal + 1).some((state) => !state.idle))) currentEntryFail("external endpoint prefix is crossed");
+    let closed = false;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("external topology observation is closed");
+      authority.assertStable();
+      if (entryOwner !== null) entryOwner.assertStable();
+      for (const child of children) child.assertStable();
+      if (entryOwner !== null) entryOwner.assertStable();
+      authority.assertStable();
+    };
+    const close = (): void => {
+      if (closed) currentEntryFail("external topology observation closed twice");
+      closed = true;
+      let first: unknown = null;
+      for (let index = children.length - 1; index >= 0; index -= 1) try { children[index]!.close(); } catch (error) { first ??= error; }
+      if (first !== null) throw first;
+    };
+    const observedCurrent = arrow.family === "database-33" ? (() => {
+      const endpoint = children[0];
+      if (endpoint === undefined || endpoint.material !== "database-33" || endpoint.role !== "database") currentEntryFail("migration-33 external database endpoint is absent");
+      return strictCanonicalRecord(endpoint.expectedBytes, "migration-33 external database projection");
+    })() : arrow.family === "entry-authority" ? (() => {
+      if (retainedEntryPair === null || activeEndpointOrdinal === null) currentEntryFail("entry external visible pair is absent");
+      const activeEndpoint = children[activeEndpointOrdinal]!;
+      const decisive = isPlainRecord(activeEndpoint.publication)
+        && (activeEndpoint.publication.state === "F2u" || activeEndpoint.publication.state === "F3" || activeEndpoint.publication.state === "F4");
+      return decisive
+        ? Object.freeze({ state: "ready", entryAuthority: retainedEntryPair })
         : Object.freeze({ state: "fence-released", entryAuthority: null });
-      let closed = false;
-      const assertStable = (): void => {
-        if (closed) currentEntryFail("entry external topology observation is closed");
-        authority.assertStable();
-        entryOwner.assertStable();
-        for (const child of children) child.assertStable();
-        entryOwner.assertStable();
-        authority.assertStable();
-      };
-      const close = (): void => {
-        if (closed) currentEntryFail("entry external topology observation closed twice");
-        closed = true;
-        let first: unknown = null;
-        for (let index = children.length - 1; index >= 0; index -= 1) try { children[index]!.close(); } catch (error) { first ??= error; }
-        if (first !== null) throw first;
-      };
-      assertStable();
-      const observed: ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Object.freeze({ state: "publishing", family: "entry-authority", operationRef: operation.operationRef, operationHash: operation.operationHash, arrow: Object.freeze({ prior: "fence-released", next: "ready", ordinal: 0 }), current: visibleCurrent, activeEndpointOrdinal, endpoints, assertStable, close });
-      entryOwner.assertStable();
-      requireExactPoisonPostVisibleExternalRawPublicationV1(observed, operation);
-      entryOwner.assertStable();
-      return observed;
-    } catch (error) {
-      let first: unknown = error;
-      for (let index = children.length - 1; index >= 0; index -= 1) try { children[index]!.close(); } catch (closeError) { first ??= closeError; }
-      throw first;
+    })() : current;
+    const observed: ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Object.freeze({
+      state: activeEndpointOrdinal === null ? "none" : "publishing",
+      family: arrow.family,
+      operationRef: operation.operationRef,
+      operationHash: operation.operationHash,
+      arrow: Object.freeze({ prior: arrow.prior, next: arrow.next, ordinal: arrow.ordinal }),
+      current: observedCurrent,
+      activeEndpointOrdinal,
+      endpoints: Object.freeze(children),
+      assertStable,
+      close,
+    });
+    requireExactPoisonPostVisibleExternalRawPublicationV1(observed, operation);
+    transferred = true;
+    return observed;
+  } catch (error) {
+    primary = error;
+    throw error;
+  } finally {
+    if (!transferred) {
+      let firstClose: unknown = null;
+      for (let index = children.length - 1; index >= 0; index -= 1) try { children[index]!.close(); } catch (error) { firstClose ??= error; }
+      if (primary === null && firstClose !== null) throw firstClose;
     }
   }
-  if (entryOwner !== null) currentEntryFail("non-entry external topology received an entry owner");
-  void current;
-  return Object.freeze({
-    state: "none", family: null, operationRef: operation.operationRef, operationHash: operation.operationHash,
-    arrow: null, current: null, activeEndpointOrdinal: null, endpoints: Object.freeze([]),
-    assertStable(): void { authority.assertStable(); }, close(): void {},
-  });
 }
 
 async function observeExactPoisonPostVisibleProgressRowTailNoWriteV1(
@@ -12986,6 +14041,7 @@ async function observeExactPoisonPostVisibleProgressOwnerDatabaseNoWriteV1(
     await sql.end();
   };
   try {
+    let initialSnapshotFingerprint: string | null = null;
     const project = async (connection: typeof sql): Promise<Readonly<Record<string, unknown>>> => {
       const ownerRows = await connection<Array<Record<string, unknown>>>`
         WITH RECURSIVE owner_head AS (
@@ -13107,18 +14163,46 @@ async function observeExactPoisonPostVisibleProgressOwnerDatabaseNoWriteV1(
            = (reservation.reservation_ref, reservation.reservation_hash, reservation.reservation_ref)
         ORDER BY reservation.category, reservation.reservation_ref
       `;
-      const runBindingRows = await connection<Array<Record<string, unknown>>>`
-        /* exact recovery run binding census */
+      const projectedRecoveryState = isPlainRecord(current) && typeof current.state === "string" ? current.state : null;
+      const projectedRecoveryOperation = isPlainRecord(current) && isPlainRecord(current.recoverySourceOperation)
+        ? current.recoverySourceOperation
+        : null;
+      const projectedExpectedRunId = projectedRecoveryOperation === null ? "0".repeat(64) : hashCanonicalJson({
+        schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+        pendingInputRef: projectedRecoveryOperation.pendingInputRef,
+        pendingInputHash: projectedRecoveryOperation.pendingInputHash,
+      });
+      const expectedRunRows = await connection<Array<Record<string, unknown>>>`
+        /* exact recovery run durable identity */
         SELECT run.id AS "runId", run.workflow_id AS "workflowId", run.task,
-               run.status AS state, run.context, run.notify_url AS "notifyUrl",
+               run.status AS state, run.status, run.context, run.notify_url AS "notifyUrl",
                run.protocol, run.protocol_version AS "protocolVersion",
                run.compiler_release_sha AS "compilerReleaseSha",
                run.activation_preflight_hash AS "activationPreflightHash",
                run.release_admission_hash AS "releaseAdmissionHash",
                run.created_at AS "createdAt", run.updated_at AS "updatedAt"
         FROM public.runs run
-        WHERE run.status NOT IN ('done', 'completed', 'failed', 'cancelled')
+        WHERE run.id = ${projectedExpectedRunId}
       `;
+      const activeRunRows = await connection<Array<Record<string, unknown>>>`
+        /* unfiltered canonical-active workflow census */
+        SELECT run.id AS "runId", run.workflow_id AS "workflowId", run.task,
+               run.status AS state, run.status, run.context, run.notify_url AS "notifyUrl",
+               run.protocol, run.protocol_version AS "protocolVersion",
+               run.compiler_release_sha AS "compilerReleaseSha",
+               run.activation_preflight_hash AS "activationPreflightHash",
+               run.release_admission_hash AS "releaseAdmissionHash",
+               run.created_at AS "createdAt", run.updated_at AS "updatedAt"
+        FROM public.runs run
+        WHERE run.status IN ('running', 'resuming', 'cancelling', 'failing')
+        ORDER BY run.id
+      `;
+      const snapshotFingerprint = canonicalComparable(Object.freeze({ ownerRows, reservationRows, expectedRunRows, activeRunRows }));
+      if (initialSnapshotFingerprint === null) initialSnapshotFingerprint = snapshotFingerprint;
+      else if (initialSnapshotFingerprint !== snapshotFingerprint) currentEntryFail("progress raw row-tail owner database snapshot changed");
+      const projectedRecoveryOperationAuthority = projectedRecoveryOperation === null
+        ? null
+        : createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(projectedRecoveryOperation);
       const row = selection.state === "blocked" ? selection.lastValidRow : selection.row;
       if (!EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1.some((candidate) => candidate.row === row)) currentEntryFail("progress raw row-tail owner selected row is invalid");
       if (!isPlainRecord(current) || !isPlainRecord(current.selectedCurrentEntryOperation)
@@ -13155,376 +14239,108 @@ async function observeExactPoisonPostVisibleProgressOwnerDatabaseNoWriteV1(
         || validatedRecoverySourceBootstrap.operationRef !== validatedRecoverySourceOperation.operationRef
         || validatedRecoverySourceBootstrap.operationHash !== validatedRecoverySourceOperation.operationHash
       )) currentEntryFail("progress raw row-tail recovery operation authority is crossed");
-      const expectedHeadHistory = (() => {
-        if (expectedHistory === null) return Object.freeze([ownerAdmissionHead]);
-        if (!terminal) {
-          if (!isPlainRecord(expectedHistory.ownerAdmissionHead)) currentEntryFail("progress raw row-tail owner H1 history is absent");
-          return Object.freeze([expectedHistory.ownerAdmissionHead]);
+      if (prepared || terminal) {
+        if (projectedRecoveryOperationAuthority === null || projectedRecoveryState === null || projectedRecoveryState !== current.state) {
+          currentEntryFail("progress raw row-tail recovery persistence authority is absent");
         }
-        const headNames = ["ownerAdmissionHead", "sourceCloseOwnerAdmissionHead", "pairCloseOwnerAdmissionHead", "releasedOwnerAdmissionHead"] as const;
-        const heads = headNames.map((name) => expectedHistory[name]);
-        if (heads.some((head) => !isPlainRecord(head))) currentEntryFail("progress raw row-tail terminal owner head history is absent");
-        return Object.freeze(heads as readonly Readonly<Record<string, unknown>>[]);
-      })();
-      const authorityRecord = (
-        body: Readonly<Record<string, unknown>>,
-        refKey: string,
-        hashKey: string,
-        authorityKind: "fence" | "reservation" | "close" | "release",
-        phaseKey: unknown,
-        predecessorHeadHash: unknown,
-        successorHeadHash: unknown,
-      ): Readonly<Record<string, unknown>> => Object.freeze({
-        authorityRef: body[refKey], authorityHash: body[hashKey], authorityKind, phaseKey,
-        predecessorHeadHash, successorHeadHash, authorityBody: body,
-      });
-      const expectedAuthorityHistory = (() => {
-        if (expectedHistory === null) return Object.freeze([]);
-        const historicalFence = expectedHistory.fence;
-        const historicalSource = expectedHistory.sourceReservation;
-        const historicalRun = expectedHistory.runReservation;
-        if (!isPlainRecord(historicalFence) || !isPlainRecord(historicalSource) || !isPlainRecord(historicalRun)) currentEntryFail("progress raw row-tail owner authority history is absent");
-        const values: Readonly<Record<string, unknown>>[] = [
-          authorityRecord(historicalFence, "fenceRef", "fenceHash", "fence", historicalFence.pendingInputRef, historicalFence.predecessorFenceHeadHash, historicalFence.ownerAdmissionHeadHash),
-          authorityRecord(historicalSource, "reservationRef", "reservationHash", "reservation", historicalSource.reservationRef, historicalSource.ownerAdmissionHeadPredecessorHash, historicalFence.ownerAdmissionHeadHash),
-          authorityRecord(historicalRun, "reservationRef", "reservationHash", "reservation", historicalRun.reservationRef, historicalRun.ownerAdmissionHeadPredecessorHash, historicalFence.ownerAdmissionHeadHash),
-        ];
+        const expectedFence = isPlainRecord(current.ownerAdmissionFence) ? current.ownerAdmissionFence : null;
+        const sourceReservationRow = reservationRows.find((candidate) => (
+          candidate.reservationRef === projectedRecoveryOperationAuthority.targetSourceRunReservationRef
+          && candidate.reservationHash === projectedRecoveryOperationAuthority.targetSourceRunReservationHash
+        ));
+        const runReservationRow = reservationRows.find((candidate) => (
+          candidate.reservationRef === projectedRecoveryOperationAuthority.targetRunReservationRef
+          && candidate.reservationHash === projectedRecoveryOperationAuthority.targetRunReservationHash
+        ));
+        if (prepared) {
+          if (expectedFence === null
+            || canonicalComparable(owner.activeFenceBody) !== canonicalComparable(expectedFence)
+            || owner.authorityKind !== "fence"
+            || owner.phaseKey !== expectedFence.pendingInputRef
+            || owner.predecessorHeadHash !== expectedFence.predecessorFenceHeadHash
+            || owner.successorHeadHash !== expectedFence.ownerAdmissionHeadHash
+            || !isPlainRecord(current.sourceRunReservation)
+            || !isPlainRecord(current.runReservation)
+            || sourceReservationRow === undefined || runReservationRow === undefined
+            || canonicalComparable(sourceReservationRow.reservationBody) !== canonicalComparable(current.sourceRunReservation)
+            || canonicalComparable(runReservationRow.reservationBody) !== canonicalComparable(current.runReservation)) {
+            currentEntryFail("progress raw row-tail prepared owner aliases are crossed");
+          }
+        } else if (owner.activeFenceBody !== null || owner.authorityKind !== null || owner.phaseKey !== null
+          || owner.predecessorHeadHash !== null || owner.successorHeadHash !== null) {
+          currentEntryFail("progress raw row-tail released owner retains an active authority");
+        }
+        const persistence = requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1({
+          recoveryState: projectedRecoveryState,
+          recoveryOperationAuthority: projectedRecoveryOperationAuthority,
+          ownerRows,
+          reservationRows,
+          expectedRunRows,
+          activeRunRows,
+        });
+        if (prepared ? persistence.state !== "absent" && persistence.state !== "active" : persistence.state !== "released") {
+          currentEntryFail("progress raw row-tail recovery persistence phase is crossed");
+        }
         if (terminal) {
-          const sourceClose = expectedHistory.sourceReservationClose;
-          const runClose = expectedHistory.runReservationClose;
-          const release = expectedHistory.fenceRelease;
-          if (!isPlainRecord(sourceClose) || !isPlainRecord(runClose) || !isPlainRecord(release)) currentEntryFail("progress raw row-tail terminal owner authority history is absent");
-          values.push(
-            authorityRecord(sourceClose, "closeRef", "closeHash", "close", historicalSource.reservationRef, sourceClose.ownerAdmissionHeadPredecessorHash, sourceClose.ownerAdmissionHeadSuccessorHash),
-            authorityRecord(runClose, "closeRef", "closeHash", "close", historicalRun.reservationRef, runClose.ownerAdmissionHeadPredecessorHash, runClose.ownerAdmissionHeadSuccessorHash),
-            authorityRecord(release, "releaseRef", "releaseHash", "release", historicalFence.fenceRef, release.ownerAdmissionHeadPredecessorHash, release.ownerAdmissionHeadSuccessorHash),
-          );
+          if (persistence.state !== "released" || validatedRecoverySourceBootstrap === null
+            || validatedRecoverySourceBootstrap.runId !== persistence.runId
+            || validatedRecoverySourceBootstrap.terminalOwnerRef !== persistence.terminalOwnerRef
+            || validatedRecoverySourceBootstrap.terminalOwnerHash !== persistence.terminalOwnerHash
+            || validatedRecoverySourceBootstrap.terminalSourceRunRef !== persistence.terminalSourceRunRef
+            || validatedRecoverySourceBootstrap.terminalSourceRunHash !== persistence.terminalSourceRunHash
+            || validatedRecoverySourceBootstrap.terminalRunLaunchRef !== persistence.terminalRunLaunchRef
+            || validatedRecoverySourceBootstrap.terminalRunLaunchHash !== persistence.terminalRunLaunchHash
+            || validatedRecoverySourceBootstrap.targetReservationPairCloseRef !== persistence.targetReservationPairCloseRef
+            || validatedRecoverySourceBootstrap.targetReservationPairCloseHash !== persistence.targetReservationPairCloseHash
+            || validatedRecoverySourceBootstrap.fenceReleaseRef !== persistence.fenceReleaseRef
+            || validatedRecoverySourceBootstrap.fenceReleaseHash !== persistence.fenceReleaseHash
+            || validatedRecoverySourceBootstrap.sourceRunRef !== persistence.sourceRunRef
+            || validatedRecoverySourceBootstrap.sourceRunHash !== persistence.sourceRunHash) {
+            currentEntryFail("progress raw row-tail released recovery aliases are crossed");
+          }
         }
-        return Object.freeze(values);
-      })();
-      if (canonicalComparable(owner.headHistory) !== canonicalComparable(expectedHeadHistory)
-        || canonicalComparable(owner.authorityHistory) !== canonicalComparable(expectedAuthorityHistory)) currentEntryFail("progress raw row-tail owner H0 H1 H2 H3 H4 ancestry is crossed");
-      if ((prepared ? 1 : 0) !== owner.activeFenceCount
-        || (prepared ? expectedFence?.fenceRef : null) !== owner.activeFenceRef
-        || (prepared ? expectedFence?.fenceHash : null) !== owner.activeFenceHash) currentEntryFail("progress raw row-tail owner active fence is crossed");
-      if (prepared) {
-        if (expectedFence === null) currentEntryFail("progress raw row-tail owner fence body is absent");
-        const fence = validateInternalProductionGlobalOwnerAdmissionFenceV1(owner.activeFenceBody);
-        if (canonicalComparable(fence) !== canonicalComparable(expectedFence)
-          || owner.authorityKind !== "fence" || owner.phaseKey !== fence.pendingInputRef
-          || owner.predecessorHeadHash !== fence.predecessorFenceHeadHash || owner.successorHeadHash !== fence.ownerAdmissionHeadHash
-          || owner.activeTargetFamilyHash !== fence.targetFamily.targetFamilyHash) currentEntryFail("progress raw row-tail owner fence authority is crossed");
-      } else if (owner.authorityKind !== null || owner.phaseKey !== null || owner.predecessorHeadHash !== null || owner.successorHeadHash !== null || owner.activeFenceBody !== null) {
-        currentEntryFail("progress raw row-tail owner zero has active authority");
-      }
-      const requireSelfHashed = (bodyValue: unknown, refKey: string, hashKey: string, label: string): Readonly<Record<string, unknown>> => {
-        if (!isPlainRecord(bodyValue)) currentEntryFail(`${label} body is absent`);
-        const body = bodyValue;
-        const hash = requireSha256(body[hashKey], `${label} hash`);
-        if (typeof body[refKey] !== "string" || !String(body[refKey]).endsWith(hash)) currentEntryFail(`${label} ref is crossed`);
-        const projection = { ...body };
-        delete projection[refKey];
-        delete projection[hashKey];
-        if (hashCanonicalJson(projection) !== hash) currentEntryFail(`${label} body is crossed`);
-        return body;
-      };
-      let sourceReservationCount = 0;
-      let runReservationCount = 0;
-      let sourceReservationRowCount = 0;
-      let runReservationRowCount = 0;
-      let unrelatedReservationCount = 0;
-      const historicalFence = expectedHistory !== null && isPlainRecord(expectedHistory.fence) ? expectedHistory.fence : null;
-      const expectedSourceReservation = prepared
-        ? (isPlainRecord(current.sourceRunReservation) ? current.sourceRunReservation : null)
-        : historicalFence !== null && expectedHistory !== null && isPlainRecord(expectedHistory.sourceReservation) ? expectedHistory.sourceReservation : null;
-      const expectedRunReservation = prepared
-        ? (isPlainRecord(current.runReservation) ? current.runReservation : null)
-        : historicalFence !== null && expectedHistory !== null && isPlainRecord(expectedHistory.runReservation) ? expectedHistory.runReservation : null;
-      const expectedSourceRunOwnerKey = validatedRecoverySourceOperation === null ? null : hashCanonicalJson({
-        schema: "setfarm.internal-production-recovery-source-run-owner-key.v1",
-        pendingInputRef: validatedRecoverySourceOperation.pendingInputRef,
-        pendingInputHash: validatedRecoverySourceOperation.pendingInputHash,
-      });
-      const expectedRunId = validatedRecoverySourceOperation === null ? null : hashCanonicalJson({
-        schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
-        pendingInputRef: validatedRecoverySourceOperation.pendingInputRef,
-        pendingInputHash: validatedRecoverySourceOperation.pendingInputHash,
-      });
-      if ((prepared || terminal) && (
-        expectedSourceReservation === null || expectedRunReservation === null
-        || expectedSourceRunOwnerKey === null || expectedRunId === null
-        || expectedSourceReservation.ownerKey !== expectedSourceRunOwnerKey
-        || expectedRunReservation.ownerKey !== expectedRunId
-        || validatedRecoverySourceOperation === null
-        || validatedRecoverySourceOperation.targetSourceRunReservationRef !== expectedSourceReservation.reservationRef
-        || validatedRecoverySourceOperation.targetSourceRunReservationHash !== expectedSourceReservation.reservationHash
-        || validatedRecoverySourceOperation.targetRunReservationRef !== expectedRunReservation.reservationRef
-        || validatedRecoverySourceOperation.targetRunReservationHash !== expectedRunReservation.reservationHash
-        || validatedRecoverySourceOperation.targetRunLaunchCompositeHash !== hashCanonicalJson({
-          schema: "setfarm.internal-production-source-run-launch-target-composite.v1",
-          pendingInputRef: validatedRecoverySourceOperation.pendingInputRef,
-          pendingInputHash: validatedRecoverySourceOperation.pendingInputHash,
-          sourceRunOwnerKeyHash: expectedSourceRunOwnerKey,
-          runOwnerKeyHash: expectedRunId,
-        })
-      )) currentEntryFail("progress raw row-tail recovery reservation authority is crossed");
-      let validatedSourceBoundReservation: Readonly<Record<string, unknown>> | null = null;
-      let validatedRunBoundReservation: Readonly<Record<string, unknown>> | null = null;
-      for (const reservation of reservationRows) {
-        if (!isPlainRecord(reservation.reservationBody) || !isPlainRecord(reservation.authorityBody)
-          || reservation.authorityKind !== "reservation" || reservation.phaseKey !== reservation.reservationRef
-          || reservation.authorityRef !== reservation.reservationRef || reservation.authorityHash !== reservation.reservationHash
-          || canonicalComparable(reservation.authorityBody) !== canonicalComparable(reservation.reservationBody)) currentEntryFail("progress raw row-tail reservation authority is crossed");
-        const reservationBody = requireSelfHashed(reservation.reservationBody, "reservationRef", "reservationHash", "progress raw row-tail reservation");
-        if (reservation.reservationRef !== reservationBody.reservationRef || reservation.reservationHash !== reservationBody.reservationHash
-          || reservation.ownerKey !== reservationBody.ownerKey || reservation.ownerKeyHash !== reservationBody.ownerKeyHash
-          || reservation.producerPurposeHash !== reservationBody.producerPurposeHash || reservation.producerImplementationId !== reservationBody.producerImplementationId
-          || reservation.producerImplementationHash !== reservationBody.producerImplementationHash
-          || reservation.reservationHeadPredecessorHash !== reservationBody.ownerAdmissionHeadPredecessorHash
-          || reservation.authorityPredecessorHeadHash !== reservationBody.ownerAdmissionHeadPredecessorHash
-          || historicalFence === null || reservation.authoritySuccessorHeadHash !== historicalFence.ownerAdmissionHeadHash) currentEntryFail("progress raw row-tail reservation payload is crossed");
-        const activeReservation = reservation.state !== "closed";
-        if (reservation.category === "source-run") {
-          if (expectedSourceReservation === null || canonicalComparable(reservationBody) !== canonicalComparable(expectedSourceReservation)) currentEntryFail("progress raw row-tail source-run reservation is crossed");
-          sourceReservationRowCount += 1;
-          sourceReservationCount += activeReservation ? 1 : 0;
+        if (activeRunRows.length > 1 || activeRunRows.some((candidate) => candidate.runId !== projectedExpectedRunId)) {
+          currentEntryFail("progress raw row-tail unrelated active run is present");
         }
-        else if (reservation.category === "run") {
-          if (expectedRunReservation === null || canonicalComparable(reservationBody) !== canonicalComparable(expectedRunReservation)) currentEntryFail("progress raw row-tail run reservation is crossed");
-          runReservationRowCount += 1;
-          runReservationCount += activeReservation ? 1 : 0;
-        }
-        else unrelatedReservationCount += 1;
-        if (reservation.state === "bound") {
-          if (!prepared || validatedRecoverySourceOperation === null || expectedRunId === null) currentEntryFail("progress raw row-tail bound reservation phase is crossed");
-          const validatedBound = validateInternalProductionBoundOwnerReservationV1(reservation.bindingBody);
-          const runOwnerRef = `setfarm://runs/${encodeURIComponent(expectedRunId)}`;
-          const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId: expectedRunId });
-          const expectedCanonicalOwnerIdentity = reservation.category === "source-run"
-            ? Object.freeze({ schema: "setfarm.internal-production-canonical-owner-identity.v1", category: "source-run", ownerKey: reservation.ownerKey, ownerRef: validatedRecoverySourceOperation.operationRef, ownerHash: validatedRecoverySourceOperation.operationHash })
-            : reservation.category === "run"
-              ? Object.freeze({ schema: "setfarm.internal-production-canonical-owner-identity.v1", category: "run", ownerKey: reservation.ownerKey, ownerRef: runOwnerRef, ownerHash: runOwnerHash })
-              : null;
-          if (expectedCanonicalOwnerIdentity === null
-            || validatedBound.category !== reservation.category
-            || validatedBound.producerImplementationId !== reservation.producerImplementationId
-            || validatedBound.ownerKey !== reservation.ownerKey
-            || validatedBound.reservationRef !== reservation.reservationRef
-            || validatedBound.reservationHash !== reservation.reservationHash
-            || canonicalComparable(validatedBound.canonicalOwnerIdentity) !== canonicalComparable(expectedCanonicalOwnerIdentity)
-            || canonicalComparable(reservation.canonicalOwnerIdentity) !== canonicalComparable(expectedCanonicalOwnerIdentity)
-            || reservation.bindingHash !== validatedBound.bindingHash
-            || canonicalComparable(reservation.bindingBody) !== canonicalComparable(validatedBound)
-            || reservation.headVersion !== 1
-            || [reservation.closeKind, reservation.terminalOwnerRef, reservation.terminalOwnerHash,
-              reservation.closeHeadPredecessorHash, reservation.closeHeadSuccessorHash,
-              reservation.preservedFenceRef, reservation.preservedFenceHash,
-              reservation.closeRef, reservation.closeHash, reservation.closeBody].some((value) => value !== null)) currentEntryFail("progress raw row-tail bound reservation is crossed");
-          if (reservation.category === "source-run") validatedSourceBoundReservation = validatedBound;
-          else validatedRunBoundReservation = validatedBound;
-        } else if (reservation.state === "closed") {
-          const bound = validateInternalProductionBoundOwnerReservationV1(reservation.bindingBody);
-          const closeRecord = validateInternalProductionOwnerReservationCloseV1(reservation.closeBody);
-          if (recoverySourceOperation === null || recoverySourceBootstrap === null) currentEntryFail("progress raw row-tail terminal reservation operation is absent");
-          const runId = requireSha256(recoverySourceBootstrap.runId, "progress raw row-tail terminal run id");
-          const expectedCanonicalOwnerIdentity = reservation.category === "source-run"
-            ? Object.freeze({ schema: "setfarm.internal-production-canonical-owner-identity.v1", category: "source-run", ownerKey: reservation.ownerKey, ownerRef: recoverySourceOperation.operationRef, ownerHash: recoverySourceOperation.operationHash })
-            : Object.freeze({ schema: "setfarm.internal-production-canonical-owner-identity.v1", category: "run", ownerKey: reservation.ownerKey, ownerRef: `setfarm://runs/${encodeURIComponent(runId)}`, ownerHash: hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId }) });
-          const expectedClose = expectedHistory === null ? null : reservation.category === "source-run" ? expectedHistory.sourceReservationClose : expectedHistory.runReservationClose;
-          if (canonicalComparable(bound.canonicalOwnerIdentity) !== canonicalComparable(reservation.canonicalOwnerIdentity)
-            || canonicalComparable(bound.canonicalOwnerIdentity) !== canonicalComparable(expectedCanonicalOwnerIdentity)
-            || bound.bindingHash !== reservation.bindingHash || closeRecord.closeRef !== reservation.closeRef || closeRecord.closeHash !== reservation.closeHash
-            || closeRecord.terminalOwnerRef !== reservation.terminalOwnerRef || closeRecord.terminalOwnerHash !== reservation.terminalOwnerHash
-            || closeRecord.ownerAdmissionHeadPredecessorHash !== reservation.closeHeadPredecessorHash
-            || closeRecord.ownerAdmissionHeadSuccessorHash !== reservation.closeHeadSuccessorHash
-            || closeRecord.preservedFenceRef !== reservation.preservedFenceRef || closeRecord.preservedFenceHash !== reservation.preservedFenceHash
-            || !isPlainRecord(expectedClose) || canonicalComparable(closeRecord) !== canonicalComparable(expectedClose)) currentEntryFail("progress raw row-tail closed reservation is crossed");
-        } else if (reservation.state !== "pending") currentEntryFail("progress raw row-tail reservation state is invalid");
+        authority.assertStable();
+        await database.assertStable();
+        return Object.freeze({
+          schema: "setfarm.internal-production-exact-poison-post-visible-progress-owner-census.v1",
+          state: prepared ? "recovery-source-prepared" : "zero",
+          ownerAdmissionFenceCount: prepared ? 1 : 0,
+          sourceReservationCount: prepared ? 1 : 0,
+          runReservationCount: prepared ? 1 : 0,
+          activeRunCount: activeRunRows.length,
+          unrelatedOwnerCount: 0,
+          unrelatedReservationCount: 0,
+        });
       }
-      const expectedSourceReservationCount = prepared ? 1 : 0;
-      const expectedRunReservationCount = prepared ? 1 : 0;
-      if (sourceReservationCount !== expectedSourceReservationCount || runReservationCount !== expectedRunReservationCount || unrelatedReservationCount !== 0) currentEntryFail("progress raw row-tail owner reservation phase is crossed");
-      if ((prepared || terminal) && (sourceReservationRowCount !== 1 || runReservationRowCount !== 1)) currentEntryFail("progress raw row-tail owner reservation history is incomplete");
-      if (!prepared && !terminal && (sourceReservationRowCount !== 0 || runReservationRowCount !== 0)) currentEntryFail("progress raw row-tail owner reservation history is unexpected");
-      const preparedBound = prepared && validatedSourceBoundReservation !== null && validatedRunBoundReservation !== null;
-      const preparedPending = prepared && validatedSourceBoundReservation === null && validatedRunBoundReservation === null;
-      if (prepared && !preparedBound && !preparedPending) currentEntryFail("progress raw row-tail prepared reservation binding is incomplete");
-      const expectedAuthorityRows = new Map(expectedAuthorityHistory.map((entry) => [`${String(entry.authorityRef)}\n${String(entry.authorityHash)}`, canonicalComparable(entry)]));
-      if (preparedBound) {
-        if (validatedSourceBoundReservation === null || validatedRunBoundReservation === null) currentEntryFail("progress raw row-tail prepared binding authority is absent");
-        const bindingAuthorityRecord = (boundReservation: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => Object.freeze({
-          authorityKind: "binding",
-          authorityRef: `setfarm://internal-production/bound-owner-reservations/${String(boundReservation.bindingHash)}`,
-          authorityHash: boundReservation.bindingHash,
-          phaseKey: boundReservation.reservationRef,
-          predecessorHeadHash: ownerAdmissionHead.headHash,
-          successorHeadHash: ownerAdmissionHead.headHash,
-          authorityBody: boundReservation,
-        });
-        for (const validatedBound of [validatedSourceBoundReservation, validatedRunBoundReservation]) {
-          const bindingAuthority = bindingAuthorityRecord(validatedBound);
-          if (bindingAuthority.predecessorHeadHash !== ownerAdmissionHead.headHash
-            || bindingAuthority.successorHeadHash !== ownerAdmissionHead.headHash
-            || canonicalComparable(bindingAuthority.authorityBody) !== canonicalComparable(validatedBound)) currentEntryFail("progress raw row-tail binding authority is crossed");
-          expectedAuthorityRows.set(`${String(bindingAuthority.authorityRef)}\n${String(bindingAuthority.authorityHash)}`, canonicalComparable(bindingAuthority));
-        }
+      const recoveryAbsent = projectedRecoveryState === "absent"
+        && validatedRecoverySourceBootstrap !== null
+        && validatedRecoverySourceBootstrap.state === "absent";
+      if (projectedRecoveryOperationAuthority !== null
+        || (projectedRecoveryState !== "pre-recovery" && projectedRecoveryState !== "absent")
+        || (!recoveryAbsent && recoverySourceBootstrap !== null) || recoverySourceOperation !== null
+        || owner.headVersion !== 0 || owner.activeFenceCount !== 0
+        || owner.activeFenceRef !== null || owner.activeFenceHash !== null || owner.activeFenceBody !== null
+        || owner.authorityKind !== null || owner.phaseKey !== null
+        || owner.predecessorHeadHash !== null || owner.successorHeadHash !== null
+        || owner.headHistory.length !== 1 || owner.authorityHistory.length !== 0 || owner.allAuthorityRows.length !== 0
+        || Number(owner.unrelatedAuthorityCount) !== 0
+        || reservationRows.length !== 0 || expectedRunRows.length !== 0 || activeRunRows.length !== 0) {
+        currentEntryFail("progress raw row-tail owner H0 inventory is crossed");
       }
-      const seenAuthorityRows = new Set<string>();
-      let unrelatedAuthorityCount = 0;
-      for (const candidate of owner.allAuthorityRows) {
-        if (!isPlainRecord(candidate) || !hasExactKeys(candidate, ["authorityRef", "authorityHash", "authorityKind", "phaseKey", "predecessorHeadHash", "successorHeadHash", "authorityBody"])) currentEntryFail("progress raw row-tail all-authority census is invalid");
-        const key = `${String(candidate.authorityRef)}\n${String(candidate.authorityHash)}`;
-        const expected = expectedAuthorityRows.get(key);
-        if (expected === undefined || expected !== canonicalComparable(candidate) || seenAuthorityRows.has(key)) unrelatedAuthorityCount += 1;
-        else seenAuthorityRows.add(key);
-      }
-      if (seenAuthorityRows.size !== expectedAuthorityRows.size || unrelatedAuthorityCount !== Number(owner.unrelatedAuthorityCount) || unrelatedAuthorityCount !== 0) currentEntryFail("progress raw row-tail unrelated authority is present");
-
-      let matchingRunCount = 0;
-      let unexpectedRunCount = 0;
-      if (preparedBound) {
-        if (validatedRecoverySourceOperation === null || expectedRunId === null
-          || validatedSourceBoundReservation === null || validatedRunBoundReservation === null) currentEntryFail("progress raw row-tail response-loss run authority is absent");
-        const sourceRunCanonicalOwnerIdentity = validatedSourceBoundReservation.canonicalOwnerIdentity as Readonly<Record<string, unknown>>;
-        const runCanonicalOwnerIdentity = validatedRunBoundReservation.canonicalOwnerIdentity as Readonly<Record<string, unknown>>;
-        const operationRunBindingHash = hashCanonicalJson({
-          schema: "setfarm.internal-production-recovery-source-bootstrap-operation-run-binding.v1",
-          operationRef: validatedRecoverySourceOperation.operationRef,
-          operationHash: validatedRecoverySourceOperation.operationHash,
-          targetRunLaunchCompositeHash: validatedRecoverySourceOperation.targetRunLaunchCompositeHash,
-          sourceRunReservationRef: validatedRecoverySourceOperation.targetSourceRunReservationRef,
-          sourceRunReservationHash: validatedRecoverySourceOperation.targetSourceRunReservationHash,
-          sourceRunOwnerRef: sourceRunCanonicalOwnerIdentity.ownerRef,
-          sourceRunOwnerHash: sourceRunCanonicalOwnerIdentity.ownerHash,
-          runReservationRef: validatedRecoverySourceOperation.targetRunReservationRef,
-          runReservationHash: validatedRecoverySourceOperation.targetRunReservationHash,
-          runId: expectedRunId,
-          runOwnerRef: runCanonicalOwnerIdentity.ownerRef,
-          runOwnerHash: runCanonicalOwnerIdentity.ownerHash,
-        });
-        const reciprocalRunOperationBindingHash = hashCanonicalJson({
-          schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
-          runId: expectedRunId,
-          runOwnerRef: runCanonicalOwnerIdentity.ownerRef,
-          runOwnerHash: runCanonicalOwnerIdentity.ownerHash,
-          runReservationRef: validatedRecoverySourceOperation.targetRunReservationRef,
-          runReservationHash: validatedRecoverySourceOperation.targetRunReservationHash,
-          operationRef: validatedRecoverySourceOperation.operationRef,
-          operationHash: validatedRecoverySourceOperation.operationHash,
-          sourceRunOwnerRef: sourceRunCanonicalOwnerIdentity.ownerRef,
-          sourceRunOwnerHash: sourceRunCanonicalOwnerIdentity.ownerHash,
-          sourceRunReservationRef: validatedRecoverySourceOperation.targetSourceRunReservationRef,
-          sourceRunReservationHash: validatedRecoverySourceOperation.targetSourceRunReservationHash,
-          targetRunLaunchCompositeHash: validatedRecoverySourceOperation.targetRunLaunchCompositeHash,
-          operationRunBindingHash,
-        });
-        const task = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
-        const expectedRunContext = canonicalComparable({
-          schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
-          task,
-          purpose: validatedRecoverySourceOperation.purpose,
-          repository: validatedRecoverySourceOperation.repository,
-          workflow: validatedRecoverySourceOperation.workflow,
-          protocol: validatedRecoverySourceOperation.protocol,
-          promptManifestHash: validatedRecoverySourceOperation.promptManifestHash,
-          baseSourceSha: validatedRecoverySourceOperation.baseSourceSha,
-          baseSourceTreeHash: validatedRecoverySourceOperation.baseSourceTreeHash,
-          buildHash: validatedRecoverySourceOperation.buildHash,
-          activationPreflightHash: validatedRecoverySourceOperation.activationPreflightHash,
-          releaseAdmissionHash: validatedRecoverySourceOperation.releaseAdmissionHash,
-          pendingInputRef: validatedRecoverySourceOperation.pendingInputRef,
-          pendingInputHash: validatedRecoverySourceOperation.pendingInputHash,
-          startIntentRef: validatedRecoverySourceOperation.startIntentRef,
-          startIntentHash: validatedRecoverySourceOperation.startIntentHash,
-          startOutboxRef: validatedRecoverySourceOperation.startOutboxRef,
-          startOutboxHash: validatedRecoverySourceOperation.startOutboxHash,
-          operationRef: validatedRecoverySourceOperation.operationRef,
-          operationHash: validatedRecoverySourceOperation.operationHash,
-          targetSourceRunReservationRef: validatedRecoverySourceOperation.targetSourceRunReservationRef,
-          targetSourceRunReservationHash: validatedRecoverySourceOperation.targetSourceRunReservationHash,
-          targetRunReservationRef: validatedRecoverySourceOperation.targetRunReservationRef,
-          targetRunReservationHash: validatedRecoverySourceOperation.targetRunReservationHash,
-          targetRunLaunchCompositeHash: validatedRecoverySourceOperation.targetRunLaunchCompositeHash,
-          sourceRunOwnerRef: sourceRunCanonicalOwnerIdentity.ownerRef,
-          sourceRunOwnerHash: sourceRunCanonicalOwnerIdentity.ownerHash,
-          runOwnerRef: runCanonicalOwnerIdentity.ownerRef,
-          runOwnerHash: runCanonicalOwnerIdentity.ownerHash,
-          operationRunBindingHash,
-          reciprocalRunOperationBindingHash,
-        });
-        const expectedRunBindingContext = Object.freeze({
-          context: expectedRunContext,
-          operationRunBindingHash,
-          reciprocalRunOperationBindingHash,
-        });
-        const runKeys = ["runId", "workflowId", "task", "state", "context", "notifyUrl", "protocol", "protocolVersion", "compilerReleaseSha", "activationPreflightHash", "releaseAdmissionHash", "createdAt", "updatedAt"] as const;
-        const normalizeRunTimestamp = (value: unknown): string => {
-          if (!(value instanceof Date) && typeof value !== "string") currentEntryFail("progress raw row-tail active run timestamp is invalid");
-          const timestamp = value instanceof Date ? new Date(value.getTime()) : new Date(value);
-          if (!Number.isFinite(timestamp.getTime())) currentEntryFail("progress raw row-tail active run timestamp is invalid");
-          return timestamp.toISOString();
-        };
-        for (const run of runBindingRows) {
-          if (!hasExactKeys(run, runKeys)) { unexpectedRunCount += 1; continue; }
-          const normalizedCreatedAt = normalizeRunTimestamp(run.createdAt);
-          const normalizedUpdatedAt = normalizeRunTimestamp(run.updatedAt);
-          const normalizedRun: Readonly<Record<string, unknown>> = Object.freeze({
-            ...(run as Readonly<Record<string, unknown>>),
-            createdAt: normalizedCreatedAt,
-            updatedAt: normalizedUpdatedAt,
-          });
-          const expectedRun = Object.freeze({
-            runId: expectedRunId,
-            workflowId: "feature-dev",
-            task,
-            state: "running",
-            context: expectedRunBindingContext.context,
-            notifyUrl: null,
-            protocol: "v3",
-            protocolVersion: 1,
-            compilerReleaseSha: validatedRecoverySourceOperation.baseSourceSha,
-            activationPreflightHash: validatedRecoverySourceOperation.activationPreflightHash,
-            releaseAdmissionHash: validatedRecoverySourceOperation.releaseAdmissionHash,
-            createdAt: normalizedCreatedAt,
-            updatedAt: normalizedCreatedAt,
-          });
-          if (normalizedRun.runId !== expectedRun.runId
-            || normalizedRun.workflowId !== expectedRun.workflowId
-            || normalizedRun.task !== expectedRun.task
-            || normalizedRun.state !== expectedRun.state
-            || normalizedRun.context !== expectedRun.context
-            || normalizedRun.notifyUrl !== expectedRun.notifyUrl
-            || normalizedRun.protocol !== expectedRun.protocol
-            || normalizedRun.protocolVersion !== expectedRun.protocolVersion
-            || normalizedRun.compilerReleaseSha !== expectedRun.compilerReleaseSha
-            || normalizedRun.activationPreflightHash !== expectedRun.activationPreflightHash
-            || normalizedRun.releaseAdmissionHash !== expectedRun.releaseAdmissionHash
-            || normalizedRun.createdAt !== expectedRun.createdAt
-            || normalizedRun.updatedAt !== expectedRun.updatedAt) unexpectedRunCount += 1;
-          else matchingRunCount += 1;
-        }
-      } else {
-        unexpectedRunCount = runBindingRows.length;
-      }
-      if (preparedBound ? (matchingRunCount !== 1 || unexpectedRunCount !== 0) : (matchingRunCount !== 0 || unexpectedRunCount !== 0)) currentEntryFail("progress raw row-tail active run binding is crossed");
-      if (terminal) {
-        if (expectedHistory === null || recoverySourceBootstrap === null) currentEntryFail("progress raw row-tail terminal owner history is absent");
-        if (owner.headVersion !== 4 || owner.headHistory.length !== 4 || owner.authorityHistory.length !== 6) currentEntryFail("progress raw row-tail terminal H1 H2 H3 H4 history is crossed");
-        const fenceRelease = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(expectedHistory.fenceRelease);
-        if (fenceRelease.releaseRef !== recoverySourceBootstrap.fenceReleaseRef || fenceRelease.releaseHash !== recoverySourceBootstrap.fenceReleaseHash) currentEntryFail("progress raw row-tail terminal fence release pair is crossed");
-        const sourceClose = validateInternalProductionOwnerReservationCloseV1(expectedHistory.sourceReservationClose);
-        const runClose = validateInternalProductionOwnerReservationCloseV1(expectedHistory.runReservationClose);
-        if (sourceClose.terminalOwnerRef !== recoverySourceBootstrap.terminalSourceRunRef || sourceClose.terminalOwnerHash !== recoverySourceBootstrap.terminalSourceRunHash) currentEntryFail("progress raw row-tail terminalSourceRunRef terminalOwnerRef pair is crossed");
-        if (runClose.terminalOwnerRef !== recoverySourceBootstrap.terminalRunLaunchRef || runClose.terminalOwnerHash !== recoverySourceBootstrap.terminalRunLaunchHash) currentEntryFail("progress raw row-tail terminalRunLaunchRef terminalOwnerRef pair is crossed");
-      } else if (owner.headHistory.length !== 1 || owner.authorityHistory.length !== (prepared ? 3 : 0)) currentEntryFail("progress raw row-tail owner history phase is crossed");
-      const ownerAdmissionFenceCount = Number(owner.activeFenceCount);
       authority.assertStable();
       await database.assertStable();
       return Object.freeze({
         schema: "setfarm.internal-production-exact-poison-post-visible-progress-owner-census.v1",
-        state: prepared ? "recovery-source-prepared" : "zero",
-        ownerAdmissionFenceCount, sourceReservationCount, runReservationCount,
-        activeRunCount: runBindingRows.length, unrelatedOwnerCount: Number(owner.unrelatedAuthorityCount), unrelatedReservationCount,
+        state: "zero",
+        ownerAdmissionFenceCount: 0,
+        sourceReservationCount: 0,
+        runReservationCount: 0,
+        activeRunCount: 0,
+        unrelatedOwnerCount: 0,
+        unrelatedReservationCount: 0,
       });
     };
     const initial = await sql.begin("isolation level repeatable read read only", async (tx) => {
@@ -14056,7 +14872,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         }
         const preparedPublicationSet = await authority.buildPreparedPublicationSet();
         await requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1(authority, status, preparedPublicationSet);
-        const externalPublicationCurrent = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, preSchemaCurrent, null);
+        const externalArrowCurrent = selectExactPoisonPostVisibleExternalArrowV1(descriptor, preSchemaCurrent);
+        const externalPublicationCurrent = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowCurrent, preSchemaCurrent, null);
         own(externalPublicationCurrent);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationCurrent, operation);
         const rowTailCurrent = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, preSchemaCurrent);
@@ -14095,7 +14912,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         own(preSchemaOwner);
         const preSchemaCurrent = preSchemaOwner.value;
         const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
-        const externalPublicationPreManifest = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, migrationCurrent, null);
+        const externalArrowPreManifest = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
+        const externalPublicationPreManifest = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowPreManifest, migrationCurrent, null);
         own(externalPublicationPreManifest);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationPreManifest, operation);
         const rowTailPreManifest = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
@@ -14109,7 +14927,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
       }
       case "migration-current": {
         const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
-        const externalPublicationMigration = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, migrationCurrent, null);
+        const externalArrowMigration = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
+        const externalPublicationMigration = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowMigration, migrationCurrent, null);
         own(externalPublicationMigration);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationMigration, operation);
         const rowTailMigration = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
@@ -14127,7 +14946,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
       }
       case "migration-retained": {
         const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
-        const externalPublicationMigrationRetained = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, migrationCurrent, null);
+        const externalArrowMigrationRetained = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
+        const externalPublicationMigrationRetained = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowMigrationRetained, migrationCurrent, null);
         own(externalPublicationMigrationRetained);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationMigrationRetained, operation);
         const rowTailMigrationRetained = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
@@ -14145,7 +14965,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
       }
       case "manifest": {
         const manifestCurrent = await resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
-        const externalPublicationManifest = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, manifestCurrent, null);
+        const externalArrowManifest = selectExactPoisonPostVisibleExternalArrowV1(descriptor, manifestCurrent);
+        const externalPublicationManifest = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowManifest, manifestCurrent, null);
         own(externalPublicationManifest);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationManifest, operation);
         const rowTailManifest = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, manifestCurrent);
@@ -14169,7 +14990,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         const serviceCurrent = await observeInternalProductionServiceCensusV1();
         const physicalCurrent = observePhysicalInventoryV1(serviceCurrent, 0);
         const databaseCurrent = await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
-        const externalPublicationAdmission = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, recoveryCurrent, null);
+        const externalArrowAdmission = selectExactPoisonPostVisibleExternalArrowV1(descriptor, recoveryCurrent, preSchemaCurrent);
+        const externalPublicationAdmission = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowAdmission, recoveryCurrent, null);
         own(externalPublicationAdmission);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationAdmission, operation);
         const rowTailAdmission = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, recoveryCurrent);
@@ -14185,7 +15007,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         const recoveryOwner = await observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(authority, operation);
         own(recoveryOwner);
         const recoveryCurrent = recoveryOwner.value;
-        const externalPublicationRecovery = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, recoveryCurrent, null);
+        const externalArrowRecovery = selectExactPoisonPostVisibleExternalArrowV1(descriptor, recoveryCurrent);
+        const externalPublicationRecovery = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowRecovery, recoveryCurrent, null);
         own(externalPublicationRecovery);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationRecovery, operation);
         const rowTailRecovery = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, recoveryCurrent);
@@ -14234,7 +15057,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         own(entryOwner);
         const entryCurrent = entryOwner.value;
         entryOwner.assertStable();
-        const externalPublicationEntry = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, descriptor, entryCurrent, entryOwner);
+        const externalArrowEntry = selectExactPoisonPostVisibleExternalArrowV1(descriptor, entryCurrent);
+        const externalPublicationEntry = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowEntry, entryCurrent, entryOwner);
         own(externalPublicationEntry);
         entryOwner.assertStable();
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationEntry, operation);
@@ -16557,6 +17381,58 @@ function publishExactPoisonPostVisibleTask12ReceiptEndpointV1(
   }
   owner.assertStable();
   publishLegacyZeroRecordV1(target, bytes, false, () => owner.assertStable());
+}
+
+function observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(
+  target: string,
+  expectedBytes: Buffer,
+): ExactPoisonPostVisibleTask12ReceiptEndpointObservationV1 {
+  const directoryOwner = openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1(target);
+  try {
+    const selectedHash = path.basename(target, ".json");
+    if (!SHA256.test(selectedHash) || path.basename(directoryOwner.directory) !== selectedHash.slice(0, 2)) currentEntryFail("Task12 content shard selected target is invalid");
+    const fixed = /^([0-9a-f]{64})\.json$/;
+    const publication = /^([0-9a-f]{64})\.json\.tmp-[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const writerFixed = /^\.([0-9a-f]{64})\.json\.writer\.lock$/;
+    const writerTemporary = /^\.([0-9a-f]{64})\.json\.writer\.lock\.tmp-[1-9][0-9]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const hashes = new Set<string>([selectedHash]);
+    for (const name of directoryOwner.directoryMembers) {
+      const match = fixed.exec(name) ?? publication.exec(name) ?? writerFixed.exec(name) ?? writerTemporary.exec(name);
+      if (match === null || match[1]!.slice(0, 2) !== path.basename(directoryOwner.directory)) currentEntryFail("Task12 content shard member name is invalid");
+      hashes.add(match[1]!);
+    }
+    const directoryPolicy = Object.freeze([...hashes].sort(compareBytes).map((hash) => Object.freeze({
+      target: path.join(directoryOwner.directory, `${hash}.json`),
+      allowFinal: true,
+      allowPublicationTemporaries: true,
+      allowWriterFamily: true,
+    })));
+    const publicationObservation = observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1(directoryOwner, target, expectedBytes, directoryPolicy);
+    const writerObservation = observeTask12ReceiptLocatorWriterFromOwnedDirectoryNoWriteV1(directoryOwner, target);
+    let closed = false;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("Task12 content shard endpoint observation is closed");
+      directoryOwner.assertStable();
+    };
+    assertStable();
+    return Object.freeze({
+      target,
+      expectedBytes,
+      directoryPolicy,
+      publication: publicationObservation,
+      writer: writerObservation,
+      assertStable,
+      close: (): void => {
+        if (closed) currentEntryFail("Task12 content shard endpoint observation closed twice");
+        closed = true;
+        directoryOwner.close();
+      },
+    });
+  } catch (error) {
+    try { directoryOwner.close(); }
+    catch {}
+    throw error;
+  }
 }
 
 function observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(
