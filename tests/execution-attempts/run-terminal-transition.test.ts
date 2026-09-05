@@ -3617,9 +3617,10 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
           canonicalOwnerIdentity: identity,
         });
       });
+      const ordinaryContext = '{"task":"ordinary migration 32 context ordering","repo":"/tmp/setfarm-ordinary-context"}';
       await database.sql`
         UPDATE runs
-           SET context=${'{"zeta":"last","alpha":"first"}'}
+           SET context=${ordinaryContext}
          WHERE id=${runId}
       `;
       await seedBoundDrainedTermination(database, {
@@ -3641,10 +3642,12 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
         run_status: string;
         request_state: string;
         run_owner_state: string;
+        run_context: string;
       }>>`
         SELECT run_row.status AS run_status,
                request.state AS request_state,
-               owner.state AS run_owner_state
+               owner.state AS run_owner_state,
+               run_row.context AS run_context
           FROM runs run_row
           JOIN run_termination_requests request ON request.run_id=run_row.id
           JOIN internal_production_owner_reservations_v1 owner
@@ -3655,6 +3658,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
         run_status: "failed",
         request_state: "terminalized",
         run_owner_state: "closed",
+        run_context: ordinaryContext,
       }]);
     } finally {
       await database.cleanup();
