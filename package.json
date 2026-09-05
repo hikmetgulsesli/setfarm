@@ -12,7 +12,8 @@
   "scripts": {
     "build": "umask 077 && tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
     "start": "node dist/cli/cli.js",
-    "test": "node --import tsx --test tests/*.test.ts && npm run test:steps && npm run test:status && npm run test:scripts && npm run test:product-compiler && npm run test:execution-attempts && npm run test:findings && npm run test:evidence && npm run test:recovery && npm run test:evals && npm run test:internal-production",
+    "test": "node --import tsx --test tests/*.test.ts && npm run test:cleanup-ops && npm run test:steps && npm run test:status && npm run test:scripts && npm run test:product-compiler && npm run test:execution-attempts && npm run test:findings && npm run test:evidence && npm run test:recovery && npm run test:evals && npm run test:internal-production",
+    "test:cleanup-ops": "env -u SETFARM_PG_URL node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 tests/cleanup-ops.test.ts",
     "test:product-compiler": "node --import tsx --test tests/product-compiler/*.test.ts",
     "test:execution-attempts": "node --import tsx --test tests/execution-attempts/*.test.ts",
     "test:findings": "node --import tsx --test tests/findings/*.test.ts",
