@@ -14059,6 +14059,33 @@ function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, bytes);
   chmodSync(target, mode);
+  if (locator === "src/internal-production/baseline-post-handoff-receipt-v1.ts") {
+    ensureBaselinePostHandoffImportSupportV1(root);
+  }
+}
+
+function ensureBaselinePostHandoffImportSupportV1(root: string): void {
+  const ensure = (locator: string, bytes: string | Buffer): void => {
+    const target = path.join(root, locator);
+    if (existsSync(target)) return;
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, bytes, { mode: 0o644 });
+  };
+  ensure("src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+  ensure("src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+  ensure("src/execution/recovery-source-bootstrap-run-authority-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts")));
+  ensure("src/db/contract-spine-migration-digests.generated.ts", 'export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS={31:"f052eff1b45df0f00ffb844fe0d23b542eafa4789da5e90a329a8d756dfcdc3a"};\n');
+  ensure("src/db/contract-spine-migration-source-integrity.ts", "export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST={31:{}};\n");
+  ensure("src/db/bootstrap-main-claim-handoff-v1-migration.ts", 'export async function projectBootstrapMainClaimHandoffV1Schema(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V32_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
+  ensure("src/db/contract-spine-migrations.ts", 'export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V33_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
+  ensure("src/db/operational-failure-cause-authority-v3-catalog.ts", 'export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V31_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
+  ensure("src/db-pg.ts", "export {};\n");
+  ensure("src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); }
+export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_RECOVERY_RUN_DISPATCH_NOT_INSTRUMENTED"); }
+export async function dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_RECOVERY_RUN_AUTHORITY_DISPATCH_NOT_INSTRUMENTED"); }
+`);
+  ensure("src/execution/v3-git-revision.ts", "export function replayV3HistoricalGitCommitAncestryV1(){}\n");
+  ensure("src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", "export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value: unknown){return value as Record<string, unknown>}\n");
 }
 
 function fixtureV31Migrations(): readonly (readonly [string, string])[] {
@@ -14364,11 +14391,15 @@ function materializeOutputs(root: string): void {
     "dist/cli/cli.js": 'console.log("fixture");\n',
     "dist/db/bootstrap-main-claim-handoff-v1-migration.js": "// compiled migration fixture\n",
     "dist/db-pg.js": "// compiled db fixture\n",
+    "dist/db/contract-spine-migrations.js": "// compiled v33 verifier fixture\n",
     "dist/db/contract-spine-migration-digests.generated.js": "// compiled digest fixture\n",
     "dist/db/contract-spine-migration-source-integrity.js": "// compiled integrity fixture\n",
+    "dist/db/operational-failure-cause-authority-v3-catalog.js": "// compiled v31 verifier fixture\n",
+    "dist/execution/recovery-source-bootstrap-run-authority-v1.js": "// compiled recovery authority fixture\n",
     "dist/execution/v3-git-revision.js": "// compiled git fixture\n",
     "dist/installer/compat-rules.json": "{}\n",
     "dist/installer/prompts/prompt.md": "prompt\n",
+    "dist/installer/run.js": "// compiled recovery installer fixture\n",
     "dist/installer/steps/nested/step.md": "step\n",
     "dist/internal-production/baseline-post-handoff-receipt-v1.js": "// compiled observer fixture\n",
     "dist/internal-production/owner-admission-v1.js": "// compiled owner admission fixture\n",
