@@ -17507,6 +17507,175 @@ export async function applyContractSpineMigrations(
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-automatic-successor-wrapper:END
 
+async function applyMigration33AfterEvolvedOwnerAdmissionHeadV1(
+  transaction: TransactionSql,
+  rawPlan: ContractSpineMigrationPlan,
+  plan: ContractSpineMigrationPlan,
+  options: Readonly<{ releaseSha?: string }>,
+): Promise<ContractSpineMigrationApplyResult | null> {
+  const rawMigration32 = rawPlan.migrations.find((migration) => migration.version === 32);
+  const rawMigration33 = rawPlan.migrations.find((migration) => migration.version === 33);
+  const predecessorPlan = plan.migrations.slice(0, -1);
+  const successorPlan = plan.migrations.at(-1);
+  if (
+    rawMigration32?.state !== "adoption_mismatch"
+    || rawMigration33?.state !== "blocked_by_guarded_predecessor"
+    || rawPlan.migrations.some((migration) => migration.version !== 32
+      && migration.version !== 33
+      && migration.state !== "applied"
+      && migration.state !== "adopted")
+    || plan.migrations.length !== completeMigrations.length
+    || predecessorPlan.length !== 32
+    || predecessorPlan.some((migration, index) =>
+      migration.version !== index + 1
+      || (migration.state !== "applied" && migration.state !== "adopted"))
+    || predecessorPlan.at(-1)?.state !== "applied"
+    || successorPlan?.version !== 33
+    || (successorPlan.state !== "pending" && successorPlan.state !== "adoptable")
+  ) return null;
+
+  const journal = await completeJournalRows(transaction);
+  if (
+    journal.length !== 32
+    || journal.some((row, index) => {
+      const migration = completeMigrations[index];
+      return !migration
+        || row.version !== migration.version
+        || row.name !== migration.name
+        || row.checksum !== checksum(migration)
+        || (migration.migrationClass === "guarded" && row.state !== "applied");
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      "Migration source chain through guarded migration 32 differs from source",
+    );
+  }
+  for (const migration of completeMigrations.slice(0, 32)) {
+    if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction)
+      !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `Migration ${migration.version} journaled objects are not fully present`,
+      );
+    }
+    if (migration.version === 32) {
+      await verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+        transaction,
+      );
+    }
+    await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction);
+  }
+  await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
+  await verifyExactContractSpineJournalAuthority(transaction);
+  await verifyExactContractSpineSourceChain(transaction, 32);
+
+  const detection = await detectV3RecoveryClaimRuntimePublicationV1(transaction);
+  if (detection === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Migration 33 relation is partially installed",
+    );
+  }
+  let state: "applied" | "adopted";
+  if (detection === "present") {
+    await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+    state = "adopted";
+  } else {
+    for (const statement of migration33.statements) {
+      await transaction.unsafe(statement);
+    }
+    await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+    state = "applied";
+  }
+  const timestamps = await transaction.unsafe<Array<{ captured_at: Date }>>(
+    "SELECT NOW() AS captured_at",
+  );
+  if (timestamps.length !== 1 || !(timestamps[0]?.captured_at instanceof Date)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "Migration 33 database timestamp capture failed",
+    );
+  }
+  await transaction.unsafe(
+    `INSERT INTO public.setfarm_schema_migrations (
+       version, name, checksum, state, release_sha,
+       verified_release_sha, verified_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      migration33.version,
+      migration33.name,
+      checksum(migration33),
+      state,
+      options.releaseSha ?? null,
+      options.releaseSha ?? null,
+      options.releaseSha === undefined ? null : timestamps[0].captured_at,
+    ],
+  );
+  if (options.releaseSha) {
+    await transaction.unsafe(
+      `UPDATE public.setfarm_schema_migrations
+          SET verified_release_sha = $1,
+              verified_at = $2`,
+      [options.releaseSha, timestamps[0].captured_at],
+    );
+  }
+  const finalPlan = await reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
+    transaction,
+    await planContractSpineMigrationsOnConnection(transaction),
+  );
+  if (
+    finalPlan.status !== "current"
+    || finalPlan.migrations.length !== completeMigrations.length
+    || finalPlan.migrations.some((migration) =>
+      migration.state !== "applied" && migration.state !== "adopted")
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "Migration 33 successor application did not reach the exact current plan",
+    );
+  }
+  for (const migration of completeMigrations) {
+    if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction)
+      !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `Migration ${migration.version} journaled objects are not fully present`,
+      );
+    }
+    if (migration.version === 32) {
+      await verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
+        transaction,
+      );
+    }
+    await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, transaction);
+  }
+  await verifyV3RecoveryClaimRuntimePublicationV1(transaction);
+  await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(transaction);
+  await verifyExactContractSpineJournalAuthority(transaction);
+  await verifyExactContractSpineSourceChain(transaction, 32);
+  const finalJournal = await completeJournalRows(transaction);
+  const finalMigration33 = finalJournal.find((row) => row.version === 33);
+  if (
+    finalJournal.length !== completeMigrations.length
+    || finalMigration33?.name !== migration33.name
+    || finalMigration33.checksum !== checksum(migration33)
+    || (finalMigration33.state !== "applied" && finalMigration33.state !== "adopted")
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      "Migration 33 journal identity differs from source",
+    );
+  }
+  return {
+    schema: "setfarm.contract-spine-migration-apply.v1",
+    applied: state === "applied" ? [migration33.name] : [],
+    adopted: state === "adopted" ? [migration33.name] : [],
+    alreadyApplied: predecessorPlan.map((migration) => migration.name),
+    guardedPending: [],
+  };
+}
+
 export async function applyContractSpineMigrationsIfNeeded(
   sql: Sql,
   options: Readonly<{
@@ -17545,10 +17714,18 @@ export async function applyContractSpineMigrationsIfNeeded(
       await transaction.unsafe(
         "LOCK TABLE public.setfarm_schema_migrations IN SHARE ROW EXCLUSIVE MODE",
       );
+      const rawPlan = await planContractSpineMigrationsOnConnection(transaction);
       const plan = await reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
         transaction,
-        await planContractSpineMigrationsOnConnection(transaction),
+        rawPlan,
       );
+      const evolvedSuccessor = await applyMigration33AfterEvolvedOwnerAdmissionHeadV1(
+        transaction,
+        rawPlan,
+        plan,
+        options,
+      );
+      if (evolvedSuccessor) return evolvedSuccessor;
       if (plan.status !== "current") return null;
       for (const migration of completeMigrations) {
         if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(

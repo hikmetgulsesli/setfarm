@@ -25,6 +25,14 @@ import { createRuntimeCompletionEffectRepository } from "../../src/execution/run
 import { validateRuntimeCompletionEffectInput } from "../../src/execution/runtime-completion-effect-runner.js";
 import { RuntimeCompletionPlanV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import {
+  createInternalProductionOwnerReservationV1,
+  INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
+} from "../../src/internal-production/owner-admission-v1.js";
+import {
+  ownerAdmissionSuccessorV1,
+  validateOwnerAdmissionMigrationApplicationV1,
+} from "../../src/internal-production/owner-admission-head-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -97,9 +105,17 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "e67b7c65da5c80033a5d9865c65472899fdc1dd79993f2f7cfee22e9e966378e",
+      "86c6e2e1ff1cf5bbedb6e2b0fdc4951733133ce4e8c835d5f8dba4defb7c628a",
       "366a60b471443d89e386365fa58d35e36277baad654dab596e3a2335af01219d",
     ],
+  );
+  assert.match(
+    generatedDigests.toString("utf8"),
+    /32: "8cbaab0c47bf3639033442d2df9a1c15d421eb34adbab72fa82951712cafe4e2"/,
+  );
+  assert.match(
+    generatedDigests.toString("utf8"),
+    /33: "d3d0308a6c855a4badc4ad091c5b5807842310e8ec86d8e6e2cd2f395f58967c"/,
   );
 
   const start = databaseSource.indexOf("// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN");
@@ -472,6 +488,239 @@ describe("contract spine migration journal", () => {
       relation_name: "internal_production_v3_recovery_claim_publications_v1",
     });
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+  });
+
+  it("applies migration 33 after an authenticated owner transition advanced guarded v32", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    const migration32Identity = await database.sql<Array<{ identity: string }>>`
+      SELECT jsonb_build_object(
+               'version',version,'name',name,'checksum',checksum,'state',state,
+               'releaseSha',release_sha,'appliedAt',applied_at
+             )::text AS identity
+        FROM setfarm_schema_migrations
+       WHERE version=32
+    `;
+    assert.equal(migration32Identity.length, 1);
+    const heads = await database.sql<Array<{
+      head_version: number;
+      head_hash: string;
+      migration_application_evidence_hash: string;
+      head_payload: Record<string, unknown>;
+    }>>`
+      SELECT head_version, head_hash, migration_application_evidence_hash, head_payload
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton=TRUE
+    `;
+    const head = heads[0];
+    assert.ok(head);
+    const migrationApplication = validateOwnerAdmissionMigrationApplicationV1(
+      head.head_payload.migrationApplication,
+      head.migration_application_evidence_hash,
+    );
+    const producer = INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
+      (candidate) => candidate.implementationId === "a-runtime-run-v1",
+    );
+    assert.ok(producer);
+    const reservation = createInternalProductionOwnerReservationV1({
+      producer,
+      ownerKey: "migration-33-after-evolved-v32",
+      ownerAdmissionHeadPredecessorHash: head.head_hash,
+    });
+    const successor = ownerAdmissionSuccessorV1({
+      version: Number(head.head_version),
+      predecessorHeadHash: head.head_hash,
+      transitionKind: "reservation",
+      transitionRef: reservation.reservationRef,
+      transitionHash: reservation.reservationHash,
+      migrationApplication,
+    });
+    await database.sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO internal_production_owner_reservations_v1 (
+           reservation_ref,reservation_hash,category,owner_key,owner_key_hash,
+           producer_purpose_hash,producer_implementation_id,producer_implementation_hash,
+           reservation_payload,reservation_head_predecessor_hash,state,head_version
+         ) VALUES (
+           ${reservation.reservationRef}, ${reservation.reservationHash}, ${reservation.category},
+           ${reservation.ownerKey}, ${reservation.ownerKeyHash}, ${reservation.producerPurposeHash},
+           ${reservation.producerImplementationId}, ${reservation.producerImplementationHash},
+           ${transaction.json(reservation)}, ${reservation.ownerAdmissionHeadPredecessorHash},
+           'pending', ${successor.version}
+         )
+      `;
+      await transaction`
+        INSERT INTO internal_production_owner_admission_authorities_v1 (
+           authority_ref,authority_hash,authority_kind,phase_key,
+           predecessor_head_hash,successor_head_hash,authority_body
+         ) VALUES (
+           ${reservation.reservationRef}, ${reservation.reservationHash}, 'reservation',
+           ${reservation.reservationRef}, ${head.head_hash}, ${successor.hash},
+           ${transaction.json(reservation)}
+         )
+      `;
+      const updated = await transaction<Array<{ head_version: string }>>`
+        UPDATE internal_production_owner_admission_head_v1
+           SET head_version=${successor.version},
+               head_hash=${successor.hash},
+               head_payload=${transaction.json(successor.payload)},
+               updated_at=NOW()
+         WHERE singleton=TRUE
+           AND head_version=${head.head_version}
+           AND head_hash=${head.head_hash}
+         RETURNING head_version::text
+      `;
+      assert.deepEqual(updated.map(({ head_version }) => head_version), [String(successor.version)]);
+    });
+
+    const evolvedPlan = await planContractSpineMigrations(database.sql);
+    assert.deepEqual(
+      evolvedPlan.migrations.slice(-2).map(({ version, state }) => ({ version, state })),
+      [{ version: 32, state: "applied" }, { version: 33, state: "pending" }],
+    );
+    const successorBoundarySnapshot = async () => {
+      const rows = await database.sql<Array<{
+        head: string;
+        predecessor_journal: string;
+        migration_33_relation: string | null;
+        migration_33_function: string | null;
+        migration_33_journal_count: number;
+      }>>`
+        SELECT (
+                 SELECT jsonb_build_object(
+                          'version',head_version,'hash',head_hash,'payload',head_payload,
+                          'evidenceHash',migration_application_evidence_hash
+                        )::text
+                   FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+               ) AS head,
+               (
+                 SELECT jsonb_agg(to_jsonb(migration) ORDER BY migration.version)::text
+                   FROM setfarm_schema_migrations migration WHERE migration.version<=32
+               ) AS predecessor_journal,
+               to_regclass('public.internal_production_v3_recovery_claim_publications_v1')::text
+                 AS migration_33_relation,
+               to_regprocedure('public.ip_v3_recovery_publication_immutable_v1()')::text
+                 AS migration_33_function,
+               (SELECT COUNT(*)::integer FROM setfarm_schema_migrations WHERE version=33)
+                 AS migration_33_journal_count
+      `;
+      assert.equal(rows.length, 1);
+      return { ...rows[0]! };
+    };
+    const beforeFailedApplications = await successorBoundarySnapshot();
+    const postgresClient = (await import("postgres")).default;
+    const lockHolder = postgresClient(database.url, { max: 1 });
+    let releaseLock!: () => void;
+    const lockRelease = new Promise<void>((resolve) => { releaseLock = resolve; });
+    let markLockReady!: () => void;
+    const lockReady = new Promise<void>((resolve) => { markLockReady = resolve; });
+    const heldLock = lockHolder.begin(async (transaction) => {
+      await transaction`SELECT pg_advisory_xact_lock(${contractSpineMigrationLockKey})`;
+      markLockReady();
+      await lockRelease;
+    });
+    await lockReady;
+    try {
+      await assert.rejects(
+        applyContractSpineMigrationsIfNeeded(database.sql, {
+          lockTimeoutMs: 50,
+          statementTimeoutMs: 500,
+          releaseSha: "6".repeat(40),
+        }),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_LOCK_TIMEOUT",
+      );
+    } finally {
+      releaseLock();
+      await heldLock;
+      await lockHolder.end();
+    }
+    assert.deepEqual(await successorBoundarySnapshot(), beforeFailedApplications);
+
+    await database.sql.unsafe(`
+      CREATE FUNCTION public.fail_evolved_v32_successor_ddl_v1()
+      RETURNS event_trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF position('ip_v3_recovery_publication_immutable_v1' IN current_query()) > 0 THEN
+          RAISE EXCEPTION 'TEST_EVOLVED_V32_SUCCESSOR_DDL_FAILURE';
+        END IF;
+      END
+      $$
+    `);
+    await database.sql.unsafe(`
+      CREATE EVENT TRIGGER fail_evolved_v32_successor_ddl_v1
+      ON ddl_command_start
+      EXECUTE FUNCTION public.fail_evolved_v32_successor_ddl_v1()
+    `);
+    try {
+      await assert.rejects(
+        applyContractSpineMigrationsIfNeeded(database.sql, {
+          releaseSha: "7".repeat(40),
+        }),
+        /TEST_EVOLVED_V32_SUCCESSOR_DDL_FAILURE/,
+      );
+    } finally {
+      await database.sql.unsafe("DROP EVENT TRIGGER fail_evolved_v32_successor_ddl_v1");
+      await database.sql.unsafe("DROP FUNCTION public.fail_evolved_v32_successor_ddl_v1()");
+    }
+    assert.deepEqual(await successorBoundarySnapshot(), beforeFailedApplications);
+
+    const applied = await applyContractSpineMigrationsIfNeeded(database.sql, {
+      releaseSha: "4".repeat(40),
+    });
+    assert.deepEqual(applied.applied, [recoveryPublicationMigrationId]);
+    assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    const evolvedHeads = await database.sql<Array<{
+      head_version: string;
+      head_hash: string;
+      migration_32_count: number;
+      migration_33_count: number;
+    }>>`
+      SELECT head.head_version,
+             head.head_hash,
+             COUNT(*) FILTER (WHERE migration.version=32)::integer AS migration_32_count,
+             COUNT(*) FILTER (WHERE migration.version=33)::integer AS migration_33_count
+        FROM internal_production_owner_admission_head_v1 head
+        JOIN setfarm_schema_migrations migration ON migration.version IN (32,33)
+       WHERE head.singleton=TRUE
+       GROUP BY head.head_version,head.head_hash
+    `;
+    assert.deepEqual({ ...evolvedHeads[0] }, {
+      head_version: String(successor.version),
+      head_hash: successor.hash,
+      migration_32_count: 1,
+      migration_33_count: 1,
+    });
+    const repeated = await applyContractSpineMigrationsIfNeeded(database.sql, {
+      releaseSha: "5".repeat(40),
+    });
+    assert.deepEqual(repeated.applied, []);
+    assert.deepEqual(repeated.adopted, []);
+    assert.equal(repeated.alreadyApplied.length, 33);
+    const reattested = await database.sql<Array<{
+      migration_32_identity: string;
+      verified_count: number;
+      verified_release_count: number;
+      verified_release_sha: string | null;
+    }>>`
+      SELECT (
+               SELECT jsonb_build_object(
+                        'version',version,'name',name,'checksum',checksum,'state',state,
+                        'releaseSha',release_sha,'appliedAt',applied_at
+                      )::text
+                 FROM setfarm_schema_migrations WHERE version=32
+             ) AS migration_32_identity,
+             COUNT(*) FILTER (WHERE verified_at IS NOT NULL)::integer AS verified_count,
+             COUNT(DISTINCT verified_release_sha)::integer AS verified_release_count,
+             MIN(verified_release_sha) AS verified_release_sha
+        FROM setfarm_schema_migrations
+    `;
+    assert.deepEqual({ ...reattested[0] }, {
+      migration_32_identity: migration32Identity[0]!.identity,
+      verified_count: 33,
+      verified_release_count: 1,
+      verified_release_sha: "5".repeat(40),
+    });
   });
 
   it("rejects a source-newer journal row from the migration 33 read-only endpoint", async () => {
