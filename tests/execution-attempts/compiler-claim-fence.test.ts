@@ -3,6 +3,11 @@ import { describe, it } from "node:test";
 
 import { ensureCompilerClaimFence } from "../../src/execution/compiler-claim-fence.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
@@ -21,12 +26,31 @@ async function seedClaim(database: Awaited<ReturnType<typeof createIsolatedTestD
     VALUES
       (${`${runId}-story`}, ${runId}, 1, 'US-002', 'Story', 'running', 'feature-dev_developer')
   `;
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-    VALUES (${runId}, 'implement', 'US-002', 'feature-dev_developer', NOW())
-    RETURNING id::integer AS id
-  `;
-  return claims[0]!.id;
+  return insertClaim(database, runId);
+}
+
+async function insertClaim(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  runId: string,
+  storyId = "US-002",
+): Promise<number> {
+  return database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId,
+      workflowStepId: "implement",
+      storyId,
+      claimAgentId: "feature-dev_developer",
+      claimedAt: new Date(),
+    });
+  }) as Promise<number>;
 }
 
 function ensure(database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>, runId: string, claimId: number) {
@@ -176,36 +200,59 @@ describe("compiler claim handoff fence", () => {
     }
   });
 
-  it("closes a duplicate claim but keeps an unrelated active fence non-retryable", async () => {
+  it("rejects a crossed active fence without mutating either owner", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "run-fence-block";
       const claimId = await seedClaim(database, runId);
-      const otherClaims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${runId}, 'implement', 'US-OTHER', 'feature-dev_developer', NOW())
-        RETURNING id::integer AS id
-      `;
+      const otherClaimId = await insertClaim(database, runId, "US-OTHER");
       const repository = createAttemptRepository(database.sql);
-      await repository.reserve(exactProductReservation({
-        claimId: otherClaims[0]!.id,
+      const foreignReservation = await repository.reserve(exactProductReservation({
+        claimId: otherClaimId,
         runId,
         storyId: "US-OTHER",
         agentId: "feature-dev_developer",
-        evidenceRefs: [`setfarm://claim-log/${otherClaims[0]!.id}`],
+        evidenceRefs: [`setfarm://claim-log/${otherClaimId}`],
       }));
       await database.sql`
         UPDATE execution_attempts SET story_id = 'US-002'
-        WHERE run_id = ${runId} AND story_id = 'US-OTHER'
+        WHERE attempt_id = ${foreignReservation.attempt.attemptId}
       `;
-      assert.deepEqual(await ensure(database, runId, claimId), {
-        status: "blocked",
-        reason: "COMPILER_CLAIM_DIFFERENT_ACTIVE_FENCE",
-      });
+      await assert.rejects(
+        ensure(database, runId, claimId),
+        /PRE_DISPATCH_ATTEMPT_IDENTITY_MISMATCH/,
+      );
       const story = await database.sql<Array<{ status: string }>>`
         SELECT status FROM stories WHERE run_id = ${runId}
       `;
       assert.equal(story[0]?.status, "running");
+      const retained = await database.sql<Array<{
+        target_claim_outcome: string | null;
+        target_claim_owner_state: string;
+        foreign_attempt_disposition: string;
+        foreign_attempt_owner_state: string;
+      }>>`
+        SELECT target_claim.outcome AS target_claim_outcome,
+               target_owner.state AS target_claim_owner_state,
+               foreign_attempt.disposition AS foreign_attempt_disposition,
+               foreign_owner.state AS foreign_attempt_owner_state
+          FROM claim_log target_claim
+          JOIN internal_production_owner_reservations_v1 target_owner
+            ON target_owner.producer_implementation_id = 'a-claim-loop-runtime-v1'
+           AND target_owner.owner_key = target_claim.id::text
+          JOIN execution_attempts foreign_attempt
+            ON foreign_attempt.attempt_id = ${foreignReservation.attempt.attemptId}
+          JOIN internal_production_owner_reservations_v1 foreign_owner
+            ON foreign_owner.producer_implementation_id = 'a-execution-attempt-v1'
+           AND foreign_owner.owner_key = foreign_attempt.attempt_id
+         WHERE target_claim.id = ${claimId}
+      `;
+      assert.deepEqual({ ...retained[0] }, {
+        target_claim_outcome: null,
+        target_claim_owner_state: "bound",
+        foreign_attempt_disposition: "claimed",
+        foreign_attempt_owner_state: "bound",
+      });
     } finally {
       await database.cleanup();
     }
