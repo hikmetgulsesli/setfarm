@@ -20,6 +20,9 @@ import type {
   BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import {
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
   projectBootstrapMainClaimHandoffV1Schema,
   verifyBootstrapMainClaimHandoffV1Schema,
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
@@ -119,6 +122,28 @@ let _isolatedTestPgUrl: string | null = null;
 
 const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
 const P3_ISOLATED_TEST_DATABASE_V1 = /^setfarm_p3_[a-f0-9]{24}_(?:template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/;
+
+const BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM =
+  computeContractSpineMigrationChecksumV1({
+    version: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+    name: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+    statements: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[32],
+  });
+
+export function isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(
+  value: Readonly<{
+    version: unknown;
+    name: unknown;
+    checksum: unknown;
+    state: unknown;
+  }> | undefined,
+): boolean {
+  return value?.version === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL
+    && value.name === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+    && value.checksum === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM
+    && value.state === "applied";
+}
 
 function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
   return [LEGACY_ISOLATED_TEST_DATABASE_V1, P3_ISOLATED_TEST_DATABASE_V1]
@@ -4975,15 +5000,20 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
     runContext: string | Readonly<Record<string, unknown>>;
   }>,
 ): Promise<void> {
-  const migrationRows = await sql<Array<{ state: string }>>`
-    SELECT state
+  const migrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
       FROM public.setfarm_schema_migrations
      WHERE version=32
   `;
   if (migrationRows.length === 0) return;
   if (
     migrationRows.length !== 1
-    || (migrationRows[0]?.state !== "applied" && migrationRows[0]?.state !== "adopted")
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])
   ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
   const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
@@ -5153,15 +5183,20 @@ export async function resolveInternalProductionRecoverySourceBootstrapActualRunT
 }> | null> {
   exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_ACTUAL_TERMINAL_INPUT_INVALID");
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
-  const migrationRows = await sql<Array<{ state: string }>>`
-    SELECT state
+  const migrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
       FROM public.setfarm_schema_migrations
      WHERE version=32
   `;
   if (migrationRows.length === 0) return null;
   if (
     migrationRows.length !== 1
-    || (migrationRows[0]?.state !== "applied" && migrationRows[0]?.state !== "adopted")
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])
   ) throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   const pairs = await sql<Array<{ reservation_ref: string; reservation_hash: string }>>`
     SELECT reservation_ref,reservation_hash
@@ -5652,7 +5687,10 @@ export async function auditCurrentInternalProductionBaselineBootstrapHandoffMigr
     "SELECT version,name,checksum,state FROM public.setfarm_schema_migrations WHERE version=32 LIMIT 2",
   );
   const row = rows[0];
-  if (rows.length !== 1 || !row || Number(row.version) !== 32 || row.name !== "contract-spine-bootstrap-main-claim-handoff-v1" || !/^[a-f0-9]{64}$/.test(row.checksum) || row.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
+  if (
+    rows.length !== 1
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(row)
+  ) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
   await verifyBootstrapMainClaimHandoffV1Schema(sql);
   return Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: row.checksum, migrationState: "current", schemaProjectionHash: hashCanonicalJson(await projectBootstrapMainClaimHandoffV1Schema(sql)) });
 }

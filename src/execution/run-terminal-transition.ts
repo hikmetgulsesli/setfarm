@@ -4,6 +4,7 @@ import {
   assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1,
   closeInternalProductionOwnerReservationV1,
   lockInternalProductionWorkflowRunInsertionFenceV1,
+  isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1,
   resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1,
   resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1,
@@ -367,16 +368,22 @@ export async function transitionRunToTerminalInTransaction(
     throw new Error("RUN_TERMINAL_TIME_INVALID");
   }
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
-  const ownerAdmissionMigrationRows = await sql<Array<{ state: string }>>`
-    SELECT state
+  const ownerAdmissionMigrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
       FROM public.setfarm_schema_migrations
      WHERE version=32
   `;
   if (
     ownerAdmissionMigrationRows.length > 1
     || (ownerAdmissionMigrationRows.length === 1
-      && ownerAdmissionMigrationRows[0]?.state !== "applied"
-      && ownerAdmissionMigrationRows[0]?.state !== "adopted")
+      && !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(
+        ownerAdmissionMigrationRows[0],
+      ))
   ) throw new Error("RUN_TERMINAL_OWNER_ADMISSION_MIGRATION32_JOURNAL_INVALID");
   const ownerAdmissionAvailable = ownerAdmissionMigrationRows.length === 1;
   const runs = await sql.unsafe<RunRow[]>(

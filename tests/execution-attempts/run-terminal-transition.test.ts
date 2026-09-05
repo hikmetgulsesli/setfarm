@@ -34,6 +34,7 @@ import {
 } from "../../src/execution/claim-runtime-publication.js";
 import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
 import {
+  assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1,
   beginOrAdoptInternalProductionOwnerReservationV1,
   bindInternalProductionOwnerReservationV1,
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
@@ -80,6 +81,13 @@ const RUNTIME_DRAIN_EVIDENCE = {
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/run-terminal-completion-drain"],
 };
+
+const AUTHENTIC_MIGRATION_32_JOURNAL_ROW = Object.freeze({
+  version: 32,
+  name: "contract-spine-bootstrap-main-claim-handoff-v1",
+  checksum: "d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d",
+  state: "applied",
+});
 
 async function seedBoundDrainedTermination(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -493,6 +501,7 @@ describe("canonical run terminal owner", () => {
 const g=globalThis as any;
 type InternalProductionPgTransactionSql=any;
 type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1=any;
+const isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1=(value:any)=>value?.version===32&&value?.name==="contract-spine-bootstrap-main-claim-handoff-v1"&&value?.checksum==="d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d"&&value?.state==="applied";
 const same=(left:any,right:any)=>JSON.stringify(left)===JSON.stringify(right);
 const sameJsonValueV1=same;
 const hashCanonicalJson=(value:any)=>{g.__p4BarrierHashInputs.push(value);if(value?.schema==="setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1"){if(value.pendingInputRef===undefined||value.pendingInputHash===undefined)throw new Error("RECOVERY_ONLY_HASH_INPUT_INVALID");return g.__p4BarrierInput.runId}return JSON.stringify(value)};
@@ -565,7 +574,7 @@ ${barrier}
           queries.push(text);
           const normalized = text.replace(/\/\*[\s\S]*?\*\//g, " ").trimStart();
           if (/^(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP)\b/i.test(normalized)) throw new Error("BARRIER_WRITE_ATTEMPTED");
-          if (/setfarm_schema_migrations/i.test(text) && /version\s*=\s*32/i.test(text)) return [{state:"applied"}];
+          if (/setfarm_schema_migrations/i.test(text) && /version\s*=\s*32/i.test(text)) return [AUTHENTIC_MIGRATION_32_JOURNAL_ROW];
           if (/internal_production_owner_reservations_v1/i.test(text)) return rows.reservationRows;
           if (/internal_production_owner_admission_(?:head|authorities)_v1/i.test(text)) return rows.ownerRows;
           if (/FROM\s+(?:public\.)?runs/i.test(text) && /running[\s\S]*resuming[\s\S]*cancelling[\s\S]*failing/i.test(text)) return rows.activeRunRows;
@@ -973,6 +982,7 @@ const g=globalThis as any;
 const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";
 const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).digest("hex");
 const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
+const isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1=(value:any)=>value?.version===32&&value?.name==="contract-spine-bootstrap-main-claim-handoff-v1"&&value?.checksum==="d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d"&&value?.state==="applied";
 const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
 const strictCanonicalText=(v:string)=>JSON.parse(v);
 const validateOwnerAdmissionPairV1=(input:any,refKey:string,hashKey:string)=>({[refKey]:input[refKey],[hashKey]:input[hashKey]});
@@ -1042,7 +1052,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
       Object.assign(globalThis as any, { __p4RunReservation: runReservation, __p4SourceReservation: sourceReservation, __p4Bound: bound, __p4SourceTerminal: sourceTerminal, __p4RunTerminal: runTerminal, __p4PairClose: pairClose, __p4Release: release, __p4ReceiptBody: receiptBody, __p4TerminalCross: null, __p4TerminalCalls: [] });
       const sql = Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const query = strings.join("?");
-        if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [{ state: "applied" }];
+        if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [AUTHENTIC_MIGRATION_32_JOURNAL_ROW];
         if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
         if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
         if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: "completed" }];
@@ -1068,7 +1078,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
         const staged = { status: durable.status };
         const tagged = async (strings: TemplateStringsArray, ...values: unknown[]) => {
           const query = strings.join("?");
-          if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [{ state: "applied" }];
+          if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [AUTHENTIC_MIGRATION_32_JOURNAL_ROW];
           if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return ["pair-closed", "closed"].includes((globalThis as any).__p4OwnerPhase) ? [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }] : [];
           if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
           if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: staged.status }];
@@ -3436,6 +3446,93 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
     } finally {
       await database.cleanup();
     }
+  });
+
+  it("rejects ordinary terminalization when the migration 32 journal identity is unauthenticated", async () => {
+    const corruptions = [
+      {
+        label: "adopted guarded migration",
+        apply: async (database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>) => {
+          await database.sql`UPDATE setfarm_schema_migrations SET state='adopted' WHERE version=32`;
+        },
+      },
+      {
+        label: "crossed migration name",
+        apply: async (database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>) => {
+          await database.sql`UPDATE setfarm_schema_migrations SET name='crossed-bootstrap-main-claim-handoff-v1' WHERE version=32`;
+        },
+      },
+      {
+        label: "crossed migration checksum",
+        apply: async (database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>) => {
+          await database.sql`UPDATE setfarm_schema_migrations SET checksum=${"0".repeat(64)} WHERE version=32`;
+        },
+      },
+    ] as const;
+    const failures: string[] = [];
+
+    for (const corruption of corruptions) {
+      const database = await createIsolatedTestDatabase();
+      try {
+        const runId = `run-terminal-migration32-${corruption.label.replaceAll(" ", "-")}`;
+        await database.sql`
+          INSERT INTO runs (id, workflow_id, task, status, protocol)
+          VALUES (${runId}, 'feature-dev', ${corruption.label}, 'running', 'legacy')
+        `;
+        await database.sql`
+          INSERT INTO steps
+            (id, run_id, step_id, agent_id, step_index, input_template, expects, status)
+          VALUES
+            (${`${runId}-step`}, ${runId}, 'plan', 'feature-dev_planner', 0, '', '', 'pending')
+        `;
+        await corruption.apply(database);
+
+        try {
+          await assert.rejects(
+            transitionRunToTerminal(database.sql, {
+              runId,
+              status: "failed",
+              diagnostic: "migration 32 identity must be authenticated before owner access",
+              unclaimedBootstrapFailure: true,
+            }),
+            /^Error: RUN_TERMINAL_OWNER_ADMISSION_MIGRATION32_JOURNAL_INVALID$/,
+            corruption.label,
+          );
+        } catch (error) {
+          failures.push(`${corruption.label} terminal: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          await assert.rejects(
+            assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(
+              database.sql as PgTransactionSql,
+              {
+                runId,
+                workflowState: "running",
+                protocol: "legacy",
+                runContext: {},
+              },
+            ),
+            /^Error: RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID$/,
+            `${corruption.label} delivery barrier`,
+          );
+        } catch (error) {
+          failures.push(`${corruption.label} barrier: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        const rows = await database.sql<Array<{ runStatus: string; stepStatus: string }>>`
+          SELECT run.status AS "runStatus",step.status AS "stepStatus"
+            FROM runs run
+            JOIN steps step ON step.run_id=run.id
+           WHERE run.id=${runId}
+        `;
+        assert.deepEqual(rows.map((row) => ({ ...row })), [
+          { runStatus: "running", stepStatus: "pending" },
+        ]);
+      } finally {
+        await database.cleanup();
+      }
+    }
+    assert.deepEqual(failures, []);
   });
 
   it("downgrades migration 20 terminal rows to the exact v19 reader contract", async () => {
