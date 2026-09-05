@@ -12,6 +12,7 @@ const TEST_PREFIX = "tests/execution-attempts/";
 const OWNER_BACKED_TESTS = new Set([
   "attempt-reconciler.test.ts",
   "claim-authority.test.ts",
+  "claim-attempt-transition.test.ts",
   "claim-runtime-publication.test.ts",
   "claim-step-v3-recovery.integration.test.ts",
   "compiler-claim-fence.test.ts",
