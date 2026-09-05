@@ -179,6 +179,33 @@ describe("operational failure cause migration", () => {
       await database.sql.unsafe(
         "ALTER TABLE public.run_termination_requests ENABLE TRIGGER trg_run_termination_requests_operational_failure_cause_immutable",
       );
+      const triggerRows = await database.sql<Array<{ definition: string }>>`
+        SELECT pg_get_triggerdef(trigger_row.oid, true) AS definition
+          FROM pg_trigger trigger_row
+         WHERE trigger_row.tgname='trg_run_termination_requests_operational_failure_cause_immutabl'
+           AND NOT trigger_row.tgisinternal
+      `;
+      const canonicalTriggerDefinition = triggerRows[0]?.definition;
+      assert.ok(canonicalTriggerDefinition);
+      await database.sql.unsafe(
+        "DROP TRIGGER trg_run_termination_requests_operational_failure_cause_immutable ON public.run_termination_requests",
+      );
+      await database.sql.unsafe(`
+        CREATE TRIGGER trg_run_termination_requests_operational_failure_cause_immutable
+        BEFORE UPDATE OF evidence, target_status, requested_by ON public.run_termination_requests
+        FOR EACH ROW WHEN (false)
+        EXECUTE FUNCTION public.setfarm_enforce_operational_failure_cause_immutable()
+      `);
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => error instanceof OperationalFailureCauseAuthorityV3MigrationError
+          && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH",
+        "the catalog verifier rejects a same-target immutability trigger with a disabling WHEN clause",
+      );
+      await database.sql.unsafe(
+        "DROP TRIGGER trg_run_termination_requests_operational_failure_cause_immutable ON public.run_termination_requests",
+      );
+      await database.sql.unsafe(canonicalTriggerDefinition);
       const functionRows = await database.sql<Array<{ definition: string }>>`
         SELECT pg_get_functiondef(
           to_regprocedure('public.setfarm_enforce_operational_failure_cause_immutable()')
