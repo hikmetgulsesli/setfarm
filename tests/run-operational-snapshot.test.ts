@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import { createAcceptedCandidateV1 } from "../src/evidence/accepted-candidate-v1.js";
+import type { PgTransactionSql } from "../src/db-pg.js";
 import {
   createEvidenceBundleV2,
   computeEvidenceBundleHash,
@@ -14,6 +15,11 @@ import {
 import { createAttemptRepository } from "../src/execution/attempt-repository.js";
 import { createOperationalOutboxPublisher } from "../src/execution/operational-outbox-publisher.js";
 import { createOperationalOutboxRepository } from "../src/execution/operational-outbox-repository.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishLoopClaimRuntime,
+} from "../src/execution/claim-runtime-publication.js";
 import {
   createRuntimeCompletionPlanV1,
   type RuntimeCompletionPlanDescriptorV1,
@@ -36,6 +42,7 @@ import {
 import { createFindingSetV1 } from "../src/findings/finding-set.js";
 import { createFindingRecoveryRepository } from "../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../src/recovery/recovery-delivery-repository.js";
+import { createV3RecoveryClaimAuthority } from "../src/recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseDraftV1 } from "../src/recovery/recovery-case.js";
 import { hashCanonicalJson } from "../src/product-compiler/canonical-json.js";
 import {
@@ -50,6 +57,7 @@ import {
 import { RunOperationalSnapshotV2Schema } from "../src/server/schemas/run-operational-snapshot-v2.js";
 import { RunOperationalSnapshotV3Schema } from "../src/server/schemas/run-operational-snapshot-v3.js";
 import { createIsolatedTestDatabase } from "./execution-attempts/test-database.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "./execution-attempts/helpers/compiler-story-english-admission-fixture.js";
 
 const SHA = "a".repeat(40);
 const TREE = "b".repeat(40);
@@ -59,13 +67,19 @@ const PLAN_HASH = "e".repeat(64);
 const PACKET_HASH = "f".repeat(64);
 const SLICE_HASH = "8".repeat(64);
 const EXECUTION_SLICE_HASH = "9".repeat(64);
+const ownerBackedIt = fs.existsSync(path.join(process.cwd(), ".setfarm-p3-projection-marker.json"))
+  ? it
+  : it.skip;
+const legacyDatabaseIt = fs.existsSync(path.join(process.cwd(), ".setfarm-p3-projection-marker.json"))
+  ? it.skip
+  : it;
 
-function findingSet(runId: string) {
+function findingSet(runId: string, storyId = "US-RECOVERY", sliceHash = SLICE_HASH) {
   return createFindingSetV1({
     runId,
-    storyId: "US-RECOVERY",
+    storyId,
     packetHash: PACKET_HASH,
-    sliceHash: SLICE_HASH,
+    sliceHash,
     sourceRevision: { sha: SHA, treeHash: TREE },
     findings: [{
       origin: "runtime",
@@ -106,7 +120,7 @@ function recoveryDraft(findings: ReturnType<typeof findingSet>): RecoveryCaseDra
   };
 }
 
-function evidenceBundle(runId: string) {
+function evidenceBundle(runId: string, storyId = "US-RECOVERY", sliceHash = SLICE_HASH) {
   const observation = {
     kind: "runtime" as const,
     owner: "setfarm-orchestrator" as const,
@@ -117,9 +131,9 @@ function evidenceBundle(runId: string) {
   };
   return createEvidenceBundleV2({
     runId,
-    storyId: "US-RECOVERY",
+    storyId,
     packetHash: PACKET_HASH,
-    sliceHash: SLICE_HASH,
+    sliceHash,
     sourceRevision: { sha: SHA, treeHash: TREE },
     predicates: [{
       invariantRef: "INV_SAVE_RELOAD",
@@ -341,7 +355,7 @@ describe("canonical run operational snapshot", () => {
       stateHash: HASH,
     });
   });
-  it("projects the complete claim-to-outbox chain with exact refs and no unsafe payload fields", async () => {
+  ownerBackedIt("projects the complete claim-to-outbox chain with exact refs and no unsafe payload fields", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "RUN_snapshot-full-0001";
@@ -687,7 +701,7 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("projects the exact deploy receipt and Mission Control transfer acknowledgement", async () => {
+  ownerBackedIt("projects the exact deploy receipt and Mission Control transfer acknowledgement", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "RUN_snapshot-deploy-receipt-v3";
@@ -877,13 +891,23 @@ describe("canonical run operational snapshot", () => {
          ) VALUES ($1, $2, 'deploy', 'deployer', 11, '', '', 'running')`,
         [stepDbId, runId],
       );
-      const claimRows = await database.sql.unsafe<Array<{ id: number }>>(
-        `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-         VALUES ($1, 'deploy', NULL, 'deployer', NOW())
-         RETURNING id::integer AS id`,
-        [runId],
-      );
-      const claimId = claimRows[0]!.id;
+      const claimId = await database.sql.begin(async (sql) => {
+        const rows = await sql<Array<{ id: unknown }>>`
+          SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+        `;
+        const birth = await prepareInternalProductionClaimBirthV1(
+          sql as PgTransactionSql,
+          "a-claim-single-runtime-v1",
+          rows,
+        );
+        return insertAndBindInternalProductionClaimBirthV1(sql as PgTransactionSql, birth, {
+          runId,
+          workflowStepId: "deploy",
+          storyId: null,
+          claimAgentId: "deployer",
+          claimedAt: new Date("2026-07-13T13:00:15.000Z"),
+        });
+      });
       const envelope = ClaimEnvelopeV1Schema.parse({
         schema: "setfarm.claim-envelope.v1",
         protocol: "v3",
@@ -1207,7 +1231,7 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("reduces the #1996 terminal-run/closed-claim/active-attempt shape to inconsistent", async () => {
+  legacyDatabaseIt("reduces the #1996 terminal-run/closed-claim/active-attempt shape to inconsistent", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "RUN_snapshot-1996-0001";
@@ -1235,21 +1259,25 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("projects v11 finding, evidence, current revision, and delivered dispatch state without prose or lease secrets", async () => {
+  ownerBackedIt("projects v11 finding, evidence, current revision, and delivered dispatch state without prose or lease secrets", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const runId = "RUN_snapshot-recovery-v11";
-      await database.insertRun(runId);
+      const compiler = await seedCanonicalCompilerStoryAdmissionFixture(database, {
+        runId,
+        releaseSha: SHA,
+        packetHash: PACKET_HASH,
+      });
+      const story = compiler.stories[0]!;
       const findingRepository = createFindingRecoveryRepository(database.sql);
       const deliveryRepository = createRecoveryDeliveryRepository(database.sql);
       const attemptRepository = createAttemptRepository(database.sql);
-      const findings = findingSet(runId);
-      await database.sql`
-        INSERT INTO stories (id, run_id, story_index, story_id, title, status)
-        VALUES (${`${runId}-story`}, ${runId}, 1, ${findings.storyId}, 'Snapshot recovery story', 'failed')
-      `;
+      const findings = findingSet(runId, story.storyId, EXECUTION_SLICE_HASH);
+      await database.sql`UPDATE stories SET status = 'failed' WHERE id = ${story.id}`;
       await findingRepository.putFindingSet(findings);
-      const evidence = await findingRepository.putEvidenceBundle(evidenceBundle(runId));
+      const evidence = await findingRepository.putEvidenceBundle(
+        evidenceBundle(runId, story.storyId, EXECUTION_SLICE_HASH),
+      );
       const opened = await findingRepository.openRecoveryCase(recoveryDraft(findings), {
         now: new Date("2026-07-13T08:01:00.000Z"),
       });
@@ -1263,19 +1291,34 @@ describe("canonical run operational snapshot", () => {
       }, { now: new Date("2026-07-13T08:02:00.000Z") });
       assert.equal(authorized.status, "authorized");
       if (authorized.status !== "authorized") throw new Error("expected recovery authorization");
-      const leased = await deliveryRepository.leaseNext({
+      const handoff = await createV3RecoveryClaimAuthority(database.sql).acquireRecoveryClaim({
         ownerInstanceId: "snapshot-recovery-worker",
         runId,
         storyId: findings.storyId,
         leaseMs: 60_000,
       }, { now: new Date("2026-07-13T08:03:00.000Z") });
-      assert.ok(leased);
-      const claimRows = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-        VALUES (${runId}, 'implement', ${findings.storyId}, 'snapshot-recovery-agent')
-        RETURNING id::integer AS id
-      `;
-      const claimId = claimRows[0]!.id;
+      const publication = await publishLoopClaimRuntime(database.sql, {
+        runId,
+        stepDbId: compiler.implementStepDbId,
+        workflowStepId: "implement",
+        storyDbId: story.id,
+        storyId: story.storyId,
+        claimAgentId: "snapshot-recovery-agent",
+        callerGatewayAgent: "snapshot-recovery-gateway",
+        parallelLimit: 1,
+        runtimeIntent: {
+          schema: "setfarm.runtime-claim-intent.v1",
+          sessionId: "RTS_snapshot-recovery-v11",
+          runtimeAgentId: "snapshot-recovery-runtime",
+          runtimeKind: "openclaw_session",
+          ownerInstanceId: handoff.lease.ownerInstanceId,
+        },
+        recoveryHandoff: handoff,
+        storyAdmissionProof: compiler.storyAdmissionProof,
+        now: new Date("2026-07-13T08:03:01.000Z"),
+      });
+      assert.ok(publication);
+      const claimId = publication.claimId;
       const reserved = await attemptRepository.reserve({
         claimId,
         runId,
@@ -1290,8 +1333,8 @@ describe("canonical run operational snapshot", () => {
         recoveryCaseRevisionId: revision.revisionId,
         recoveryDispatchId: authorized.dispatch.dispatchId,
         recoveryDeliveryLease: {
-          ownerInstanceId: leased.ownerInstanceId!,
-          leaseToken: leased.leaseToken!,
+          ownerInstanceId: handoff.lease.ownerInstanceId,
+          leaseToken: handoff.lease.leaseToken,
         },
         role: "developer",
         agentId: "snapshot-recovery-agent",
@@ -1350,22 +1393,25 @@ describe("canonical run operational snapshot", () => {
       assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
 
       const serialized = JSON.stringify(snapshot);
-      assert.equal(serialized.includes(leased.leaseToken!), false);
+      assert.equal(serialized.includes(handoff.lease.leaseToken), false);
       assert.equal(serialized.includes("SECRET_TERMINAL_RESULT_PROSE"), false);
       assert.equal(serialized.includes("SECRET_RECOVERY_DIAGNOSTIC"), false);
       assert.equal(serialized.includes("terminalResult"), false);
       assert.equal(serialized.includes("diagnostic"), false);
 
-      await database.sql`DELETE FROM recovery_dispatch_deliveries WHERE dispatch_id = ${authorized.dispatch.dispatchId}`;
-      const missingDelivery = await buildRunOperationalSnapshot(database.sql, runId);
-      assert.ok(missingDelivery);
-      assert.deepEqual(missingDelivery.recoveryDispatches, []);
+      await assert.rejects(
+        database.sql`DELETE FROM recovery_dispatch_deliveries WHERE dispatch_id = ${authorized.dispatch.dispatchId}`,
+        /ip_v3_recovery_publications_delivery_fkey|violates foreign key constraint/,
+      );
+      const retainedDelivery = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(retainedDelivery);
+      assert.equal(retainedDelivery.recoveryDispatches?.length, 1);
     } finally {
       await database.cleanup();
     }
   });
 
-  it("reports a v4-shaped database as partial instead of an empty successful projection", async () => {
+  legacyDatabaseIt("reports a v4-shaped database as partial instead of an empty successful projection", async () => {
     const database = await createIsolatedTestDatabase({ migrate: false });
     try {
       await database.sql.unsafe(`
@@ -1475,7 +1521,7 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("keeps the v2 projection readable on a pre-v19 manager-completion database", async () => {
+  legacyDatabaseIt("keeps the v2 projection readable on a pre-v19 manager-completion database", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       await database.sql.unsafe(
@@ -1507,7 +1553,7 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("keeps the v2 projection readable until migration 22 is release-attested", async () => {
+  legacyDatabaseIt("keeps the v2 projection readable until migration 22 is release-attested", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       await attestSnapshotMigrationShape(database);
@@ -1526,7 +1572,7 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
-  it("does not advertise submission evidence from an unattested v19 shape", async () => {
+  legacyDatabaseIt("does not advertise submission evidence from an unattested v19 shape", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       await database.sql.unsafe(
