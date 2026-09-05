@@ -108,8 +108,10 @@ export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(
        JOIN pg_namespace function_namespace ON function_namespace.oid=routine.pronamespace
        JOIN pg_language language ON language.oid=routine.prolang
       WHERE NOT trigger_row.tgisinternal
-        AND trigger_row.tgname=$1`,
-    [expectedOperationalFailureCauseAuthorityV3TriggerName],
+        AND relation_namespace.nspname=$1
+        AND relation.relname=$2
+      ORDER BY trigger_row.tgname`,
+    ["public", "run_termination_requests"],
   );
   const seal = sealRows[0];
   const triggerDefinitionHash = seal

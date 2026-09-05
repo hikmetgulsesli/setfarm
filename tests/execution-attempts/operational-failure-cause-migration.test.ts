@@ -238,6 +238,34 @@ describe("operational failure cause migration", () => {
       );
       await database.sql.unsafe(canonicalFunctionDefinition);
       await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
+      await database.sql.unsafe(`
+        CREATE FUNCTION public.zz_setfarm_cross_operational_failure_cause()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          NEW.evidence := NEW.evidence - 'operationalFailureCause';
+          RETURN NEW;
+        END
+        $$
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER zz_run_termination_requests_cross_operational_failure_cause
+        BEFORE UPDATE OF target_status ON public.run_termination_requests
+        FOR EACH ROW
+        EXECUTE FUNCTION public.zz_setfarm_cross_operational_failure_cause()
+      `);
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => error instanceof OperationalFailureCauseAuthorityV3MigrationError
+          && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH",
+        "the catalog verifier rejects a later-sorting trigger that can erase the protected cause",
+      );
+      await database.sql.unsafe(
+        "DROP TRIGGER zz_run_termination_requests_cross_operational_failure_cause ON public.run_termination_requests",
+      );
+      await database.sql.unsafe(
+        "DROP FUNCTION public.zz_setfarm_cross_operational_failure_cause()",
+      );
+      await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
       const currentHead = await database.sql<Array<{ version: number }>>`
         SELECT version FROM setfarm_schema_migrations
          WHERE version >= 26 ORDER BY version
