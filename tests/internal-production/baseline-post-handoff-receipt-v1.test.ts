@@ -5976,6 +5976,8 @@ ${progressWriterProcessResult}`);
       while (true) {
         const callStart = input.indexOf(`${port}(`, cursor);
         if (callStart < 0) break;
+        const receiver = /([A-Za-z_$][A-Za-z0-9_$]*)\.$/.exec(input.slice(0, callStart));
+        const expressionStart = receiver === null ? callStart : callStart - receiver[0].length;
         let depth = 0;
         let callEnd = -1;
         for (let index = callStart + port.length; index < input.length; index += 1) {
@@ -5983,11 +5985,11 @@ ${progressWriterProcessResult}`);
           else if (input[index] === ")" && --depth === 0) { callEnd = index + 1; break; }
         }
         assert.ok(callEnd > callStart, `P5c-S copied effect runner closes ${port}`);
-        const call = input.slice(callStart, callEnd);
-        const args = call.slice(port.length + 1, -1);
+        const call = input.slice(expressionStart, callEnd);
+        const args = input.slice(callStart + port.length + 1, callEnd - 1);
         const replacement = `(p5cSEffectProbe ? p5cSEffectProbe.observe(effect.effect, "${port}", [${args}]) as ReturnType<typeof ${port}> : ${call})`;
-        input = input.slice(0, callStart) + replacement + input.slice(callEnd);
-        cursor = callStart + replacement.length;
+        input = input.slice(0, expressionStart) + replacement + input.slice(callEnd);
+        cursor = expressionStart + replacement.length;
       }
       return input;
     };
@@ -14129,12 +14131,18 @@ function createFixture(options: FixtureOptions = {}): string {
     )
     : observerBytes;
   if (!options.preserveCodeOwnedWorkspaceRoot) {
-    const fixtureBoundObserver = fixtureObserver.replace(
-      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
-      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());',
-    );
-    assert.notEqual(fixtureBoundObserver, fixtureObserver, "fixture must replace only the code-owned workspace root");
-    fixtureObserver = fixtureBoundObserver;
+    const workspaceRootSource =
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
+    const fixtureWorkspaceRoot =
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+    if (fixtureObserver.includes(workspaceRootSource)) {
+      assert.equal(fixtureObserver.split(workspaceRootSource).length, 2,
+        "fixture replaces exactly one code-owned workspace root");
+      fixtureObserver = fixtureObserver.replace(workspaceRootSource, fixtureWorkspaceRoot);
+    } else {
+      assert.equal(fixtureObserver.split(fixtureWorkspaceRoot).length, 2,
+        "an authenticated P3 projection may pre-bind exactly one fixture workspace root");
+    }
   }
   if (options.preparedAccessorReobservationDrift) {
     const driftedBasename = {
@@ -14227,6 +14235,10 @@ function createFixture(options: FixtureOptions = {}): string {
   fixtureFile(root, "src/db/operational-failure-cause-authority-v3-catalog.ts", 'export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V31_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
   fixtureFile(root, "src/db/contract-spine-migrations.ts", 'export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V33_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
   fixtureFile(root, "src/db-pg.ts", fixtureDatabasePortSource(options));
+  fixtureFile(root, "src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); }
+export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_DISPATCH_NOT_INSTRUMENTED"); }
+export async function dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_AUTHORITY_DISPATCH_NOT_INSTRUMENTED"); }
+`);
   const recoveryRunAuthorityPath = path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts");
   fixtureFile(root, "src/execution/recovery-source-bootstrap-run-authority-v1.ts", existsSync(recoveryRunAuthorityPath)
     ? readFileSync(recoveryRunAuthorityPath)
@@ -29940,7 +29952,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const ownerBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+observeInternalProductionRecoverySourceBootstrapStatusAtRootV1\(/.exec(arm);
       assert.ok(ownerBinding, `${rawKind}: one owned AtRoot recovery observation is acquired`);
       const ownerName = ownerBinding[1]!;
-      assert.match(arm, new RegExp(`owned\\.push\\(\\s*${ownerName}\\s*\\)[\\s\\S]*const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${ownerName}\\.value`),
+      assert.match(arm, new RegExp(`(?:owned\\.push\\(\\s*${ownerName}\\s*\\)|own\\(\\s*${ownerName}\\s*\\))[\\s\\S]*const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${ownerName}\\.value`),
         `${rawKind}: ownership transfers before the exact recovery value is exposed to raw binding`);
       assert.equal([...arm.matchAll(/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1\(/g)].length, 1,
         `${rawKind}: all recovery-derived consumers share one acquisition`);
@@ -30113,8 +30125,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "every independent A0/A1/A2-extra writer acquisition member is one-link, not merely the selected fixed pair");
     assert.doesNotMatch(preSchemaInventory, /openSync|readFileSync|readdirSync|opendirSync|pinMember|openExactPoisonRecoveryMemberV1/,
       "inventory grammar and every per-family cap are complete before any filesystem member is opened or pinned");
-    assert.match(preSchemaAtRoot, /openExactPoisonRecoveryMemberV1\([\s\S]*resolveInternalProductionPreSchemaSpawnerRebindStatusV1\([\s\S]*(?:authorization|startupToken|restartAuthority|predecessorTerminationObservation|replacementProcessObservation|sealedAdmission)/,
-      "the AtRoot reader pins exact pair/content generations and validates the complete causal material prefix");
+    assert.match(preSchemaAtRoot, /const\s+openContent[\s\S]*openExactPoisonRecoveryMemberV1\([\s\S]*await\s+resolver\(pair\s+as\s+never\)/,
+      "the AtRoot reader pins each exact content generation before invoking its selected resolver");
+    assert.match(preSchemaAtRoot, /openContent\(\s*"status"[\s\S]*resolveInternalProductionPreSchemaSpawnerRebindStatusV1\s+as\s+never/,
+      "the status content family is resolved through the exact status resolver");
+    assert.match(preSchemaAtRoot, /const\s+resolvers\s*=\s*\[[\s\S]*resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1[\s\S]*resolveInternalProductionPreSchemaSpawnerStartupTokenV1[\s\S]*resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1[\s\S]*resolveInternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1[\s\S]*resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1[\s\S]*resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1/,
+      "the complete causal material prefix is bound to its exact resolver table");
     for (const relation of [
       "currentEntryOperation", "authorization", "startupToken", "restartAuthority",
       "predecessorTerminationObservation", "replacementProcessObservation", "sealedAdmission", "admissionReady",
@@ -30165,10 +30181,15 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.match(preSchemaAtRoot, /authenticateTask12ReceiptDirectoryChainV1\(\s*path\.dirname\(\s*(?:contentTarget|target)\s*\)\s*\)[\s\S]*openExactPoisonRecoveryMemberV1\(\s*(?:contentTarget|target)/,
       "each resolved status/material content generation owns both its canonical parent chain and exact member pin");
-    assert.match(preSchemaAtRoot, /catch\s*\([^)]+\)\s*\{[\s\S]*(?:for\s*\([^)]*--|\.reverse\(\))[\s\S]*(?:closeSync|\.close\(\))[\s\S]*(?:throw|primary)/,
-      "partial construction closes every acquired status/material/directory pin in reverse while preserving the primary error");
-    assert.match(preSchemaAtRoot, /close\(\)[\s\S]*(?:for\s*\([^)]*--|\.reverse\(\))[\s\S]*(?:catch|first)[\s\S]*(?:closeSync|\.close\(\))/,
-      "returned-owner close continues reverse cleanup and reports the first close failure after attempting every pin");
+    const preSchemaCloseResources = /const\s+closeResources\s*=\s*\([^)]*primary[^)]*\)[\s\S]*?\n\s*\};/.exec(preSchemaAtRoot)?.[0] ?? "";
+    assert.match(preSchemaCloseResources, /for\s*\([^)]*contentResources\.length\s*-\s*1[^)]*index\s*-=/,
+      "one cleanup helper closes every acquired status/material pin in reverse");
+    assert.match(preSchemaCloseResources, /closeSync\([\s\S]*\.guard\.close\(\)[\s\S]*directoryOwner\.close\(\)[\s\S]*if\s*\(primary\s*!==\s*null\)\s*throw\s+primary[\s\S]*firstCloseError/,
+      "the cleanup helper attempts member, guard, and directory cleanup while preserving the primary error");
+    assert.match(preSchemaAtRoot, /catch\s*\(error\)\s*\{[\s\S]*if\s*\(!transferred\)[\s\S]*closeResources\(error\)/,
+      "partial construction delegates reverse cleanup with the construction primary");
+    assert.match(preSchemaAtRoot, /const\s+close\s*=\s*\(\):\s*void\s*=>[\s\S]*closeResources\(null\)/,
+      "returned-owner close delegates the same complete cleanup without a construction primary");
     const preSchemaAuthorityFences = [...preSchemaAtRoot.matchAll(/authority\.assertStable\(\)/g)].map((match) => match.index!);
     const preSchemaDirectoryOpen = Math.min(...[preSchemaAtRoot.indexOf("readdirSync("), preSchemaAtRoot.indexOf("opendirSync("), preSchemaAtRoot.indexOf("openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1(")].filter((index) => index >= 0));
     assert.ok(preSchemaAuthorityFences.length >= 2 && preSchemaAuthorityFences[0]! < preSchemaDirectoryOpen,
@@ -30189,7 +30210,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.ok(ownerBinding, `${rawKind}: the exact AtRoot result is retained as a named owner`);
       const owner = ownerBinding[1]!;
       const acquisition = ownerBinding.index;
-      const transfer = arm.indexOf(`owned.push(${owner});`, acquisition);
+      const transfer = Math.max(
+        arm.indexOf(`owned.push(${owner});`, acquisition),
+        arm.indexOf(`own(${owner});`, acquisition),
+      );
       const valueBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${owner}\\.value\\s*;`).exec(arm);
       assert.ok(transfer > acquisition && valueBinding && valueBinding.index > transfer,
         `${rawKind}: the owner is transferred to raw cleanup before its semantic value can escape`);
@@ -30200,8 +30224,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const helper = topLevelFunctionRegionV1(source, helperName);
       assert.match(helper.slice(0, helper.indexOf("{")), /authority:\s*ExactPoisonPostVisibleProgressObservationAuthorityV1[\s\S]*operation:\s*InternalProductionCurrentEntryOperationV1/,
         `${helperName}: late authority is borrowed from the same narrow live root and successor operation`);
-      assert.match(helper, /openExactPoisonRecoveryMemberV1|resolveTask12RecordV1|assertExactPoisonRecoveryPinnedMemberStableV1/,
-        `${helperName}: exact entry-authority/02 evidence remains pinned through the late raw projection`);
+      assert.match(helper, /openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1\([\s\S]*\.pinMember\([\s\S]*const\s+assertStable[\s\S]*(?:operationOwner|contentOwner)\.assertStable\(\)/,
+        `${helperName}: exact entry-authority/02 evidence remains owned and pinned through the late raw projection`);
       assert.doesNotMatch(helper, /WithSelectedCurrentEntryStoreContextV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
         `${helperName}: pre-mint late observation neither fabricates a selected handle nor mutates authority`);
     }
@@ -30230,8 +30254,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "status-01.pair.json",
       "status-02.pair.json",
     ] as const) assert.match(completedRetainedOpen, new RegExp(locator.replaceAll(".", "\\.")), `${locator}: completed evidence derives its exact retained-NEXT locator`);
-    assert.match(completedRetainedOpen, /authenticateTask12ReceiptDirectoryChainV1[\s\S]*openExactPoisonRecoveryMemberV1[\s\S]*(?:resolveInternalProductionPreSchemaSpawnerRebindStatusV1|resolveInternalProductionPreManifestMigration32AuthorizationStatusV1)[\s\S]*(?:canonicalRecordBytes|strictCanonicalRecord)[\s\S]*(?:assertExactPoisonRecoveryPinnedMemberStableV1|\.assertStable\(\))/,
-      "retained-NEXT pair, content, and parent generations remain pinned through semantic resolution and canonical byte equality");
+    assert.match(completedRetainedOpen, /authenticateTask12ReceiptDirectoryChainV1[\s\S]*openExactPoisonRecoveryMemberV1[\s\S]*(?:resolveInternalProductionPreSchemaSpawnerRebindStatusV1|resolveInternalProductionPreManifestMigration32AuthorizationStatusV1)/,
+      "retained-NEXT pair and content generations remain pinned through semantic resolution");
+    assert.match(completedRetainedOpen, /contentMember\.bytes\.equals\(\s*task12ReceiptCanonicalBytesV1\(value\)\s*\)[\s\S]*const\s+assertStable[\s\S]*assertExactPoisonRecoveryPinnedMemberStableV1/,
+      "the resolved retained-NEXT value is byte-equal and both pinned generations remain in the returned stability fence");
     const pairGuardBinding = /(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]*)[^;=]*=\s*authenticateTask12ReceiptDirectoryChainV1\(\s*path\.dirname\(\s*pairTarget\s*\)\s*\)/.exec(completedRetainedOpen);
     const pairMemberBinding = /(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]*)[^;=]*=\s*openExactPoisonRecoveryMemberV1\(\s*pairTarget\b/.exec(completedRetainedOpen);
     const contentGuardBinding = /(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]*)[^;=]*=\s*authenticateTask12ReceiptDirectoryChainV1\(\s*path\.dirname\(\s*contentTarget\s*\)\s*\)/.exec(completedRetainedOpen);
@@ -30255,15 +30281,20 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const retainedInitialFence = completedRetainedOpen.indexOf("assertStable();", completedRetainedOpen.indexOf(retainedStableDefinition) + retainedStableDefinition.length);
     assert.ok(retainedInitialFence >= 0 && retainedInitialFence < retainedOwnerReturn,
       "retained-NEXT executes the complete member/locator/authority fence before returning its owner");
-    const stableStart = completedRetainedOpen.indexOf("assertStable", retainedOwnerReturn);
-    const closeStart = completedRetainedOpen.indexOf("close", stableStart + "assertStable".length);
-    const stableRegion = completedRetainedOpen.slice(stableStart, closeStart);
-    for (const owner of [pairGuard, pairMember, contentGuard, contentMember]) {
-      assert.match(stableRegion, new RegExp(`\\b${owner}\\b`), `${owner}: returned retained-NEXT stability re-fences every pair/content owner`);
-    }
-    const cleanupRegion = completedRetainedOpen.slice(closeStart);
-    const cleanupOrder = [contentMember, contentGuard, pairMember, pairGuard].map((owner) => cleanupRegion.indexOf(owner));
-    assert.equal(cleanupOrder.every((index) => index >= 0), true, "retained-NEXT cleanup names every pair/content owner");
+    const stableRegion = completedRetainedOpen.slice(retainedOwnerReturn);
+    assert.match(stableRegion, /assertStable:\s*\(\)\s*=>\s*\{[\s\S]*if\s*\(closed\)[\s\S]*assertStable\(\)/,
+      "returned retained-NEXT stability rejects closed use and delegates the complete pair/content fence");
+    const retainedStableStart = completedRetainedOpen.indexOf(retainedStableDefinition);
+    const closeStart = completedRetainedOpen.indexOf("const close =", retainedStableStart + retainedStableDefinition.length);
+    const closeEnd = completedRetainedOpen.indexOf("assertStable();", closeStart);
+    assert.ok(closeStart >= 0 && closeEnd > closeStart, "retained-NEXT binds one cleanup closure before its initial fence");
+    const cleanupRegion = completedRetainedOpen.slice(closeStart, closeEnd);
+    assert.match(completedRetainedOpen, new RegExp(`const\\s+closeContentMember[\\s\\S]*closeSync\\(\\s*${contentMember}\\.descriptor\\s*\\)`),
+      "the idempotent content-member closer owns the exact pinned descriptor");
+    assert.match(completedRetainedOpen, new RegExp(`const\\s+closePairMember[\\s\\S]*closeSync\\(\\s*${pairMember}\\.descriptor\\s*\\)`),
+      "the idempotent pair-member closer owns the exact pinned descriptor");
+    const cleanupOrder = ["closeContentMember()", `${contentGuard}.close()`, "closePairMember()", `${pairGuard}.close()`].map((operation) => cleanupRegion.indexOf(operation));
+    assert.equal(cleanupOrder.every((index) => index >= 0), true, "retained-NEXT cleanup invokes every pair/content owner closer");
     assert.equal(cleanupOrder.every((index, ordinal) => ordinal === 0 || index > cleanupOrder[ordinal - 1]!), true,
       "retained-NEXT closes content member/parent then pair member/parent in exact reverse acquisition order");
     assert.match(completedRetainedOpen, /assertStable[\s\S]*finally[\s\S]*close\(\)/,
@@ -30294,10 +30325,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(effectResultProjector, /(?:state|phase|activeEndpointOrdinal|migration33|manifestA|admissionReady|terminalSourceRun|entryAuthority)[\s\S]*(?:return\s+null|completed|decisive)/,
       "each projector arm distinguishes a strict preceding raw prefix from decisive completed lower evidence");
     assertPhase5cSEntryAuthorityCompletedProjectionStaticsV1(source);
-    const migration33ReadOnlyEvidence = effectResultProjector.indexOf("setfarm.internal-production-current-entry-migration-33-read-only-observation.v1");
-    const migration33CompletedNormalize = effectResultProjector.indexOf("normalizeExactPoisonPostVisibleProgressMigration33EffectResultV1(", migration33ReadOnlyEvidence);
-    assert.ok(migration33ReadOnlyEvidence >= 0 && migration33CompletedNormalize > migration33ReadOnlyEvidence,
-      "the exact completed DB33 read-only projection enters the same private normalization path as the real apply result");
+    assert.match(effectResultProjector, /case\s+"apply-or-adopt-migration-33"[\s\S]*endpoint\.database\.expectedProjection[\s\S]*strictCanonicalRecord\([\s\S]*normalizeExactPoisonPostVisibleProgressMigration33EffectResultV1\(readOnly\)/,
+      "the exact completed DB33 endpoint bytes enter the same private normalization path as the real apply result");
     const retainedCurrentMatcher = topLevelFunctionRegionV1(source, "requireExactPoisonPostVisibleProgressCompletedRetainedStatusMatchesCurrentV1");
     const retainedCurrentMatcherHeader = retainedCurrentMatcher.slice(0, retainedCurrentMatcher.indexOf("{"));
     assert.match(retainedCurrentMatcherHeader, /operation:\s*InternalProductionCurrentEntryOperationV1[\s\S]*current:[\s\S]*[A-Za-z_$][A-Za-z0-9_$]*:\s*ExactPoisonPostVisibleProgressCompletedRetainedStatusOwnerV1/,
@@ -30350,15 +30379,21 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const completedProjectIndex = raw.indexOf("projectExactPoisonPostVisibleProgressEffectResultV1(");
     assert.ok(completedOpenIndex >= 0 && completedProjectIndex > completedOpenIndex,
       "eligible terminal composite raw opens and owns retained NEXT before projecting completed evidence");
-    assert.match(raw, /operation_prepared[\s\S]*"pre-schema"[\s\S]*\b0\b[\s\S]*pre_schema_spawner_rebinding[\s\S]*(?:rowIndex|index|ordinal)[\s\S]*"pre-schema"[\s\S]*migration_applying\/prepared[\s\S]*"migration-32"[\s\S]*\b1\b[\s\S]*migration_applying\/consumed[\s\S]*"migration-32"[\s\S]*\b2\b/,
-      "the completed raw route maps operation-prepared, all five retained pre-schema rows, and migration prepared/consumed to their exact adjacent retained ordinal");
+    assert.match(raw, /case\s+"pre-schema-current"[\s\S]*openExactPoisonPostVisibleProgressCompletedRetainedStatusV1\(\s*authority,\s*operation,\s*"pre-schema",\s*0\s*\)/,
+      "operation-prepared completion opens only the adjacent pre-schema ordinal zero");
+    assert.match(raw, /case\s+"pre-schema-retained"[\s\S]*rowIndex\s*>=\s*1\s*&&\s*rowIndex\s*<=\s*5[\s\S]*openExactPoisonPostVisibleProgressCompletedRetainedStatusV1\(\s*authority,\s*operation,\s*"pre-schema",\s*ordinal\s*\)/,
+      "all five retained pre-schema rows derive their exact adjacent ordinal from the frozen row table index");
+    assert.match(raw, /case\s+"migration-current"[\s\S]*rowIndex\s*===\s*7[\s\S]*openExactPoisonPostVisibleProgressCompletedRetainedStatusV1\(\s*authority,\s*operation,\s*"migration-32",\s*1\s*\)/,
+      "migration prepared completion opens only retained migration ordinal one");
+    assert.match(raw, /case\s+"migration-retained"[\s\S]*openExactPoisonPostVisibleProgressCompletedRetainedStatusV1\(\s*authority,\s*operation,\s*"migration-32",\s*2\s*\)/,
+      "migration consumed completion opens only retained migration ordinal two");
     assert.match(raw, /completedRetained[\s\S]*(?:state|phase)[\s\S]*(?:pre_manifest_bootstrap_sealed|terminal)[\s\S]*(?:null|openExactPoisonPostVisibleProgressCompletedRetainedStatusV1)/,
       "nonterminal lower raw and active response-loss prefixes cannot open or synthesize a retained-NEXT completion owner");
     assert.equal([...raw.matchAll(/deriveExactPoisonPostVisibleProgressImmediatePublicationV1\(/g)].length, 1,
       "the raw pass owns one nonterminal immediate target/byte derivation call site");
     assert.doesNotMatch(raw, /observeTask12CurrentStatusTerminalNoWriteV1|observeTask12CurrentStatusCas(?:ForProgress)?NoWriteV1/,
       "raw authority does not classify fixed-01 topology; the pass derives authenticated lineage only after raw completes");
-    assert.match(raw, /const\s+effectResult\s*=\s*projectExactPoisonPostVisibleProgressEffectResultV1\(\s*status\.status,\s*selection,\s*current,\s*completedRetained\s*\)[\s\S]*const\s+evidence\s*=\s*(?:selection\.row|row)[\s\S]*"terminal"[\s\S]*effectResult\s*===\s*null[\s\S]*"prior-only"[\s\S]*"completed"/,
+    assert.match(raw, /const\s+effectResult\s*=\s*projectExactPoisonPostVisibleProgressEffectResultV1\(\s*status\.status,\s*selection,\s*current,\s*completedRetained\s*\)[\s\S]*const\s+evidence(?:\s*:\s*"prior-only"\s*\|\s*"completed"\s*\|\s*"terminal")?\s*=\s*selection\.state\s*===\s*"blocked"[\s\S]*row\s*===\s*"ready"[\s\S]*"terminal"[\s\S]*effectResult\s*===\s*null\s*\?\s*"prior-only"\s*:\s*"completed"/,
       "raw classifies terminal, preceding, and completed evidence only after the exact lower-port result projection");
     assert.match(raw, /effectResult\s*===\s*null\s*\?\s*null\s*:\s*await\s+deriveExactPoisonPostVisibleProgressImmediatePublicationV1\(\s*authority,\s*status,\s*selection,\s*effectResult\s*\)/,
       "only a non-null authenticated effect result derives the immediate candidate target and bytes");
@@ -30374,10 +30409,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "raw construction failure preserves the primary error while closing the unified vector in reverse order");
     assert.doesNotMatch(raw, /completedRetained\?\.close\(\)/,
       "retained-NEXT never bypasses later downstream ownership through a separate early close site");
-    assert.match(raw, /controllerLockTarget[\s\S]*observeTask12ReceiptLocatorWriterNoWriteV1[\s\S]*immediate\.target[\s\S]*observeTask12ReceiptPublicationNoWriteV1[\s\S]*observeTask12ReceiptLocatorWriterNoWriteV1|observeTask12ReceiptLocatorWriterNoWriteV1[\s\S]*controllerLockTarget[\s\S]*immediate\.target[\s\S]*observeTask12ReceiptPublicationNoWriteV1[\s\S]*observeTask12ReceiptLocatorWriterNoWriteV1/,
-      "every raw row separately observes the operation controller writer and exact immediate publication/writer families");
-    assert.match(raw, /requireExactPoisonPostVisibleProgressRowV1\(/,
-      "progress and blocked both enter the same exact row classifier");
+    assert.match(raw, /const\s+assertControllerWriterAuthority[\s\S]*observeTask12ReceiptLocatorWriterNoWriteV1\(\s*controllerLockTarget\s*\)/,
+      "every raw row shares one exact operation-controller writer observation");
+    assert.match(raw, /const\s+publication\s*=\s*immediate\s*===\s*null\s*\?\s*null\s*:\s*observeTask12ReceiptPublicationNoWriteV1\(\s*immediate\.target,\s*immediate\.bytes\s*\)[\s\S]*const\s+writer\s*=\s*immediate\s*===\s*null\s*\?\s*null\s*:\s*observeTask12ReceiptLocatorWriterNoWriteV1\(\s*immediate\.target\s*\)/,
+      "every nonterminal raw row observes the exact immediate publication and writer families from one derived target");
+    assert.match(raw, /const\s+row\s*=\s*selection\.state\s*===\s*"blocked"\s*\?\s*selection\.lastValidRow\s*:\s*selection\.row[\s\S]*EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1\.find\(\s*\([^)]*\)\s*=>\s*[^;]*\.row\s*===\s*row\s*\)[\s\S]*descriptor\s*===\s*undefined[\s\S]*currentEntryFail/,
+      "progress and blocked both resolve one exact descriptor from the frozen row table and reject absence");
     const rawKinds = [...new Set(PHASE5C_S_NONBLOCKED_ROWS_V1.map((entry) => entry.rawKind))];
     assert.equal(rawKinds.length, 12, "the exact 21-row table covers all twelve distinct raw-authority families");
     for (const rawKind of rawKinds) {
@@ -30399,9 +30436,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       admission: Object.freeze([/manifest/i, /observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1/, /observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeInternalProductionServiceCensusV1/, /physical/i, /verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1/]),
       "recovery-source": Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/]),
       canary: Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeCompleteInternalProductionZeroOwnerCensusV1/]),
-      settlement: Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /terminal.?settlement/i, /target.?close/i, /fence/i]),
-      "entry-authority": Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeInternalProductionCurrentEntryAuthorityAtRootV1/, /entry.?authority/i, /02-entry-authority\.pair\.json/]),
-      ready: Object.freeze([/observeInternalProductionCurrentEntryAuthorityAtRootV1/, /entry.?authority/i, /02-entry-authority\.pair\.json/, /observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeCompleteInternalProductionZeroOwnerCensusV1/, /service/i, /physical/i, /database|audit/i]),
+      settlement: Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeExactPoisonPostVisibleProgressRowTailNoWriteV1/]),
+      "entry-authority": Object.freeze([/observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeInternalProductionCurrentEntryAuthorityAtRootV1/, /observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1/]),
+      ready: Object.freeze([/observeInternalProductionCurrentEntryAuthorityAtRootV1/, /observeInternalProductionRecoverySourceBootstrapStatusAtRootV1/, /observeCompleteInternalProductionZeroOwnerCensusV1/, /observeInternalProductionServiceCensusV1/, /observePhysicalInventoryV1/, /verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1/]),
     } satisfies Readonly<Record<typeof rawKinds[number], readonly RegExp[]>>);
     const requiredRawPortCalls = PHASE5C_S_RAW_PORT_CALLS_V1;
     for (const rawKind of rawKinds) {
@@ -30429,7 +30466,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.ok(entryOwner, "entry-authority captures one owned AtRoot observation from this exact root and operation");
         const entryOwnerName = entryOwner[1]!;
         const entryOwnerTail = region.slice(entryOwner.index);
-        const transfer = entryOwnerTail.indexOf(`owned.push(${entryOwnerName});`);
+        const transfer = Math.max(
+          entryOwnerTail.indexOf(`owned.push(${entryOwnerName});`),
+          entryOwnerTail.indexOf(`own(${entryOwnerName});`),
+        );
         const value = new RegExp(`\\bconst\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${entryOwnerName}\\.value\\s*;`).exec(entryOwnerTail);
         assert.ok(transfer >= 0 && value && value.index > transfer,
           "entry-authority transfers its owner before exposing its nullable semantic value");
@@ -30443,18 +30483,21 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.ok(rowTailIndex > external!.index, "entry-authority row tail follows its dependent external observation");
         assert.match(entryOwnerTail.slice(external!.index + external![0].length, rowTailIndex), new RegExp(`\\b${entryOwnerName}\\.assertStable\\(\\)`),
           "entry-authority re-fences the borrowed AtRoot graph after external observation and before binding or projection");
-        assert.match(entryOwnerTail, new RegExp(`${entryValueName}\\s*===\\s*null[\\s\\S]*(?:externalPublicationEntry|external[A-Za-z0-9_$]*)\\.family\\s*!==\\s*null[\\s\\S]*(?:currentEntryFail|fail)`),
-          "null AtRoot authority rejects a non-none external family instead of trusting injected target echoes");
-        assert.match(entryOwnerTail, new RegExp(`${entryValueName}\\s*===\\s*null[\\s\\S]*(?:externalPublicationEntry|external[A-Za-z0-9_$]*)\\.endpoints\\.length\\s*!==\\s*0[\\s\\S]*(?:currentEntryFail|fail)`),
-          "null AtRoot authority rejects every future external endpoint instead of trusting injected target echoes");
+        const externalObserver = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1");
+        assert.match(externalObserver, /entryOwner\.value\s*===\s*null[\s\S]*current\s*!==\s*null[\s\S]*entryOwner\.pair\s*!==\s*null[\s\S]*entryOwner\.pairBytes\s*!==\s*null[\s\S]*entryOwner\.contentTarget\s*!==\s*null[\s\S]*(?:currentEntryFail|fail)/,
+          "null AtRoot authority rejects any injected current, pair, bytes, or content target");
+        assert.match(externalObserver, /state:\s*"none"\s*,\s*family:\s*null[\s\S]*activeEndpointOrdinal:\s*null\s*,\s*endpoints:\s*Object\.freeze\(\[\]\)/,
+          "null AtRoot authority projects no external family or future endpoint");
         assert.doesNotMatch(region.slice(0, entryOwner.index), /02-entry-authority\.pair\.json|entry-authorities["'`)]|entryAuthorityHash|pairBytes|canonicalRecordBytes/,
           "entry-authority cannot derive future locator/content targets or bytes before its owned AtRoot observation");
       }
-      const binder = new RegExp(`requireExactPoisonPostVisibleProgressRawCurrentV1\\(\\s*authority,\\s*(?:"${rawKind}"|selection\\.rawKind),\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\)`).exec(region);
+      const binderPattern = new RegExp(`requireExactPoisonPostVisibleProgressRawCurrentV1\\(\\s*authority,\\s*(?:"${rawKind}"|selection\\.rawKind),\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\)`, "g");
+      const binder = [...region.matchAll(binderPattern)].at(-1) ?? null;
       assert.ok(binder, `${rawKind}: the real arm passes one named lower-port projection through the shared operation binder`);
       const binderIndex = binder.index;
       const observedName = binder[1]!;
-      const declaration = new RegExp(`\\bconst\\s+${observedName}\\s*=\\s*Object\\.freeze\\(`).exec(region.slice(0, binderIndex));
+      const declarationPattern = new RegExp(`\\bconst\\s+${observedName}\\s*=\\s*Object\\.freeze\\(`, "g");
+      const declaration = [...region.slice(0, binderIndex).matchAll(declarationPattern)].at(-1) ?? null;
       assert.ok(declaration, `${rawKind}: the bound projection is one immutable initializer in this exact real arm`);
       const freezeStart = region.indexOf("Object.freeze(", declaration.index);
       let depth = 0;
@@ -30485,7 +30528,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const owner = /\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+observeInternalProductionCurrentEntryAuthorityAtRootV1\(\s*authority\s*,\s*(?:authority\.successorOperation|operation)\s*\)\s*;/.exec(region.slice(0, declaration.index));
           assert.ok(owner, `${rawKind}: the entry-authority lower port captures one owned observation`);
           const ownerPrefix = region.slice(owner!.index, declaration.index);
-          const transferIndex = ownerPrefix.indexOf(`owned.push(${owner![1]!});`);
+          const transferIndex = Math.max(
+            ownerPrefix.indexOf(`owned.push(${owner![1]!});`),
+            ownerPrefix.indexOf(`own(${owner![1]!});`),
+          );
           const value = new RegExp(`\\bconst\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${owner![1]!}\\.value\\s*;`).exec(ownerPrefix);
           assert.ok(transferIndex >= 0 && value && value.index > transferIndex,
             `${rawKind}: the entry-authority owner transfers before its nullable semantic value is exposed`);
@@ -30495,11 +30541,31 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             `${rawKind}: exact four-source provenance retains the nullable semantic AtRoot value without leaking its owner`);
           continue;
         }
+        if (port === "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1") {
+          const owner = /\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+observeInternalProductionRecoverySourceBootstrapStatusAtRootV1\(\s*authority\s*,\s*(?:authority\.successorOperation|operation)\s*\)\s*;/.exec(region.slice(0, declaration.index));
+          assert.ok(owner, `${rawKind}: the recovery lower port captures one owned observation from this exact root and operation`);
+          const ownerPrefix = region.slice(owner!.index, declaration.index);
+          const transferIndex = Math.max(
+            ownerPrefix.indexOf(`owned.push(${owner![1]!});`),
+            ownerPrefix.indexOf(`own(${owner![1]!});`),
+          );
+          const value = new RegExp(`\\bconst\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${owner![1]!}\\.value\\s*;`).exec(ownerPrefix);
+          assert.ok(transferIndex >= 0 && value && value.index > transferIndex,
+            `${rawKind}: the recovery owner transfers before its semantic value is exposed`);
+          assert.match(projectionInitializer, new RegExp(`source\\(\\s*["']observeInternalProductionRecoverySourceBootstrapStatusAtRootV1["']\\s*,\\s*${value![1]!}\\s*\\)`),
+            `${rawKind}: the recovery projection retains only the owned semantic value`);
+          assert.doesNotMatch(projectionInitializer, new RegExp(`\\b${owner![1]!}\\b`),
+            `${rawKind}: the recovery lifetime owner itself cannot escape through semantic raw sources`);
+          continue;
+        }
         if (port === "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1") {
           const owner = /\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1\(\s*authority\s*,\s*(?:authority\.successorOperation|operation)\s*\)\s*;/.exec(region.slice(0, declaration.index));
           assert.ok(owner, `${rawKind}: the pre-schema lower port captures one owned observation from this exact root and operation`);
           const ownerPrefix = region.slice(owner.index, declaration.index);
-          const transferIndex = ownerPrefix.indexOf(`owned.push(${owner[1]!});`);
+          const transferIndex = Math.max(
+            ownerPrefix.indexOf(`owned.push(${owner[1]!});`),
+            ownerPrefix.indexOf(`own(${owner[1]!});`),
+          );
           const value = new RegExp(`\\bconst\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${owner[1]!}\\.value\\s*;`).exec(ownerPrefix);
           assert.ok(transferIndex > 0 && value && value.index > transferIndex,
             `${rawKind}: the pre-schema owner transfers to raw cleanup before exposing its semantic value`);
@@ -30515,8 +30581,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.match(projectionInitializer, new RegExp(`\\bsources\\b[\\s\\S]*\\b${alias[1]!}\\b`),
           `${rawKind}: ${port} alias is retained in the binder's exhaustive sources list rather than discarded or hidden only in current`);
       }
-      assert.match(region.slice(freezeEnd + 1, binderIndex), /^\s*(?:(?:const\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*|return\s+))?$/,
-        `${rawKind}: the completed projection is consumed immediately by the binder`);
+      assert.match(region.slice(freezeEnd + 1, binderIndex), /^\s*(?:[A-Za-z_$][A-Za-z0-9_$]*\.assertStable\(\);\s*)*(?:(?:const\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*|return\s+))?$/,
+        `${rawKind}: the completed projection permits only retained-owner fences before immediate binder consumption`);
       assert.doesNotMatch(region, /\b(?:prepare|execute|applyOrAdopt|initialize|activate|transition|resume|publish)[A-Z][A-Za-z0-9_]*V1\(|task12ReceiptExpectedPredecessorCasV1\(/,
         `${rawKind}: read-only raw arm cannot invoke an effect, CAS, resume, or controller`);
     }
@@ -30524,16 +30590,27 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       ["observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "external(?:Publication|Raw)?"],
       ["observeExactPoisonPostVisibleProgressRowTailNoWriteV1", "rowTail"],
     ] as const) {
-      assert.match(raw, new RegExp(`const\\s+(${aliasPattern}[A-Za-z0-9_]*)\\s*=\\s*(?:await\\s+)?${port}\\([\\s\\S]*?return[\\s\\S]*\\1\\.assertStable\\(\\)[\\s\\S]*finally[\\s\\S]*\\1\\.close\\(\\)`),
-        `${port}: raw observation retains its exact child owner through the final fence and reverse cleanup`);
+      const acquisitions = [...raw.matchAll(new RegExp(`const\\s+(${aliasPattern}[A-Za-z0-9_]*)\\s*=\\s*(?:await\\s+)?${port}\\(`, "g"))];
+      assert.ok(acquisitions.length > 0, `${port}: raw has at least one exact child acquisition`);
+      for (const acquisition of acquisitions) {
+        const alias = acquisition[1]!;
+        const tail = raw.slice(acquisition.index! + acquisition[0].length);
+        const transfer = tail.indexOf(`own(${alias});`);
+        const nextAcquisition = tail.search(/\n\s*const\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*(?:await\s+)?observe/);
+        assert.ok(transfer >= 0 && (nextAcquisition < 0 || transfer < nextAcquisition),
+          `${port}: ${alias} transfers into the unified owner vector before another lower-port acquisition`);
+      }
     }
     const preparedSetBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+authority\.buildPreparedPublicationSet\(\)/.exec(raw);
     assert.ok(preparedSetBinding, "the operation-prepared raw arm invokes exactly the builder closure carried by its pinned-or-selected observation authority");
     const preparedSetAlias = preparedSetBinding[1]!;
     const preparedSetTail = raw.slice(preparedSetBinding.index);
-    assert.match(preparedSetTail, new RegExp(`${preparedSetAlias}\\.operationDirectoryPrefix[\\s\\S]*authority\\.operationDirectory|authority\\.operationDirectory[\\s\\S]*${preparedSetAlias}\\.operationDirectoryPrefix`),
+    assert.match(preparedSetTail, new RegExp(`requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1\\(\\s*authority,\\s*status,\\s*${preparedSetAlias}\\s*\\)`),
+      "the returned prepared set enters the exact live-authority/status matcher before any dependent observation");
+    const preparedSetMatcher = topLevelFunctionRegionV1(source, "requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1");
+    assert.match(preparedSetMatcher, /prepared\.operationDirectoryPrefix[\s\S]*authority\.operationDirectory|authority\.operationDirectory[\s\S]*prepared\.operationDirectoryPrefix/,
       "the returned prepared set's exact operation-directory prefix is compared with the live observation authority");
-    assert.match(preparedSetTail, new RegExp(`${preparedSetAlias}\\.candidates[\\s\\S]*(?:phase[\\s\\S]*[\"']P5[\"']|\\[3\\])[\\s\\S]*(?:status\\.target|currentStatusTarget)[\\s\\S]*(?:status\\.pairBytes|pairBytes)|(?:status\\.target|currentStatusTarget)[\\s\\S]*(?:status\\.pairBytes|pairBytes)[\\s\\S]*${preparedSetAlias}\\.candidates`),
+    assert.match(preparedSetMatcher, /prepared\.candidates[\s\S]*(?:phase[\s\S]*["']P5["']|\[3\])[\s\S]*(?:status\.target|currentStatusTarget)[\s\S]*(?:status\.pairBytes|pairBytes)|(?:status\.target|currentStatusTarget)[\s\S]*(?:status\.pairBytes|pairBytes)[\s\S]*prepared\.candidates/,
       "the returned P5 target and bytes are load-bearing against the already-pinned operation-prepared status rather than ornamental builder output");
     assert.doesNotMatch(raw, /buildTask12PreparedCurrentEntryPublicationSetV1\(/,
       "raw observation cannot bypass its origin-owned prepared builder closure with a detached global reconstruction");
