@@ -367,6 +367,18 @@ export async function transitionRunToTerminalInTransaction(
     throw new Error("RUN_TERMINAL_TIME_INVALID");
   }
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  const ownerAdmissionMigrationRows = await sql<Array<{ state: string }>>`
+    SELECT state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (
+    ownerAdmissionMigrationRows.length > 1
+    || (ownerAdmissionMigrationRows.length === 1
+      && ownerAdmissionMigrationRows[0]?.state !== "applied"
+      && ownerAdmissionMigrationRows[0]?.state !== "adopted")
+  ) throw new Error("RUN_TERMINAL_OWNER_ADMISSION_MIGRATION32_JOURNAL_INVALID");
+  const ownerAdmissionAvailable = ownerAdmissionMigrationRows.length === 1;
   const runs = await sql.unsafe<RunRow[]>(
     `SELECT id, status, protocol, context, packet_hash, accepted_candidate_hash, meta
        FROM runs WHERE id = $1 FOR UPDATE`,
@@ -902,28 +914,36 @@ export async function transitionRunToTerminalInTransaction(
   // Resolve all only after every terminal mutation.
   const ownerSql = sql as unknown as Parameters<typeof closeInternalProductionOwnerReservationV1>[0];
   const claimCloses = [];
-  for (const claim of claims) {
-    claimCloses.push(await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(ownerSql, {
-      claimIdText: claim.id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const claim of claims) {
+      claimCloses.push(await resolveInternalProductionClaimTerminalAuthorityPairInTransactionV1(ownerSql, {
+        claimIdText: claim.id,
+      }));
+    }
   }
   const attemptCloses = [];
-  for (const attempt of attempts) {
-    attemptCloses.push(await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(ownerSql, {
-      attemptId: attempt.attempt_id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const attempt of attempts) {
+      attemptCloses.push(await resolveInternalProductionExecutionAttemptTerminalAuthorityPairInTransactionV1(ownerSql, {
+        attemptId: attempt.attempt_id,
+      }));
+    }
   }
   const runtimeCloses = [];
-  for (const runtime of runtimes) {
-    runtimeCloses.push(await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(ownerSql, {
-      sessionId: runtime.session_id,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const runtime of runtimes) {
+      runtimeCloses.push(await resolveInternalProductionRuntimeSessionTerminalAuthorityPairInTransactionV1(ownerSql, {
+        sessionId: runtime.session_id,
+      }));
+    }
   }
   const completionCloses = [];
-  for (const requestId of completionOwnerIds) {
-    completionCloses.push(await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(ownerSql, {
-      requestId,
-    }));
+  if (ownerAdmissionAvailable) {
+    for (const requestId of completionOwnerIds) {
+      completionCloses.push(await resolveInternalProductionCompletionOwnerTerminalAuthorityPairInTransactionV1(ownerSql, {
+        requestId,
+      }));
+    }
   }
   // Consume every exact read-only preflight fact in the mandatory-effect
   // resolve slot. Task 6 still performs no effect resolver, mutation, or close.
@@ -936,16 +956,18 @@ export async function transitionRunToTerminalInTransaction(
     throw new Error("RUN_TERMINAL_EFFECT_PREFLIGHT_FACT_AMBIGUOUS");
   }
   const terminationCloses = [];
-  if (terminationRequestId) {
+  if (ownerAdmissionAvailable && terminationRequestId) {
     terminationCloses.push(await resolveInternalProductionTerminationTerminalAuthorityPairInTransactionV1(ownerSql, {
       requestId: terminationRequestId,
     }));
   }
-  const recoverySourceBootstrapTerminal = await resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
-    ownerSql,
-    { runId: input.runId },
-  );
-  const terminalPair = recoverySourceBootstrapTerminal === null
+  const recoverySourceBootstrapTerminal = ownerAdmissionAvailable
+    ? await resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
+        ownerSql,
+        { runId: input.runId },
+      )
+    : null;
+  const terminalPair = ownerAdmissionAvailable && recoverySourceBootstrapTerminal === null
     ? await resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(
         ownerSql,
         { runId: input.runId },

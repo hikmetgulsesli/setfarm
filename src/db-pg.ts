@@ -4975,6 +4975,16 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
     runContext: string | Readonly<Record<string, unknown>>;
   }>,
 ): Promise<void> {
+  const migrationRows = await sql<Array<{ state: string }>>`
+    SELECT state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (migrationRows.length === 0) return;
+  if (
+    migrationRows.length !== 1
+    || (migrationRows[0]?.state !== "applied" && migrationRows[0]?.state !== "adopted")
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
   const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
     SELECT head.head_version::integer AS "headVersion",
@@ -5143,6 +5153,16 @@ export async function resolveInternalProductionRecoverySourceBootstrapActualRunT
 }> | null> {
   exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_ACTUAL_TERMINAL_INPUT_INVALID");
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
+  const migrationRows = await sql<Array<{ state: string }>>`
+    SELECT state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (migrationRows.length === 0) return null;
+  if (
+    migrationRows.length !== 1
+    || (migrationRows[0]?.state !== "applied" && migrationRows[0]?.state !== "adopted")
+  ) throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   const pairs = await sql<Array<{ reservation_ref: string; reservation_hash: string }>>`
     SELECT reservation_ref,reservation_hash
       FROM internal_production_owner_reservations_v1

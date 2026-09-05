@@ -384,6 +384,12 @@ describe("canonical run terminal owner", () => {
     };
     assert.match(deliveryBarrier, /^export\s+async\s+function\s+assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1\(\s*sql:\s*InternalProductionPgTransactionSql\s*,\s*input:/,
       "the delivery-pending barrier consumes the terminal caller's existing locked transaction and authenticated run input");
+    const migration32Gate = deliveryBarrier.indexOf("public.setfarm_schema_migrations");
+    const insertionFenceLock = deliveryBarrier.indexOf("lockInternalProductionWorkflowRunInsertionFenceV1(sql)");
+    assert.equal(migration32Gate >= 0 && insertionFenceLock > migration32Gate, true,
+      "migration 32 journal presence is checked before recovery-only locking or catalog reads");
+    assert.match(deliveryBarrier.slice(migration32Gate, insertionFenceLock), /WHERE\s+version\s*=\s*32[\s\S]*migrationRows\.length\s*===\s*0\s*\)\s*return/,
+      "a migration-31 database bypasses only the unavailable recovery-source authority barrier");
     const ownerRowsBinding = /const\s+ownerRows\s*=\s*await/.exec(deliveryBarrier);
     const reservationRowsBinding = /const\s+reservationRows\s*=\s*await/.exec(deliveryBarrier);
     const expectedRunRowsBinding = /const\s+expectedRunRows\s*=\s*await/.exec(deliveryBarrier);
@@ -559,6 +565,7 @@ ${barrier}
           queries.push(text);
           const normalized = text.replace(/\/\*[\s\S]*?\*\//g, " ").trimStart();
           if (/^(?:INSERT|UPDATE|DELETE|TRUNCATE|CREATE|ALTER|DROP)\b/i.test(normalized)) throw new Error("BARRIER_WRITE_ATTEMPTED");
+          if (/setfarm_schema_migrations/i.test(text) && /version\s*=\s*32/i.test(text)) return [{state:"applied"}];
           if (/internal_production_owner_reservations_v1/i.test(text)) return rows.reservationRows;
           if (/internal_production_owner_admission_(?:head|authorities)_v1/i.test(text)) return rows.ownerRows;
           if (/FROM\s+(?:public\.)?runs/i.test(text) && /running[\s\S]*resuming[\s\S]*cancelling[\s\S]*failing/i.test(text)) return rows.activeRunRows;
@@ -1035,6 +1042,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
       Object.assign(globalThis as any, { __p4RunReservation: runReservation, __p4SourceReservation: sourceReservation, __p4Bound: bound, __p4SourceTerminal: sourceTerminal, __p4RunTerminal: runTerminal, __p4PairClose: pairClose, __p4Release: release, __p4ReceiptBody: receiptBody, __p4TerminalCross: null, __p4TerminalCalls: [] });
       const sql = Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const query = strings.join("?");
+        if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [{ state: "applied" }];
         if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }];
         if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
         if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: "completed" }];
@@ -1060,6 +1068,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
         const staged = { status: durable.status };
         const tagged = async (strings: TemplateStringsArray, ...values: unknown[]) => {
           const query = strings.join("?");
+          if (query.includes("setfarm_schema_migrations") && query.includes("version=32")) return [{ state: "applied" }];
           if (query.includes("producer_implementation_id='a-recovery-source-bootstrap-run-v1'")) return ["pair-closed", "closed"].includes((globalThis as any).__p4OwnerPhase) ? [{ reservation_ref: runReservation.reservationRef, reservation_hash: runReservation.reservationHash }] : [];
           if (query.includes("SELECT *") && query.includes("FROM internal_production_owner_reservations_v1")) return values[0] === sourceReservation.reservationRef ? [sourceRow] : [runRow];
           if (query.includes("SELECT id,context,status FROM runs")) return [{ id: runId, context: JSON.stringify(context), status: staged.status }];
@@ -3388,6 +3397,42 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
           .findRecoveryCase(fixture.recoveryCaseId))?.status,
         "repairing",
       );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps ordinary migration 31 terminalization available while guarded migration 32 is pending", async () => {
+    const database = await createIsolatedMigration31TestDatabase();
+    try {
+      const runId = "run-terminal-migration31-ordinary";
+      await database.sql`
+        INSERT INTO runs (id, workflow_id, task, status, protocol)
+        VALUES (${runId}, 'feature-dev', 'migration 31 ordinary terminal', 'running', 'legacy')
+      `;
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status)
+        VALUES
+          ('run-terminal-migration31-ordinary-step', ${runId}, 'plan', 'feature-dev_planner', 0, '', '', 'pending')
+      `;
+
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "ordinary migration 31 bootstrap failure",
+        unclaimedBootstrapFailure: true,
+      });
+
+      const rows = await database.sql<Array<{ runStatus: string; stepStatus: string }>>`
+        SELECT run.status AS "runStatus",step.status AS "stepStatus"
+          FROM runs run
+          JOIN steps step ON step.run_id=run.id
+         WHERE run.id=${runId}
+      `;
+      assert.deepEqual(rows.map((row) => ({ ...row })), [
+        { runStatus: "failed", stepStatus: "failed" },
+      ]);
     } finally {
       await database.cleanup();
     }
