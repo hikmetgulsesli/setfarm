@@ -167,6 +167,37 @@ describe("operational failure cause migration", () => {
       assert.equal(await detectOperationalFailureCauseAuthorityV3Constraint(database.sql), "present");
       await verifyOperationalFailureCauseAuthorityV3Constraint(database.sql);
       await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
+      await database.sql.unsafe(
+        "ALTER TABLE public.run_termination_requests DISABLE TRIGGER trg_run_termination_requests_operational_failure_cause_immutable",
+      );
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => error instanceof OperationalFailureCauseAuthorityV3MigrationError
+          && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH",
+        "the catalog verifier rejects a disabled operational-failure immutability trigger",
+      );
+      await database.sql.unsafe(
+        "ALTER TABLE public.run_termination_requests ENABLE TRIGGER trg_run_termination_requests_operational_failure_cause_immutable",
+      );
+      const functionRows = await database.sql<Array<{ definition: string }>>`
+        SELECT pg_get_functiondef(
+          to_regprocedure('public.setfarm_enforce_operational_failure_cause_immutable()')
+        ) AS definition
+      `;
+      const canonicalFunctionDefinition = functionRows[0]?.definition;
+      assert.ok(canonicalFunctionDefinition);
+      await database.sql.unsafe(`
+        CREATE OR REPLACE FUNCTION public.setfarm_enforce_operational_failure_cause_immutable()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$
+      `);
+      await assert.rejects(
+        verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database),
+        (error: unknown) => error instanceof OperationalFailureCauseAuthorityV3MigrationError
+          && error.code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_MISMATCH",
+        "the catalog verifier rejects a same-name immutability function with drifted behavior",
+      );
+      await database.sql.unsafe(canonicalFunctionDefinition);
+      await verifyOperationalFailureCauseAuthorityV3CatalogReadOnlyV1(database);
       const currentHead = await database.sql<Array<{ version: number }>>`
         SELECT version FROM setfarm_schema_migrations
          WHERE version >= 26 ORDER BY version
