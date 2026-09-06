@@ -2088,7 +2088,7 @@ function configureExactPoisonRecoveryLeafHarnessV1(
   installExactCurrentSuccessorGitFixtureV1(root);
   const original = seedExactOriginalPoisonStoreV1(root);
   const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
   instrumentExactPoisonRecoveryLeafFixtureV1(root, fault);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
   return Object.freeze({ original, admitted, observations });
@@ -5677,6 +5677,7 @@ ${progressWriterProcessResult}`);
     source = source.slice(0, rawInsertion) + `
   const p5cSRawProbe = Reflect.get(globalThis, "__p5cProgressProbeV1") as undefined | {rawCalls?:number;rawRows?:string[];rawSameOperation?:boolean[]};
   const p5cSRawRouteProbe = Reflect.get(globalThis, "__p5cSRawRouteProbeV1") as undefined | {observe:(rawKind:string,port:string,args:readonly unknown[])=>unknown;record:(rawKind:string,port:string,args:readonly unknown[])=>void};
+  const p5cSAdmissionProbe = Reflect.get(globalThis, "__p4ExactPoisonPublisherAdmissionV1") as undefined | {next:(kind:string)=>unknown};
   if (p5cSRawProbe) {
     p5cSRawProbe.rawCalls = (p5cSRawProbe.rawCalls ?? 0) + 1;
     (p5cSRawProbe.rawRows ??= []).push(selection.state === "blocked" ? selection.lastValidRow : selection.row);
@@ -5697,7 +5698,10 @@ ${progressWriterProcessResult}`);
       assert.ok(end > start, `${rawKind}: copied real raw arm closes ${port}`);
       const call = region.slice(start, end);
       const args = call.slice(port.length + 1, -1);
-      return region.slice(0, start) + `(p5cSRawRouteProbe ? p5cSRawRouteProbe.observe("${rawKind}", "${port}", [${args}]) as ReturnType<typeof ${port}> : ${call})` + region.slice(end);
+      const fallback = port === PHASE5C_S_POST_EFFECT_DOWNSTREAM_PORT_V1
+        ? `(p5cSAdmissionProbe ? Object.freeze({...(p5cSAdmissionProbe.next("rowTail") as Readonly<{downstreamTopology:Readonly<Record<string,unknown>>}>).downstreamTopology,assertFilesystemStable():void{},assertStable():Promise<void>{return Promise.resolve()},close():Promise<void>{return Promise.resolve()}}) as ReturnType<typeof ${port}> : ${call})`
+        : call;
+      return region.slice(0, start) + `(p5cSRawRouteProbe ? p5cSRawRouteProbe.observe("${rawKind}", "${port}", [${args}]) as ReturnType<typeof ${port}> : ${fallback})` + region.slice(end);
     };
     const recordCallAt = (region: string, start: number, rawKind: string, port: string): string => {
       const open = start + port.length;
@@ -5799,7 +5803,8 @@ ${progressWriterProcessResult}`);
     const header = /^async function observeExactPoisonPostVisibleProgressRowTailNoWriteV1\([\s\S]*?\)\s*:\s*Promise<[^\n]+>\s*\{/.exec(rowTailRegion);
     assert.ok(header, "P5c-S copied fixture bounds the private row-tail helper header");
     let transformed = rowTailRegion.slice(0, header[0].length) + `
-  const p5cSRowTailProbe = Reflect.get(globalThis, "__p5cSRowTailProbeV1") as undefined | {observe:(port:string,args:readonly unknown[])=>unknown};` + rowTailRegion.slice(header[0].length);
+  const p5cSRowTailProbe = Reflect.get(globalThis, "__p5cSRowTailProbeV1") as undefined | {handles?:(port:string)=>boolean;observe:(port:string,args:readonly unknown[])=>unknown};
+  const p5cSAdmissionProbe = Reflect.get(globalThis, "__p4ExactPoisonPublisherAdmissionV1") as undefined | {next:(kind:string)=>unknown;nextPhysical:(...args:unknown[])=>unknown};` + rowTailRegion.slice(header[0].length);
     for (const port of PHASE5C_S_ROW_TAIL_INSTRUMENTED_CALLS_V1) {
       const callStart = transformed.indexOf(`${port}(`, header[0].length);
       if (callStart < 0) continue;
@@ -5813,7 +5818,25 @@ ${progressWriterProcessResult}`);
       assert.ok(callEnd > callStart, `P5c-S row tail closes ${port}`);
       const call = transformed.slice(callStart, callEnd);
       const args = call.slice(port.length + 1, -1);
-      const replacement = `(p5cSRowTailProbe ? p5cSRowTailProbe.observe("${port}", [${args}]) as ReturnType<typeof ${port}> : ${call})`;
+      const admissionObservation = port === "observeCurrentInternalProductionCleanSetfarmSourceBuildV1"
+        ? 'p5cSAdmissionProbe.next("source")'
+        : port === "observeCurrentPba"
+          ? 'p5cSAdmissionProbe.next("pba")'
+          : port === "observeInternalProductionServiceCensusV1"
+            ? 'p5cSAdmissionProbe.next("service")'
+            : port === "observePhysicalInventoryV1"
+              ? `p5cSAdmissionProbe.nextPhysical(${args})`
+              : port === "observeExactPoisonPostVisibleProgressDatabaseNoWriteV1"
+                ? 'Object.freeze({...(p5cSAdmissionProbe.next("rowTail") as Readonly<{database:Readonly<Record<string,unknown>>}>).database,assertFilesystemStable():void{},assertStable():Promise<void>{return Promise.resolve()},close():Promise<void>{return Promise.resolve()}})'
+                : port === "observeExactPoisonPostVisibleProgressOwnerCensusNoWriteV1"
+                  ? 'Object.freeze({...(p5cSAdmissionProbe.next("rowTail") as Readonly<{ownerCensus:Readonly<Record<string,unknown>>}>).ownerCensus,assertFilesystemStable():void{},assertStable():Promise<void>{return Promise.resolve()},close():Promise<void>{return Promise.resolve()}})'
+                  : port === PHASE5C_S_POST_EFFECT_DOWNSTREAM_PORT_V1
+                    ? 'Object.freeze({...(p5cSAdmissionProbe.next("rowTail") as Readonly<{downstreamTopology:Readonly<Record<string,unknown>>}>).downstreamTopology,assertFilesystemStable():void{},assertStable():Promise<void>{return Promise.resolve()},close():Promise<void>{return Promise.resolve()}})'
+                    : null;
+      const fallback = admissionObservation !== null
+        ? `(p5cSAdmissionProbe ? ${admissionObservation} as ReturnType<typeof ${port}> : ${call})`
+        : call;
+      const replacement = `(p5cSRowTailProbe && (p5cSRowTailProbe.handles?.("${port}") ?? true) ? p5cSRowTailProbe.observe("${port}", [${args}]) as ReturnType<typeof ${port}> : ${fallback})`;
       transformed = transformed.slice(0, callStart) + replacement + transformed.slice(callEnd);
     }
     source = source.slice(0, rowTailStart) + transformed + source.slice(rowTailEnd);
@@ -12780,7 +12803,7 @@ function configurePhase5cZeroProgressFixtureV1(root: string, preStatus = false):
   installExactCurrentSuccessorGitFixtureV1(root);
   const original = seedExactOriginalPoisonStoreV1(root);
   const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
   rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
   const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
   instrumentPhase5bStrictCEntryFixtureV1(root);
@@ -12997,7 +13020,7 @@ function configurePhase5cZeroProgressPublisherFixtureV1(root: string): Readonly<
   installExactCurrentSuccessorGitFixtureV1(root);
   const original = seedExactOriginalPoisonStoreV1(root);
   const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-  const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+  const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
   rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
   instrumentPhase5bStrictCEntryFixtureV1(root);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, true);
@@ -13942,6 +13965,7 @@ function buildExactPoisonPublisherAdmissionFixtureV1(
 }
 
 function buildExactPoisonPublisherRawObservationsV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>,
 ): Readonly<Record<string, readonly unknown[]>> {
   const current = admitted.value.current as Readonly<Record<string, unknown>>;
@@ -13988,6 +14012,14 @@ function buildExactPoisonPublisherRawObservationsV1(
     "sourceRunOwnerCount", "coldRehearsalOwnerCount", "compilationLeaseCount", "executionLeaseCount",
   ].map((key) => [key, completeZero[key]])));
   const pair = (value: unknown): readonly unknown[] => Object.freeze([value, value]);
+  const operationPrepared = PHASE5C_S_NONBLOCKED_ROWS_V1.find((descriptor) => descriptor.row === "operation_prepared")!;
+  const rowTail = phase5cSRawPortValueFixtureV1(
+    "observeExactPoisonPostVisibleProgressRowTailNoWriteV1",
+    0,
+    operationPrepared,
+    "0",
+    path.join(original.store, admitted.chain.successorStoreRelativeRoot),
+  );
   return Object.freeze({
     source: pair(current.controllerSource),
     pba: pair(current.productBuildAuthorityV2Observation),
@@ -13998,6 +14030,17 @@ function buildExactPoisonPublisherRawObservationsV1(
     phase: pair(phase),
     downstream: Object.freeze([EXACT_ZERO_EFFECT_DOWNSTREAM_ABSENCE_V1]),
     syntheticGit: Object.freeze([admitted.value.unavailableSyntheticGitObjects]),
+    rowTail: pair(Object.freeze({
+      database: rowTail.database,
+      downstreamTopology: phase5cSRawPortValueFixtureV1(
+        PHASE5C_S_POST_EFFECT_DOWNSTREAM_PORT_V1,
+        0,
+        operationPrepared,
+        "0",
+        path.join(original.store, admitted.chain.successorStoreRelativeRoot),
+      ),
+      ownerCensus: rowTail.ownerCensus,
+    })),
   });
 }
 
@@ -16515,7 +16558,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       installExactCurrentSuccessorGitFixtureV1(root);
       const original = seedExactOriginalPoisonStoreV1(root);
       const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-      const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
       instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
       const result = runExactPoisonPublisherCoreFixtureV1(root, observations, null);
       assert.equal(result.status, 0, result.stderr);
@@ -16985,7 +17028,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       installExactCurrentSuccessorGitFixtureV1(root);
       const original = seedExactOriginalPoisonStoreV1(root);
       const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-      const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
       instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
       instrumentExactPoisonDurabilityFixtureV1(root);
       const result = runExactPoisonPublisherCoreWithDurabilityFixtureV1(root, observations);
@@ -19628,12 +19671,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned");
           const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
           phase5cSeedPublicationPhysicalStateV1(targets, phase, physicalState);
-          phase5cSeedControllerWriterV1(targets);
+          const progress = phase === "P5" && physicalState === "F2u-or-F3-or-F4";
+          if (!progress) phase5cSeedControllerWriterV1(targets);
           const before = filesystemTreeSnapshot(harness.original.store);
           const result = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }));
           assert.equal(result.status, 0, result.stderr);
           const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
-          const progress = phase === "P5" && physicalState === "F2u-or-F3-or-F4";
           const expectedStage = physicalState !== "F2u-or-F3-or-F4"
             ? phase === "P2" && physicalState === "F0" ? "P1" : phase
             : phase === "P2" ? "P3" : phase === "P3" ? "P4" : phase === "P4" ? "P5" : "P5";
@@ -34055,7 +34098,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         installExactCurrentSuccessorGitFixtureV1(root);
         const original = seedExactOriginalPoisonStoreV1(root);
         const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
-        const observations = buildExactPoisonPublisherRawObservationsV1(admitted);
+        const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
         const faultedObservations = negative.mutate(original, observations);
         const before = filesystemTreeSnapshot(original.store);
         assert.deepEqual(recoveryPhaseSnapshotV1(original.store, original.originalLocators), [], `${negative.name}: fixture must begin without recovery phase bytes`);
