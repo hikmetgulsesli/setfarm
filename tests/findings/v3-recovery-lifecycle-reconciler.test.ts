@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import {
@@ -578,6 +578,10 @@ describe("v3 recovery lifecycle reconciler", () => {
 
   before(async () => {
     database = await createIsolatedTestDatabase();
+  });
+
+  beforeEach(async () => {
+    if (sequence > 0) await database.reset();
   });
 
   after(async () => database.cleanup());
