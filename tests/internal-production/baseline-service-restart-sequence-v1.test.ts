@@ -23,8 +23,15 @@ function sha256(value: string): string {
 test("restart sequence exposes the fixed public surface", async () => {
   const module = await import("../../src/internal-production/baseline-service-restart-sequence-v1.js");
   assert.deepEqual(Object.keys(module), [
+    "executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1",
+    "finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1",
     "observeInternalProductionBaselineRestartSequenceStatusV1",
+    "prepareInternalProductionBaselineSpawnerBootstrapRestartFromDurableTargetGuardReceiptForRecoveryV1",
+    "prepareInternalProductionBaselineSpawnerBootstrapRestartV1",
     "resolveInternalProductionBaselineRestartSequenceReceiptV1",
+    "resolveInternalProductionBaselineSpawnerBootstrapContinuationGrantV1",
+    "resolveInternalProductionBaselineSpawnerBootstrapRestartOperationV1",
+    "resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1",
     "resumeInternalProductionBaselineRestartSequenceV1",
   ]);
   assert.equal(module.resumeInternalProductionBaselineRestartSequenceV1.length, 1);

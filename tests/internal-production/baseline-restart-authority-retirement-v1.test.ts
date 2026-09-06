@@ -324,6 +324,7 @@ const publishLegacyZeroRecordV1=(target:string,bytes:Buffer)=>{const current=sto
 const isEnoent=(error:any)=>error&&error.code==="ENOENT";
 const lstatSync=()=>({dev:1n});
 const fixedRepositoryRoot=()=>"/p4";
+const fixedWorkspaceAuthorityPathV1=(...segments:string[])=>path.join(fixedRepositoryRoot(),...segments);
 const CURRENT_ENTRY_MAX_BYTES=1024*1024;
 const BASELINE_RESTART_ROOT_V1="data/internal-production-baseline/baseline-service-restart-v1";
 const BASELINE_RESTART_AUTHORIZATION_PREFIX_V1="setfarm://internal-production/baseline-service-restart-authorization/sha256/";
