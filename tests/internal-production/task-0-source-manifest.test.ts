@@ -145,8 +145,11 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "tests/operational-active-run-status-v1.test.ts",
   "tests/product-compiler/artifact-store-authority.test.ts",
   "tests/product-compiler/artifact-store-staging.test.ts",
+  "tests/smoke-test-static-rules.test.ts",
   "tests/steps/04-setup-repo.test.ts",
   "tests/steps/05-setup-build.test.ts",
+  "tests/steps/09-qa-test.test.ts",
+  "tests/steps/10-final-test.test.ts",
 ] as const;
 
 const P3_EXACT_SOURCE_PATHS_V1 = [
@@ -260,9 +263,9 @@ function assertExactP3SourcePathsV1(actual: readonly string[]): void {
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen136");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen139");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen136 order");
+    "P3 source paths do not preserve frozen139 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
@@ -368,8 +371,11 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "tests/execution-attempts/operational-outbox-repository.test.ts",
     "tests/execution-attempts/plan-context-authority.test.ts",
     "tests/product-compiler/artifact-store-staging.test.ts",
+    "tests/smoke-test-static-rules.test.ts",
     "tests/steps/04-setup-repo.test.ts",
     "tests/steps/05-setup-build.test.ts",
+    "tests/steps/09-qa-test.test.ts",
+    "tests/steps/10-final-test.test.ts",
   ], "approved recovery repository isolation insertion paths differ");
   insertAfter(base, "scripts/run-isolated-postgres-tests.ts", [
     "scripts/agent-browser-recovery-config.json",
@@ -400,8 +406,11 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "src/installer/worktree-ops.ts",
   ]);
   insertAfter(base, "tests/product-compiler/artifact-store-staging.test.ts", [
+    "tests/smoke-test-static-rules.test.ts",
     "tests/steps/04-setup-repo.test.ts",
     "tests/steps/05-setup-build.test.ts",
+    "tests/steps/09-qa-test.test.ts",
+    "tests/steps/10-final-test.test.ts",
   ]);
   insertAfter(base, "tests/execution-attempts/operational-outbox-repository.test.ts", [
     "tests/execution-attempts/plan-context-authority.test.ts",
@@ -969,7 +978,7 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact58 subset of frozen136", () => {
+  it("freezes P3 as an ordered exact58 subset of frozen139", () => {
     assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 58);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
@@ -1154,8 +1163,8 @@ describe("Task 0 exact source manifest", () => {
     )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 136-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 136);
+  it("accepts the literal 139-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 139);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
@@ -1168,7 +1177,7 @@ describe("Task 0 exact source manifest", () => {
     assert.equal(readFileSync(configPath, "utf8"), "{}\n");
   });
 
-  it("matches frozen136 while preserving every approved P3 exact58 member", () => {
+  it("matches frozen139 while preserving every approved P3 exact58 member", () => {
     const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
     const approved = extractApprovedTask0SourcePathsV1(plan);
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
@@ -1176,13 +1185,13 @@ describe("Task 0 exact source manifest", () => {
       "insert `src/installer/constants.ts`",
       "insert `src/installer/constants-crossed.ts`",
     )), /approved recovery repository isolation insertion paths differ/,
-    "the plan consumer rejects a changed exact136 amendment path instead of replaying hard-coded insertions");
+    "the plan consumer rejects a changed exact139 amendment path instead of replaying hard-coded insertions");
     const p3Approved = new Set(P3_EXACT_SOURCE_PATHS_V1);
     const missingP3 = approved.filter((relativePath) => p3Approved.has(relativePath as never))
       .filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
     assert.deepEqual(missingP3, [], "approved P3 source paths are missing from the repository");
     const missingApproved = approved.filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
-    assert.deepEqual(missingApproved, [], "approved exact136 source paths are missing from the repository");
+    assert.deepEqual(missingApproved, [], "approved exact139 source paths are missing from the repository");
   });
 
   it("rejects an omission, extra path, duplicate, and reorder", () => {

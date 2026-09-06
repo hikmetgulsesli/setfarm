@@ -922,7 +922,7 @@ describe("single-step claim_log lifecycle", () => {
 
   it("persists module onComplete context before continuing guardrails", () => {
     const source = stepOpsSource();
-    const moduleStart = source.indexOf("if (_stepModule.onComplete)");
+    const moduleStart = source.indexOf("if (!isRecoverySetupModuleCompletion && _stepModule.onComplete)");
     const moduleEnd = source.indexOf("// (Legacy REPO DEDUP", moduleStart);
     assert.notEqual(moduleStart, -1, "module onComplete block not found");
     assert.notEqual(moduleEnd, -1, "module onComplete block end not found");
@@ -1862,7 +1862,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(smokeStart, -1, "verify smoke decision not found");
     const passedSource = handleSource.slice(passedStart, smokeStart + 1200);
 
-    const syncMain = passedSource.indexOf("syncBaseBranch(repoPath, \"main\")");
+    const syncMain = passedSource.indexOf("await syncRunBaseBranchV1(verifyStep.run_id, context, repoPath)");
     const buildGate = passedSource.indexOf("runPostMergeBuildGate(repoPath");
     const routeFailure = passedSource.indexOf("routeQualityFailureToImplement(", buildGate);
     const smokeDecision = passedSource.indexOf("shouldRunStorySystemSmokeGate", buildGate);
@@ -2205,7 +2205,7 @@ describe("single-step claim_log lifecycle", () => {
 
   it("feeds invalid supervisor output back into the next supervisor attempt", () => {
     const source = stepOpsSource();
-    const onCompleteStart = source.indexOf("if (_stepModule.onComplete)");
+    const onCompleteStart = source.indexOf("if (!isRecoverySetupModuleCompletion && _stepModule.onComplete)");
     const supervisorFeedback = source.indexOf("SUPERVISOR_OUTPUT_INVALID", onCompleteStart);
     assert.notEqual(onCompleteStart, -1, "step module onComplete block not found");
     assert.notEqual(supervisorFeedback, -1, "supervisor output feedback context not found");
