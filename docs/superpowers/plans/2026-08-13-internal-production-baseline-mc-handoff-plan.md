@@ -7128,6 +7128,7 @@ A_ISOLATED_PG_TEST_FILES=(
   tests/execution-attempts/operational-outbox-repository.test.ts \
   tests/execution-attempts/run-termination.test.ts \
   tests/execution-attempts/runtime-completion-effect-runner.test.ts \
+  tests/execution-attempts/runtime-completion.test.ts \
   tests/execution-attempts/runtime-hooks.test.ts \
   tests/execution-attempts/runtime-session-repository.test.ts \
   tests/execution-attempts/v3-downstream-evidence-publication.test.ts \
@@ -7172,7 +7173,7 @@ for A_ISOLATED_PG_TEST_FILE in "${A_ISOLATED_PG_TEST_FILES[@]}"; do
       node --import tsx --test --test-concurrency=1 "$A_ISOLATED_PG_TEST_FILE"
 done
 env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL \
-  node --import tsx --test \
+  node --import tsx --test --test-concurrency=1 \
   tests/operational-active-run-status-v1.test.ts \
   tests/mission-control-contract-artifacts.test.ts \
   tests/mission-control-terminal-filter.test.ts \
@@ -7183,7 +7184,6 @@ env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL \
   tests/internal-production/baseline-restart-authority-retirement-v1.test.ts \
   tests/internal-production/task-0-source-manifest.test.ts \
   tests/execution-attempts/migration-source-digests.test.ts \
-  tests/execution-attempts/runtime-completion.test.ts \
   tests/internal-production/baseline-post-handoff-cli.test.ts \
   tests/execution-attempts/plan-context-authority.test.ts \
   tests/smoke-test-static-rules.test.ts
