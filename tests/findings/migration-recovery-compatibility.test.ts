@@ -243,7 +243,7 @@ async function insertLegacyRevision(value: RecoveryCaseV1): Promise<string> {
 }
 
 async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
-  const rewoundHeads = await database!.sql.unsafe<Array<{ head_version: number }>>(
+  const rewoundHeads = await database!.sql.unsafe<Array<{ head_version: string }>>(
     `UPDATE internal_production_owner_admission_head_v1
         SET head_version = 0,
             head_hash = $1,
@@ -261,7 +261,7 @@ async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
       RETURNING head_version`,
     ["0".repeat(64)],
   );
-  assert.deepEqual(rewoundHeads, [{ head_version: 0 }]);
+  assert.deepEqual(rewoundHeads, [{ head_version: "0" }]);
   for (const statement of [
     // v33 binds its immutable recovery publication ledger directly to the v11
     // delivery table. Unwind that empty successor before reconstructing the
