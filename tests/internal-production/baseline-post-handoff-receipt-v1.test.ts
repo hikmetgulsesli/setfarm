@@ -18832,36 +18832,42 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   it("P5c-P freezes read-only writer-owner and publication F observers plus the exact P0-P5 topology", () => {
     const source = readFileSync(observerSource, "utf8");
     const owner = topLevelFunctionRegionV1(source, "observeTask12ReceiptLocatorWriterNoWriteV1");
+    const ownedOwner = topLevelFunctionRegionV1(source, "observeTask12ReceiptLocatorWriterFromOwnedDirectoryNoWriteV1");
     const writerProcess = topLevelFunctionRegionV1(source, "observeTask12ReceiptWriterProcessV1");
     assert.match(owner, /target:\s*string/);
-    assert.match(owner, /observeTask12ReceiptWriterProcessV1\(pid\)/, "writer ownership delegates PID liveness to the shared read-only process observer");
-    assert.doesNotMatch(owner, /spawnSync\(/, "writer-family observation does not duplicate the process syscall");
+    assert.match(owner, /openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1\(target\)[\s\S]*observeTask12ReceiptLocatorWriterFromOwnedDirectoryNoWriteV1\(directoryOwner,\s*target\)[\s\S]*finally[\s\S]*directoryOwner\.close\(\)/,
+      "the public no-write observer delegates through one closed owned directory inventory");
+    assert.match(ownedOwner, /observeTask12ReceiptWriterProcessV1\(pid\)/, "writer ownership delegates PID liveness to the shared read-only process observer");
+    assert.doesNotMatch(ownedOwner, /spawnSync\(/, "writer-family observation does not duplicate the process syscall");
     assert.match(writerProcess, /pid:\s*number/);
     assert.equal(writerProcess.split('spawnSync("/bin/ps",').length - 1, 1, "the shared process observer owns the sole bounded ps observation");
     assert.doesNotMatch(writerProcess, /(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync|acquireTask12|publishTask12|fsyncSync/, "the shared process observer is read-only");
-    for (const topology of ["A0", "A1", "A2"]) assert.match(owner, new RegExp(`["']${topology}["']`), `writer observation classifies exact ${topology}`);
-    for (const classification of ["live", "dead", "reuse", "ambiguous", "invalid"]) assert.match(owner, new RegExp(classification), `writer observation authenticates ${classification} ownership`);
+    for (const topology of ["A0", "A1", "A2"]) assert.match(ownedOwner, new RegExp(`["']${topology}["']`), `writer observation classifies exact ${topology}`);
+    for (const classification of ["live", "dead", "reuse", "ambiguous", "invalid"]) assert.match(ownedOwner, new RegExp(classification), `writer observation authenticates ${classification} ownership`);
     for (const relation of ["targetHash", "pid", "start", "commandHash", "identityHash", "nonce"]) {
-      assert.match(owner, new RegExp(`\\b${relation}\\b`), `writer ownership authenticates ${relation}`);
+      assert.match(ownedOwner, new RegExp(`\\b${relation}\\b`), `writer ownership authenticates ${relation}`);
     }
-    assert.match(owner, /TASK12_RECEIPT_WRITER_UUID_V4_V1|[0-9a-f]\{8\}/, "writer acquisition temporaries retain UUID-v4 grammar");
-    assert.match(owner, /length\s*>\s*8|MAX[^\n]*8|>=\s*8/, "writer observation enforces the exact-eight acquisition cap");
-    assert.doesNotMatch(owner, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync|while\s*\([^)]*wait|setTimeout|Atomics\.wait/,
+    assert.match(ownedOwner, /TASK12_RECEIPT_WRITER_UUID_V4_V1|[0-9a-f]\{8\}/, "writer acquisition temporaries retain UUID-v4 grammar");
+    assert.match(ownedOwner, /length\s*>\s*8|MAX[^\n]*8|>=\s*8/, "writer observation enforces the exact-eight acquisition cap");
+    assert.doesNotMatch(ownedOwner, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync|while\s*\([^)]*wait|setTimeout|Atomics\.wait/,
       "writer-owner observation cannot acquire, wait, clean, fsync, or mutate");
 
     const publication = topLevelFunctionRegionV1(source, "observeTask12ReceiptPublicationNoWriteV1");
+    const ownedPublication = topLevelFunctionRegionV1(source, "observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1");
     const publicationTypeStart = source.indexOf("type Task12ReceiptPublicationNoWriteObservationV1 = Readonly<{");
     const publicationTypeEnd = source.indexOf("\n\nfunction observeTask12ReceiptPublicationNoWriteV1(", publicationTypeStart);
     assert.ok(publicationTypeStart >= 0 && publicationTypeEnd > publicationTypeStart, "P5c-P bounds the exact publication-observation type");
     const publicationType = source.slice(publicationTypeStart, publicationTypeEnd);
     assert.match(publication, /expectedBytes:\s*Buffer/);
+    assert.match(publication, /openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1\(target\)[\s\S]*observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1\(directoryOwner,\s*target,\s*expectedBytes,\s*directoryPolicy\)[\s\S]*directoryOwner\.close\(\)/,
+      "the public publication observer delegates through one closed owned directory inventory");
     for (const state of ["F-1", "F0", "F1", "F2", "F2u", "F3", "F4"]) {
       assert.match(publicationType, new RegExp(`["']${state.replace("-", "\\-")}["']`), `publication observation retains exact ${state}`);
     }
-    assert.match(publication, /tmp-[\s\S]*(?:\[1-5\]|\[0-9a-f\]\{8\})/,
+    assert.match(ownedPublication, /tmp-[\s\S]*(?:\[1-5\]|\[0-9a-f\]\{8\})/,
       "publication temporary grammar remains PID plus UUID versions one through five");
-    assert.doesNotMatch(publication, /TASK12_RECEIPT_WRITER_UUID_V4_V1/, "publication and acquisition temporary grammars remain disjoint");
-    assert.doesNotMatch(publication, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
+    assert.doesNotMatch(ownedPublication, /TASK12_RECEIPT_WRITER_UUID_V4_V1/, "publication and acquisition temporary grammars remain disjoint");
+    assert.doesNotMatch(ownedPublication, /acquireTask12ReceiptLocatorWriterV1|ensureTask12ReceiptPrivateDirectoryV1|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|fsyncSync|fsyncCurrentEntryDirectory|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "publication observation classifies but never normalizes an F-state");
 
     const preStatus = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisiblePreStatusPassNoWriteV1");
@@ -18873,6 +18879,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.match(preStatus, /operationDirectoryPrefix/,
       "P0 discovers no authority and admits only the literal left-to-right directory chain");
+    assert.match(preStatus, /publicationPolicy\.filter\(\(family\)\s*=>\s*path\.dirname\(family\.target\)\s*===\s*path\.dirname\(candidate\.target\)\)/,
+      "each pre-status observer receives the directory-local projection of the shared P2-P5/controller policy");
+    assert.doesNotMatch(preStatus, /observeTask12ReceiptPublicationNoWriteV1\(candidate\.target,\s*candidate\.bytes,\s*candidate\.directoryPolicy\)/,
+      "pre-status observation does not hide same-directory P3/P5/controller response-loss evidence behind a candidate-local policy");
     assert.match(preStatus, /phase:\s*"P5"[\s\S]*(?:F2u|F3|F4)[\s\S]*state:\s*"progress"/,
       "a strict one-link P5 final exits P and routes only to progress classification");
     assert.doesNotMatch(preStatus, /ensureTask12|acquireTask12|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|readdirSync\([^)]*storeRoot|latest|mtime|process\.env|globalThis|fsyncSync|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
@@ -19483,7 +19493,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.deepEqual(
           { outcome: observed.outcome, selectorCalls: observed.selectorCalls, validatorCalls: observed.validatorCalls, creatorCalls: observed.creatorCalls, descriptorDelta: observed.descriptorDelta },
           { outcome: "returned", selectorCalls: 1, validatorCalls: 1, creatorCalls: 1, descriptorDelta: 0 },
-          "mutation caught: an exact P0 prefix is rejected as unexplained or mistaken for Z",
+          `mutation caught: an exact P0 prefix is rejected as unexplained or mistaken for Z (${String(observed.message)})`,
         );
         const selected = observed.value as Readonly<Record<string, unknown>>;
         assert.equal(realpathSync(String(selected.storeRoot)), realpathSync(successorRoot));
@@ -19629,7 +19639,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             assert.deepEqual(
               { outcome: observed.outcome, creatorCalls: observed.creatorCalls, dispatcherCalls: observed.dispatcherCalls, preStatusPassCalls: observed.preStatusPassCalls, progressPassCalls: observed.progressPassCalls, descriptorDelta: observed.descriptorDelta },
               { outcome: "returned", creatorCalls: 1, dispatcherCalls: 1, preStatusPassCalls: 0, progressPassCalls: 2, descriptorDelta: 0 },
-              `${phase}/${physicalState}: strict one-link 01 routes to S before P`,
+              `${phase}/${physicalState}: strict one-link 01 routes to S before P (${String(observed.message)})`,
             );
             assert.equal((observed.value as Readonly<Record<string, unknown>>).selectionKind, "successor-progress");
           } else {
@@ -30314,12 +30324,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
 
     const dispatcher = topLevelFunctionRegionV1(source, "classifyExactPoisonPostVisibleCurrentStatusDispatchV1");
     assert.match(dispatcher, /:\s*"pre-status"\s*\|\s*"progress"/);
-    assert.match(dispatcher, /ENOENT[\s\S]*return\s+"pre-status"/);
+    assert.match(dispatcher, /openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1\([\s\S]*state\s*===\s*"missing-parent"[\s\S]*directoryMembers\.includes\(path\.basename\(target\)\)[\s\S]*assertStable\(\)[\s\S]*return\s+"pre-status"/,
+      "strict dispatch classifies missing parents and absent fixed members through one stable owned directory inventory");
     assert.match(dispatcher, /nlink\s*===?\s*2n?[\s\S]*return\s+"pre-status"/);
     assert.match(dispatcher, /nlink\s*===?\s*1n?[\s\S]*strictCanonicalRecord[\s\S]*return\s+"progress"/);
-    assert.match(dispatcher, /openExactPoisonRecoveryMemberV1\([\s\S]*assertExactPoisonRecoveryPinnedMemberStableV1\(/,
+    assert.match(dispatcher, /\.pinMember\(target\)[\s\S]*assertExactPoisonRecoveryPinnedMemberStableV1\(/,
       "strict dispatch reuses the audited four-read descriptor/path pin and stability fence");
-    assert.match(dispatcher, /finally\s*\{[\s\S]*\.close\(\)/, "strict dispatcher owns and closes its pinned member");
+    assert.match(dispatcher, /finally\s*\{[\s\S]*directoryOwner\.close\(\)/, "strict dispatcher owns and closes its directory inventory and pinned member");
     assert.doesNotMatch(dispatcher, /readdirSync|opendirSync|normalizeTask12|acquireTask12|selectCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/);
 
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");

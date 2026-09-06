@@ -5099,6 +5099,16 @@ async function observeExactPoisonPostVisiblePreStatusPassNoWriteV1(
 
     const successorRootIdentity = context.successorRootParent.identity;
     const recordPrefixes = observeExactPoisonPreStatusRecordPrefixesV1(context, publicationSet, successorRootIdentity);
+    const publicationPolicy = Object.freeze([
+      ...publicationSet.candidates.map((candidate) => Object.freeze({ target: candidate.target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })),
+      Object.freeze({ target: publicationSet.controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true }),
+    ]);
+    const observeCandidatePublication = (candidate: (typeof publicationSet.candidates)[number]): Task12ReceiptPublicationNoWriteObservationV1 =>
+      observeTask12ReceiptPublicationNoWriteV1(
+        candidate.target,
+        candidate.bytes,
+        publicationPolicy.filter((family) => path.dirname(family.target) === path.dirname(candidate.target)),
+      );
     const prefixObservations: ExactPoisonPreStatusDirectoryObservationV1[] = [];
     let prefixDepth = 0;
     for (const [index, target] of publicationSet.operationDirectoryPrefix.entries()) {
@@ -5116,11 +5126,7 @@ async function observeExactPoisonPostVisiblePreStatusPassNoWriteV1(
           const expectedMembers = parentIndex + 1 < index ? [path.basename(publicationSet.operationDirectoryPrefix[parentIndex + 1]!)] : [];
           if (canonicalComparable(parent.members) !== canonicalComparable(expectedMembers)) currentEntryFail("post-visible P0 directory child set is not exact");
         }
-        const publicationPolicy = Object.freeze([
-          ...publicationSet.candidates.map((candidate) => Object.freeze({ target: candidate.target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })),
-          Object.freeze({ target: publicationSet.controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true }),
-        ]);
-        const publicationStates = publicationSet.candidates.map((candidate) => observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, publicationPolicy));
+        const publicationStates = publicationSet.candidates.map(observeCandidatePublication);
         if (publicationStates.some((entry) => entry.state !== "F0" || entry.members.length !== 0)) currentEntryFail("post-visible P0 has a later publication member");
         if (recordPrefixes.candidateDepths.some((depth) => depth !== 0)) currentEntryFail("post-visible P0 has a prepared record directory prefix");
         return Object.freeze({ stage: "P0", state: "pre-status", publicationSet, rawFence, topology: Object.freeze([prefixDepth, phaseTopologyMembers, prefixObservations, recordPrefixes.observations, publicationStates]) });
@@ -5135,11 +5141,7 @@ async function observeExactPoisonPostVisiblePreStatusPassNoWriteV1(
     }
     const operationMembers = exactPoisonPreStatusOperationDirectoryMembersV1(publicationSet, prefixObservations.at(-1)!);
     const controllerWriter = observeTask12ReceiptLocatorWriterNoWriteV1(publicationSet.controllerLockTarget);
-    const publicationPolicy = Object.freeze([
-      ...publicationSet.candidates.map((candidate) => Object.freeze({ target: candidate.target, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })),
-      Object.freeze({ target: publicationSet.controllerLockTarget, allowFinal: false, allowPublicationTemporaries: false, allowWriterFamily: true }),
-    ]);
-    const publicationStates = publicationSet.candidates.map((candidate) => observeTask12ReceiptPublicationNoWriteV1(candidate.target, candidate.bytes, publicationPolicy));
+    const publicationStates = publicationSet.candidates.map(observeCandidatePublication);
     const candidateWriters = publicationSet.candidates.map((candidate) => {
       try {
         const parent = lstatSync(path.dirname(candidate.target), { bigint: true });
@@ -10021,46 +10023,34 @@ function classifyExactPoisonPostVisibleCurrentStatusDispatchV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
 ): "pre-status" | "progress" {
   const target = path.join(context.successorRoot, "operations", "sha256", context.successorOperation.operationHash.slice(0, 2), context.successorOperation.operationHash, "01-current-status.pair.json");
-  let directoryGuard: Task12ReceiptDirectoryGuardV1 | null = null;
-  let owner: Readonly<{ member: ExactPoisonRecoveryPinnedMemberV1; close(): void }> | null = null;
+  const directoryOwner = openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1(target);
   try {
     context.assertStable();
-    directoryGuard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(target));
-    directoryGuard.assertStable();
-    let member: ExactPoisonRecoveryPinnedMemberV1;
-    try { member = openExactPoisonRecoveryMemberV1(target, "post-visible current-status dispatcher"); }
-    catch (error) {
-      if (!isEnoent(error)) throw error;
+    directoryOwner.assertStable();
+    if (
+      directoryOwner.state === "missing-parent"
+      || !directoryOwner.directoryMembers.includes(path.basename(target))
+    ) {
       context.assertStable();
-      directoryGuard.assertStable();
-      try { lstatSync(target, { bigint: true }); }
-      catch (reobservedError) {
-        if (isEnoent(reobservedError)) {
-          directoryGuard.assertStable();
-          return "pre-status";
-        }
-        throw reobservedError;
-      }
-      currentEntryFail("post-visible current-status appeared during ENOENT dispatch");
+      directoryOwner.assertStable();
+      return "pre-status";
     }
-    let closed = false;
-    owner = Object.freeze({ member, close(): void { if (closed) currentEntryFail("post-visible current-status dispatcher closed twice"); closed = true; closeSync(member.descriptor); } });
+    const member = directoryOwner.pinMember(target);
     if (member.identity.nlink === 2n) {
-      directoryGuard.assertStable();
+      directoryOwner.assertStable();
       assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "post-visible current-status dispatcher");
-      directoryGuard.assertStable();
+      directoryOwner.assertStable();
       return "pre-status";
     }
     if (member.identity.nlink !== 1n) currentEntryFail("post-visible current-status dispatcher link count is invalid");
     const parsed = strictCanonicalRecord(member.bytes, "post-visible current-status dispatcher pair");
     requirePair(parsed, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1);
-    directoryGuard.assertStable();
+    directoryOwner.assertStable();
     assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "post-visible current-status dispatcher");
-    directoryGuard.assertStable();
+    directoryOwner.assertStable();
     return "progress";
   } finally {
-    try { owner?.close(); }
-    finally { directoryGuard?.close(); }
+    directoryOwner.close();
   }
 }
 
