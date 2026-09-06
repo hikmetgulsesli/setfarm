@@ -13616,7 +13616,7 @@ function runPhase5bNestedPrerequisiteFixtureV1(
     : route === "historical-operation"
       ? `m.p5bRunHistoricalOperationNestedPrerequisiteFixtureV1(${JSON.stringify(pair)})`
       : `m.p5bRunHistoricalNestedPrerequisiteFixtureV1(${JSON.stringify(route === "historical-v31" ? "authorityV3Migration31Audit" : "pendingBootstrapHandoffMigration")},${JSON.stringify(pair)})`;
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={selectorCalls:0,creatorCalls:0,validatorCalls:0,selectedV31Calls:0,selectedPendingCalls:0,historicalV31Calls:0,historicalPendingCalls:0,publicV31Calls:0,publicPendingCalls:0,historicalOperationCalls:0,atRootV31Calls:0,atRootPendingCalls:0,fixedRootOpenCalls:0,fixedRootCloseCalls:0,openLog:[],events:[],drift:${JSON.stringify(drift)},driftDone:false};Reflect.set(globalThis,"__p5bNestedPrerequisiteProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(probe.driftDone&&probe.drift){fs.renameSync(probe.drift.root,probe.drift.replacement);fs.renameSync(probe.drift.backup,probe.drift.root)}}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,value,...probe,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const probe={selectorCalls:0,creatorCalls:0,validatorCalls:0,selectedV31Calls:0,selectedPendingCalls:0,historicalV31Calls:0,historicalPendingCalls:0,publicV31Calls:0,publicPendingCalls:0,historicalOperationCalls:0,atRootV31Calls:0,atRootPendingCalls:0,fixedRootOpenCalls:0,fixedRootCloseCalls:0,openLog:[],events:[],drift:${JSON.stringify(drift)},driftDone:false};Reflect.set(globalThis,"__p5bNestedPrerequisiteProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(probe.driftDone&&probe.drift){fs.renameSync(probe.drift.root,probe.drift.replacement);fs.renameSync(probe.drift.backup,probe.drift.root)}}const after=descriptorCount();process.stdout.write(JSON.stringify({outcome,message,value,...probe,descriptorDelta:after-before}))})()`);
 }
 
 function phase5bNestedPresentedPathV1(store: string, target: string): string {
@@ -36163,7 +36163,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "one helper definition plus all nineteen fixed authority-store call sites must remain bound",
     );
     assert.match(source, /const CODE_OWNER_HOME_V1 = userInfo\(\)\.homedir;/);
-    assert.match(source, /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.join\(CODE_OWNER_HOME_V1, "ai", "setrox"\);/);
+    const workspaceRootDefinitions = source.match(/const CODE_OWNED_WORKSPACE_ROOT_V1 = [^\n]+;/g) ?? [];
+    assert.equal(workspaceRootDefinitions.length, 1, "one code-owned workspace root definition is frozen");
+    assert.equal(
+      new Set([
+        'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+        "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());",
+      ]).has(workspaceRootDefinitions[0]!),
+      true,
+      "the source uses either the canonical account workspace or the authenticated P3 projection root",
+    );
     const functionRegion = (startMarker: string, endMarker: string): string => {
       const start = source.indexOf(startMarker);
       const end = source.indexOf(endMarker, start + startMarker.length);
@@ -36220,10 +36229,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       });
       assert.equal(result.status, 0, result.stderr);
       const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string }>;
-      const expectedWorkspace = path.join(userInfo().homedir, "ai", "setrox");
+      const projectedWorkspace = source.includes("const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());");
+      const expectedWorkspace = projectedWorkspace
+        ? realpathSync(path.dirname(root))
+        : path.join(userInfo().homedir, "ai", "setrox");
       assert.equal(observed.target, path.join(expectedWorkspace, "data/internal-production-baseline/current-entry-v1/probe.json"));
       assert.equal(observed.anchor, expectedWorkspace);
-      assert.notEqual(observed.target, path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1/probe.json"));
+      assert.notEqual(observed.target, path.join(path.dirname(root), "crossed-home", "data/internal-production-baseline/current-entry-v1/probe.json"));
+      if (!projectedWorkspace) {
+        assert.notEqual(observed.target, path.join(path.dirname(root), "data/internal-production-baseline/current-entry-v1/probe.json"));
+      }
     } finally {
       removeFixture(root);
     }
