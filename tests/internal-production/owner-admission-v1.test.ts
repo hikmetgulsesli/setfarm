@@ -2703,6 +2703,56 @@ test("P3 runner freezes the complete secure physical-mode domain before projecti
   assert.match(runner, /chmodSync\(target, observation\.projectedMode\)/);
 });
 
+test("P3 runner bounds the recovery lifecycle suite in three code-owned process shards", () => {
+  const runner = readFileSync(path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"), "utf8");
+  const lifecycle = readFileSync(path.join(process.cwd(), "tests/findings/v3-recovery-lifecycle-reconciler.test.ts"), "utf8");
+  assert.match(runner, /P3_RECOVERY_LIFECYCLE_TEST_FILE_V1\s*=\s*"tests\/findings\/v3-recovery-lifecycle-reconciler\.test\.ts"/);
+  assert.match(runner, /P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1\s*=\s*Object\.freeze\(\["0\/3",\s*"1\/3",\s*"2\/3"\]/);
+  assert.match(runner, /testShards\.map\(\(\)\s*=>\s*randomBytes\(32\)\)/,
+    "every process shard receives a fresh test capability nonce");
+  assert.match(runner, /markerForTestNonce\(testNonce\)[\s\S]*spawnWithCapabilityV1\([\s\S]*capabilityFrameV1\("test",\s*testNonce\)/,
+    "each fresh marker is published before its matching child capability frame");
+  assert.match(runner, /SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1:\s*input\.recoveryLifecycleShard/);
+  assert.doesNotMatch(runner, /process\.env\.SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1/,
+    "the runner never accepts a caller-selected shard");
+  assert.match(runner, /:\s*Object\.freeze\(\[undefined\]\s*as\s*const\)/,
+    "every non-lifecycle one-file command retains one ordinary child");
+  assert.match(runner, /if\s*\(exitCode\s*!==\s*0\)[\s\S]*process\.exitCode\s*=\s*exitCode;[\s\S]*break;/,
+    "the first nonzero shard stops the aggregate");
+  assert.match(lifecycle, /RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1\s*=\s*3/);
+  assert.match(lifecycle, /\^\(\[0-2\]\)\\\/3\$/);
+  assert.match(lifecycle, /if\s*\(recoveryLifecycleTestShardFrameV1\s*!==\s*undefined\)[\s\S]*authenticateP3ProjectedReadinessTestCapabilityV1\(\)[\s\S]*P3_RECOVERY_LIFECYCLE_TEST_SHARD_UNAUTHENTICATED/,
+    "a defined shard frame is admitted only after the marker/FD3 P3 test capability authenticates");
+  assert.match(lifecycle, /ordinal\s*%\s*RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1\s*===\s*recoveryLifecycleTestShardIndexV1/);
+  assert.equal((lifecycle.match(/^\s{2}it\(/gm) ?? []).length, 29,
+    "the exact 29 lifecycle tests are registered through the shard wrapper");
+  assert.equal((lifecycle.match(/nodeIt(?:\.skip)?\(/g) ?? []).length, 2,
+    "only the shard wrapper may register a running or skipped node:test case");
+  const shards = [0, 1, 2].map((shard) => Array.from({ length: 29 }, (_, ordinal) => ordinal).filter((ordinal) => ordinal % 3 === shard));
+  assert.deepEqual(shards.map((shard) => shard.length), [10, 10, 9]);
+  assert.deepEqual([...new Set(shards.flat())].sort((left, right) => left - right), Array.from({ length: 29 }, (_, ordinal) => ordinal));
+  assert.match(lifecycle, /if\s*\(sequence\s*>\s*0\)\s*await database\.reset\(\)/,
+    "relational state remains reset independently inside each bounded process shard");
+});
+
+test("recovery lifecycle shard selection rejects a direct caller without the P3 capability", () => {
+  const result = spawnSync(process.execPath, [
+    "--import", import.meta.resolve("tsx"),
+    "--test", "--test-concurrency=1", "--test-name-pattern=^$",
+    "tests/findings/v3-recovery-lifecycle-reconciler.test.ts",
+  ], {
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH,
+      SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1: "0/3",
+    },
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /P3_RECOVERY_LIFECYCLE_TEST_SHARD_UNAUTHENTICATED/);
+});
+
 test("P3 runner refuses every constructible indexed and physical projection drift before child spawn", async () => {
   if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
   const member = "src/execution/attempt-repository.ts";
