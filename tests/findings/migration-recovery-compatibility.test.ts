@@ -261,7 +261,8 @@ async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
       RETURNING head_version`,
     ["0".repeat(64)],
   );
-  assert.deepEqual(rewoundHeads, [{ head_version: "0" }]);
+  assert.equal(rewoundHeads.length, 1);
+  assert.equal(rewoundHeads[0]?.head_version, "0");
   for (const statement of [
     // v33 binds its immutable recovery publication ledger directly to the v11
     // delivery table. Unwind that empty successor before reconstructing the
