@@ -243,6 +243,25 @@ async function insertLegacyRevision(value: RecoveryCaseV1): Promise<string> {
 }
 
 async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
+  const rewoundHeads = await database!.sql.unsafe<Array<{ head_version: number }>>(
+    `UPDATE internal_production_owner_admission_head_v1
+        SET head_version = 0,
+            head_hash = $1,
+            active_fence_ref = NULL,
+            active_fence_hash = NULL,
+            active_target_family_hash = NULL,
+            head_payload = jsonb_build_object(
+              'schema', 'setfarm.internal-production-owner-admission-head.v1',
+              'version', 0,
+              'migrationApplication', head_payload -> 'migrationApplication'
+            ),
+            updated_at = NOW()
+      WHERE singleton = TRUE
+        AND head_payload -> 'migrationApplication' IS NOT NULL
+      RETURNING head_version`,
+    ["0".repeat(64)],
+  );
+  assert.deepEqual(rewoundHeads, [{ head_version: 0 }]);
   for (const statement of [
     // v33 binds its immutable recovery publication ledger directly to the v11
     // delivery table. Unwind that empty successor before reconstructing the
@@ -378,9 +397,9 @@ describe("revisioned recovery migration compatibility", () => {
 
   it("upgrades populated v10 cases without re-authorizing an unprovably consumed dispatch", async () => {
     database = await createIsolatedTestDatabase();
-    await downgradeRecoveryDeliveryLedgerToV10();
     const findingSet = finding("run-v10-upgrade", "US-V10");
     await createFindingRecoveryRepository(database.sql).putFindingSet(findingSet);
+    await downgradeRecoveryDeliveryLedgerToV10();
     const legacyCase = recovery(findingSet, 1);
     await insertRecoveryCase(legacyCase);
     const dispatchKey = computeRecoveryDispatchDedupeKey({
@@ -501,9 +520,9 @@ describe("revisioned recovery migration compatibility", () => {
 
   it("preserves owner evolution as immutable history without reviving any legacy delivery", async () => {
     database = await createIsolatedTestDatabase();
-    await downgradeRecoveryDeliveryLedgerToV10();
     const findingSet = finding("run-v10-owner-evolution", "US-V10-EVOLUTION");
     await createFindingRecoveryRepository(database.sql).putFindingSet(findingSet);
+    await downgradeRecoveryDeliveryLedgerToV10();
     const legacyCase = recovery(findingSet, 1);
     await insertRecoveryCase(legacyCase);
     const historicalImplement = await insertLegacyDispatch(
@@ -581,9 +600,9 @@ describe("revisioned recovery migration compatibility", () => {
 
   it("migrates a terminal legacy case without reviving its last dispatch", async () => {
     database = await createIsolatedTestDatabase();
-    await downgradeRecoveryDeliveryLedgerToV10();
     const findingSet = finding("run-v10-terminal", "US-V10-TERMINAL");
     await createFindingRecoveryRepository(database.sql).putFindingSet(findingSet);
+    await downgradeRecoveryDeliveryLedgerToV10();
     const legacyCase = recovery(findingSet, 1);
     await insertRecoveryCase(legacyCase);
     const legacyDispatchId = await insertLegacyDispatch(
@@ -636,9 +655,9 @@ describe("revisioned recovery migration compatibility", () => {
 
   it("rolls the whole v11 migration back when immutable v10 dispatch evidence is corrupt", async () => {
     database = await createIsolatedTestDatabase();
-    await downgradeRecoveryDeliveryLedgerToV10();
     const findingSet = finding("run-v10-unsafe", "US-V10-UNSAFE");
     await createFindingRecoveryRepository(database.sql).putFindingSet(findingSet);
+    await downgradeRecoveryDeliveryLedgerToV10();
     const legacyCase = recovery(findingSet, 1);
     await insertRecoveryCase(legacyCase);
     const dispatchKey = computeRecoveryDispatchDedupeKey({

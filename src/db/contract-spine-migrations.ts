@@ -17355,28 +17355,30 @@ export async function applyContractSpineMigrations(
         contractSpineMigrationLockKey,
       ]);
 
-      const preflightPlan = await planContractSpineMigrationsOnConnection(transaction);
-      const preflightFailure = preflightPlan.migrations.find((candidate) =>
-        candidate.state === "unexpected"
-        || candidate.state === "checksum_mismatch"
-        || candidate.state === "adoption_mismatch");
-      if (preflightFailure) {
-        if (preflightFailure.state === "unexpected") {
-          throw new ContractSpineMigrationError(
-            "MIGRATION_UNKNOWN_VERSION",
-            `Migration journal contains unknown version ${preflightFailure.version}`,
-          );
-        }
-        throw new ContractSpineMigrationError(
-          preflightFailure.state === "checksum_mismatch"
-            ? "MIGRATION_CHECKSUM_MISMATCH"
-            : "MIGRATION_ADOPTION_MISMATCH",
-          `Migration ${preflightFailure.version} failed successor preflight`,
-        );
-      }
       const preflightJournal = await completeJournalRows(transaction);
       const preflight32 = preflightJournal.find((row) => row.version === 32);
       const preflight33 = preflightJournal.find((row) => row.version === 33);
+      if (preflight33) {
+        const preflightPlan = await planContractSpineMigrationsOnConnection(transaction);
+        const preflightFailure = preflightPlan.migrations.find((candidate) =>
+          candidate.state === "unexpected"
+          || candidate.state === "checksum_mismatch"
+          || candidate.state === "adoption_mismatch");
+        if (preflightFailure) {
+          if (preflightFailure.state === "unexpected") {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_UNKNOWN_VERSION",
+              `Migration journal contains unknown version ${preflightFailure.version}`,
+            );
+          }
+          throw new ContractSpineMigrationError(
+            preflightFailure.state === "checksum_mismatch"
+              ? "MIGRATION_CHECKSUM_MISMATCH"
+              : "MIGRATION_ADOPTION_MISMATCH",
+            `Migration ${preflightFailure.version} failed successor preflight`,
+          );
+        }
+      }
       const preflight33Detection = await detectV3RecoveryClaimRuntimePublicationV1(transaction);
       if (preflight33 && !preflight32) {
         throw new ContractSpineMigrationError(
