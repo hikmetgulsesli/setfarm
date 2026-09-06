@@ -480,6 +480,7 @@ function childEnvironmentV1(input: Readonly<{
     PATH: "/usr/bin:/bin",
     LANG: "C",
     LC_ALL: "C",
+    TSX_DISABLE_CACHE: "1",
     ...(input.testProcess ? {
       NODE_OPTIONS:
         "--test-isolation=none --import=./.setfarm-p3-test-capability-preload.mjs",

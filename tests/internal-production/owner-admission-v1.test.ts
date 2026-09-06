@@ -1987,6 +1987,7 @@ test("P3 runner projects authenticated current bytes from import meta root", asy
     childEnvironmentSource,
     /NODE_OPTIONS:\s*"--test-isolation=none --import=\.\/\.setfarm-p3-test-capability-preload\.mjs"/,
   );
+  assert.match(childEnvironmentSource, /TSX_DISABLE_CACHE:\s*"1"/);
   assert.doesNotMatch(childEnvironmentSource, /\.\.\.process\.env|process\.env\.NODE_OPTIONS/);
   assert.doesNotMatch(
     childEnvironmentSource,
