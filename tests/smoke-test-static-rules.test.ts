@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  captureRecoveryScreenshotBytesV1,
   discoverHashRoutes,
   checkEntryPointImports,
   checkNativeButtonWiring,
@@ -527,6 +528,106 @@ describe("smoke-test static rules", () => {
     assert.match(smokeScript, /status: failures\.length === 0 \? 'pass' : \(confidence >= 70 \? 'warn' : 'fail'\)/);
     assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
     assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
+  });
+
+  it("emits the recovery screenshot envelope on every CLI exit", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /process\.once\(['"]exit['"],\s*emitRecoveryScreenshotEnvelope/);
+    assert.match(smokeScript, /setfarm\.internal-production-recovery-smoke-screenshots\.v1/);
+  });
+
+  it("captures recovery screenshots from one stable loopback CDP page without a pathname", async () => {
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("stable-cdp-frame"),
+    ]);
+    const currentUrl = "http://127.0.0.1:4173/dashboard";
+    const calls: any[] = [];
+    const createSocket = (options: { duplicate?: boolean; navigateAfter?: boolean; reloadAfter?: boolean } = {}) => class FakeWebSocket {
+      listeners = new Map<string, Set<(event: any) => void>>();
+      evaluations = 0;
+      frameTrees = 0;
+      constructor(readonly url: string) {
+        queueMicrotask(() => this.emit("open", {}));
+      }
+      addEventListener(type: string, listener: (event: any) => void): void {
+        const listeners = this.listeners.get(type) ?? new Set();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      }
+      emit(type: string, event: any): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+      send(raw: string): void {
+        const request = JSON.parse(raw);
+        calls.push(request);
+        let result: any;
+        if (request.method === "Target.getTargets") result = { targetInfos: [
+          { targetId: "page-1", type: "page", url: currentUrl },
+          ...(options.duplicate ? [{ targetId: "page-2", type: "page", url: currentUrl }] : []),
+        ] };
+        else if (request.method === "Target.attachToTarget") result = { sessionId: "session-1" };
+        else if (request.method === "Runtime.evaluate") {
+          this.evaluations += 1;
+          result = { result: { value: options.navigateAfter && this.evaluations > 1 ? "http://127.0.0.1:4173/changed" : currentUrl } };
+        } else if (request.method === "Page.getFrameTree") {
+          this.frameTrees += 1;
+          result = { frameTree: { frame: {
+            id: "frame-1",
+            loaderId: options.reloadAfter && this.frameTrees > 1 ? "loader-2" : "loader-1",
+            url: currentUrl,
+          } } };
+        } else if (request.method === "Page.captureScreenshot") result = { data: png.toString("base64") };
+        else if (request.method === "Target.getTargetInfo") result = { targetInfo: { targetId: "page-1", type: "page", url: currentUrl } };
+        else if (request.method === "Target.detachFromTarget") result = {};
+        else throw new Error(`unexpected CDP method ${request.method}`);
+        queueMicrotask(() => this.emit("message", { data: JSON.stringify({ id: request.id, result }) }));
+      }
+      close(): void { this.emit("close", {}); }
+    };
+    const command = (...args: string[]) => JSON.stringify({
+      success: true,
+      data: args[1] === "cdp-url"
+        ? { cdpUrl: "ws://127.0.0.1:9222/devtools/browser/browser-1" }
+        : { url: currentUrl },
+    });
+    const frame = await captureRecoveryScreenshotBytesV1("smoke-home.png", {
+      command,
+      WebSocketClass: createSocket(),
+    });
+    assert.equal(frame.relativePath, "smoke-home.png");
+    assert.equal(Buffer.from(frame.contentBase64, "base64").equals(png), true);
+    assert.deepEqual(calls.map(call => [call.method, call.sessionId ?? null]), [
+      ["Target.getTargets", null],
+      ["Target.attachToTarget", null],
+      ["Runtime.evaluate", "session-1"],
+      ["Page.getFrameTree", "session-1"],
+      ["Page.captureScreenshot", "session-1"],
+      ["Target.getTargetInfo", null],
+      ["Page.getFrameTree", "session-1"],
+      ["Runtime.evaluate", "session-1"],
+      ["Target.detachFromTarget", null],
+    ]);
+    await assert.rejects(
+      captureRecoveryScreenshotBytesV1("smoke-home.png", { command, WebSocketClass: createSocket({ duplicate: true }) }),
+      /RECOVERY_SMOKE_CDP_PAGE_CROSSED/,
+    );
+    await assert.rejects(
+      captureRecoveryScreenshotBytesV1("smoke-home.png", { command, WebSocketClass: createSocket({ navigateAfter: true }) }),
+      /RECOVERY_SMOKE_CDP_PAGE_CROSSED/,
+    );
+    await assert.rejects(
+      captureRecoveryScreenshotBytesV1("smoke-home.png", { command, WebSocketClass: createSocket({ reloadAfter: true }) }),
+      /RECOVERY_SMOKE_CDP_PAGE_CROSSED/,
+    );
+    await assert.rejects(
+      captureRecoveryScreenshotBytesV1("smoke-home.png", {
+        command: (...args: string[]) => JSON.stringify({ success: true, data: args[1] === "cdp-url" ? { cdpUrl: "ws://example.com/devtools/browser/x" } : { url: currentUrl } }),
+        WebSocketClass: createSocket(),
+      }),
+      /RECOVERY_SMOKE_CDP_CROSSED/,
+    );
   });
 
   it("reports stack static issues without referencing stale browser-game variables", () => {

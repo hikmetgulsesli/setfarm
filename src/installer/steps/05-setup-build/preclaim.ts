@@ -35,6 +35,7 @@ import {
 } from "../../../product-compiler/english-text-contract-v1.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-english-admission-ledger-v1.js";
 import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../../../execution/recovery-source-bootstrap-run-authority-v1.js";
 
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 const STITCH_CONVERSION_RESULT_REL = ".setfarm/setup/STITCH_TO_JSX_RESULT.json";
@@ -833,6 +834,26 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (protocol === "v3") {
     await loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
     await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
+  if (isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context)) {
+    const { requireActiveInternalProductionRecoverySourceBootstrapSetupV1 } = await import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+    await requireActiveInternalProductionRecoverySourceBootstrapSetupV1({
+      runId: ctx.runId,
+      context: ctx.context,
+    });
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [ctx.runId, ctx.stepId],
+    );
+    if (!step?.id) return;
+    const output = ["STATUS: done", "BUILD_CMD: npm run build", ""].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output, ctx.claimEnvelope);
+    logger.info("[module:setup-build preclaim] AUTO-COMPLETED authenticated recovery baseline", {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
+    return;
   }
   let executedConverterSource: SetupConverterSourceV1 | undefined;
 

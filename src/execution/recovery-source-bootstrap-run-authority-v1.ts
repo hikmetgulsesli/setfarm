@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import {
   INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1,
   type InternalProductionSourceRunLaunchTargetReservationPairCloseV1,
@@ -9,12 +12,28 @@ import {
   validateInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
 } from "../internal-production/owner-admission-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+  validateInternalProductionRecoverySourceBootstrapRepositoryV1,
+  validateInternalProductionRecoverySourceBootstrapSetupBaselineV1,
+  type InternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+} from "./recovery-source-bootstrap-repository-v1.js";
 
 const SHA256_V1 = /^[0-9a-f]{64}$/;
 const GIT_SHA_V1 = /^[0-9a-f]{40}$/;
 const CANONICAL_REF_V1 = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
 const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 =
   "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
+const RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1 = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+
+export function isInternalProductionRecoverySourceBootstrapRunContextV1(
+  context: Readonly<Record<string, unknown>>,
+): boolean {
+  return context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
+}
 
 const OPERATION_KEYS_V1 = Object.freeze([
   "schema", "purpose", "repository", "workflow", "protocol", "promptManifestHash",
@@ -188,17 +207,32 @@ function producer(implementationId: "a-recovery-source-run-v1" | "a-recovery-sou
   return value;
 }
 
-function expectedRunContextV1(
+export function createInternalProductionRecoverySourceBootstrapRunContextV1(
   operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
-  runId: string,
-  operationRunBindingHash: string,
-  reciprocalRunOperationBindingHash: string,
+  input: Readonly<{
+    runId: string;
+    operationRunBindingHash: string;
+    reciprocalRunOperationBindingHash: string;
+    repositoryIdentity: InternalProductionRecoverySourceBootstrapRepositoryIdentityV1;
+  }>,
 ): UnknownRowV1 {
-  const runOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}`;
-  const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId });
+  const expectedIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: input.repositoryIdentity.sourceRepositoryRoot,
+    runId: input.runId,
+  });
+  if (!same(expectedIdentity, input.repositoryIdentity)) {
+    fail("RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_IDENTITY_CROSSED");
+  }
+  const runOwnerRef = `setfarm://runs/${encodeURIComponent(input.runId)}`;
+  const runOwnerHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-workflow-run-owner.v1",
+    runId: input.runId,
+  });
   return Object.freeze({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
     task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
+    repo: input.repositoryIdentity.repositoryRoot,
+    branch: input.repositoryIdentity.branch,
     purpose: operation.purpose,
     repository: operation.repository,
     workflow: operation.workflow,
@@ -222,12 +256,232 @@ function expectedRunContextV1(
     targetRunReservationRef: operation.targetRunReservationRef,
     targetRunReservationHash: operation.targetRunReservationHash,
     targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    ownerAdmissionFenceRef: operation.ownerAdmissionFenceRef,
+    ownerAdmissionFenceHash: operation.ownerAdmissionFenceHash,
     sourceRunOwnerRef: operation.operationRef,
     sourceRunOwnerHash: operation.operationHash,
     runOwnerRef,
     runOwnerHash,
+    operationRunBindingHash: input.operationRunBindingHash,
+    reciprocalRunOperationBindingHash: input.reciprocalRunOperationBindingHash,
+  });
+}
+
+function expectedRecoverySourceBootstrapRunBindingsV1(
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  runId: string,
+): Readonly<{
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}> {
+  const runOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}`;
+  const runOwnerHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-workflow-run-owner.v1",
+    runId,
+  });
+  const operationRunBindingHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-operation-run-binding.v1",
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    sourceRunReservationRef: operation.targetSourceRunReservationRef,
+    sourceRunReservationHash: operation.targetSourceRunReservationHash,
+    sourceRunOwnerRef: operation.operationRef,
+    sourceRunOwnerHash: operation.operationHash,
+    runReservationRef: operation.targetRunReservationRef,
+    runReservationHash: operation.targetRunReservationHash,
+    runId,
+    runOwnerRef,
+    runOwnerHash,
+  });
+  const reciprocalRunOperationBindingHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
+    runId,
+    runOwnerRef,
+    runOwnerHash,
+    runReservationRef: operation.targetRunReservationRef,
+    runReservationHash: operation.targetRunReservationHash,
+    operationRef: operation.operationRef,
+    operationHash: operation.operationHash,
+    sourceRunOwnerRef: operation.operationRef,
+    sourceRunOwnerHash: operation.operationHash,
+    sourceRunReservationRef: operation.targetSourceRunReservationRef,
+    sourceRunReservationHash: operation.targetSourceRunReservationHash,
+    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
+    operationRunBindingHash,
+  });
+  return Object.freeze({ operationRunBindingHash, reciprocalRunOperationBindingHash });
+}
+
+export function resolveInternalProductionRecoverySourceBootstrapRunContextBindingAuthorityV1(
+  input: Readonly<{
+    sourceRepositoryRoot: string;
+    runId: string;
+    context: Readonly<Record<string, unknown>>;
+  }>,
+): Readonly<{
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  repositoryIdentity: InternalProductionRecoverySourceBootstrapRepositoryIdentityV1;
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}> {
+  const candidate = row(input, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_AUTHORITY_INVALID");
+  exactKeys(candidate, ["sourceRepositoryRoot", "runId", "context"], "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_AUTHORITY_INVALID");
+  const context = row(input.context, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  const runId = requireHash(input.runId, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  const operation = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1({
+    schema: context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
+      ? "setfarm.internal-production-recovery-source-bootstrap-operation.v1"
+      : context.schema,
+    purpose: context.purpose,
+    repository: context.repository,
+    workflow: context.workflow,
+    protocol: context.protocol,
+    promptManifestHash: context.promptManifestHash,
+    pendingInputRef: context.pendingInputRef,
+    pendingInputHash: context.pendingInputHash,
+    baseSourceSha: context.baseSourceSha,
+    baseSourceTreeHash: context.baseSourceTreeHash,
+    buildHash: context.buildHash,
+    activationPreflightHash: context.activationPreflightHash,
+    releaseAdmissionHash: context.releaseAdmissionHash,
+    targetSourceRunReservationRef: context.targetSourceRunReservationRef,
+    targetSourceRunReservationHash: context.targetSourceRunReservationHash,
+    targetRunReservationRef: context.targetRunReservationRef,
+    targetRunReservationHash: context.targetRunReservationHash,
+    targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash,
+    ownerAdmissionFenceRef: context.ownerAdmissionFenceRef,
+    ownerAdmissionFenceHash: context.ownerAdmissionFenceHash,
+    startIntentRef: context.startIntentRef,
+    startIntentHash: context.startIntentHash,
+    startOutboxRef: context.startOutboxRef,
+    startOutboxHash: context.startOutboxHash,
+    operationRef: context.operationRef,
+    operationHash: context.operationHash,
+  });
+  const expectedRunId = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+    pendingInputRef: operation.pendingInputRef,
+    pendingInputHash: operation.pendingInputHash,
+  });
+  if (runId !== expectedRunId) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_AUTHORITY_CROSSED");
+  const operationRunBindingHash = requireHash(context.operationRunBindingHash, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  const reciprocalRunOperationBindingHash = requireHash(context.reciprocalRunOperationBindingHash, "RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  const expectedBindings = expectedRecoverySourceBootstrapRunBindingsV1(operation, runId);
+  if (
+    operationRunBindingHash !== expectedBindings.operationRunBindingHash
+    || reciprocalRunOperationBindingHash !== expectedBindings.reciprocalRunOperationBindingHash
+  ) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_CROSSED");
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: input.sourceRepositoryRoot,
+    runId,
+  });
+  const expectedContext = createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId,
     operationRunBindingHash,
     reciprocalRunOperationBindingHash,
+    repositoryIdentity,
+  });
+  for (const [key, value] of Object.entries(expectedContext)) {
+    if (context[key] !== value) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_CROSSED");
+  }
+  return Object.freeze({
+    operation,
+    repositoryIdentity,
+    operationRunBindingHash,
+    reciprocalRunOperationBindingHash,
+  });
+}
+
+export function resolveInternalProductionRecoverySourceBootstrapRunContextAuthorityV1(
+  input: Readonly<{
+    sourceRepositoryRoot: string;
+    runId: string;
+    context: Readonly<Record<string, unknown>>;
+  }>,
+): ReturnType<typeof resolveInternalProductionRecoverySourceBootstrapRunContextBindingAuthorityV1> {
+  const authority = resolveInternalProductionRecoverySourceBootstrapRunContextBindingAuthorityV1(input);
+  validateInternalProductionRecoverySourceBootstrapRepositoryV1({
+    sourceRepositoryRoot: authority.repositoryIdentity.sourceRepositoryRoot,
+    runId: input.runId,
+    operationRef: authority.operation.operationRef,
+    operationHash: authority.operation.operationHash,
+    baseSourceSha: authority.operation.baseSourceSha,
+    baseSourceTreeHash: authority.operation.baseSourceTreeHash,
+  });
+  return authority;
+}
+
+export function requireExactInternalProductionRecoverySourceBootstrapActiveRunAuthorityV1(
+  input: Readonly<{
+    sourceRepositoryRoot: string;
+    runId: string;
+    context: Readonly<Record<string, unknown>>;
+    persistence: InternalProductionRecoverySourceBootstrapRunPersistenceV1;
+  }>,
+): Readonly<{
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  repositoryIdentity: InternalProductionRecoverySourceBootstrapRepositoryIdentityV1;
+  operationRunBindingHash: string;
+  reciprocalRunOperationBindingHash: string;
+}> {
+  const candidate = row(input, "RECOVERY_SOURCE_BOOTSTRAP_SETUP_AUTHORITY_INVALID");
+  exactKeys(candidate, ["sourceRepositoryRoot", "runId", "context", "persistence"], "RECOVERY_SOURCE_BOOTSTRAP_SETUP_AUTHORITY_INVALID");
+  const authority = resolveInternalProductionRecoverySourceBootstrapRunContextAuthorityV1({
+    sourceRepositoryRoot: input.sourceRepositoryRoot,
+    runId: input.runId,
+    context: input.context,
+  });
+  const persistence = row(input.persistence, "RECOVERY_SOURCE_BOOTSTRAP_SETUP_RUN_INVALID");
+  if (persistence.state !== "active") fail("RECOVERY_SOURCE_BOOTSTRAP_SETUP_RUN_NOT_ACTIVE");
+  exactKeys(persistence, [
+    "state", "workflowState", "runId", "operationRunBindingHash",
+    "reciprocalRunOperationBindingHash",
+  ], "RECOVERY_SOURCE_BOOTSTRAP_SETUP_RUN_INVALID");
+  if (
+    !["running", "resuming", "cancelling", "failing"].includes(String(persistence.workflowState))
+    || persistence.runId !== input.runId
+    || persistence.operationRunBindingHash !== authority.operationRunBindingHash
+    || persistence.reciprocalRunOperationBindingHash !== authority.reciprocalRunOperationBindingHash
+  ) fail("RECOVERY_SOURCE_BOOTSTRAP_SETUP_RUN_CROSSED");
+  return authority;
+}
+
+export function requireExactInternalProductionRecoverySourceBootstrapSetupAuthorityV1(
+  input: Readonly<{
+    sourceRepositoryRoot: string;
+    runId: string;
+    context: Readonly<Record<string, unknown>>;
+    persistence: InternalProductionRecoverySourceBootstrapRunPersistenceV1;
+  }>,
+): ReturnType<typeof requireExactInternalProductionRecoverySourceBootstrapActiveRunAuthorityV1> {
+  const authority = requireExactInternalProductionRecoverySourceBootstrapActiveRunAuthorityV1(input);
+  validateInternalProductionRecoverySourceBootstrapSetupBaselineV1({
+    sourceRepositoryRoot: authority.repositoryIdentity.sourceRepositoryRoot,
+    runId: input.runId,
+    operationRef: authority.operation.operationRef,
+    operationHash: authority.operation.operationHash,
+    baseSourceSha: authority.operation.baseSourceSha,
+    baseSourceTreeHash: authority.operation.baseSourceTreeHash,
+  });
+  return authority;
+}
+
+function expectedRunContextV1(
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  runId: string,
+  operationRunBindingHash: string,
+  reciprocalRunOperationBindingHash: string,
+): UnknownRowV1 {
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1,
+    runId,
+  });
+  return createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId,
+    operationRunBindingHash,
+    reciprocalRunOperationBindingHash,
+    repositoryIdentity,
   });
 }
 
@@ -279,42 +533,10 @@ function validateExpectedRunV1(
   if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || createdAt > updatedAt) {
     fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_TIMESTAMP_INVALID");
   }
-  const runOwnerRef = `setfarm://runs/${encodeURIComponent(expectedRunId)}`;
-  const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId: expectedRunId });
-  const expectedOperationRunBindingHash = hashCanonicalJson({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-operation-run-binding.v1",
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    sourceRunReservationRef: operation.targetSourceRunReservationRef,
-    sourceRunReservationHash: operation.targetSourceRunReservationHash,
-    sourceRunOwnerRef: operation.operationRef,
-    sourceRunOwnerHash: operation.operationHash,
-    runReservationRef: operation.targetRunReservationRef,
-    runReservationHash: operation.targetRunReservationHash,
-    runId: expectedRunId,
-    runOwnerRef,
-    runOwnerHash,
-  });
-  const expectedReciprocalRunOperationBindingHash = hashCanonicalJson({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
-    runId: expectedRunId,
-    runOwnerRef,
-    runOwnerHash,
-    runReservationRef: operation.targetRunReservationRef,
-    runReservationHash: operation.targetRunReservationHash,
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    sourceRunOwnerRef: operation.operationRef,
-    sourceRunOwnerHash: operation.operationHash,
-    sourceRunReservationRef: operation.targetSourceRunReservationRef,
-    sourceRunReservationHash: operation.targetSourceRunReservationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    operationRunBindingHash: expectedOperationRunBindingHash,
-  });
+  const expectedBindings = expectedRecoverySourceBootstrapRunBindingsV1(operation, expectedRunId);
   if (
-    operationRunBindingHash !== expectedOperationRunBindingHash
-    || reciprocalRunOperationBindingHash !== expectedReciprocalRunOperationBindingHash
+    operationRunBindingHash !== expectedBindings.operationRunBindingHash
+    || reciprocalRunOperationBindingHash !== expectedBindings.reciprocalRunOperationBindingHash
   ) fail("RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_CROSSED");
   return Object.freeze({
     workflowState: workflowState as "running" | "resuming" | "cancelling" | "failing" | "completed" | "failed" | "cancelled",

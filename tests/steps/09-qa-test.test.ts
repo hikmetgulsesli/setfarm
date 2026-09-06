@@ -96,6 +96,16 @@ describe("09-qa-test step module", () => {
     assert.match(catchBlock, /failed = false/);
   });
 
+  it("QA recovery smoke preserves structured stdout and authenticates an optional screenshot envelope", () => {
+    assert.match(sourcePreclaim, /recoverySmokeStdout\s*=\s*stdout/);
+    assert.match(sourcePreclaim, /output\s*=\s*output\s*\|\|\s*recoverySmokeStdout\s*\|\|\s*formatFailure\(err\)/);
+    assert.match(sourcePreclaim, /recoveryScreenshotFrames\.length\s*>\s*0[\s\S]*publishRecoveryScreenshots/);
+    assert.match(sourcePreclaim, /currentRecoveryScreenshots[\s\S]*publishQaArtifacts\([^)]*currentRecoveryScreenshots/,
+      "recovery reports derive screenshot evidence from this smoke invocation, not stale excluded files");
+    assert.match(sourcePreclaim, /recoveryScreenshots === undefined[\s\S]*fs\.existsSync/,
+      "filesystem fallback remains ordinary-only");
+  });
+
   it("QA prompt overrides external browser examples with lifecycle URLs", () => {
     assert.match(sourcePrompt, /Setfarm\s+lifecycle\s+is\s+authoritative/i);
     assert.match(sourcePrompt, /DEV_SERVER_URL/);

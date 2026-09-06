@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
@@ -22,9 +23,16 @@ import {
 } from "../internal-production/baseline-post-handoff-receipt-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { RunProtocolIdentity } from "./run-protocol.js";
-import type {
-  InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+import {
+  createInternalProductionRecoverySourceBootstrapRunContextV1,
+  type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
 } from "./recovery-source-bootstrap-run-authority-v1.js";
+import {
+  prepareInternalProductionRecoverySourceBootstrapRepositoryV1,
+  resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+  validateInternalProductionRecoverySourceBootstrapRepositoryV1,
+  type InternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+} from "./recovery-source-bootstrap-repository-v1.js";
 import {
   V3ReleaseAdmissionV1Schema,
   canarySelectorHash,
@@ -605,6 +613,7 @@ type RecoverySourceBootstrapRunCandidateV1 = Readonly<{
   workflow: WorkflowSpec;
   runId: string;
   protocol: RunProtocolIdentity;
+  repositoryIdentity: InternalProductionRecoverySourceBootstrapRepositoryIdentityV1;
   context: string;
   steps: readonly PersistedWorkflowStep[];
 }>;
@@ -665,6 +674,10 @@ function recoverySourceBootstrapRunCandidateV1(
   });
   const runOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}`;
   const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId });
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1,
+    runId,
+  });
   const reciprocalRunOperationBindingHash = hashCanonicalJson({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
     runId,
@@ -681,41 +694,12 @@ function recoverySourceBootstrapRunCandidateV1(
     targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
     operationRunBindingHash,
   });
-  const context = canonicalJsonStringify({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
-    task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
-    repo: RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1,
-    branch: runId,
-    purpose: operation.purpose,
-    repository: operation.repository,
-    workflow: operation.workflow,
-    protocol: operation.protocol,
-    promptManifestHash: operation.promptManifestHash,
-    baseSourceSha: operation.baseSourceSha,
-    baseSourceTreeHash: operation.baseSourceTreeHash,
-    buildHash: operation.buildHash,
-    activationPreflightHash: operation.activationPreflightHash,
-    releaseAdmissionHash: operation.releaseAdmissionHash,
-    pendingInputRef: operation.pendingInputRef,
-    pendingInputHash: operation.pendingInputHash,
-    startIntentRef: operation.startIntentRef,
-    startIntentHash: operation.startIntentHash,
-    startOutboxRef: operation.startOutboxRef,
-    startOutboxHash: operation.startOutboxHash,
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    targetSourceRunReservationRef: operation.targetSourceRunReservationRef,
-    targetSourceRunReservationHash: operation.targetSourceRunReservationHash,
-    targetRunReservationRef: operation.targetRunReservationRef,
-    targetRunReservationHash: operation.targetRunReservationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    sourceRunOwnerRef: operation.operationRef,
-    sourceRunOwnerHash: operation.operationHash,
-    runOwnerRef,
-    runOwnerHash,
+  const context = canonicalJsonStringify(createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId,
     operationRunBindingHash,
     reciprocalRunOperationBindingHash,
-  });
+    repositoryIdentity,
+  }));
   const steps = Object.freeze(workflow.steps.map((step, stepIndex) => Object.freeze({
     id: hashCanonicalJson({
       schema: "setfarm.internal-production-recovery-source-bootstrap-step-id.v1",
@@ -733,7 +717,7 @@ function recoverySourceBootstrapRunCandidateV1(
     type: step.type ?? "single",
     loopConfig: step.loop === undefined ? null : canonicalJsonStringify(step.loop),
   })));
-  return Object.freeze({ operation, workflow, runId, protocol, context, steps });
+  return Object.freeze({ operation, workflow, runId, protocol, repositoryIdentity, context, steps });
 }
 
 async function persistRecoverySourceBootstrapRunInTransactionV1(
@@ -762,6 +746,27 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
   );
   if (existingRows.length > 1) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
   let row = existingRows[0] ?? null;
+  if (row !== null && row.status !== "running") {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
+  }
+  if (row !== null && !existsSync(candidate.repositoryIdentity.workspaceRoot)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_REPOSITORY_MISSING");
+  }
+  const repositoryInput = {
+    sourceRepositoryRoot: candidate.repositoryIdentity.sourceRepositoryRoot,
+    runId: candidate.runId,
+    operationRef: candidate.operation.operationRef,
+    operationHash: candidate.operation.operationHash,
+    baseSourceSha: candidate.operation.baseSourceSha,
+    baseSourceTreeHash: candidate.operation.baseSourceTreeHash,
+  } as const;
+  const preparedRepository = row === null
+    ? prepareInternalProductionRecoverySourceBootstrapRepositoryV1(repositoryInput)
+    : validateInternalProductionRecoverySourceBootstrapRepositoryV1(repositoryInput);
+  if (
+    preparedRepository.repositoryRoot !== candidate.repositoryIdentity.repositoryRoot
+    || preparedRepository.branch !== candidate.repositoryIdentity.branch
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_IDENTITY_CROSSED");
   let persistedAt: Date;
   let runNumber: number;
   if (row === null) {

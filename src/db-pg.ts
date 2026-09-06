@@ -115,11 +115,13 @@ import {
   RuntimeCompletionPlanV1Schema,
 } from "./execution/schemas/runtime-completion-plan-v1.js";
 import {
+  createInternalProductionRecoverySourceBootstrapRunContextV1,
   createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
   requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1,
   type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
   type InternalProductionRecoverySourceBootstrapRunPersistenceV1,
 } from "./execution/recovery-source-bootstrap-run-authority-v1.js";
+import { resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1 } from "./execution/recovery-source-bootstrap-repository-v1.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -3521,39 +3523,16 @@ export async function bindInternalProductionRecoverySourceBootstrapRunInTransact
     throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_WORKFLOW_INVALID");
   }
   const sourceTask = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
-  const expectedContext = canonicalJsonStringify({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
-    task: sourceTask,
-    purpose: operation.purpose,
-    repository: operation.repository,
-    workflow: operation.workflow,
-    protocol: operation.protocol,
-    promptManifestHash: operation.promptManifestHash,
-    baseSourceSha: operation.baseSourceSha,
-    baseSourceTreeHash: operation.baseSourceTreeHash,
-    buildHash: operation.buildHash,
-    activationPreflightHash: operation.activationPreflightHash,
-    releaseAdmissionHash: operation.releaseAdmissionHash,
-    pendingInputRef: operation.pendingInputRef,
-    pendingInputHash: operation.pendingInputHash,
-    startIntentRef: operation.startIntentRef,
-    startIntentHash: operation.startIntentHash,
-    startOutboxRef: operation.startOutboxRef,
-    startOutboxHash: operation.startOutboxHash,
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    targetSourceRunReservationRef: operation.targetSourceRunReservationRef,
-    targetSourceRunReservationHash: operation.targetSourceRunReservationHash,
-    targetRunReservationRef: operation.targetRunReservationRef,
-    targetRunReservationHash: operation.targetRunReservationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    sourceRunOwnerRef: authority.sourceRunCanonicalOwnerIdentity.ownerRef,
-    sourceRunOwnerHash: authority.sourceRunCanonicalOwnerIdentity.ownerHash,
-    runOwnerRef: authority.runCanonicalOwnerIdentity.ownerRef,
-    runOwnerHash: authority.runCanonicalOwnerIdentity.ownerHash,
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: OWNER_PRODUCER_REPOSITORY_ROOT,
+    runId: authority.runId,
+  });
+  const expectedContext = canonicalJsonStringify(createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId: authority.runId,
     operationRunBindingHash: authority.operationRunBindingHash,
     reciprocalRunOperationBindingHash: authority.reciprocalRunOperationBindingHash,
-  });
+    repositoryIdentity,
+  }));
   const runRows = await sql.unsafe<Array<{
     id: string; workflow_id: string; task: string; status: string; context: string;
     notify_url: string | null; protocol: string; protocol_version: number;

@@ -11563,9 +11563,21 @@ function phase5cSRecoveryActiveRunOwnerFixtureV1(
       operationRunBindingHash,
     }));
     const task = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
+    const sourceRepositoryRoot = realpathSync(path.resolve(import.meta.dirname, "../.."));
+    const sourceRepositoryKey = createHash("sha256").update(sourceRepositoryRoot).digest("hex");
+    const recoveryRepositoryRoot = path.join(
+      path.dirname(sourceRepositoryRoot),
+      ".setfarm-internal-production",
+      "recovery-source-bootstrap-workspaces",
+      sourceRepositoryKey,
+      runId,
+      "repository",
+    );
     const context = Object.freeze({
       schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
       task,
+      repo: recoveryRepositoryRoot,
+      branch: runId,
       purpose: recoveryOperation.purpose,
       repository: recoveryOperation.repository,
       workflow: recoveryOperation.workflow,
@@ -11589,6 +11601,8 @@ function phase5cSRecoveryActiveRunOwnerFixtureV1(
       targetRunReservationRef: runReservation.reservationRef,
       targetRunReservationHash: runReservation.reservationHash,
       targetRunLaunchCompositeHash: recoveryOperation.targetRunLaunchCompositeHash,
+      ownerAdmissionFenceRef: recoveryOperation.ownerAdmissionFenceRef,
+      ownerAdmissionFenceHash: recoveryOperation.ownerAdmissionFenceHash,
       sourceRunOwnerRef: sourceCanonicalOwnerIdentity.ownerRef,
       sourceRunOwnerHash: sourceCanonicalOwnerIdentity.ownerHash,
       runOwnerRef,
@@ -14128,6 +14142,7 @@ function ensureBaselinePostHandoffImportSupportV1(root: string): void {
   };
   ensure("src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
   ensure("src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
+  ensure("src/execution/recovery-source-bootstrap-repository-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-repository-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-run-authority-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts")));
   ensure("src/db/contract-spine-migration-digests.generated.ts", 'export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS={31:"f052eff1b45df0f00ffb844fe0d23b542eafa4789da5e90a329a8d756dfcdc3a"};\n');
   ensure("src/db/contract-spine-migration-source-integrity.ts", "export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST={31:{}};\n");
@@ -23897,6 +23912,23 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     });
     assert.deepEqual(requirePersistence(input(persisted.queryRows)), expectedActive,
       "bound H1 returns only the exact authenticated recovery triple");
+    const crossedImmutableContext = (patch: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => Object.freeze({
+      ...persisted.expectedRun,
+      context: canonical(Object.freeze({ ...expectedContext, ...patch })),
+    });
+    for (const [label, run] of [
+      ["live-source-repository", crossedImmutableContext({ repo: path.resolve(import.meta.dirname, "../..") })],
+      ["foreign-branch", crossedImmutableContext({ branch: "foreign-recovery-branch" })],
+      ["crossed-fence-ref", crossedImmutableContext({ ownerAdmissionFenceRef: "setfarm://tests/crossed-fence" })],
+      ["crossed-fence-hash", crossedImmutableContext({ ownerAdmissionFenceHash: "9".repeat(64) })],
+    ] as const) {
+      assert.throws(() => requirePersistence(input(Object.freeze({
+        ...persisted.queryRows,
+        "expected-run": Object.freeze([run]),
+        "active-runs": Object.freeze([run]),
+      }))), /RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_CROSSED/,
+      `${label}: immutable managed repository and fence context cannot be crossed after binding`);
+    }
     for (const active of [persisted.expectedMergedActiveRun, persisted.expectedCancellingRun, persisted.expectedFailingRun]) {
       const rows = Object.freeze({
         ...persisted.queryRows,

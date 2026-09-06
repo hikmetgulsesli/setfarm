@@ -49,6 +49,11 @@ export interface RunRuntimeArtifactInput {
   status?: "allocated" | "running" | "passed" | "failed" | "stopped";
 }
 
+export type RunRuntimeArtifactBytesV1 = Readonly<{
+  relativePath: ".setfarm/run-runtime.json";
+  bytes: Buffer;
+}>;
+
 export function portBandRange(band: RuntimePortBand): { base: number; max: number; size: number } {
   const spec = PORT_BANDS[band];
   return { base: spec.base, max: spec.base + spec.size - 1, size: spec.size };
@@ -115,10 +120,9 @@ export async function allocateRuntimePort(input: RuntimeAllocationInput): Promis
   throw new Error(`No free ${input.band} runtime port in ${base}-${max}`);
 }
 
-export function writeRunRuntimeArtifact(input: RunRuntimeArtifactInput): string {
-  const setfarmDir = path.join(input.repo, ".setfarm");
-  fs.mkdirSync(setfarmDir, { recursive: true });
-  const relPath = ".setfarm/run-runtime.json";
+export function createRunRuntimeArtifactV1(
+  input: Omit<RunRuntimeArtifactInput, "repo">,
+): RunRuntimeArtifactBytesV1 {
   const artifact = {
     schema: "setfarm.run-runtime.v1",
     generatedAt: new Date().toISOString(),
@@ -132,6 +136,16 @@ export function writeRunRuntimeArtifact(input: RunRuntimeArtifactInput): string 
     port: input.runtime.port,
     band: input.runtime.band,
   };
-  fs.writeFileSync(path.join(input.repo, relPath), JSON.stringify(artifact, null, 2));
-  return relPath;
+  return Object.freeze({
+    relativePath: ".setfarm/run-runtime.json" as const,
+    bytes: Buffer.from(JSON.stringify(artifact, null, 2), "utf8"),
+  });
+}
+
+export function writeRunRuntimeArtifact(input: RunRuntimeArtifactInput): string {
+  const setfarmDir = path.join(input.repo, ".setfarm");
+  fs.mkdirSync(setfarmDir, { recursive: true });
+  const artifact = createRunRuntimeArtifactV1(input);
+  fs.writeFileSync(path.join(input.repo, artifact.relativePath), artifact.bytes);
+  return artifact.relativePath;
 }

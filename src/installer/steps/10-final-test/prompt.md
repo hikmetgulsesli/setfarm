@@ -14,13 +14,9 @@ is the merge gate; if it fails, deploy must not run.
 
 ## Checks
 
-0. **Main sync**: for `merge_strategy: pr-each` / `verify_each`, final-test
-   tests merged `main`, not the old run branch:
-   - `cd {{REPO}}`
-   - `git fetch origin main`
-   - `git checkout main`
-   - `git pull --ff-only origin main`
-   - do not commit/push final-test output.
+0. **Branch policy**: stay on the branch assigned and synchronized by Setfarm.
+   Do not checkout, pull, merge, reset, or push another branch from `{{REPO}}`.
+   Do not commit/push final-test output.
 1. **Build pass**: `npm run build` exits 0. Errors are not acceptable; small
    warnings are acceptable only when clearly harmless.
 2. **Smoke test**:

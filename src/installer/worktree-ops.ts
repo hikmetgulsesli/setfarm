@@ -1860,31 +1860,38 @@ export function killWorktreeProcesses(dir: string): void {
  * Clean up leftover git worktrees when a run completes.
  * Prunes stale worktree refs and removes the .worktrees/ directory.
  */
-export async function cleanupWorktrees(runId: string): Promise<void> {
+export async function cleanupWorktreesAtRepository(repo: string, runId: string): Promise<boolean> {
   try {
-    const run = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [runId]);
-    if (!run) return;
-    let context: Record<string, string>;
-    try {
-      context = JSON.parse(run.context);
-    } catch (parseErr) {
-      logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
-      return;
-    }
-    const repo = context.repo;
-    if (!repo) return;
+    if (!repo || !path.isAbsolute(repo)) return false;
 
+    const worktreesDir = path.join(repo, ".worktrees");
     // Prune stale worktree references
     try {
       execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
     } catch (e) { logger.warn(`[worktree] stale prune failed: ${String(e)}`, {}); }
 
+    if (!fs.existsSync(worktreesDir)) return true;
+    const worktreesStats = fs.lstatSync(worktreesDir);
+    if (
+      !worktreesStats.isDirectory()
+      || worktreesStats.isSymbolicLink()
+      || fs.realpathSync(worktreesDir) !== path.resolve(worktreesDir)
+    ) return false;
+
     // Remove .worktrees/ directory if empty or contains only leftover dirs
-    const worktreesDir = path.join(repo, ".worktrees");
     if (fs.existsSync(worktreesDir)) {
       const entries = fs.readdirSync(worktreesDir);
       for (const entry of entries) {
         const entryPath = path.join(worktreesDir, entry);
+        const entryStats = fs.lstatSync(entryPath);
+        if (entryStats.isSymbolicLink()) {
+          fs.unlinkSync(entryPath);
+          continue;
+        }
+        if (
+          !entryStats.isDirectory()
+          || !fs.realpathSync(entryPath).startsWith(`${fs.realpathSync(worktreesDir)}${path.sep}`)
+        ) return false;
         // Kill orphaned processes (vitest, esbuild, etc.) before removing worktree
         killWorktreeProcesses(entryPath);
         try {
@@ -1911,8 +1918,27 @@ export async function cleanupWorktrees(runId: string): Promise<void> {
     }
 
     logger.info(`[worktree] Cleanup completed for run ${runId} in ${repo}`, {});
+    return !fs.existsSync(worktreesDir) || fs.readdirSync(worktreesDir).length === 0;
   } catch (err) {
     logger.warn(`[worktree] Cleanup failed for run ${runId}: ${err}`, {});
+    return false;
+  }
+}
+
+export async function cleanupWorktrees(runId: string): Promise<void> {
+  try {
+    const run = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [runId]);
+    if (!run) return;
+    let context: Record<string, string>;
+    try {
+      context = JSON.parse(run.context);
+    } catch {
+      logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
+      return;
+    }
+    await cleanupWorktreesAtRepository(context.repo, runId);
+  } catch (err) {
+    logger.warn(`[worktree] Cleanup lookup failed for run ${runId}: ${err}`, {});
   }
 }
 

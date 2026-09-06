@@ -1,16 +1,22 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
-import { allocateRuntimePort, writeRunRuntimeArtifact, type RuntimeAllocation } from "../../runtime-ports.js";
+import {
+  allocateRuntimePort,
+  createRunRuntimeArtifactV1,
+  writeRunRuntimeArtifact,
+  type RuntimeAllocation,
+} from "../../runtime-ports.js";
 import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
 import { resolveOperationalStackContract, stackEvidenceMetadata, stackExecutionPlanForStep } from "../../stack-evidence.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 import { ensurePlaywrightChromiumInstalled, isMissingPlaywrightBrowserFailure } from "../../playwright-runtime.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../../../execution/recovery-source-bootstrap-run-authority-v1.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -136,11 +142,19 @@ export function classifyQaSystemSmokeResult(result: any, rawOutput: string, comm
   };
 }
 
-function buildQaArtifacts(repo: string, result: any, rawOutput: string, status: string, runtime: RuntimeAllocation): { markdownPath: string; jsonPath: string } {
-  const reportDir = path.join(repo, "quality-reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, "qa-test-1.md");
-  const jsonPath = path.join(reportDir, "qa-test-1.json");
+function buildQaArtifacts(
+  repo: string,
+  result: any,
+  rawOutput: string,
+  status: string,
+  runtime: RuntimeAllocation,
+  recoveryScreenshots?: readonly ("smoke-home.png" | "smoke-after-click.png")[],
+): {
+  markdownPath: "quality-reports/qa-test-1.md";
+  jsonPath: "quality-reports/qa-test-1.json";
+  markdownBytes: Buffer;
+  jsonBytes: Buffer;
+} {
   const failures = failuresFor(result, rawOutput);
   const routesTested = Math.max(
     1,
@@ -154,11 +168,13 @@ function buildQaArtifacts(repo: string, result: any, rawOutput: string, status: 
     numericField(result, "formsChecked") +
     numericField(result, "flowsChecked");
   const issueCount = status === "retry" ? Math.max(failures.length, 1) : failures.length;
-  const screenshots = [
-    fs.existsSync(path.join(repo, "smoke-home.png")) ? "smoke-home.png" : "",
-    fs.existsSync(path.join(repo, "smoke-after-click.png")) ? "smoke-after-click.png" : "",
-  ].filter(Boolean);
-  if (screenshots.length === 0) screenshots.push("smoke-home.png");
+  const screenshots: string[] = recoveryScreenshots === undefined
+    ? [
+        fs.existsSync(path.join(repo, "smoke-home.png")) ? "smoke-home.png" : "",
+        fs.existsSync(path.join(repo, "smoke-after-click.png")) ? "smoke-after-click.png" : "",
+      ].filter(Boolean)
+    : [...recoveryScreenshots];
+  if (recoveryScreenshots === undefined && screenshots.length === 0) screenshots.push("smoke-home.png");
 
   const json = {
     schema: "setfarm.qa-report.v1",
@@ -177,7 +193,7 @@ function buildQaArtifacts(repo: string, result: any, rawOutput: string, status: 
     failures,
     raw: result && typeof result === "object" ? result : { output: rawOutput.slice(0, 4000) },
   };
-  fs.writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
+  const jsonBytes = Buffer.from(JSON.stringify(json, null, 2) + "\n", "utf8");
 
   const lines = [
     "# QA Test Report",
@@ -232,10 +248,11 @@ function buildQaArtifacts(repo: string, result: any, rawOutput: string, status: 
       ? ["- None."]
       : ["- Route the batched failures to the owning phase; do not retry with ad-hoc browser setup.", ...failures.slice(0, 10).map((failure) => `- Fix: ${failure}`)]),
   ];
-  fs.writeFileSync(reportPath, lines.join("\n") + "\n");
   return {
-    markdownPath: path.relative(repo, reportPath).replace(/\\/g, "/"),
-    jsonPath: path.relative(repo, jsonPath).replace(/\\/g, "/"),
+    markdownPath: "quality-reports/qa-test-1.md",
+    jsonPath: "quality-reports/qa-test-1.json",
+    markdownBytes: Buffer.from(lines.join("\n") + "\n", "utf8"),
+    jsonBytes,
   };
 }
 
@@ -249,7 +266,60 @@ function runPreflight(command: string, cwd: string, timeoutMs: number): { ok: bo
 }
 
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  const recoveryRun = isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context);
+  let publishRecoveryArtifact: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").publishActiveInternalProductionRecoverySourceBootstrapArtifactV1 | undefined;
+  let decodeRecoveryScreenshotFrames: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").decodeInternalProductionRecoverySourceBootstrapScreenshotFramesV1 | undefined;
+  let createRecoverySmokeEnvironment: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").createInternalProductionRecoverySourceBootstrapSmokeEnvironmentV1 | undefined;
+  let recoverySmokeEnvironment: NodeJS.ProcessEnv | undefined;
+  if (recoveryRun) {
+    const recoveryAuthority = await import(
+      "../../../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+    );
+    publishRecoveryArtifact = recoveryAuthority.publishActiveInternalProductionRecoverySourceBootstrapArtifactV1;
+    decodeRecoveryScreenshotFrames = recoveryAuthority.decodeInternalProductionRecoverySourceBootstrapScreenshotFramesV1;
+    createRecoverySmokeEnvironment = recoveryAuthority.createInternalProductionRecoverySourceBootstrapSmokeEnvironmentV1;
+    await recoveryAuthority.syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1({
+      runId: ctx.runId,
+      context: ctx.context,
+    });
+  }
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
+  const publishArtifact = async (
+    relativePath: ".setfarm/run-runtime.json" | "quality-reports/qa-test-1.md" | "quality-reports/qa-test-1.json" | "smoke-home.png" | "smoke-after-click.png",
+    bytes: Buffer,
+  ): Promise<void> => {
+    if (recoveryRun) {
+      if (publishRecoveryArtifact === undefined) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_ARTIFACT_PUBLISHER_UNAVAILABLE");
+      await publishRecoveryArtifact({ runId: ctx.runId, context: ctx.context, relativePath, bytes });
+      return;
+    }
+    const target = path.join(repo, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+  };
+  const publishQaArtifacts = async (
+    result: any,
+    rawOutput: string,
+    status: string,
+    runtime: RuntimeAllocation,
+    recoveryScreenshots?: readonly ("smoke-home.png" | "smoke-after-click.png")[],
+  ): Promise<ReturnType<typeof buildQaArtifacts>> => {
+    const artifacts = buildQaArtifacts(repo, result, rawOutput, status, runtime, recoveryScreenshots);
+    await publishArtifact(artifacts.jsonPath, artifacts.jsonBytes);
+    await publishArtifact(artifacts.markdownPath, artifacts.markdownBytes);
+    return artifacts;
+  };
+  const publishRecoveryScreenshots = async (frames: Buffer): Promise<readonly ("smoke-home.png" | "smoke-after-click.png")[]> => {
+    if (!recoveryRun) return [];
+    if (decodeRecoveryScreenshotFrames === undefined) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_SCREENSHOT_DECODER_UNAVAILABLE");
+    }
+    const decoded = decodeRecoveryScreenshotFrames(frames);
+    for (const frame of decoded) {
+      await publishArtifact(frame.relativePath, frame.bytes);
+    }
+    return decoded.map((frame) => frame.relativePath);
+  };
   const stackContract = resolveOperationalStackContract(ctx.context, false);
   const stackPlan = stackExecutionPlanForStep(ctx.stepId, stackContract);
   await recordStackEvidencePlanObservation({
@@ -300,7 +370,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   ctx.context["dev_server_port"] = String(runtime.port);
   ctx.context["dev_server_url"] = runtime.url;
   ctx.context["qa_url"] = runtime.url;
-  const runtimeArtifact = writeRunRuntimeArtifact({
+  const runtimeArtifact = createRunRuntimeArtifactV1({
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: "allocated",
+  });
+  if (recoveryRun) await publishArtifact(runtimeArtifact.relativePath, runtimeArtifact.bytes);
+  else writeRunRuntimeArtifact({
     repo,
     runId: ctx.runId,
     runNumber: runRow?.run_number ?? null,
@@ -308,7 +386,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     runtime,
     status: "allocated",
   });
-  ctx.context["run_runtime_json"] = runtimeArtifact;
+  ctx.context["run_runtime_json"] = runtimeArtifact.relativePath;
 
   await recordGateObservation({
     runId: ctx.runId,
@@ -319,7 +397,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     status: "pass",
     summary: `Allocated ${runtime.band} port ${runtime.port}`,
     detail: runtime.url,
-    metadata: { runtime, artifactPath: runtimeArtifact, ...stackEvidenceMetadata(stackContract) },
+    metadata: { runtime, artifactPath: runtimeArtifact.relativePath, ...stackEvidenceMetadata(stackContract) },
   });
 
   for (const tool of stackContract.toolPreflight || []) {
@@ -346,7 +424,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       metadata: { tool, failureCategory: tool.failureCategory, ...stackEvidenceMetadata(stackContract) },
     });
     if (!result.ok && tool.required) {
-      const artifacts = buildQaArtifacts(repo, { status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
+      const artifacts = await publishQaArtifacts({ status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
       const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
       if (!step?.id) throw new Error(`qa preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
       const { completeStep } = await import("../../step-ops.js");
@@ -383,29 +461,60 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     return;
   }
 
-  try {
-    execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
-    execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repo, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
-  } catch (syncErr) {
-    logger.warn(`[module:qa preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
+  if (!recoveryRun) {
+    try {
+      execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
+      execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repo, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
+    } catch (syncErr) {
+      logger.warn(`[module:qa preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
+    }
   }
 
   let output = "";
   let failed = false;
-  const runSmoke = (): string => execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
+  let recoveryScreenshotFrames = Buffer.alloc(0);
+  let recoverySmokeStdout = "";
+  const smokeArguments = [smokeScript, repo, "--port", String(runtime.port)];
+  const smokeOptions = {
     cwd: repo,
     timeout: stackContract.runtime?.timeoutMs || 240_000,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    env: {
-      ...process.env,
+  };
+  const smokeEnvironment = (): NodeJS.ProcessEnv => ({
+      ...(recoveryRun
+        ? (recoverySmokeEnvironment ??= createRecoverySmokeEnvironment?.(process.env))
+        : process.env),
       DEV_SERVER_PORT: String(runtime.port),
       PREVIEW_PORT: String(runtime.port),
       PORT: String(runtime.port),
       DEV_SERVER_URL: runtime.url,
       QA_URL: runtime.url,
-    },
   });
+  const runSmoke = (): string => {
+    if (!recoveryRun) {
+      return execFileSync("node", smokeArguments, {
+        ...smokeOptions,
+        env: smokeEnvironment(),
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    }
+    const result = spawnSync(process.execPath, [...smokeArguments, "--recovery-byte-screenshots"], {
+      ...smokeOptions,
+      env: smokeEnvironment(),
+      encoding: null,
+      maxBuffer: 96 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    recoveryScreenshotFrames = Buffer.isBuffer(result.output?.[3]) ? result.output[3] : Buffer.alloc(0);
+    const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout || "");
+    recoverySmokeStdout = stdout;
+    if (result.error || result.status !== 0) {
+      const error = result.error ?? new Error("RECOVERY_SMOKE_PROCESS_FAILED");
+      Object.assign(error, { stdout: result.stdout, stderr: result.stderr, status: result.status, signal: result.signal });
+      throw error;
+    }
+    return stdout;
+  };
   try {
     const buildFresh = ensureSmokeBuildFresh(repo, {
       runId: ctx.runId,
@@ -439,7 +548,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     output = runSmoke();
   } catch (err) {
     failed = true;
-    output = output || formatFailure(err);
+    output = output || recoverySmokeStdout || formatFailure(err);
     if (isMissingPlaywrightBrowserFailure(output)) {
       await recordGateObservation({
         runId: ctx.runId,
@@ -469,17 +578,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
           output = runSmoke();
           failed = false;
         } catch (retryErr) {
-          output = formatFailure(retryErr);
+          output = recoverySmokeStdout || formatFailure(retryErr);
         }
       }
     }
   }
 
   const parsed = firstJsonObject(output);
-  const decision = classifyQaSystemSmokeResult(parsed, output, failed);
+  const evidenceOutput = output;
+  const currentRecoveryScreenshots = recoveryRun
+    ? (recoveryScreenshotFrames.length > 0 ? await publishRecoveryScreenshots(recoveryScreenshotFrames) : [])
+    : undefined;
+  const decision = classifyQaSystemSmokeResult(parsed, evidenceOutput, failed);
   const status = decision.status;
   const issueCount = decision.issueCount;
-  const reportArtifacts = buildQaArtifacts(repo, decision.result, output, status, runtime);
+  const reportArtifacts = await publishQaArtifacts(decision.result, evidenceOutput, status, runtime, currentRecoveryScreenshots);
   await recordGateObservation({
     runId: ctx.runId,
     stepId: ctx.stepId,
@@ -488,7 +601,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     label: "QA system smoke",
     status: status === "retry" ? "retry" : status === "skip" ? "info" : "pass",
     summary: `QA smoke ${status}`,
-    detail: output.slice(0, 2000),
+    detail: evidenceOutput.slice(0, 2000),
     metadata: { reportPath: reportArtifacts.markdownPath, jsonPath: reportArtifacts.jsonPath, runtime, ...stackEvidenceMetadata(stackContract) },
   });
   const lines = [
@@ -505,10 +618,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (status === "skip") {
     lines.push(`SKIP_REASON: ${String(decision.result?.reason || "Smoke gate reported skip for this repository.")}`);
   }
-  if (status === "retry" && failuresFor(decision.result, output).length === 0) {
-    const failures = failuresFor(decision.result, output);
+  if (status === "retry" && failuresFor(decision.result, evidenceOutput).length === 0) {
+    const failures = failuresFor(decision.result, evidenceOutput);
     lines.push("TEST_FAILURES:");
-    for (const failure of (failures.length > 0 ? failures : [output.slice(0, 2000).replace(/\n/g, " ")]).slice(0, 20)) {
+    for (const failure of (failures.length > 0 ? failures : [evidenceOutput.slice(0, 2000).replace(/\n/g, " ")]).slice(0, 20)) {
       lines.push(`- ${failure}`);
     }
   }

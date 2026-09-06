@@ -98,6 +98,8 @@ export const RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS = new Set([
   "target_run_reservation_ref",
   "target_run_reservation_hash",
   "target_run_launch_composite_hash",
+  "owner_admission_fence_ref",
+  "owner_admission_fence_hash",
   "source_run_owner_ref",
   "source_run_owner_hash",
   "run_owner_ref",

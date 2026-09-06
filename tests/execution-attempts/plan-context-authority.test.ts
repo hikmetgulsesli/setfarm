@@ -41,6 +41,14 @@ describe("PLAN compiler-owned context authority", () => {
   });
 
   it("rejects every normalized agent-output alias of recovery run authority", () => {
+    const fenceAliases = parseOutputKeyValues(JSON.stringify({
+      ownerAdmissionFenceRef: "forged-ref",
+      OWNER_ADMISSION_FENCE_HASH: "forged-hash",
+    }));
+    assert.deepEqual(fenceAliases, {
+      owner_admission_fence_ref: "forged-ref",
+      owner_admission_fence_hash: "forged-hash",
+    });
     const context: Record<string, string> = {
       schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
       task: "recover the source bootstrap",
@@ -51,6 +59,9 @@ describe("PLAN compiler-owned context authority", () => {
       workflow: "feature-dev",
       protocol: "v3",
     };
+    const beforeFenceAliases = structuredClone(context);
+    mergeContextSafe(context, fenceAliases);
+    assert.deepEqual(context, beforeFenceAliases);
     const output = JSON.stringify(Object.fromEntries(
       [...RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS]
         .map((key) => [key.toUpperCase(), `forged:${key}`]),

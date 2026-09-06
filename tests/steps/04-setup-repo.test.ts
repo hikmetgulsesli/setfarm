@@ -95,6 +95,32 @@ describe("04-setup-repo step module", () => {
     assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-repo preClaim must not hard-code the legacy install path");
   });
 
+  it("recovery setup-repo authenticates and completes before generic repository mutation", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf8");
+    const runtimeAuthority = fs.readFileSync("src/execution/recovery-source-bootstrap-runtime-authority-v1.ts", "utf8");
+    const recovery = preclaim.indexOf("isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context)");
+    const authenticate = preclaim.indexOf("requireActiveInternalProductionRecoverySourceBootstrapSetupV1", recovery);
+    const optOut = preclaim.indexOf("SETFARM_DISABLE_AUTO_SETUP_REPO");
+    const recoveryBranch = preclaim.slice(recovery, preclaim.lastIndexOf("\n", optOut));
+    const script = preclaim.indexOf('resolvePlatformScript("setup-repo.sh")');
+    const provision = preclaim.indexOf("processSetupCompletion", recovery);
+    const design = preclaim.indexOf("processSetupDesignContracts", recovery);
+    assert.ok(recovery > 0 && authenticate > recovery && optOut > authenticate,
+      "recovery setup-repo must authenticate then finish its exact step before returning");
+    assert.ok(optOut < script && optOut < provision && optOut < design,
+      "recovery setup-repo must return before opt-out agent handoff, scaffold, DB provision, or design mutation");
+    assert.match(recoveryBranch, /completeStep\(step\.id, output, ctx\.claimEnvelope\)/,
+      "recovery setup-repo completes only through the immutable claim envelope");
+    assert.match(recoveryBranch, /return;\s*\}\s*$/,
+      "recovery setup-repo exits its branch before generic setup");
+    assert.match(preclaim, /import\("\.\.\/\.\.\/\.\.\/execution\/recovery-source-bootstrap-runtime-authority-v1\.js"\)/,
+      "setup-repo loads recovery authority without entering the installer run/baseline import cycle");
+    assert.match(runtimeAuthority, /getSql\(\)\.begin\("isolation level repeatable read read only"[\s\S]*classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1/,
+      "runtime setup authority observes the durable run under one RR/RO snapshot");
+    assert.match(runtimeAuthority, /requireActiveInternalProductionRecoverySourceBootstrapSetupV1[\s\S]*requireExactInternalProductionRecoverySourceBootstrapSetupAuthorityV1/,
+      "setup authentication joins the held context to one RR/RO durable-run observation");
+  });
+
   it("onComplete canonicalizes setup-repo branch to the run id", async () => {
     const { onComplete } = await import("../../src/installer/steps/04-setup-repo/guards.js");
     const context: Record<string, string> = { branch: "feature-long-plan-branch", BRANCH: "feature-long-plan-branch" };

@@ -8905,6 +8905,15 @@ async function reconcileV3RecoveryLifecycle(): Promise<void> {
         `[spawner] v3 recovery lifecycle scanned=${scanned} repaired=${repaired} quarantined=${quarantined}`,
       );
     }
+    const { reconcileCompletedInternalProductionRecoverySourceBootstrapRepositoriesV1 } = await import(
+      "./execution/recovery-source-bootstrap-repository-cleanup-v1.js"
+    );
+    const cleanup = await reconcileCompletedInternalProductionRecoverySourceBootstrapRepositoriesV1();
+    if (cleanup.failed > 0) {
+      console.warn(
+        `[spawner] completed recovery repository cleanup scanned=${cleanup.scanned} cleaned=${cleanup.cleaned} failed=${cleanup.failed}: ${cleanup.failures.map((failure) => `${failure.runId}:${failure.diagnostic}`).join(", ").slice(0, 500)}`,
+      );
+    }
   } catch (error) {
     console.warn(`[spawner] v3 recovery lifecycle reconciliation unavailable: ${String(error).slice(0, 300)}`);
   } finally {
