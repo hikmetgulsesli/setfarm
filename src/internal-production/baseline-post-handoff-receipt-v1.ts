@@ -10779,7 +10779,7 @@ type ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Readonly<{
     role: "content" | "locator" | "fixed" | "database";
     policy: "pre-schema-no-replace" | "task12-receipt" | "spawner-admission" | "database-atomic" | "expected-predecessor-cas";
     target: string | null;
-    expectedBytes: Buffer;
+    expectedBytes: Buffer | null;
     publication: unknown;
     writer: unknown;
     database: unknown;
@@ -10839,10 +10839,10 @@ type ExactPoisonPostVisiblePreSchemaEndpointCapabilityV1 = Readonly<{
   operationHash: string;
   arrow: Readonly<{ prior: string; next: string; ordinal: number }>;
   endpoints: ReadonlyMap<string, Readonly<{
-    target: string;
-    expectedBytes: Buffer;
-    publication: Task12ReceiptPublicationNoWriteObservationV1;
-    writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+    target: string | null;
+    expectedBytes: Buffer | null;
+    publication: Task12ReceiptPublicationNoWriteObservationV1 | null;
+    writer: Task12ReceiptLocatorWriterNoWriteObservationV1 | null;
   }>>;
   assertStable(): void;
 }>;
@@ -11140,7 +11140,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
   ] as const);
   const blockedLocator = "status-blocked-helper-dispatch-settlement-unknown.pair.json";
   const directoryOwner = openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1(path.join(operationDirectory, statusLocators[0]));
-  type ContentResource = Readonly<{ target: string; guard: Task12ReceiptDirectoryGuardV1; member: ExactPoisonRecoveryPinnedMemberV1 }>;
+  type ContentResource = Readonly<{ target: string; directoryIdentity: BigIntStats; guard: Task12ReceiptDirectoryGuardV1; member: ExactPoisonRecoveryPinnedMemberV1 }>;
   const contentResources: ContentResource[] = [];
   let transferred = false;
   let closed = false;
@@ -11164,6 +11164,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     if (closed) currentEntryFail("pre-schema observation is closed");
     for (const resource of contentResources) {
       assertExactPoisonRecoveryPinnedMemberStableV1(resource.target, resource.member, "pre-schema retained content");
+      const directoryNow = lstatSync(path.dirname(resource.target), { bigint: true });
+      if (!directoryNow.isDirectory() || directoryNow.isSymbolicLink() || !sameRegularMetadata(resource.directoryIdentity, directoryNow)) currentEntryFail("pre-schema retained content directory changed");
       resource.guard.assertStable();
     }
     directoryOwner.assertStable();
@@ -11175,9 +11177,65 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     if (capabilityCurrent !== null) exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.delete(capabilityCurrent);
     closeResources(null);
   };
+  const retainAbsentPreSchemaFrontierCapabilityV1 = (
+    value: InternalProductionPreSchemaSpawnerRebindStatusV1,
+  ): void => {
+    const endpoints = new Map<string, ExactPoisonPostVisiblePreSchemaEndpointCapabilityV1["endpoints"] extends ReadonlyMap<string, infer Endpoint> ? Endpoint : never>();
+    const unaddressedContent = (): Readonly<{
+      target: null;
+      expectedBytes: null;
+      publication: null;
+      writer: null;
+    }> => Object.freeze({ target: null, expectedBytes: null, publication: null, writer: null });
+    const absentLocator = (target: string): Readonly<{
+      target: string;
+      expectedBytes: Buffer;
+      publication: Task12ReceiptPublicationNoWriteObservationV1;
+      writer: Task12ReceiptLocatorWriterNoWriteObservationV1;
+    }> => {
+      const targetHash = hashCanonicalJson(Object.freeze({
+        schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1",
+        target: task12ReceiptLocatorWriterAuthorityTargetV1(target),
+      }));
+      return Object.freeze({
+        target,
+        expectedBytes: Buffer.alloc(0),
+        publication: Object.freeze({
+          state: "F0" as const,
+          temporaryTarget: null,
+          temporaryTargets: Object.freeze([]),
+          selectedTemporaryTarget: null,
+          directoryIdentity: EXACT_POISON_POST_VISIBLE_TASK12_RECEIPT_ABSENT_DIRECTORY_IDENTITY_V1,
+          members: Object.freeze([]),
+        }),
+        writer: Object.freeze({
+          state: "A0" as const,
+          targetHash,
+          directoryIdentity: EXACT_POISON_POST_VISIBLE_TASK12_RECEIPT_ABSENT_DIRECTORY_IDENTITY_V1,
+          members: Object.freeze([]),
+        }),
+      });
+    };
+    endpoints.set("pre-dispatch-legacy-zero-content:content", unaddressedContent());
+    endpoints.set("authorization:content", unaddressedContent());
+    endpoints.set("pre-dispatch-legacy-zero:locator", absentLocator(path.join(directoryOwner.directory, materialLocators[0])));
+    endpoints.set("authorization:locator", absentLocator(path.join(directoryOwner.directory, materialLocators[1])));
+    endpoints.set("status:content", unaddressedContent());
+    endpoints.set("status:locator", absentLocator(path.join(directoryOwner.directory, statusLocators[0])));
+    const capability = Object.freeze({
+      operationRef: operation.operationRef,
+      operationHash: operation.operationHash,
+      arrow: Object.freeze({ prior: "absent", next: "prepared", ordinal: 0 }),
+      endpoints,
+      assertStable,
+    });
+    exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.set(value, capability);
+    capabilityCurrent = value;
+  };
   try {
     if (directoryOwner.state === "missing-parent") {
       const value = absentValue();
+      retainAbsentPreSchemaFrontierCapabilityV1(value);
       assertStable();
       transferred = true;
       return Object.freeze({ value, assertStable, close });
@@ -11185,6 +11243,9 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     const inventory = requireExactPoisonPostVisibleProgressPreSchemaOperationInventoryV1(operationDirectory, directoryOwner.directoryMembers, materialLocators, statusLocators, blockedLocator);
     const operationPins = new Map<string, ExactPoisonPostVisibleTask12ReceiptEndpointMemberPinV1>();
     for (const name of directoryOwner.directoryMembers) operationPins.set(name, directoryOwner.pinMember(path.join(operationDirectory, name)));
+    type PreSchemaEndpointCapabilityValue = ExactPoisonPostVisiblePreSchemaEndpointCapabilityV1["endpoints"] extends ReadonlyMap<string, infer Endpoint> ? Endpoint : never;
+    const dynamicContentResources = new Map<string, ContentResource>();
+    const dynamicLocatorEndpoints = new Map<string, PreSchemaEndpointCapabilityValue>();
     directoryOwner.assertStable();
     const startup = await import("./baseline-spawner-startup-admission-v1.js");
     const openContent = async <T extends Readonly<Record<string, unknown>>>(
@@ -11194,6 +11255,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       hashKey: string,
       resolver: (value: never) => Promise<T>,
       legacy = false,
+      capabilityKey?: string,
     ): Promise<T> => {
       const hash = pair[hashKey];
       if (typeof hash !== "string" || !SHA256.test(hash)) currentEntryFail(`pre-schema ${kind} hash is invalid`);
@@ -11204,9 +11266,13 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
         guard.assertStable();
+        const directoryIdentity = lstatSync(path.dirname(contentTarget), { bigint: true });
+        if (!directoryIdentity.isDirectory() || directoryIdentity.isSymbolicLink() || (directoryIdentity.mode & 0o7777n) !== 0o700n) currentEntryFail(`pre-schema ${kind} content directory identity is invalid`);
         member = openExactPoisonRecoveryMemberV1(contentTarget, `pre-schema ${kind} content`);
-        const resource = Object.freeze({ target: contentTarget, guard, member });
+        if (member.identity.dev !== directoryIdentity.dev || member.identity.uid !== directoryIdentity.uid) currentEntryFail(`pre-schema ${kind} content directory membership is crossed`);
+        const resource = Object.freeze({ target: contentTarget, directoryIdentity, guard, member });
         contentResources.push(resource);
+        if (capabilityKey !== undefined) dynamicContentResources.set(capabilityKey, resource);
         if (member.identity.nlink !== 1n) currentEntryFail(`pre-schema ${kind} content is not one-link`);
         const parsed = strictCanonicalRecord(member.bytes, `pre-schema ${kind} content`);
         const value = await resolver(pair as never);
@@ -11269,15 +11335,20 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       pairs.push(pair);
       bodies.push(await openContent(kind, pair, refKey, hashKey, resolvers[index] as never, legacy));
     }
-    const openProcessIdentity = async (ref: unknown, hash: unknown, label: string): Promise<Readonly<Record<string, unknown>>> => {
+    const openProcessIdentity = async (ref: unknown, hash: unknown, label: string, capabilityKey?: string): Promise<Readonly<Record<string, unknown>>> => {
       if (typeof hash !== "string" || !SHA256.test(hash) || ref !== `setfarm://internal-production/spawner-process-identity/sha256/${hash}`) currentEntryFail(`pre-schema ${label} pair is crossed`);
       const contentTarget = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
       const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
         guard.assertStable();
+        const directoryIdentity = lstatSync(path.dirname(contentTarget), { bigint: true });
+        if (!directoryIdentity.isDirectory() || directoryIdentity.isSymbolicLink() || (directoryIdentity.mode & 0o7777n) !== 0o700n) currentEntryFail(`pre-schema ${label} directory identity is invalid`);
         member = openExactPoisonRecoveryMemberV1(contentTarget, `pre-schema ${label}`);
-        contentResources.push(Object.freeze({ target: contentTarget, guard, member }));
+        if (member.identity.dev !== directoryIdentity.dev || member.identity.uid !== directoryIdentity.uid) currentEntryFail(`pre-schema ${label} directory membership is crossed`);
+        const resource = Object.freeze({ target: contentTarget, directoryIdentity, guard, member });
+        contentResources.push(resource);
+        if (capabilityKey !== undefined) dynamicContentResources.set(capabilityKey, resource);
         if (member.identity.nlink !== 1n) currentEntryFail(`pre-schema ${label} is not one-link`);
         const value = strictCanonicalRecord(member.bytes, `pre-schema ${label}`);
         if (!hasExactKeys(value, ["schema", "pid", "processStartTimeEpochMs", "processIdentityHash"]) || value.schema !== "setfarm.internal-production-spawner-process-identity.v1" || hashCanonicalJson(value) !== hash || !Number.isSafeInteger(value.pid) || Number(value.pid) < 1 || !Number.isSafeInteger(value.processStartTimeEpochMs) || Number(value.processStartTimeEpochMs) < 1 || typeof value.processIdentityHash !== "string" || !SHA256.test(value.processIdentityHash)) currentEntryFail(`pre-schema ${label} is invalid`);
@@ -11348,7 +11419,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       const statusOrdinal = blockedStatus ? "blocked" : index as 0 | 1 | 2 | 3 | 4 | 5 | 6;
       validateStatusCausal(status, statusOrdinal, "historical");
     }
-    const validateDynamicMaterialCausal = async (index: number, value: Readonly<Record<string, unknown>>): Promise<void> => {
+    const validateDynamicMaterialCausal = async (index: number, value: Readonly<Record<string, unknown>>, processIdentityCapabilityKey?: string): Promise<void> => {
       if (index === 0) {
         if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication pre-dispatch legacy authority is crossed");
         return;
@@ -11359,7 +11430,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       }
       if (index === 2) {
         if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.task0SpawnerSourceSha !== source.sha || value.task0SpawnerTreeHash !== source.treeHash || value.task0SpawnerBuildHash !== source.buildHash || value.predecessorSpawnerServiceIdentityHash !== bodies[1]!.predecessorSpawnerServiceIdentityHash || value.predecessorSpawnerGenerationHash !== bodies[1]!.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema dynamic publication startup authorization pairs are crossed");
-        predecessorIdentity = await openProcessIdentity(value.predecessorSpawnerProcessIdentityRef, value.predecessorSpawnerProcessIdentityHash, "dynamic-predecessor-process-identity");
+        predecessorIdentity = await openProcessIdentity(value.predecessorSpawnerProcessIdentityRef, value.predecessorSpawnerProcessIdentityHash, "dynamic-predecessor-process-identity", processIdentityCapabilityKey);
         return;
       }
       if (index === 3) {
@@ -11374,7 +11445,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         return;
       }
       if (index === 5) {
-        const replacementIdentity = await openProcessIdentity(value.replacementSpawnerProcessIdentityRef, value.replacementSpawnerProcessIdentityHash, "dynamic-replacement-process-identity");
+        const replacementIdentity = await openProcessIdentity(value.replacementSpawnerProcessIdentityRef, value.replacementSpawnerProcessIdentityHash, "dynamic-replacement-process-identity", processIdentityCapabilityKey);
         if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.startupTokenRef !== pairs[2]!.startupTokenRef || value.startupTokenHash !== pairs[2]!.startupTokenHash || value.restartAuthorityRef !== pairs[3]!.restartAuthorityRef || value.restartAuthorityHash !== pairs[3]!.restartAuthorityHash || value.predecessorTerminationObservationRef !== pairs[4]!.predecessorTerminationObservationRef || value.predecessorTerminationObservationHash !== pairs[4]!.predecessorTerminationObservationHash || value.actualSpawnerSourceSha !== source.sha || value.actualSpawnerTreeHash !== source.treeHash || value.actualSpawnerBuildHash !== source.buildHash || value.actualSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || value.replacementSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || replacementIdentity.processIdentityHash === predecessorIdentity?.processIdentityHash) currentEntryFail("pre-schema dynamic publication replacement authority is crossed");
         return;
       }
@@ -11392,8 +11463,40 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       }
       currentEntryFail("pre-schema dynamic publication material index is invalid");
     };
+    const dynamicMaterialContentKeys = Object.freeze([
+      "pre-dispatch-legacy-zero-content:content",
+      "authorization:content",
+      "startup-token:content",
+      "restart-authority:content",
+      "predecessor-termination:content",
+      "replacement-process:content",
+      "post-termination-legacy-zero-content:content",
+      "sealed-admission:content",
+      "admission-ready:content",
+    ] as const);
+    const dynamicMaterialLocatorKeys = Object.freeze([
+      "pre-dispatch-legacy-zero:locator",
+      "authorization:locator",
+      "startup-token:locator",
+      "restart-authority:locator",
+      "predecessor-termination:locator",
+      "replacement-process:locator",
+      "post-termination-legacy-zero:locator",
+      "sealed-admission:locator",
+      "admission-ready:locator",
+    ] as const);
     const validateDynamicTarget = async (target: string): Promise<void> => {
       const basename = path.basename(target);
+      const statusIndex = statusLocators.indexOf(basename as never);
+      const materialIndex = materialLocators.indexOf(basename as never);
+      if (statusIndex < 0 && materialIndex < 0) currentEntryFail("pre-schema dynamic publication endpoint is invalid");
+      const contentCapabilityKey = statusIndex >= 0 ? "status:content" : dynamicMaterialContentKeys[materialIndex]!;
+      const locatorCapabilityKey = statusIndex >= 0 ? "status:locator" : dynamicMaterialLocatorKeys[materialIndex]!;
+      const processIdentityCapabilityKey = materialIndex === 2
+        ? "predecessor-process-identity:content"
+        : materialIndex === 5
+          ? "replacement-process-identity:content"
+          : undefined;
       const final = operationPins.get(basename) ?? null;
       const producerPins = [...operationPins.entries()].filter(([name]) => name.startsWith(`.${basename}.`) && name.endsWith(".tmp") && !name.includes(".writer.lock.")).map(([, pin]) => pin);
       if (final === null && producerPins.some((pin) => pin.identity.nlink !== 1n)) currentEntryFail("pre-schema producerPins F1 identity nlink is invalid");
@@ -11410,12 +11513,12 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         const parsed = strictCanonicalRecord(candidate.bytes, "pre-schema dynamic publication");
         if (basename.startsWith("status-")) {
           const pair = requirePair(parsed, "statusRef", "statusHash", statusPrefix) as InternalProductionPreSchemaSpawnerRebindStatusPairV1;
-          const value = await openContent("status", pair, "statusRef", "statusHash", startup.resolveInternalProductionPreSchemaSpawnerRebindStatusV1 as never);
-          const statusOrdinal = statusLocators.indexOf(basename as never);
+          const value = await openContent("status", pair, "statusRef", "statusHash", startup.resolveInternalProductionPreSchemaSpawnerRebindStatusV1 as never, false, contentCapabilityKey);
+          const statusOrdinal = statusIndex;
           if (statusOrdinal < 0 || statusOrdinal > 6) currentEntryFail("pre-schema dynamic status ordinal is invalid");
           validateStatusCausal(value as InternalProductionPreSchemaSpawnerRebindStatusV1, statusOrdinal as 0 | 1 | 2 | 3 | 4 | 5 | 6, "dynamic status");
         } else {
-          const nextIndex = materialLocators.indexOf(basename as never);
+          const nextIndex = materialIndex;
           if (nextIndex < 0) currentEntryFail("pre-schema dynamic publication material is invalid");
           const specification = materialSpecs[nextIndex]!;
           const kind = specification[0] as string;
@@ -11424,8 +11527,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
           const prefix = specification[3] as string;
           const legacy = specification[4] as boolean;
           const pair = requirePair(parsed, refKey, hashKey, prefix) as Readonly<Record<string, string>>;
-          const value = await openContent(kind, pair, refKey, hashKey, resolvers[nextIndex] as never, legacy);
-          await validateDynamicMaterialCausal(nextIndex, value);
+          const value = await openContent(kind, pair, refKey, hashKey, resolvers[nextIndex] as never, legacy, contentCapabilityKey);
+          await validateDynamicMaterialCausal(nextIndex, value, processIdentityCapabilityKey);
           if (final !== null && producerPins.length === 0) completedMaterial = Object.freeze({ index: nextIndex, pair, value });
         }
       }
@@ -11449,6 +11552,39 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       } else {
         for (const { pin } of writerTemporaries) if (pin.identity.nlink !== 1n) currentEntryFail("pre-schema writerTemporaries independent identity nlink is invalid");
       }
+      const temporary = producerPins[0] ?? null;
+      const publicationState: Task12ReceiptPublicationNoWriteObservationV1["state"] = final === null
+        ? temporary === null ? "F0" : "F1"
+        : temporary === null ? "F2u" : "F2";
+      const publicationMembers = publicationState === "F0"
+        ? Object.freeze([])
+        : publicationState === "F1"
+          ? Object.freeze([Object.freeze({ target: temporary!.target, identity: observeTask12ReceiptPhysicalIdentityV1(temporary!.identity), bytes: temporary!.bytes })])
+          : publicationState === "F2"
+            ? Object.freeze([
+                Object.freeze({ target: temporary!.target, identity: observeTask12ReceiptPhysicalIdentityV1(temporary!.identity), bytes: temporary!.bytes }),
+                Object.freeze({ target: final!.target, identity: observeTask12ReceiptPhysicalIdentityV1(final!.identity), bytes: final!.bytes }),
+              ])
+            : Object.freeze([Object.freeze({ target: final!.target, identity: observeTask12ReceiptPhysicalIdentityV1(final!.identity), bytes: final!.bytes })]);
+      const selectedTemporaryTarget = publicationState === "F2"
+        && temporary!.identity.dev === final!.identity.dev
+        && temporary!.identity.ino === final!.identity.ino
+        ? temporary!.target
+        : null;
+      const presentedTarget = path.join(directoryOwner.directory, basename);
+      dynamicLocatorEndpoints.set(locatorCapabilityKey, Object.freeze({
+        target: presentedTarget,
+        expectedBytes: candidate?.bytes ?? Buffer.alloc(0),
+        publication: Object.freeze({
+          state: publicationState,
+          temporaryTarget: temporary?.target ?? null,
+          temporaryTargets: temporary === null ? Object.freeze([]) : Object.freeze([temporary.target]),
+          selectedTemporaryTarget,
+          directoryIdentity: directoryOwner.directoryIdentity,
+          members: publicationMembers,
+        }),
+        writer: observeTask12ReceiptLocatorWriterFromOwnedDirectoryNoWriteV1(directoryOwner, presentedTarget),
+      }));
       if (completedMaterial !== null) {
         if (completedMaterial.index !== pairs.length) currentEntryFail("pre-schema dynamic publication prior pair sequence is crossed");
         pairs.push(completedMaterial.pair);
@@ -11457,6 +11593,58 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     };
     for (const target of inventory.dynamicTargets) await validateDynamicTarget(target);
     const value = inventory.ordinal === -1 ? absentValue() : statuses.at(-1)!;
+    const earlyInventoryOrdinal = inventory.ordinal;
+    if (typeof earlyInventoryOrdinal === "number" && earlyInventoryOrdinal >= -1 && earlyInventoryOrdinal <= 4) {
+      const capabilityArrow = EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === earlyInventoryOrdinal + 1);
+      if (capabilityArrow === undefined) currentEntryFail("pre-schema early endpoint arrow is unavailable");
+      const descriptorKey = `${capabilityArrow.family}:${capabilityArrow.ordinal}:${capabilityArrow.prior}:${capabilityArrow.next}`;
+      const descriptors = EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[descriptorKey];
+      if (descriptors === undefined) currentEntryFail("pre-schema early endpoint descriptors are unavailable");
+      const endpoints = new Map<string, PreSchemaEndpointCapabilityValue>();
+      const unaddressedContent = (): PreSchemaEndpointCapabilityValue => Object.freeze({ target: null, expectedBytes: null, publication: null, writer: null });
+      const retainedContent = (resource: ContentResource): PreSchemaEndpointCapabilityValue => {
+        const expectedBytes = resource.member.bytes;
+        return Object.freeze({
+          target: resource.target,
+          expectedBytes,
+          publication: Object.freeze({
+            state: "F2u" as const,
+            temporaryTarget: null,
+            temporaryTargets: Object.freeze([]),
+            selectedTemporaryTarget: null,
+            directoryIdentity: observeTask12ReceiptPhysicalIdentityV1(resource.directoryIdentity),
+            members: Object.freeze([Object.freeze({ target: resource.target, identity: observeTask12ReceiptPhysicalIdentityV1(resource.member.identity), bytes: expectedBytes })]),
+          }),
+          writer: Object.freeze({
+            state: "A0" as const,
+            targetHash: hashCanonicalJson(Object.freeze({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: task12ReceiptLocatorWriterAuthorityTargetV1(resource.target) })),
+            directoryIdentity: observeTask12ReceiptPhysicalIdentityV1(resource.directoryIdentity),
+            members: Object.freeze([]),
+          }),
+        });
+      };
+      for (const descriptor of descriptors) {
+        const key = `${descriptor.material}:${descriptor.role}`;
+        if (descriptor.role === "content") {
+          const resource = dynamicContentResources.get(key);
+          endpoints.set(key, resource === undefined ? unaddressedContent() : retainedContent(resource));
+          continue;
+        }
+        if (descriptor.role !== "locator") currentEntryFail("pre-schema early endpoint role is invalid");
+        const endpoint = dynamicLocatorEndpoints.get(key);
+        if (endpoint === undefined) currentEntryFail("pre-schema early locator endpoint authority is absent");
+        endpoints.set(key, endpoint);
+      }
+      const capability = Object.freeze({
+        operationRef: operation.operationRef,
+        operationHash: operation.operationHash,
+        arrow: Object.freeze({ prior: capabilityArrow.prior, next: capabilityArrow.next, ordinal: capabilityArrow.ordinal }),
+        endpoints,
+        assertStable,
+      });
+      exactPoisonPostVisiblePreSchemaEndpointCapabilitiesV1.set(value, capability);
+      capabilityCurrent = value;
+    }
     if (inventory.ordinal === "blocked" || inventory.ordinal === 5 || inventory.ordinal === 6) {
       const endpoint = (
         target: string,
@@ -11493,9 +11681,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         const expectedBytes = task12ReceiptCanonicalBytesV1(expectedValue);
         const resource = contentResources.find((candidate) => candidate.target === expectedTarget);
         if (resource === undefined || !resource.member.bytes.equals(expectedBytes)) currentEntryFail("pre-schema complete content endpoint authority is crossed");
-        const directoryStats = lstatSync(path.dirname(resource.target), { bigint: true });
-        if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink() || (directoryStats.mode & 0o7777n) !== 0o700n) currentEntryFail("pre-schema complete content directory identity is invalid");
-        endpoints.set(key, endpoint(resource.target, resource.member.bytes, observeTask12ReceiptPhysicalIdentityV1(directoryStats), resource.member.identity));
+        endpoints.set(key, endpoint(resource.target, resource.member.bytes, observeTask12ReceiptPhysicalIdentityV1(resource.directoryIdentity), resource.member.identity));
       };
       const addLocatorEndpoint = (key: string, name: string): void => {
         const locator = operationPins.get(name);
@@ -12791,6 +12977,10 @@ function requireExactPoisonPostVisibleExternalRawPublicationV1(
   };
   const endpointState = (endpoint: ExactPoisonPostVisibleExternalRawPublicationObservationV1["endpoints"][number]): Readonly<{ idle: boolean; complete: boolean; decisive: boolean }> => {
     if (typeof endpoint.material !== "string" || !["content", "locator", "fixed", "database"].includes(endpoint.role)) currentEntryFail("external endpoint descriptor is invalid");
+    if (endpoint.target === null && endpoint.role === "content" && endpoint.policy === "pre-schema-no-replace") {
+      if (endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) currentEntryFail("external unaddressed pre-schema content endpoint is crossed");
+      return Object.freeze({ idle: true, complete: false, decisive: false });
+    }
     const expectedBytes = requireBuffer(endpoint.expectedBytes, "external endpoint expected");
     if (endpoint.role === "database") {
       if (endpoint.policy !== "database-atomic" || endpoint.target !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.cas !== null || !isPlainRecord(endpoint.database)) currentEntryFail("external database endpoint is crossed");
@@ -12828,7 +13018,15 @@ function requireExactPoisonPostVisibleExternalRawPublicationV1(
     if (canonicalComparable(publicationDirectoryIdentity) !== canonicalComparable(writerDirectoryIdentity)) currentEntryFail("external publication and writer directory identities are crossed");
     const sharedZeroDirectoryIdentity = isExactZeroDirectoryIdentity(publicationDirectoryIdentity);
     if (sharedZeroDirectoryIdentity) {
-      if (endpoint.policy !== "task12-receipt"
+      const exactMissingParentPreSchemaLocator = endpoint.policy === "pre-schema-no-replace"
+        && value.family === "pre-schema"
+        && value.arrow?.ordinal === 0
+        && value.arrow.prior === "absent"
+        && value.arrow.next === "prepared"
+        && isPlainRecord(value.current)
+        && value.current.state === "absent"
+        && endpoint.role === "locator";
+      if (endpoint.policy !== "task12-receipt" && !exactMissingParentPreSchemaLocator
         || publicationState !== "F0" || !Array.isArray(publication.members) || publication.members.length !== 0
         || publication.temporaryTarget !== null || publication.selectedTemporaryTarget !== null
         || !Array.isArray(publication.temporaryTargets) || publication.temporaryTargets.length !== 0
@@ -13379,6 +13577,10 @@ function selectExactPoisonPostVisibleExternalArrowV1(
 function classifyExactPoisonPostVisibleExternalEndpointStateV1(
   endpoint: ExactPoisonPostVisibleExternalEndpointOwnerV1,
 ): Readonly<{ idle: boolean; complete: boolean }> {
+  if (endpoint.target === null && endpoint.role === "content" && endpoint.policy === "pre-schema-no-replace") {
+    if (endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) currentEntryFail("external unaddressed pre-schema content endpoint is crossed");
+    return Object.freeze({ idle: true, complete: false });
+  }
   if (endpoint.role === "database") {
     if (!isPlainRecord(endpoint.database)) currentEntryFail("external database endpoint observation is absent");
     return Object.freeze({ idle: endpoint.database.state === "absent", complete: endpoint.database.state === "current" });
@@ -13538,6 +13740,7 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
     const observedCurrent = arrow.family === "database-33" ? (() => {
       const endpoint = children[0];
       if (endpoint === undefined || endpoint.material !== "database-33" || endpoint.role !== "database") currentEntryFail("migration-33 external database endpoint is absent");
+      if (!Buffer.isBuffer(endpoint.expectedBytes)) currentEntryFail("migration-33 external database projection bytes are absent");
       return strictCanonicalRecord(endpoint.expectedBytes, "migration-33 external database projection");
     })() : arrow.family === "entry-authority" ? (() => {
       if (retainedEntryPair === null || activeEndpointOrdinal === null) currentEntryFail("entry external visible pair is absent");

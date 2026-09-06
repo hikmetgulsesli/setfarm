@@ -7330,6 +7330,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     ? `export function p5cSPrewarmFixedRepositoryRootFixtureV1(): string { return fixedRepositoryRoot(); }
 
 export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;mutation:"none"|"absent-child-appearance"|"absent-parent-aba"|"status-member-aba"|"content-member-aba"|"content-parent-aba"|"content-drift"|"material-locator-aba"|"operation-directory-aba";mutationTarget:string;observeExternal?:boolean;externalOrdinal?:number;internalCloseFaultAt?:number|null;internalCloseFaultTarget?:string|null;authorityFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
+  const descriptorBefore=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
   const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
   let authorityStableCalls=0;const authorityEvents:string[]=[];
   const context=Object.freeze({successorRoot:input.successorRoot,successorOperation:operation,assertStable():void{authorityStableCalls+=1;authorityEvents.push("authority-stable:"+authorityStableCalls);if(input.authorityFaultAt===authorityStableCalls)currentEntryFail("P5C_S_PRE_SCHEMA_AUTHORITY_STABLE_FAULT:"+authorityStableCalls);}}) as unknown as ExactPoisonRecoveryPinnedCommitChainV1;
@@ -7372,7 +7373,8 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
       if(mutationApplied&&input.mutation==="content-drift"&&driftOriginal!==null)writeFileSync(input.mutationTarget,driftOriginal,{mode:0o600});
     }
   }
-  return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null})))}),closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events])});
+  const descriptorAfter=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
+  return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:Buffer.isBuffer(endpoint.expectedBytes)?endpoint.expectedBytes.toString("base64"):null,publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null})))}),closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events]),descriptorDelta:descriptorAfter-descriptorBefore});
 }
 
 `
@@ -28372,6 +28374,175 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       } finally {
         removeFixture(root);
       }
+    }
+  });
+
+  it("P5c-S retains the absent pre-schema frontier as six exact idle endpoint observations", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, -1);
+      const input = Object.freeze({
+        operation: seeded.operation,
+        successorRoot: seeded.successorRoot,
+        mutation: "none" as const,
+        mutationTarget: seeded.operationDirectory,
+        observeExternal: true,
+      });
+      const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      assert.equal(observed.outcome, "returned", String(observed.message ?? ""));
+      const external = observed.external as Readonly<Record<string, unknown>>;
+      assert.deepEqual(
+        { state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current },
+        { state: "none", family: "pre-schema", activeEndpointOrdinal: null, current: seeded.current },
+      );
+      const endpoints = external.endpoints as readonly Readonly<Record<string, unknown>>[];
+      assert.equal(endpoints.length, 6, "the absent-to-prepared arrow retains its exact six-endpoint cardinality");
+      assert.deepEqual(endpoints.map((endpoint) => [endpoint.material, endpoint.role, endpoint.policy, endpoint.target, endpoint.expectedBytesBase64, endpoint.publication, endpoint.writer]), [
+        ["pre-dispatch-legacy-zero-content", "content", "pre-schema-no-replace", null, null, null, null],
+        ["authorization", "content", "pre-schema-no-replace", null, null, null, null],
+        ["pre-dispatch-legacy-zero", "locator", "pre-schema-no-replace", path.join(seeded.operationDirectory, "00-pre-dispatch-legacy-zero.pair.json"), "", "F0", "A0"],
+        ["authorization", "locator", "pre-schema-no-replace", path.join(seeded.operationDirectory, "01-authorization.pair.json"), "", "F0", "A0"],
+        ["status", "content", "pre-schema-no-replace", null, null, null, null],
+        ["status", "locator", "pre-schema-no-replace", path.join(seeded.operationDirectory, "status-00-prepared.pair.json"), "", "F0", "A0"],
+      ]);
+      assert.equal(observed.descriptorDelta, 0, "the absent frontier releases every retained directory descriptor");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("P5c-S retains every present idle pre-schema frontier through ordinal four", async () => {
+    const cases = Object.freeze([
+      Object.freeze({ label: "present-empty", seedOrdinal: -1 as const, arrowOrdinal: 0 }),
+      ...Array.from({ length: 5 }, (_, seedOrdinal) => Object.freeze({ label: `stable-${seedOrdinal}`, seedOrdinal: seedOrdinal as 0 | 1 | 2 | 3 | 4, arrowOrdinal: seedOrdinal + 1 })),
+    ]);
+    for (const entry of cases) {
+      const root = createFixture();
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        instrumentPhase5cProgressFixtureV1(root);
+        const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, entry.seedOrdinal);
+        if (entry.seedOrdinal === -1) mkdirSync(seeded.operationDirectory, { mode: 0o700 });
+        const input = Object.freeze({ operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none" as const, mutationTarget: seeded.operationDirectory, observeExternal: true });
+        const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+        const result = await runFixtureExpressionAsync(root, expression);
+        assert.equal(result.status, 0, `${entry.label}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", `${entry.label}: ${String(observed.message ?? "")}`);
+        const external = observed.external as Readonly<Record<string, unknown>>;
+        const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === entry.arrowOrdinal)!;
+        assert.deepEqual({ state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current }, { state: "none", family: "pre-schema", activeEndpointOrdinal: null, current: seeded.current }, `${entry.label}: idle current projection`);
+        const expectedEndpoints = arrow.materials.flatMap((material) => [
+          ...(material.kind === null ? [] : [[material.name, "content", null, null, null, null]]),
+          ...(material.locator === null ? [] : [[material.name, "locator", path.join(seeded.operationDirectory, material.locator), "", "F0", "A0"]]),
+        ]);
+        const endpoints = external.endpoints as readonly Readonly<Record<string, unknown>>[];
+        assert.equal(endpoints.length, expectedEndpoints.length, `${entry.label}: exact endpoint cardinality`);
+        assert.deepEqual(endpoints.map((endpoint) => [endpoint.material, endpoint.role, endpoint.target, endpoint.expectedBytesBase64, endpoint.publication, endpoint.writer]), expectedEndpoints, `${entry.label}: retained idle endpoint topology`);
+        assert.equal(observed.descriptorDelta, 0, `${entry.label}: retained descriptors close exactly once`);
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  it("P5c-S retains the early pre-schema locator F1 F2 and F2u prefixes", async () => {
+    const cases = Object.freeze([
+      Object.freeze({ label: "F1", publication: "F1", mutation: "rename" as const }),
+      Object.freeze({ label: "F2", publication: "F2", mutation: "link" as const }),
+      Object.freeze({ label: "F2u", publication: "F2u", mutation: "none" as const }),
+    ]);
+    const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 1)!;
+    const expectedCurrent = phase5cSExternalRawCausalChainFixtureV1(arrow, "B").prior;
+    for (const entry of cases) {
+      const root = createFixture();
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        instrumentPhase5cProgressFixtureV1(root);
+        const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 1);
+        unlinkSync(seeded.currentStatusTarget);
+        unlinkSync(seeded.currentStatusContentTarget);
+        const locatorTarget = path.join(seeded.operationDirectory, "02-startup-token.pair.json");
+        const temporaryTarget = path.join(seeded.operationDirectory, ".02-startup-token.pair.json.11111111-1111-4111-8111-111111111111.tmp");
+        if (entry.mutation === "rename") renameSync(locatorTarget, temporaryTarget);
+        if (entry.mutation === "link") linkSync(locatorTarget, temporaryTarget);
+        const input = Object.freeze({ operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none" as const, mutationTarget: locatorTarget, observeExternal: true });
+        const expression = `(async()=>{await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify(value))})()`;
+        const result = await runFixtureExpressionAsync(root, expression);
+        assert.equal(result.status, 0, `${entry.label}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "returned", `${entry.label}: ${String(observed.message ?? "")}`);
+        const external = observed.external as Readonly<Record<string, unknown>>;
+        assert.deepEqual({ state: external.state, family: external.family, activeEndpointOrdinal: external.activeEndpointOrdinal, current: external.current }, {
+          state: "publishing",
+          family: "pre-schema",
+          activeEndpointOrdinal: 2,
+          current: expectedCurrent,
+        }, `${entry.label}: exact active startup-token locator frontier`);
+        const endpoints = external.endpoints as readonly Readonly<Record<string, unknown>>[];
+        assert.deepEqual(endpoints.map((endpoint) => [endpoint.material, endpoint.role, endpoint.publication, endpoint.writer]), [
+          ["predecessor-process-identity", "content", "F2u", "A0"],
+          ["startup-token", "content", "F2u", "A0"],
+          ["startup-token", "locator", entry.publication, "A0"],
+          ["status", "content", null, null],
+          ["status", "locator", "F0", "A0"],
+        ], `${entry.label}: retained content and locator topology`);
+        assert.equal(observed.descriptorDelta, 0, `${entry.label}: retained descriptors close exactly once`);
+      } finally {
+        removeFixture(root);
+      }
+    }
+  });
+
+  it("P5c-S accepts only the exact unaddressed pre-schema content tuple", async () => {
+    const root = createFixture();
+    try {
+      instrumentPhase5cProgressFixtureV1(root);
+      const preSchemaArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 0)!;
+      const preSchemaBase = phase5cSExternalRawPublicationFixtureV1(preSchemaArrow, 0, "none", "none", root);
+      const nullTuple = Object.freeze({ target: null, expectedBytesBase64: null, publication: null, writer: null, database: null, cas: null });
+      const exactUnaddressed = Object.freeze({
+        ...preSchemaBase,
+        endpoints: Object.freeze((preSchemaBase.endpoints as readonly Readonly<Record<string, unknown>>[]).map((endpoint) => endpoint.role === "content" ? Object.freeze({ ...endpoint, ...nullTuple }) : endpoint)),
+      });
+      const locatorNull = Object.freeze({
+        ...exactUnaddressed,
+        endpoints: Object.freeze((exactUnaddressed.endpoints as readonly Readonly<Record<string, unknown>>[]).map((endpoint, index) => index === 2 ? Object.freeze({ ...endpoint, ...nullTuple }) : endpoint)),
+      });
+      const partialTuple = Object.freeze({
+        ...exactUnaddressed,
+        endpoints: Object.freeze((exactUnaddressed.endpoints as readonly Readonly<Record<string, unknown>>[]).map((endpoint, index) => index === 0 ? Object.freeze({ ...endpoint, target: null, expectedBytesBase64: null, publication: (preSchemaBase.endpoints as readonly Readonly<Record<string, unknown>>[])[0]!.publication }) : endpoint)),
+      });
+      const task12Arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 0)!;
+      const task12Base = phase5cSExternalRawPublicationFixtureV1(task12Arrow, 0, "none", "none", root);
+      const task12Null = Object.freeze({
+        ...task12Base,
+        endpoints: Object.freeze((task12Base.endpoints as readonly Readonly<Record<string, unknown>>[]).map((endpoint, index) => index === 0 ? Object.freeze({ ...endpoint, ...nullTuple }) : endpoint)),
+      });
+      const inputs = Object.freeze([
+        Object.freeze({ label: "exact-pre-schema-content", valid: true, value: exactUnaddressed }),
+        Object.freeze({ label: "locator-null", valid: false, value: locatorNull }),
+        Object.freeze({ label: "partial-content-tuple", valid: false, value: partialTuple }),
+        Object.freeze({ label: "task12-content-null", valid: false, value: task12Null }),
+      ]);
+      const expression = `(()=>{const inputs=${JSON.stringify(inputs)};process.stdout.write(JSON.stringify(inputs.map((input)=>({label:input.label,...m.p5cSRequireExternalTask12WriterFixtureV1(input)}))))})()`;
+      const result = await runFixtureExpressionAsync(root, expression);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(observed.map((entry) => ({ label: entry.label, outcome: entry.outcome, decisive: entry.decisive ?? null, completed: entry.completed ?? null })), [
+        { label: "exact-pre-schema-content", outcome: "returned", decisive: false, completed: false },
+        { label: "locator-null", outcome: "threw", decisive: null, completed: null },
+        { label: "partial-content-tuple", outcome: "threw", decisive: null, completed: null },
+        { label: "task12-content-null", outcome: "threw", decisive: null, completed: null },
+      ]);
+      assert.equal(observed.slice(1).every((entry) => /external|endpoint|publication|content|crossed|absent/i.test(String(entry.message))), true, "every crossed null tuple fails inside the external binder");
+    } finally {
+      removeFixture(root);
     }
   });
 
