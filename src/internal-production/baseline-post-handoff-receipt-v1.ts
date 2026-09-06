@@ -5252,8 +5252,10 @@ async function revalidatePostVisibleCurrentEntryStoreProgressV1(
   context.successorRootParent.assertStable();
   assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity);
   if (passB.status.state === "blocked") {
-    const selection = requireExactPoisonPostVisibleProgressRowV1(passB.status);
-    if (selection.state !== "blocked" || !selection.lastValidRow || !selection.blockedReason) currentEntryFail("post-visible current-entry progress blocked evidence is invalid");
+    if (!EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1.some((entry) => entry.row === passB.row)
+      || (passB.status.blockedReason !== "CORRUPTION" && passB.status.blockedReason !== "SUPERSEDED")) {
+      currentEntryFail("post-visible current-entry progress blocked evidence is invalid");
+    }
     currentEntryFail("post-visible current-entry progress is blocked");
   }
   return Object.freeze({ storeRoot: context.successorRoot, operation: Object.freeze({ operationRef: context.successorOperation.operationRef, operationHash: context.successorOperation.operationHash }), selectionKind: "successor-progress" });
@@ -5912,7 +5914,12 @@ async function publishExactPoisonRecoveryCandidateV1(
       const reopened = readTask12ReceiptStoreSnapshotV1(candidate.target);
       if (!reopened.bytes.equals(candidate.bytes)) currentEntryFail(`exact-poison ${phase} final did not reopen`);
       exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "final-reopen");
-      await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+      if (phase === "successor-activation-commit") {
+        heldWriter.assertStable();
+        admitted.assertStableOriginals();
+      } else {
+        await assertExactPoisonRecoveryPublicationFenceV1(operation, admitted, heldWriter);
+      }
       return;
     } finally {
       if (tempDescriptor >= 0) closeSync(tempDescriptor);
@@ -5937,6 +5944,22 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const heldWriter = acquireExactPoisonRecoveryWriterV1();
   try {
     heldWriter.assertStable();
+    const validatePostVisible = async (context: ExactPoisonRecoveryPinnedCommitChainV1): Promise<void> => {
+      heldWriter.assertStable();
+      context.assertStable();
+      await durablyAuthenticateSuccessorActivationCommitV1(context);
+      heldWriter.assertStable();
+      context.assertStable();
+      await revalidatePostVisibleCurrentEntryStoreV1(context);
+      heldWriter.assertStable();
+      context.assertStable();
+    };
+    const existing = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
+    if (existing.state === "complete") {
+      try { await validatePostVisible(existing.context); }
+      finally { existing.context.close(); }
+      return;
+    }
     const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
@@ -5947,16 +5970,8 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       }
       if (ordinal === 6) {
         const context = await openExactPoisonRecoveryPinnedCommitChainV1();
-        try {
-          heldWriter.assertStable();
-          context.assertStable();
-          await durablyAuthenticateSuccessorActivationCommitV1(context);
-          heldWriter.assertStable();
-          context.assertStable();
-          await revalidatePostVisibleCurrentEntryStoreV1(context);
-          heldWriter.assertStable();
-          context.assertStable();
-        } finally { context.close(); }
+        try { await validatePostVisible(context); }
+        finally { context.close(); }
       }
     }
     heldWriter.assertStable();
@@ -7288,7 +7303,7 @@ function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12Receip
       const descriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
       descriptors.push(descriptor);
       const observed = fstatSync(descriptor, { bigint: true });
-      if (!before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory() || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode || before.nlink !== observed.nlink || before.nlink < 1n || (index > 0 && (observed.mode & 0o7777n) !== 0o700n) || (index > 0 && observed.dev !== identities[0]!.dev)) currentEntryFail("Task12 receipt private directory identity is invalid");
+      if (!before.isDirectory() || before.isSymbolicLink() || !observed.isDirectory() || before.dev !== observed.dev || before.ino !== observed.ino || before.mode !== observed.mode || before.nlink < 1n || observed.nlink < 1n || (index > 0 && (observed.mode & 0o7777n) !== 0o700n) || (index > 0 && observed.dev !== identities[0]!.dev)) currentEntryFail("Task12 receipt private directory identity is invalid");
       identities.push(observed);
     }
     assertStable();
@@ -7333,8 +7348,11 @@ function ensureTask12ReceiptPrivateDirectoryV1(
         try { mkdirSync(current, { mode: 0o700 }); }
         catch (error) {
           if (isEnoent(error)) throw error;
-          if (error instanceof Error && "code" in error && error.code === "EEXIST") currentEntryFail("Task12 receipt directory appeared before creation");
-          throw error;
+          if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+          parent.assertStable();
+          const appeared = authenticateTask12ReceiptDirectoryChainV1(current);
+          try { appeared.assertStable(); }
+          finally { appeared.close(); }
         }
       }
       parent.assertStable();
@@ -8519,6 +8537,7 @@ function normalizeTask12CurrentStatusCasV1(
   successorBytes: Buffer,
   assertAuthority: () => void,
   assertAuthorityWithoutCurrentStatusCas: () => void,
+  assertAuthorityAfterCurrentStatusCas: () => void = assertAuthorityWithoutCurrentStatusCas,
 ): void {
   if (path.basename(target) !== "01-current-status.pair.json") currentEntryFail("Task12 current-status CAS target is invalid");
   const operationHash = path.basename(path.dirname(target));
@@ -8533,16 +8552,21 @@ function normalizeTask12CurrentStatusCasV1(
   let writer: Task12ReceiptLocatorWriterHandleV1 | null = null;
   let observation: Task12CurrentStatusCasObservationV1 | null = null;
   let transferred = false;
+  let currentStatusReplaced = false;
+  const assertMutationAuthority = (): void => {
+    if (currentStatusReplaced) assertAuthorityAfterCurrentStatusCas();
+    else assertAuthorityWithoutCurrentStatusCas();
+  };
   try {
     writer = acquireTask12ReceiptLocatorWriterV1(
       target,
       (snapshot) => {
-        assertAuthorityWithoutCurrentStatusCas();
+        assertMutationAuthority();
         cleanupTask12CurrentStatusCasQ1BeforeStaleWriterRemovalV1(snapshot, predecessorBytes, successorBytes);
       },
-      assertAuthorityWithoutCurrentStatusCas
+      assertMutationAuthority
     );
-    assertAuthorityWithoutCurrentStatusCas();
+    assertMutationAuthority();
     writer.assertStable();
     for (;;) {
       observation = observeTask12CurrentStatusCasNoWriteV1(target, predecessorBytes, successorBytes);
@@ -8705,6 +8729,7 @@ function normalizeTask12CurrentStatusCasV1(
         current.assertStable();
         writer.assertStable();
         renameSync(selected.target, target);
+        currentStatusReplaced = true;
         task12CurrentStatusCasFaultV1("after-rename");
         writer.assertStable();
         current.parent.assertStable();
@@ -9463,6 +9488,7 @@ type ExactPoisonPostVisibleProgressStatusObservationV1 = Readonly<{
 type ExactPoisonPostVisibleProgressRawObservationV1 = Readonly<{
   rawKind: string;
   current: Readonly<Record<string, unknown>>;
+  controllerWriter: Task12ReceiptLocatorWriterNoWriteObservationV1;
   completedRetained: ExactPoisonPostVisibleProgressCompletedRetainedStatusOwnerV1 | null;
   evidence: "prior-only" | "completed" | "terminal";
   effectResult: ExactPoisonPostVisibleProgressEffectResultV1 | null;
@@ -9512,7 +9538,6 @@ type ExactPoisonPostVisibleProgressPassV1 = Readonly<{
 }>;
 
 const exactPoisonPostVisibleSelectedProgressPassOwnerBrandV1: unique symbol = Symbol("exact-poison-post-visible-selected-progress-pass-owner-v1");
-const exactPoisonPostVisibleControllerRecoveryResumesV1 = new WeakMap<object, () => Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>>>();
 const exactPoisonPostVisibleSelectedProgressPassControllerLocksV1 = new WeakMap<object, Readonly<{
   controllerLock: Task12ControllerLockHandleV1;
   resumeRecoverySourceBootstrapHeldLockV1: () => Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>>;
@@ -9576,7 +9601,12 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReade
 
 type ExactPoisonPostVisibleProgressEffectV1 = typeof EXACT_POISON_POST_VISIBLE_PROGRESS_EFFECTS_V1[number];
 type ExactPoisonPostVisibleProgressEffectResultV1 = Readonly<
-  | { effect: "resume-pre-schema" | "retained-pre-schema-01" | "retained-pre-schema-02" | "retained-pre-schema-03" | "retained-pre-schema-04" | "retained-pre-schema-05", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "resume-pre-schema", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "retained-pre-schema-01", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "retained-pre-schema-02", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "retained-pre-schema-03", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "retained-pre-schema-04", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
+  | { effect: "retained-pre-schema-05", preSchemaSpawnerRebindStatus: unknown, preSchemaSpawnerRebindStatusBody: unknown }
   | { effect: "prepare-or-adopt-migration-32", authorization: unknown }
   | { effect: "apply-or-adopt-migration-32", consumption: unknown }
   | { effect: "publish-migration-receipt", migrationReceipt: unknown }
@@ -10503,17 +10533,17 @@ function requireExactPoisonPostVisibleProgressRawCurrentV1(
       break;
     case "pre-manifest":
       if (sources.length !== 4) currentEntryFail("pre-manifest raw source cardinality is invalid");
-      requireSources(["observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
+      requireSources(["observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", "observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
       for (const source of sources) if (!isPlainRecord(source.value) || (isPlainRecord(source.value.currentEntryOperation) && (source.value.currentEntryOperation.operationRef !== operation.operationRef || source.value.currentEntryOperation.operationHash !== operation.operationHash)) || source.value.state === "blocked") currentEntryFail("pre-manifest raw source value operation or blocked state is crossed");
       break;
     case "migration-current":
       if (sources.length !== 3) currentEntryFail("migration-current raw source cardinality is invalid");
-      requireSources(["observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
+      requireSources(["observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
       for (const source of sources) if (!isPlainRecord(source.value) || (isPlainRecord(source.value.currentEntryOperation) && (source.value.currentEntryOperation.operationRef !== operation.operationRef || source.value.currentEntryOperation.operationHash !== operation.operationHash)) || source.value.state === "blocked") currentEntryFail("migration-current raw source value operation or blocked state is crossed");
       break;
     case "migration-retained":
       if (sources.length !== 3) currentEntryFail("migration-retained raw source cardinality is invalid");
-      requireSources(["observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
+      requireSources(["observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", "observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", "observeExactPoisonPostVisibleProgressRowTailNoWriteV1"]);
       for (const source of sources) if (!isPlainRecord(source.value) || (isPlainRecord(source.value.currentEntryOperation) && (source.value.currentEntryOperation.operationRef !== operation.operationRef || source.value.currentEntryOperation.operationHash !== operation.operationHash)) || source.value.state === "blocked") currentEntryFail("migration-retained raw source value operation or blocked state is crossed");
       break;
     case "manifest":
@@ -10561,7 +10591,7 @@ function requireExactPoisonPostVisibleProgressRawCurrentV1(
   }
   const preSchemaSource = sources.find((source) => source.port === "observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1");
   if (preSchemaSource !== undefined) requireExactPoisonPostVisiblePreSchemaRawStatusV1(preSchemaSource.value, operation);
-  for (const migrationSource of sources.filter((source) => source.port === "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1" || source.port === "readExactRetainedMigration32StatusV1")) {
+  for (const migrationSource of sources.filter((source) => source.port === "observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1" || source.port === "readExactRetainedMigration32StatusV1")) {
     requireExactPoisonPostVisibleMigration32RawStatusV1(migrationSource.value, operation);
   }
   const manifestSource = sources.find((source) => source.port === "resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1");
@@ -10675,7 +10705,7 @@ function requireExactPoisonPostVisibleProgressRowTailV1(
   if (!isPlainRecord(tail.database) || !hasExactKeys(tail.database, ["schema", "migration31", "migration32", "migration33", "manifestA", "manifestActivationRef", "manifestActivationHash", "manifestHeadRef", "manifestHeadHash", "migration32JournalChecksum", "migration33JournalChecksum", "databasePrefixOrdinal", "driftMarker"])
     || tail.database.schema !== "setfarm.internal-production-exact-poison-post-visible-progress-database-read-only.v1"
     || tail.database.migration31 !== "current" || tail.database.databasePrefixOrdinal !== rowIndex || typeof tail.database.driftMarker !== "string") currentEntryFail("progress raw row-tail database is invalid");
-  const migrationSource = sources.find((source) => source.port === "observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1");
+  const migrationSource = sources.find((source) => source.port === "observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1");
   const migrationCurrent = migrationSource !== undefined && isPlainRecord(migrationSource.value) && (migrationSource.value.state === "consumed" || migrationSource.value.state === "terminal");
   const expectedMigration32 = migrationCurrent || rowIndex >= 8 ? "current" : "absent";
   if (tail.database.migration32 !== expectedMigration32
@@ -11772,12 +11802,32 @@ async function readExactRetainedPreSchemaSpawnerRebindStatusV1(
   let guard: Task12ReceiptDirectoryGuardV1 | null = null;
   let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
   try {
+    if (ordinal === 0) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-00");
+    else if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-01");
+    else if (ordinal === 2) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-02");
+    else if (ordinal === 3) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-03");
+    else if (ordinal === 4) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-04");
+    else exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-locator-05");
     guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(target));
     guard.assertStable();
     member = openExactPoisonRecoveryMemberV1(target, "retained pre-schema status locator");
     if (member.identity.nlink !== 1n) currentEntryFail("retained pre-schema status locator is not one-link");
     const pair = requirePair(strictCanonicalRecord(member.bytes, "retained pre-schema status locator"), "statusRef", "statusHash", "setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/") as Readonly<{ statusRef: string; statusHash: string }>;
     if (expectedPair !== undefined && canonicalComparable(pair) !== canonicalComparable(expectedPair)) currentEntryFail("retained pre-schema status pair is unequal");
+    assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "retained pre-schema status locator");
+    guard.assertStable();
+    if (ordinal === 0) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-00");
+    else if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-01");
+    else if (ordinal === 2) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-02");
+    else if (ordinal === 3) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-03");
+    else if (ordinal === 4) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-04");
+    else exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-locator-05");
+    if (ordinal === 0) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-00");
+    else if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-01");
+    else if (ordinal === 2) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-02");
+    else if (ordinal === 3) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-03");
+    else if (ordinal === 4) exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-04");
+    else exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-content-05");
     const resolver = resolveStatus ?? (async (input) => {
       const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Readonly<Record<string, unknown>>;
       const port = startup.resolveInternalProductionPreSchemaSpawnerRebindStatusV1;
@@ -11794,6 +11844,12 @@ async function readExactRetainedPreSchemaSpawnerRebindStatusV1(
     assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "retained pre-schema status locator");
     guard.assertStable();
     pinnedAuthority?.assertStable();
+    if (ordinal === 0) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-00");
+    else if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-01");
+    else if (ordinal === 2) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-02");
+    else if (ordinal === 3) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-03");
+    else if (ordinal === 4) exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-04");
+    else exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-content-05");
     return recursivelyFreeze(resolved);
   } finally {
     try { if (member !== null) closeSync(member.descriptor); }
@@ -11821,12 +11877,20 @@ async function readExactRetainedMigration32StatusV1(
   let guard: Task12ReceiptDirectoryGuardV1 | null = null;
   let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
   try {
+    if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("before-migration-retained-locator-01");
+    else exactPoisonPostVisibleProgressFaultV1("before-migration-retained-locator-02");
     guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(target));
     guard.assertStable();
     member = openExactPoisonRecoveryMemberV1(target, "retained migration-32 status locator");
     if (member.identity.nlink !== 1n) currentEntryFail("retained migration-32 status locator is not one-link");
     const pair = requirePair(strictCanonicalRecord(member.bytes, "retained migration-32 status locator"), "statusRef", "statusHash", TASK12_MIGRATION_PREFIXES_V1.status) as Readonly<{ statusRef: string; statusHash: string }>;
     if (expectedPair !== undefined && canonicalComparable(pair) !== canonicalComparable(expectedPair)) currentEntryFail("retained migration-32 status pair is unequal");
+    assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "retained migration-32 status locator");
+    guard.assertStable();
+    if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("after-migration-retained-locator-01");
+    else exactPoisonPostVisibleProgressFaultV1("after-migration-retained-locator-02");
+    if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("before-migration-retained-content-01");
+    else exactPoisonPostVisibleProgressFaultV1("before-migration-retained-content-02");
     const resolved = await resolveInternalProductionPreManifestMigration32AuthorizationStatusV1(pair);
     if (
       !isPlainRecord(resolved.currentEntryOperation)
@@ -11837,6 +11901,8 @@ async function readExactRetainedMigration32StatusV1(
     assertExactPoisonRecoveryPinnedMemberStableV1(target, member, "retained migration-32 status locator");
     guard.assertStable();
     pinnedAuthority?.assertStable();
+    if (ordinal === 1) exactPoisonPostVisibleProgressFaultV1("after-migration-retained-content-01");
+    else exactPoisonPostVisibleProgressFaultV1("after-migration-retained-content-02");
     return recursivelyFreeze(resolved);
   } finally {
     try { if (member !== null) closeSync(member.descriptor); }
@@ -11852,6 +11918,20 @@ type ExactPoisonPostVisibleProgressCompletedRetainedStatusOwnerV1 = Readonly<{
   assertStable(): void;
   close(): void;
 }>;
+
+const EXACT_POISON_POST_VISIBLE_PRE_SCHEMA_RETAINED_READ_FAULTS_V1 = [
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-00", afterLocator: "after-pre-schema-retained-locator-00", beforeContent: "before-pre-schema-retained-content-00", afterContent: "after-pre-schema-retained-content-00" }),
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-01", afterLocator: "after-pre-schema-retained-locator-01", beforeContent: "before-pre-schema-retained-content-01", afterContent: "after-pre-schema-retained-content-01" }),
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-02", afterLocator: "after-pre-schema-retained-locator-02", beforeContent: "before-pre-schema-retained-content-02", afterContent: "after-pre-schema-retained-content-02" }),
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-03", afterLocator: "after-pre-schema-retained-locator-03", beforeContent: "before-pre-schema-retained-content-03", afterContent: "after-pre-schema-retained-content-03" }),
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-04", afterLocator: "after-pre-schema-retained-locator-04", beforeContent: "before-pre-schema-retained-content-04", afterContent: "after-pre-schema-retained-content-04" }),
+  Object.freeze({ beforeLocator: "before-pre-schema-retained-locator-05", afterLocator: "after-pre-schema-retained-locator-05", beforeContent: "before-pre-schema-retained-content-05", afterContent: "after-pre-schema-retained-content-05" }),
+] as const;
+
+const EXACT_POISON_POST_VISIBLE_MIGRATION_RETAINED_READ_FAULTS_V1 = Object.freeze({
+  1: Object.freeze({ beforeLocator: "before-migration-retained-locator-01", afterLocator: "after-migration-retained-locator-01", beforeContent: "before-migration-retained-content-01", afterContent: "after-migration-retained-content-01" }),
+  2: Object.freeze({ beforeLocator: "before-migration-retained-locator-02", afterLocator: "after-migration-retained-locator-02", beforeContent: "before-migration-retained-content-02", afterContent: "after-migration-retained-content-02" }),
+} as const);
 
 async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
@@ -11877,6 +11957,9 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
   const migrationOrdinal: 1 | 2 | null = family === "migration-32"
     ? ordinal === 1 || ordinal === 2 ? ordinal : currentEntryFail("completed retained migration ordinal is invalid")
     : null;
+  const readFaults = family === "pre-schema"
+    ? EXACT_POISON_POST_VISIBLE_PRE_SCHEMA_RETAINED_READ_FAULTS_V1[ordinal]
+    : EXACT_POISON_POST_VISIBLE_MIGRATION_RETAINED_READ_FAULTS_V1[migrationOrdinal!];
   const pairTarget = family === "pre-schema"
     ? fixedWorkspaceAuthorityPathV1(
       "data/internal-production-baseline/pre-schema-spawner-rebind-v1",
@@ -11886,6 +11969,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
   const pairGuard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(pairTarget));
   let transferred = false;
   try {
+    exactPoisonPostVisibleProgressFaultV1(readFaults.beforeLocator);
     pairGuard.assertStable();
     const pairMember = openExactPoisonRecoveryMemberV1(pairTarget, "completed retained status pair");
     let pairMemberClosed = false;
@@ -11903,6 +11987,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
         strictCanonicalRecord(pairMember.bytes, "completed retained status pair"),
         "statusRef", "statusHash", prefix,
       ) as Readonly<{ statusRef: string; statusHash: string }>;
+      exactPoisonPostVisibleProgressFaultV1(readFaults.afterLocator);
       const contentTarget = family === "pre-schema"
         ? path.join(
           fixedRepositoryRoot(),
@@ -11911,6 +11996,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
           `${pair.statusHash}.json`,
         )
         : task12MigrationRecordPathV1("statuses", pair.statusHash);
+      exactPoisonPostVisibleProgressFaultV1(readFaults.beforeContent);
       const contentGuard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       try {
         contentGuard.assertStable();
@@ -11937,6 +12023,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
             || value.currentEntryOperation.operationHash !== operation.operationHash
             || !contentMember.bytes.equals(task12ReceiptCanonicalBytesV1(value))
           ) currentEntryFail("completed retained status content is crossed");
+          exactPoisonPostVisibleProgressFaultV1(readFaults.afterContent);
           const assertStable = (): void => {
             authority.assertStable();
             pairGuard.assertStable();
@@ -12026,7 +12113,7 @@ async function requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV
   prepared: Task12PreparedCurrentEntryPublicationSetV1,
 ): Promise<void> {
   const operation = authority.successorOperation;
-  const statusValue = status.status as unknown as Readonly<Record<string, unknown>>;
+  const statusValue = (status.lastValidStatus ?? status.status) as unknown as Readonly<Record<string, unknown>>;
   if (!isPlainRecord(statusValue.preMutationLoadedRuntimeServiceAuthority)) currentEntryFail("operation-prepared pre-mutation authority is absent");
   const preMutation = statusValue.preMutationLoadedRuntimeServiceAuthority;
   const preMutationHash = requireSha256(preMutation.preMutationLoadedRuntimeServiceAuthorityHash, "operation-prepared pre-mutation hash");
@@ -12039,8 +12126,8 @@ async function requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV
   const expected = Object.freeze([
     Object.freeze({ phase: "P2", target: path.join(authority.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationHash.slice(0, 2), `${preMutationHash}.json`), bytes: await canonicalRecordBytes(preMutation) }),
     Object.freeze({ phase: "P3", target: path.join(authority.operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json"), bytes: await canonicalRecordBytes(Object.freeze({ preMutationLoadedRuntimeServiceAuthorityRef: preMutation.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: preMutationHash })) }),
-    Object.freeze({ phase: "P4", target: path.join(authority.successorRoot, "records", "statuses", "sha256", status.status.statusHash.slice(0, 2), `${status.status.statusHash}.json`), bytes: await canonicalRecordBytes(status.status) }),
-    Object.freeze({ phase: "P5", target: status.target, bytes: status.pairBytes }),
+    Object.freeze({ phase: "P4", target: path.join(authority.successorRoot, "records", "statuses", "sha256", String(statusValue.statusHash).slice(0, 2), `${String(statusValue.statusHash)}.json`), bytes: await canonicalRecordBytes(statusValue) }),
+    Object.freeze({ phase: "P5", target: status.target, bytes: await canonicalRecordBytes(Object.freeze({ statusRef: statusValue.statusRef, statusHash: statusValue.statusHash })) }),
   ] as const);
   status.assertStable();
   authority.assertStable();
@@ -12052,7 +12139,7 @@ async function requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV
     const projection = expected[index]!;
     if (candidate.phase !== projection.phase || candidate.target !== projection.target || !candidate.bytes.equals(projection.bytes)) currentEntryFail(`operation-prepared ${projection.phase} publication is crossed`);
   });
-  if (operation.operationRef !== status.status.operationRef || operation.operationHash !== status.status.operationHash) currentEntryFail("operation-prepared publication operation is crossed");
+  if (operation.operationRef !== statusValue.operationRef || operation.operationHash !== statusValue.operationHash) currentEntryFail("operation-prepared publication operation is crossed");
   status.assertStable();
   authority.assertStable();
 }
@@ -12981,6 +13068,13 @@ function requireExactPoisonPostVisibleExternalRawPublicationV1(
       if (endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) currentEntryFail("external unaddressed pre-schema content endpoint is crossed");
       return Object.freeze({ idle: true, complete: false, decisive: false });
     }
+    if (endpoint.target === null && endpoint.material === "current-audit" && endpoint.role === "content" && endpoint.policy === "task12-receipt") {
+      if (value.family !== "current-audit" || value.arrow?.ordinal !== 0 || value.arrow.prior !== "terminal" || value.arrow.next !== "current"
+        || endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) {
+        currentEntryFail("external unaddressed current-audit endpoint is crossed");
+      }
+      return Object.freeze({ idle: true, complete: false, decisive: false });
+    }
     const expectedBytes = requireBuffer(endpoint.expectedBytes, "external endpoint expected");
     if (endpoint.role === "database") {
       if (endpoint.policy !== "database-atomic" || endpoint.target !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.cas !== null || !isPlainRecord(endpoint.database)) currentEntryFail("external database endpoint is crossed");
@@ -13170,6 +13264,36 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   if (current === null || endpointDescriptor.policy !== "task12-receipt") currentEntryFail("external Task12 endpoint authority is crossed");
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external Task12 operation is crossed");
+  if (arrow.family === "current-audit") {
+    if (arrow.ordinal !== 0 || arrow.prior !== "terminal" || arrow.next !== "current"
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content"
+      || current.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1" || current.state !== "terminal"
+      || !isPlainRecord(current.currentEntryOperation) || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash) {
+      currentEntryFail("migration-32 current-audit endpoint authority is crossed");
+    }
+    let closed = false;
+    const assertStable = (): void => {
+      if (closed) currentEntryFail("external current-audit endpoint observation is closed");
+      authority.assertStable();
+    };
+    assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material,
+      role: endpointDescriptor.role,
+      policy: endpointDescriptor.policy,
+      target: null,
+      expectedBytes: null,
+      publication: null,
+      writer: null,
+      database: null,
+      cas: null,
+      assertStable,
+      close(): void {
+        if (closed) currentEntryFail("external current-audit endpoint observation closed twice");
+        closed = true;
+      },
+    });
+  }
   if (arrow.family === "recovery-source") {
     const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
       exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
@@ -13263,16 +13387,6 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
       expectedBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ statusRef: current.statusRef, statusHash: current.statusHash }));
       locator = true;
     } else currentEntryFail("migration-32 endpoint descriptor is crossed");
-  } else if (arrow.family === "current-audit" && arrow.ordinal === 0 && arrow.prior === "terminal" && arrow.next === "current") {
-    if (entryOwner !== null || !isPlainRecord(current.currentEntryOperation)
-      || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
-      || !isPlainRecord(current.currentAudit)
-      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content") currentEntryFail("migration-32 current-audit endpoint authority is crossed");
-    const audit = await resolveInternalProductionBootstrapHandoffCurrentAuditV1(current.currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>, operation);
-    target = task12MigrationRecordPathV1("current-audits", String(audit.bootstrapHandoffCurrentAuditHash));
-    expectedBytes = task12ReceiptCanonicalBytesV1(audit);
-    content = true;
-    contentShard = true;
   } else currentEntryFail("external Task12 physical endpoint discovery is unavailable");
   target = task12ReceiptPresentedPathV1(target);
   const family = (familyTarget: string): Task12ReceiptPublicationDirectoryFamilyV1 => Object.freeze({ target: familyTarget, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true });
@@ -13563,7 +13677,11 @@ function selectExactPoisonPostVisibleExternalArrowV1(
       ?? null;
     return arrow === null ? null : requireExactPoisonPostVisibleExternalArrowV1(arrow);
   }
-  if (candidates.length === 1) return requireExactPoisonPostVisibleExternalArrowV1(candidates[0]!);
+  if (candidates.length === 1) {
+    const candidate = candidates[0]!;
+    if (candidate.family === "migration-32" && candidate.ordinal === 0 && isPlainRecord(current) && current.state === "absent") return null;
+    return requireExactPoisonPostVisibleExternalArrowV1(candidate);
+  }
   if (!isPlainRecord(current)) currentEntryFail("external lower authority is absent");
   const currentStage = current.state === "dispatching" && isPlainRecord(current.dispatchPrefix)
     ? String(current.dispatchPrefix.phase)
@@ -13579,6 +13697,10 @@ function classifyExactPoisonPostVisibleExternalEndpointStateV1(
 ): Readonly<{ idle: boolean; complete: boolean }> {
   if (endpoint.target === null && endpoint.role === "content" && endpoint.policy === "pre-schema-no-replace") {
     if (endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) currentEntryFail("external unaddressed pre-schema content endpoint is crossed");
+    return Object.freeze({ idle: true, complete: false });
+  }
+  if (endpoint.target === null && endpoint.material === "current-audit" && endpoint.role === "content" && endpoint.policy === "task12-receipt") {
+    if (endpoint.expectedBytes !== null || endpoint.publication !== null || endpoint.writer !== null || endpoint.database !== null || endpoint.cas !== null) currentEntryFail("external unaddressed current-audit endpoint is crossed");
     return Object.freeze({ idle: true, complete: false });
   }
   if (endpoint.role === "database") {
@@ -14752,7 +14874,9 @@ async function observeExactPoisonPostVisibleProgressOperationDirectoryNoWriteV1(
     if (currentStatusWriter.state !== "A0" && currentStatusWriter.state !== "A1") currentEntryFail("progress raw row-tail downstream current status writer is crossed");
     if (currentStatusWriter.state === "A1" && (currentStatusWriter.members.length !== 1 || currentStatusWriter.members[0]!.ownerState !== "live")) currentEntryFail("progress raw row-tail downstream current status writer is not exactly live");
     if (currentStatusWriter.members.length !== 0 && expectedSuccessorBytes === null) currentEntryFail("progress raw row-tail downstream current status writer is later than projected successor");
-    const expectedControllerMemberTarget = path.join(path.dirname(controllerLockTarget), `.${path.basename(controllerLockTarget)}.writer.lock`);
+    const expectedControllerMemberTarget = task12ReceiptPresentedPathV1(
+      path.join(path.dirname(controllerLockTarget), `.${path.basename(controllerLockTarget)}.writer.lock`),
+    );
     const controllerWriter = controllerWriterAuthority === null
       ? observeTask12ReceiptLocatorWriterNoWriteV1(controllerLockTarget)
       : (() => {
@@ -14924,7 +15048,7 @@ function projectExactPoisonPostVisibleProgressEffectResultV1(
   };
   const pair = (value: Readonly<Record<string, unknown>>, refKey: string, hashKey: string): Readonly<Record<string, unknown>> => Object.freeze({ [refKey]: value[refKey], [hashKey]: value[hashKey] });
   const preSchema = ports.observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1 ?? ports.readExactRetainedPreSchemaSpawnerRebindStatusV1;
-  const migration = ports.observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1 ?? ports.readExactRetainedMigration32StatusV1;
+  const migration = ports.observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1 ?? ports.readExactRetainedMigration32StatusV1;
   const recovery = ports.observeInternalProductionRecoverySourceBootstrapStatusAtRootV1;
   switch (effect) {
     case "resume-pre-schema":
@@ -14948,7 +15072,7 @@ function projectExactPoisonPostVisibleProgressEffectResultV1(
       return Object.freeze({ effect, preSchemaSpawnerRebindStatus: Object.freeze({ statusRef: full.statusRef, statusHash: full.statusHash }), preSchemaSpawnerRebindStatusBody: full }) as ExactPoisonPostVisibleProgressEffectResultV1;
     }
     case "prepare-or-adopt-migration-32": {
-      const observed = source("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1");
+      const observed = source("observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1");
       if (observed.state === "absent") return null;
       if (observed.state !== "prepared" || !isPlainRecord(observed.authorization)) currentEntryFail("progress completed migration authorization is invalid");
       const external = source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1") as ExactPoisonPostVisibleExternalRawPublicationObservationV1;
@@ -14956,7 +15080,7 @@ function projectExactPoisonPostVisibleProgressEffectResultV1(
       return Object.freeze({ effect, authorization: pair(observed.authorization, "authorizationRef", "authorizationHash") });
     }
     case "apply-or-adopt-migration-32": {
-      const observed = source("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1");
+      const observed = source("observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1");
       if (observed.state !== "terminal") return null;
       const external = source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1") as ExactPoisonPostVisibleExternalRawPublicationObservationV1;
       if (!hasExactPoisonPostVisibleCompletedExternalEndpointV1(external, "migration-32", 2)) return null;
@@ -15087,17 +15211,33 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
     ) currentEntryFail("progress raw borrowed controller writer authority is crossed");
     controllerWriterAuthority.assertStable();
   };
+  let controllerWriterObservation: Task12ReceiptLocatorWriterNoWriteObservationV1 | null = null;
   const assertControllerWriterAuthority = (): void => {
     const controllerWriter = observeTask12ReceiptLocatorWriterNoWriteV1(controllerLockTarget);
+    const comparableControllerWriter = (observation: Task12ReceiptLocatorWriterNoWriteObservationV1): Readonly<{
+      state: Task12ReceiptLocatorWriterNoWriteObservationV1["state"];
+      targetHash: string;
+      members: Task12ReceiptLocatorWriterNoWriteObservationV1["members"];
+    }> => Object.freeze({ state: observation.state, targetHash: observation.targetHash, members: observation.members });
+    const retainObservation = (): void => {
+      if (controllerWriterObservation === null) controllerWriterObservation = controllerWriter;
+      else if (canonicalComparable(controllerWriterAuthority === null ? controllerWriterObservation : comparableControllerWriter(controllerWriterObservation))
+        !== canonicalComparable(controllerWriterAuthority === null ? controllerWriter : comparableControllerWriter(controllerWriter))) {
+        currentEntryFail("progress raw controller writer observation changed");
+      }
+    };
     if (controllerWriterAuthority === null) {
       if (controllerWriter.state !== "A0" || controllerWriter.members.length !== 0) {
         currentEntryFail("progress raw controller writer is active");
       }
+      retainObservation();
       return;
     }
     assertBorrowedControllerWriterAuthority();
     const controllerMember = controllerWriter.members[0]!;
-    const expectedControllerMemberTarget = path.join(path.dirname(controllerLockTarget), `.${path.basename(controllerLockTarget)}.writer.lock`);
+    const expectedControllerMemberTarget = task12ReceiptPresentedPathV1(
+      path.join(path.dirname(controllerLockTarget), `.${path.basename(controllerLockTarget)}.writer.lock`),
+    );
     if (
       controllerWriter.state !== "A1"
       || controllerWriterAuthority.target !== controllerLockTarget
@@ -15113,6 +15253,7 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
       || !controllerMember.bytes.equals(task12ReceiptCanonicalBytesV1(controllerWriterAuthority.owner))
     ) currentEntryFail("progress raw controller writer authority is crossed");
     assertBorrowedControllerWriterAuthority();
+    retainObservation();
   };
   assertBorrowedControllerWriterAuthority();
   const owned: ExactPoisonPostVisibleProgressOwnedRawPortV1[] = [];
@@ -15162,8 +15303,10 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
             }
             if (firstCloseError !== null) throw firstCloseError;
           };
+          assertControllerWriterAuthority();
           await assertStable();
-          return Object.freeze({ rawKind: descriptor.rawKind, current: blockedCurrent, completedRetained: null, evidence: "terminal", effectResult: null, nextPairBytes: null, immediate: null, publication: null, writer: null, assertFilesystemStable, assertStable, close });
+          if (controllerWriterObservation === null) currentEntryFail("progress raw controller writer observation is absent");
+          return Object.freeze({ rawKind: descriptor.rawKind, current: blockedCurrent, controllerWriter: controllerWriterObservation, completedRetained: null, evidence: "terminal", effectResult: null, nextPairBytes: null, immediate: null, publication: null, writer: null, assertFilesystemStable, assertStable, close });
         }
         const preparedPublicationSet = await authority.buildPreparedPublicationSet();
         await requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1(authority, status, preparedPublicationSet);
@@ -15206,29 +15349,29 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
         const preSchemaOwner = await observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(authority, operation);
         own(preSchemaOwner);
         const preSchemaCurrent = preSchemaOwner.value;
-        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
+        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1(authority, operation);
         const externalArrowPreManifest = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
         const externalPublicationPreManifest = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowPreManifest, migrationCurrent, null);
         own(externalPublicationPreManifest);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationPreManifest, operation);
         const rowTailPreManifest = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
         own(rowTailPreManifest);
-        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", preSchemaCurrent), source("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationPreManifest), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailPreManifest)]), current: migrationCurrent });
+        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1", preSchemaCurrent), source("observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationPreManifest), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailPreManifest)]), current: migrationCurrent });
         const boundCurrent = requireExactPoisonPostVisibleProgressRawCurrentV1(authority, "pre-manifest", observed);
         if (boundCurrent === null) currentEntryFail("pre-manifest raw current is absent");
         current = boundCurrent;
-        sourceValues = Object.freeze({ observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1: preSchemaCurrent, observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationPreManifest, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailPreManifest });
+        sourceValues = Object.freeze({ observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1: preSchemaCurrent, observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationPreManifest, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailPreManifest });
         break;
       }
       case "migration-current": {
-        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
+        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1(authority, operation);
         const externalArrowMigration = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
         const externalPublicationMigration = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowMigration, migrationCurrent, null);
         own(externalPublicationMigration);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationMigration, operation);
         const rowTailMigration = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
         own(rowTailMigration);
-        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationMigration), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailMigration)]), current: migrationCurrent });
+        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationMigration), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailMigration)]), current: migrationCurrent });
         const boundCurrent = requireExactPoisonPostVisibleProgressRawCurrentV1(authority, "migration-current", observed);
         if (boundCurrent === null) currentEntryFail("migration-current raw current is absent");
         current = boundCurrent;
@@ -15236,18 +15379,18 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
           completedRetained = await openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(authority, operation, "migration-32", 1);
           own(completedRetained);
         }
-        sourceValues = Object.freeze({ observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationMigration, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailMigration, ...(completedRetained === null ? {} : { openExactPoisonPostVisibleProgressCompletedRetainedStatusV1: completedRetained }) });
+        sourceValues = Object.freeze({ observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationMigration, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailMigration, ...(completedRetained === null ? {} : { openExactPoisonPostVisibleProgressCompletedRetainedStatusV1: completedRetained }) });
         break;
       }
       case "migration-retained": {
-        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(authority, operation);
+        const migrationCurrent = await observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1(authority, operation);
         const externalArrowMigrationRetained = selectExactPoisonPostVisibleExternalArrowV1(descriptor, migrationCurrent);
         const externalPublicationMigrationRetained = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowMigrationRetained, migrationCurrent, null);
         own(externalPublicationMigrationRetained);
         requireExactPoisonPostVisibleExternalRawPublicationV1(externalPublicationMigrationRetained, operation);
         const rowTailMigrationRetained = await observeExactPoisonPostVisibleProgressRowTailNoWriteV1(authority, selection, migrationCurrent);
         own(rowTailMigrationRetained);
-        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationMigrationRetained), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailMigrationRetained)]), current: migrationCurrent });
+        const observed = Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash, sources: Object.freeze([source("observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1", migrationCurrent), source("observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1", externalPublicationMigrationRetained), source("observeExactPoisonPostVisibleProgressRowTailNoWriteV1", rowTailMigrationRetained)]), current: migrationCurrent });
         const boundCurrent = requireExactPoisonPostVisibleProgressRawCurrentV1(authority, "migration-retained", observed);
         if (boundCurrent === null) currentEntryFail("migration-retained raw current is absent");
         current = boundCurrent;
@@ -15255,7 +15398,7 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
           completedRetained = await openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(authority, operation, "migration-32", 2);
           own(completedRetained);
         }
-        sourceValues = Object.freeze({ observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationMigrationRetained, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailMigrationRetained, ...(completedRetained === null ? {} : { openExactPoisonPostVisibleProgressCompletedRetainedStatusV1: completedRetained }) });
+        sourceValues = Object.freeze({ observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1: migrationCurrent, observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1: externalPublicationMigrationRetained, observeExactPoisonPostVisibleProgressRowTailNoWriteV1: rowTailMigrationRetained, ...(completedRetained === null ? {} : { openExactPoisonPostVisibleProgressCompletedRetainedStatusV1: completedRetained }) });
         break;
       }
       case "manifest": {
@@ -15428,7 +15571,15 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
     for (const child of owned) await child.assertStable();
     authority.assertStable();
     assertControllerWriterAuthority();
-    const publication = immediate === null ? null : observeTask12ReceiptPublicationNoWriteV1(immediate.target, immediate.bytes);
+    const publication = immediate === null ? null : (() => {
+      const owner = observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(immediate.target, immediate.bytes);
+      try {
+        owner.assertStable();
+        return owner.publication;
+      } finally {
+        owner.close();
+      }
+    })();
     const writer = immediate === null ? null : observeTask12ReceiptLocatorWriterNoWriteV1(immediate.target);
     const assertFilesystemStable = (): void => {
       if (closed) currentEntryFail("progress raw observation is closed");
@@ -15455,7 +15606,8 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
       if (first !== null) throw first;
     };
     await assertStable();
-    return Object.freeze({ rawKind: descriptor.rawKind, current, completedRetained, evidence, effectResult, nextPairBytes, immediate, publication, writer, assertFilesystemStable, assertStable, close });
+    if (controllerWriterObservation === null) currentEntryFail("progress raw controller writer observation is absent");
+    return Object.freeze({ rawKind: descriptor.rawKind, current, controllerWriter: controllerWriterObservation, completedRetained, evidence, effectResult, nextPairBytes, immediate, publication, writer, assertFilesystemStable, assertStable, close });
   } catch (error) {
     let first: unknown = error;
     for (let index = owned.length - 1; index >= 0; index -= 1) try { await owned[index]!.close(); } catch (closeError) { first ??= closeError; }
@@ -15926,9 +16078,10 @@ async function normalizeTask12CurrentStatusCasForProgressV1(
       currentPairBytes,
       nextPairBytes,
       () => passOwner.assertFilesystemStable(),
-      () => passOwner.assertFilesystemStable()
+      () => passOwner.assertFilesystemStable(),
+      () => passOwner.assertRootStable()
     );
-    await passOwner.assertStableWithoutCurrentStatusCas();
+    passOwner.assertRootStable();
   }
 }
 
@@ -16020,7 +16173,14 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
     const outgoingNormalization = currentStatusCas.state === "Q1" || currentStatusCas.state === "Q2";
     if (outgoingNormalization) {
       const publicationMembers = raw.publication?.members;
-      const publishedMember = Array.isArray(publicationMembers) && publicationMembers.length === 1 && isPlainRecord(publicationMembers[0]) ? publicationMembers[0] : null;
+      const immediate = raw.immediate;
+      const matchingPublishedMembers = Array.isArray(publicationMembers) && immediate !== null
+        ? publicationMembers.filter((member) => isPlainRecord(member)
+          && member.target === task12ReceiptPresentedPathV1(immediate.target)
+          && Buffer.isBuffer(member.bytes)
+          && member.bytes.equals(immediate.bytes))
+        : [];
+      const publishedMember = matchingPublishedMembers.length === 1 ? matchingPublishedMembers[0]! : null;
       if (
         raw.evidence !== "completed"
         || raw.immediate === null
@@ -16029,10 +16189,10 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
         || !Array.isArray(raw.writer?.members)
         || raw.writer.members.length !== 0
         || publishedMember === null
-        || publishedMember.target !== raw.immediate.target
+        || publishedMember.target !== task12ReceiptPresentedPathV1(raw.immediate.target)
         || !Buffer.isBuffer(publishedMember.bytes)
         || !publishedMember.bytes.equals(raw.immediate.bytes)
-      ) currentEntryFail("selected progress outgoing current-status CAS lacks durable immediate content");
+      ) currentEntryFail(`selected progress outgoing current-status CAS lacks durable immediate content: evidence=${raw.evidence}; immediate=${raw.immediate === null ? "absent" : "present"}; publication=${String(publicationState)}; members=${Array.isArray(publicationMembers) ? publicationMembers.length : -1}`);
     } else if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("selected progress raw publication or writer conflicts with current-status CAS");
     if (currentStatusCas.transition === "current-to-next" && !new Set(["Q0", "Q1", "Q2"]).has(currentStatusCas.state)) currentEntryFail("selected progress outgoing current-status CAS is invalid");
     if (currentStatusCas.state === "Q3" && (currentStatusCas.transition !== "prior-to-current-cleanup" || statusLineage.previousPairBytes === null)) currentEntryFail("selected progress incoming cleanup route is invalid");
@@ -16107,11 +16267,9 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
       assertStable,
       close,
     });
-    const resumeRecovery = exactPoisonPostVisibleControllerRecoveryResumesV1.get(controllerLock)
-      ?? (() => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock));
     exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set(owner, Object.freeze({
       controllerLock,
-      resumeRecoverySourceBootstrapHeldLockV1: resumeRecovery,
+      resumeRecoverySourceBootstrapHeldLockV1: () => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock),
     }));
     return owner;
   } catch (error) {
@@ -16162,7 +16320,14 @@ async function observeExactPoisonPostVisibleProgressPassNoWriteV1(
     const outgoingNormalization = currentStatusCas.state === "Q1" || currentStatusCas.state === "Q2";
     if (outgoingNormalization) {
       const publicationMembers = raw.publication?.members;
-      const publishedMember = Array.isArray(publicationMembers) && publicationMembers.length === 1 && isPlainRecord(publicationMembers[0]) ? publicationMembers[0] : null;
+      const immediate = raw.immediate;
+      const matchingPublishedMembers = Array.isArray(publicationMembers) && immediate !== null
+        ? publicationMembers.filter((member) => isPlainRecord(member)
+          && member.target === task12ReceiptPresentedPathV1(immediate.target)
+          && Buffer.isBuffer(member.bytes)
+          && member.bytes.equals(immediate.bytes))
+        : [];
+      const publishedMember = matchingPublishedMembers.length === 1 ? matchingPublishedMembers[0]! : null;
       if (
         raw.evidence !== "completed"
         || raw.immediate === null
@@ -16171,10 +16336,10 @@ async function observeExactPoisonPostVisibleProgressPassNoWriteV1(
         || !Array.isArray(raw.writer?.members)
         || raw.writer.members.length !== 0
         || publishedMember === null
-        || publishedMember.target !== raw.immediate.target
+        || publishedMember.target !== task12ReceiptPresentedPathV1(raw.immediate.target)
         || !Buffer.isBuffer(publishedMember.bytes)
         || !publishedMember.bytes.equals(raw.immediate.bytes)
-      ) currentEntryFail("progress outgoing current-status CAS lacks durable immediate content");
+      ) currentEntryFail(`progress outgoing current-status CAS lacks durable immediate content: evidence=${raw.evidence}; immediate=${raw.immediate === null ? "absent" : "present"}; publication=${String(publicationState)}; members=${Array.isArray(publicationMembers) ? publicationMembers.length : -1}`);
     } else if (publicationState !== "F0" || writerState !== "A0") currentEntryFail("progress raw publication or writer conflicts with current-status CAS");
     if (currentStatusCas.transition === "current-to-next" && !new Set(["Q0", "Q1", "Q2"]).has(currentStatusCas.state)) currentEntryFail("progress outgoing current-status CAS is invalid");
     if (currentStatusCas.state === "Q3" && (currentStatusCas.transition !== "prior-to-current-cleanup" || statusLineage.previousPairBytes === null)) currentEntryFail("progress incoming cleanup route is invalid");
@@ -16205,7 +16370,7 @@ function assertExactPoisonPostVisibleProgressPassEqualV1(
     status: pass.status,
     nested: pass.nested,
     physical: pass.physical,
-    raw: Object.freeze({ rawKind: pass.raw.rawKind, current: pass.raw.current, nextPairBytes: pass.raw.nextPairBytes?.toString("base64") ?? null, immediate: pass.raw.immediate === null ? null : Object.freeze({ target: pass.raw.immediate.target, bytes: pass.raw.immediate.bytes.toString("base64") }) }),
+    raw: Object.freeze({ rawKind: pass.raw.rawKind, current: pass.raw.current, controllerWriter: pass.raw.controllerWriter, nextPairBytes: pass.raw.nextPairBytes?.toString("base64") ?? null, immediate: pass.raw.immediate === null ? null : Object.freeze({ target: pass.raw.immediate.target, bytes: pass.raw.immediate.bytes.toString("base64") }) }),
     publication: pass.publication,
     writer: pass.writer,
     currentStatusCas: Object.freeze({ state: pass.currentStatusCas.state, transition: pass.currentStatusCas.transition, selectedRoute: pass.currentStatusCas.selectedRoute, requiresNormalization: pass.currentStatusCas.requiresNormalization }),
@@ -16373,6 +16538,7 @@ async function task12CasCurrentStatusV1(
     successorPairBytes,
     () => passOwner.assertFilesystemStable(),
     () => passOwner.assertFilesystemStable(),
+    () => passOwner.assertRootStable(),
   );
 }
 
@@ -16473,6 +16639,19 @@ function releaseTask12ControllerLockV1(handle: Task12ControllerLockHandleV1): vo
   activeTask12ControllerOperationsV1.delete(state.operationHash);
   if (firstError !== null) throw firstError;
 }
+
+type ExactPoisonPostVisibleProgressFaultBoundaryV1 =
+  | "before-pre-schema-retained-locator-00" | "after-pre-schema-retained-locator-00" | "before-pre-schema-retained-content-00" | "after-pre-schema-retained-content-00" | "before-pre-schema-retained-cas-00" | "after-pre-schema-retained-cas-00"
+  | "before-pre-schema-retained-locator-01" | "after-pre-schema-retained-locator-01" | "before-pre-schema-retained-content-01" | "after-pre-schema-retained-content-01" | "before-pre-schema-retained-cas-01" | "after-pre-schema-retained-cas-01"
+  | "before-pre-schema-retained-locator-02" | "after-pre-schema-retained-locator-02" | "before-pre-schema-retained-content-02" | "after-pre-schema-retained-content-02" | "before-pre-schema-retained-cas-02" | "after-pre-schema-retained-cas-02"
+  | "before-pre-schema-retained-locator-03" | "after-pre-schema-retained-locator-03" | "before-pre-schema-retained-content-03" | "after-pre-schema-retained-content-03" | "before-pre-schema-retained-cas-03" | "after-pre-schema-retained-cas-03"
+  | "before-pre-schema-retained-locator-04" | "after-pre-schema-retained-locator-04" | "before-pre-schema-retained-content-04" | "after-pre-schema-retained-content-04" | "before-pre-schema-retained-cas-04" | "after-pre-schema-retained-cas-04"
+  | "before-pre-schema-retained-locator-05" | "after-pre-schema-retained-locator-05" | "before-pre-schema-retained-content-05" | "after-pre-schema-retained-content-05" | "before-pre-schema-retained-cas-05" | "after-pre-schema-retained-cas-05"
+  | "before-migration-retained-locator-01" | "after-migration-retained-locator-01" | "before-migration-retained-content-01" | "after-migration-retained-content-01" | "before-migration-retained-cas-consumed" | "after-migration-retained-cas-consumed"
+  | "before-migration-retained-locator-02" | "after-migration-retained-locator-02" | "before-migration-retained-content-02" | "after-migration-retained-content-02" | "before-migration-retained-cas-receipt" | "after-migration-retained-cas-receipt"
+  | "before-migration-current-audit-publication" | "after-migration-current-audit-publication" | "before-migration-retained-cas-current-audited" | "after-migration-retained-cas-current-audited";
+
+function exactPoisonPostVisibleProgressFaultV1(_boundary: ExactPoisonPostVisibleProgressFaultBoundaryV1): void {}
 
 async function advanceTask12CurrentStatusV1(
   context: SelectedCurrentEntryStoreContextV1,
@@ -16619,7 +16798,12 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
       case "retained-pre-schema-05": {
         const ordinal = Number(effect.effect.slice(-2)) as 1 | 2 | 3 | 4 | 5;
         const retained = await readExactRetainedPreSchemaSpawnerRebindStatusV1(context, operation, ordinal); passOwner.assertRootStable();
-        effectResult = Object.freeze({ effect: effect.effect, preSchemaSpawnerRebindStatus: Object.freeze({ statusRef: retained.statusRef, statusHash: retained.statusHash }), preSchemaSpawnerRebindStatusBody: retained });
+        const preSchemaSpawnerRebindStatus = Object.freeze({ statusRef: retained.statusRef, statusHash: retained.statusHash });
+        if (effect.effect === "retained-pre-schema-01") effectResult = Object.freeze({ effect: "retained-pre-schema-01", preSchemaSpawnerRebindStatus, preSchemaSpawnerRebindStatusBody: retained });
+        else if (effect.effect === "retained-pre-schema-02") effectResult = Object.freeze({ effect: "retained-pre-schema-02", preSchemaSpawnerRebindStatus, preSchemaSpawnerRebindStatusBody: retained });
+        else if (effect.effect === "retained-pre-schema-03") effectResult = Object.freeze({ effect: "retained-pre-schema-03", preSchemaSpawnerRebindStatus, preSchemaSpawnerRebindStatusBody: retained });
+        else if (effect.effect === "retained-pre-schema-04") effectResult = Object.freeze({ effect: "retained-pre-schema-04", preSchemaSpawnerRebindStatus, preSchemaSpawnerRebindStatusBody: retained });
+        else effectResult = Object.freeze({ effect: "retained-pre-schema-05", preSchemaSpawnerRebindStatus, preSchemaSpawnerRebindStatusBody: retained });
         break;
       }
       case "prepare-or-adopt-migration-32": {
@@ -16647,9 +16831,11 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
         const databaseAudit = await auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1(); passOwner.assertRootStable();
         if (!isPlainRecord(passOwner.pass.status.migrationApplyingPhase) || !isPlainRecord(passOwner.pass.status.migrationApplyingPhase.migrationReceipt)) currentEntryFail("migration-32 current-audit prefix is absent");
         const auditBody = Object.freeze({ schema: "setfarm.internal-production-bootstrap-handoff-current-audit.v1", currentStatus: "current", currentEntryOperation: operationPair(operation), migrationReceipt: passOwner.pass.status.migrationApplyingPhase.migrationReceipt, databaseAudit });
+        exactPoisonPostVisibleProgressFaultV1("before-migration-current-audit-publication");
         const published = await publishTask12HashedRecordV1("current-audits", auditBody, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", TASK12_MIGRATION_PREFIXES_V1.currentAudit); passOwner.assertRootStable();
         const currentAudit = Object.freeze({ bootstrapHandoffCurrentAuditRef: published.bootstrapHandoffCurrentAuditRef, bootstrapHandoffCurrentAuditHash: published.bootstrapHandoffCurrentAuditHash });
         await resolveInternalProductionBootstrapHandoffCurrentAuditV1(currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>, passOwner.operation); passOwner.assertRootStable();
+        exactPoisonPostVisibleProgressFaultV1("after-migration-current-audit-publication");
         effectResult = Object.freeze({ effect: "audit-migration-current", currentAudit });
         break;
       }
@@ -16752,6 +16938,7 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
           const entryBytes = await canonicalRecordBytes(entryAuthority);
           passOwner.assertRootStable();
           contentOwner = observeExactPoisonPostVisibleEntryAuthorityContentEndpointNoWriteV1(contentTarget, entryBytes);
+          passOwner.assertRootStable();
           publishExactPoisonPostVisibleTask12ReceiptEndpointV1(contentOwner, contentTarget, entryBytes);
           passOwner.assertRootStable();
           const resolved = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, { entryAuthorityRef, entryAuthorityHash }); passOwner.assertRootStable();
@@ -16761,6 +16948,7 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
           const locatorBytes = await canonicalRecordBytes(entryAuthorityPublication02);
           passOwner.assertRootStable();
           locatorOwner = observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(locatorTarget, locatorBytes, directoryPolicies.locator);
+          passOwner.assertRootStable();
           publishExactPoisonPostVisibleTask12ReceiptEndpointV1(locatorOwner, locatorTarget, locatorBytes);
           passOwner.assertRootStable();
           effectResult = Object.freeze({ effect: "publish-entry-authority", entryAuthority: Object.freeze({ entryAuthorityRef, entryAuthorityHash }), entryAuthorityPublication02 });
@@ -16782,7 +16970,25 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
   passOwner.assertRootStable();
   const candidate = await buildExactPoisonPostVisibleProgressNextStatusV1(context, passOwner.pass.status, Object.freeze({ state: "progress", row: passOwner.pass.row }), effectResult);
   passOwner.assertRootStable();
+  if (effect.effect === "resume-pre-schema") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-00");
+  else if (effect.effect === "retained-pre-schema-01") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-01");
+  else if (effect.effect === "retained-pre-schema-02") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-02");
+  else if (effect.effect === "retained-pre-schema-03") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-03");
+  else if (effect.effect === "retained-pre-schema-04") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-04");
+  else if (effect.effect === "retained-pre-schema-05") exactPoisonPostVisibleProgressFaultV1("before-pre-schema-retained-cas-05");
+  else if (effect.effect === "apply-or-adopt-migration-32") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-consumed");
+  else if (effect.effect === "publish-migration-receipt") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-receipt");
+  else if (effect.effect === "audit-migration-current") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-current-audited");
   await advanceTask12CurrentStatusV1(context, passOwner, candidate);
+  if (effect.effect === "resume-pre-schema") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-00");
+  else if (effect.effect === "retained-pre-schema-01") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-01");
+  else if (effect.effect === "retained-pre-schema-02") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-02");
+  else if (effect.effect === "retained-pre-schema-03") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-03");
+  else if (effect.effect === "retained-pre-schema-04") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-04");
+  else if (effect.effect === "retained-pre-schema-05") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-05");
+  else if (effect.effect === "apply-or-adopt-migration-32") exactPoisonPostVisibleProgressFaultV1("after-migration-retained-cas-consumed");
+  else if (effect.effect === "publish-migration-receipt") exactPoisonPostVisibleProgressFaultV1("after-migration-retained-cas-receipt");
+  else if (effect.effect === "audit-migration-current") exactPoisonPostVisibleProgressFaultV1("after-migration-retained-cas-current-audited");
   return candidate.status;
 }
 
@@ -17198,15 +17404,12 @@ function observeTask12ReceiptLocatorWriterFromOwnedDirectoryNoWriteV1(
   directoryOwner: ExactPoisonPostVisibleTask12ReceiptEndpointDirectoryOwnerV1,
   target: string,
 ): Task12ReceiptLocatorWriterNoWriteObservationV1 {
-  const presentedTarget = process.platform === "darwin" && path.resolve(target).startsWith("/private/var/")
-    ? path.resolve(target).slice("/private".length)
-    : path.resolve(target);
-  if (path.dirname(presentedTarget) !== directoryOwner.directory) currentEntryFail("Task12 receipt writer owned target is crossed");
+  const authorityTarget = task12ReceiptLocatorWriterAuthorityTargetV1(target);
+  if (path.dirname(authorityTarget) !== directoryOwner.directory) currentEntryFail("Task12 receipt writer owned target is crossed");
   directoryOwner.assertStable();
   const directory = directoryOwner.directory;
-  const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
+  const lockPath = path.join(directory, `.${path.basename(authorityTarget)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
-  const authorityTarget = presentedTarget;
   const targetHash = hashCanonicalJson({ schema: "setfarm.internal-production-task12-receipt-locator-writer-target.v1", target: authorityTarget });
   if (directoryOwner.state === "missing-parent") {
     if (directoryOwner.directoryStats !== null || directoryOwner.directoryMembers.length !== 0) currentEntryFail("Task12 receipt writer missing-parent authority is crossed");
@@ -17369,7 +17572,7 @@ function observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1(
       const writerFixed = `.${basename}.writer.lock`;
       if (family.allowWriterFamily && (name === writerFixed || writerGrammar(family.target).test(name))) return Object.freeze({ family, role: "writer" as const });
     }
-    currentEntryFail("Task12 receipt publication directory has a foreign member");
+    currentEntryFail(`Task12 receipt publication directory has a foreign member: ${name}; expected ${normalizedPolicy.map((family) => path.basename(family.target)).join(",")}`);
   };
   const names = directoryOwner.directoryMembers;
   const classifiedNames = names.map((name) => Object.freeze({ name, ...classifyName(name) }));
@@ -17426,7 +17629,7 @@ function observeTask12ReceiptPublicationFromOwnedDirectoryNoWriteV1(
     if (temporaries.length === 1) return result("F-1", temporaries[0]!.target, null);
     currentEntryFail("Task12 receipt publication multiple temporaries are crossed");
   }
-  if (final === null || !final.bytes.equals(expectedBytes)) currentEntryFail("Task12 receipt publication final canonical identity changed or is crossed");
+  if (final === null || !final.bytes.equals(expectedBytes)) currentEntryFail(`Task12 receipt publication final canonical identity changed or is crossed: ${presentedTarget}`);
   if (temporaries.length > 0) {
     if (temporaries.some((temporary) => !temporary.bytes.equals(expectedBytes))) currentEntryFail("Task12 receipt publication complete temporaries are crossed");
     const selected = temporaries.filter((temporary) => temporary.identity.dev === final.identity.dev && temporary.identity.ino === final.identity.ino);
@@ -18592,11 +18795,9 @@ export async function resolveInternalProductionPreManifestMigration32Authorizati
   return value;
 }
 
-async function observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(
-  context: object,
+async function observeInternalProductionPreManifestMigration32AuthorizationStatusFromFixedRootV1(
   operation: InternalProductionCurrentEntryOperationV1 | null,
 ): Promise<Readonly<Record<string, unknown>>> {
-  void context;
   if (!operation) {
     const body = { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1", state: "absent", currentEntryOperation: null, authorization: null, consumption: null, migrationReceipt: null, refusalCode: null };
     const statusHash = hashCanonicalJson(body);
@@ -18615,6 +18816,51 @@ async function observeInternalProductionPreManifestMigration32AuthorizationStatu
   const body = { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1", state: "absent", currentEntryOperation: null, authorization: null, consumption: null, migrationReceipt: null, refusalCode: null };
   const statusHash = hashCanonicalJson(body);
   return recursivelyFreeze({ ...body, statusRef: `${TASK12_MIGRATION_PREFIXES_V1.status}${statusHash}`, statusHash });
+}
+
+async function observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  operation: InternalProductionCurrentEntryOperationV1 | null,
+): Promise<Readonly<Record<string, unknown>>> {
+  const selected = requireSelectedCurrentEntryStoreContextStateV1(context);
+  if (operation === null) {
+    if (selected.operation !== null) currentEntryFail("migration-32 selected operation is crossed");
+  } else if (
+    selected.operation === null
+    || selected.operation.operationRef !== operation.operationRef
+    || selected.operation.operationHash !== operation.operationHash
+  ) currentEntryFail("migration-32 selected operation is crossed");
+  const observed = await observeInternalProductionPreManifestMigration32AuthorizationStatusFromFixedRootV1(operation);
+  const currentEntryOperation = observed.currentEntryOperation;
+  if (
+    operation !== null
+    && observed.state !== "absent"
+    && (!isPlainRecord(currentEntryOperation)
+      || currentEntryOperation.operationRef !== operation.operationRef
+      || currentEntryOperation.operationHash !== operation.operationHash)
+  ) currentEntryFail("migration-32 selected status operation is crossed");
+  if (requireSelectedCurrentEntryStoreContextStateV1(context) !== selected) currentEntryFail("migration-32 selected context changed during observation");
+  return observed;
+}
+
+async function observeInternalProductionPreManifestMigration32AuthorizationStatusAtRootV1(
+  authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
+  operation: InternalProductionCurrentEntryOperationV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  authority.assertStable();
+  if (
+    operation.operationRef !== authority.successorOperation.operationRef
+    || operation.operationHash !== authority.successorOperation.operationHash
+  ) currentEntryFail("migration-32 raw operation is crossed");
+  const observed = await observeInternalProductionPreManifestMigration32AuthorizationStatusFromFixedRootV1(operation);
+  if (
+    observed.state !== "absent"
+    && (!isPlainRecord(observed.currentEntryOperation)
+      || observed.currentEntryOperation.operationRef !== operation.operationRef
+      || observed.currentEntryOperation.operationHash !== operation.operationHash)
+  ) currentEntryFail("migration-32 raw status operation is crossed");
+  authority.assertStable();
+  return observed;
 }
 
 export async function observeInternalProductionPreManifestMigration32AuthorizationStatusV1(
@@ -19594,9 +19840,6 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
   const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!operation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");
   const controllerLock = await acquireTask12ControllerLockV1(context, operation.operationHash);
-  const resumeHeldRecovery = (): Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>> =>
-    resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock);
-  exactPoisonPostVisibleControllerRecoveryResumesV1.set(controllerLock, resumeHeldRecovery);
   let result: InternalProductionCurrentEntryAuthorityStatusV1 | null = null;
   let primary: unknown = null;
   try {
@@ -19611,8 +19854,11 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
           continueAfterNormalization = true;
         } else {
           await passOwner.assertStable();
-          const effect = requireExactPoisonPostVisibleProgressEffectV1(passOwner.pass.row);
-          result = await advanceExactPoisonPostVisibleProgressEffectV1(context, passOwner, effect);
+          if (passOwner.pass.status.state === "blocked") result = passOwner.pass.status;
+          else {
+            const effect = requireExactPoisonPostVisibleProgressEffectV1(passOwner.pass.row);
+            result = await advanceExactPoisonPostVisibleProgressEffectV1(context, passOwner, effect);
+          }
         }
       } catch (error) {
         passFailure = error;
@@ -19627,7 +19873,6 @@ export async function resumeInternalProductionCurrentEntryAuthorityV1(
   } catch (error) {
     primary = error;
   }
-  exactPoisonPostVisibleControllerRecoveryResumesV1.delete(controllerLock);
   try { releaseTask12ControllerLockV1(controllerLock); }
   catch (error) { primary ??= error; }
   if (primary !== null) throw primary;
