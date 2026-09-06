@@ -770,6 +770,13 @@ function canonicalFixtureRecordV1(value: Readonly<Record<string, unknown>>): Buf
   return Buffer.from(`${canonical(value)}\n`, "utf8");
 }
 
+function task12FixturePresentedPathV1(candidate: string): string {
+  const resolved = path.resolve(candidate);
+  return process.platform === "darwin" && resolved.startsWith("/private/var/")
+    ? resolved.slice("/private".length)
+    : resolved;
+}
+
 function rehashFixtureRecordV1(
   original: Readonly<Record<string, unknown>>,
   refKey: string,
@@ -1375,7 +1382,7 @@ function seedExactOriginalPoisonStoreV1(root: string): ExactOriginalPoisonStoreF
     orderedDirectories: Object.freeze(orderedDirectories),
     orderedFiles: Object.freeze(orderedFiles),
     schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1",
-    storeLocator: realpathSync(store),
+    storeLocator: task12FixturePresentedPathV1(realpathSync(store)),
   });
   const predecessorFileIdentities = Object.freeze(members.map((member) => {
     const stats = lstatSync(path.join(store, member.locator), { bigint: true });
@@ -1407,7 +1414,7 @@ function observeExactOriginalPoisonIdentityV1(store: string): Readonly<{
     const bytes = readFileSync(target);
     return Object.freeze({ byteLength: bytes.length, bytesSha256: createHash("sha256").update(bytes).digest("hex"), linkCount: Number(stats.nlink), locator, mode: `0${Number(stats.mode & 0o777n).toString(8)}` });
   });
-  const inventoryBody = Object.freeze({ orderedDirectories: Object.freeze(orderedDirectories), orderedFiles: Object.freeze(orderedFiles), schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1", storeLocator: realpathSync(store) });
+  const inventoryBody = Object.freeze({ orderedDirectories: Object.freeze(orderedDirectories), orderedFiles: Object.freeze(orderedFiles), schema: "setfarm.internal-production-current-entry-store-quarantine-inventory.v1", storeLocator: task12FixturePresentedPathV1(realpathSync(store)) });
   const predecessorFileIdentities = Object.freeze(EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1.map((locator) => {
     const stats = lstatSync(path.join(store, locator), { bigint: true });
     return Object.freeze({ locator, uidDecimal: String(stats.uid), deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino) });
@@ -2291,11 +2298,12 @@ function runExactPoisonDurabilityFixtureV1(
 function runExactPoisonPublisherCoreWithDurabilityFixtureV1(
   root: string,
   observations: Readonly<Record<string, readonly unknown[]>>,
+  fault: ExactPoisonDurabilityFaultFixtureV1 | null = null,
 ): ReturnType<typeof spawnSync> {
   const transported = JSON.stringify(fixtureTransportValueV1(observations));
   const transportPath = path.join(path.dirname(root), ".p5a-exact-poison-admission.json");
   fixtureFile(path.dirname(root), ".p5a-exact-poison-admission.json", `${transported}\n`, 0o600);
-  return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5A_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,events:durability.events,admissionCalls:admission.admissionCalls}))})()`);
+  return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5A_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const durability={events:[],matches:0,fault:${JSON.stringify(fault)}};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,events:durability.events,admissionCalls:admission.admissionCalls}))})()`);
 }
 
 const PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1 = Object.freeze([
@@ -5151,7 +5159,7 @@ function runPhase5cExpectedPredecessorCasFixtureV1(
 ): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
   const predecessorBase64 = seeded.predecessorBytes.toString("base64");
   const successorBase64 = seeded.successorBytes.toString("base64");
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={controllerHeld:false,casCalls:0,events:[],fault:${JSON.stringify(fault)},faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null,...${JSON.stringify(probeOverrides)}};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);const predecessor=Buffer.from(${JSON.stringify(predecessorBase64)},"base64");const successor=Buffer.from(${JSON.stringify(successorBase64)},"base64");let outcome="returned",message=null,value=null;try{if(${JSON.stringify(action)}==="classify"){const observe=Reflect.get(m,"observeTask12CurrentStatusCasNoWriteV1");if(typeof observe!=="function")throw new Error("P5C_Q_CLASSIFIER_UNAVAILABLE");const observed=observe(${JSON.stringify(seeded.paths.target)},predecessor,successor);value={state:observed.state,route:observed.route,temporaryCount:observed.temporaries?.length??observed.temporaryTargets?.length??0};observed.close?.()}else if(${JSON.stringify(action)}==="normalize-held"){m.p5cRunTask12CurrentStatusCasWithControllerV1(${JSON.stringify(seeded.paths.target)},predecessor,successor)}else{const normalize=Reflect.get(m,"normalizeTask12CurrentStatusCasV1");if(typeof normalize!=="function")throw new Error("P5C_Q_NORMALIZER_UNAVAILABLE");normalize(${JSON.stringify(seeded.paths.target)},predecessor,successor)}}catch(error){outcome="threw";message=String(error)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const capabilitySize=typeof m.p5cQFixtureCleanupCapabilitySizeV1==="function"?m.p5cQFixtureCleanupCapabilitySizeV1():0;process.stdout.write(JSON.stringify({outcome,message,value,...probe,capabilitySize,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const probe={controllerHeld:false,casCalls:0,events:[],fault:${JSON.stringify(fault)},faultIndex:0,boundaryMatches:{},target:${JSON.stringify(seeded.paths.target)},matches:0,targetWriterAcquireCalls:0,createdEvidence:null,...${JSON.stringify(probeOverrides)}};Reflect.set(globalThis,"__p5cExpectedPredecessorCasProbeV1",probe);const predecessor=Buffer.from(${JSON.stringify(predecessorBase64)},"base64");const successor=Buffer.from(${JSON.stringify(successorBase64)},"base64");let outcome="returned",message=null,value=null;try{if(${JSON.stringify(action)}==="classify"){const observe=Reflect.get(m,"observeTask12CurrentStatusCasNoWriteV1");if(typeof observe!=="function")throw new Error("P5C_Q_CLASSIFIER_UNAVAILABLE");const observed=observe(${JSON.stringify(seeded.paths.target)},predecessor,successor);value={state:observed.state,route:observed.route,temporaryCount:observed.temporaries?.length??observed.temporaryTargets?.length??0};observed.close?.()}else if(${JSON.stringify(action)}==="normalize-held"){m.p5cRunTask12CurrentStatusCasWithControllerV1(${JSON.stringify(seeded.paths.target)},predecessor,successor)}else{const normalize=Reflect.get(m,"normalizeTask12CurrentStatusCasV1");if(typeof normalize!=="function")throw new Error("P5C_Q_NORMALIZER_UNAVAILABLE");normalize(${JSON.stringify(seeded.paths.target)},predecessor,successor)}}catch(error){outcome="threw";message=String(error)}const after=descriptorCount();const capabilitySize=typeof m.p5cQFixtureCleanupCapabilitySizeV1==="function"?m.p5cQFixtureCleanupCapabilitySizeV1():0;process.stdout.write(JSON.stringify({outcome,message,value,...probe,capabilitySize,descriptorDelta:after-before}))})()`);
 }
 
 function runPhase5cExpectedPredecessorCasSameProcessFixtureV1(
@@ -13241,7 +13249,7 @@ function runPhase5cZeroProgressFixtureV1(
           : entry === "controller-construction"
             ? `m.p5cSControllerGenerationConstructionFaultFixtureV1(${JSON.stringify(controllerConstructionInput)})`
           : "m.p5cPrepareCurrentEntryFixtureV1()";
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
 }
 
 function phase5cSWithRowTailOrdinalsV1(
@@ -14469,7 +14477,11 @@ function fixturePbaPortSource(options: FixtureOptions): string {
 
 function createFixture(options: FixtureOptions = {}): string {
   assert.equal(existsSync(observerSource), true, "production observer module must exist before fixture creation");
-  const root = path.join(mkdtempSync(path.join(tmpdir(), "setfarm-oa17-observer-")), "setfarm");
+  const physicalFixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-oa17-observer-")));
+  const fixtureRoot = process.platform === "darwin" && physicalFixtureRoot.startsWith("/private/var/")
+    ? physicalFixtureRoot.slice("/private".length)
+    : physicalFixtureRoot;
+  const root = path.join(fixtureRoot, "setfarm");
   fixtureFile(root, "scripts/write-build-info.mjs", readFileSync(path.join(sourceRoot, "scripts/write-build-info.mjs")));
   fixtureFile(root, "scripts/build-generation-retention.mjs", readFileSync(path.join(sourceRoot, "scripts/build-generation-retention.mjs")));
   fixtureFile(root, "scripts/stitch-to-jsx.mjs", 'process.stdout.write("fixture converter\\n");\n');
@@ -16923,7 +16935,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       'await durablyAuthenticateSuccessorActivationSealV1(',
       'ordinal === 6',
       'await openExactPoisonRecoveryPinnedCommitChainV1()',
-      'await durablyAuthenticateSuccessorActivationCommitV1(',
+      'try { await validatePostVisible(context); }',
     ];
     let cursor = -1;
     for (const marker of ordered) {
@@ -19044,6 +19056,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           descriptorDelta: observed.descriptorDelta,
         },
         { outcome: "returned", publisherCalls: 1, writerCalls: 1, validatorCalls: 1, lowerReturnCalls: 1, creatorCalls: 0, descriptorDelta: 0 },
+        String(observed.message),
       );
       assert.ok(Number(observed.admissionCalls) >= 1, "publisher performs at least one writer-bound admission before its post-visible fence");
       assert.equal(observed.sameContext, true, "publisher C durability and Z validation share the same pinned context");
@@ -27799,7 +27812,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const validationFailures: string[] = [];
       for (const input of inputs) {
         const before = filesystemTreeSnapshot(String(input.successorRoot));
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const before=count();try{const value=await m.p5cSNormalizeProgressQWithControllerFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:"returned",value,descriptorDelta:count()-before}))}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error),descriptorDelta:count()-before}))}})()`);
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=count();try{const value=await m.p5cSNormalizeProgressQWithControllerFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:"returned",value,descriptorDelta:count()-before}))}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error),descriptorDelta:count()-before}))}})()`);
         try {
           assert.equal(result.status, 0, result.stderr);
           const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
@@ -28804,7 +28817,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const closeFault = entry.label.includes("close-fault");
         const authorityFault = entry.label.includes("authority-fault");
         const input = Object.freeze({ operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: entry.mutation, mutationTarget, ...(closeFault ? { internalCloseFaultAt: entry.label.includes("primary-over") ? 1 : 2, internalCloseFaultTarget: seeded.currentStatusTarget } : {}), ...(authorityFault ? { authorityFaultAt: 4 } : {}) });
-        const expression = `(async()=>{const fs=await import("node:fs");await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const before=count();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({value,descriptorDelta:count()-before}))})()`;
+        const expression = `(async()=>{const fs=await import("node:fs");await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=count();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({value,descriptorDelta:count()-before}))})()`;
         const result = await runFixtureExpressionAsync(root, expression);
         assert.equal(result.status, 0, `${entry.label}: ${result.stderr}`);
         const observed = JSON.parse(result.stdout) as Readonly<{ value: Readonly<Record<string, unknown>>; descriptorDelta: number }>;
@@ -34776,17 +34789,26 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           "one-link-durability",
         );
 
-        setExactPoisonRecoveryLeafFaultFixtureV1(root, Object.freeze({
+        const completedChain = phase.phase === "successor-activation-commit";
+        setExactPoisonRecoveryLeafFaultFixtureV1(root, completedChain ? null : Object.freeze({
           phase: phase.phase,
           ordinal: phase.ordinal,
           boundary: "parent-fsync",
           occurrence: 1,
         }));
-        const durability = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        if (completedChain) instrumentExactPoisonDurabilityFixtureV1(root);
+        const commitDurabilityFault = completedChain
+          ? Object.freeze({ kind: "commit" as const, boundary: "post-fsync" as const, occurrence: 1, action: "throw" as const })
+          : null;
+        const durability = completedChain
+          ? runExactPoisonPublisherCoreWithDurabilityFixtureV1(root, harness.observations, commitDurabilityFault)
+          : runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
         assert.equal(durability.status, 0, durability.stderr);
         const durabilityObserved = JSON.parse(durability.stdout) as Readonly<{ outcome: string; message: string | null }>;
         assert.equal(durabilityObserved.outcome, "threw");
-        assert.match(durabilityObserved.message ?? "", /P4_EXACT_POISON_RECOVERY_LEAF_FAULT/);
+        assert.match(durabilityObserved.message ?? "", completedChain
+          ? /P5A_EXACT_POISON_DURABILITY_FAULT:commit:post-fsync/
+          : /P4_EXACT_POISON_RECOVERY_LEAF_FAULT/);
         assertExactPoisonRecoveryBoundaryFrontierV1(
           harness.original,
           harness.admitted.chain,
@@ -34796,7 +34818,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         );
 
         setExactPoisonRecoveryLeafFaultFixtureV1(root, null);
-        const retry = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+        const retry = completedChain
+          ? runExactPoisonPublisherCoreWithDurabilityFixtureV1(root, harness.observations)
+          : runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
         assert.equal(retry.status, 0, retry.stderr);
         const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
         assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
