@@ -1154,7 +1154,7 @@ node --test scripts/__tests__/build-generation-retention.test.js
 node --import tsx --test tests/execution-attempts/migration-source-digests.test.ts
 env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL \
   node --import tsx --test \
-  --test-name-pattern='^(pure current-entry parser rejects malformed status|source boundary keeps PostgreSQL imports lazy|private fake projects current-entry status|read-only prepared operation observer is exact and mutation-free)$' \
+  --test-name-pattern='^(P4 current-entry status preserves every crash prefix|returns null for an absent prepared operation without creating current-entry state|declares only zero-input current-entry database composition ports without importing db-pg|keeps no-environment lifecycle execution test-safe before db-pg import)$' \
   tests/internal-production/baseline-post-handoff-receipt-v1.test.ts
 env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL \
   node --import tsx --test \
