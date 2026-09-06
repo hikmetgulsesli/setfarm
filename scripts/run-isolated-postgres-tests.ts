@@ -43,6 +43,7 @@ const P3_TRACKED_SCOPE = new Set([
   "src/db/contract-spine-migrations.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
   "src/db/contract-spine-migration-digests.generated.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/execution/attempt-reconciler.ts",
   "src/execution/attempt-repository.ts",

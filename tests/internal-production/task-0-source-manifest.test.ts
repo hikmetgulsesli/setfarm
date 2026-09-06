@@ -71,6 +71,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/internal-production/baseline-service-restart-helper-v1.ts",
   "src/internal-production/baseline-service-restart-sequence-v1.ts",
   "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
   "src/medic/checks.ts",
@@ -175,6 +176,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/medic/checks.ts",
   "src/medic/medic.ts",
@@ -257,19 +259,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 58, "P3 source path cardinality differs");
+  assert.equal(actual.length, 59, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen139");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen140");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen139 order");
+    "P3 source paths do not preserve frozen140 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 58, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 59, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -368,6 +370,8 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "src/installer/steps/10-final-test/preclaim.ts",
     "src/installer/steps/10-final-test/prompt.md",
     "src/installer/worktree-ops.ts",
+    "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+    "src/internal-production/owner-admission-head-v1.ts",
     "tests/execution-attempts/operational-outbox-repository.test.ts",
     "tests/execution-attempts/plan-context-authority.test.ts",
     "tests/product-compiler/artifact-store-staging.test.ts",
@@ -404,6 +408,9 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "src/installer/steps/10-final-test/preclaim.ts",
     "src/installer/steps/10-final-test/prompt.md",
     "src/installer/worktree-ops.ts",
+  ]);
+  insertAfter(base, "src/internal-production/baseline-spawner-startup-admission-v1.ts", [
+    "src/internal-production/owner-admission-head-v1.ts",
   ]);
   insertAfter(base, "tests/product-compiler/artifact-store-staging.test.ts", [
     "tests/smoke-test-static-rules.test.ts",
@@ -446,6 +453,9 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
     "approved plan current-entry closure amendment differs");
   insertAfter("src/execution/pre-dispatch-withdrawal-authority.ts", [
     "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+  ]);
+  insertAfter("src/installer/step-ops.ts", [
+    "src/internal-production/owner-admission-head-v1.ts",
   ]);
   return base;
 }
@@ -620,7 +630,7 @@ function p3ExecutableSqlLiteralOccurrences(
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
-    "Task 8 must parse all exact30 production/package paths");
+    "Task 8 must parse all exact31 production/package paths");
 
   const ownerCore = sources["src/internal-production/owner-admission-v1.ts"]!;
   assert.equal(countMatches(ownerCore, /BigInt\(value\) > 9_007_199_254_740_991n/g), 1,
@@ -978,15 +988,15 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact58 subset of frozen139", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 58);
+  it("freezes P3 as an ordered exact59 subset of frozen140", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 59);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(production.length, 30);
+    assert.equal(production.length, 31);
     assert.equal(tests.length, 28);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 58);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 59);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
@@ -997,6 +1007,7 @@ describe("Task 0 exact source manifest", () => {
       "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
       "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
       "src/internal-production/owner-admission-v1.ts",
+      "src/internal-production/owner-admission-head-v1.ts",
       "src/execution/runtime-completion-effect-runner.ts",
       "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
       "src/db/contract-spine-migrations.ts",
@@ -1020,7 +1031,7 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 58);
+    assert.equal(countOnly.length, 59);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
@@ -1163,8 +1174,8 @@ describe("Task 0 exact source manifest", () => {
     )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 139-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 139);
+  it("accepts the literal 140-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 140);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
@@ -1177,7 +1188,7 @@ describe("Task 0 exact source manifest", () => {
     assert.equal(readFileSync(configPath, "utf8"), "{}\n");
   });
 
-  it("matches frozen139 while preserving every approved P3 exact58 member", () => {
+  it("matches frozen140 while preserving every approved P3 exact59 member", () => {
     const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
     const approved = extractApprovedTask0SourcePathsV1(plan);
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
@@ -1185,13 +1196,13 @@ describe("Task 0 exact source manifest", () => {
       "insert `src/installer/constants.ts`",
       "insert `src/installer/constants-crossed.ts`",
     )), /approved recovery repository isolation insertion paths differ/,
-    "the plan consumer rejects a changed exact139 amendment path instead of replaying hard-coded insertions");
+    "the plan consumer rejects a changed exact140 amendment path instead of replaying hard-coded insertions");
     const p3Approved = new Set(P3_EXACT_SOURCE_PATHS_V1);
     const missingP3 = approved.filter((relativePath) => p3Approved.has(relativePath as never))
       .filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
     assert.deepEqual(missingP3, [], "approved P3 source paths are missing from the repository");
     const missingApproved = approved.filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
-    assert.deepEqual(missingApproved, [], "approved exact139 source paths are missing from the repository");
+    assert.deepEqual(missingApproved, [], "approved exact140 source paths are missing from the repository");
   });
 
   it("rejects an omission, extra path, duplicate, and reorder", () => {

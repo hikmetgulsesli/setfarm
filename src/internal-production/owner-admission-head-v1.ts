@@ -2,12 +2,14 @@ import type { PgTransactionSql } from "./owner-admission-v1.js";
 import {
   createInternalProductionGlobalOwnerAdmissionFenceTransitionV1,
   createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
+  createInternalProductionSourceRunLaunchTargetReservationPairCloseV1,
   INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1,
   validateInternalProductionGlobalOwnerAdmissionFenceV1,
   validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1,
   validateInternalProductionOwnerReservationCloseV1,
   validateInternalProductionOwnerReservationV1,
   type InternalProductionGlobalOwnerAdmissionFenceV1,
+  type InternalProductionOwnerReservationCloseV1,
   type InternalProductionOwnerReservationV1,
 } from "./owner-admission-v1.js";
 import { hashCanonicalJson, canonicalJsonStringify } from "../product-compiler/canonical-json.js";
@@ -22,6 +24,11 @@ type OwnerAdmissionMigrationApplicationV1 = Readonly<{
   authorizationConsumptionHash: string; applicationHash: string;
 }>;
 type OwnerAdmissionAdvancingAuthorityV1 = Readonly<{ version: number; authority: OwnerAdmissionAuthorityRowV1 }>;
+type OwnerAdmissionActiveFenceProjectionV1 = Readonly<{
+  activeFenceRef: string | null;
+  activeFenceHash: string | null;
+  activeTargetFamilyHash: string | null;
+}>;
 const OWNER_ADMISSION_SHA256_V1 = /^[a-f0-9]{64}$/;
 const OWNER_ADMISSION_REF_V1 = /^setfarm:\/\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/;
 function exactObjectKeys(value: unknown, keys: readonly string[], code: string): void {
@@ -300,6 +307,166 @@ export async function validateOwnerAdmissionAncestryToGenesisV1(
   ]);
 }
 
+function deriveOwnerAdmissionActiveFenceProjectionV1(
+  ancestry: readonly OwnerAdmissionAdvancingAuthorityV1[],
+): OwnerAdmissionActiveFenceProjectionV1 {
+  let activeFence: InternalProductionGlobalOwnerAdmissionFenceV1 | null = null;
+  let remainingTargetReservations: ReadonlyArray<Readonly<{
+    reservationRef: string;
+    reservationHash: string;
+  }>> = [];
+  let targetCloses: InternalProductionOwnerReservationCloseV1[] = [];
+  const groups = new Map<number, OwnerAdmissionAuthorityRowV1[]>();
+  for (const { version, authority } of [...ancestry].reverse()) {
+    const group = groups.get(version) ?? [];
+    group.push(authority);
+    groups.set(version, group);
+  }
+  for (const [, authorities] of groups) {
+    const fenceAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "fence");
+    if (fenceAuthorities.length === 1) {
+      if (activeFence !== null) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      activeFence = validateInternalProductionGlobalOwnerAdmissionFenceV1(
+        fenceAuthorities[0]!.authority_body,
+      );
+      remainingTargetReservations = activeFence.targetFamily.kind === "none"
+        ? []
+        : activeFence.targetFamily.kind === "source-run-launch"
+          ? [activeFence.targetFamily.sourceRunReservation, activeFence.targetFamily.runReservation]
+          : [
+              activeFence.targetFamily.restartReservation,
+              activeFence.targetFamily.serviceRestartOperationReservation,
+              activeFence.targetFamily.launchOutboxReservation,
+              activeFence.targetFamily.helperProcessReservation,
+              activeFence.targetFamily.dispatchChildProcessReservation,
+              activeFence.targetFamily.startupListenerReservation,
+              activeFence.targetFamily.replacementProcessReservation,
+            ];
+      targetCloses = [];
+      if (activeFence.targetFamily.kind === "source-run-launch") {
+        const companionAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "reservation");
+        if (companionAuthorities.length !== 2 || remainingTargetReservations.some((expected) => {
+          const companion = companionAuthorities.find(({ authority_ref, authority_hash }) => (
+            authority_ref === expected.reservationRef && authority_hash === expected.reservationHash
+          ));
+          if (!companion || companion.phase_key !== expected.reservationRef) return true;
+          const body = companion.authority_body as Partial<InternalProductionOwnerReservationV1>;
+          const producer = typeof body.producerImplementationId === "string"
+            ? ownerProducerRowForImplementationV1(body.producerImplementationId)
+            : undefined;
+          if (!producer) return true;
+          try {
+            const reservation = validateInternalProductionOwnerReservationV1(body, producer);
+            return reservation.reservationRef !== expected.reservationRef
+              || reservation.reservationHash !== expected.reservationHash;
+          } catch {
+            return true;
+          }
+        })) {
+          throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        }
+      }
+      continue;
+    }
+    if (fenceAuthorities.length !== 0 || authorities.length !== 1) {
+      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    }
+    const authority = authorities[0]!;
+    if (authority.authority_kind === "reservation") {
+      if (activeFence !== null) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      continue;
+    }
+    if (authority.authority_kind === "close") {
+      const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
+      if (close.closeKind === "ordinary") {
+        if (activeFence !== null) {
+          throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        }
+        continue;
+      }
+      if (
+        activeFence === null
+        || close.preservedFenceRef !== activeFence.fenceRef
+        || close.preservedFenceHash !== activeFence.fenceHash
+      ) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      const expectedTarget = remainingTargetReservations[0];
+      if (
+        !expectedTarget
+        || expectedTarget.reservationRef !== close.reservationRef
+        || expectedTarget.reservationHash !== close.reservationHash
+      ) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      remainingTargetReservations = remainingTargetReservations.slice(1);
+      targetCloses.push(close);
+      continue;
+    }
+    if (authority.authority_kind === "release") {
+      const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(authority.authority_body);
+      if (
+        activeFence === null
+        || release.fenceRef !== activeFence.fenceRef
+        || release.fenceHash !== activeFence.fenceHash
+        || release.releaseAuthority.purpose !== activeFence.purpose
+        || release.releaseAuthority.targetFamilyKind !== activeFence.targetFamily.kind
+        || remainingTargetReservations.length !== 0
+      ) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      if (activeFence.targetFamily.kind === "source-run-launch") {
+        const [sourceClose, runClose] = targetCloses;
+        if (!sourceClose || !runClose || targetCloses.length !== 2) {
+          throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        }
+        const pairClose = createInternalProductionSourceRunLaunchTargetReservationPairCloseV1({
+          fenceRef: activeFence.fenceRef,
+          fenceHash: activeFence.fenceHash,
+          targetRunLaunchCompositeHash: activeFence.targetFamily.targetRunLaunchCompositeHash,
+          sourceRunReservationRef: activeFence.targetFamily.sourceRunReservation.reservationRef,
+          sourceRunReservationHash: activeFence.targetFamily.sourceRunReservation.reservationHash,
+          runReservationRef: activeFence.targetFamily.runReservation.reservationRef,
+          runReservationHash: activeFence.targetFamily.runReservation.reservationHash,
+          terminalSourceRunRef: sourceClose.terminalOwnerRef,
+          terminalSourceRunHash: sourceClose.terminalOwnerHash,
+          terminalRunLaunchRef: runClose.terminalOwnerRef,
+          terminalRunLaunchHash: runClose.terminalOwnerHash,
+          ownerAdmissionHeadPredecessorHash: sourceClose.ownerAdmissionHeadPredecessorHash,
+          ownerAdmissionHeadSuccessorHash: runClose.ownerAdmissionHeadSuccessorHash,
+          preservedFenceRef: activeFence.fenceRef,
+          preservedFenceHash: activeFence.fenceHash,
+        });
+        if (
+          sourceClose.ownerAdmissionHeadSuccessorHash !== runClose.ownerAdmissionHeadPredecessorHash
+          || release.releaseAuthority.targetReservationPairCloseRef !== pairClose.targetReservationPairCloseRef
+          || release.releaseAuthority.targetReservationPairCloseHash !== pairClose.targetReservationPairCloseHash
+        ) {
+          throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        }
+      }
+      activeFence = null;
+      remainingTargetReservations = [];
+      targetCloses = [];
+      continue;
+    }
+    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  }
+  return activeFence === null
+    ? Object.freeze({ activeFenceRef: null, activeFenceHash: null, activeTargetFamilyHash: null })
+    : Object.freeze({
+        activeFenceRef: activeFence.fenceRef,
+        activeFenceHash: activeFence.fenceHash,
+        activeTargetFamilyHash: activeFence.targetFamily.kind === "none"
+          ? null
+          : activeFence.targetFamily.targetFamilyHash,
+      });
+}
+
 
 export async function validateCurrentInternalProductionOwnerAdmissionHeadV1(sql: PgTransactionSql, row: Readonly<{ head_version: string|number; head_hash: string; active_fence_ref: string|null; active_fence_hash: string|null; active_target_family_hash: string|null; migration_application_evidence_hash: string; head_payload: unknown }>): Promise<Readonly<{version:number; hash:string; migrationApplication:OwnerAdmissionMigrationApplicationV1; activeFenceRef:string|null; activeFenceHash:string|null; activeTargetFamilyHash:string|null}>> {
   const version = Number(row.head_version);
@@ -312,6 +479,14 @@ export async function validateCurrentInternalProductionOwnerAdmissionHeadV1(sql:
   if (payload.schema !== "setfarm.internal-production-owner-admission-head.v1" || payload.version !== version) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
   if (version === 0) { if (row.head_hash !== "0".repeat(64)) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION"); }
   else if (typeof payload.predecessorHeadHash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(payload.predecessorHeadHash) || !["reservation", "close", "fence", "release"].includes(String(payload.transitionKind)) || typeof payload.transitionRef !== "string" || !OWNER_ADMISSION_REF_V1.test(payload.transitionRef) || typeof payload.transitionHash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(payload.transitionHash) || hashCanonicalJson(payload) !== row.head_hash) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  if (version > 0) await validateOwnerAdmissionAncestryToGenesisV1(sql, row.head_hash, version, migrationApplication);
+  const ancestry = version > 0
+    ? await validateOwnerAdmissionAncestryToGenesisV1(sql, row.head_hash, version, migrationApplication)
+    : Object.freeze([]);
+  const activeFence = deriveOwnerAdmissionActiveFenceProjectionV1(ancestry);
+  if (
+    row.active_fence_ref !== activeFence.activeFenceRef
+    || row.active_fence_hash !== activeFence.activeFenceHash
+    || row.active_target_family_hash !== activeFence.activeTargetFamilyHash
+  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
   return Object.freeze({version, hash:row.head_hash, migrationApplication, activeFenceRef:row.active_fence_ref, activeFenceHash:row.active_fence_hash, activeTargetFamilyHash:row.active_target_family_hash});
 }
