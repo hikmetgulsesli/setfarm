@@ -29,7 +29,10 @@ import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../db/contract-spine-migration-digests.generated.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST } from "../db/contract-spine-migration-source-integrity.js";
 import { projectBootstrapMainClaimHandoffV1Schema } from "../db/bootstrap-main-claim-handoff-v1-migration.js";
-import { verifyV3RecoveryClaimRuntimePublicationV1 } from "../db/contract-spine-migrations.js";
+import {
+  V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY,
+  verifyV3RecoveryClaimRuntimePublicationV1,
+} from "../db/contract-spine-migrations.js";
 import { verifyOperationalFailureCauseAuthorityV3CatalogV1 } from "../db/operational-failure-cause-authority-v3-catalog.js";
 import { replayV3HistoricalGitCommitAncestryV1 } from "../execution/v3-git-revision.js";
 import {
@@ -13516,14 +13519,16 @@ async function observeExactPoisonPostVisibleDatabaseEndpointNoWriteV1(
     authority.assertStable();
     if (!hasExactKeys(observed, ["schema", "state", "migrationName", "journal", "catalog"])
       || observed.schema !== "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1"
-      || observed.migrationName !== "033_v3_recovery_claim_runtime_publication_v1"
+      || observed.migrationName
+        !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.name
       || (observed.state !== "absent" && observed.state !== "current")) currentEntryFail("external migration-33 database observation is invalid");
     if (observed.state === "absent") {
       if (observed.journal !== null || observed.catalog !== null) currentEntryFail("external migration-33 database absence is crossed");
     } else {
       if (!isPlainRecord(observed.journal) || !isPlainRecord(observed.catalog)
         || observed.journal.ordinal !== 33 || observed.journal.state !== "current"
-        || observed.journal.checksum !== "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf"
+        || observed.journal.checksum
+          !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum
         || canonicalComparable(observed.catalog) !== canonicalComparable(Object.freeze({ bootstrapHandoffOperationTablePresent: true, bootstrapHandoffOperationIdUnique: true, bootstrapHandoffClaimIdUnique: true, terminalReceiptPairColumnsPresent: true, ownerReservationSidecarPresent: true, ownerAdmissionHeadPresent: true }))) currentEntryFail("external migration-33 database current projection is crossed");
     }
     const expectedBytes = task12ReceiptCanonicalBytesV1(observed);
@@ -14311,7 +14316,11 @@ async function observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1
       const expectedJournal = Object.freeze([
         Object.freeze({ version: 31, name: "031_operational_failure_cause_authority_v3", checksum: "7fba6cf62e2201dc12e64175611e3a77fe780bc5af98a62f5f353281e075ab8f" }),
         Object.freeze({ version: 32, name: "contract-spine-bootstrap-main-claim-handoff-v1", checksum: "d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d" }),
-        Object.freeze({ version: 33, name: "033_v3_recovery_claim_runtime_publication_v1", checksum: "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf" }),
+        Object.freeze({
+          version: 33,
+          name: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.name,
+          checksum: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum,
+        }),
       ]);
       const states: ("absent" | "current")[] = [];
       const checksums: (string | null)[] = [];

@@ -13,6 +13,7 @@ import {
   auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
+  V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY,
   verifyV3RecoveryClaimRuntimePublicationV1,
   verifyContractSpineMigrations,
   type BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1,
@@ -5600,7 +5601,8 @@ export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1
       || migration32.name !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
       || migration32.checksum !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM
       || migration32.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
-    const migrationName = "033_v3_recovery_claim_runtime_publication_v1" as const;
+    const migrationName =
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.name;
     if (migration33 === undefined) return Object.freeze({
       schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
       state: "absent" as const,
@@ -5609,7 +5611,8 @@ export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1
       catalog: null,
     });
     if (migration33.name !== migrationName
-      || migration33.checksum !== "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf"
+      || migration33.checksum
+        !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum
       || migration33.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
     await verifyV3RecoveryClaimRuntimePublicationV1(sql);
     return Object.freeze({

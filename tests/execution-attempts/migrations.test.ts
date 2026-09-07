@@ -105,8 +105,8 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "86c6e2e1ff1cf5bbedb6e2b0fdc4951733133ce4e8c835d5f8dba4defb7c628a",
-      "366a60b471443d89e386365fa58d35e36277baad654dab596e3a2335af01219d",
+      "00ebd7073d7fce8f68acbf7054db179403e9ccb44df4b8c15df145dcf81f52a5",
+      "d61009aebe3a1cca347a4a6132fa39e35855514b697f8132b3fc81ae506e3e95",
     ],
   );
   assert.match(
@@ -115,7 +115,7 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
   );
   assert.match(
     generatedDigests.toString("utf8"),
-    /33: "d3d0308a6c855a4badc4ad091c5b5807842310e8ec86d8e6e2cd2f395f58967c"/,
+    /33: "e55159dc7b0471ee757742ee978cdea3ddb52ff59ae457aa90208a74e3bb771a"/,
   );
 
   const start = databaseSource.indexOf("// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN");
@@ -450,6 +450,50 @@ describe("contract spine migration journal", () => {
                WHERE version = 33) AS journal_count
     `;
     assert.deepEqual({ ...state[0] }, { relation_name: null, journal_count: 0 });
+  });
+
+  it("rejects an unjournaled migration 33 schema before guarded migration 32", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+    await applyContractSpineMigrations(database.sql);
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (32, 33)`;
+    await database.sql.unsafe(`
+      DROP TABLE
+        internal_production_owner_producer_manifest_set_current_v1,
+        internal_production_owner_producer_manifest_activation_heads_v1,
+        internal_production_owner_producer_manifest_set_activations_v1,
+        internal_production_owner_producer_source_build_authorities_v1,
+        internal_production_owner_admission_head_v1,
+        internal_production_owner_admission_authorities_v1,
+        internal_production_owner_reservations_v1,
+        internal_production_bootstrap_main_claim_handoff_operations_v1
+      CASCADE
+    `);
+    await database.sql.unsafe("DROP FUNCTION ip_op_enforce_current_update_v1()");
+    await database.sql.unsafe("DROP FUNCTION ip_op_reject_immutable_v1()");
+    await database.sql.unsafe(
+      "DROP FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation()",
+    );
+
+    await assert.rejects(
+      applyContractSpineMigrations(database.sql),
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_INCOMPLETE",
+    );
+    const state = await database.sql<Array<{
+      relation_name: string | null;
+      maximum_version: number;
+    }>>`
+      SELECT to_regclass(
+               'public.internal_production_v3_recovery_claim_publications_v1'
+             )::text AS relation_name,
+             MAX(version)::integer AS maximum_version
+        FROM setfarm_schema_migrations
+    `;
+    assert.deepEqual({ ...state[0] }, {
+      relation_name: "internal_production_v3_recovery_claim_publications_v1",
+      maximum_version: 31,
+    });
   });
 
   it("applies migration 33 after guarded 32 with one exact release metadata triple", async () => {

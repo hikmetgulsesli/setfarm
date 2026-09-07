@@ -2507,7 +2507,7 @@ const PHASE5C_S_NONBLOCKED_ROWS_V1 = Object.freeze([
 const PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1 = Object.freeze({
   31: Object.freeze({ name: "031_operational_failure_cause_authority_v3", checksum: "7fba6cf62e2201dc12e64175611e3a77fe780bc5af98a62f5f353281e075ab8f" }),
   32: Object.freeze({ name: "contract-spine-bootstrap-main-claim-handoff-v1", checksum: "d152ec3d70de4221dc2a5bc79ccf46b4a6b89a3f5e8b966b8002a129d9e8c71d" }),
-  33: Object.freeze({ name: "033_v3_recovery_claim_runtime_publication_v1", checksum: "a0433b0fb06e751c33662e7563db2baf6e883d9f6bbd0a66648071d4d8a555cf" }),
+  33: Object.freeze({ name: "033_v3_recovery_claim_runtime_publication_v1", checksum: "98c1f855bd0ec1e20006d9a230c53e2fefc71a8ba3b4c3d2d6c567e09de96983" }),
 } as const);
 
 const PHASE5C_S_MIGRATION_32_CATALOG_V1 = Object.freeze({
@@ -14409,7 +14409,9 @@ function ensureBaselinePostHandoffImportSupportV1(root: string): void {
   ensure("src/db/contract-spine-migration-digests.generated.ts", 'export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS={31:"f052eff1b45df0f00ffb844fe0d23b542eafa4789da5e90a329a8d756dfcdc3a"};\n');
   ensure("src/db/contract-spine-migration-source-integrity.ts", "export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST={31:{}};\n");
   ensure("src/db/bootstrap-main-claim-handoff-v1-migration.ts", 'export async function projectBootstrapMainClaimHandoffV1Schema(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V32_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
-  ensure("src/db/contract-spine-migrations.ts", 'export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V33_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
+  ensure("src/db/contract-spine-migrations.ts", `export const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY=${JSON.stringify({ ordinal: 33, ...PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[33] })};
+export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V33_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }
+`);
   ensure("src/db/operational-failure-cause-authority-v3-catalog.ts", 'export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_V31_CATALOG_VERIFIER_NOT_INSTRUMENTED"); }\n');
   ensure("src/db-pg.ts", "export {};\n");
   ensure("src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P4_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); }
@@ -14615,7 +14617,9 @@ ${mutationMarker}`);
     'export async function projectBootstrapMainClaimHandoffV1Schema(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V32_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }',
   ));
   fixtureFile(root, "src/db/operational-failure-cause-authority-v3-catalog.ts", 'export async function verifyOperationalFailureCauseAuthorityV3CatalogV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V31_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
-  fixtureFile(root, "src/db/contract-spine-migrations.ts", 'export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V33_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }\n');
+  fixtureFile(root, "src/db/contract-spine-migrations.ts", `export const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY=${JSON.stringify({ ordinal: 33, ...PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[33] })};
+export async function verifyV3RecoveryClaimRuntimePublicationV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_V33_CATALOG_VERIFIER_CALLSITE_NOT_INSTRUMENTED"); }
+`);
   fixtureFile(root, "src/db-pg.ts", fixtureDatabasePortSource(options));
   fixtureFile(root, "src/installer/run.ts", `export async function observePersistedInternalProductionRecoverySourceBootstrapRunV1(input: unknown): Promise<Readonly<Record<string,unknown>>> { const probe=Reflect.get(globalThis,"__p5cSRecoveryAtRootDatabaseProbeV1") as undefined|{observe:(input:unknown)=>Promise<Readonly<Record<string,unknown>>>}; if(probe===undefined)throw new Error("P5C_S_RECOVERY_RUN_OBSERVER_NOT_INSTRUMENTED"); return await probe.observe(input); }
 export async function dispatchInternalProductionRecoverySourceBootstrapRunV1(..._args: readonly unknown[]): Promise<never> { throw new Error("P5C_S_RECOVERY_RUN_DISPATCH_NOT_INSTRUMENTED"); }
@@ -29343,6 +29347,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const result = await runFixtureExpressionAsync(root, expression);
       assert.equal(result.status, 0, result.stderr);
       const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
+      assert.equal(observed.length, 3, "the exact absent/current/crossed matrix is complete");
+      assert.equal(observed[0]?.outcome, "returned", String(observed[0]?.message ?? ""));
+      assert.equal(observed[1]?.outcome, "returned", String(observed[1]?.message ?? ""));
       assert.deepEqual(observed.slice(0, 2).map((value) => [value.outcome, value.calls, value.state, value.family, value.activeEndpointOrdinal, (value.current as Readonly<Record<string, unknown>>).state]), [
         ["returned", 1, "none", "database-33", null, "absent"],
         ["returned", 1, "publishing", "database-33", 0, "current"],
@@ -32608,9 +32615,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the complete database projection executes inside one exact read-only transaction");
     assert.match(databaseLeaf, /setfarm_schema_migrations[\s\S]*(?:migration32|version\s*=\s*32)[\s\S]*(?:===?\s*["']current["']|state\s*===?\s*["']applied["'])[\s\S]*(?:manifestRows|internal_production_owner_producer_manifest_set_current_v1)/i,
       "manifest relations are queried only after the same snapshot authenticates migration 32 current");
-    for (const { name, checksum } of Object.values(PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1)) {
+    for (const [version, { name, checksum }] of Object.entries(PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1)) {
       assert.match(databaseLeaf, new RegExp(name), `${name}: the migration journal row is checked against its exact immutable name`);
-      assert.match(databaseLeaf, new RegExp(checksum), `${name}: the migration journal row is checked against its exact immutable checksum`);
+      if (version === "33") {
+        assert.match(databaseLeaf, /V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY\.checksum/,
+          `${name}: the migration journal row consumes the code-owned registered journal identity`);
+      } else {
+        assert.match(databaseLeaf, new RegExp(checksum), `${name}: the migration journal row is checked against its exact immutable checksum`);
+      }
     }
     for (const literal of [
       ...PHASE5C_S_MIGRATION_32_CATALOG_V1.relations,

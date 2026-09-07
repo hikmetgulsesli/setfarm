@@ -13443,6 +13443,13 @@ function assertSemanticMigrationDefinitionsAreSourceBound(): void {
 assertSemanticMigrationDefinitionsAreSourceBound();
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-registration:END
 
+export const V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY =
+  Object.freeze({
+    ordinal: 33 as const,
+    name: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_ID,
+    checksum: checksum(migration33),
+  });
+
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-authority-audit:BEGIN
 export async function auditCurrentArtifactPublicationAuthorityLedgerData(
   sql: Sql,
@@ -17384,6 +17391,21 @@ export async function applyContractSpineMigrations(
         throw new ContractSpineMigrationError(
           "MIGRATION_INCOMPLETE",
           "Migration 33 cannot precede guarded migration 32",
+        );
+      }
+      if (
+        !preflight32
+        && await detectBootstrapMainClaimHandoffV1Schema(transaction) !== "absent"
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Guarded migration 32 refuses partial or adoptable schema before migration 33",
+        );
+      }
+      if (!preflight32 && preflight33Detection === "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 33 schema cannot precede guarded migration 32",
         );
       }
       if (preflight33) {
