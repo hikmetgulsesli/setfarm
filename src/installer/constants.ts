@@ -131,11 +131,16 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
   ...COMPILER_OWNED_CONTEXT_KEYS,
 ]);
 
+const PLATFORM_OWNED_CONTEXT_DISCRIMINATOR_KEYS = new Set([
+  "schema",
+]);
+
 export function isStepOutputContextKeyProtected(
   key: string,
   context: Readonly<Record<string, string>>,
 ): boolean {
-  return COMPILER_OWNED_CONTEXT_KEYS.has(key)
+  return PLATFORM_OWNED_CONTEXT_DISCRIMINATOR_KEYS.has(key)
+    || COMPILER_OWNED_CONTEXT_KEYS.has(key)
     || (
       context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
       && RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS.has(key)

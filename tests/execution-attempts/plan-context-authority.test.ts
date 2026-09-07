@@ -40,6 +40,25 @@ describe("PLAN compiler-owned context authority", () => {
     assert.equal(context.design_required, "true");
   });
 
+  it("rejects ordinary-run introduction of the recovery schema discriminator", () => {
+    const context: Record<string, string> = {
+      task: "build an ordinary project",
+      repo: "/projects/ordinary",
+      branch: "main",
+    };
+    const parsed = parseOutputKeyValues([
+      "STATUS: done",
+      "SCHEMA: setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
+      "FEATURE: retained ordinary output",
+    ].join("\n"));
+
+    assert.equal(isStepOutputContextKeyProtected("schema", context), true);
+    mergeContextSafe(context, parsed);
+
+    assert.equal(context.schema, undefined);
+    assert.equal(context.feature, "retained ordinary output");
+  });
+
   it("rejects every normalized agent-output alias of recovery run authority", () => {
     const fenceAliases = parseOutputKeyValues(JSON.stringify({
       ownerAdmissionFenceRef: "forged-ref",
