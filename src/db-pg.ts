@@ -3824,6 +3824,7 @@ export async function reobserveInternalProductionGlobalOwnerAdmissionFenceV1(inp
     || !OWNER_ADMISSION_SHA256_V1.test(input.fenceHash)
   ) throw new TypeError("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PAIR_INVALID");
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "present");
     if (
       head.activeFenceRef !== input.fenceRef
@@ -3896,6 +3897,7 @@ export async function closeInternalProductionSourceRunLaunchTargetReservationsUn
     ) throw new TypeError("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_INVALID");
   }
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "present");
     if (head.activeFenceRef !== input.fenceRef || head.activeFenceHash !== input.fenceHash) {
       throw new Error("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_NOT_ACTIVE");
@@ -4127,6 +4129,7 @@ export async function releaseInternalProductionGlobalOwnerAdmissionFenceV1(input
     || !OWNER_ADMISSION_SHA256_V1.test(input.fenceHash)
   ) throw new TypeError("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INPUT_INVALID");
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "either");
     if (head.activeFenceRef === null) {
       const rows = await sql<OwnerAdmissionAuthorityRowV1[]>`

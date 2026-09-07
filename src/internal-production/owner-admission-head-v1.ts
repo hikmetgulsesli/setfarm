@@ -140,171 +140,183 @@ export async function validateOwnerAdmissionAncestryToGenesisV1(
     }
     return Object.freeze([]);
   }
-  if (seen.has(headHash)) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  seen.add(headHash);
-  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE successor_head_hash=${headHash} AND predecessor_head_hash<>successor_head_hash`;
-  const fenceAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "fence");
-  if (fenceAuthorities.length === 1) {
-    const authority = fenceAuthorities[0]!;
-    let fence: InternalProductionGlobalOwnerAdmissionFenceV1;
-    try {
-      fence = validateInternalProductionGlobalOwnerAdmissionFenceV1(authority.authority_body);
-    } catch {
+  const inventory = await sql<OwnerAdmissionAuthorityRowV1[]>`
+    SELECT authority_ref,authority_hash,authority_kind,phase_key,
+           predecessor_head_hash,successor_head_hash,authority_body
+      FROM internal_production_owner_admission_authorities_v1
+     WHERE predecessor_head_hash<>successor_head_hash
+     ORDER BY successor_head_hash,authority_kind,authority_ref
+  `;
+  const bySuccessor = new Map<string, OwnerAdmissionAuthorityRowV1[]>();
+  for (const authority of inventory) {
+    const group = bySuccessor.get(authority.successor_head_hash) ?? [];
+    group.push(authority);
+    bySuccessor.set(authority.successor_head_hash, group);
+  }
+  const ancestry: OwnerAdmissionAdvancingAuthorityV1[] = [];
+  let currentHeadHash = headHash;
+  let currentVersion = version;
+  while (currentVersion > 0) {
+    if (seen.has(currentHeadHash)) {
       throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
     }
-    const expectedCount = fence.targetFamily.kind === "source-run-launch" ? 3 : 1;
-    if (authorities.length !== expectedCount) {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    const transition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
-      purpose: fence.purpose,
-      pendingInputRef: fence.pendingInputRef,
-      pendingInputHash: fence.pendingInputHash,
-      targetFamilyHash: fence.targetFamily.kind === "source-run-launch"
-        ? fence.targetFamily.targetFamilyHash
-        : hashCanonicalJson(fence.targetFamily),
-      ownerIdentitySetHash: fence.ownerIdentitySetHash,
-    });
-    const expectedSuccessor = ownerAdmissionSuccessorV1({
-      version: version - 1,
-      predecessorHeadHash: authority.predecessor_head_hash,
-      transitionKind: "fence",
-      transitionRef: transition.transitionRef,
-      transitionHash: transition.transitionHash,
-      migrationApplication,
-    });
-    if (
-      expectedSuccessor.hash !== headHash
-      || fence.ownerAdmissionHeadHash !== headHash
-      || authority.authority_ref !== fence.fenceRef
-      || authority.authority_hash !== fence.fenceHash
-      || authority.phase_key !== fence.pendingInputRef
-      || authority.predecessor_head_hash !== fence.predecessorFenceHeadHash
-      || !sameJsonValueV1(authority.authority_body, fence)
-    ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    if (fence.targetFamily.kind === "source-run-launch") {
-      const reservations = authorities.filter(({ authority_kind }) => authority_kind === "reservation");
-      const expectedPairs = [
-        fence.targetFamily.sourceRunReservation,
-        fence.targetFamily.runReservation,
-      ];
-      if (reservations.length !== 2 || expectedPairs.some((pair) => !reservations.some((candidate) => (
-        candidate.authority_ref === pair.reservationRef
-        && candidate.authority_hash === pair.reservationHash
-        && candidate.predecessor_head_hash === authority.predecessor_head_hash
-        && candidate.successor_head_hash === headHash
-      )))) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    const predecessors = await validateOwnerAdmissionAncestryToGenesisV1(
-      sql,
-      authority.predecessor_head_hash,
-      version - 1,
-      migrationApplication,
-      seen,
-    );
-    return Object.freeze([
-      ...authorities.map((member) => Object.freeze({ version, authority: member })),
-      ...predecessors,
-    ]);
-  }
-  const authority = authorities[0];
-  if (authorities.length !== 1 || !authority) {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  let expectedSuccessor: ReturnType<typeof ownerAdmissionSuccessorV1>;
-  try {
-    if (authority.authority_kind === "reservation") {
-      const body = authority.authority_body as Partial<InternalProductionOwnerReservationV1>;
-      const producer = typeof body.producerImplementationId === "string"
-        ? ownerProducerRowForImplementationV1(body.producerImplementationId)
-        : undefined;
-      if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-      const reservation = validateInternalProductionOwnerReservationV1(body, producer);
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "reservation",
-        transitionRef: reservation.reservationRef,
-        transitionHash: reservation.reservationHash,
-        migrationApplication,
+    seen.add(currentHeadHash);
+    const authorities = bySuccessor.get(currentHeadHash) ?? [];
+    const fenceAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "fence");
+    let predecessorHeadHash: string;
+    if (fenceAuthorities.length === 1) {
+      const authority = fenceAuthorities[0]!;
+      let fence: InternalProductionGlobalOwnerAdmissionFenceV1;
+      try {
+        fence = validateInternalProductionGlobalOwnerAdmissionFenceV1(authority.authority_body);
+      } catch {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      const expectedCount = fence.targetFamily.kind === "source-run-launch" ? 3 : 1;
+      if (authorities.length !== expectedCount) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      const transition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+        purpose: fence.purpose,
+        pendingInputRef: fence.pendingInputRef,
+        pendingInputHash: fence.pendingInputHash,
+        targetFamilyHash: fence.targetFamily.kind === "source-run-launch"
+          ? fence.targetFamily.targetFamilyHash
+          : hashCanonicalJson(fence.targetFamily),
+        ownerIdentitySetHash: fence.ownerIdentitySetHash,
       });
-      if (
-        authority.authority_ref !== reservation.reservationRef
-        || authority.authority_hash !== reservation.reservationHash
-        || authority.phase_key !== reservation.reservationRef
-        || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, reservation)
-      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    } else if (authority.authority_kind === "close") {
-      const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
-      const transition = {
-        schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
-        reservationRef: close.reservationRef,
-        reservationHash: close.reservationHash,
-        terminalOwnerRef: close.terminalOwnerRef,
-        terminalOwnerHash: close.terminalOwnerHash,
-      };
-      const transitionHash = hashCanonicalJson(transition);
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "close",
-        transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
-        transitionHash,
-        migrationApplication,
-      });
-      if (
-        authority.authority_ref !== close.closeRef
-        || authority.authority_hash !== close.closeHash
-        || authority.phase_key !== close.reservationRef
-        || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, close)
-      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    } else if (authority.authority_kind === "release") {
-      const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(authority.authority_body);
-      const transition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
-        fenceRef: release.fenceRef,
-        fenceHash: release.fenceHash,
-        releaseAuthority: release.releaseAuthority,
-      });
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "release",
+      const expectedSuccessor = ownerAdmissionSuccessorV1({
+        version: currentVersion - 1,
+        predecessorHeadHash: authority.predecessor_head_hash,
+        transitionKind: "fence",
         transitionRef: transition.transitionRef,
         transitionHash: transition.transitionHash,
         migrationApplication,
       });
       if (
-        authority.authority_ref !== release.releaseRef
-        || authority.authority_hash !== release.releaseHash
-        || authority.phase_key !== release.fenceRef
-        || authority.predecessor_head_hash !== release.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, release)
+        expectedSuccessor.hash !== currentHeadHash
+        || fence.ownerAdmissionHeadHash !== currentHeadHash
+        || authority.authority_ref !== fence.fenceRef
+        || authority.authority_hash !== fence.fenceHash
+        || authority.phase_key !== fence.pendingInputRef
+        || authority.predecessor_head_hash !== fence.predecessorFenceHeadHash
+        || !sameJsonValueV1(authority.authority_body, fence)
       ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      if (fence.targetFamily.kind === "source-run-launch") {
+        const reservations = authorities.filter(({ authority_kind }) => authority_kind === "reservation");
+        const expectedPairs = [
+          fence.targetFamily.sourceRunReservation,
+          fence.targetFamily.runReservation,
+        ];
+        if (reservations.length !== 2 || expectedPairs.some((pair) => !reservations.some((candidate) => (
+          candidate.authority_ref === pair.reservationRef
+          && candidate.authority_hash === pair.reservationHash
+          && candidate.predecessor_head_hash === authority.predecessor_head_hash
+          && candidate.successor_head_hash === currentHeadHash
+        )))) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      predecessorHeadHash = authority.predecessor_head_hash;
     } else {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      const authority = authorities[0];
+      if (authorities.length !== 1 || !authority) {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      let expectedSuccessor: ReturnType<typeof ownerAdmissionSuccessorV1>;
+      try {
+        if (authority.authority_kind === "reservation") {
+          const body = authority.authority_body as Partial<InternalProductionOwnerReservationV1>;
+          const producer = typeof body.producerImplementationId === "string"
+            ? ownerProducerRowForImplementationV1(body.producerImplementationId)
+            : undefined;
+          if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+          const reservation = validateInternalProductionOwnerReservationV1(body, producer);
+          expectedSuccessor = ownerAdmissionSuccessorV1({
+            version: currentVersion - 1,
+            predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
+            transitionKind: "reservation",
+            transitionRef: reservation.reservationRef,
+            transitionHash: reservation.reservationHash,
+            migrationApplication,
+          });
+          if (
+            authority.authority_ref !== reservation.reservationRef
+            || authority.authority_hash !== reservation.reservationHash
+            || authority.phase_key !== reservation.reservationRef
+            || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
+            || !sameJsonValueV1(authority.authority_body, reservation)
+          ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        } else if (authority.authority_kind === "close") {
+          const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
+          const transition = {
+            schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+            reservationRef: close.reservationRef,
+            reservationHash: close.reservationHash,
+            terminalOwnerRef: close.terminalOwnerRef,
+            terminalOwnerHash: close.terminalOwnerHash,
+          };
+          const transitionHash = hashCanonicalJson(transition);
+          expectedSuccessor = ownerAdmissionSuccessorV1({
+            version: currentVersion - 1,
+            predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
+            transitionKind: "close",
+            transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
+            transitionHash,
+            migrationApplication,
+          });
+          if (
+            authority.authority_ref !== close.closeRef
+            || authority.authority_hash !== close.closeHash
+            || authority.phase_key !== close.reservationRef
+            || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
+            || !sameJsonValueV1(authority.authority_body, close)
+          ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        } else if (authority.authority_kind === "release") {
+          const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(authority.authority_body);
+          const transition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+            fenceRef: release.fenceRef,
+            fenceHash: release.fenceHash,
+            releaseAuthority: release.releaseAuthority,
+          });
+          expectedSuccessor = ownerAdmissionSuccessorV1({
+            version: currentVersion - 1,
+            predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
+            transitionKind: "release",
+            transitionRef: transition.transitionRef,
+            transitionHash: transition.transitionHash,
+            migrationApplication,
+          });
+          if (
+            authority.authority_ref !== release.releaseRef
+            || authority.authority_hash !== release.releaseHash
+            || authority.phase_key !== release.fenceRef
+            || authority.predecessor_head_hash !== release.ownerAdmissionHeadPredecessorHash
+            || !sameJsonValueV1(authority.authority_body, release)
+          ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        } else {
+          throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+        }
+      } catch {
+        throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      }
+      if (
+        expectedSuccessor.version !== currentVersion
+        || expectedSuccessor.hash !== currentHeadHash
+        || authority.successor_head_hash !== currentHeadHash
+        || authority.predecessor_head_hash !== expectedSuccessor.payload.predecessorHeadHash
+      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+      predecessorHeadHash = authority.predecessor_head_hash;
     }
-  } catch {
+    for (const authority of authorities) {
+      ancestry.push(Object.freeze({ version: currentVersion, authority }));
+    }
+    bySuccessor.delete(currentHeadHash);
+    currentHeadHash = predecessorHeadHash;
+    currentVersion -= 1;
+  }
+  if (currentHeadHash !== "0".repeat(64)) {
     throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
   }
-  if (
-    expectedSuccessor.version !== version
-    || expectedSuccessor.hash !== headHash
-    || authority.successor_head_hash !== headHash
-    || authority.predecessor_head_hash !== expectedSuccessor.payload.predecessorHeadHash
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  const predecessors = await validateOwnerAdmissionAncestryToGenesisV1(
-    sql,
-    authority.predecessor_head_hash,
-    version - 1,
-    migrationApplication,
-    seen,
-  );
-  return Object.freeze([
-    Object.freeze({ version, authority }),
-    ...predecessors,
-  ]);
+  return Object.freeze(ancestry);
 }
 
 function deriveOwnerAdmissionActiveFenceProjectionV1(

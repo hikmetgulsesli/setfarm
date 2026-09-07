@@ -367,6 +367,22 @@ describe("canonical run terminal owner", () => {
     assert.match(source.slice(proof, ordinary + 500), /recoverySourceBootstrapTerminal === null/);
     assert.match(source, /if \(terminalPair !== null\) \{/);
     const dbSource = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/db-pg.ts"), "utf8");
+    for (const [functionName, headCall] of [
+      ["reobserveInternalProductionGlobalOwnerAdmissionFenceV1", "lockOwnerAdmissionHeadV1(sql, \"present\")"],
+      ["closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1", "lockOwnerAdmissionHeadV1(sql, \"present\")"],
+      ["releaseInternalProductionGlobalOwnerAdmissionFenceV1", "lockOwnerAdmissionHeadV1(sql, \"either\")"],
+    ] as const) {
+      const lifecycleStart = dbSource.indexOf(`export async function ${functionName}(`);
+      const lifecycleEnd = dbSource.indexOf("\nexport ", lifecycleStart + 1);
+      assert.ok(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart);
+      const lifecycle = dbSource.slice(lifecycleStart, lifecycleEnd);
+      const insertionFence = lifecycle.indexOf("lockInternalProductionWorkflowRunInsertionFenceV1(sql)");
+      const ownerHead = lifecycle.indexOf(headCall);
+      assert.ok(
+        insertionFence >= 0 && ownerHead > insertionFence,
+        `${functionName} takes the shared insertion fence before owner-head and reservation locks, matching terminalization's global lock order`,
+      );
+    }
     assert.doesNotMatch(dbSource, /observeInternalProductionRecoverySourceBootstrapStatusV1/, "db-pg terminal proof cannot discover authority through the mutable zero-input status");
     assert.match(dbSource, /resolveInternalProductionRecoverySourceBootstrapRunReceiptV1/, "db-pg uses only the final pair-only run-receipt authority edge");
     const recoveryTerminalStart = dbSource.indexOf("export async function resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(");
@@ -3836,6 +3852,126 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
       releaseLock();
       await blocker.end();
       await database.cleanup();
+    }
+  });
+
+  it("serializes every source/run fence lifecycle operation on the terminal insertion fence before owner locks", async () => {
+    const database = await createIsolatedTestDatabase();
+    const postgresClient = (await import("postgres")).default;
+    const holder = postgresClient(database.url, { max: 1 });
+    try {
+      const fencePair = {
+        fenceRef: "setfarm://tests/run-terminal/source-run-fence-lifecycle/fence",
+        fenceHash: HASH_A,
+      };
+      const cases: ReadonlyArray<Readonly<{
+        label: string;
+        invoke: () => Promise<unknown>;
+        expectedError: RegExp;
+      }>> = [
+        {
+          label: "reobserve",
+          invoke: () => database.db.reobserveInternalProductionGlobalOwnerAdmissionFenceV1(fencePair),
+          expectedError: /INTERNAL_PRODUCTION_OWNER_ADMISSION_FENCE_UNAVAILABLE/,
+        },
+        {
+          label: "close",
+          invoke: () => database.db.closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1({
+            ...fencePair,
+            sourceRunReservationRef: "setfarm://tests/run-terminal/source-run-fence-lifecycle/source",
+            sourceRunReservationHash: HASH_A,
+            runReservationRef: "setfarm://tests/run-terminal/source-run-fence-lifecycle/run",
+            runReservationHash: HASH_A,
+            terminalSourceRunRef: "setfarm://tests/run-terminal/source-run-fence-lifecycle/terminal-source",
+            terminalSourceRunHash: HASH_A,
+            terminalRunLaunchRef: "setfarm://tests/run-terminal/source-run-fence-lifecycle/terminal-run",
+            terminalRunLaunchHash: HASH_A,
+          }),
+          expectedError: /INTERNAL_PRODUCTION_OWNER_ADMISSION_FENCE_UNAVAILABLE/,
+        },
+        {
+          label: "release",
+          invoke: () => database.db.releaseInternalProductionGlobalOwnerAdmissionFenceV1({
+            ...fencePair,
+            releaseAuthority: {} as never,
+          }),
+          expectedError: /INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_CONFLICT/,
+        },
+      ];
+      for (const testCase of cases) {
+        let releaseFence!: () => void;
+        const fenceRelease = new Promise<void>((resolve) => { releaseFence = resolve; });
+        let reportFenceHeld!: (pid: number) => void;
+        const fenceHeld = new Promise<number>((resolve) => { reportFenceHeld = resolve; });
+        let operation: Promise<Readonly<{ status: "fulfilled" | "rejected"; error: string }>> | undefined;
+        const heldFence = holder.begin(async (transaction) => {
+          const pidRows = await transaction<Array<{ pid: number }>>`
+            SELECT pg_backend_pid()::integer AS pid
+          `;
+          await transaction`
+            SELECT version
+              FROM public.setfarm_schema_migrations
+             WHERE version=31
+             FOR UPDATE
+          `;
+          reportFenceHeld(pidRows[0]!.pid);
+          await fenceRelease;
+        });
+        try {
+          const holderPid = await Promise.race([
+            fenceHeld,
+            heldFence.then(
+              () => { throw new Error("TEST_INSERTION_FENCE_HOLDER_EXITED_BEFORE_READY"); },
+              (error: unknown) => { throw error; },
+            ),
+          ]);
+          let observedOutcome: Readonly<{ status: "fulfilled" | "rejected"; error: string }> | undefined;
+          operation = testCase.invoke().then(
+            () => (observedOutcome = { status: "fulfilled" as const, error: "" }),
+            (error: unknown) => (observedOutcome = { status: "rejected" as const, error: String(error) }),
+          );
+          let waiters: Array<{ pid: number; waitEventType: string | null }> = [];
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            waiters = await database.sql<Array<{ pid: number; waitEventType: string | null }>>`
+              SELECT pid,wait_event_type AS "waitEventType"
+                FROM pg_stat_activity
+               WHERE datname=current_database()
+                 AND pid<>pg_backend_pid()
+                 AND ${holderPid}=ANY(pg_blocking_pids(pid))
+            `;
+            if (waiters.length === 1 && waiters[0]?.waitEventType === "Lock") break;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          const activities = waiters.length === 0
+            ? await database.sql<Array<{ pid: number; state: string | null; waitEventType: string | null; query: string }>>`
+                SELECT pid,state,wait_event_type AS "waitEventType",query
+                  FROM pg_stat_activity
+                 WHERE datname=current_database()
+                 ORDER BY pid
+              `
+            : [];
+          assert.equal(waiters.length, 1,
+            `expected ${testCase.label} to wait on the shared insertion fence, saw ${JSON.stringify({ waiters, activities, observedOutcome })}`);
+          assert.equal(waiters[0]?.waitEventType, "Lock");
+          releaseFence();
+          await heldFence;
+          const outcome = await operation;
+          assert.equal(outcome.status, "rejected");
+          assert.match(outcome.error, testCase.expectedError);
+        } finally {
+          releaseFence();
+          await Promise.allSettled([
+            heldFence,
+            operation ?? Promise.resolve(),
+          ]);
+        }
+      }
+    } finally {
+      try {
+        await holder.end();
+      } finally {
+        await database.cleanup();
+      }
     }
   });
 

@@ -547,9 +547,7 @@ test("current owner-admission head binds active fence projection to authenticate
     [crossedReservationSuccessor.hash, [crossedReservationAuthorityRow]],
     [releaseSuccessor.hash, [releaseAuthorityRow]],
   ]);
-  const sql = (async (_strings: TemplateStringsArray, ...values: unknown[]) => (
-    authorities.get(String(values[0])) ?? []
-  )) as never;
+  const sql = (async () => [...authorities.values()].flat()) as never;
   const activeRow = {
     head_version: fenceSuccessor.version,
     head_hash: fenceSuccessor.hash,
@@ -645,6 +643,78 @@ test("current owner-admission head binds active fence projection to authenticate
     }),
     /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
   );
+});
+
+test("current owner-admission head authenticates a long immutable history from one linear inventory", async () => {
+  const migrationApplicationBody = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1" as const,
+    evidenceHash: SHA_A,
+    authorizationRef: "setfarm://tests/owner-admission/linear/migration-authorization",
+    authorizationHash: SHA_B,
+    authorizationConsumptionRef: "setfarm://tests/owner-admission/linear/migration-consumption",
+    authorizationConsumptionHash: SHA_C,
+  };
+  const migrationApplication = validateOwnerAdmissionMigrationApplicationV1({
+    ...migrationApplicationBody,
+    applicationHash: hashCanonicalJson(migrationApplicationBody),
+  }, SHA_A);
+  const producer = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0]!;
+  const authorities: Array<Readonly<{
+    authority_ref: string;
+    authority_hash: string;
+    authority_kind: "reservation";
+    phase_key: string;
+    predecessor_head_hash: string;
+    successor_head_hash: string;
+    authority_body: unknown;
+  }>> = [];
+  let predecessorHeadHash = "0".repeat(64);
+  let successor = null as ReturnType<typeof ownerAdmissionSuccessorV1> | null;
+  for (let ordinal = 0; ordinal < 3_000; ordinal += 1) {
+    const reservation = createInternalProductionOwnerReservationV1({
+      producer,
+      ownerKey: `owner-admission-linear-${ordinal}`,
+      ownerAdmissionHeadPredecessorHash: predecessorHeadHash,
+    });
+    successor = ownerAdmissionSuccessorV1({
+      version: ordinal,
+      predecessorHeadHash,
+      transitionKind: "reservation",
+      transitionRef: reservation.reservationRef,
+      transitionHash: reservation.reservationHash,
+      migrationApplication,
+    });
+    authorities.push(Object.freeze({
+      authority_ref: reservation.reservationRef,
+      authority_hash: reservation.reservationHash,
+      authority_kind: "reservation",
+      phase_key: reservation.reservationRef,
+      predecessor_head_hash: predecessorHeadHash,
+      successor_head_hash: successor.hash,
+      authority_body: reservation,
+    }));
+    predecessorHeadHash = successor.hash;
+  }
+  assert.ok(successor !== null);
+  let inventoryQueries = 0;
+  const sql = (async () => {
+    inventoryQueries += 1;
+    return authorities;
+  }) as never;
+  const validated = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, {
+    head_version: successor.version,
+    head_hash: successor.hash,
+    active_fence_ref: null,
+    active_fence_hash: null,
+    active_target_family_hash: null,
+    migration_application_evidence_hash: SHA_A,
+    head_payload: successor.payload,
+  });
+  assert.equal(inventoryQueries, 1,
+    "head validation reads the immutable authority inventory once instead of querying once per generation");
+  assert.equal(validated.version, 3_000);
+  assert.equal(validated.hash, successor.hash);
+  assert.equal(validated.activeFenceRef, null);
 });
 
 test("source-run owner-admission fence projection requires its ordered target drain before release", async () => {
@@ -876,9 +946,7 @@ test("source-run owner-admission fence projection requires its ordered target dr
     [runCloseSuccessor.hash, [closeAuthority(runClose)]],
     [releaseSuccessor.hash, [releaseAuthorityRow]],
   ]);
-  const sql = (async (_strings: TemplateStringsArray, ...values: unknown[]) => (
-    authorities.get(String(values[0])) ?? []
-  )) as never;
+  const sql = (async () => [...authorities.values()].flat()) as never;
   const rowAt = (successor: typeof fenceSuccessor, active: boolean) => ({
     head_version: successor.version,
     head_hash: successor.hash,

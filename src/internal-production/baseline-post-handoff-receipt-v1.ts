@@ -31,8 +31,6 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST } from "../db/contrac
 import { projectBootstrapMainClaimHandoffV1Schema } from "../db/bootstrap-main-claim-handoff-v1-migration.js";
 import { verifyV3RecoveryClaimRuntimePublicationV1 } from "../db/contract-spine-migrations.js";
 import { verifyOperationalFailureCauseAuthorityV3CatalogV1 } from "../db/operational-failure-cause-authority-v3-catalog.js";
-import * as recoverySourceBootstrapDatabaseV1 from "../db-pg.js";
-import * as recoverySourceBootstrapInstallerV1 from "../installer/run.js";
 import { replayV3HistoricalGitCommitAncestryV1 } from "../execution/v3-git-revision.js";
 import {
   createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
@@ -12466,7 +12464,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
         const observePersistedDatabase = (): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> => {
           if (databaseObservation !== null) return databaseObservation;
           databaseObservation = (async (): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> => {
-            const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
+            const installer = await import("../installer/run.js") as unknown as Readonly<Record<string, unknown>>;
             const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
             if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source prepared database observer is unavailable");
             const observed = await (observer as (input: Readonly<{ recoveryOperationAuthority: ReturnType<typeof createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1> }>) => Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1>)({
@@ -12549,7 +12547,7 @@ async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(
         const observeDatabase = (): Promise<"current"> => {
           if (databaseObservation !== null) return databaseObservation;
           databaseObservation = (async (): Promise<"current"> => {
-            const installer = recoverySourceBootstrapInstallerV1 as unknown as Readonly<Record<string, unknown>>;
+            const installer = await import("../installer/run.js") as unknown as Readonly<Record<string, unknown>>;
             const observer = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
             if (typeof observer !== "function" || observer.length !== 1) currentEntryFail("recovery-source terminal database observer is unavailable");
             const observed = await (observer as (input: Readonly<{ recoveryOperationAuthority: ReturnType<typeof createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1> }>) => Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1>)({
@@ -19317,7 +19315,7 @@ async function resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSel
   const sourceTerminal = await resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalSourceRunRef: String(value.terminalSourceRunRef), terminalSourceRunHash: String(value.terminalSourceRunHash) });
   const runTerminal = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalRunLaunchRef: String(value.terminalRunLaunchRef), terminalRunLaunchHash: String(value.terminalRunLaunchHash) });
   const pairClose = await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, { targetReservationPairCloseRef: String(value.targetReservationPairCloseRef), targetReservationPairCloseHash: String(value.targetReservationPairCloseHash) });
-  const db = recoverySourceBootstrapDatabaseV1 as unknown as Record<string, unknown>;
+  const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
   const resolveRelease = db.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1;
   if (typeof resolveRelease !== "function" || resolveRelease.length !== 1) currentEntryFail("recovery source bootstrap fence release resolver is unavailable");
   const release = await (resolveRelease as (pair: unknown) => Promise<Record<string, unknown>>)({ releaseRef: value.fenceReleaseRef, releaseHash: value.fenceReleaseHash });
@@ -19530,12 +19528,12 @@ async function resumeRecoverySourceBootstrapHeldLockV1(context: SelectedCurrentE
   const visible = recoverySourceBootstrapVisibilityPairV1(context);
   if (visible.state !== "prepared" || visible.operationRef !== operation.operationRef || visible.operationHash !== operation.operationHash) currentEntryFail("RECOVERY_SOURCE_BOOTSTRAP_PREFIX_AMBIGUOUS");
   const heldAuthority = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(operation);
-  const db = recoverySourceBootstrapDatabaseV1 as unknown as Record<string, unknown>;
+  const db = await import("../db-pg.js") as unknown as Record<string, unknown>;
   const reobserveFence = db.reobserveInternalProductionGlobalOwnerAdmissionFenceV1;
   const closeTargets = db.closeInternalProductionSourceRunLaunchTargetReservationsUnderFenceV1;
   const releaseFence = db.releaseInternalProductionGlobalOwnerAdmissionFenceV1;
   if (typeof reobserveFence !== "function" || reobserveFence.length !== 1 || typeof closeTargets !== "function" || closeTargets.length !== 1 || typeof releaseFence !== "function" || releaseFence.length !== 1) currentEntryFail("recovery source bootstrap fence lifecycle ports are unavailable");
-  const installer = recoverySourceBootstrapInstallerV1 as unknown as Record<string, unknown>;
+  const installer = await import("../installer/run.js") as unknown as Record<string, unknown>;
   const observePersisted = installer.observePersistedInternalProductionRecoverySourceBootstrapRunV1;
   const dispatchForAuthority = installer.dispatchInternalProductionRecoverySourceBootstrapRunForAuthorityV1;
   if (typeof observePersisted !== "function" || observePersisted.length !== 1 || typeof dispatchForAuthority !== "function" || dispatchForAuthority.length !== 1) currentEntryFail("recovery source bootstrap durable-run ports are unavailable");

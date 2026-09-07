@@ -37433,14 +37433,26 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "../db/bootstrap-main-claim-handoff-v1-migration.js",
       "../db/contract-spine-migrations.js",
       "../db/operational-failure-cause-authority-v3-catalog.js",
-      "../db-pg.js",
-      "../installer/run.js",
       "../execution/v3-git-revision.js",
       "../execution/recovery-source-bootstrap-run-authority-v1.js",
       "./owner-admission-v1.js",
       "./product-build-authority-v2-delivery-evidence-v1.js",
       "./baseline-spawner-startup-admission-v1.js",
     ], "the import-inert observer freezes its exact reviewed source dependency set");
+    assert.doesNotMatch(source, /^import[^;]+from\s+["']\.\.\/(?:db-pg|installer\/run)[.]js["'];/m,
+      "receipt evaluation has no static reverse edge into database or installer composition");
+    const receiptResolverStart = source.indexOf("async function resolveInternalProductionRecoverySourceBootstrapRunReceiptWithSelectedCurrentEntryStoreContextV1(");
+    const receiptResolverEnd = source.indexOf("\nfunction recoverySourceBootstrapPairClosePathV1(", receiptResolverStart);
+    assert.ok(receiptResolverStart >= 0 && receiptResolverEnd > receiptResolverStart);
+    assert.match(source.slice(receiptResolverStart, receiptResolverEnd),
+      /await import\(["']\.\.\/db-pg[.]js["']\)/,
+      "the final run-receipt resolver loads its pair-only database edge only when invoked");
+    const resumeStart = source.indexOf("async function resumeRecoverySourceBootstrapHeldLockV1(");
+    const resumeEnd = source.indexOf("\nexport async function resumeActiveInternalProductionRecoverySourceBootstrapRunV1(", resumeStart);
+    assert.ok(resumeStart >= 0 && resumeEnd > resumeStart);
+    assert.match(source.slice(resumeStart, resumeEnd),
+      /await import\(["']\.\.\/installer\/run[.]js["']\)/,
+      "Task 12 resume loads installer composition only inside the invoked async boundary");
   });
 
   it("returns only the clean current source tuple and exact controller build hash", () => {
