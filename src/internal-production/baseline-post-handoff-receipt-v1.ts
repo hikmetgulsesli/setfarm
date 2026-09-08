@@ -1343,6 +1343,12 @@ type CurrentEntryStoreRecordPairV1 = Readonly<{
   hash: Sha256V1;
 }>;
 
+type CurrentEntryPrerequisiteRecordV1<TValue> = Readonly<{
+  value: TValue;
+  bytes: Buffer;
+  pair: CurrentEntryStoreRecordPairV1;
+}>;
+
 type CurrentEntryStoreSuccessorGenesisEntryV1 = Readonly<{
   locator: string;
   mode: "0600";
@@ -2289,6 +2295,19 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
 async function observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  const record = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+  publishLegacyZeroRecordV1(
+    currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", record.pair.hash),
+    record.bytes,
+    true,
+  );
+  return resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, v31Pair(record.value));
+}
+
+async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<CurrentEntryPrerequisiteRecordV1<InternalProductionAuthorityV3Migration31AuditV1>> {
+  requireSelectedCurrentEntryStoreContextStateV1(context);
   const ports = await import("../db-pg.js") as Readonly<{
     auditCurrentInternalProductionAuthorityV3Migration31V1?: () => Promise<Readonly<{ authorityV3ContractSpineThroughMigration31: Migration31AuditDataV1; currentAuthorityAudit: CurrentAuthorityAuditV1 }>>;
   }>;
@@ -2322,12 +2341,14 @@ async function observeCurrentInternalProductionAuthorityV3Migration31AuditWithSe
   });
   const bytes = await canonicalRecordBytes(value);
   await validateCurrentEntryRecordBytes("authorityV3Migration31Audit", bytes);
-  publishLegacyZeroRecordV1(
-    currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", authorityV3Migration31AuditHash),
+  return Object.freeze({
+    value,
     bytes,
-    true,
-  );
-  return resolveInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context, v31Pair(value));
+    pair: Object.freeze({
+      ref: value.authorityV3Migration31AuditRef,
+      hash: value.authorityV3Migration31AuditHash,
+    }),
+  });
 }
 
 export async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1(): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
@@ -2338,6 +2359,19 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
 async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  const record = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  publishLegacyZeroRecordV1(
+    currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", record.pair.hash),
+    record.bytes,
+    true,
+  );
+  return resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, pendingPair(record.value));
+}
+
+async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<CurrentEntryPrerequisiteRecordV1<InternalProductionPendingBootstrapHandoffMigrationProjectionV1>> {
+  requireSelectedCurrentEntryStoreContextStateV1(context);
   const ports = await import("../db-pg.js") as Readonly<{
     inspectCurrentInternalProductionPendingBootstrapHandoffMigrationV1?: () => Promise<PendingSuccessorV1>;
   }>;
@@ -2359,12 +2393,14 @@ async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationW
   });
   const bytes = await canonicalRecordBytes(value);
   await validateCurrentEntryRecordBytes("pendingBootstrapHandoffMigration", bytes);
-  publishLegacyZeroRecordV1(
-    currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", pendingBootstrapHandoffMigrationHash),
+  return Object.freeze({
+    value,
     bytes,
-    true,
-  );
-  return resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(context, pendingPair(value));
+    pair: Object.freeze({
+      ref: value.pendingBootstrapHandoffMigrationRef,
+      hash: value.pendingBootstrapHandoffMigrationHash,
+    }),
+  });
 }
 
 export async function resolveInternalProductionAuthorityV3Migration31AuditV1(

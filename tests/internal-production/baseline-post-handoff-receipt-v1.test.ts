@@ -37075,6 +37075,117 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("P4c current prerequisite builders remain no-write until public publication", () => {
+    const fixture = createFixture();
+    try {
+      const modulePath = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      let source = readFileSync(modulePath, "utf8");
+      const exposePrivate = (name: string): void => {
+        const marker = `async function ${name}(`;
+        if (source.includes(marker)) source = source.replace(marker, `export async function ${name}(`);
+      };
+      exposePrivate("selectCurrentEntryStoreContextV1");
+      exposePrivate("buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1");
+      exposePrivate("buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1");
+      const publisher = topLevelFunctionRegionV1(source, "publishLegacyZeroRecordV1");
+      const publisherHeader = `function publishLegacyZeroRecordV1(
+  target: string,
+  bytes: Buffer,
+  allowUnequalIncompleteTempCleanup = false,
+  beforeAnyMutation?: () => void,
+): void {
+`;
+      const instrumentedPublisher = publisher.replace(
+        publisherHeader,
+        `export ${publisherHeader}  const p4cProbe = Reflect.get(globalThis, "__p4cCurrentPrerequisitePublicationProbeV1") as undefined | { publication: Array<{ target: string; bytesBase64: string }> };
+  p4cProbe?.publication.push({ target, bytesBase64: bytes.toString("base64") });
+`,
+      );
+      assert.notEqual(instrumentedPublisher, publisher, "fixture instruments the real immutable publication seam");
+      source = source.replace(publisher, () => instrumentedPublisher);
+      writeFileSync(modulePath, source);
+      git(fixture, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      git(fixture, ["commit", "-qm", "fixture current prerequisite publication seam"]);
+      git(fixture, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const prepared = runProducer(fixture, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      materializeOutputs(fixture);
+      const finalized = runProducer(fixture, "--finalize");
+      assert.equal(finalized.status, 0, finalized.stderr);
+
+      const store = currentEntryStore(fixture);
+      const observed = runFixtureExpression(fixture, `(async () => {
+        const fs = await import("node:fs");
+        const probe = { publication: [] };
+        Reflect.set(globalThis, "__p4cCurrentPrerequisitePublicationProbeV1", probe);
+        const context = await m.selectCurrentEntryStoreContextV1();
+        const authority = await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+        const pending = await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+        const beforePublic = { publicationCount: probe.publication.length, storeExists: fs.existsSync(${JSON.stringify(store)}) };
+        const observedAuthority = await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
+        const observedPending = await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+        process.stdout.write(JSON.stringify({
+          authority: { value: authority.value, bytesBase64: authority.bytes.toString("base64"), pair: authority.pair },
+          pending: { value: pending.value, bytesBase64: pending.bytes.toString("base64"), pair: pending.pair },
+          beforePublic,
+          observedAuthority,
+          observedPending,
+          publication: probe.publication,
+        }));
+      })()`);
+      assert.equal(observed.status, 0, observed.stderr);
+      const result = JSON.parse(observed.stdout) as Readonly<{
+        authority: Readonly<{ value: Record<string, string>; bytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        pending: Readonly<{ value: Record<string, string>; bytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        beforePublic: Readonly<{ publicationCount: number; storeExists: boolean }>;
+        observedAuthority: Record<string, string>;
+        observedPending: Record<string, string>;
+        publication: readonly Readonly<{ target: string; bytesBase64: string }>[];
+      }>;
+
+      assert.deepEqual(result.beforePublic, { publicationCount: 0, storeExists: false }, "both builders leave an absent store untouched");
+      assert.deepEqual(result.observedAuthority, result.authority.value, "the public authority observer returns its builder value");
+      assert.deepEqual(result.observedPending, result.pending.value, "the public pending observer returns its builder value");
+      assert.deepEqual(result.authority.pair, {
+        ref: result.authority.value.authorityV3Migration31AuditRef,
+        hash: result.authority.value.authorityV3Migration31AuditHash,
+      }, "the authority builder returns its exact pair");
+      assert.deepEqual(result.pending.pair, {
+        ref: result.pending.value.pendingBootstrapHandoffMigrationRef,
+        hash: result.pending.value.pendingBootstrapHandoffMigrationHash,
+      }, "the pending builder returns its exact pair");
+      assert.equal(result.publication.length, 2, "the two public wrappers publish exactly once each");
+      assert.deepEqual(result.publication.map((entry) => ({
+        ...entry,
+        target: entry.target.replace(/^\/private/, ""),
+      })), [
+        {
+          target: currentEntryPrerequisiteRecord(fixture, "authority-v3-migration31-audits", result.authority.pair.hash),
+          bytesBase64: result.authority.bytesBase64,
+        },
+        {
+          target: currentEntryPrerequisiteRecord(fixture, "pending-bootstrap-handoff-migrations", result.pending.pair.hash),
+          bytesBase64: result.pending.bytesBase64,
+        },
+      ], "public wrappers publish the builders' exact canonical bytes to their exact content-addressed targets");
+      assert.equal(readFileSync(result.publication[0]!.target).toString("base64"), result.authority.bytesBase64);
+      assert.equal(readFileSync(result.publication[1]!.target).toString("base64"), result.pending.bytesBase64);
+
+      for (const builder of [
+        topLevelFunctionRegionV1(source, "buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1"),
+        topLevelFunctionRegionV1(source, "buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1"),
+      ]) {
+        assert.doesNotMatch(builder, /readdirSync|latest/i, "a builder never selects a latest record");
+        assert.doesNotMatch(builder, /observeCurrentInternalProduction(?:AuthorityV3Migration31Audit|PendingBootstrapHandoffMigration)V1/, "a builder never calls a public observer");
+        assert.doesNotMatch(builder, /publishLegacyZeroRecordV1|publishCurrentEntryRecord/, "a builder never publishes or repairs a record");
+      }
+      const recovery = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+      assert.doesNotMatch(recovery, /observeCurrentInternalProductionAuthorityV3Migration31AuditV1|observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1/, "recovery never calls a public prerequisite observer");
+    } finally {
+      removeFixture(fixture);
+    }
+  });
+
   it("P4 publishes content-addressed prerequisites and adopts one fixed current-entry operation", () => {
       const fixture = finalizedFixture({ stubServiceCensus: true });
       try {
