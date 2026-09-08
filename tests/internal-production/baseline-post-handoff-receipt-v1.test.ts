@@ -14260,6 +14260,176 @@ function buildExactPoisonPublisherRawObservationsV1(
   });
 }
 
+type ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1 = Readonly<{
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+  target: string;
+  value: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+  pair: Readonly<{ ref: string; hash: string }>;
+}>;
+
+function instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(
+  root: string,
+  original: ExactOriginalPoisonStoreFixtureV1,
+  statFault: "uid" | "device" | null = null,
+): void {
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const expose = (marker: string, replacement: string): void => {
+    assert.equal(source.split(marker).length - 1, 1, `copied overlay fixture locates ${marker}`);
+    source = source.replace(marker, replacement);
+  };
+  expose("async function selectCurrentEntryStoreContextV1(", "export async function selectCurrentEntryStoreContextV1(");
+  expose("async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(", "export async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(");
+  expose("async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(", "export async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(");
+  expose("function currentEntryPrerequisiteRecordPathV1(", "export function currentEntryPrerequisiteRecordPathV1(");
+  expose("function fixedLegacyCurrentEntryOperationPathV1(", "export function fixedLegacyCurrentEntryOperationPathV1(");
+  expose("function requireExactPoisonRecoverySnapshotV1(", "export function requireExactPoisonRecoverySnapshotV1(");
+  expose("function observeExactPoisonQuarantinedInventoryV1(", "export function observeExactPoisonQuarantinedInventoryV1(");
+  expose("async function observeExactPoisonQuarantineAdmissionCoreV1(", "export async function observeExactPoisonQuarantineAdmissionCoreV1(");
+  const overlayBuilder = "async function buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(";
+  if (source.includes(overlayBuilder)) source = source.replace(overlayBuilder, `export ${overlayBuilder}`);
+
+  const admission = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionCoreV1");
+  const observedCall = "  const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory);";
+  const frontierCall = "  assertExactPoisonRecoveryFrontierV1(observed.candidates, heldWriter);";
+  assert.equal(admission.split(observedCall).length - 1, 1, "copied overlay fixture isolates one unrelated no-write candidate build");
+  assert.equal(admission.split(frontierCall).length - 1, 1, "copied overlay fixture isolates one unrelated recovery frontier");
+  const isolatedAdmission = admission
+    .replace(observedCall, "  const observed = Object.freeze({ candidates: Object.freeze([]) }) as unknown as ExactPoisonRecoveryNoWriteFenceV1;")
+    .replace(frontierCall, "  void observed;");
+  source = source.replace(admission, () => isolatedAdmission);
+
+  const inventory = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantinedInventoryV1");
+  const writerLockMember = '["records", new Set([recoveryLock, "authority-v3-migration31-audits", "pending-bootstrap-handoff-migrations"])],';
+  assert.equal(inventory.split(writerLockMember).length - 1, 1, "copied overlay fixture isolates the unrelated held-writer lock member");
+  const finalFence = "  assertStableOriginals();\n  return Object.freeze({";
+  assert.equal(inventory.split(finalFence).length - 1, 1, "copied overlay fixture locates the inventory final stability fence");
+  const hookedInventory = inventory
+    .replace(writerLockMember, '["records", new Set(["authority-v3-migration31-audits", "pending-bootstrap-handoff-migrations"])],')
+    .replace(
+      finalFence,
+      `  { const hook = Reflect.get(globalThis, "__p4cExactPoisonOverlayFinalFenceV1"); if (typeof hook === "function") (hook as () => void)(); }\n${finalFence}`,
+    );
+  source = source.replace(inventory, () => hookedInventory);
+
+  if (statFault !== null) {
+    const identityMarker = "  const expectedUid = rootStats.uid;\n  const expectedDevice = rootStats.dev;";
+    assert.equal(source.split(identityMarker).length - 1, 1, `copied overlay ${statFault} fault owns one stat seam`);
+    source = source.replace(
+      identityMarker,
+      `  const expectedUid = rootStats.uid + ${statFault === "uid" ? "1n" : "0n"};\n  const expectedDevice = rootStats.dev + ${statFault === "device" ? "1n" : "0n"};`,
+    );
+  }
+  writeFileSync(modulePath, source);
+  git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+  git(root, ["commit", "-qm", `fixture exact-poison current prerequisite overlay${statFault === null ? "" : ` ${statFault}`}`]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const prepared = runProducer(root, "--prepare");
+  assert.equal(prepared.status, 0, prepared.stderr);
+  materializeOutputs(root);
+  const finalized = runProducer(root, "--finalize");
+  assert.equal(finalized.status, 0, finalized.stderr);
+}
+
+function deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(
+  root: string,
+): readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1] {
+  const result = runFixtureExpression(root, `(async()=>{
+    const context=await m.selectCurrentEntryStoreContextV1();
+    const authority=await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+    const pending=await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+    const fallback=Object.freeze([
+      Object.freeze({kind:"authorityV3Migration31Audit",target:m.currentEntryPrerequisiteRecordPathV1(context,"authorityV3Migration31Audit",authority.pair.hash),value:authority.value,bytes:authority.bytes,pair:authority.pair}),
+      Object.freeze({kind:"pendingBootstrapHandoffMigration",target:m.currentEntryPrerequisiteRecordPathV1(context,"pendingBootstrapHandoffMigration",pending.pair.hash),value:pending.value,bytes:pending.bytes,pair:pending.pair}),
+    ]);
+    const overlay=typeof m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1==="function"
+      ? await m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(context)
+      : fallback;
+    process.stdout.write(JSON.stringify(overlay.map((candidate)=>({...candidate,bytesBase64:candidate.bytes.toString("base64"),bytes:undefined}))));
+  })()`);
+  assert.equal(result.status, 0, result.stderr);
+  const candidates = JSON.parse(result.stdout) as readonly Readonly<{
+    kind: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1["kind"];
+    target: string;
+    value: Readonly<Record<string, unknown>>;
+    bytesBase64: string;
+    pair: Readonly<{ ref: string; hash: string }>;
+  }>[];
+  assert.equal(candidates.length, 2, "copied private builders derive exactly two overlay candidates");
+  return Object.freeze(candidates.map((candidate) => Object.freeze({
+    kind: candidate.kind,
+    target: candidate.target.replace(/^\/private/, ""),
+    value: candidate.value,
+    bytes: Buffer.from(candidate.bytesBase64, "base64"),
+    pair: candidate.pair,
+  }))) as unknown as readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1];
+}
+
+function runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(
+  root: string,
+  options: Readonly<{
+    appearance?: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1;
+    duplicateExpected?: true;
+  }> = {},
+): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{
+    const fs=await import("node:fs");
+    const path=await import("node:path");
+    const context=await m.selectCurrentEntryStoreContextV1();
+    const authority=await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+    const pending=await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+    const fallback=Object.freeze([
+      Object.freeze({kind:"authorityV3Migration31Audit",target:m.currentEntryPrerequisiteRecordPathV1(context,"authorityV3Migration31Audit",authority.pair.hash),value:authority.value,bytes:authority.bytes,pair:authority.pair}),
+      Object.freeze({kind:"pendingBootstrapHandoffMigration",target:m.currentEntryPrerequisiteRecordPathV1(context,"pendingBootstrapHandoffMigration",pending.pair.hash),value:pending.value,bytes:pending.bytes,pair:pending.pair}),
+    ]);
+    const builtExpected=typeof m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1==="function"
+      ? await m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(context)
+      : fallback;
+    const expected=${options.duplicateExpected === true ? "Object.freeze([builtExpected[0],builtExpected[0]])" : "builtExpected"};
+    ${options.appearance === undefined ? "" : `Reflect.set(globalThis,"__p4cExactPoisonOverlayFinalFenceV1",()=>{Reflect.deleteProperty(globalThis,"__p4cExactPoisonOverlayFinalFenceV1");const target=${JSON.stringify(options.appearance.target)};fs.mkdirSync(path.dirname(target),{recursive:true,mode:0o700});fs.chmodSync(path.dirname(target),0o700);fs.writeFileSync(target,Buffer.from(${JSON.stringify(options.appearance.bytes.toString("base64"))},"base64"),{mode:0o600});});`}
+    const operation=m.requireExactPoisonRecoverySnapshotV1(m.fixedLegacyCurrentEntryOperationPathV1(),"P4c copied exact-poison operation");
+    const heldWriter=Object.freeze({assertStable:()=>{}});
+    let outcome="returned",message=null,admission=null,stableOutcome="not-called";
+    try {
+      const observed=await m.observeExactPoisonQuarantineAdmissionCoreV1(operation,heldWriter,expected);
+      let stableMessage=null;
+      try { observed.assertStableOriginals(); stableOutcome="returned"; } catch(error) { stableOutcome="threw"; stableMessage=String(error); }
+      admission={
+        inventoryBody:observed.inventoryBody,
+        inventoryHash:observed.inventoryHash,
+        predecessorFileIdentities:observed.predecessorFileIdentities,
+        currentPrerequisiteOverlay:observed.currentPrerequisiteOverlay?.map((candidate)=>({...candidate,bytesBase64:candidate.bytes.toString("base64"),bytes:undefined})),
+        stableMessage,
+      };
+    } catch(error) { outcome="threw"; message=String(error); }
+    process.stdout.write(JSON.stringify({outcome,message,stableOutcome,admission}));
+  })()`);
+}
+
+function exactPoisonOverlayVictimsV1(root: string): ReadonlyMap<string, Buffer> {
+  const workspace = path.dirname(root);
+  const victims = new Map<string, Buffer>();
+  for (const [name, bytes] of [
+    ["successor-publication", "publication-victim\n"],
+    ["database", "database-victim\n"],
+    ["owner", "owner-victim\n"],
+    ["service", "service-victim\n"],
+    ["migration", "migration-victim\n"],
+    ["cleanup", "cleanup-victim\n"],
+  ] as const) {
+    const target = path.join(workspace, ".p4c-overlay-external-victims", name);
+    fixtureFile(workspace, path.relative(workspace, target), bytes, 0o600);
+    victims.set(target, readFileSync(target));
+  }
+  return victims;
+}
+
+function assertExactPoisonOverlayVictimsUnchangedV1(victims: ReadonlyMap<string, Buffer>, label: string): void {
+  for (const [target, bytes] of victims) assert.deepEqual(readFileSync(target), bytes, `${label}: ${path.basename(target)} remains byte-identical`);
+}
+
 function replaceExactPoisonRawSecondV1(
   observations: Readonly<Record<string, readonly unknown[]>>,
   key: string,
@@ -16814,6 +16984,260 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     } finally {
       removeFixture(root);
     }
+  });
+
+  it("P4c exact-poison inventory admits every settled current prerequisite overlay prefix", () => {
+    const prefixes = Object.freeze([
+      Object.freeze({ label: "none", present: Object.freeze([] as number[]) }),
+      Object.freeze({ label: "audit-only", present: Object.freeze([0]) }),
+      Object.freeze({ label: "pending-only", present: Object.freeze([1]) }),
+      Object.freeze({ label: "both", present: Object.freeze([0, 1]) }),
+    ]);
+    for (const prefix of prefixes) {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+        const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        assert.equal(new Set(overlay.map((candidate) => candidate.target)).size, 2, `${prefix.label}: exact targets are unique`);
+        assert.equal(new Set(overlay.map((candidate) => candidate.pair.hash)).size, 2, `${prefix.label}: exact hashes are unique`);
+        for (const [index, candidate] of overlay.entries()) {
+          assert.equal(candidate.target, currentEntryPrerequisiteRecord(
+            root,
+            candidate.kind === "authorityV3Migration31Audit" ? "authority-v3-migration31-audits" : "pending-bootstrap-handoff-migrations",
+            candidate.pair.hash,
+          ), `${prefix.label}: candidate path follows the existing content locator`);
+          assert.equal(candidate.bytes.toString("utf8"), `${canonical(candidate.value)}\n`, `${prefix.label}: candidate bytes are canonical plus LF`);
+          assert.equal(candidate.value[candidate.kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditHash" : "pendingBootstrapHandoffMigrationHash"], candidate.pair.hash);
+          if (prefix.present.includes(index)) {
+            mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+            chmodSync(path.dirname(candidate.target), 0o700);
+            writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+          }
+        }
+        const absentParents = overlay
+          .filter((_candidate, index) => !prefix.present.includes(index))
+          .map((candidate) => Object.freeze({ target: candidate.target, parent: path.dirname(candidate.target), before: lstatSync(path.dirname(path.dirname(candidate.target)), { bigint: true }) }));
+        const beforeOriginal = observeExactOriginalPoisonIdentityV1(original.store);
+        assert.deepEqual(beforeOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: the original 10-directory/5-file body is unchanged before admission`);
+        assert.equal(canonicalHash(beforeOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: the original inventory hash is unchanged before admission`);
+        assert.deepEqual(beforeOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: the original five file identities are unchanged before admission`);
+        const victims = exactPoisonOverlayVictimsV1(root);
+        const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+        assert.equal(result.status, 0, `${prefix.label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", prefix.label);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: "returned" | "threw";
+          message: string | null;
+          stableOutcome: "returned" | "threw" | "not-called";
+          admission: null | Readonly<{
+            currentPrerequisiteOverlay: readonly Readonly<{
+              kind: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1["kind"];
+              target: string;
+              value: Readonly<Record<string, unknown>>;
+              bytesBase64: string;
+              pair: Readonly<{ ref: string; hash: string }>;
+              state: "absent" | "present";
+            }>[];
+            stableMessage: string | null;
+          }>;
+        }>;
+        assert.equal(observed.outcome, "returned", `${prefix.label}: ${observed.message ?? "no admission result"}`);
+        assert.equal(observed.message, null, prefix.label);
+        assert.equal(observed.stableOutcome, "returned", `${prefix.label}: ${observed.admission?.stableMessage ?? "stability was not returned"}`);
+        assert.deepEqual(observed.admission?.currentPrerequisiteOverlay.map((candidate) => ({
+          kind: candidate.kind,
+          target: candidate.target.replace(/^\/private/, ""),
+          value: candidate.value,
+          bytesBase64: candidate.bytesBase64,
+          pair: candidate.pair,
+          state: candidate.state,
+        })), overlay.map((candidate, index) => ({
+          kind: candidate.kind,
+          target: candidate.target,
+          value: candidate.value,
+          bytesBase64: candidate.bytes.toString("base64"),
+          pair: candidate.pair,
+          state: prefix.present.includes(index) ? "present" : "absent",
+        })), `${prefix.label}: admission returns the exact internally-derived overlay and settled state`);
+        for (const [index, candidate] of overlay.entries()) {
+          if (!prefix.present.includes(index)) continue;
+          const stats = lstatSync(candidate.target, { bigint: true });
+          const rootStats = lstatSync(original.store, { bigint: true });
+          assert.equal(stats.isFile() && !stats.isSymbolicLink(), true, `${prefix.label}: present overlay is regular`);
+          assert.equal(stats.mode & 0o7777n, 0o600n, `${prefix.label}: present overlay mode`);
+          assert.equal(stats.uid, rootStats.uid, `${prefix.label}: present overlay UID`);
+          assert.equal(stats.dev, rootStats.dev, `${prefix.label}: present overlay device`);
+          assert.equal(stats.nlink, 1n, `${prefix.label}: present overlay link count`);
+          assert.deepEqual(readFileSync(candidate.target), candidate.bytes, `${prefix.label}: present overlay bytes`);
+        }
+        for (const absence of absentParents) {
+          assert.equal(existsSync(absence.target), false, `${prefix.label}: absent overlay remains absent`);
+          const after = lstatSync(path.dirname(path.dirname(absence.target)), { bigint: true });
+          assert.equal(after.isDirectory() && !after.isSymbolicLink(), true, `${prefix.label}: absence parent is authenticated`);
+          assert.deepEqual(
+            { dev: after.dev, ino: after.ino, mode: after.mode, uid: after.uid },
+            { dev: absence.before.dev, ino: absence.before.ino, mode: absence.before.mode, uid: absence.before.uid },
+            `${prefix.label}: absence parent remains stable`,
+          );
+        }
+        const afterOriginal = observeExactOriginalPoisonIdentityV1(original.store);
+        assert.deepEqual(afterOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: original inventory serialization stays frozen`);
+        assert.equal(canonicalHash(afterOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: original inventory hash stays frozen`);
+        assert.deepEqual(afterOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: original identities stay frozen`);
+        assertExactPoisonOverlayVictimsUnchangedV1(victims, prefix.label);
+        for (const reserved of [
+          "current-entry-store-quarantine-dispositions",
+          "current-entry-store-successor-edges",
+          "current-entry-store-successor-activation-seals",
+          "current-entry-store-successor-activation-commits",
+        ]) assert.equal(existsSync(path.join(original.store, "records", reserved)), false, `${prefix.label}: no recovery publication occurs`);
+      } finally {
+        removeFixture(root);
+      }
+    }
+    const source = readFileSync(observerSource, "utf8");
+    const builderName = "buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1";
+    const builder = topLevelFunctionRegionV1(source, builderName);
+    assert.equal((source.match(new RegExp(`^async function ${builderName}\\(`, "gm")) ?? []).length, 1, "the exact overlay has one private builder");
+    assert.equal(source.includes(`export async function ${builderName}(`), false, "the exact overlay builder remains private");
+    assert.equal((builder.match(/buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1\(context\)/g) ?? []).length, 1, "the audit candidate comes only from its no-write builder");
+    assert.equal((builder.match(/buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1\(context\)/g) ?? []).length, 1, "the pending candidate comes only from its no-write builder");
+    assert.doesNotMatch(builder, /\b(?:readdirSync|writeFileSync|renameSync|copyFileSync|linkSync|symlinkSync|unlinkSync|rmSync|mkdirSync)\b|\b(?:latest|mtime)\b/i, "the closed builder neither scans nor mutates storage");
+  });
+
+  it("P4c exact-poison inventory rejects crossed current prerequisite overlays", () => {
+    const runCase = (
+      label: string,
+      mutate: (root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => Readonly<{
+        appearance?: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1;
+        duplicateExpected?: true;
+      }>,
+      statFault: "uid" | "device" | null = null,
+      expectReturn = false,
+    ): void => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original, statFault);
+        const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        const options = mutate(root, original, overlay);
+        const victims = exactPoisonOverlayVictimsV1(root);
+        const before = filesystemTreeSnapshot(original.store);
+        const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, options);
+        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", label);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: "returned" | "threw"; message: string | null; admission: null | Readonly<{ currentPrerequisiteOverlay: readonly unknown[] }> }>;
+        assert.equal(observed.outcome, expectReturn ? "returned" : "threw", `${label}: ${observed.message ?? "no error"}`);
+        if (expectReturn) assert.equal(observed.admission?.currentPrerequisiteOverlay.length, 2, `${label}: valid control returns the closed two-record overlay`);
+        else assert.match(observed.message ?? "", /exact-poison|overlay|inventory|directory|record|identity|stable|changed|crossed/i, label);
+        if (options.appearance === undefined) assert.deepEqual(filesystemTreeSnapshot(original.store), before, `${label}: rejection performs no cleanup or publication mutation`);
+        else {
+          assert.equal(existsSync(options.appearance.target), true, `${label}: the copied race seam creates only the competing settled record`);
+          assert.deepEqual(readFileSync(options.appearance.target), options.appearance.bytes, `${label}: the concurrent record is preserved exactly`);
+        }
+        assertExactPoisonOverlayVictimsUnchangedV1(victims, label);
+        for (const reserved of [
+          "current-entry-store-quarantine-dispositions",
+          "current-entry-store-successor-edges",
+          "current-entry-store-successor-activation-seals",
+          "current-entry-store-successor-activation-commits",
+        ]) assert.equal(existsSync(path.join(original.store, "records", reserved)), false, `${label}: no successor phase is published`);
+      } finally {
+        removeFixture(root);
+      }
+    };
+
+    runCase("valid-control", (_root, _original, overlay) => {
+      const candidate = overlay[0];
+      mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(candidate.target), 0o700);
+      writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+      return Object.freeze({});
+    }, null, true);
+
+    const cases = Object.freeze([
+      Object.freeze({ label: "wrong-path-or-hash-shard", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        const wrongShard = candidate.pair.hash.slice(0, 2) === "ff" ? "fe" : "ff";
+        const target = path.join(path.dirname(path.dirname(candidate.target)), wrongShard, path.basename(candidate.target));
+        mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(target), 0o700);
+        writeFileSync(target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-bytes-expected-basename", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, Buffer.from("{}\n"), { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "third-generation-unknown-sibling", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        const siblingHash = `${candidate.pair.hash.slice(0, 2)}${candidate.pair.hash.slice(2) === "f".repeat(62) ? "e".repeat(62) : "f".repeat(62)}`;
+        writeFileSync(path.join(path.dirname(candidate.target), `${siblingHash}.json`), Buffer.from("{}\n"), { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "exact-temp-sibling", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        writeFileSync(path.join(path.dirname(candidate.target), `.${path.basename(candidate.target)}.00000000-0000-4000-8000-000000000001.tmp`), candidate.bytes, { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "partial-empty-shard", mutate: (_root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay.find((entry) => !EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.includes(path.relative(original.store, path.dirname(entry.target)) as never)) ?? overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "symlink-leaf", mutate: (_root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        symlinkSync(path.join(original.store, original.originalLocators[1]!), candidate.target);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "hard-linked-leaf", mutate: (root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        const source = path.join(path.dirname(root), ".p4c-overlay-hard-link-source");
+        writeFileSync(source, candidate.bytes, { flag: "wx", mode: 0o600 });
+        linkSync(source, candidate.target);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-file-mode", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o644 });
+        chmodSync(candidate.target, 0o644);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-directory-mode", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        chmodSync(path.dirname(candidate.target), 0o755);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "duplicate-target-and-hash-identity", mutate: () => Object.freeze({ duplicateExpected: true as const }) }),
+    ]);
+    for (const testCase of cases) runCase(testCase.label, testCase.mutate);
+    for (const statFault of ["uid", "device"] as const) runCase(`simulated-${statFault}-crossing`, (_root, _original, overlay) => {
+      const candidate = overlay[0];
+      mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(candidate.target), 0o700);
+      writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+      return Object.freeze({});
+    }, statFault);
+    runCase("overlay-presence-changes-at-final-fence", (_root, _original, overlay) => Object.freeze({ appearance: overlay[0] }));
   });
 
   it("P4 exact-poison publisher leaves an authorized e2 ce strict chain preselection-complete", () => {

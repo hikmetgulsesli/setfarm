@@ -2403,6 +2403,42 @@ async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoW
   });
 }
 
+async function buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(
+  context: SelectedCurrentEntryStoreContextV1,
+): Promise<readonly [
+  ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
+  ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
+]> {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  if (state.storeRoot !== fixedLegacyCurrentEntryRootV1()) {
+    currentEntryFail("exact-poison current prerequisite overlay root is crossed");
+  }
+  const authority = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+  const pending = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  const candidates = Object.freeze([
+    Object.freeze({
+      kind: "authorityV3Migration31Audit" as const,
+      target: currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", authority.pair.hash),
+      value: authority.value,
+      bytes: authority.bytes,
+      pair: authority.pair,
+    }),
+    Object.freeze({
+      kind: "pendingBootstrapHandoffMigration" as const,
+      target: currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", pending.pair.hash),
+      value: pending.value,
+      bytes: pending.bytes,
+      pair: pending.pair,
+    }),
+  ] as const);
+  if (
+    candidates[0].target === candidates[1].target
+    || candidates[0].pair.hash === candidates[1].pair.hash
+    || candidates.some((candidate) => candidate.target !== exactPoisonRecoveryPrerequisitePathV1(candidate.kind, candidate.pair.hash))
+  ) currentEntryFail("exact-poison current prerequisite overlay identity is duplicated or crossed");
+  return candidates;
+}
+
 export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
@@ -3619,6 +3655,20 @@ type ExactPoisonRecoveryCandidateV1 = Readonly<{
   bytes: Buffer;
 }>;
 
+type ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1 = Readonly<{
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+  target: string;
+  value: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+  pair: CurrentEntryStoreRecordPairV1;
+}>;
+
+type ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1 = Readonly<
+  ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1 & {
+    state: "absent" | "present";
+  }
+>;
+
 type CompleteZeroEffectBracketHashInputV1 = readonly [
   Readonly<{ observation: "controller-source-a"; value: unknown }>,
   Readonly<{ observation: "product-build-authority-a"; value: unknown }>,
@@ -3654,6 +3704,7 @@ type ExactPoisonRecoveryInventoryEvidenceV1 = Readonly<{
   inventoryBody: Record<string, unknown>;
   inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
   predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
+  currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
   assertStableOriginals: () => void;
 }>;
 
@@ -3678,6 +3729,7 @@ const EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1 = Object.freeze([
 
 type ExactPoisonQuarantineAdmissionV1 = Readonly<{
   candidates: ExactPoisonRecoveryNoWriteFenceV1["candidates"];
+  currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
   assertStableOriginals: () => void;
 }>;
 
@@ -3770,6 +3822,65 @@ function exactPoisonRecoveryPrerequisitePathV1(kind: "authorityV3Migration31Audi
     exactHash.slice(0, 2),
     `${exactHash}.json`,
   );
+}
+
+function requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(
+  value: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[],
+): readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] {
+  if (value.length === 0) return Object.freeze([]);
+  if (value.length !== 2) currentEntryFail("exact-poison current prerequisite overlay candidate count is invalid");
+  const shapes = Object.freeze([
+    Object.freeze({
+      kind: "authorityV3Migration31Audit" as const,
+      refKey: "authorityV3Migration31AuditRef",
+      hashKey: "authorityV3Migration31AuditHash",
+      prefix: "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+    }),
+    Object.freeze({
+      kind: "pendingBootstrapHandoffMigration" as const,
+      refKey: "pendingBootstrapHandoffMigrationRef",
+      hashKey: "pendingBootstrapHandoffMigrationHash",
+      prefix: "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+    }),
+  ] as const);
+  const candidates = shapes.map((shape, index) => {
+    const candidate = value[index];
+    if (
+      !isPlainRecord(candidate)
+      || !hasExactKeys(candidate, ["kind", "target", "value", "bytes", "pair"])
+      || candidate.kind !== shape.kind
+      || typeof candidate.target !== "string"
+      || !isPlainRecord(candidate.value)
+      || !Buffer.isBuffer(candidate.bytes)
+      || !isPlainRecord(candidate.pair)
+      || !hasExactKeys(candidate.pair, ["ref", "hash"])
+    ) currentEntryFail(`exact-poison current prerequisite overlay ${shape.kind} descriptor is invalid`);
+    const hash = requireSha256(candidate.pair.hash, `exact-poison current prerequisite overlay ${shape.kind} hash`);
+    const ref = candidate.pair.ref;
+    const expectedTarget = exactPoisonRecoveryPrerequisitePathV1(shape.kind, hash);
+    const body = { ...candidate.value };
+    delete body[shape.refKey];
+    delete body[shape.hashKey];
+    if (
+      ref !== `${shape.prefix}${hash}`
+      || candidate.value[shape.refKey] !== ref
+      || candidate.value[shape.hashKey] !== hash
+      || hashCanonicalJson(body) !== hash
+      || candidate.bytes.toString("utf8") !== `${canonicalComparable(candidate.value)}\n`
+      || candidate.target !== expectedTarget
+    ) currentEntryFail(`exact-poison current prerequisite overlay ${shape.kind} is crossed`);
+    return Object.freeze({
+      kind: shape.kind,
+      target: expectedTarget,
+      value: candidate.value,
+      bytes: candidate.bytes,
+      pair: Object.freeze({ ref, hash }),
+    });
+  });
+  if (candidates[0]!.target === candidates[1]!.target || candidates[0]!.pair.hash === candidates[1]!.pair.hash) {
+    currentEntryFail("exact-poison current prerequisite overlay identity is duplicated");
+  }
+  return Object.freeze(candidates);
 }
 
 async function observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(): Promise<ExactPoisonRecoveryPrerequisitesV1> {
@@ -4037,7 +4148,7 @@ function observeExactPoisonRecoveryWriterTransientsV1(heldWriter: ExactPoisonRec
 function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
 ): ExactPoisonRecoveryInventoryEvidenceV1 {
   heldWriter.assertStable();
   const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4056,10 +4167,115 @@ function observeExactPoisonQuarantinedInventoryV1(
     ["records/pending-bootstrap-handoff-migrations/sha256/6e", new Set([`${EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1[3].locator.split("/").at(-1)!}`])],
     ["records/pending-bootstrap-handoff-migrations/sha256/ce", new Set([`${EXACT_POISON_CURRENT_PENDING_HASH_V1}.json`])],
   ]);
-  // Recovery records are not members of the poisoned inventory hash.  They are
-  // authenticated against the derived seven-record frontier after candidate
-  // construction; this observation only carves out their fixed namespaces.
-  void expectedPublished;
+  const overlayCandidates = requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(expectedPublished);
+  const rootStats = lstatSync(root, { bigint: true });
+  const expectedUid = rootStats.uid;
+  const expectedDevice = rootStats.dev;
+  const overlayStates = new Map<string, "absent" | "present">();
+  const overlayFileSnapshots: Array<Readonly<{
+    candidate: ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1;
+    snapshot: FileSnapshot;
+  }>> = [];
+  const absentOverlayShards: Array<Readonly<{
+    locator: string;
+    target: string;
+    parentTarget: string;
+    parentSnapshot: DirectorySnapshot;
+  }>> = [];
+  const overlayByShard = new Map<string, ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[]>();
+  for (const candidate of overlayCandidates) {
+    const shardTarget = path.dirname(candidate.target);
+    const shardLocator = path.relative(root, shardTarget);
+    if (
+      !shardLocator
+      || shardLocator === ".."
+      || shardLocator.startsWith(`..${path.sep}`)
+      || path.isAbsolute(shardLocator)
+      || shardTarget !== path.join(
+        root,
+        "records",
+        CURRENT_ENTRY_PREREQUISITE_RECORD_KINDS_V1[candidate.kind],
+        "sha256",
+        candidate.pair.hash.slice(0, 2),
+      )
+    ) currentEntryFail("exact-poison current prerequisite overlay shard is crossed");
+    const grouped = overlayByShard.get(shardLocator) ?? [];
+    grouped.push(candidate);
+    overlayByShard.set(shardLocator, grouped);
+  }
+  for (const [shardLocator, shardCandidates] of overlayByShard) {
+    const shardTarget = path.join(root, shardLocator);
+    const parentTarget = path.dirname(shardTarget);
+    const parentLocator = path.dirname(shardLocator);
+    const parentSnapshot = directorySnapshot(parentTarget, `exact-poison overlay parent ${parentLocator}`, rootSnapshot.device);
+    const parentStats = lstatSync(parentTarget, { bigint: true });
+    if ((parentStats.mode & 0o7777n) !== 0o700n || parentStats.uid !== expectedUid || parentStats.dev !== expectedDevice) {
+      currentEntryFail(`exact-poison overlay parent ${parentLocator} identity is crossed`);
+    }
+    let shardPresent = true;
+    try {
+      lstatSync(shardTarget, { bigint: true });
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+      shardPresent = false;
+    }
+    if (!shardPresent) {
+      assertDirectory(parentTarget, parentSnapshot, `parent of absent exact-poison overlay shard ${shardLocator}`);
+      try {
+        lstatSync(shardTarget, { bigint: true });
+        currentEntryFail(`absent exact-poison overlay shard ${shardLocator} appeared while observed`);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
+      assertDirectory(parentTarget, parentSnapshot, `parent of absent exact-poison overlay shard ${shardLocator}`);
+      absentOverlayShards.push(Object.freeze({ locator: shardLocator, target: shardTarget, parentTarget, parentSnapshot }));
+      for (const candidate of shardCandidates) overlayStates.set(candidate.target, "absent");
+      continue;
+    }
+    const shardSnapshot = directorySnapshot(shardTarget, `exact-poison overlay shard ${shardLocator}`, rootSnapshot.device);
+    const shardStats = lstatSync(shardTarget, { bigint: true });
+    if ((shardStats.mode & 0o7777n) !== 0o700n || shardStats.uid !== expectedUid || shardStats.dev !== expectedDevice) {
+      currentEntryFail(`exact-poison overlay shard ${shardLocator} identity is crossed`);
+    }
+    const observedMembers = readdirSync(shardTarget).sort(compareBytes);
+    const frozenMembers = new Set(exactEntries.get(shardLocator) ?? []);
+    const presentOverlayMembers = shardCandidates
+      .map((candidate) => path.basename(candidate.target))
+      .filter((basename) => observedMembers.includes(basename));
+    if (frozenMembers.size === 0 && presentOverlayMembers.length === 0) {
+      currentEntryFail(`exact-poison overlay shard ${shardLocator} is incomplete`);
+    }
+    const allowedMembers = [...new Set([...frozenMembers, ...presentOverlayMembers])].sort(compareBytes);
+    if (canonicalComparable(observedMembers) !== canonicalComparable(allowedMembers)) {
+      currentEntryFail(`exact-poison overlay shard ${shardLocator} contains a foreign member`);
+    }
+    const parentEntries = exactEntries.get(parentLocator);
+    if (parentEntries === undefined) currentEntryFail(`exact-poison overlay parent ${parentLocator} is outside the frozen topology`);
+    parentEntries.add(path.basename(shardLocator));
+    exactEntries.set(shardLocator, new Set(allowedMembers));
+    for (const candidate of shardCandidates) {
+      const basename = path.basename(candidate.target);
+      if (!presentOverlayMembers.includes(basename)) {
+        overlayStates.set(candidate.target, "absent");
+        continue;
+      }
+      const snapshot = requireExactPoisonRecoverySnapshotV1(candidate.target, `exact-poison overlay record ${candidate.kind}`);
+      if (
+        snapshot.observed.mode !== 0o600
+        || snapshot.observed.stats.nlink !== 1n
+        || snapshot.observed.stats.uid !== expectedUid
+        || snapshot.observed.stats.dev !== expectedDevice
+        || !snapshot.observed.bytes.equals(candidate.bytes)
+      ) currentEntryFail(`exact-poison overlay record ${candidate.kind} identity or bytes are crossed`);
+      assertDirectory(shardTarget, shardSnapshot, `exact-poison overlay shard ${shardLocator}`);
+      overlayFileSnapshots.push(Object.freeze({ candidate, snapshot }));
+      overlayStates.set(candidate.target, "present");
+    }
+  }
+  const currentPrerequisiteOverlay = Object.freeze(overlayCandidates.map((candidate) => Object.freeze({
+    ...candidate,
+    state: overlayStates.get(candidate.target) ?? currentEntryFail(`exact-poison overlay state for ${candidate.kind} is absent`),
+  })));
   const reservedRootEntries = new Set(["stores"]);
   const reservedRecordEntries = new Set([
     "current-entry-store-quarantine-dispositions",
@@ -4153,6 +4369,19 @@ function observeExactPoisonQuarantinedInventoryV1(
       }
     }
     for (const { locator, snapshot } of fileSnapshots) assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable file ${locator}`);
+    for (const { candidate, snapshot } of overlayFileSnapshots) {
+      assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable overlay record ${candidate.kind}`);
+    }
+    for (const absent of absentOverlayShards) {
+      assertDirectory(absent.parentTarget, absent.parentSnapshot, `parent of stable absent exact-poison overlay shard ${absent.locator}`);
+      try {
+        lstatSync(absent.target, { bigint: true });
+        currentEntryFail(`absent exact-poison overlay shard ${absent.locator} appeared before admission closed`);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
+      assertDirectory(absent.parentTarget, absent.parentSnapshot, `parent of stable absent exact-poison overlay shard ${absent.locator}`);
+    }
     heldWriter.assertStable();
   };
   assertStableOriginals();
@@ -4160,6 +4389,7 @@ function observeExactPoisonQuarantinedInventoryV1(
     inventoryBody,
     inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
     predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+    currentPrerequisiteOverlay,
     assertStableOriginals,
   });
 }
@@ -4446,7 +4676,7 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
 async function observeExactPoisonQuarantineAdmissionCoreV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
 ): Promise<ExactPoisonQuarantineAdmissionV1> {
   heldWriter.assertStable();
   const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
@@ -4456,6 +4686,7 @@ async function observeExactPoisonQuarantineAdmissionCoreV1(
   heldWriter.assertStable();
   return Object.freeze({
     candidates: observed.candidates,
+    currentPrerequisiteOverlay: inventory.currentPrerequisiteOverlay,
     assertStableOriginals: inventory.assertStableOriginals,
   });
 }
@@ -4984,7 +5215,7 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
 async function observeExactPoisonQuarantineAdmissionV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCandidateV1[] = Object.freeze([]),
+  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
 ): Promise<ExactPoisonQuarantineAdmissionV1> {
   return observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished);
 }
@@ -5468,6 +5699,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
         inventoryBody,
         inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
         predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
+        currentPrerequisiteOverlay: Object.freeze([]),
         assertStableOriginals,
       }),
       close,
