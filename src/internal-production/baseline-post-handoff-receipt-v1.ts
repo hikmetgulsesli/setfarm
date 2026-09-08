@@ -2441,7 +2441,27 @@ async function buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(
 export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
   pair: InternalProductionAuthorityV3Migration31AuditPairV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
-  return resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(pair);
+  const expected = requirePair(pair, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+  const rootReader = openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  const retained: CurrentEntryPrerequisiteSnapshotV1[] = [];
+  try {
+    try {
+      return await resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(pair, rootReader, retained);
+    } catch (error) {
+      const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!);
+      await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
+        "authorityV3Migration31Audit",
+        expected,
+        rootReader,
+        contentPath,
+        retained,
+        error,
+      );
+      return await resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath);
+    }
+  } finally {
+    rootReader.close();
+  }
 }
 
 async function resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(
@@ -2539,7 +2559,27 @@ async function parseAuthorityV3Migration31AuditBody(
 export async function resolveInternalProductionPendingBootstrapHandoffMigrationV1(
   pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
-  return resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(pair);
+  const expected = requirePair(pair, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+  const rootReader = openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  const retained: CurrentEntryPrerequisiteSnapshotV1[] = [];
+  try {
+    try {
+      return await resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(pair, rootReader, retained);
+    } catch (error) {
+      const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!);
+      await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
+        "pendingBootstrapHandoffMigration",
+        expected,
+        rootReader,
+        contentPath,
+        retained,
+        error,
+      );
+      return await resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath);
+    }
+  } finally {
+    rootReader.close();
+  }
 }
 
 async function resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(
@@ -2619,6 +2659,135 @@ function parsePendingBootstrapHandoffMigrationBody(
   const implementationBlob = requireGitHash(body.migrationImplementation.gitBlobHash, "pending migration Git blob");
   if (migrationImplementationEntry(controllerSource).gitBlobHash !== implementationBlob) currentEntryFail("pending migration implementation does not match stored controller source");
   return Object.freeze(body as unknown as InternalProductionPendingBootstrapHandoffMigrationProjectionV1);
+}
+
+function assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  contentPath: string,
+  label: string,
+): void {
+  rootReader.assertStable();
+  if (readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(rootReader.store, contentPath) !== null) {
+    currentEntryFail(`${label} appeared before committed successor fallback`);
+  }
+  rootReader.assertStable();
+}
+
+async function requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  expected: Readonly<Record<string, string>>,
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  contentPath: string,
+  retained: readonly CurrentEntryPrerequisiteSnapshotV1[],
+  fixedFailure: unknown,
+): Promise<void> {
+  rootReader.assertStable();
+  if (retained.length > 1) currentEntryFail("fixed legacy historical prerequisite retained multiple records");
+  const snapshot = retained[0];
+  if (snapshot === undefined) {
+    if (!isEnoent(fixedFailure)) throw fixedFailure;
+  } else {
+    if (snapshot.absentContentLocator === null) throw fixedFailure;
+    if (snapshot.absentContentLocator !== contentPath) currentEntryFail("fixed legacy historical prerequisite absence locator is crossed");
+    assertExactPoisonRecoverySnapshotStableV1(snapshot.source, "fixed legacy historical prerequisite fallback");
+    const body = strictCanonicalRecord(snapshot.source.observed.bytes, "fixed legacy historical prerequisite fallback");
+    if (kind === "authorityV3Migration31Audit") {
+      const ownPair = requirePair(Object.freeze({
+        authorityV3Migration31AuditRef: body.authorityV3Migration31AuditRef,
+        authorityV3Migration31AuditHash: body.authorityV3Migration31AuditHash,
+      }), "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+      await parseAuthorityV3Migration31AuditBody(body, ownPair);
+      if (
+        ownPair.authorityV3Migration31AuditRef === expected.authorityV3Migration31AuditRef
+        && ownPair.authorityV3Migration31AuditHash === expected.authorityV3Migration31AuditHash
+      ) throw fixedFailure;
+    } else {
+      const ownPair = requirePair(Object.freeze({
+        pendingBootstrapHandoffMigrationRef: body.pendingBootstrapHandoffMigrationRef,
+        pendingBootstrapHandoffMigrationHash: body.pendingBootstrapHandoffMigrationHash,
+      }), "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+      parsePendingBootstrapHandoffMigrationBody(body, ownPair);
+      if (
+        ownPair.pendingBootstrapHandoffMigrationRef === expected.pendingBootstrapHandoffMigrationRef
+        && ownPair.pendingBootstrapHandoffMigrationHash === expected.pendingBootstrapHandoffMigrationHash
+      ) throw fixedFailure;
+    }
+    assertExactPoisonRecoverySnapshotStableV1(snapshot.source, "fixed legacy historical prerequisite fallback");
+    rootReader.assertStable();
+  }
+  assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, `fixed legacy ${kind}`);
+}
+
+async function resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1(
+  expected: Readonly<Record<string, string>>,
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  contentPath: string,
+): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try {
+    const current = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(context).authorityV3Migration31Audit;
+    if (
+      current.pair.authorityV3Migration31AuditRef !== expected.authorityV3Migration31AuditRef
+      || current.pair.authorityV3Migration31AuditHash !== expected.authorityV3Migration31AuditHash
+    ) currentEntryFail("historical authority-v31 audit pair is unknown");
+    const exactTarget = currentEntryPrerequisiteRecordPathAtRootV1(context.successorRoot, "authorityV3Migration31Audit", current.pair.authorityV3Migration31AuditHash!);
+    if (context.successorAuthorityV31.target !== exactTarget) currentEntryFail("historical authority-v31 successor locator is crossed");
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy authority-v31 audit");
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    assertExactPoisonRecoveryPinnedRecordStableV1(context.successorAuthorityV31, "historical committed successor authority-v31 audit");
+    await durablyAuthenticateSuccessorActivationCommitV1(context);
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy authority-v31 audit");
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    const parsed = await parseAuthorityV3Migration31AuditBody(
+      strictCanonicalRecord(context.successorAuthorityV31.bytes, "historical committed successor authority-v31 audit"),
+      expected,
+    );
+    assertExactPoisonRecoveryPinnedRecordStableV1(context.successorAuthorityV31, "historical committed successor authority-v31 audit");
+    context.successorRootParent.assertStable();
+    context.assertStable();
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy authority-v31 audit");
+    return parsed;
+  } finally {
+    context.close();
+  }
+}
+
+async function resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1(
+  expected: Readonly<Record<string, string>>,
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  contentPath: string,
+): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try {
+    const current = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(context).pendingBootstrapHandoffMigration;
+    if (
+      current.pair.pendingBootstrapHandoffMigrationRef !== expected.pendingBootstrapHandoffMigrationRef
+      || current.pair.pendingBootstrapHandoffMigrationHash !== expected.pendingBootstrapHandoffMigrationHash
+    ) currentEntryFail("historical pending migration pair is unknown");
+    const exactTarget = currentEntryPrerequisiteRecordPathAtRootV1(context.successorRoot, "pendingBootstrapHandoffMigration", current.pair.pendingBootstrapHandoffMigrationHash!);
+    if (context.successorPending.target !== exactTarget) currentEntryFail("historical pending successor locator is crossed");
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy pending migration");
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    assertExactPoisonRecoveryPinnedRecordStableV1(context.successorPending, "historical committed successor pending migration");
+    await durablyAuthenticateSuccessorActivationCommitV1(context);
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy pending migration");
+    context.assertStable();
+    context.successorRootParent.assertStable();
+    const parsed = parsePendingBootstrapHandoffMigrationBody(
+      strictCanonicalRecord(context.successorPending.bytes, "historical committed successor pending migration"),
+      expected,
+    );
+    assertExactPoisonRecoveryPinnedRecordStableV1(context.successorPending, "historical committed successor pending migration");
+    context.successorRootParent.assertStable();
+    context.assertStable();
+    assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy pending migration");
+    return parsed;
+  } finally {
+    context.close();
+  }
 }
 
 async function observeCurrentPba(): Promise<ProductBuildAuthorityObservationV1> {

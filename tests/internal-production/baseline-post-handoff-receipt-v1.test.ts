@@ -1835,6 +1835,41 @@ function writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(
   }
 }
 
+function buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(
+  root: string,
+): readonly [
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+] {
+  const authority = phase5bNestedPrerequisiteAlternateRecordV1(
+    "authorityV3Migration31Audit",
+    JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+  );
+  const pending = phase5bNestedPrerequisiteAlternateRecordV1(
+    "pendingBootstrapHandoffMigration",
+    JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+  );
+  assert.deepEqual(authority.value.controllerSource, pending.value.controllerSource, "distinct current prerequisite records retain one exact source");
+  assert.notEqual(authority.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "distinct audit pair does not reuse frozen e2");
+  assert.notEqual(pending.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, "distinct pending pair does not reuse frozen ce");
+  return Object.freeze([
+    Object.freeze({
+      kind: "authorityV3Migration31Audit" as const,
+      target: currentEntryPrerequisiteRecord(root, "authority-v3-migration31-audits", authority.hash),
+      value: authority.value,
+      bytes: authority.bytes,
+      pair: Object.freeze({ ref: authority.ref, hash: authority.hash }),
+    }),
+    Object.freeze({
+      kind: "pendingBootstrapHandoffMigration" as const,
+      target: currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", pending.hash),
+      value: pending.value,
+      bytes: pending.bytes,
+      pair: Object.freeze({ ref: pending.ref, hash: pending.hash }),
+    }),
+  ]);
+}
+
 function publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(
   root: string,
 ): readonly [
@@ -1873,6 +1908,7 @@ function instrumentExactPoisonTask3BoundaryFixtureV1(
     | { boundary: "post-admission-response-loss"; marker: string }
     | { boundary: "post-commit-response-loss"; marker: string }
     | { boundary: "post-admission-overlay-appearance" }
+    | { boundary: "post-admission-replacement-latch"; readyPath: string; releasePath: string }
   >,
 ): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
@@ -1889,10 +1925,64 @@ function instrumentExactPoisonTask3BoundaryFixtureV1(
     assert.equal(core.split(admission).length - 1, 1, "task3 copied fixture locates one post-admission boundary");
     const hook = fault.boundary === "post-admission-response-loss"
       ? `\n    if (!existsSync(${JSON.stringify(fault.marker)})) { writeFileSync(${JSON.stringify(fault.marker)}, "lost\\n", { flag: "wx", mode: 0o600 }); throw new Error("P4C_POST_ADMISSION_RESPONSE_LOSS"); }`
-      : `\n    { const candidate=Reflect.get(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1") as undefined|null|{target:string;bytes:Buffer}; if (!candidate || !Buffer.isBuffer(candidate.bytes)) throw new Error("P4C_OVERLAY_APPEARANCE_MISSING"); mkdirSync(path.dirname(candidate.target),{recursive:true,mode:0o700}); writeFileSync(candidate.target,candidate.bytes,{flag:"wx",mode:0o600}); }`;
+      : fault.boundary === "post-admission-overlay-appearance"
+        ? `\n    { const candidate=Reflect.get(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1") as undefined|null|{target:string;bytes:Buffer}; if (!candidate || !Buffer.isBuffer(candidate.bytes)) throw new Error("P4C_OVERLAY_APPEARANCE_MISSING"); mkdirSync(path.dirname(candidate.target),{recursive:true,mode:0o700}); writeFileSync(candidate.target,candidate.bytes,{flag:"wx",mode:0o600}); }`
+        : `\n    { writeFileSync(${JSON.stringify(fault.readyPath)}, "ready\\n", { flag: "wx", mode: 0o600 }); const wait = new Int32Array(new SharedArrayBuffer(4)); while (!existsSync(${JSON.stringify(fault.releasePath)})) Atomics.wait(wait, 0, 0, 5); }`;
     source = source.replace(core, () => core.replace(admission, `${admission}${hook}`));
   }
   writeFileSync(modulePath, source);
+}
+
+function instrumentExactPoisonHistoricalPrerequisiteUnavailabilityFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  for (const [name, label] of [
+    ["observeCurrentInternalProductionCleanSetfarmSourceBuildV1", "source-observer"],
+    ["selectCurrentEntryStoreContextV1", "current-store-selector"],
+    ["observeCurrentInternalProductionAuthorityV3Migration31AuditV1", "current-audit-observer"],
+    ["observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1", "current-pending-observer"],
+    ["buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1", "current-audit-builder"],
+    ["buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1", "current-database-builder"],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    const body = region.indexOf("{\n");
+    assert.notEqual(body, -1, `${label}: copied historical resolver fixture finds the real current boundary`);
+    const hooked = `${region.slice(0, body + 2)}  { const probe = Reflect.get(globalThis, "__p4cHistoricalPrerequisiteUnavailableV1") as undefined | { calls: string[] }; if (probe !== undefined) { probe.calls.push(${JSON.stringify(label)}); throw new Error(${JSON.stringify(`P4C_CURRENT_AUTHORITY_UNAVAILABLE:${label}`)}); } }\n${region.slice(body + 2)}`;
+    source = source.replace(region, () => hooked);
+  }
+  writeFileSync(modulePath, source);
+}
+
+function runExactPoisonHistoricalPrerequisiteResolutionFixtureV1(
+  root: string,
+  successor: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+): ReturnType<typeof spawnSync> {
+  const legacyAuthority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+  const legacyPending = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+  const successorAuthorityPair = Object.freeze({
+    authorityV3Migration31AuditRef: successor[0].pair.ref,
+    authorityV3Migration31AuditHash: successor[0].pair.hash,
+  });
+  const successorPendingPair = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: successor[1].pair.ref,
+    pendingBootstrapHandoffMigrationHash: successor[1].pair.hash,
+  });
+  const legacyAuthorityPair = phase5bNestedPrerequisitePairV1("authorityV3Migration31Audit", legacyAuthority);
+  const legacyPendingPair = phase5bNestedPrerequisitePairV1("pendingBootstrapHandoffMigration", legacyPending);
+  const arbitraryAuthorityHash = "f".repeat(64);
+  const arbitraryPendingHash = "0".repeat(64);
+  assert.equal(new Set([
+    successor[0].pair.hash,
+    successor[1].pair.hash,
+    String(legacyAuthority.authorityV3Migration31AuditHash),
+    String(legacyPending.pendingBootstrapHandoffMigrationHash),
+    arbitraryAuthorityHash,
+    arbitraryPendingHash,
+  ]).size, 6, "historical resolution fixture uses six distinct exact hashes");
+  return runFixtureExpression(root, `(async()=>{const probe={calls:[]};Reflect.set(globalThis,"__p4cHistoricalPrerequisiteUnavailableV1",probe);const attempt=async(fn)=>{try{return {outcome:"returned",value:await fn(),message:null}}catch(error){return {outcome:"threw",value:null,message:String(error)}}};const successorAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(successorAuthorityPair)}));const successorPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(successorPendingPair)}));const legacyAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(legacyAuthorityPair)}));const legacyPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(legacyPendingPair)}));const arbitraryAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1({authorityV3Migration31AuditRef:"setfarm://internal-production/authority-v3-migration31-audit/sha256/${arbitraryAuthorityHash}",authorityV3Migration31AuditHash:"${arbitraryAuthorityHash}"}));const arbitraryPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1({pendingBootstrapHandoffMigrationRef:"setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${arbitraryPendingHash}",pendingBootstrapHandoffMigrationHash:"${arbitraryPendingHash}"}));process.stdout.write(JSON.stringify({successorAuthority,successorPending,legacyAuthority,legacyPending,arbitraryAuthority,arbitraryPending,calls:probe.calls}))})()`);
 }
 
 function instrumentExactPoisonTask3WriterContentionLatchFixtureV1(
@@ -2333,18 +2423,26 @@ function seedExactPoisonRecoveryInvalidLeafStateV1(
 function configureExactPoisonRecoveryLeafHarnessV1(
   root: string,
   fault: ExactPoisonRecoveryLeafFaultFixtureV1 | null = null,
+  options: Readonly<{ currentPrerequisites?: "frozen" | "distinct" }> = {},
 ): Readonly<{
   original: ExactOriginalPoisonStoreFixtureV1;
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
   observations: Readonly<Record<string, readonly unknown[]>>;
+  currentOverlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ] | null;
 }> {
   installExactCurrentSuccessorGitFixtureV1(root);
   const original = seedExactOriginalPoisonStoreV1(root);
-  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const currentOverlay = options.currentPrerequisites === "distinct"
+    ? buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root)
+    : null;
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, currentOverlay ?? undefined);
   const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
   instrumentExactPoisonRecoveryLeafFixtureV1(root, fault);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
-  return Object.freeze({ original, admitted, observations });
+  return Object.freeze({ original, admitted, observations, currentOverlay });
 }
 
 type ExactPoisonDurabilityKindFixtureV1 = "seal" | "commit";
@@ -13904,6 +14002,41 @@ function assertExactPoisonRecoveryConvergedV1(
   assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, `${label}: original file identities`);
 }
 
+function assertExactPoisonDistinctCurrentPairSuccessorV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  currentOverlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+  label: string,
+): void {
+  const authorityPair = Object.freeze({
+    authorityV3Migration31AuditRef: currentOverlay[0].pair.ref,
+    authorityV3Migration31AuditHash: currentOverlay[0].pair.hash,
+  });
+  const pendingPair = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: currentOverlay[1].pair.ref,
+    pendingBootstrapHandoffMigrationHash: currentOverlay[1].pair.hash,
+  });
+  const proofOperation = Reflect.get(chain.embedded.zeroEffectProof.value, "successorOperation") as Readonly<Record<string, unknown>>;
+  assert.notEqual(currentOverlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, `${label}: current audit pair is distinct from frozen e2`);
+  assert.notEqual(currentOverlay[1].pair.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, `${label}: current pending pair is distinct from frozen ce`);
+  assert.deepEqual(chain.records.successorAuthorityV31.bytes, currentOverlay[0].bytes, `${label}: modeled successor audit bytes are the exact current bytes`);
+  assert.deepEqual(chain.records.successorPending.bytes, currentOverlay[1].bytes, `${label}: modeled successor pending bytes are the exact current bytes`);
+  assert.deepEqual(chain.records.successorOperation.value.authorityV3Migration31Audit, authorityPair, `${label}: modeled successor operation binds only the current audit pair`);
+  assert.deepEqual(chain.records.successorOperation.value.pendingBootstrapHandoffMigration, pendingPair, `${label}: modeled successor operation binds only the current pending pair`);
+  assert.deepEqual(proofOperation.authorityV3Migration31Audit, authorityPair, `${label}: zero-effect proof binds the current audit pair`);
+  assert.deepEqual(proofOperation.pendingBootstrapHandoffMigration, pendingPair, `${label}: zero-effect proof binds the current pending pair`);
+  assert.deepEqual(chain.embedded.successorGenesis.value.authorityV3Migration31Audit, authorityPair, `${label}: genesis binds the current audit pair`);
+  assert.deepEqual(chain.embedded.successorGenesis.value.pendingBootstrapHandoffMigration, pendingPair, `${label}: genesis binds the current pending pair`);
+  assert.deepEqual(readFileSync(path.join(original.store, chain.records.successorAuthorityV31.locator)), currentOverlay[0].bytes, `${label}: published successor audit is byte-identical current state`);
+  assert.deepEqual(readFileSync(path.join(original.store, chain.records.successorPending.locator)), currentOverlay[1].bytes, `${label}: published successor pending is byte-identical current state`);
+  const publishedOperation = JSON.parse(readFileSync(path.join(original.store, chain.records.successorOperation.locator), "utf8")) as Readonly<Record<string, unknown>>;
+  assert.deepEqual(publishedOperation.authorityV3Migration31Audit, authorityPair, `${label}: published successor operation never falls back to frozen e2`);
+  assert.deepEqual(publishedOperation.pendingBootstrapHandoffMigration, pendingPair, `${label}: published successor operation never falls back to frozen ce`);
+}
+
 type ExactPoisonRecoveryWriterBoundaryFixtureV1 =
   | "post-scan"
   | "pre-member-open"
@@ -17586,6 +17719,74 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  for (const prefix of [
+    Object.freeze({ label: "none", present: Object.freeze([] as number[]) }),
+    Object.freeze({ label: "audit-only", present: Object.freeze([0]) }),
+    Object.freeze({ label: "pending-only", present: Object.freeze([1]) }),
+    Object.freeze({ label: "both", present: Object.freeze([0, 1]) }),
+  ] as const) {
+    it(`P4c committed successor prerequisite pairs remain historically resolvable after ${prefix.label} overlay`, () => {
+      const root = createFixture({ stopAfterCurrentEntryOperationPublication: true });
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const overlay = buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, overlay, prefix.present);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
+        const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+        instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+        instrumentExactPoisonHistoricalPrerequisiteUnavailabilityFixtureV1(root);
+        assert.notEqual(overlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, `${prefix.label}: successor audit differs from frozen legacy audit`);
+        assert.notEqual(overlay[1].pair.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, `${prefix.label}: successor pending differs from frozen legacy pending`);
+        const protectedBefore = exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay);
+
+        const recovery = runExactPoisonTask3FixtureV1(root, observations);
+        assert.equal(recovery.status, 0, `${prefix.label}: ${recovery.stderr}`);
+        assert.equal(recovery.stderr, "", prefix.label);
+        const recovered = JSON.parse(recovery.stdout) as Readonly<{ outcome: "returned" | "threw"; message: string | null }>;
+        assert.equal(recovered.outcome, "returned", `${prefix.label}: ${recovered.message ?? "recovery did not commit"}`);
+        assertExactPoisonRecoveryConvergedV1(original, admitted.chain, `${prefix.label}: committed successor`);
+
+        const result = runExactPoisonHistoricalPrerequisiteResolutionFixtureV1(root, overlay);
+        assert.equal(result.status, 0, `${prefix.label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", prefix.label);
+        const resolved = JSON.parse(result.stdout) as Readonly<{
+          successorAuthority: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          successorPending: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          legacyAuthority: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          legacyPending: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          arbitraryAuthority: Readonly<{ outcome: "returned" | "threw"; value: null; message: string | null }>;
+          arbitraryPending: Readonly<{ outcome: "returned" | "threw"; value: null; message: string | null }>;
+          calls: readonly string[];
+        }>;
+        assert.deepEqual(
+          [resolved.successorAuthority.outcome, resolved.successorPending.outcome],
+          ["returned", "returned"],
+          `${prefix.label}: both committed successor prerequisite pairs resolve (${resolved.successorAuthority.message ?? "audit returned"}; ${resolved.successorPending.message ?? "pending returned"})`,
+        );
+        assert.deepEqual(resolved.successorAuthority.value, overlay[0].value, `${prefix.label}: exact successor audit bytes parse to the committed value`);
+        assert.deepEqual(resolved.successorPending.value, overlay[1].value, `${prefix.label}: exact successor pending bytes parse to the committed value`);
+        assert.deepEqual(
+          [resolved.legacyAuthority.outcome, resolved.legacyPending.outcome],
+          ["returned", "returned"],
+          `${prefix.label}: both frozen legacy pairs remain resolvable (${resolved.legacyAuthority.message ?? "audit returned"}; ${resolved.legacyPending.message ?? "pending returned"})`,
+        );
+        assert.deepEqual(resolved.legacyAuthority.value, JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")), `${prefix.label}: frozen audit value is unchanged`);
+        assert.deepEqual(resolved.legacyPending.value, JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")), `${prefix.label}: frozen pending value is unchanged`);
+        assert.deepEqual(
+          [resolved.arbitraryAuthority.outcome, resolved.arbitraryPending.outcome],
+          ["threw", "threw"],
+          `${prefix.label}: arbitrary well-shaped pairs remain rejected`,
+        );
+        assert.ok(resolved.arbitraryAuthority.message !== null && resolved.arbitraryPending.message !== null, `${prefix.label}: arbitrary rejection retains a diagnostic`);
+        assert.deepEqual(resolved.calls, [], `${prefix.label}: historical resolution uses no current observer, store selector, source observer, or database-backed builder`);
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay), protectedBefore, `${prefix.label}: resolution is read-only across frozen and overlay history`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
   it("P4c recovery boundary rejects public and ambient prerequisite replacement mutations", () => {
     const runMutation = (mutation: "public-observer" | "ambient-latest") => {
       const root = createFixture();
@@ -17647,6 +17848,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         | { boundary: "post-admission-response-loss"; marker: string }
         | { boundary: "post-commit-response-loss"; marker: string }
         | { boundary: "post-admission-overlay-appearance" }
+        | { boundary: "post-admission-replacement-latch"; readyPath: string; releasePath: string }
       > | null,
     ) => {
       const root = createFixture();
@@ -17659,6 +17861,116 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
       const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
       return Object.freeze({ root, original, overlay, admitted, observations });
+    };
+
+    const runPostAdmissionReplacementRace = async (kind: "overlay-file" | "shard-parent"): Promise<void> => {
+      const readyPath = path.join(tmpdir(), `setfarm-p4c-${kind}-ready-${process.pid}-${randomUUID()}`);
+      const releasePath = path.join(tmpdir(), `setfarm-p4c-${kind}-release-${process.pid}-${randomUUID()}`);
+      const fixture = setup(kind, [0, 1], {
+        boundary: "post-admission-replacement-latch",
+        readyPath,
+        releasePath,
+      });
+      let attempt: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+      let displacedParent: Readonly<{ target: string; inode: bigint }> | null = null;
+      const displacedFiles: Array<Readonly<{ target: string; inode: bigint; bytes: Buffer }>> = [];
+      try {
+        const candidateIndex = fixture.overlay.findIndex((candidate) => {
+          const shard = path.relative(fixture.original.store, path.dirname(candidate.target)).split(path.sep).join("/");
+          return !EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.includes(shard as never);
+        });
+        assert.notEqual(candidateIndex, -1, `${kind}: replacement candidate shard is outside frozen original topology`);
+        const candidate = fixture.overlay[candidateIndex]!;
+        const originalBefore = observeExactOriginalPoisonIdentityV1(fixture.original.store);
+        const overlayBefore = fixture.overlay.map((entry) => Object.freeze({
+          target: entry.target,
+          bytes: readFileSync(entry.target),
+          stats: lstatSync(entry.target, { bigint: true }),
+        }));
+        const recoveryBefore = recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators);
+        assert.deepEqual(recoveryBefore, [], `${kind}: authenticated durable prefix is initially empty`);
+
+        attempt = runFixtureExpressionAsync(
+          fixture.root,
+          exactPoisonTask3ProbeExpressionV1(fixture.root, fixture.observations, "publisher-core"),
+        );
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${kind}: post-admission pre-fence latch`, 5_000);
+
+        if (kind === "overlay-file") {
+          const prior = overlayBefore[candidateIndex]!;
+          const backup = path.join(fixture.root, `.p4c-${kind}-original-${randomUUID()}`);
+          renameSync(candidate.target, backup);
+          writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+          chmodSync(candidate.target, 0o600);
+          const replacement = lstatSync(candidate.target, { bigint: true });
+          const retained = lstatSync(backup, { bigint: true });
+          assert.equal(retained.ino, prior.stats.ino, `${kind}: displaced admitted file keeps its inode at the external evidence path`);
+          assert.deepEqual(readFileSync(backup), prior.bytes, `${kind}: displaced admitted file keeps its bytes`);
+          displacedFiles.push(Object.freeze({ target: backup, inode: prior.stats.ino, bytes: prior.bytes }));
+          assert.notEqual(replacement.ino, prior.stats.ino, `${kind}: same-path replacement has a distinct inode`);
+          assert.deepEqual(readFileSync(candidate.target), prior.bytes, `${kind}: same-path replacement deliberately retains equal bytes`);
+        } else {
+          const shard = path.dirname(candidate.target);
+          const shardBefore = lstatSync(shard, { bigint: true });
+          const members = readdirSync(shard).map((name) => {
+            const target = path.join(shard, name);
+            const stats = lstatSync(target, { bigint: true });
+            assert.equal(stats.isFile() && !stats.isSymbolicLink(), true, `${kind}: admitted shard member is a regular file`);
+            return Object.freeze({ name, bytes: readFileSync(target), stats });
+          });
+          const backup = path.join(fixture.root, `.p4c-${kind}-original-${randomUUID()}`);
+          renameSync(shard, backup);
+          mkdirSync(shard, { mode: 0o700 });
+          chmodSync(shard, 0o700);
+          for (const member of members) {
+            const replacement = path.join(shard, member.name);
+            copyFileSync(path.join(backup, member.name), replacement);
+            chmodSync(replacement, 0o600);
+          }
+          assert.equal(lstatSync(backup, { bigint: true }).ino, shardBefore.ino, `${kind}: displaced admitted shard keeps its directory inode`);
+          displacedParent = Object.freeze({ target: backup, inode: shardBefore.ino });
+          assert.notEqual(lstatSync(shard, { bigint: true }).ino, shardBefore.ino, `${kind}: same-path shard replacement has a distinct inode`);
+          for (const member of members) {
+            const retained = lstatSync(path.join(backup, member.name), { bigint: true });
+            const replacement = lstatSync(path.join(shard, member.name), { bigint: true });
+            assert.equal(retained.ino, member.stats.ino, `${kind}: displaced member ${member.name} keeps its inode`);
+            assert.notEqual(replacement.ino, member.stats.ino, `${kind}: replacement member ${member.name} has a distinct inode`);
+            assert.deepEqual(readFileSync(path.join(backup, member.name)), member.bytes, `${kind}: displaced member ${member.name} keeps its bytes`);
+            assert.deepEqual(readFileSync(path.join(shard, member.name)), member.bytes, `${kind}: replacement member ${member.name} keeps equal bytes`);
+            displacedFiles.push(Object.freeze({ target: path.join(backup, member.name), inode: member.stats.ino, bytes: member.bytes }));
+          }
+        }
+
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = parse(await attempt, kind);
+        assert.equal(result.outcome, "threw", `${kind}: admitted replacement must fail closed`);
+        assert.match(result.message ?? "", /exact-poison|overlay|inventory|identity|stable|changed|replaced/i, `${kind}: rejection is caused by the admitted topology drift`);
+        assert.deepEqual(
+          recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators),
+          recoveryBefore,
+          `${kind}: no successor mutation advances beyond the authenticated empty durable prefix`,
+        );
+        assert.deepEqual(observeExactOriginalPoisonIdentityV1(fixture.original.store), originalBefore, `${kind}: frozen original bytes and inodes remain exact`);
+        if (displacedParent !== null) {
+          assert.equal(lstatSync(displacedParent.target, { bigint: true }).ino, displacedParent.inode, `${kind}: displaced shard inode remains exact after rejection`);
+        }
+        for (const victim of displacedFiles) {
+          assert.equal(lstatSync(victim.target, { bigint: true }).ino, victim.inode, `${kind}: displaced overlay inode remains exact after rejection`);
+          assert.deepEqual(readFileSync(victim.target), victim.bytes, `${kind}: displaced overlay bytes remain exact after rejection`);
+        }
+        for (const [index, prior] of overlayBefore.entries()) {
+          if (index === candidateIndex || path.dirname(prior.target) === path.dirname(candidate.target) && kind === "shard-parent") continue;
+          const after = lstatSync(prior.target, { bigint: true });
+          assert.equal(after.ino, prior.stats.ino, `${kind}: unaffected overlay ${index} keeps its inode`);
+          assert.deepEqual(readFileSync(prior.target), prior.bytes, `${kind}: unaffected overlay ${index} keeps its bytes`);
+        }
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (attempt !== null) await attempt;
+        if (existsSync(readyPath)) rmSync(readyPath);
+        if (existsSync(releasePath)) rmSync(releasePath);
+        removeFixture(fixture.root);
+      }
     };
 
     for (const prefix of prefixes) {
@@ -17735,6 +18047,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         removeFixture(fixture.root);
       }
     }
+
+    await runPostAdmissionReplacementRace("overlay-file");
+    await runPostAdmissionReplacementRace("shard-parent");
 
     {
       const fixture = setup("prerequisite-a-b-drift", [0, 1], null);
@@ -17952,11 +18267,15 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(source.split("durablyAuthenticateSuccessorActivationSealV1(").length - 1, 2, "only definition and publisher call S durability");
     const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
     const historicalResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
-    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 4, "C durability has exactly one definition, one publisher call, one current-selector call, and one historical-resolver call");
+    const historicalAuthorityResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1");
+    const historicalPendingResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 6, "C durability has exactly one definition, one publisher call, one current-selector call, and three exact historical-resolver calls");
     assert.equal(commitRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "C durability retains one private definition");
     assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
     assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
     assert.equal(historicalResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical strict-C resolution invokes C durability exactly once");
+    assert.equal(historicalAuthorityResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed audit resolution invokes C durability exactly once");
+    assert.equal(historicalPendingResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed pending resolution invokes C durability exactly once");
     assert.match(core, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/, "publisher fences the generic C helper with the exact H writer and pinned C context immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
@@ -35709,7 +36028,17 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const root = createFixture();
         try {
           const fault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary, occurrence: 1 });
-          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault);
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault, { currentPrerequisites: "distinct" });
+          assert.notEqual(
+            harness.admitted.chain.records.successorAuthorityV31.value.authorityV3Migration31AuditHash,
+            EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1,
+            `${phase.phase}/${boundary}: replay matrix audit pair must be distinct from frozen e2`,
+          );
+          assert.notEqual(
+            harness.admitted.chain.records.successorPending.value.pendingBootstrapHandoffMigrationHash,
+            EXACT_POISON_CURRENT_PENDING_HASH_V1,
+            `${phase.phase}/${boundary}: replay matrix pending pair must be distinct from frozen ce`,
+          );
           const first = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
           assert.equal(first.status, 0, `${phase.phase}/${boundary}: ${first.stderr}`);
           assert.equal(first.stderr, "", `${phase.phase}/${boundary}: first call stderr`);
@@ -35731,6 +36060,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
           assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
           assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/${boundary}`);
+          assert.notEqual(harness.currentOverlay, null, `${phase.phase}/${boundary}: distinct current overlay fixture is retained`);
+          assertExactPoisonDistinctCurrentPairSuccessorV1(
+            harness.original,
+            harness.admitted.chain,
+            harness.currentOverlay!,
+            `${phase.phase}/${boundary}`,
+          );
         } finally {
           removeFixture(root);
         }
