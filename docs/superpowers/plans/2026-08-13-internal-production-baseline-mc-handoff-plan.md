@@ -6548,6 +6548,10 @@ Before its first recovery publication, the legacy root must equal exact inventor
 
 The inventory has exactly ten directories and five files. There is no legacy fixed prerequisite, temporary, `operations`, status, receipt, bootstrap, Task-12, quarantine, successor, symlink, hard link, device crossing, or other dirent. Every file is additionally same-UID/device as its parent and no-follow regular; stable descriptor/path/parent reobservation is required around every read. A missing, extra, reordered, replaced, unstable, or physically invalid member blocks before publication.
 
+The frozen ten-directory/five-file original inventory and `EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1` remain exact: they authenticate only the original legacy history and never serialize a current prerequisite overlay. The sole closed exception to the earlier no-additional-record wording is an optional, all-or-nothing overlay of exactly two internally derived and already settled current prerequisite records: the exact v31-audit record and exact pending-successor record whose canonical bytes, content-addressed locators, pairs, no-follow one-link identities, and stability fences match the recovery-derived current pairs. A partial, duplicate, foreign, replaced, unstable, or pair-crossed overlay is poison. Overlay presence is authenticated separately from the frozen inventory hash, so an admitted overlay neither changes that hash nor enlarges the original inventory. Recovery/replay and successor construction bind those admitted current pairs through the private no-write builders and never call a public prerequisite publisher, observer, repair path, latest scan, or ambient selector. This closure is causally required because Task 6A Step 1 settles the current prerequisites before `prepare-current-entry`; treating those settled records as forbidden extras would deadlock preparation on the former frozen-current assumption. Recovery failure remains fail-closed: Task 6A stops before every migration or service mutation.
+
+The File Map remains exact140/exact59. The authoritative manifest parser reads the plan only to reconstruct the literal Task 0 and P3 source inventories; this plan document and the prerequisite-overlay implementation-plan/brief documents are not runtime-source members of either tuple, and `P3_TRACKED_SCOPE` likewise admits only its enumerated source/test paths. Therefore this documentation closure adds no Task 0 or P3 member, changes no insertion order, and requires no cardinality change.
+
 Whole-store quarantine is logical and append-only; no existing path is renamed, deleted, copied, normalized, overwritten, chmodded, or used as a successor member. Under the same code-owned legacy root, the disposition locator is content-addressed at `records/current-entry-store-quarantine-dispositions/sha256/<hh>/<dispositionHash>.json`, the successor root is `stores/sha256/<hh>/<successorStoreHash>/`, only the edge locator is predecessor-bound at `records/current-entry-store-successor-edges/by-predecessor-operation/sha256/<hh>/<predecessorOperationHash>.json`, the activation-seal locator is content-addressed at `records/current-entry-store-successor-activation-seals/sha256/<hh>/<activationSealHash>.json`, and the activation-commit locator is content-addressed at `records/current-entry-store-successor-activation-commits/sha256/<hh>/<activationCommitHash>.json`; every `<hh>` is the first two lowercase hexadecimal characters of its adjacent complete hash. No predecessor-index, pointer, latest file, scan, or second fixed locator is added for disposition, successor, edge, seal, commit, or activation discovery.
 
 Every code-owned recovery publisher is serialized by one predecessor-derived private lock before phase 0. The controller first strict-reads the no-follow fixed poison operation, authenticates the exact predecessor pair, and derives `H`; it then passes the virtual target `${legacyRoot}/records/current-entry-store-quarantine-recovery-by-predecessor-operation-${H}` to the existing private `acquireTask12ReceiptLocatorWriterV1()` protocol. That target is never created or read. The protocol's actual fixed lock is `${legacyRoot}/records/.current-entry-store-quarantine-recovery-by-predecessor-operation-${H}.writer.lock`, and its only acquisition temporaries match the existing exact `.current-entry-store-quarantine-recovery-by-predecessor-operation-${H}.writer.lock.tmp-${pid}-${uuid}` family. The already inventoried real `records/` directory is the parent, so acquisition creates no recovery-control root or pre-admission directory. The existing strict canonical lock body, target hash, PID/start/command/identity/nonce binding, no-follow `0600` one-link publication, bounded lock-temp protocol, `/bin/ps` process-identity observation, live-or-ambiguous busy result, definitely-dead or PID-reused stale-owner cleanup, parent fsync, stable reopen, and exact-owner release rules remain byte-authoritative.
@@ -8363,6 +8367,21 @@ printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -e '
   (.pendingBootstrapHandoffMigrationHash | test("^[0-9a-f]{64}$"))
 ' --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_PREREQUISITE_ROOT="/Users/setrox/ai/setrox/data/internal-production-baseline/current-entry-v1/records"
+A_CURRENT_ENTRY_V31_RECORD="$A_CURRENT_ENTRY_PREREQUISITE_ROOT/authority-v3-migration31-audits/sha256/${A_AUTHORITY_V3_V31_HASH:0:2}/${A_AUTHORITY_V3_V31_HASH}.json"
+A_CURRENT_ENTRY_PENDING_RECORD="$A_CURRENT_ENTRY_PREREQUISITE_ROOT/pending-bootstrap-handoff-migrations/sha256/${A_PENDING_SUCCESSOR_HASH:0:2}/${A_PENDING_SUCCESSOR_HASH}.json"
+snapshot_current_entry_prerequisite_v1() {
+  local A_CURRENT_ENTRY_PREREQUISITE_RECORD="$1"
+  test -f "$A_CURRENT_ENTRY_PREREQUISITE_RECORD"
+  test ! -L "$A_CURRENT_ENTRY_PREREQUISITE_RECORD"
+  test "$(stat -f '%l' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" = "1"
+  printf '%s:%s:%s\n' \
+    "$(stat -f '%d' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" \
+    "$(stat -f '%i' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" \
+    "$(shasum -a 256 "$A_CURRENT_ENTRY_PREREQUISITE_RECORD" | awk '{print $1}')"
+}
+A_CURRENT_ENTRY_V31_BEFORE_PREPARE="$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_V31_RECORD")"
+A_CURRENT_ENTRY_PENDING_BEFORE_PREPARE="$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_PENDING_RECORD")"
 A_PRE_ENTRY_SERVICE_CENSUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- service-census --json)"
 printf '%s\n' "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" | jq -e '
   keys == ["censusHash","dashboard","missionControl","openClaw","schema","spawner"] and
@@ -8390,6 +8409,8 @@ printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -e '
   (.operationHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
+test "$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_V31_RECORD")" = "$A_CURRENT_ENTRY_V31_BEFORE_PREPARE"
+test "$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_PENDING_RECORD")" = "$A_CURRENT_ENTRY_PENDING_BEFORE_PREPARE"
 A_CURRENT_ENTRY_OPERATION_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
 printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   --arg operationRef "$A_CURRENT_ENTRY_OPERATION_REF" --arg operationHash "$A_CURRENT_ENTRY_OPERATION_HASH" \
@@ -8471,7 +8492,7 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
 ' >/dev/null
 ```
 
-Expected: read-only PBA/v31/pending/source prerequisites and the adjacent exact named-field four-service census are captured before `prepare-current-entry`. Prepare publishes the operation, then the operation-bound pre-mutation loaded-runtime authority and `operation_prepared` status before the first live mutation. The one strict status body contains those four nested prerequisite authorities, direct pre-mutation pair plus resolved body, and no flattened mirrors. Its four named projections equal the census's shared named identity/count fields, `observedServiceCensusHash` equals `censusHash`, and every later phase is null. This step invokes no resume, restart, migration, activation, guard, run, or other live mutation.
+Expected: read-only PBA/v31/pending/source prerequisites and the adjacent exact named-field four-service census are captured before `prepare-current-entry`. The v31-audit and pending-successor current records are each no-follow, one-link records whose device/inode and complete byte SHA-256 are captured after the read-only observers have settled them; both snapshots must be byte/identity-identical after prepare. Prepare publishes the operation, then the operation-bound pre-mutation loaded-runtime authority and `operation_prepared` status before the first live mutation. The returned operation pair must equal the status operation pair, and the status's nested v31/pending pairs must equal the current pairs captured before preparation. The one strict status body contains those four nested prerequisite authorities, direct pre-mutation pair plus resolved body, and no flattened mirrors. Its four named projections equal the census's shared named identity/count fields, `observedServiceCensusHash` equals `censusHash`, and every later phase is null. A failed prerequisite snapshot, pair equality, prepare, or post-prepare stability check stops before resume, service mutation, or migration mutation; this step invokes no resume, restart, migration, activation, guard, run, or other live mutation.
 
 - [ ] **Step 2: Resume the one operation to ready, then verify it read-only**
 
