@@ -37085,6 +37085,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         if (source.includes(marker)) source = source.replace(marker, `export async function ${name}(`);
       };
       exposePrivate("selectCurrentEntryStoreContextV1");
+      exposePrivate("canonicalRecordBytes");
       exposePrivate("buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1");
       exposePrivate("buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1");
       const publisher = topLevelFunctionRegionV1(source, "publishLegacyZeroRecordV1");
@@ -37122,28 +37123,42 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const authority = await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
         const pending = await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
         const beforePublic = { publicationCount: probe.publication.length, storeExists: fs.existsSync(${JSON.stringify(store)}) };
-        const observedAuthority = await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
-        const observedPending = await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+        const authorityCanonicalBytes = await m.canonicalRecordBytes(authority.value);
+        const pendingCanonicalBytes = await m.canonicalRecordBytes(pending.value);
+        let observedAuthority = null;
+        let observedPending = null;
+        let publicError = null;
+        try {
+          observedAuthority = await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
+          observedPending = await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+        } catch (error) {
+          publicError = String(error);
+        }
         process.stdout.write(JSON.stringify({
-          authority: { value: authority.value, bytesBase64: authority.bytes.toString("base64"), pair: authority.pair },
-          pending: { value: pending.value, bytesBase64: pending.bytes.toString("base64"), pair: pending.pair },
+          authority: { value: authority.value, bytesBase64: authority.bytes.toString("base64"), canonicalBytesBase64: authorityCanonicalBytes.toString("base64"), pair: authority.pair },
+          pending: { value: pending.value, bytesBase64: pending.bytes.toString("base64"), canonicalBytesBase64: pendingCanonicalBytes.toString("base64"), pair: pending.pair },
           beforePublic,
           observedAuthority,
           observedPending,
+          publicError,
           publication: probe.publication,
         }));
       })()`);
       assert.equal(observed.status, 0, observed.stderr);
       const result = JSON.parse(observed.stdout) as Readonly<{
-        authority: Readonly<{ value: Record<string, string>; bytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
-        pending: Readonly<{ value: Record<string, string>; bytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        authority: Readonly<{ value: Record<string, string>; bytesBase64: string; canonicalBytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        pending: Readonly<{ value: Record<string, string>; bytesBase64: string; canonicalBytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
         beforePublic: Readonly<{ publicationCount: number; storeExists: boolean }>;
-        observedAuthority: Record<string, string>;
-        observedPending: Record<string, string>;
+        observedAuthority: Record<string, string> | null;
+        observedPending: Record<string, string> | null;
+        publicError: string | null;
         publication: readonly Readonly<{ target: string; bytesBase64: string }>[];
       }>;
 
       assert.deepEqual(result.beforePublic, { publicationCount: 0, storeExists: false }, "both builders leave an absent store untouched");
+      assert.equal(result.authority.bytesBase64, result.authority.canonicalBytesBase64, "the authority builder returns independently canonical bytes");
+      assert.equal(result.pending.bytesBase64, result.pending.canonicalBytesBase64, "the pending builder returns independently canonical bytes");
+      assert.equal(result.publicError, null, "public wrappers accept their builders' canonical bytes");
       assert.deepEqual(result.observedAuthority, result.authority.value, "the public authority observer returns its builder value");
       assert.deepEqual(result.observedPending, result.pending.value, "the public pending observer returns its builder value");
       assert.deepEqual(result.authority.pair, {
