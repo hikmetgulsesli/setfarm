@@ -2404,31 +2404,30 @@ async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoW
 }
 
 async function buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(
-  context: SelectedCurrentEntryStoreContextV1,
+  currentPrerequisites: ExactPoisonRecoveryPrerequisitesV1,
 ): Promise<readonly [
   ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
   ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
 ]> {
-  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
-  if (state.storeRoot !== fixedLegacyCurrentEntryRootV1()) {
-    currentEntryFail("exact-poison current prerequisite overlay root is crossed");
-  }
-  const authority = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
-  const pending = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  const current = requireExactPoisonRecoveryPrerequisitesV1(currentPrerequisites);
+  const authority = current.authorityV3Migration31Audit;
+  const pending = current.pendingBootstrapHandoffMigration;
+  const authorityHash = authority.pair.authorityV3Migration31AuditHash!;
+  const pendingHash = pending.pair.pendingBootstrapHandoffMigrationHash!;
   const candidates = Object.freeze([
     Object.freeze({
       kind: "authorityV3Migration31Audit" as const,
-      target: currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", authority.pair.hash),
+      target: exactPoisonRecoveryPrerequisitePathV1("authorityV3Migration31Audit", authorityHash),
       value: authority.value,
       bytes: authority.bytes,
-      pair: authority.pair,
+      pair: Object.freeze({ ref: authority.pair.authorityV3Migration31AuditRef!, hash: authorityHash }),
     }),
     Object.freeze({
       kind: "pendingBootstrapHandoffMigration" as const,
-      target: currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", pending.pair.hash),
+      target: exactPoisonRecoveryPrerequisitePathV1("pendingBootstrapHandoffMigration", pendingHash),
       value: pending.value,
       bytes: pending.bytes,
-      pair: pending.pair,
+      pair: Object.freeze({ ref: pending.pair.pendingBootstrapHandoffMigrationRef!, hash: pendingHash }),
     }),
   ] as const);
   if (
@@ -3663,6 +3662,11 @@ type ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1 = Readonly<{
   pair: CurrentEntryStoreRecordPairV1;
 }>;
 
+type ExactPoisonRecoveryCurrentPrerequisiteOverlayV1 = readonly [
+  ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
+  ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1,
+];
+
 type ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1 = Readonly<
   ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1 & {
     state: "absent" | "present";
@@ -3729,6 +3733,8 @@ const EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1 = Object.freeze([
 
 type ExactPoisonQuarantineAdmissionV1 = Readonly<{
   candidates: ExactPoisonRecoveryNoWriteFenceV1["candidates"];
+  currentPrerequisites: ExactPoisonRecoveryPrerequisitesV1;
+  expectedCurrentPrerequisiteOverlay: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1;
   currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
   assertStableOriginals: () => void;
 }>;
@@ -3826,8 +3832,7 @@ function exactPoisonRecoveryPrerequisitePathV1(kind: "authorityV3Migration31Audi
 
 function requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(
   value: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[],
-): readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] {
-  if (value.length === 0) return Object.freeze([]);
+): ExactPoisonRecoveryCurrentPrerequisiteOverlayV1 {
   if (value.length !== 2) currentEntryFail("exact-poison current prerequisite overlay candidate count is invalid");
   const shapes = Object.freeze([
     Object.freeze({
@@ -3880,37 +3885,35 @@ function requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(
   if (candidates[0]!.target === candidates[1]!.target || candidates[0]!.pair.hash === candidates[1]!.pair.hash) {
     currentEntryFail("exact-poison current prerequisite overlay identity is duplicated");
   }
-  return Object.freeze(candidates);
+  return Object.freeze(candidates) as unknown as ExactPoisonRecoveryCurrentPrerequisiteOverlayV1;
 }
 
 async function observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(): Promise<ExactPoisonRecoveryPrerequisitesV1> {
-  const authoritySnapshot = requireExactPoisonRecoverySnapshotV1(
-    exactPoisonRecoveryPrerequisitePathV1("authorityV3Migration31Audit", EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1),
-    "exact-poison current authority-v31 audit",
-  );
-  const authorityBody = strictCanonicalRecord(authoritySnapshot.observed.bytes, "exact-poison current authority-v31 audit");
-  const authorityPair = Object.freeze({
-    authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1}`,
-    authorityV3Migration31AuditHash: EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1,
-  });
-  const authorityValue = await parseAuthorityV3Migration31AuditBody(authorityBody, authorityPair);
-
-  const pendingSnapshot = requireExactPoisonRecoverySnapshotV1(
-    exactPoisonRecoveryPrerequisitePathV1("pendingBootstrapHandoffMigration", EXACT_POISON_CURRENT_PENDING_HASH_V1),
-    "exact-poison current pending migration",
-  );
-  const pendingBody = strictCanonicalRecord(pendingSnapshot.observed.bytes, "exact-poison current pending migration");
-  const pendingPair = Object.freeze({
-    pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${EXACT_POISON_CURRENT_PENDING_HASH_V1}`,
-    pendingBootstrapHandoffMigrationHash: EXACT_POISON_CURRENT_PENDING_HASH_V1,
-  });
-  const pendingValue = parsePendingBootstrapHandoffMigrationBody(pendingBody, pendingPair);
-  assertExactPoisonRecoverySnapshotStableV1(authoritySnapshot, "exact-poison current authority-v31 audit");
-  assertExactPoisonRecoverySnapshotStableV1(pendingSnapshot, "exact-poison current pending migration");
-  return recursivelyFreeze({
-    authorityV3Migration31Audit: { value: authorityValue, bytes: authoritySnapshot.observed.bytes, pair: authorityPair },
-    pendingBootstrapHandoffMigration: { value: pendingValue, bytes: pendingSnapshot.observed.bytes, pair: pendingPair },
-  });
+  const context = createSelectedCurrentEntryStoreContextV1(Object.freeze({
+    storeRoot: fixedLegacyCurrentEntryRootV1(),
+    operation: exactPoisonOperationPairV1(),
+    selectionKind: "legacy-edge-absent" as const,
+  }));
+  const authority = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+  const pending = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  return requireExactPoisonRecoveryPrerequisitesV1(Object.freeze({
+    authorityV3Migration31Audit: Object.freeze({
+      value: authority.value,
+      bytes: authority.bytes,
+      pair: Object.freeze({
+        authorityV3Migration31AuditRef: authority.pair.ref,
+        authorityV3Migration31AuditHash: authority.pair.hash,
+      }),
+    }),
+    pendingBootstrapHandoffMigration: Object.freeze({
+      value: pending.value,
+      bytes: pending.bytes,
+      pair: Object.freeze({
+        pendingBootstrapHandoffMigrationRef: pending.pair.ref,
+        pendingBootstrapHandoffMigrationHash: pending.pair.hash,
+      }),
+    }),
+  }));
 }
 
 function observeExactPoisonSyntheticGitObjectAbsenceV1(): typeof EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1 {
@@ -4148,7 +4151,7 @@ function observeExactPoisonRecoveryWriterTransientsV1(heldWriter: ExactPoisonRec
 function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
+  expectedPublished: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1,
 ): ExactPoisonRecoveryInventoryEvidenceV1 {
   heldWriter.assertStable();
   const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4428,6 +4431,51 @@ function requireExactPoisonRecoveryPrerequisitesV1(value: unknown): ExactPoisonR
   });
 }
 
+function assertExactPoisonRecoveryPrerequisitesEqualV1(
+  observed: ExactPoisonRecoveryPrerequisitesV1,
+  expected: ExactPoisonRecoveryPrerequisitesV1,
+  label: string,
+): void {
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    const actual = observed[kind];
+    const admitted = expected[kind];
+    if (
+      canonicalComparable(actual.value) !== canonicalComparable(admitted.value)
+      || !actual.bytes.equals(admitted.bytes)
+      || canonicalComparable(actual.pair) !== canonicalComparable(admitted.pair)
+    ) currentEntryFail(`${label} ${kind} value, bytes, or pair drifted`);
+  }
+}
+
+function assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
+  observed: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[],
+  expected: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[],
+  label: string,
+): void {
+  if (observed.length !== expected.length) currentEntryFail(`${label} candidate count drifted`);
+  for (const [index, actual] of observed.entries()) {
+    const admitted = expected[index]!;
+    if (
+      actual.kind !== admitted.kind
+      || actual.target !== admitted.target
+      || canonicalComparable(actual.value) !== canonicalComparable(admitted.value)
+      || !actual.bytes.equals(admitted.bytes)
+      || actual.pair.ref !== admitted.pair.ref
+      || actual.pair.hash !== admitted.pair.hash
+    ) currentEntryFail(`${label} candidate ${index} drifted`);
+  }
+}
+
+function assertExactPoisonRecoveryAdmittedOverlayEqualV1(
+  observed: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[],
+  expected: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[],
+): void {
+  assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(observed, expected, "exact-poison admitted current prerequisite overlay");
+  for (const [index, actual] of observed.entries()) {
+    if (actual.state !== expected[index]!.state) currentEntryFail(`exact-poison admitted current prerequisite overlay candidate ${index} state drifted`);
+  }
+}
+
 function requireExactZeroCountsV1(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
   if (!isPlainRecord(value) || !hasExactKeys(value, keys) || keys.some((key) => value[key] !== 0)) {
     currentEntryFail(`${label} is not exact zero`);
@@ -4477,6 +4525,7 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   operation: FileSnapshot,
   inventory: ExactPoisonRecoveryInventoryEvidenceV1,
+  admittedCurrentPrerequisites: ExactPoisonRecoveryPrerequisitesV1,
 ): Promise<ExactPoisonRecoveryNoWriteFenceV1> {
   const predecessorPair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
   if (
@@ -4492,9 +4541,9 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
     currentEntryFail("exact-poison synthetic Git absence tuple is crossed");
   }
 
+  const prerequisitesA = requireExactPoisonRecoveryPrerequisitesV1(admittedCurrentPrerequisites);
   const sourceA = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaA = await observeCurrentPba();
-  const prerequisitesA = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison phase-a");
   const serviceA = await observeInternalProductionServiceCensusV1();
   const physicalA = observePhysicalInventoryV1(serviceA, 0);
@@ -4513,11 +4562,10 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaB = await observeCurrentPba();
   const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+  assertExactPoisonRecoveryPrerequisitesEqualV1(prerequisitesB, prerequisitesA, "exact-poison zero-effect A/B prerequisites");
   if (
     canonicalComparable(sourceA) !== canonicalComparable(sourceB)
     || canonicalComparable(pbaA) !== canonicalComparable(pbaB)
-    || canonicalComparable(prerequisitesA.authorityV3Migration31Audit.value) !== canonicalComparable(prerequisitesB.authorityV3Migration31Audit.value)
-    || canonicalComparable(prerequisitesA.pendingBootstrapHandoffMigration.value) !== canonicalComparable(prerequisitesB.pendingBootstrapHandoffMigration.value)
     || canonicalComparable(serviceA) !== canonicalComparable(serviceB)
     || canonicalComparable(physicalA) !== canonicalComparable(physicalB)
     || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
@@ -4676,16 +4724,32 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
 async function observeExactPoisonQuarantineAdmissionCoreV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
+  expectedPublished: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1,
+  currentPrerequisites: ExactPoisonRecoveryPrerequisitesV1,
 ): Promise<ExactPoisonQuarantineAdmissionV1> {
   heldWriter.assertStable();
-  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
-  const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory);
+  const admittedCurrentPrerequisites = requireExactPoisonRecoveryPrerequisitesV1(currentPrerequisites);
+  const expectedCurrentPrerequisiteOverlay = requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(expectedPublished);
+  const derivedCurrentPrerequisiteOverlay = await buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(admittedCurrentPrerequisites);
+  assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
+    expectedCurrentPrerequisiteOverlay,
+    derivedCurrentPrerequisiteOverlay,
+    "exact-poison expected current prerequisite overlay",
+  );
+  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedCurrentPrerequisiteOverlay);
+  assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
+    inventory.currentPrerequisiteOverlay,
+    expectedCurrentPrerequisiteOverlay,
+    "exact-poison inventory current prerequisite overlay",
+  );
+  const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory, admittedCurrentPrerequisites);
   assertExactPoisonRecoveryFrontierV1(observed.candidates, heldWriter);
   inventory.assertStableOriginals();
   heldWriter.assertStable();
   return Object.freeze({
     candidates: observed.candidates,
+    currentPrerequisites: admittedCurrentPrerequisites,
+    expectedCurrentPrerequisiteOverlay,
     currentPrerequisiteOverlay: inventory.currentPrerequisiteOverlay,
     assertStableOriginals: inventory.assertStableOriginals,
   });
@@ -4986,7 +5050,7 @@ async function openExactPoisonRecoveryPinnedChainV1(
       operation: records[0]!,
       edge: records[1]!,
       disposition: records[2]!,
-      successorRoot: parsed.successorRoot,
+      successorRoot,
       successorOperationPair: parsed.successorOperationPair,
       successorOperation: parsed.successorOperation,
       seal,
@@ -5029,13 +5093,55 @@ async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoison
   return openExactPoisonRecoveryPinnedChainV1(true);
 }
 
+function exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(
+  context: ExactPoisonRecoveryPinnedCommitChainV1,
+): ExactPoisonRecoveryPrerequisitesV1 {
+  const authorityValue = strictCanonicalRecord(context.successorAuthorityV31.bytes, "pinned successor authority-v31");
+  const pendingValue = strictCanonicalRecord(context.successorPending.bytes, "pinned successor pending migration");
+  return requireExactPoisonRecoveryPrerequisitesV1(Object.freeze({
+    authorityV3Migration31Audit: Object.freeze({
+      value: authorityValue,
+      bytes: context.successorAuthorityV31.bytes,
+      pair: Object.freeze({
+        authorityV3Migration31AuditRef: authorityValue.authorityV3Migration31AuditRef,
+        authorityV3Migration31AuditHash: authorityValue.authorityV3Migration31AuditHash,
+      }),
+    }),
+    pendingBootstrapHandoffMigration: Object.freeze({
+      value: pendingValue,
+      bytes: context.successorPending.bytes,
+      pair: Object.freeze({
+        pendingBootstrapHandoffMigrationRef: pendingValue.pendingBootstrapHandoffMigrationRef,
+        pendingBootstrapHandoffMigrationHash: pendingValue.pendingBootstrapHandoffMigrationHash,
+      }),
+    }),
+  }));
+}
+
 async function observeExactPoisonRecoveryPostVisibleZeroFenceV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
+  admitted?: ExactPoisonQuarantineAdmissionV1,
 ): Promise<void> {
+  const durableCurrentPrerequisites = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(context);
+  const currentPrerequisites = admitted?.currentPrerequisites ?? durableCurrentPrerequisites;
+  assertExactPoisonRecoveryPrerequisitesEqualV1(
+    currentPrerequisites,
+    durableCurrentPrerequisites,
+    "post-visible admitted and durable current prerequisites",
+  );
+  const expectedCurrentPrerequisiteOverlay = await buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(currentPrerequisites);
+  if (admitted !== undefined) {
+    assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
+      admitted.expectedCurrentPrerequisiteOverlay,
+      expectedCurrentPrerequisiteOverlay,
+      "post-visible admitted current prerequisite overlay",
+    );
+    admitted.assertStableOriginals();
+  }
   const originals = openExactPoisonRecoveryPostVisibleOriginalsV1(context);
   try {
     const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1(context.operation);
-    const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, originals.evidence);
+    const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, originals.evidence, currentPrerequisites);
     const expectedCandidates = Object.freeze([
       Object.freeze({ phase: "disposition" as const, target: context.disposition.target, bytes: context.disposition.bytes }),
       Object.freeze({ phase: "successor-authority-v31" as const, target: context.successorAuthorityV31.target, bytes: context.successorAuthorityV31.bytes }),
@@ -5051,6 +5157,7 @@ async function observeExactPoisonRecoveryPostVisibleZeroFenceV1(
     }
     context.assertStable();
     originals.evidence.assertStableOriginals();
+    admitted?.assertStableOriginals();
   } finally {
     originals.close();
   }
@@ -5170,10 +5277,10 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
   const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
   const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB);
   const expectedOperation = context.successorOperation;
+  assertExactPoisonRecoveryPrerequisitesEqualV1(prerequisitesB, prerequisitesA, "post-visible pre-status raw A/B prerequisites");
   if (
     canonicalComparable(sourceA) !== canonicalComparable(sourceB)
     || canonicalComparable(pbaA) !== canonicalComparable(pbaB)
-    || canonicalComparable(prerequisitesA) !== canonicalComparable(prerequisitesB)
     || canonicalComparable(serviceA) !== canonicalComparable(serviceB)
     || canonicalComparable(physicalA) !== canonicalComparable(physicalB)
     || canonicalComparable(phaseA) !== canonicalComparable(phaseB)
@@ -5215,9 +5322,15 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
 async function observeExactPoisonQuarantineAdmissionV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
-  expectedPublished: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = Object.freeze([]),
 ): Promise<ExactPoisonQuarantineAdmissionV1> {
-  return observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished);
+  heldWriter.assertStable();
+  const currentPrerequisites = requireExactPoisonRecoveryPrerequisitesV1(
+    await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(),
+  );
+  heldWriter.assertStable();
+  const expectedPublished = await buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(currentPrerequisites);
+  heldWriter.assertStable();
+  return observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished, currentPrerequisites);
 }
 
 type ExactPoisonPreStatusDirectoryObservationV1 = Readonly<
@@ -5531,6 +5644,7 @@ async function revalidatePostVisibleCurrentEntryStoreProgressV1(
 
 async function revalidatePostVisibleCurrentEntryStoreV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
+  admitted?: ExactPoisonQuarantineAdmissionV1,
 ): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1> {
   context.assertStable();
   context.successorRootParent.assertStable();
@@ -5560,7 +5674,7 @@ async function revalidatePostVisibleCurrentEntryStoreV1(
   assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context);
   context.assertStable();
   context.successorRootParent.assertStable();
-  await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context);
+  await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context, admitted);
   context.assertStable();
   context.successorRootParent.assertStable();
   assertExactPoisonPostVisibleSuccessorRootIdentityV1(context, rootIdentity);
@@ -6037,10 +6151,27 @@ async function assertExactPoisonRecoveryPublicationFenceV1(
   admitted: ExactPoisonQuarantineAdmissionV1,
   heldWriter: ExactPoisonRecoveryWriterV1,
 ): Promise<void> {
-  const observed = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
+  const observed = await observeExactPoisonQuarantineAdmissionCoreV1(
+    operation,
+    heldWriter,
+    admitted.expectedCurrentPrerequisiteOverlay,
+    admitted.currentPrerequisites,
+  );
   assertExactPoisonQuarantineAdmissionCandidatesEqualV1(observed.candidates, admitted.candidates);
+  assertExactPoisonRecoveryPrerequisitesEqualV1(
+    observed.currentPrerequisites,
+    admitted.currentPrerequisites,
+    "exact-poison publication-fence current prerequisites",
+  );
+  assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
+    observed.expectedCurrentPrerequisiteOverlay,
+    admitted.expectedCurrentPrerequisiteOverlay,
+    "exact-poison publication-fence expected current prerequisite overlay",
+  );
+  assertExactPoisonRecoveryAdmittedOverlayEqualV1(observed.currentPrerequisiteOverlay, admitted.currentPrerequisiteOverlay);
   heldWriter.assertStable();
   observed.assertStableOriginals();
+  admitted.assertStableOriginals();
 }
 
 function exactPoisonRecoveryPublicationFaultV1(
@@ -6213,13 +6344,14 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const heldWriter = acquireExactPoisonRecoveryWriterV1();
   try {
     heldWriter.assertStable();
+    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     const validatePostVisible = async (context: ExactPoisonRecoveryPinnedCommitChainV1): Promise<void> => {
       heldWriter.assertStable();
       context.assertStable();
       await durablyAuthenticateSuccessorActivationCommitV1(context);
       heldWriter.assertStable();
       context.assertStable();
-      await revalidatePostVisibleCurrentEntryStoreV1(context);
+      await revalidatePostVisibleCurrentEntryStoreV1(context, admission);
       heldWriter.assertStable();
       context.assertStable();
     };
@@ -6229,7 +6361,6 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       finally { existing.context.close(); }
       return;
     }
-    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
       if (ordinal === 5) {
