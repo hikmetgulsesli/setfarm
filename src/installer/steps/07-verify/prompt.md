@@ -3,7 +3,7 @@
 Task: verify one story PR. This role is a gatekeeper: it does not fix code,
 edit source files, or create commits/pushes. If a real issue exists, return one
 clear `STATUS: retry` report for the implement step. Only merge a PR that is
-fully clean, then update local `main`.
+fully clean; Setfarm owns all post-merge base synchronization.
 
 ## Context
 
@@ -13,7 +13,8 @@ STORY_WORKDIR: {{STORY_WORKDIR}}
 REPO: {{REPO}}
 
 - `VERIFY_WORKDIR` is where the story branch must be verified.
-- `MAIN_REPO` is the canonical project repository for final `main` update.
+- `MAIN_REPO` identifies the canonical project repository for read-only evidence;
+  do not change its checked-out branch or refs.
 - `STORY_WORKDIR` is the existing story-branch worktree, when this is a story PR.
 - `REPO` is the primary verification workdir; it equals `STORY_WORKDIR` when present, otherwise `MAIN_REPO`.
 - `{{BRANCH}}` — run/setup branch; not the story merge target
@@ -75,7 +76,8 @@ Verify is an evidence gate, not a broad manual source review.
      for the story branch. Do not check out the story branch inside
      `{{MAIN_REPO}}`; Git worktree ownership will reject it and it wastes the
      verify budget.
-   - Use `{{MAIN_REPO}}` only for final `main` refresh after the PR is merged.
+   - Use `{{MAIN_REPO}}` only for read-only canonical evidence. Setfarm performs
+     the authenticated post-merge synchronization.
 2. `git fetch origin --prune`.
 3. If `{{PR_URL}}` is empty, stop immediately. Do not inspect source files,
    read generated screens, run build/test, or infer a branch. Return:
@@ -86,8 +88,8 @@ Verify is an evidence gate, not a broad manual source review.
    - If `baseRefName` is not `main`, retarget the PR:
      `gh api -X PATCH repos/<owner>/<repo>/pulls/<num> -f base=main`.
 5. If the PR is not open:
-   - If it is `MERGED`, run `git checkout main && git pull --ff-only origin main`,
-     then still evaluate the build/test/smoke evidence below before returning.
+   - If it is `MERGED`, do not change the assigned worktree branch. Setfarm owns
+     authenticated base synchronization and will evaluate post-merge build/test/smoke evidence.
    - Otherwise return `STATUS: retry` with the reason.
 6. Check out or align the PR branch in the verification workdir:
    - `HEAD_BRANCH=$(gh pr view "{{PR_URL}}" --json headRefName --jq .headRefName)`
@@ -154,12 +156,8 @@ Verify is an evidence gate, not a broad manual source review.
      reason. Do not inspect, rebase, resolve, or repair merge conflicts.
 12. Confirm merge:
     - `gh pr view "{{PR_URL}}" --json state --jq .state` must return `MERGED`.
-13. Update local main in the canonical repo:
-    - `cd "{{MAIN_REPO}}"`
-    - `git fetch origin main`
-    - `git checkout main`
-    - `git pull --ff-only origin main`
-    - `git status --short` must be clean.
+13. Do not mutate `{{MAIN_REPO}}` or change its checked-out branch. Setfarm owns
+    canonical-main refresh and recovery run-branch synchronization after merge.
 
 ## Time Budget
 
@@ -174,6 +172,7 @@ STATUS: done|retry|skip|fail
 FEEDBACK: <short reason when retry/fail>
 ```
 
-`STATUS: done` is allowed only after the PR is actually `MERGED`, local `main`
-has been updated, and current-main runtime/smoke evidence is clean. For
+`STATUS: done` is allowed only after the PR is actually `MERGED` and the
+required runtime/smoke evidence is clean. Setfarm performs and verifies the
+post-merge base synchronization. For
 `STATUS: retry`, provide 1-5 actionable bullets; do not write long analysis.

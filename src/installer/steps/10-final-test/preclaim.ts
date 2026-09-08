@@ -1,17 +1,18 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
-import { allocateRuntimePort, writeRunRuntimeArtifact } from "../../runtime-ports.js";
+import { allocateRuntimePort, createRunRuntimeArtifactV1, writeRunRuntimeArtifact } from "../../runtime-ports.js";
 import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
 import { resolveOperationalStackContract, stackEvidenceMetadata, stackExecutionPlanForStep } from "../../stack-evidence.js";
 import { updateRunContext } from "../../repo.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 import { ensurePlaywrightChromiumInstalled, isMissingPlaywrightBrowserFailure } from "../../playwright-runtime.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../../../execution/recovery-source-bootstrap-run-authority-v1.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -74,10 +75,10 @@ function numericField(result: any, key: string, fallback = 0): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function writeFinalJsonReport(repo: string, result: any, rawOutput: string, status: string, runtime: any): string {
-  const reportDir = path.join(repo, "quality-reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const relPath = "quality-reports/final-test-1.json";
+function createFinalJsonReport(result: any, rawOutput: string, status: string, runtime: any): Readonly<{
+  relativePath: "quality-reports/final-test-1.json";
+  bytes: Buffer;
+}> {
   const routesTested = Math.max(
     1,
     numericField(result, "routesDiscovered"),
@@ -108,8 +109,10 @@ function writeFinalJsonReport(repo: string, result: any, rawOutput: string, stat
     failures,
     rawOutput: rawOutput.slice(0, 4000),
   };
-  fs.writeFileSync(path.join(repo, relPath), JSON.stringify(payload, null, 2));
-  return relPath;
+  return Object.freeze({
+    relativePath: "quality-reports/final-test-1.json" as const,
+    bytes: Buffer.from(JSON.stringify(payload, null, 2), "utf8"),
+  });
 }
 
 export function classifyFinalSystemSmokeResult(result: any, rawOutput: string, commandFailed: boolean): {
@@ -162,7 +165,56 @@ function runPreflight(command: string, cwd: string, timeoutMs: number): { ok: bo
 }
 
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  const recoveryRun = isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context);
+  let publishRecoveryArtifact: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").publishActiveInternalProductionRecoverySourceBootstrapArtifactV1 | undefined;
+  let decodeRecoveryScreenshotFrames: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").decodeInternalProductionRecoverySourceBootstrapScreenshotFramesV1 | undefined;
+  let createRecoverySmokeEnvironment: typeof import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js").createInternalProductionRecoverySourceBootstrapSmokeEnvironmentV1 | undefined;
+  let recoverySmokeEnvironment: NodeJS.ProcessEnv | undefined;
+  if (recoveryRun) {
+    const recoveryAuthority = await import(
+      "../../../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+    );
+    publishRecoveryArtifact = recoveryAuthority.publishActiveInternalProductionRecoverySourceBootstrapArtifactV1;
+    decodeRecoveryScreenshotFrames = recoveryAuthority.decodeInternalProductionRecoverySourceBootstrapScreenshotFramesV1;
+    createRecoverySmokeEnvironment = recoveryAuthority.createInternalProductionRecoverySourceBootstrapSmokeEnvironmentV1;
+    await recoveryAuthority.syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1({
+      runId: ctx.runId,
+      context: ctx.context,
+    });
+  }
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
+  const publishArtifact = async (
+    relativePath: ".setfarm/run-runtime.json" | "quality-reports/final-test-1.json" | "smoke-home.png" | "smoke-after-click.png",
+    bytes: Buffer,
+  ): Promise<void> => {
+    if (recoveryRun) {
+      if (publishRecoveryArtifact === undefined) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_ARTIFACT_PUBLISHER_UNAVAILABLE");
+      await publishRecoveryArtifact({ runId: ctx.runId, context: ctx.context, relativePath, bytes });
+      return;
+    }
+    const target = path.join(repo, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+  };
+  const publishFinalJsonReport = async (
+    result: any,
+    rawOutput: string,
+    status: string,
+    runtime: any,
+  ): Promise<string> => {
+    const artifact = createFinalJsonReport(result, rawOutput, status, runtime);
+    await publishArtifact(artifact.relativePath, artifact.bytes);
+    return artifact.relativePath;
+  };
+  const publishRecoveryScreenshots = async (frames: Buffer): Promise<void> => {
+    if (!recoveryRun) return;
+    if (decodeRecoveryScreenshotFrames === undefined) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_SCREENSHOT_DECODER_UNAVAILABLE");
+    }
+    for (const frame of decodeRecoveryScreenshotFrames(frames)) {
+      await publishArtifact(frame.relativePath, frame.bytes);
+    }
+  };
   const stackContract = resolveOperationalStackContract(ctx.context, false);
   const stackPlan = stackExecutionPlanForStep(ctx.stepId, stackContract);
   await recordStackEvidencePlanObservation({
@@ -230,7 +282,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   ctx.context["dev_server_port"] = String(runtime.port);
   ctx.context["dev_server_url"] = runtime.url;
   ctx.context["qa_url"] = runtime.url;
-  const runtimeArtifact = writeRunRuntimeArtifact({
+  const runtimeArtifact = createRunRuntimeArtifactV1({
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: "allocated",
+  });
+  if (recoveryRun) await publishArtifact(runtimeArtifact.relativePath, runtimeArtifact.bytes);
+  else writeRunRuntimeArtifact({
     repo,
     runId: ctx.runId,
     runNumber: runRow?.run_number ?? null,
@@ -238,7 +298,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     runtime,
     status: "allocated",
   });
-  ctx.context["run_runtime_json"] = runtimeArtifact;
+  ctx.context["run_runtime_json"] = runtimeArtifact.relativePath;
   await updateRunContext(ctx.runId, ctx.context);
 
   await recordGateObservation({
@@ -250,7 +310,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     status: "pass",
     summary: `Allocated ${runtime.band} port ${runtime.port}`,
     detail: runtime.url,
-    metadata: { runtime, artifactPath: runtimeArtifact, ...stackEvidenceMetadata(stackContract) },
+    metadata: { runtime, artifactPath: runtimeArtifact.relativePath, ...stackEvidenceMetadata(stackContract) },
   });
 
   for (const tool of stackContract.toolPreflight || []) {
@@ -277,7 +337,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       metadata: { tool, failureCategory: tool.failureCategory, runtime, ...stackEvidenceMetadata(stackContract) },
     });
     if (!result.ok && tool.required) {
-      const jsonPath = writeFinalJsonReport(repo, { status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
+      const jsonPath = await publishFinalJsonReport({ status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
       const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
       if (!step?.id) throw new Error(`final-test preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
       const { completeStep } = await import("../../step-ops.js");
@@ -294,30 +354,60 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  try {
-    execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
-    execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repo, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
-  } catch (syncErr) {
-    logger.warn(`[module:final-test preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
+  if (!recoveryRun) {
+    try {
+      execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
+      execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repo, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
+    } catch (syncErr) {
+      logger.warn(`[module:final-test preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
+    }
   }
 
-  const runSmoke = (): string => execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
+  let output = "";
+  let failed = false;
+  let recoveryScreenshotFrames = Buffer.alloc(0);
+  let recoverySmokeStdout = "";
+  const smokeArguments = [smokeScript, repo, "--port", String(runtime.port)];
+  const smokeOptions = {
     cwd: repo,
     timeout: stackContract.runtime?.timeoutMs || 240_000,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    env: {
-      ...process.env,
+  };
+  const smokeEnvironment = (): NodeJS.ProcessEnv => ({
+      ...(recoveryRun
+        ? (recoverySmokeEnvironment ??= createRecoverySmokeEnvironment?.(process.env))
+        : process.env),
       DEV_SERVER_PORT: String(runtime.port),
       PREVIEW_PORT: String(runtime.port),
       PORT: String(runtime.port),
       DEV_SERVER_URL: runtime.url,
       QA_URL: runtime.url,
-    },
   });
-
-  let output = "";
-  let failed = false;
+  const runSmoke = (): string => {
+    if (!recoveryRun) {
+      return execFileSync("node", smokeArguments, {
+        ...smokeOptions,
+        env: smokeEnvironment(),
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    }
+    const result = spawnSync(process.execPath, [...smokeArguments, "--recovery-byte-screenshots"], {
+      ...smokeOptions,
+      env: smokeEnvironment(),
+      encoding: null,
+      maxBuffer: 96 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    recoveryScreenshotFrames = Buffer.isBuffer(result.output?.[3]) ? result.output[3] : Buffer.alloc(0);
+    const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout || "");
+    recoverySmokeStdout = stdout;
+    if (result.error || result.status !== 0) {
+      const error = result.error ?? new Error("RECOVERY_SMOKE_PROCESS_FAILED");
+      Object.assign(error, { stdout: result.stdout, stderr: result.stderr, status: result.status, signal: result.signal });
+      throw error;
+    }
+    return stdout;
+  };
   try {
     const buildFresh = ensureSmokeBuildFresh(repo, {
       runId: ctx.runId,
@@ -351,7 +441,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     output = runSmoke();
   } catch (err) {
     failed = true;
-    output = output || formatFailure(err);
+    output = output || recoverySmokeStdout || formatFailure(err);
     if (isMissingPlaywrightBrowserFailure(output)) {
       await recordGateObservation({
         runId: ctx.runId,
@@ -381,17 +471,27 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
           output = runSmoke();
           failed = false;
         } catch (retryErr) {
-          output = formatFailure(retryErr);
+          output = recoverySmokeStdout || formatFailure(retryErr);
         }
       }
     }
   }
 
   const parsed = firstJsonObject(output);
-  const decision = classifyFinalSystemSmokeResult(parsed, output, failed);
+  const evidenceOutput = output;
+  if (recoveryRun && recoveryScreenshotFrames.length > 0) await publishRecoveryScreenshots(recoveryScreenshotFrames);
+  const decision = classifyFinalSystemSmokeResult(parsed, evidenceOutput, failed);
   const status = decision.status;
-  const jsonPath = writeFinalJsonReport(repo, decision.result, output, status, runtime);
-  writeRunRuntimeArtifact({
+  const jsonPath = await publishFinalJsonReport(decision.result, evidenceOutput, status, runtime);
+  const completedRuntimeArtifact = createRunRuntimeArtifactV1({
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: status === "done" ? "passed" : "failed",
+  });
+  if (recoveryRun) await publishArtifact(completedRuntimeArtifact.relativePath, completedRuntimeArtifact.bytes);
+  else writeRunRuntimeArtifact({
     repo,
     runId: ctx.runId,
     runNumber: runRow?.run_number ?? null,
@@ -407,7 +507,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     label: "Final system smoke",
     status: status === "retry" ? "retry" : status === "skip" ? "info" : "pass",
     summary: `Final smoke ${status}`,
-    detail: output.slice(0, 2000),
+    detail: evidenceOutput.slice(0, 2000),
     metadata: { runtime, ...stackEvidenceMetadata(stackContract) },
   });
   const lines = [
@@ -419,7 +519,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   ];
   if (status === "retry" && !Array.isArray(decision.result?.failures)) {
     lines.push("TEST_FAILURES:");
-    lines.push(`- ${output.slice(0, 2000).replace(/\n/g, " ")}`);
+    lines.push(`- ${evidenceOutput.slice(0, 2000).replace(/\n/g, " ")}`);
   }
 
   const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);

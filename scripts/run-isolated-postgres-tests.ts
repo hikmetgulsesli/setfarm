@@ -37,26 +37,32 @@ type P3ProjectionMarkerV1 = Readonly<{
 type P3CapabilityRoleV1 = "setup" | "test";
 
 const SOURCE_ROOT = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
+const P3_RECOVERY_LIFECYCLE_TEST_FILE_V1 = "tests/findings/v3-recovery-lifecycle-reconciler.test.ts";
+const P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1 = Object.freeze(["0/3", "1/3", "2/3"] as const);
 const P3_TRACKED_SCOPE = new Set([
   "scripts/run-isolated-postgres-tests.ts",
   "src/db-pg.ts",
   "src/db/contract-spine-migrations.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
   "src/db/contract-spine-migration-digests.generated.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/execution/attempt-reconciler.ts",
   "src/execution/attempt-repository.ts",
   "src/execution/claim-attempt-transition.ts",
   "src/execution/claim-runtime-publication.ts",
+  "src/execution/operational-retry-reservation.ts",
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
   "src/execution/runtime-completion-effect-repository.ts",
   "src/execution/runtime-completion-effect-runner.ts",
   "src/execution/runtime-completion.ts",
   "src/execution/runtime-session-repository.ts",
+  "src/execution/v3-implementation-attempt.ts",
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
@@ -69,14 +75,22 @@ const P3_TRACKED_SCOPE = new Set([
   "src/recovery/v3-recovery-lifecycle-reconciler.ts",
   "tests/claim-log-lifecycle.test.ts",
   "tests/cleanup-ops.test.ts",
+  "tests/run-operational-snapshot.test.ts",
   "tests/execution-attempts/attempt-reconciler.test.ts",
+  "tests/execution-attempts/claim-authority.test.ts",
   "tests/execution-attempts/claim-attempt-transition.test.ts",
   "tests/execution-attempts/claim-runtime-publication.test.ts",
+  "tests/execution-attempts/claim-step-v3-recovery.integration.test.ts",
+  "tests/execution-attempts/compiler-claim-fence.test.ts",
+  "tests/execution-attempts/concurrency.test.ts",
   "tests/execution-attempts/helpers/compiler-story-admission-fixture.ts",
+  "tests/execution-attempts/helpers/compiler-story-english-admission-fixture.ts",
+  "tests/execution-attempts/migration-runtime-preservation.test.ts",
   "tests/execution-attempts/migrations.test.ts",
   "tests/execution-attempts/migration-source-digests.test.ts",
   "tests/execution-attempts/operational-event-delivery.test.ts",
   "tests/execution-attempts/operational-outbox-repository.test.ts",
+  "tests/execution-attempts/operational-retry-reservation.test.ts",
   "tests/execution-attempts/run-terminal-transition.test.ts",
   "tests/execution-attempts/run-termination.test.ts",
   "tests/execution-attempts/runtime-completion-effect-runner.test.ts",
@@ -88,8 +102,11 @@ const P3_TRACKED_SCOPE = new Set([
   "tests/execution-attempts/v3-platform-preclaim-claim.integration.test.ts",
   "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
   "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
+  "tests/execution-attempts/v3-pre-dispatch-failure.integration.test.ts",
+  "tests/execution-attempts/v3-preparation-claim-authority.test.ts",
   "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
   "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  "tests/execution-attempts/v3-stage-input-unresolved.integration.test.ts",
   "tests/findings/repository.test.ts",
   "tests/findings/v3-evidence-only-worker.test.ts",
   "tests/findings/v3-recovery-lifecycle-reconciler.test.ts",
@@ -457,17 +474,22 @@ function childEnvironmentV1(input: Readonly<{
   databaseUrl: string;
   adminUrl: string;
   testProcess?: boolean;
+  recoveryLifecycleShard?: typeof P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1[number];
 }>): NodeJS.ProcessEnv {
   return {
     PATH: "/usr/bin:/bin",
     LANG: "C",
     LC_ALL: "C",
+    TSX_DISABLE_CACHE: "1",
     ...(input.testProcess ? {
       NODE_OPTIONS:
         "--test-isolation=none --import=./.setfarm-p3-test-capability-preload.mjs",
     } : {}),
     SETFARM_PG_URL: input.databaseUrl,
     SETFARM_TEST_PG_ADMIN_URL: input.adminUrl,
+    ...(input.recoveryLifecycleShard === undefined ? {} : {
+      SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1: input.recoveryLifecycleShard,
+    }),
   };
 }
 
@@ -595,8 +617,11 @@ async function main(): Promise<void> {
   const templateDatabaseName = `${prefix}_template`;
   const primaryDatabaseName = `${prefix}_primary`;
   const setupNonce = randomBytes(32);
-  const testNonce = randomBytes(32);
-  const marker: P3ProjectionMarkerV1 = Object.freeze({
+  const testShards = command[5] === P3_RECOVERY_LIFECYCLE_TEST_FILE_V1
+    ? P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1
+    : Object.freeze([undefined] as const);
+  const testNonces = testShards.map(() => randomBytes(32));
+  const markerForTestNonce = (testNonce: Buffer): P3ProjectionMarkerV1 => Object.freeze({
     schema: "setfarm.p3-isolated-projection-marker.v1",
     projectionRoot: projection.root,
     projectedHead: projection.head,
@@ -608,7 +633,7 @@ async function main(): Promise<void> {
   });
   writeFileSync(
     path.join(projection.root, ".setfarm-p3-projection-marker.json"),
-    `${JSON.stringify(marker)}\n`,
+    `${JSON.stringify(markerForTestNonce(testNonces[0]!))}\n`,
     { mode: 0o600 },
   );
   writeFileSync(
@@ -631,17 +656,32 @@ async function main(): Promise<void> {
     await cloneDatabaseV1(adminUrl, primaryDatabaseName, templateDatabaseName);
     await verifyPrimaryCloneV1(projection.root, primaryUrl.toString());
     process.stderr.write(`[p3-isolated-test-db] cloned ${primaryDatabaseName} from ${templateDatabaseName}\n`);
-    const exitCode = await spawnWithCapabilityV1({
-      args: command.slice(1),
-      cwd: projection.root,
-      env: childEnvironmentV1({
-        databaseUrl: primaryUrl.toString(),
-        adminUrl,
-        testProcess: true,
-      }),
-      frame: capabilityFrameV1("test", testNonce),
-    });
-    if (exitCode !== 0) process.exitCode = exitCode;
+    for (const [index, recoveryLifecycleShard] of testShards.entries()) {
+      const testNonce = testNonces[index]!;
+      writeFileSync(
+        path.join(projection.root, ".setfarm-p3-projection-marker.json"),
+        `${JSON.stringify(markerForTestNonce(testNonce))}\n`,
+        { mode: 0o600 },
+      );
+      if (recoveryLifecycleShard !== undefined) {
+        process.stderr.write(`[p3-isolated-test-db] lifecycle shard ${recoveryLifecycleShard}\n`);
+      }
+      const exitCode = await spawnWithCapabilityV1({
+        args: command.slice(1),
+        cwd: projection.root,
+        env: childEnvironmentV1({
+          databaseUrl: primaryUrl.toString(),
+          adminUrl,
+          testProcess: true,
+          recoveryLifecycleShard,
+        }),
+        frame: capabilityFrameV1("test", testNonce),
+      });
+      if (exitCode !== 0) {
+        process.exitCode = exitCode;
+        break;
+      }
+    }
   } finally {
     await cleanupDatabasesV1(adminUrl, prefix).catch((error) => {
       process.stderr.write(`P3_DATABASE_CLEANUP_FAILED:${String(error)}\n`);

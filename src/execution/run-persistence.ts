@@ -1,3 +1,7 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   beginOrAdoptInternalProductionOwnerReservationV1,
@@ -19,6 +23,16 @@ import {
 } from "../internal-production/baseline-post-handoff-receipt-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { RunProtocolIdentity } from "./run-protocol.js";
+import {
+  createInternalProductionRecoverySourceBootstrapRunContextV1,
+  type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+} from "./recovery-source-bootstrap-run-authority-v1.js";
+import {
+  prepareInternalProductionRecoverySourceBootstrapRepositoryV1,
+  resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+  validateInternalProductionRecoverySourceBootstrapRepositoryV1,
+  type InternalProductionRecoverySourceBootstrapRepositoryIdentityV1,
+} from "./recovery-source-bootstrap-repository-v1.js";
 import {
   V3ReleaseAdmissionV1Schema,
   canarySelectorHash,
@@ -581,6 +595,10 @@ export async function persistWorkflowRun(
 
 const RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1 =
   "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
+const RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1 = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 export type PersistInternalProductionRecoverySourceBootstrapRunResultV1 = Readonly<{
   run: PersistedWorkflowRunV1;
@@ -591,16 +609,17 @@ export type PersistInternalProductionRecoverySourceBootstrapRunResultV1 = Readon
 }>;
 
 type RecoverySourceBootstrapRunCandidateV1 = Readonly<{
-  operation: InternalProductionRecoverySourceBootstrapOperationV1;
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   workflow: WorkflowSpec;
   runId: string;
   protocol: RunProtocolIdentity;
+  repositoryIdentity: InternalProductionRecoverySourceBootstrapRepositoryIdentityV1;
   context: string;
   steps: readonly PersistedWorkflowStep[];
 }>;
 
 function recoverySourceBootstrapRunCandidateV1(
-  operation: InternalProductionRecoverySourceBootstrapOperationV1,
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
   protocolAuthority: Awaited<ReturnType<typeof resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1>>,
   workflow: WorkflowSpec,
 ): RecoverySourceBootstrapRunCandidateV1 {
@@ -655,6 +674,10 @@ function recoverySourceBootstrapRunCandidateV1(
   });
   const runOwnerRef = `setfarm://runs/${encodeURIComponent(runId)}`;
   const runOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-workflow-run-owner.v1", runId });
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_ROOT_V1,
+    runId,
+  });
   const reciprocalRunOperationBindingHash = hashCanonicalJson({
     schema: "setfarm.internal-production-recovery-source-bootstrap-run-operation-binding.v1",
     runId,
@@ -671,39 +694,12 @@ function recoverySourceBootstrapRunCandidateV1(
     targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
     operationRunBindingHash,
   });
-  const context = canonicalJsonStringify({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
-    task: RECOVERY_SOURCE_BOOTSTRAP_SOURCE_TASK_V1,
-    purpose: operation.purpose,
-    repository: operation.repository,
-    workflow: operation.workflow,
-    protocol: operation.protocol,
-    promptManifestHash: operation.promptManifestHash,
-    baseSourceSha: operation.baseSourceSha,
-    baseSourceTreeHash: operation.baseSourceTreeHash,
-    buildHash: operation.buildHash,
-    activationPreflightHash: operation.activationPreflightHash,
-    releaseAdmissionHash: operation.releaseAdmissionHash,
-    pendingInputRef: operation.pendingInputRef,
-    pendingInputHash: operation.pendingInputHash,
-    startIntentRef: operation.startIntentRef,
-    startIntentHash: operation.startIntentHash,
-    startOutboxRef: operation.startOutboxRef,
-    startOutboxHash: operation.startOutboxHash,
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    targetSourceRunReservationRef: operation.targetSourceRunReservationRef,
-    targetSourceRunReservationHash: operation.targetSourceRunReservationHash,
-    targetRunReservationRef: operation.targetRunReservationRef,
-    targetRunReservationHash: operation.targetRunReservationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    sourceRunOwnerRef: operation.operationRef,
-    sourceRunOwnerHash: operation.operationHash,
-    runOwnerRef,
-    runOwnerHash,
+  const context = canonicalJsonStringify(createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId,
     operationRunBindingHash,
     reciprocalRunOperationBindingHash,
-  });
+    repositoryIdentity,
+  }));
   const steps = Object.freeze(workflow.steps.map((step, stepIndex) => Object.freeze({
     id: hashCanonicalJson({
       schema: "setfarm.internal-production-recovery-source-bootstrap-step-id.v1",
@@ -721,17 +717,17 @@ function recoverySourceBootstrapRunCandidateV1(
     type: step.type ?? "single",
     loopConfig: step.loop === undefined ? null : canonicalJsonStringify(step.loop),
   })));
-  return Object.freeze({ operation, workflow, runId, protocol, context, steps });
+  return Object.freeze({ operation, workflow, runId, protocol, repositoryIdentity, context, steps });
 }
 
 async function persistRecoverySourceBootstrapRunInTransactionV1(
   sql: PgTransactionSql,
   candidate: RecoverySourceBootstrapRunCandidateV1,
 ): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
-  const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(sql, {
-    operationRef: candidate.operation.operationRef,
-    operationHash: candidate.operation.operationHash,
-  });
+  const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(
+    sql,
+    candidate.operation,
+  );
   if (
     authority.runId !== candidate.runId
     || authority.operationRef !== candidate.operation.operationRef
@@ -750,6 +746,27 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
   );
   if (existingRows.length > 1) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
   let row = existingRows[0] ?? null;
+  if (row !== null && row.status !== "running") {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
+  }
+  if (row !== null && !existsSync(candidate.repositoryIdentity.workspaceRoot)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_REPOSITORY_MISSING");
+  }
+  const repositoryInput = {
+    sourceRepositoryRoot: candidate.repositoryIdentity.sourceRepositoryRoot,
+    runId: candidate.runId,
+    operationRef: candidate.operation.operationRef,
+    operationHash: candidate.operation.operationHash,
+    baseSourceSha: candidate.operation.baseSourceSha,
+    baseSourceTreeHash: candidate.operation.baseSourceTreeHash,
+  } as const;
+  const preparedRepository = row === null
+    ? prepareInternalProductionRecoverySourceBootstrapRepositoryV1(repositoryInput)
+    : validateInternalProductionRecoverySourceBootstrapRepositoryV1(repositoryInput);
+  if (
+    preparedRepository.repositoryRoot !== candidate.repositoryIdentity.repositoryRoot
+    || preparedRepository.branch !== candidate.repositoryIdentity.branch
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_REPOSITORY_IDENTITY_CROSSED");
   let persistedAt: Date;
   let runNumber: number;
   if (row === null) {
@@ -786,8 +803,7 @@ async function persistRecoverySourceBootstrapRunInTransactionV1(
     if (!Number.isFinite(persistedAt.getTime())) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_STORED_RUN_INVALID");
   }
   const bound = await bindInternalProductionRecoverySourceBootstrapRunInTransactionV1(sql, {
-    operationRef: candidate.operation.operationRef,
-    operationHash: candidate.operation.operationHash,
+    recoveryOperationAuthority: candidate.operation,
     runId: candidate.runId,
     operationRunBindingHash: authority.operationRunBindingHash,
     reciprocalRunOperationBindingHash: authority.reciprocalRunOperationBindingHash,
@@ -866,3 +882,23 @@ export async function persistInternalProductionRecoverySourceBootstrapRunV1(
   if (!tentative) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_COMMIT_RESULT_UNAVAILABLE");
   return tentative;
 }
+
+export async function persistInternalProductionRecoverySourceBootstrapRunForAuthorityV1(
+  input: Readonly<{
+    recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  }>,
+): Promise<PersistInternalProductionRecoverySourceBootstrapRunResultV1> {
+  const protocolAuthority = await resolveCurrentInternalProductionRecoverySourceBootstrapRunProtocolAuthorityV1();
+  const workflow = await loadWorkflowSpec(resolveBundledWorkflowDir("feature-dev"));
+  const candidate = recoverySourceBootstrapRunCandidateV1(input.recoveryOperationAuthority, protocolAuthority, workflow);
+  let tentative: PersistInternalProductionRecoverySourceBootstrapRunResultV1 | undefined;
+  await pgBegin(async (sql) => {
+    tentative = await persistRecoverySourceBootstrapRunInTransactionV1(sql, candidate);
+    return undefined;
+  });
+  if (!tentative) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_COMMIT_RESULT_UNAVAILABLE");
+  return tentative;
+}
+
+export type PersistInternalProductionRecoverySourceBootstrapRunForAuthorityResultV1 =
+  PersistInternalProductionRecoverySourceBootstrapRunResultV1;

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { closeExactSingleStepClaimInTransaction } from "../../src/execution/claim-attempt-transition.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
@@ -10,6 +15,48 @@ import { createRuntimeSessionRepository } from "../../src/execution/runtime-sess
 import { requestRunTermination } from "../../src/execution/run-termination.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+type TestDatabase = Awaited<ReturnType<typeof createIsolatedTestDatabase>>;
+
+async function insertOwnedSingleClaim(
+  database: TestDatabase,
+  input: Readonly<{ runId: string; workflowStepId: string; claimAgentId: string }>,
+): Promise<number> {
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId: input.claimAgentId,
+      claimedAt: new Date("2026-07-13T12:00:00.000Z"),
+    });
+  }) as number;
+  const owners = await database.sql<Array<{
+    producer_implementation_id: string;
+    category: string;
+    owner_key: string;
+    state: string;
+  }>>`
+    SELECT producer_implementation_id, category, owner_key, state
+      FROM internal_production_owner_reservations_v1
+     WHERE category = 'claim' AND owner_key = ${String(claimId)}
+  `;
+  assert.deepEqual(owners.map((row) => ({ ...row })), [{
+    producer_implementation_id: "a-claim-single-runtime-v1",
+    category: "claim",
+    owner_key: String(claimId),
+    state: "bound",
+  }]);
+  return claimId;
+}
 
 test("post-claim finalizer settles terminal reserved and pre-transfer starting owners", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
@@ -34,12 +81,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
         1, '', '', 'running', 'single', 0, 3
       )
     `;
-    const terminalClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${terminalRunId}, 'security-gate', NULL, ${terminalAgent})
-      RETURNING id::integer AS id
-    `;
-    const terminalClaimId = terminalClaims[0]!.id;
+    const terminalClaimId = await insertOwnedSingleClaim(database, {
+      runId: terminalRunId,
+      workflowStepId: "security-gate",
+      claimAgentId: terminalAgent,
+    });
     const terminalSession = await sessions.reserve({
       sessionId: "RTS_post-claim-terminal-reserved",
       runId: terminalRunId,
@@ -80,13 +126,19 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       runtimeOwnerInstanceId: terminalSession.ownerInstanceId,
     } as never, "security-runtime", "injected throw after claim close before runtime release");
 
-    const terminalState = await database.sql<Array<{ outcome: string; runtime_state: string }>>`
-      SELECT claim.outcome, runtime.state AS runtime_state
+    const terminalState = await database.sql<Array<{ outcome: string; runtime_state: string; claim_owner_state: string }>>`
+      SELECT claim.outcome, runtime.state AS runtime_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = claim.id::text) AS claim_owner_state
         FROM claim_log claim
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
        WHERE claim.id = ${terminalClaimId}
     `;
-    assert.deepEqual({ ...terminalState[0] }, { outcome: "completed", runtime_state: "released" });
+    assert.deepEqual({ ...terminalState[0] }, {
+      outcome: "completed",
+      runtime_state: "released",
+      claim_owner_state: "closed",
+    });
 
     const startingRunId = "run-post-claim-starting-single";
     const startingStepDbId = `${startingRunId}-step`;
@@ -101,12 +153,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
         1, '', '', 'running', 'single', 0, 3
       )
     `;
-    const startingClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${startingRunId}, 'verify', NULL, ${startingAgent})
-      RETURNING id::integer AS id
-    `;
-    const startingClaimId = startingClaims[0]!.id;
+    const startingClaimId = await insertOwnedSingleClaim(database, {
+      runId: startingRunId,
+      workflowStepId: "verify",
+      claimAgentId: startingAgent,
+    });
     const startingSession = await sessions.reserve({
       sessionId: "RTS_post-claim-starting-single",
       runId: startingRunId,
@@ -138,10 +189,13 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
     const startingState = await database.sql<Array<{
       outcome: string;
       runtime_state: string;
+      claim_owner_state: string;
       active_attempts: number;
       active_deliveries: number;
     }>>`
       SELECT claim.outcome, runtime.state AS runtime_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = claim.id::text) AS claim_owner_state,
              (SELECT COUNT(*)::integer FROM execution_attempts attempt
                WHERE attempt.claim_id = claim.id
                  AND attempt.disposition IN ('claimed', 'running')) AS active_attempts,
@@ -155,6 +209,7 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
     assert.deepEqual({ ...startingState[0] }, {
       outcome: "infra_retry",
       runtime_state: "released",
+      claim_owner_state: "closed",
       active_attempts: 0,
       active_deliveries: 0,
     });
@@ -172,12 +227,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
         1, '', '', 'running', 'single', 0, 3
       )
     `;
-    const completionClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${completionRunId}, 'qa', NULL, ${completionAgent})
-      RETURNING id::integer AS id
-    `;
-    const completionClaimId = completionClaims[0]!.id;
+    const completionClaimId = await insertOwnedSingleClaim(database, {
+      runId: completionRunId,
+      workflowStepId: "qa",
+      claimAgentId: completionAgent,
+    });
     const completionSession = await sessions.reserve({
       sessionId: "RTS_post-claim-completion-handoff",
       runId: completionRunId,
@@ -222,8 +276,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: string | null;
       runtime_state: string;
       completion_state: string;
+      claim_owner_state: string;
     }>>`
-      SELECT claim.outcome, runtime.state AS runtime_state, completion.state AS completion_state
+      SELECT claim.outcome, runtime.state AS runtime_state, completion.state AS completion_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = claim.id::text) AS claim_owner_state
         FROM claim_log claim
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
         JOIN runtime_completion_requests completion ON completion.claim_id = claim.id
@@ -233,6 +290,7 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: null,
       runtime_state: "drain_requested",
       completion_state: "requested",
+      claim_owner_state: "bound",
     });
 
     const quarantinedRunId = "run-post-claim-quarantined-completion";
@@ -248,12 +306,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
         1, '', '', 'running', 'single', 0, 3
       )
     `;
-    const quarantinedClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${quarantinedRunId}, 'qa', NULL, ${quarantinedAgent})
-      RETURNING id::integer AS id
-    `;
-    const quarantinedClaimId = quarantinedClaims[0]!.id;
+    const quarantinedClaimId = await insertOwnedSingleClaim(database, {
+      runId: quarantinedRunId,
+      workflowStepId: "qa",
+      claimAgentId: quarantinedAgent,
+    });
     const quarantinedSession = await sessions.reserve({
       sessionId: "RTS_post-claim-quarantined-completion",
       runId: quarantinedRunId,
@@ -314,8 +371,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: string | null;
       runtime_state: string;
       completion_state: string;
+      claim_owner_state: string;
     }>>`
-      SELECT claim.outcome, runtime.state AS runtime_state, completion.state AS completion_state
+      SELECT claim.outcome, runtime.state AS runtime_state, completion.state AS completion_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = claim.id::text) AS claim_owner_state
         FROM claim_log claim
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
         JOIN runtime_completion_requests completion ON completion.claim_id = claim.id
@@ -325,6 +385,7 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: null,
       runtime_state: "drain_requested",
       completion_state: "quarantined",
+      claim_owner_state: "bound",
     });
 
     const terminationRunId = "run-post-claim-termination-handoff";
@@ -340,12 +401,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
         1, '', '', 'running', 'single', 0, 3
       )
     `;
-    const terminationClaims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${terminationRunId}, 'final', NULL, ${terminationAgent})
-      RETURNING id::integer AS id
-    `;
-    const terminationClaimId = terminationClaims[0]!.id;
+    const terminationClaimId = await insertOwnedSingleClaim(database, {
+      runId: terminationRunId,
+      workflowStepId: "final",
+      claimAgentId: terminationAgent,
+    });
     const terminationSession = await sessions.reserve({
       sessionId: "RTS_post-claim-termination-handoff",
       runId: terminationRunId,
@@ -385,8 +445,11 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: string | null;
       runtime_state: string;
       termination_state: string;
+      claim_owner_state: string;
     }>>`
-      SELECT claim.outcome, runtime.state AS runtime_state, termination.state AS termination_state
+      SELECT claim.outcome, runtime.state AS runtime_state, termination.state AS termination_state,
+             (SELECT state FROM internal_production_owner_reservations_v1
+               WHERE category = 'claim' AND owner_key = claim.id::text) AS claim_owner_state
         FROM claim_log claim
         JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
         JOIN run_termination_requests termination ON termination.run_id = claim.run_id
@@ -396,6 +459,7 @@ test("post-claim finalizer settles terminal reserved and pre-transfer starting o
       outcome: null,
       runtime_state: "drain_requested",
       termination_state: "requested",
+      claim_owner_state: "bound",
     });
   } finally {
     await runtimeDb?.pgClose().catch(() => {});

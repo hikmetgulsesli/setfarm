@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it as nodeIt } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import {
@@ -43,6 +43,7 @@ import {
   compileCompilerStoryEnglishAdmissionV1,
   compilerStoryEnglishAdmissionStateV1,
 } from "../../src/product-compiler/compiler-story-english-admission-v1.js";
+
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { renderProductSpecV2Compatibility } from "../../src/product-compiler/renderers/product-spec-v2-compatibility.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
@@ -54,11 +55,42 @@ import {
 } from "../../src/recovery/v3-recovery-claim-authority.js";
 import { createV3RecoveryLifecycleReconciler } from "../../src/recovery/v3-recovery-lifecycle-reconciler.js";
 import { createV3RecoveryOwnerLeaseRepository } from "../../src/recovery/v3-recovery-owner-lease.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
+import {
+  authenticateP3ProjectedReadinessTestCapabilityV1,
+  createIsolatedTestDatabase,
+  type TestDatabase,
+} from "../execution-attempts/test-database.js";
 import {
   NODE_CLI_TASK,
   genuineNodeCliProductSpecV2,
 } from "../product-compiler/fixtures/no-design-product-semantics-v2.js";
+
+const RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1 = 3;
+const recoveryLifecycleTestShardFrameV1 = process.env.SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1;
+const recoveryLifecycleTestShardMatchV1 = recoveryLifecycleTestShardFrameV1 === undefined
+  ? null
+  : /^([0-2])\/3$/.exec(recoveryLifecycleTestShardFrameV1);
+if (recoveryLifecycleTestShardFrameV1 !== undefined && recoveryLifecycleTestShardMatchV1 === null) {
+  throw new Error("P3_RECOVERY_LIFECYCLE_TEST_SHARD_INVALID");
+}
+if (recoveryLifecycleTestShardFrameV1 !== undefined) {
+  try { authenticateP3ProjectedReadinessTestCapabilityV1(); }
+  catch { throw new Error("P3_RECOVERY_LIFECYCLE_TEST_SHARD_UNAUTHENTICATED"); }
+}
+const recoveryLifecycleTestShardIndexV1 = recoveryLifecycleTestShardMatchV1 === null
+  ? null
+  : Number(recoveryLifecycleTestShardMatchV1[1]);
+let recoveryLifecycleTestOrdinalV1 = 0;
+
+function it(name: string, body: () => void | Promise<void>): ReturnType<typeof nodeIt> {
+  const ordinal = recoveryLifecycleTestOrdinalV1;
+  recoveryLifecycleTestOrdinalV1 += 1;
+  if (
+    recoveryLifecycleTestShardIndexV1 === null
+    || ordinal % RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1 === recoveryLifecycleTestShardIndexV1
+  ) return nodeIt(name, body);
+  return nodeIt.skip(name, body);
+}
 
 const PACKET_HASH = "a".repeat(64);
 const SLICE_HASH = "b".repeat(64);
@@ -578,6 +610,10 @@ describe("v3 recovery lifecycle reconciler", () => {
 
   before(async () => {
     database = await createIsolatedTestDatabase();
+  });
+
+  beforeEach(async () => {
+    if (sequence > 0) await database.reset();
   });
 
   after(async () => database.cleanup());

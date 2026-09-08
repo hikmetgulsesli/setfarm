@@ -96,7 +96,11 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("STATUS: retry"));
     assert.ok(verifyPromptSource.includes("STATUS: done` is allowed only after the PR is actually `MERGED`"));
     assert.ok(verifyPromptSource.includes("Do not dismiss them as \"pre-existing\""));
-    assert.ok(verifyPromptSource.includes("current-main runtime/smoke evidence is clean"));
+    assert.ok(verifyPromptSource.includes("required runtime/smoke evidence is clean"));
+    assert.match(
+      verifyPromptSource,
+      /Setfarm performs and verifies the\s+post-merge base synchronization/,
+    );
     assert.ok(verifyPromptSource.includes("8 minutes"));
     assert.ok(verifyPromptSource.includes("VERIFY_INFRA_PR_URL_MISSING"));
     assert.ok(verifyPromptSource.includes("Setfarm must create/reuse the story PR before reviewer runs"));

@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import {
   createRuntimeCompletionRepository,
@@ -93,12 +98,39 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
         'waiting', 'single', 0, 3
       )
     `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'plan', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
+    const claimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-single-runtime-v1",
+        rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "plan",
+        storyId: null,
+        claimAgentId,
+        claimedAt: new Date("2026-07-14T22:00:00.000Z"),
+      });
+    });
+    const boundClaimOwners = await database.sql<Array<{
+      producer_implementation_id: string;
+      category: string;
+      owner_key: string;
+      state: string;
+    }>>`
+      SELECT producer_implementation_id, category, owner_key, state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(claimId)}
     `;
-    const claimId = claims[0]!.id;
+    assert.deepEqual(boundClaimOwners.map((row) => ({ ...row })), [{
+      producer_implementation_id: "a-claim-single-runtime-v1",
+      category: "claim",
+      owner_key: String(claimId),
+      state: "bound",
+    }]);
     const sessions = createRuntimeSessionRepository(database.sql);
     const session = await sessions.reserve({
       sessionId: "RTS_v3-plan-invalid-retry1",
@@ -538,6 +570,8 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       claim_count: number;
       open_claims: number;
       released_runtimes: number;
+      claim_owner_count: number;
+      open_claim_owners: number;
       termination_count: number;
       latest_diagnostic: string;
       dedupe_observations: number;
@@ -548,6 +582,8 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
              (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id) AS claim_count,
              (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id AND outcome IS NULL) AS open_claims,
              (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id = run.id AND state = 'released') AS released_runtimes,
+             (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 r WHERE r.category = 'claim' AND r.owner_key IN (SELECT id::text FROM claim_log WHERE run_id = run.id) AND r.state = 'closed') AS claim_owner_count,
+             (SELECT COUNT(*)::integer FROM internal_production_owner_reservations_v1 r WHERE r.category = 'claim' AND r.owner_key IN (SELECT id::text FROM claim_log WHERE run_id = run.id) AND r.state <> 'closed') AS open_claim_owners,
              (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = run.id) AS termination_count,
              (SELECT diagnostic FROM claim_log WHERE run_id = run.id ORDER BY id DESC LIMIT 1) AS latest_diagnostic,
              (SELECT COUNT(*)::integer FROM run_observations WHERE run_id = run.id AND check_id LIKE 'v3.stage-retry.duplicate:%') AS dedupe_observations,
@@ -567,6 +603,8 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       claim_count: 4,
       open_claims: 0,
       released_runtimes: 4,
+      claim_owner_count: 4,
+      open_claim_owners: 0,
       termination_count: 1,
       latest_diagnostic: "V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE: <dedupe>",
       dedupe_observations: 1,

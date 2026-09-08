@@ -14,6 +14,7 @@ import {
 } from "../../../product-compiler/english-text-contract-v1.js";
 import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-english-admission-ledger-v1.js";
 import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../../../execution/recovery-source-bootstrap-run-authority-v1.js";
 
 export class SetupRepoEnglishTextRequiredError extends Error {
   readonly code = "SETUP_REPO_ENGLISH_TEXT_REQUIRED";
@@ -89,6 +90,27 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (runProtocol?.protocol === "v3") {
     await loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
     await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
+  if (isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context)) {
+    const { requireActiveInternalProductionRecoverySourceBootstrapSetupV1 } = await import("../../../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+    await requireActiveInternalProductionRecoverySourceBootstrapSetupV1({
+      runId: ctx.runId,
+      context: ctx.context,
+    });
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [ctx.runId, ctx.stepId],
+    );
+    if (!step?.id) return;
+    ctx.context["existing_code_hint"] = "true";
+    const output = ["STATUS: done", "EXISTING_CODE: true", ""].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output, ctx.claimEnvelope);
+    logger.info("[module:setup-repo preclaim] AUTO-COMPLETED authenticated recovery repository", {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
+    return;
   }
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;
 

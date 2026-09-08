@@ -85,6 +85,12 @@ describe("10-final-test step module", () => {
     assert.match(catchBlock, /failed = false/);
   });
 
+  it("final recovery smoke preserves structured stdout and authenticates an optional screenshot envelope", () => {
+    assert.match(sourcePreclaim, /recoverySmokeStdout\s*=\s*stdout/);
+    assert.match(sourcePreclaim, /output\s*=\s*output\s*\|\|\s*recoverySmokeStdout\s*\|\|\s*formatFailure\(err\)/);
+    assert.match(sourcePreclaim, /recoveryScreenshotFrames\.length\s*>\s*0[\s\S]*publishRecoveryScreenshots/);
+  });
+
   it("validateOutput rejects missing STATUS", () => {
     assert.equal(validateOutput({} as ParsedOutput).ok, false);
   });

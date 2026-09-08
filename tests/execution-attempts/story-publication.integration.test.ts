@@ -16,9 +16,12 @@ import {
   loadCompilerStoryEnglishAdmissionLedgerAuthorityV1,
 } from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
 import {
+  insertAndBindInternalProductionClaimBirthV1,
   publishLoopClaimRuntime,
   publishSingleClaimRuntime,
+  prepareInternalProductionClaimBirthV1,
 } from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
@@ -68,12 +71,39 @@ async function prepareManagedCompletion(
     output: string;
   }>,
 ) {
-  const claims = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${input.claimAgentId})
-    RETURNING id::integer AS id
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: null,
+      claimAgentId: input.claimAgentId,
+      claimedAt: new Date("2026-08-12T11:59:00.000Z"),
+    });
+  }) as number;
+  const claimOwners = await database.sql<Array<{
+    producer_implementation_id: string;
+    category: string;
+    owner_key: string;
+    state: string;
+  }>>`
+    SELECT producer_implementation_id, category, owner_key, state
+      FROM internal_production_owner_reservations_v1
+     WHERE category = 'claim' AND owner_key = ${String(claimId)}
   `;
-  const claimId = claims[0]!.id;
+  assert.deepEqual(claimOwners.map((row) => ({ ...row })), [{
+    producer_implementation_id: "a-claim-single-runtime-v1",
+    category: "claim",
+    owner_key: String(claimId),
+    state: "bound",
+  }]);
   const sessions = createRuntimeSessionRepository(database.sql);
   const session = await sessions.reserve({
     sessionId: input.sessionId,
@@ -603,21 +633,26 @@ describe("canonical story publication", { concurrency: 1 }, () => {
       );
       const rolledBack = await database.sql<Array<{
         claim_outcome: string | null;
+        claim_owner_state: string;
         step_status: string;
         apply_phase: string;
         context: string;
       }>>`
         SELECT claim.outcome AS claim_outcome,
+               claim_owner.state AS claim_owner_state,
                step.status AS step_status,
                completion.apply_phase,
                run.context
           FROM runs run
           JOIN steps step ON step.id = ${storyStepDbId}
           JOIN claim_log claim ON claim.id = ${managedStories.claimId}
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category = 'claim' AND claim_owner.owner_key = claim.id::text
           JOIN runtime_completion_requests completion ON completion.claim_id = claim.id
          WHERE run.id = ${runId}
       `;
       assert.equal(rolledBack[0]!.claim_outcome, null);
+      assert.equal(rolledBack[0]!.claim_owner_state, "bound");
       assert.equal(rolledBack[0]!.step_status, "running");
       assert.notEqual(rolledBack[0]!.apply_phase, "owner_committed");
       assert.equal(JSON.parse(rolledBack[0]!.context).stories_english_admission_receipt_hash, undefined);
@@ -632,6 +667,7 @@ describe("canonical story publication", { concurrency: 1 }, () => {
       )), { advanced: false, runCompleted: false });
       const committed = await database.sql<Array<{
         claim_outcome: string;
+        claim_owner_state: string;
         step_status: string;
         step_output: string;
         apply_phase: string;
@@ -639,6 +675,7 @@ describe("canonical story publication", { concurrency: 1 }, () => {
         receipt: unknown;
       }>>`
         SELECT claim.outcome AS claim_outcome,
+               claim_owner.state AS claim_owner_state,
                step.status AS step_status,
                step.output AS step_output,
                completion.apply_phase,
@@ -647,12 +684,15 @@ describe("canonical story publication", { concurrency: 1 }, () => {
           FROM runs run
           JOIN steps step ON step.id = ${storyStepDbId}
           JOIN claim_log claim ON claim.id = ${managedStories.claimId}
+          JOIN internal_production_owner_reservations_v1 claim_owner
+            ON claim_owner.category = 'claim' AND claim_owner.owner_key = claim.id::text
           JOIN runtime_completion_requests completion ON completion.claim_id = claim.id
           JOIN runtime_completion_effects effect ON effect.request_id = completion.request_id
          WHERE run.id = ${runId}
       `;
       assert.equal(committed.length, 1);
       assert.equal(committed[0]!.claim_outcome, "completed");
+      assert.equal(committed[0]!.claim_owner_state, "closed");
       assert.equal(committed[0]!.step_status, "done");
       assert.equal(committed[0]!.step_output, storyOutput);
       assert.equal(committed[0]!.apply_phase, "owner_committed");

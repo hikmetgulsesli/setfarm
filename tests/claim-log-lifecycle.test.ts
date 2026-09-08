@@ -63,8 +63,19 @@ function cliSource(): string {
 function runWorkflowSource(): string {
   const source = fs.readFileSync(path.join(root, "src", "installer", "run.ts"), "utf-8");
   const start = source.indexOf("export async function runWorkflow(");
+  const end = source.indexOf("\nexport async function ", start + 1);
   assert.notEqual(start, -1, "runWorkflow source not found");
-  return source.slice(start);
+  assert.notEqual(end, -1, "runWorkflow end not found");
+  return source.slice(start, end);
+}
+
+function runningSingleStepClaimReissueSource(): string {
+  const source = stepOpsSource();
+  const start = source.indexOf("async function authenticateRunningSingleStepClaimReissueV1(");
+  const end = source.indexOf("\nasync function claimSingleStep(", start);
+  assert.notEqual(start, -1, "running single-step claim reissue source not found");
+  assert.notEqual(end, -1, "running single-step claim reissue end not found");
+  return source.slice(start, end);
 }
 
 function loadRunWorkflowPrivate(input: Readonly<Record<string, unknown>>): (params: Readonly<{
@@ -634,7 +645,7 @@ describe("single-step claim_log lifecycle", () => {
     );
     assert.match(
       source,
-      /if \(v3PlatformPreclaim\) \{[\s\S]*terminalizeV3PlatformPreclaim\([\s\S]*ownedPreClaimError/,
+      /if \(v3PlatformPreclaim\) \{[\s\S]*terminalizeSharedV3PlatformPreclaim\([\s\S]*ownedPreClaimError/,
     );
 
     const preclaims = [
@@ -660,14 +671,21 @@ describe("single-step claim_log lifecycle", () => {
 
   it("does not duplicate idempotent running single-step claims", () => {
     const source = claimSingleStepSource();
-    assert.match(source, /SELECT cl\.id, rs\.session_id, rs\.owner_instance_id/);
-    assert.match(source, /LEFT JOIN runtime_sessions rs ON rs\.claim_id = cl\.id/);
-    assert.match(source, /cl\.run_id = \$1 AND cl\.step_id = \$2 AND cl\.story_id IS NULL/);
+    const reissue = runningSingleStepClaimReissueSource();
+    assert.match(source, /step\.step_status === "running"[\s\S]*authenticateRunningSingleStepClaimReissueV1\(step, agentId, runtimeIntent\)/);
+    assert.match(reissue, /return pgBegin\(async \(sql\) => \{/);
+    assert.match(reissue, /SELECT claim\.id::text AS claim_id/);
+    assert.match(reissue, /COUNT\(\*\)::text FROM claim_log open_claim/);
+    assert.match(reissue, /LEFT JOIN LATERAL \([\s\S]*FROM runtime_sessions candidate[\s\S]*FOR UPDATE[\s\S]*\) runtime ON TRUE/);
+    assert.match(reissue, /claim\.run_id=\$1 AND claim\.step_id=\$2[\s\S]*claim\.story_id IS NULL AND claim\.outcome IS NULL/);
+    assert.match(reissue, /LIMIT 2[\s\S]*FOR UPDATE OF claim/);
+    assert.match(reissue, /rows\.length !== 1 \|\| observed\.open_claim_count !== "1"/);
+    assert.match(reissue, /observed\.runtime_claim_id !== observed\.claim_id/);
+    assert.match(reissue, /observed\.session_id !== runtimeIntent\.sessionId/);
+    assert.match(reissue, /authenticateRunningSingleStepOwnerSidecarsV1\(sql/);
     assert.match(source, /Requeued orphaned running step/);
     assert.match(source, /NOT EXISTS \(\s*SELECT 1 FROM claim_log/);
     assert.match(source, /return \{ found: false \}/);
-    assert.match(source, /Existing runtime \$\{existingOpenClaim\.session_id\} still owns/);
-    assert.match(source, /existingOpenClaim\.session_id !== runtimeIntent\.sessionId/);
     assert.doesNotMatch(source, /INSERT INTO claim_log/);
   });
 
@@ -904,7 +922,7 @@ describe("single-step claim_log lifecycle", () => {
 
   it("persists module onComplete context before continuing guardrails", () => {
     const source = stepOpsSource();
-    const moduleStart = source.indexOf("if (_stepModule.onComplete)");
+    const moduleStart = source.indexOf("if (!isRecoverySetupModuleCompletion && _stepModule.onComplete)");
     const moduleEnd = source.indexOf("// (Legacy REPO DEDUP", moduleStart);
     assert.notEqual(moduleStart, -1, "module onComplete block not found");
     assert.notEqual(moduleEnd, -1, "module onComplete block end not found");
@@ -1844,7 +1862,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(smokeStart, -1, "verify smoke decision not found");
     const passedSource = handleSource.slice(passedStart, smokeStart + 1200);
 
-    const syncMain = passedSource.indexOf("syncBaseBranch(repoPath, \"main\")");
+    const syncMain = passedSource.indexOf("await syncRunBaseBranchV1(verifyStep.run_id, context, repoPath)");
     const buildGate = passedSource.indexOf("runPostMergeBuildGate(repoPath");
     const routeFailure = passedSource.indexOf("routeQualityFailureToImplement(", buildGate);
     const smokeDecision = passedSource.indexOf("shouldRunStorySystemSmokeGate", buildGate);
@@ -2187,7 +2205,7 @@ describe("single-step claim_log lifecycle", () => {
 
   it("feeds invalid supervisor output back into the next supervisor attempt", () => {
     const source = stepOpsSource();
-    const onCompleteStart = source.indexOf("if (_stepModule.onComplete)");
+    const onCompleteStart = source.indexOf("if (!isRecoverySetupModuleCompletion && _stepModule.onComplete)");
     const supervisorFeedback = source.indexOf("SUPERVISOR_OUTPUT_INVALID", onCompleteStart);
     assert.notEqual(onCompleteStart, -1, "step module onComplete block not found");
     assert.notEqual(supervisorFeedback, -1, "supervisor output feedback context not found");

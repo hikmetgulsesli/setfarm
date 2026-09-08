@@ -290,6 +290,9 @@ test("public current is repeatable-read nonlocking while transaction-pinned curr
   if (process.env.SETFARM_PG_URL === undefined) return;
   const db = await import("../../src/db-pg.js");
   const sql = db.getSql();
+  const expectedCurrent = await db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+  assert.ok(expectedCurrent);
+  assert.equal(expectedCurrent.receipt.phase, "A");
   let release!: () => void;
   let locked!: () => void;
   const released = new Promise<void>((resolve) => { release = resolve; });
@@ -300,29 +303,39 @@ test("public current is repeatable-read nonlocking while transaction-pinned curr
     await released;
   });
   await acquired;
-  const publicObserver = db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
-  const publicResult = await Promise.race([
-    publicObserver,
-    new Promise<"PUBLIC_BLOCKED">((resolve) => setTimeout(() => resolve("PUBLIC_BLOCKED"), 75)),
-  ]);
-  if (publicResult === "PUBLIC_BLOCKED") {
+  let publicObserver: ReturnType<typeof db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1> | undefined;
+  let pinned: ReturnType<typeof db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1> | undefined;
+  try {
+    publicObserver = db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+    let watchdog: NodeJS.Timeout | undefined;
+    const publicResult = await Promise.race([
+      publicObserver,
+      new Promise<"PUBLIC_BLOCKED">((resolve) => {
+        watchdog = setTimeout(() => resolve("PUBLIC_BLOCKED"), 5_000);
+      }),
+    ]).finally(() => {
+      if (watchdog !== undefined) clearTimeout(watchdog);
+    });
+    assert.notEqual(publicResult, "PUBLIC_BLOCKED");
+    assert.deepEqual(publicResult, expectedCurrent);
+    let pinnedSettled = false;
+    pinned = sql.begin((transaction) => db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1(transaction as never))
+      .then((value) => { pinnedSettled = true; return value; });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    assert.equal(pinnedSettled, false);
     release();
     await holder;
+    assert.deepEqual(await pinned, expectedCurrent);
+  } finally {
+    release();
+    await holder;
+    await publicObserver?.catch(() => undefined);
+    await pinned?.catch(() => undefined);
+    await db.pgClose();
   }
-  assert.notEqual(publicResult, "PUBLIC_BLOCKED");
-  assert.equal(publicResult, null);
-  let pinnedSettled = false;
-  const pinned = sql.begin((transaction) => db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1(transaction as never))
-    .then((value) => { pinnedSettled = true; return value; });
-  await new Promise((resolve) => setTimeout(resolve, 75));
-  assert.equal(pinnedSettled, false);
-  release();
-  await holder;
-  assert.equal(await pinned, null);
-  await db.pgClose();
 });
 
-test("real PostgreSQL missing prepared operation leaves all activation relations unchanged", async () => {
+test("real PostgreSQL committed A is adopted without mutating activation relations", async () => {
   if (process.env.SETFARM_PG_URL === undefined) return;
   const db = await import("../../src/db-pg.js");
   const sql = db.getSql();
@@ -333,14 +346,29 @@ test("real PostgreSQL missing prepared operation leaves all activation relations
       (SELECT COUNT(*)::text FROM internal_production_owner_producer_manifest_activation_heads_v1) AS heads,
       (SELECT current_revision::text FROM internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE) AS current_revision
   `;
+  const current = await db.resolveCurrentInternalProductionOwnerProducerManifestSetActivationV1();
+  assert.ok(current);
+  assert.equal(current.receipt.phase, "A");
   const before = await counts();
-  await assert.rejects(
-    activateInternalProductionBaselineOwnerProducerManifestV1(),
-    /^Error: CURRENT_ENTRY_UNAVAILABLE$/,
-  );
+  const adopted = await activateInternalProductionBaselineOwnerProducerManifestV1();
+  assert.deepEqual({
+    activationRef: adopted.successorActivationRef,
+    activationHash: adopted.successorActivationHash,
+    headRef: adopted.successorHeadRef,
+    headHash: adopted.successorHeadHash,
+    sourceBuildAuthorityRef: adopted.sourceBuildAuthorityRef,
+    sourceBuildAuthorityHash: adopted.sourceBuildAuthorityHash,
+  }, {
+    activationRef: current.receipt.activationRef,
+    activationHash: current.receipt.activationHash,
+    headRef: current.head.headRef,
+    headHash: current.head.headHash,
+    sourceBuildAuthorityRef: current.receipt.orderedSourceBuildAuthorities[0]?.sourceBuildAuthorityRef,
+    sourceBuildAuthorityHash: current.receipt.orderedSourceBuildAuthorities[0]?.sourceBuildAuthorityHash,
+  });
   assert.deepEqual(await counts(), before);
   const status = await observeInternalProductionBaselineOwnerProducerManifestActivationStatusV1();
-  assert.equal(status.state, "absent");
+  assert.equal(status.state, "active");
   assert.equal(status.blockedReason, null);
   await db.pgClose();
 });

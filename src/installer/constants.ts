@@ -73,6 +73,41 @@ export const COMPILER_OWNED_CONTEXT_KEYS = new Set([
   "product_runtime_behavior_contract_hash",
 ]);
 
+export const RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS = new Set([
+  "schema",
+  "purpose",
+  "repository",
+  "workflow",
+  "protocol",
+  "prompt_manifest_hash",
+  "base_source_sha",
+  "base_source_tree_hash",
+  "build_hash",
+  "activation_preflight_hash",
+  "release_admission_hash",
+  "pending_input_ref",
+  "pending_input_hash",
+  "start_intent_ref",
+  "start_intent_hash",
+  "start_outbox_ref",
+  "start_outbox_hash",
+  "operation_ref",
+  "operation_hash",
+  "target_source_run_reservation_ref",
+  "target_source_run_reservation_hash",
+  "target_run_reservation_ref",
+  "target_run_reservation_hash",
+  "target_run_launch_composite_hash",
+  "owner_admission_fence_ref",
+  "owner_admission_fence_hash",
+  "source_run_owner_ref",
+  "source_run_owner_hash",
+  "run_owner_ref",
+  "run_owner_hash",
+  "operation_run_binding_hash",
+  "reciprocal_run_operation_binding_hash",
+]);
+
 export const PROTECTED_CONTEXT_KEYS = new Set([
   "repo",
   "task",
@@ -96,11 +131,20 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
   ...COMPILER_OWNED_CONTEXT_KEYS,
 ]);
 
+const PLATFORM_OWNED_CONTEXT_DISCRIMINATOR_KEYS = new Set([
+  "schema",
+]);
+
 export function isStepOutputContextKeyProtected(
   key: string,
   context: Readonly<Record<string, string>>,
 ): boolean {
-  return COMPILER_OWNED_CONTEXT_KEYS.has(key)
+  return PLATFORM_OWNED_CONTEXT_DISCRIMINATOR_KEYS.has(key)
+    || COMPILER_OWNED_CONTEXT_KEYS.has(key)
+    || (
+      context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
+      && RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS.has(key)
+    )
     || (PROTECTED_CONTEXT_KEYS.has(key) && Boolean(context[key]));
 }
 

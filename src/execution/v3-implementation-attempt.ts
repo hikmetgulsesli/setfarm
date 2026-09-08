@@ -1399,6 +1399,9 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
                     ownerInstanceId: input.recoveryDelivery!.ownerInstanceId,
                     leaseToken: input.recoveryDelivery!.leaseToken,
                   },
+                  ...(!recoveryEvidenceOnly ? {
+                    recoveryExecutionSliceEnvelope: compiled.envelope,
+                  } : {}),
                 }
               : input.findingSetHash ? { findingSetHash: input.findingSetHash } : {}),
             role: input.role,

@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import {
   createRuntimeCompletionRepository,
@@ -9,6 +14,7 @@ import {
 } from "../../src/execution/runtime-completion.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import { persistWorkflowRunInTransaction } from "../../src/execution/run-persistence.js";
 import { createRunTerminationRepository } from "../../src/execution/run-termination.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
@@ -55,34 +61,82 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
       "```",
     ].join("\n");
 
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', ${TASK}, 'running',
-        ${JSON.stringify({ task: TASK, plan_protocol: "v3" })}, 'v3',
-        ${releaseSha}, ${"e".repeat(64)}, ${releaseAdmissionHash}
-      )
+    await database.sql.begin((transaction) => persistWorkflowRunInTransaction(
+      transaction as PgTransactionSql,
+      {
+        run: {
+          id: runId,
+          runNumber: 8701,
+          workflowId: "feature-dev",
+          task: TASK,
+          context: JSON.stringify({ task: TASK, plan_protocol: "v3" }),
+          notifyUrl: null,
+          createdAt: "2026-07-13T12:00:00.000Z",
+          protocol: {
+            mode: "v3",
+            version: 1,
+            compilerReleaseSha: releaseSha,
+            activationPreflightHash: "e".repeat(64),
+            releaseAdmissionHash,
+            releaseAdmissionKind: "release_go",
+            canaryAdmission: null,
+          },
+        },
+        steps: [
+          { id: stepDbId, stepId: "plan", agentId: claimAgentId, stepIndex: 1, inputTemplate: "", expects: "", status: "running", maxRetries: 3, type: "single", loopConfig: null },
+          { id: "step-v3-plan-refusal-design", stepId: "design", agentId: "feature-dev_designer", stepIndex: 2, inputTemplate: "", expects: "", status: "waiting", maxRetries: 3, type: "single", loopConfig: null },
+        ],
+      },
+    ));
+    const boundRunOwners = await database.sql<Array<{
+      producer_implementation_id: string;
+      category: string;
+      owner_key: string;
+      state: string;
+    }>>`
+      SELECT producer_implementation_id, category, owner_key, state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'run' AND owner_key = ${runId}
     `;
-    await database.sql`
-      INSERT INTO steps (
-        id, run_id, step_id, agent_id, step_index, input_template, expects,
-        status, type, retry_count, max_retries
-      ) VALUES (
-        ${stepDbId}, ${runId}, 'plan', ${claimAgentId}, 1, '', '',
-        'running', 'single', 0, 3
-      ), (
-        'step-v3-plan-refusal-design', ${runId}, 'design', 'feature-dev_designer', 2, '', '',
-        'waiting', 'single', 0, 3
-      )
+    assert.deepEqual(boundRunOwners.map((row) => ({ ...row })), [{
+      producer_implementation_id: "a-runtime-run-v1",
+      category: "run",
+      owner_key: runId,
+      state: "bound",
+    }]);
+    const claimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-single-runtime-v1",
+        rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "plan",
+        storyId: null,
+        claimAgentId,
+        claimedAt: new Date("2026-07-13T12:00:00.000Z"),
+      });
+    }) as number;
+    const boundClaimOwners = await database.sql<Array<{
+      producer_implementation_id: string;
+      category: string;
+      owner_key: string;
+      state: string;
+    }>>`
+      SELECT producer_implementation_id, category, owner_key, state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(claimId)}
     `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'plan', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
-    `;
-    const claimId = claims[0]!.id;
+    assert.deepEqual(boundClaimOwners.map((row) => ({ ...row })), [{
+      producer_implementation_id: "a-claim-single-runtime-v1",
+      category: "claim",
+      owner_key: String(claimId),
+      state: "bound",
+    }]);
     const sessions = createRuntimeSessionRepository(database.sql);
     const session = await sessions.reserve({
       sessionId: "RTS_v3-plan-refusal-session",
@@ -185,6 +239,12 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
     assert.equal(owner.termination_state, "requested");
     assert.equal(owner.termination_evidence.owner, "compiler");
     assert.equal(owner.termination_evidence.modelRedispatchBudget, 0);
+    const closedClaimOwners = await database.sql<Array<{ state: string }>>`
+      SELECT state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'claim' AND owner_key = ${String(claimId)}
+    `;
+    assert.deepEqual(closedClaimOwners.map((row) => ({ ...row })), [{ state: "closed" }]);
     assert.deepEqual(owner.termination_evidence.operationalFailureCause, {
       schema: "setfarm.operational-failure-cause.v1",
       workflowStepId: "plan",
@@ -236,6 +296,12 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
       ownerInstanceId: "spawner-test",
     });
     await terminations.terminalize({ requestId: termination.requestId });
+    const closedRunOwners = await database.sql<Array<{ state: string }>>`
+      SELECT state
+        FROM internal_production_owner_reservations_v1
+       WHERE category = 'run' AND owner_key = ${runId}
+    `;
+    assert.deepEqual(closedRunOwners.map((row) => ({ ...row })), [{ state: "closed" }]);
     const terminal = await database.sql<Array<{
       run_status: string;
       plan_status: string;

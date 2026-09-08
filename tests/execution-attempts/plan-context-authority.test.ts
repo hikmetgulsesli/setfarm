@@ -3,9 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   COMPILER_OWNED_CONTEXT_KEYS,
+  RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS,
   isStepOutputContextKeyProtected,
 } from "../../src/installer/constants.js";
-import { mergeContextSafe } from "../../src/installer/context-ops.js";
+import { mergeContextSafe, parseOutputKeyValues } from "../../src/installer/context-ops.js";
 
 describe("PLAN compiler-owned context authority", () => {
   it("rejects model introduction as well as overwrite of canonical PLAN keys", () => {
@@ -37,5 +38,62 @@ describe("PLAN compiler-owned context authority", () => {
     assert.equal(isStepOutputContextKeyProtected("design_required", context), true);
     mergeContextSafe(context, { design_required: "false" });
     assert.equal(context.design_required, "true");
+  });
+
+  it("rejects ordinary-run introduction of the recovery schema discriminator", () => {
+    const context: Record<string, string> = {
+      task: "build an ordinary project",
+      repo: "/projects/ordinary",
+      branch: "main",
+    };
+    const parsed = parseOutputKeyValues([
+      "STATUS: done",
+      "SCHEMA: setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
+      "FEATURE: retained ordinary output",
+    ].join("\n"));
+
+    assert.equal(isStepOutputContextKeyProtected("schema", context), true);
+    mergeContextSafe(context, parsed);
+
+    assert.equal(context.schema, undefined);
+    assert.equal(context.feature, "retained ordinary output");
+  });
+
+  it("rejects every normalized agent-output alias of recovery run authority", () => {
+    const fenceAliases = parseOutputKeyValues(JSON.stringify({
+      ownerAdmissionFenceRef: "forged-ref",
+      OWNER_ADMISSION_FENCE_HASH: "forged-hash",
+    }));
+    assert.deepEqual(fenceAliases, {
+      owner_admission_fence_ref: "forged-ref",
+      owner_admission_fence_hash: "forged-hash",
+    });
+    const context: Record<string, string> = {
+      schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
+      task: "recover the source bootstrap",
+      repo: "/setfarm",
+      branch: "run-recovery",
+      purpose: "recovery-d-source-delivery-v1",
+      repository: "setfarm",
+      workflow: "feature-dev",
+      protocol: "v3",
+    };
+    const beforeFenceAliases = structuredClone(context);
+    mergeContextSafe(context, fenceAliases);
+    assert.deepEqual(context, beforeFenceAliases);
+    const output = JSON.stringify(Object.fromEntries(
+      [...RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS]
+        .map((key) => [key.toUpperCase(), `forged:${key}`]),
+    ));
+    const parsed = parseOutputKeyValues(output);
+    assert.deepEqual(Object.keys(parsed).sort(), [...RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS].sort());
+    const before = structuredClone(context);
+
+    mergeContextSafe(context, parsed);
+
+    assert.deepEqual(context, before);
+    for (const key of RECOVERY_SOURCE_BOOTSTRAP_OWNED_CONTEXT_KEYS) {
+      assert.equal(isStepOutputContextKeyProtected(key, context), true, key);
+    }
   });
 });

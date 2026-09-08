@@ -57,7 +57,7 @@ export async function withdrawPreDispatchClaimInTransaction(
   }>>(
     `SELECT attempt_id, claim_id::text, generation, fence_token, agent_id
        FROM execution_attempts
-      WHERE run_id = $1 AND step_id = $2 AND story_id = $3
+      WHERE run_id = $1 AND step_id = $2 AND story_id = COALESCE($3, '')
         AND disposition IN ('claimed', 'running')
       ORDER BY attempt_id
       FOR UPDATE`,

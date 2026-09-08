@@ -24,7 +24,8 @@
  */
 
 import { execFileSync, spawn } from 'child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { createHash } from 'crypto';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join, basename, relative } from 'path';
 import { pathToFileURL } from 'url';
 import { checkStackStaticContracts, stackZeroInteractionIssues } from './stack-modules/registry.mjs';
@@ -32,6 +33,18 @@ import { checkStackStaticContracts, stackZeroInteractionIssues } from './stack-m
 const args = process.argv.slice(2);
 const repoPath = args[0];
 const isCli = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+const recoveryByteScreenshots = args.includes('--recovery-byte-screenshots');
+const recoveryScreenshotFrames = [];
+let recoveryScreenshotEnvelopeWritten = false;
+function emitRecoveryScreenshotEnvelope() {
+  if (!recoveryByteScreenshots || recoveryScreenshotEnvelopeWritten) return;
+  recoveryScreenshotEnvelopeWritten = true;
+  writeFileSync(3, Buffer.from(JSON.stringify({
+    schema: 'setfarm.internal-production-recovery-smoke-screenshots.v1',
+    screenshots: recoveryScreenshotFrames,
+  }), 'utf8'));
+}
+if (isCli && recoveryByteScreenshots) process.once('exit', emitRecoveryScreenshotEnvelope);
 
 // ── Phase 17 (static): Tailwind v4 compile sanity ─────────────────
 // Fails fast if src CSS imports tailwindcss but dist CSS has no compiled
@@ -112,7 +125,19 @@ const externalServer = args.includes('--external-server');
 // ── agent-browser wrapper ───────────────────────────────────────────
 function ab(...cmdArgs) {
   try {
-    return execFileSync('agent-browser', cmdArgs, {
+    const executable = recoveryByteScreenshots
+      ? process.env.SETFARM_RECOVERY_AGENT_BROWSER_PATH
+      : 'agent-browser';
+    const recoveryConfig = process.env.AGENT_BROWSER_CONFIG;
+    if (recoveryByteScreenshots && (
+      !executable
+      || !executable.startsWith('/')
+      || !recoveryConfig
+      || !recoveryConfig.startsWith('/')
+    )) {
+      throw new Error('RECOVERY_SMOKE_AGENT_BROWSER_AUTHORITY_CROSSED');
+    }
+    return execFileSync(executable, recoveryByteScreenshots ? ['--config', recoveryConfig, ...cmdArgs] : cmdArgs, {
       encoding: 'utf-8', timeout: 12000, stdio: ['pipe', 'pipe', 'pipe'],
     }).trim().replace(/\x1b\[[0-9;]*m/g, ''); // strip ANSI
   } catch (err) {
@@ -121,6 +146,158 @@ function ab(...cmdArgs) {
 }
 function abOk(...a) { const r = ab(...a); return r.startsWith('__ERR__') ? null : r; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function parseRecoveryAgentBrowserJson(raw, field) {
+  if (raw.startsWith('__ERR__')) throw new Error(`RECOVERY_SMOKE_${field}_UNAVAILABLE`);
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error(`RECOVERY_SMOKE_${field}_CROSSED`); }
+  if (parsed?.success !== true || parsed?.error != null || !parsed?.data) {
+    throw new Error(`RECOVERY_SMOKE_${field}_CROSSED`);
+  }
+  return parsed.data;
+}
+
+// AUTHENTICATED_RECOVERY_CDP_SCREENSHOT_V1:start
+async function captureRecoveryScreenshotBytesV1(relativePath, dependencies = {}) {
+  const command = dependencies.command || ab;
+  const WebSocketClass = dependencies.WebSocketClass || WebSocket;
+  const cdpUrl = parseRecoveryAgentBrowserJson(command('get', 'cdp-url', '--json'), 'CDP').cdpUrl;
+  const currentUrl = parseRecoveryAgentBrowserJson(command('get', 'url', '--json'), 'URL').url;
+  let endpoint;
+  try { endpoint = new URL(cdpUrl); } catch { throw new Error('RECOVERY_SMOKE_CDP_CROSSED'); }
+  if (
+    endpoint.protocol !== 'ws:'
+    || endpoint.hostname !== '127.0.0.1'
+    || !/^[0-9]+$/.test(endpoint.port)
+    || Number(endpoint.port) < 1
+    || Number(endpoint.port) > 65535
+    || endpoint.username !== ''
+    || endpoint.password !== ''
+    || endpoint.search !== ''
+    || endpoint.hash !== ''
+    || !/^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(endpoint.pathname)
+    || typeof currentUrl !== 'string'
+    || currentUrl.length === 0
+    || currentUrl.length > 8_192
+  ) throw new Error('RECOVERY_SMOKE_CDP_CROSSED');
+  const socket = new WebSocketClass(endpoint.href);
+  const pending = new Map();
+  let nextId = 1;
+  const opened = new Promise((resolveOpen, rejectOpen) => {
+    const timer = setTimeout(() => rejectOpen(new Error('RECOVERY_SMOKE_CDP_TIMEOUT')), 12_000);
+    socket.addEventListener('open', () => { clearTimeout(timer); resolveOpen(); }, { once: true });
+    socket.addEventListener('error', () => { clearTimeout(timer); rejectOpen(new Error('RECOVERY_SMOKE_CDP_UNAVAILABLE')); }, { once: true });
+  });
+  socket.addEventListener('message', (event) => {
+    let message;
+    try { message = JSON.parse(String(event.data)); } catch { return; }
+    if (!Number.isSafeInteger(message?.id)) return;
+    const waiter = pending.get(message.id);
+    if (!waiter) return;
+    pending.delete(message.id);
+    if (message.error) waiter.reject(new Error('RECOVERY_SMOKE_CDP_COMMAND_FAILED'));
+    else waiter.resolve(message.result);
+  });
+  socket.addEventListener('close', () => {
+    for (const waiter of pending.values()) waiter.reject(new Error('RECOVERY_SMOKE_CDP_CLOSED'));
+    pending.clear();
+  });
+  const send = async (method, params = {}, sessionId = undefined) => {
+    await opened;
+    const id = nextId++;
+    let timer;
+    const response = new Promise((resolveResponse, rejectResponse) => {
+      timer = setTimeout(() => {
+        pending.delete(id);
+        rejectResponse(new Error('RECOVERY_SMOKE_CDP_TIMEOUT'));
+      }, 12_000);
+      pending.set(id, {
+        resolve: value => { clearTimeout(timer); resolveResponse(value); },
+        reject: error => { clearTimeout(timer); rejectResponse(error); },
+      });
+    });
+    try {
+      socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    } catch {
+      clearTimeout(timer);
+      pending.delete(id);
+      throw new Error('RECOVERY_SMOKE_CDP_CLOSED');
+    }
+    return await response;
+  };
+  let sessionId;
+  let bytes;
+  try {
+    const targets = await send('Target.getTargets');
+    if (!Array.isArray(targets?.targetInfos) || targets.targetInfos.length > 128) {
+      throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+    }
+    const matches = targets.targetInfos.filter(target => target?.type === 'page' && target?.url === currentUrl);
+    if (matches.length !== 1 || typeof matches[0]?.targetId !== 'string') {
+      throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+    }
+    const targetId = matches[0].targetId;
+    const attached = await send('Target.attachToTarget', { targetId, flatten: true });
+    sessionId = attached?.sessionId;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+    }
+    const readAttachedUrl = async () => {
+      const evaluated = await send('Runtime.evaluate', {
+        expression: 'location.href',
+        returnByValue: true,
+      }, sessionId);
+      const value = evaluated?.result?.value;
+      if (typeof value !== 'string' || value.length === 0 || value.length > 8_192) {
+        throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+      }
+      return value;
+    };
+    if (await readAttachedUrl() !== currentUrl) throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+    const frameTreeBefore = await send('Page.getFrameTree', {}, sessionId);
+    const rootFrameBefore = frameTreeBefore?.frameTree?.frame;
+    if (
+      typeof rootFrameBefore?.id !== 'string'
+      || typeof rootFrameBefore?.loaderId !== 'string'
+      || rootFrameBefore?.url !== currentUrl
+    ) throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+    const captured = await send('Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
+    if (typeof captured?.data !== 'string') throw new Error('RECOVERY_SMOKE_SCREENSHOT_BYTES_CROSSED');
+    if (captured.data.length > 4 * Math.ceil((32 * 1024 * 1024) / 3)) {
+      throw new Error('RECOVERY_SMOKE_SCREENSHOT_BYTES_CROSSED');
+    }
+    bytes = Buffer.from(captured.data, 'base64');
+    if (bytes.toString('base64') !== captured.data) throw new Error('RECOVERY_SMOKE_SCREENSHOT_BYTES_CROSSED');
+    const targetAfter = await send('Target.getTargetInfo', { targetId });
+    const frameTreeAfter = await send('Page.getFrameTree', {}, sessionId);
+    const rootFrameAfter = frameTreeAfter?.frameTree?.frame;
+    if (
+      targetAfter?.targetInfo?.targetId !== targetId
+      || targetAfter?.targetInfo?.type !== 'page'
+      || targetAfter?.targetInfo?.url !== currentUrl
+      || rootFrameAfter?.id !== rootFrameBefore.id
+      || rootFrameAfter?.loaderId !== rootFrameBefore.loaderId
+      || rootFrameAfter?.url !== currentUrl
+      || await readAttachedUrl() !== currentUrl
+    ) throw new Error('RECOVERY_SMOKE_CDP_PAGE_CROSSED');
+  } finally {
+    if (sessionId) await send('Target.detachFromTarget', { sessionId }).catch(() => {});
+    try { socket.close(); } catch {}
+  }
+  if (
+    !Buffer.isBuffer(bytes)
+    || bytes.length < 8
+    || bytes.length > 32 * 1024 * 1024
+    || !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) throw new Error('RECOVERY_SMOKE_SCREENSHOT_BYTES_CROSSED');
+  return Object.freeze({
+    relativePath,
+    byteLength: bytes.length,
+    contentHash: createHash('sha256').update(bytes).digest('hex'),
+    contentBase64: bytes.toString('base64'),
+  });
+}
+// AUTHENTICATED_RECOVERY_CDP_SCREENSHOT_V1:end
 
 function parseEvalJson(raw, fallback) {
   if (!raw) return fallback;
@@ -1662,6 +1839,19 @@ async function main() {
   let consoleErrors = [];
   let flowsChecked = 0;
   let flowIssues = [];
+  const captureSmokeScreenshot = async (relativePath) => {
+    if (!recoveryByteScreenshots) {
+      return ab('screenshot', join(repoPath, relativePath), '--annotate');
+    }
+    try {
+      recoveryScreenshotFrames.push(await captureRecoveryScreenshotBytesV1(relativePath));
+      return '__RECOVERY_SCREENSHOT_BYTES__';
+    }
+    catch (error) {
+      failures.push(`[VISUAL] ${relativePath} recovery screenshot failed: ${error?.message || String(error)}`);
+      return '__ERR__: recovery screenshot failed';
+    }
+  };
 
   // ── Phase 1: Static ──
   const routes = discoverRoutes(repoPath);
@@ -1728,7 +1918,7 @@ async function main() {
       for (const h of p.headings) { if (isPlaceholder(h)) failures.push('[/] Placeholder heading: "' + h + '"'); }
 
       // Screenshot
-      ab('screenshot', join(repoPath, 'smoke-home.png'), '--annotate');
+      await captureSmokeScreenshot('smoke-home.png');
 
       // Find and click primary action button (Start/Play/Begin etc.)
       const primaryBtn = p.buttons.find(b => /start|play|begin|launch/i.test(b));
@@ -1763,7 +1953,7 @@ async function main() {
           failures.push('[/] Page went blank after clicking "' + primaryBtn + '"');
         }
 
-        ab('screenshot', join(repoPath, 'smoke-after-click.png'), '--annotate');
+        await captureSmokeScreenshot('smoke-after-click.png');
       }
 
       // Check other routes exist (navigate to first 20 non-root routes)
@@ -2815,11 +3005,14 @@ async function main() {
     failures,
   };
 
+  emitRecoveryScreenshotEnvelope();
+
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === 'fail' ? 1 : 0);
 }
 
 export {
+  captureRecoveryScreenshotBytesV1,
   discoverHashRoutes,
   checkEntryPointImports,
   checkNativeButtonWiring,

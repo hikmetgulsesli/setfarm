@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -18,6 +18,8 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "scripts/__tests__/build-info-version.test.js",
   "scripts/build-generation-retention.mjs",
   "scripts/run-isolated-postgres-tests.ts",
+  "scripts/agent-browser-recovery-config.json",
+  "scripts/smoke-test.mjs",
   "scripts/write-build-info.mjs",
   "src/contracts/mission-control-contract-artifacts.ts",
   "src/contracts/operational-active-run-status-v1-cli.ts",
@@ -27,6 +29,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/db/contract-spine-migration-digests.generated.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
   "src/db/contract-spine-migrations.ts",
+  "src/db/operational-failure-cause-authority-v3-catalog.ts",
   "src/execution/attempt-reconciler.ts",
   "src/execution/attempt-repository.ts",
   "src/execution/claim-attempt-transition.ts",
@@ -34,6 +37,10 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-repository-cleanup-v1.ts",
+  "src/execution/recovery-source-bootstrap-repository-v1.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+  "src/execution/recovery-source-bootstrap-runtime-authority-v1.ts",
   "src/execution/run-persistence.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
@@ -43,9 +50,20 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/execution/runtime-session-repository.ts",
   "src/execution/v3-git-revision.ts",
   "src/installer/cleanup-ops.ts",
+  "src/installer/constants.ts",
   "src/installer/run.ts",
+  "src/installer/runtime-ports.ts",
+  "src/installer/step-advance.ts",
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
+  "src/installer/steps/04-setup-repo/preclaim.ts",
+  "src/installer/steps/05-setup-build/preclaim.ts",
+  "src/installer/steps/07-verify/prompt.md",
+  "src/installer/steps/09-qa-test/preclaim.ts",
+  "src/installer/steps/09-qa-test/prompt.md",
+  "src/installer/steps/10-final-test/preclaim.ts",
+  "src/installer/steps/10-final-test/prompt.md",
+  "src/installer/worktree-ops.ts",
   "src/internal-production/baseline-owner-producer-manifest-activation-controller-v1.ts",
   "src/internal-production/baseline-post-handoff-cli.ts",
   "src/internal-production/baseline-post-handoff-receipt-v1.ts",
@@ -53,6 +71,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/internal-production/baseline-service-restart-helper-v1.ts",
   "src/internal-production/baseline-service-restart-sequence-v1.ts",
   "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
   "src/medic/checks.ts",
@@ -82,6 +101,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "tests/execution-attempts/operational-event-migration.test.ts",
   "tests/execution-attempts/operational-failure-cause-migration.test.ts",
   "tests/execution-attempts/operational-outbox-repository.test.ts",
+  "tests/execution-attempts/plan-context-authority.test.ts",
   "tests/execution-attempts/platform-release-store-record-ledger-v3-contract-integration.test.ts",
   "tests/execution-attempts/preparation-authority-v2-migration.test.ts",
   "tests/execution-attempts/product-compilation-attempt-migration.test.ts",
@@ -126,6 +146,11 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "tests/operational-active-run-status-v1.test.ts",
   "tests/product-compiler/artifact-store-authority.test.ts",
   "tests/product-compiler/artifact-store-staging.test.ts",
+  "tests/smoke-test-static-rules.test.ts",
+  "tests/steps/04-setup-repo.test.ts",
+  "tests/steps/05-setup-build.test.ts",
+  "tests/steps/09-qa-test.test.ts",
+  "tests/steps/10-final-test.test.ts",
 ] as const;
 
 const P3_EXACT_SOURCE_PATHS_V1 = [
@@ -141,6 +166,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/execution/operational-event-delivery-repository.ts",
   "src/execution/operational-outbox-repository.ts",
   "src/execution/pre-dispatch-withdrawal-authority.ts",
+  "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
   "src/execution/run-terminal-transition.ts",
   "src/execution/run-termination.ts",
   "src/execution/runtime-completion-effect-repository.ts",
@@ -150,6 +176,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
+  "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/medic/checks.ts",
   "src/medic/medic.ts",
@@ -232,19 +259,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 57, "P3 source path cardinality differs");
+  assert.equal(actual.length, 59, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen115");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen140");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen115 order");
+    "P3 source paths do not preserve frozen140 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 57, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 59, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -300,6 +327,101 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
     "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
   ]);
+  const currentEntryClosure = "The current-entry poison recovery closure amendment supersedes";
+  assert.equal(plan.split(currentEntryClosure).length - 1, 1,
+    "approved plan current-entry closure amendment differs");
+  insertAfter(base, "src/db/contract-spine-migrations.ts", [
+    "src/db/operational-failure-cause-authority-v3-catalog.ts",
+  ]);
+  insertAfter(base, "src/execution/pre-dispatch-withdrawal-authority.ts", [
+    "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+  ]);
+  const repositoryIsolationClosure = "The recovery repository isolation closure amendment supersedes";
+  assert.equal(plan.split(repositoryIsolationClosure).length - 1, 1,
+    "approved plan recovery repository isolation amendment differs");
+  const repositoryIsolationStart = plan.indexOf(repositoryIsolationClosure);
+  const repositoryIsolationEnd = plan.indexOf("\n\n", repositoryIsolationStart);
+  assert.notEqual(repositoryIsolationEnd, -1,
+    "approved plan recovery repository isolation amendment is unterminated");
+  const repositoryIsolationPaths = [...plan
+    .slice(repositoryIsolationStart, repositoryIsolationEnd)
+    .matchAll(/`([^`]+\.(?:ts|md|mjs|json))`/g)]
+    .map((match) => match[1]!);
+  assert.deepEqual(repositoryIsolationPaths, [
+    "scripts/run-isolated-postgres-tests.ts",
+    "scripts/agent-browser-recovery-config.json",
+    "scripts/smoke-test.mjs",
+    "src/execution/pre-dispatch-withdrawal-authority.ts",
+    "src/execution/recovery-source-bootstrap-repository-cleanup-v1.ts",
+    "src/execution/recovery-source-bootstrap-repository-v1.ts",
+    "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+    "src/execution/recovery-source-bootstrap-runtime-authority-v1.ts",
+    "src/installer/cleanup-ops.ts",
+    "src/installer/constants.ts",
+    "src/installer/run.ts",
+    "src/installer/runtime-ports.ts",
+    "src/installer/step-advance.ts",
+    "src/installer/step-ops.ts",
+    "src/installer/steps/04-setup-repo/preclaim.ts",
+    "src/installer/steps/05-setup-build/preclaim.ts",
+    "src/installer/steps/07-verify/prompt.md",
+    "src/installer/steps/09-qa-test/preclaim.ts",
+    "src/installer/steps/09-qa-test/prompt.md",
+    "src/installer/steps/10-final-test/preclaim.ts",
+    "src/installer/steps/10-final-test/prompt.md",
+    "src/installer/worktree-ops.ts",
+    "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+    "src/internal-production/owner-admission-head-v1.ts",
+    "tests/execution-attempts/operational-outbox-repository.test.ts",
+    "tests/execution-attempts/plan-context-authority.test.ts",
+    "tests/product-compiler/artifact-store-staging.test.ts",
+    "tests/smoke-test-static-rules.test.ts",
+    "tests/steps/04-setup-repo.test.ts",
+    "tests/steps/05-setup-build.test.ts",
+    "tests/steps/09-qa-test.test.ts",
+    "tests/steps/10-final-test.test.ts",
+  ], "approved recovery repository isolation insertion paths differ");
+  insertAfter(base, "scripts/run-isolated-postgres-tests.ts", [
+    "scripts/agent-browser-recovery-config.json",
+    "scripts/smoke-test.mjs",
+  ]);
+  insertAfter(base, "src/execution/pre-dispatch-withdrawal-authority.ts", [
+    "src/execution/recovery-source-bootstrap-repository-cleanup-v1.ts",
+    "src/execution/recovery-source-bootstrap-repository-v1.ts",
+  ]);
+  insertAfter(base, "src/execution/recovery-source-bootstrap-run-authority-v1.ts", [
+    "src/execution/recovery-source-bootstrap-runtime-authority-v1.ts",
+  ]);
+  insertAfter(base, "src/installer/run.ts", [
+    "src/installer/runtime-ports.ts",
+    "src/installer/step-advance.ts",
+  ]);
+  insertAfter(base, "src/installer/cleanup-ops.ts", [
+    "src/installer/constants.ts",
+  ]);
+  insertAfter(base, "src/installer/step-ops.ts", [
+    "src/installer/steps/04-setup-repo/preclaim.ts",
+    "src/installer/steps/05-setup-build/preclaim.ts",
+    "src/installer/steps/07-verify/prompt.md",
+    "src/installer/steps/09-qa-test/preclaim.ts",
+    "src/installer/steps/09-qa-test/prompt.md",
+    "src/installer/steps/10-final-test/preclaim.ts",
+    "src/installer/steps/10-final-test/prompt.md",
+    "src/installer/worktree-ops.ts",
+  ]);
+  insertAfter(base, "src/internal-production/baseline-spawner-startup-admission-v1.ts", [
+    "src/internal-production/owner-admission-head-v1.ts",
+  ]);
+  insertAfter(base, "tests/product-compiler/artifact-store-staging.test.ts", [
+    "tests/smoke-test-static-rules.test.ts",
+    "tests/steps/04-setup-repo.test.ts",
+    "tests/steps/05-setup-build.test.ts",
+    "tests/steps/09-qa-test.test.ts",
+    "tests/steps/10-final-test.test.ts",
+  ]);
+  insertAfter(base, "tests/execution-attempts/operational-outbox-repository.test.ts", [
+    "tests/execution-attempts/plan-context-authority.test.ts",
+  ]);
   return base;
 }
 
@@ -325,6 +447,15 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
     "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-failure-cause.integration.test.ts",
     "tests/execution-attempts/v3-setup-build-untyped-build-failure.integration.test.ts",
+  ]);
+  const currentEntryClosure = "The current-entry poison recovery closure amendment supersedes";
+  assert.equal(plan.split(currentEntryClosure).length - 1, 1,
+    "approved plan current-entry closure amendment differs");
+  insertAfter("src/execution/pre-dispatch-withdrawal-authority.ts", [
+    "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
+  ]);
+  insertAfter("src/installer/step-ops.ts", [
+    "src/internal-production/owner-admission-head-v1.ts",
   ]);
   return base;
 }
@@ -499,7 +630,7 @@ function p3ExecutableSqlLiteralOccurrences(
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
-    "Task 8 must parse all exact29 production/package paths");
+    "Task 8 must parse all exact31 production/package paths");
 
   const ownerCore = sources["src/internal-production/owner-admission-v1.ts"]!;
   assert.equal(countMatches(ownerCore, /BigInt\(value\) > 9_007_199_254_740_991n/g), 1,
@@ -857,15 +988,15 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact57 subset of frozen115", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 57);
+  it("freezes P3 as an ordered exact59 subset of frozen140", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 59);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(production.length, 29);
+    assert.equal(production.length, 31);
     assert.equal(tests.length, 28);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 57);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 59);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
@@ -876,7 +1007,9 @@ describe("Task 0 exact source manifest", () => {
       "tests/execution-attempts/v3-platform-preclaim-terminal.integration.test.ts",
       "tests/execution-attempts/v3-platform-preclaim-termination-race.integration.test.ts",
       "src/internal-production/owner-admission-v1.ts",
+      "src/internal-production/owner-admission-head-v1.ts",
       "src/execution/runtime-completion-effect-runner.ts",
+      "src/execution/recovery-source-bootstrap-run-authority-v1.ts",
       "src/db/contract-spine-migrations.ts",
       "src/db/contract-spine-migration-digests.generated.ts",
       "src/db/contract-spine-migration-source-integrity.ts",
@@ -898,7 +1031,7 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 57);
+    assert.equal(countOnly.length, 59);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
@@ -1041,18 +1174,35 @@ describe("Task 0 exact source manifest", () => {
     )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 115-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 115);
+  it("accepts the literal 140-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 140);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
-  it("matches frozen115 and every approved exact57 member exists", () => {
-    const approved = extractApprovedTask0SourcePathsV1(readFileSync(APPROVED_PLAN_PATH, "utf8"));
+  it("pins the recovery browser config to one inert code-owned JSON object", () => {
+    const configPath = `${REPOSITORY_ROOT}scripts/agent-browser-recovery-config.json`;
+    const stat = lstatSync(configPath);
+    assert.equal(stat.isFile(), true);
+    assert.equal(stat.nlink, 1);
+    assert.equal(stat.mode & 0o022, 0);
+    assert.equal(readFileSync(configPath, "utf8"), "{}\n");
+  });
+
+  it("matches frozen140 while preserving every approved P3 exact59 member", () => {
+    const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
+    const approved = extractApprovedTask0SourcePathsV1(plan);
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");
+    assert.throws(() => extractApprovedTask0SourcePathsV1(plan.replace(
+      "insert `src/installer/constants.ts`",
+      "insert `src/installer/constants-crossed.ts`",
+    )), /approved recovery repository isolation insertion paths differ/,
+    "the plan consumer rejects a changed exact140 amendment path instead of replaying hard-coded insertions");
     const p3Approved = new Set(P3_EXACT_SOURCE_PATHS_V1);
     const missingP3 = approved.filter((relativePath) => p3Approved.has(relativePath as never))
       .filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
     assert.deepEqual(missingP3, [], "approved P3 source paths are missing from the repository");
+    const missingApproved = approved.filter((relativePath) => !existsSync(`${REPOSITORY_ROOT}${relativePath}`));
+    assert.deepEqual(missingApproved, [], "approved exact140 source paths are missing from the repository");
   });
 
   it("rejects an omission, extra path, duplicate, and reorder", () => {

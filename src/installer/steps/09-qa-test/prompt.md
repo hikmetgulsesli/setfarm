@@ -16,13 +16,10 @@ together so implement can fix them in one batch.
 
 ## Test Scenarios
 
-0. **Branch policy**: for `merge_strategy: pr-each` / `verify_each`, QA runs on
-   merged `main`, not on the old run branch:
-   - `cd {{REPO}}`
-   - `git fetch origin main`
-   - `git checkout main`
-   - `git pull --ff-only origin main`
-   - run build/test commands on this current `main`.
+0. **Branch policy**: stay on the branch assigned by Setfarm. Setfarm refreshes
+   ordinary main or fast-forwards an authenticated recovery run branch before QA.
+   Do not checkout, pull, merge, reset, or push another branch from `{{REPO}}`.
+   Run build/test commands on the assigned synchronized branch.
    - do not commit or push QA findings. Write `quality-reports/qa-test-1.md`
      and reference it in step output as `QA_REPORT`.
 1. Build and dev server start cleanly.
@@ -126,8 +123,7 @@ cat >"$QA_RUN_SCRIPT" <<'SETFARM_QA_RUN'
 set -euo pipefail
 cd {{REPO}}
 git fetch origin main
-git checkout main
-git pull --ff-only origin main
+git status --short --branch
 npm run build
 PORT="$(
 python3 - <<'PY'

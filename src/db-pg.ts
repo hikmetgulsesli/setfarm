@@ -9,10 +9,12 @@ import { fileURLToPath } from "node:url";
 import { runtimeConfig } from "./runtime-config.js";
 import {
   applyBootstrapMainClaimHandoffGuardedMigration32V1,
-  applyContractSpineMigrations,
+  applyContractSpineMigrationsIfNeeded,
   auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
+  V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY,
+  verifyV3RecoveryClaimRuntimePublicationV1,
   verifyContractSpineMigrations,
   type BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1,
 } from "./db/contract-spine-migrations.js";
@@ -20,6 +22,9 @@ import type {
   BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import {
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+  BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
   projectBootstrapMainClaimHandoffV1Schema,
   verifyBootstrapMainClaimHandoffV1Schema,
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
@@ -101,9 +106,23 @@ import {
 } from "./internal-production/owner-admission-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./product-compiler/canonical-json.js";
 import {
+  validateCurrentInternalProductionOwnerAdmissionHeadV1,
+  validateOwnerAdmissionAncestryToGenesisV1,
+  validateOwnerAdmissionMigrationApplicationV1,
+  ownerAdmissionSuccessorV1,
+} from "./internal-production/owner-admission-head-v1.js";
+import {
   RuntimeCompletionEffectInputV1Schema,
   RuntimeCompletionPlanV1Schema,
 } from "./execution/schemas/runtime-completion-plan-v1.js";
+import {
+  createInternalProductionRecoverySourceBootstrapRunContextV1,
+  createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1,
+  type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  type InternalProductionRecoverySourceBootstrapRunPersistenceV1,
+} from "./execution/recovery-source-bootstrap-run-authority-v1.js";
+import { resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1 } from "./execution/recovery-source-bootstrap-repository-v1.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -113,6 +132,28 @@ let _isolatedTestPgUrl: string | null = null;
 
 const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
 const P3_ISOLATED_TEST_DATABASE_V1 = /^setfarm_p3_[a-f0-9]{24}_(?:template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/;
+
+const BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM =
+  computeContractSpineMigrationChecksumV1({
+    version: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL,
+    name: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID,
+    statements: BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[32],
+  });
+
+export function isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(
+  value: Readonly<{
+    version: unknown;
+    name: unknown;
+    checksum: unknown;
+    state: unknown;
+  }> | undefined,
+): boolean {
+  return value?.version === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ORDINAL
+    && value.name === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+    && value.checksum === BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM
+    && value.state === "applied";
+}
 
 function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
   return [LEGACY_ISOLATED_TEST_DATABASE_V1, P3_ISOLATED_TEST_DATABASE_V1]
@@ -174,7 +215,14 @@ async function ensureDatabaseExists(rawUrl: string): Promise<void> {
   }
 }
 
-function getSql() {
+type SetfarmSqlV1 = ReturnType<typeof postgres> & Readonly<{
+  begin<Result>(
+    options: "isolation level repeatable read read only",
+    operation: (sql: InternalProductionPgTransactionSql) => Promise<Result>,
+  ): Promise<Result>;
+}>;
+
+function getSql(): SetfarmSqlV1 {
   if (!_sql) {
     const url = resolvePgUrl();
     _sql = postgres(url, {
@@ -184,7 +232,7 @@ function getSql() {
       connect_timeout: 10,
     });
   }
-  return _sql;
+  return _sql as SetfarmSqlV1;
 }
 
 export { getSql };
@@ -241,6 +289,33 @@ function exactObjectKeys(value: unknown, keys: readonly string[], code: string):
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError(code);
   }
+}
+
+function ownerProducerRowForImplementationV1(implementationId: string) {
+  return INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
+    (row) => row.implementationId === implementationId,
+  );
+}
+
+function sameJsonValueV1(left: unknown, right: unknown): boolean {
+  return canonicalJsonStringify(left) === canonicalJsonStringify(right);
+}
+
+function validateOwnerAdmissionPairV1(
+  input: unknown,
+  refKey: string,
+  hashKey: string,
+  code: string,
+): Readonly<Record<string, string>> {
+  exactObjectKeys(input, [refKey, hashKey], code);
+  const pair = input as Record<string, unknown>;
+  if (
+    typeof pair[refKey] !== "string"
+    || !OWNER_ADMISSION_REF_V1.test(pair[refKey])
+    || typeof pair[hashKey] !== "string"
+    || !OWNER_ADMISSION_SHA256_V1.test(pair[hashKey])
+  ) throw new TypeError(code);
+  return Object.freeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] } as Record<string, string>);
 }
 
 const P3_RESOLVED_CLOSE_INPUT_KEYS_V1 = Object.freeze([
@@ -992,73 +1067,6 @@ export function createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(
   });
 }
 
-function validateOwnerAdmissionPairV1(
-  input: unknown,
-  refKey: string,
-  hashKey: string,
-  code: string,
-): Readonly<Record<string, string>> {
-  exactObjectKeys(input, [refKey, hashKey], code);
-  const pair = input as Record<string, unknown>;
-  if (
-    typeof pair[refKey] !== "string"
-    || !OWNER_ADMISSION_REF_V1.test(pair[refKey])
-    || typeof pair[hashKey] !== "string"
-    || !OWNER_ADMISSION_SHA256_V1.test(pair[hashKey])
-  ) throw new TypeError(code);
-  return Object.freeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] } as Record<string, string>);
-}
-
-function ownerProducerRowForImplementationV1(implementationId: string) {
-  return INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.rows.find(
-    (row) => row.implementationId === implementationId,
-  );
-}
-
-function sameJsonValueV1(left: unknown, right: unknown): boolean {
-  return canonicalJsonStringify(left) === canonicalJsonStringify(right);
-}
-
-function validateOwnerAdmissionMigrationApplicationV1(
-  value: unknown,
-  evidenceHash: string,
-): OwnerAdmissionMigrationApplicationV1 {
-  exactObjectKeys(value, [
-    "schema", "evidenceHash", "authorizationRef", "authorizationHash",
-    "authorizationConsumptionRef", "authorizationConsumptionHash", "applicationHash",
-  ], "INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  const application = value as Record<string, unknown>;
-  const hashes = [
-    application.evidenceHash,
-    application.authorizationHash,
-    application.authorizationConsumptionHash,
-    application.applicationHash,
-  ];
-  if (
-    application.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"
-    || application.evidenceHash !== evidenceHash
-    || !OWNER_ADMISSION_SHA256_V1.test(evidenceHash)
-    || evidenceHash === "0".repeat(64)
-    || hashes.some((hash) => typeof hash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(hash))
-    || typeof application.authorizationRef !== "string"
-    || !OWNER_ADMISSION_REF_V1.test(application.authorizationRef)
-    || typeof application.authorizationConsumptionRef !== "string"
-    || !OWNER_ADMISSION_REF_V1.test(application.authorizationConsumptionRef)
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  const body = {
-    schema: application.schema,
-    evidenceHash: application.evidenceHash,
-    authorizationRef: application.authorizationRef,
-    authorizationHash: application.authorizationHash,
-    authorizationConsumptionRef: application.authorizationConsumptionRef,
-    authorizationConsumptionHash: application.authorizationConsumptionHash,
-  };
-  if (application.applicationHash !== hashCanonicalJson(body)) {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  return Object.freeze({ ...body, applicationHash: application.applicationHash }) as OwnerAdmissionMigrationApplicationV1;
-}
-
 function validateReservationRowV1(
   row: OwnerReservationRowV1,
   authority: OwnerAdmissionAuthorityRowV1,
@@ -1628,65 +1636,8 @@ async function lockOwnerAdmissionHeadV1(
 }>> {
   const rows = await sql<OwnerAdmissionHeadRowV1[]>`SELECT head_version,head_hash,active_fence_ref,active_fence_hash,active_target_family_hash,migration_application_evidence_hash,head_payload FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE FOR UPDATE`;
   const row = rows[0];
-  const version = Number(row?.head_version);
-  if (
-    rows.length !== 1
-    || !Number.isSafeInteger(version)
-    || version < 0
-    || !row
-    || !OWNER_ADMISSION_SHA256_V1.test(row.head_hash)
-    || !OWNER_ADMISSION_SHA256_V1.test(row.migration_application_evidence_hash)
-    || (row.active_fence_ref === null) !== (row.active_fence_hash === null)
-    || (row.active_target_family_hash !== null && row.active_fence_ref === null)
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  const payload = row.head_payload;
-  const expectedPayloadKeys = version === 0
-    ? ["schema", "version", "migrationApplication"]
-    : [
-        "schema", "version", "predecessorHeadHash", "transitionKind",
-        "transitionRef", "transitionHash", "migrationApplication",
-      ];
-  try {
-    exactObjectKeys(payload, expectedPayloadKeys, "INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  } catch {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  const headPayload = payload as Record<string, unknown>;
-  let migrationApplication: OwnerAdmissionMigrationApplicationV1;
-  try {
-    migrationApplication = validateOwnerAdmissionMigrationApplicationV1(
-      headPayload.migrationApplication,
-      row.migration_application_evidence_hash,
-    );
-  } catch {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  if (
-    headPayload.schema !== "setfarm.internal-production-owner-admission-head.v1"
-    || headPayload.version !== version
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  if (version === 0) {
-    if (row.head_hash !== "0".repeat(64)) {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-  } else {
-    if (
-      typeof headPayload.predecessorHeadHash !== "string"
-      || !OWNER_ADMISSION_SHA256_V1.test(headPayload.predecessorHeadHash)
-      || !["reservation", "close", "fence", "release"].includes(String(headPayload.transitionKind))
-      || typeof headPayload.transitionRef !== "string"
-      || !OWNER_ADMISSION_REF_V1.test(headPayload.transitionRef)
-      || typeof headPayload.transitionHash !== "string"
-      || !OWNER_ADMISSION_SHA256_V1.test(headPayload.transitionHash)
-      || hashCanonicalJson(headPayload) !== row.head_hash
-    ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    await validateOwnerAdmissionAncestryToGenesisV1(
-      sql,
-      row.head_hash,
-      version,
-      migrationApplication,
-    );
-  }
+  if (rows.length !== 1 || !row) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+  const validated = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, row);
   if (activeFencePolicy === "absent" && row.active_fence_ref !== null) {
     throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_FENCED");
   }
@@ -1694,14 +1645,7 @@ async function lockOwnerAdmissionHeadV1(
     throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_FENCE_UNAVAILABLE");
   }
   await observeInternalProductionCompletionBootstrapHeadBarrierV1(sql);
-  return Object.freeze({
-    version,
-    hash: row.head_hash,
-    migrationApplication,
-    activeFenceRef: row.active_fence_ref,
-    activeFenceHash: row.active_fence_hash,
-    activeTargetFamilyHash: row.active_target_family_hash,
-  });
+  return validated;
 }
 
 export async function lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1(
@@ -1749,209 +1693,6 @@ export async function lockInternalProductionBaselineCompletionOwnerBootstrapRele
     if (boundRows.length !== 1 || !sameJsonValueV1(boundRows[0]!.canonical_owner_identity, expectedIdentity)) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TARGET_OWNER_CORRUPTION");
     return Object.freeze({ ownerAdmissionHeadVersion: head.version, ownerAdmissionHeadHash: head.hash, targetOwnerReservationRef: rows[0]!.reservation_ref, targetOwnerReservationHash: rows[0]!.reservation_hash });
   } catch (error) { internalProductionCompletionBootstrapHeadLockContextsV1.delete(key); throw error; }
-}
-
-function ownerAdmissionSuccessorV1(input: Readonly<{
-  version: number;
-  predecessorHeadHash: string;
-  transitionKind: "reservation" | "close" | "fence" | "release";
-  transitionRef: string;
-  transitionHash: string;
-  migrationApplication: OwnerAdmissionMigrationApplicationV1;
-}>): Readonly<{ version: number; hash: string; payload: Readonly<Record<string, unknown>> }> {
-  const payload = Object.freeze({
-    schema: "setfarm.internal-production-owner-admission-head.v1",
-    version: input.version + 1,
-    predecessorHeadHash: input.predecessorHeadHash,
-    transitionKind: input.transitionKind,
-    transitionRef: input.transitionRef,
-    transitionHash: input.transitionHash,
-    migrationApplication: input.migrationApplication,
-  });
-  return Object.freeze({ version: input.version + 1, hash: hashCanonicalJson(payload), payload });
-}
-
-async function validateOwnerAdmissionAncestryToGenesisV1(
-  sql: InternalProductionPgTransactionSql,
-  headHash: string,
-  version: number,
-  migrationApplication: OwnerAdmissionMigrationApplicationV1,
-  seen = new Set<string>(),
-): Promise<readonly OwnerAdmissionAdvancingAuthorityV1[]> {
-  if (!Number.isSafeInteger(version) || version < 0 || !OWNER_ADMISSION_SHA256_V1.test(headHash)) {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  if (version === 0) {
-    if (headHash !== "0".repeat(64)) {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    return Object.freeze([]);
-  }
-  if (seen.has(headHash)) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  seen.add(headHash);
-  const authorities = await sql<OwnerAdmissionAuthorityRowV1[]>`SELECT authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body FROM internal_production_owner_admission_authorities_v1 WHERE successor_head_hash=${headHash} AND predecessor_head_hash<>successor_head_hash`;
-  const fenceAuthorities = authorities.filter(({ authority_kind }) => authority_kind === "fence");
-  if (fenceAuthorities.length === 1) {
-    const authority = fenceAuthorities[0]!;
-    let fence: InternalProductionGlobalOwnerAdmissionFenceV1;
-    try {
-      fence = validateInternalProductionGlobalOwnerAdmissionFenceV1(authority.authority_body);
-    } catch {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    const expectedCount = fence.targetFamily.kind === "source-run-launch" ? 3 : 1;
-    if (authorities.length !== expectedCount) {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    const transition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
-      purpose: fence.purpose,
-      pendingInputRef: fence.pendingInputRef,
-      pendingInputHash: fence.pendingInputHash,
-      targetFamilyHash: fence.targetFamily.kind === "source-run-launch"
-        ? fence.targetFamily.targetFamilyHash
-        : hashCanonicalJson(fence.targetFamily),
-      ownerIdentitySetHash: fence.ownerIdentitySetHash,
-    });
-    const expectedSuccessor = ownerAdmissionSuccessorV1({
-      version: version - 1,
-      predecessorHeadHash: authority.predecessor_head_hash,
-      transitionKind: "fence",
-      transitionRef: transition.transitionRef,
-      transitionHash: transition.transitionHash,
-      migrationApplication,
-    });
-    if (
-      expectedSuccessor.hash !== headHash
-      || fence.ownerAdmissionHeadHash !== headHash
-      || authority.authority_ref !== fence.fenceRef
-      || authority.authority_hash !== fence.fenceHash
-      || authority.phase_key !== fence.pendingInputRef
-      || authority.predecessor_head_hash !== fence.predecessorFenceHeadHash
-      || !sameJsonValueV1(authority.authority_body, fence)
-    ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    if (fence.targetFamily.kind === "source-run-launch") {
-      const reservations = authorities.filter(({ authority_kind }) => authority_kind === "reservation");
-      const expectedPairs = [
-        fence.targetFamily.sourceRunReservation,
-        fence.targetFamily.runReservation,
-      ];
-      if (reservations.length !== 2 || expectedPairs.some((pair) => !reservations.some((candidate) => (
-        candidate.authority_ref === pair.reservationRef
-        && candidate.authority_hash === pair.reservationHash
-        && candidate.predecessor_head_hash === authority.predecessor_head_hash
-        && candidate.successor_head_hash === headHash
-      )))) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-    const predecessors = await validateOwnerAdmissionAncestryToGenesisV1(
-      sql,
-      authority.predecessor_head_hash,
-      version - 1,
-      migrationApplication,
-      seen,
-    );
-    return Object.freeze([
-      ...authorities.map((member) => Object.freeze({ version, authority: member })),
-      ...predecessors,
-    ]);
-  }
-  const authority = authorities[0];
-  if (authorities.length !== 1 || !authority) {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  let expectedSuccessor: ReturnType<typeof ownerAdmissionSuccessorV1>;
-  try {
-    if (authority.authority_kind === "reservation") {
-      const body = authority.authority_body as Partial<InternalProductionOwnerReservationV1>;
-      const producer = typeof body.producerImplementationId === "string"
-        ? ownerProducerRowForImplementationV1(body.producerImplementationId)
-        : undefined;
-      if (!producer) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-      const reservation = validateInternalProductionOwnerReservationV1(body, producer);
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: reservation.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "reservation",
-        transitionRef: reservation.reservationRef,
-        transitionHash: reservation.reservationHash,
-        migrationApplication,
-      });
-      if (
-        authority.authority_ref !== reservation.reservationRef
-        || authority.authority_hash !== reservation.reservationHash
-        || authority.phase_key !== reservation.reservationRef
-        || authority.predecessor_head_hash !== reservation.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, reservation)
-      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    } else if (authority.authority_kind === "close") {
-      const close = validateInternalProductionOwnerReservationCloseV1(authority.authority_body);
-      const transition = {
-        schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
-        reservationRef: close.reservationRef,
-        reservationHash: close.reservationHash,
-        terminalOwnerRef: close.terminalOwnerRef,
-        terminalOwnerHash: close.terminalOwnerHash,
-      };
-      const transitionHash = hashCanonicalJson(transition);
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: close.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "close",
-        transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${transitionHash}`,
-        transitionHash,
-        migrationApplication,
-      });
-      if (
-        authority.authority_ref !== close.closeRef
-        || authority.authority_hash !== close.closeHash
-        || authority.phase_key !== close.reservationRef
-        || authority.predecessor_head_hash !== close.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, close)
-      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    } else if (authority.authority_kind === "release") {
-      const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(authority.authority_body);
-      const transition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
-        fenceRef: release.fenceRef,
-        fenceHash: release.fenceHash,
-        releaseAuthority: release.releaseAuthority,
-      });
-      expectedSuccessor = ownerAdmissionSuccessorV1({
-        version: version - 1,
-        predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
-        transitionKind: "release",
-        transitionRef: transition.transitionRef,
-        transitionHash: transition.transitionHash,
-        migrationApplication,
-      });
-      if (
-        authority.authority_ref !== release.releaseRef
-        || authority.authority_hash !== release.releaseHash
-        || authority.phase_key !== release.fenceRef
-        || authority.predecessor_head_hash !== release.ownerAdmissionHeadPredecessorHash
-        || !sameJsonValueV1(authority.authority_body, release)
-      ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    } else {
-      throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-    }
-  } catch {
-    throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  }
-  if (
-    expectedSuccessor.version !== version
-    || expectedSuccessor.hash !== headHash
-    || authority.successor_head_hash !== headHash
-    || authority.predecessor_head_hash !== expectedSuccessor.payload.predecessorHeadHash
-  ) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
-  const predecessors = await validateOwnerAdmissionAncestryToGenesisV1(
-    sql,
-    authority.predecessor_head_hash,
-    version - 1,
-    migrationApplication,
-    seen,
-  );
-  return Object.freeze([
-    Object.freeze({ version, authority }),
-    ...predecessors,
-  ]);
 }
 
 async function beginOrAdoptOwnerReservationInTransactionV1(
@@ -2293,15 +2034,44 @@ async function resolveStoredWorkflowRunOwnerByPairInTransactionV1(
       `;
       const run = runRows[0];
       if (runRows.length !== 1 || !run || run.id !== reservation.ownerKey || !["running", "completed", "failed", "cancelled"].includes(run.status)) throw new Error();
-      const context = strictCanonicalText(run.context, "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
-      exactObjectKeys(context, [
-        "schema", "task", "purpose", "repository", "workflow", "protocol", "promptManifestHash",
-        "baseSourceSha", "baseSourceTreeHash", "buildHash", "activationPreflightHash", "releaseAdmissionHash",
-        "pendingInputRef", "pendingInputHash", "startIntentRef", "startIntentHash", "startOutboxRef", "startOutboxHash",
-        "operationRef", "operationHash", "targetSourceRunReservationRef", "targetSourceRunReservationHash",
-        "targetRunReservationRef", "targetRunReservationHash", "targetRunLaunchCompositeHash", "sourceRunOwnerRef",
-        "sourceRunOwnerHash", "runOwnerRef", "runOwnerHash", "operationRunBindingHash", "reciprocalRunOperationBindingHash",
-      ], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      let parsedContext: unknown;
+      try { parsedContext = JSON.parse(run.context); } catch {
+        throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      }
+      if (!parsedContext || typeof parsedContext !== "object" || Array.isArray(parsedContext)) {
+        throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+      }
+      const context = parsedContext as Readonly<Record<string, unknown>>;
+      createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1({
+        schema: context.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
+          ? "setfarm.internal-production-recovery-source-bootstrap-operation.v1"
+          : context.schema,
+        purpose: context.purpose,
+        repository: context.repository,
+        workflow: context.workflow,
+        protocol: context.protocol,
+        promptManifestHash: context.promptManifestHash,
+        pendingInputRef: context.pendingInputRef,
+        pendingInputHash: context.pendingInputHash,
+        baseSourceSha: context.baseSourceSha,
+        baseSourceTreeHash: context.baseSourceTreeHash,
+        buildHash: context.buildHash,
+        activationPreflightHash: context.activationPreflightHash,
+        releaseAdmissionHash: context.releaseAdmissionHash,
+        targetSourceRunReservationRef: context.targetSourceRunReservationRef,
+        targetSourceRunReservationHash: context.targetSourceRunReservationHash,
+        targetRunReservationRef: context.targetRunReservationRef,
+        targetRunReservationHash: context.targetRunReservationHash,
+        targetRunLaunchCompositeHash: context.targetRunLaunchCompositeHash,
+        ownerAdmissionFenceRef: context.ownerAdmissionFenceRef,
+        ownerAdmissionFenceHash: context.ownerAdmissionFenceHash,
+        startIntentRef: context.startIntentRef,
+        startIntentHash: context.startIntentHash,
+        startOutboxRef: context.startOutboxRef,
+        startOutboxHash: context.startOutboxHash,
+        operationRef: context.operationRef,
+        operationHash: context.operationHash,
+      });
       if (
         context.schema !== "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
         || context.runOwnerRef !== bound.canonicalOwnerIdentity.ownerRef
@@ -3682,11 +3452,11 @@ function recoverySourceBootstrapRunBindingAuthorityV1(
 
 export async function lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(
   sql: InternalProductionPgTransactionSql,
-  input: Readonly<{ operationRef: string; operationHash: string }>,
+  input: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
 ): Promise<InternalProductionRecoverySourceBootstrapRunInsertionAuthorityV1> {
+  let operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   try {
-    exactObjectKeys(input, ["operationRef", "operationHash"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_INSERTION_INPUT_INVALID");
-    if (typeof input.operationRef !== "string" || typeof input.operationHash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(input.operationHash)) throw new Error();
+    operation = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(input);
   } catch {
     throw new TypeError("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_INSERTION_INPUT_INVALID");
   }
@@ -3697,10 +3467,6 @@ export async function lockInternalProductionRecoverySourceBootstrapRunInsertionF
   if (fence.purpose !== "recovery-d-source-delivery-v1" || fence.targetFamily.kind !== "source-run-launch" || head.activeTargetFamilyHash !== fence.targetFamily.targetFamilyHash) {
     throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_FENCE_INVALID");
   }
-  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
-  const resolveOperation = receipt.resolveInternalProductionRecoverySourceBootstrapOperationV1;
-  if (typeof resolveOperation !== "function" || resolveOperation.length !== 1) throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_OPERATION_RESOLVER_INVALID");
-  const operation = await (resolveOperation as (pair: unknown) => Promise<Record<string, unknown>>)(input);
   const authority = recoverySourceBootstrapRunBindingAuthorityV1(operation);
   if (
     authority.targetSourceRunReservationRef !== fence.targetFamily.sourceRunReservation.reservationRef
@@ -3728,8 +3494,7 @@ export async function lockInternalProductionRecoverySourceBootstrapRunInsertionF
 export async function bindInternalProductionRecoverySourceBootstrapRunInTransactionV1(
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{
-    operationRef: string;
-    operationHash: string;
+    recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
     runId: string;
     operationRunBindingHash: string;
     reciprocalRunOperationBindingHash: string;
@@ -3739,22 +3504,19 @@ export async function bindInternalProductionRecoverySourceBootstrapRunInTransact
   sourceRunOwnerReservationHash: string;
   runOwnerReservationRef: string;
   runOwnerReservationHash: string;
-}>> {
+  }>> {
+  let operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   try {
-    exactObjectKeys(input, ["operationRef", "operationHash", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_INPUT_INVALID");
-    for (const key of ["operationHash", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash"] as const) if (typeof input[key] !== "string" || !OWNER_ADMISSION_SHA256_V1.test(input[key])) throw new Error();
-    if (typeof input.operationRef !== "string") throw new Error();
+    exactObjectKeys(input, ["recoveryOperationAuthority", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_INPUT_INVALID");
+    operation = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(input.recoveryOperationAuthority);
+    for (const key of ["runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash"] as const) if (typeof input[key] !== "string" || !OWNER_ADMISSION_SHA256_V1.test(input[key])) throw new Error();
   } catch {
     throw new TypeError("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_INPUT_INVALID");
   }
-  const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(sql, { operationRef: input.operationRef, operationHash: input.operationHash });
+  const authority = await lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1(sql, operation);
   if (input.runId !== authority.runId || input.operationRunBindingHash !== authority.operationRunBindingHash || input.reciprocalRunOperationBindingHash !== authority.reciprocalRunOperationBindingHash) {
     throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_CROSSED");
   }
-  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
-  const resolveOperation = receipt.resolveInternalProductionRecoverySourceBootstrapOperationV1;
-  if (typeof resolveOperation !== "function" || resolveOperation.length !== 1) throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_OPERATION_RESOLVER_INVALID");
-  const operation = await (resolveOperation as (pair: unknown) => Promise<Record<string, unknown>>)({ operationRef: input.operationRef, operationHash: input.operationHash });
   const paths = await import("./installer/paths.js");
   const workflowSpec = await import("./installer/workflow-spec.js");
   const workflow = await workflowSpec.loadWorkflowSpec(paths.resolveBundledWorkflowDir("feature-dev"));
@@ -3762,39 +3524,16 @@ export async function bindInternalProductionRecoverySourceBootstrapRunInTransact
     throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_WORKFLOW_INVALID");
   }
   const sourceTask = "Implement Tasks 1 and 2 from docs/superpowers/plans/2026-08-13-internal-production-recovery-mc-reconciliation-plan.md exactly as written.";
-  const expectedContext = canonicalJsonStringify({
-    schema: "setfarm.internal-production-recovery-source-bootstrap-run-context.v1",
-    task: sourceTask,
-    purpose: operation.purpose,
-    repository: operation.repository,
-    workflow: operation.workflow,
-    protocol: operation.protocol,
-    promptManifestHash: operation.promptManifestHash,
-    baseSourceSha: operation.baseSourceSha,
-    baseSourceTreeHash: operation.baseSourceTreeHash,
-    buildHash: operation.buildHash,
-    activationPreflightHash: operation.activationPreflightHash,
-    releaseAdmissionHash: operation.releaseAdmissionHash,
-    pendingInputRef: operation.pendingInputRef,
-    pendingInputHash: operation.pendingInputHash,
-    startIntentRef: operation.startIntentRef,
-    startIntentHash: operation.startIntentHash,
-    startOutboxRef: operation.startOutboxRef,
-    startOutboxHash: operation.startOutboxHash,
-    operationRef: operation.operationRef,
-    operationHash: operation.operationHash,
-    targetSourceRunReservationRef: operation.targetSourceRunReservationRef,
-    targetSourceRunReservationHash: operation.targetSourceRunReservationHash,
-    targetRunReservationRef: operation.targetRunReservationRef,
-    targetRunReservationHash: operation.targetRunReservationHash,
-    targetRunLaunchCompositeHash: operation.targetRunLaunchCompositeHash,
-    sourceRunOwnerRef: authority.sourceRunCanonicalOwnerIdentity.ownerRef,
-    sourceRunOwnerHash: authority.sourceRunCanonicalOwnerIdentity.ownerHash,
-    runOwnerRef: authority.runCanonicalOwnerIdentity.ownerRef,
-    runOwnerHash: authority.runCanonicalOwnerIdentity.ownerHash,
+  const repositoryIdentity = resolveInternalProductionRecoverySourceBootstrapRepositoryIdentityV1({
+    sourceRepositoryRoot: OWNER_PRODUCER_REPOSITORY_ROOT,
+    runId: authority.runId,
+  });
+  const expectedContext = canonicalJsonStringify(createInternalProductionRecoverySourceBootstrapRunContextV1(operation, {
+    runId: authority.runId,
     operationRunBindingHash: authority.operationRunBindingHash,
     reciprocalRunOperationBindingHash: authority.reciprocalRunOperationBindingHash,
-  });
+    repositoryIdentity,
+  }));
   const runRows = await sql.unsafe<Array<{
     id: string; workflow_id: string; task: string; status: string; context: string;
     notify_url: string | null; protocol: string; protocol_version: number;
@@ -4086,6 +3825,7 @@ export async function reobserveInternalProductionGlobalOwnerAdmissionFenceV1(inp
     || !OWNER_ADMISSION_SHA256_V1.test(input.fenceHash)
   ) throw new TypeError("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_PAIR_INVALID");
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "present");
     if (
       head.activeFenceRef !== input.fenceRef
@@ -4158,6 +3898,7 @@ export async function closeInternalProductionSourceRunLaunchTargetReservationsUn
     ) throw new TypeError("INTERNAL_PRODUCTION_SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_INVALID");
   }
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "present");
     if (head.activeFenceRef !== input.fenceRef || head.activeFenceHash !== input.fenceHash) {
       throw new Error("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_NOT_ACTIVE");
@@ -4389,6 +4130,7 @@ export async function releaseInternalProductionGlobalOwnerAdmissionFenceV1(input
     || !OWNER_ADMISSION_SHA256_V1.test(input.fenceHash)
   ) throw new TypeError("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INPUT_INVALID");
   return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
     const head = await lockOwnerAdmissionHeadV1(sql, "either");
     if (head.activeFenceRef === null) {
       const rows = await sql<OwnerAdmissionAuthorityRowV1[]>`
@@ -4597,6 +4339,643 @@ export async function recoverBoundInternalProductionWorkflowRunOwnerV1(input: Re
   });
 }
 
+type RecoverySourceBootstrapOwnerProjectionRowV1 = Readonly<{
+  headVersion: number;
+  headHash: string;
+  activeFenceRef: string | null;
+  activeFenceHash: string | null;
+  allAuthorityRows: readonly Readonly<Record<string, unknown>>[];
+}> & Readonly<Record<string, unknown>>;
+
+type RecoverySourceBootstrapReservationProjectionRowV1 = Readonly<Record<string, unknown>>;
+type RecoverySourceBootstrapRunProjectionRowV1 = Readonly<Record<string, unknown>>;
+
+function recoverySourceBootstrapProjectionRecordV1(
+  value: unknown,
+  code: string,
+): Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function recoverySourceBootstrapAuthorityKeyV1(ref: unknown, hash: unknown): string {
+  if (
+    typeof ref !== "string"
+    || !OWNER_ADMISSION_REF_V1.test(ref)
+    || typeof hash !== "string"
+    || !OWNER_ADMISSION_SHA256_V1.test(hash)
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_AUTHORITY_INVALID");
+  return `${ref}\u0000${hash}`;
+}
+
+function projectRecoverySourceBootstrapPersistenceRowsV1(
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+  ownerRows: readonly RecoverySourceBootstrapOwnerProjectionRowV1[],
+  reservationRows: readonly RecoverySourceBootstrapReservationProjectionRowV1[],
+): Readonly<{
+  ownerRows: readonly RecoverySourceBootstrapOwnerProjectionRowV1[];
+  reservationRows: readonly RecoverySourceBootstrapReservationProjectionRowV1[];
+}> {
+  const ownerRowsAlreadyProjected = ownerRows.length === 1
+    && Array.isArray(ownerRows[0]!.headHistory)
+    && Array.isArray(ownerRows[0]!.authorityHistory)
+    && typeof ownerRows[0]!.activeFenceCount === "number"
+    && Object.prototype.hasOwnProperty.call(ownerRows[0]!, "activeFenceBody")
+    && Object.prototype.hasOwnProperty.call(ownerRows[0]!, "headActiveFenceRef")
+    && typeof ownerRows[0]!.unrelatedAuthorityCount === "number";
+  const reservationRowsAlreadyProjected = reservationRows.every((candidate) => (
+    Object.prototype.hasOwnProperty.call(candidate, "authorityRef")
+    && Object.prototype.hasOwnProperty.call(candidate, "authorityBody")
+    && (candidate.state !== "closed" || Object.prototype.hasOwnProperty.call(candidate, "closeAuthority"))
+  ));
+  if (ownerRowsAlreadyProjected && reservationRowsAlreadyProjected) {
+    return Object.freeze({ ownerRows, reservationRows });
+  }
+  if (ownerRows.length !== 1) return Object.freeze({ ownerRows, reservationRows });
+  const rawOwner = recoverySourceBootstrapProjectionRecordV1(
+    ownerRows[0],
+    "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_OWNER_INVALID",
+  );
+  const allAuthorityRows = Array.isArray(rawOwner.allAuthorityRows)
+    ? rawOwner.allAuthorityRows.map((candidate) => recoverySourceBootstrapProjectionRecordV1(
+        candidate,
+        "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_AUTHORITY_INVALID",
+      ))
+    : [];
+  const authorityByKey = new Map<string, Readonly<Record<string, unknown>>>();
+  for (const authority of allAuthorityRows) {
+    const key = recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash);
+    if (authorityByKey.has(key)) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_AUTHORITY_DUPLICATE");
+    authorityByKey.set(key, authority);
+  }
+  const projectedReservations = reservationRows.map<RecoverySourceBootstrapReservationProjectionRowV1>((candidate) => {
+    if (Object.prototype.hasOwnProperty.call(candidate, "authorityRef")) return candidate;
+    const reservationAuthority = authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(
+      candidate.reservationRef,
+      candidate.reservationHash,
+    ));
+    if (!reservationAuthority) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_RESERVATION_AUTHORITY_MISSING");
+    const closeAuthority = candidate.state === "closed"
+      ? authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(candidate.closeRef, candidate.closeHash))
+      : undefined;
+    if (candidate.state === "closed" && !closeAuthority) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_CLOSE_AUTHORITY_MISSING");
+    }
+    return Object.freeze({
+      ...candidate,
+      authorityRef: reservationAuthority.authorityRef,
+      authorityHash: reservationAuthority.authorityHash,
+      authorityKind: reservationAuthority.authorityKind,
+      phaseKey: reservationAuthority.phaseKey,
+      authorityPredecessorHeadHash: reservationAuthority.predecessorHeadHash,
+      authoritySuccessorHeadHash: reservationAuthority.successorHeadHash,
+      authorityBody: reservationAuthority.authorityBody,
+      ...(closeAuthority ? { closeAuthority } : {}),
+    }) as RecoverySourceBootstrapReservationProjectionRowV1;
+  });
+  const sourceReservation = projectedReservations.find((candidate) => (
+    candidate.reservationRef === operation.targetSourceRunReservationRef
+    && candidate.reservationHash === operation.targetSourceRunReservationHash
+  ));
+  const runReservation = projectedReservations.find((candidate) => (
+    candidate.reservationRef === operation.targetRunReservationRef
+    && candidate.reservationHash === operation.targetRunReservationHash
+  ));
+  if (!sourceReservation || !runReservation) {
+    return Object.freeze({ ownerRows, reservationRows: projectedReservations });
+  }
+  const fenceAuthority = authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(
+    operation.ownerAdmissionFenceRef,
+    operation.ownerAdmissionFenceHash,
+  ));
+  if (!fenceAuthority) return Object.freeze({ ownerRows, reservationRows: projectedReservations });
+  const fence = recoverySourceBootstrapProjectionRecordV1(
+    fenceAuthority.authorityBody,
+    "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_FENCE_INVALID",
+  );
+  const currentHeadPayload = recoverySourceBootstrapProjectionRecordV1(
+    rawOwner.headPayload,
+    "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_HEAD_INVALID",
+  );
+  const migrationApplication = currentHeadPayload.migrationApplication;
+  const migrationApplicationEvidenceHash = rawOwner.migrationApplicationEvidenceHash;
+  const targetFamily = recoverySourceBootstrapProjectionRecordV1(
+    fence.targetFamily,
+    "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_FENCE_INVALID",
+  );
+  const h1Hash = fence.ownerAdmissionHeadHash;
+  if (typeof h1Hash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(h1Hash)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H1_INVALID");
+  }
+  const h1TransitionHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-global-owner-admission-fence-transition.v1",
+    purpose: fence.purpose,
+    pendingInputRef: fence.pendingInputRef,
+    pendingInputHash: fence.pendingInputHash,
+    targetFamilyHash: targetFamily.targetFamilyHash,
+    ownerIdentitySetHash: fence.ownerIdentitySetHash,
+  });
+  const h1Payload = Object.freeze({
+    schema: "setfarm.internal-production-owner-admission-head.v1",
+    version: 1,
+    predecessorHeadHash: fence.predecessorFenceHeadHash,
+    transitionKind: "fence",
+    transitionRef: `setfarm://internal-production/global-owner-admission-fence-transition/sha256/${h1TransitionHash}`,
+    transitionHash: h1TransitionHash,
+    migrationApplication,
+  });
+  const head = (
+    headVersion: 1 | 2 | 3 | 4,
+    headHash: unknown,
+    headPayload: Readonly<Record<string, unknown>>,
+    active: boolean,
+  ) => Object.freeze({
+    headVersion,
+    headHash,
+    activeFenceRef: active ? fence.fenceRef : null,
+    activeFenceHash: active ? fence.fenceHash : null,
+    activeTargetFamilyHash: active ? targetFamily.targetFamilyHash : null,
+    migrationApplicationEvidenceHash,
+    headPayload,
+  });
+  const authorityHistory: Readonly<Record<string, unknown>>[] = [
+    fenceAuthority,
+    authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(sourceReservation.reservationRef, sourceReservation.reservationHash))!,
+    authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(runReservation.reservationRef, runReservation.reservationHash))!,
+  ];
+  const headHistory: Readonly<Record<string, unknown>>[] = [];
+  const currentVersion = Number(rawOwner.headVersion);
+  // The SQL inventories stay global. Scope them only after the exact target
+  // fence and both target reservations identify one immutable release chain.
+  const targetReleaseAuthorities = allAuthorityRows.filter((candidate) => (
+    candidate.authorityKind === "release"
+    && candidate.phaseKey === fence.fenceRef
+  ));
+  if (targetReleaseAuthorities.length > 1) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_DUPLICATE");
+  }
+  const targetReleaseAuthority = targetReleaseAuthorities[0] ?? null;
+  const historicalReleased = currentVersion >= 4
+    && sourceReservation.state === "closed"
+    && runReservation.state === "closed"
+    && targetReleaseAuthority !== null;
+  if (currentVersion === 1) {
+    headHistory.push(head(1, h1Hash, h1Payload, true));
+  } else if (currentVersion === 3 || currentVersion === 4 || historicalReleased) {
+    const sourceClose = recoverySourceBootstrapProjectionRecordV1(
+      sourceReservation.closeBody,
+      "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_SOURCE_CLOSE_INVALID",
+    );
+    const runClose = recoverySourceBootstrapProjectionRecordV1(
+      runReservation.closeBody,
+      "RECOVERY_SOURCE_BOOTSTRAP_DATABASE_RUN_CLOSE_INVALID",
+    );
+    const sourceTransitionHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+      reservationRef: sourceClose.reservationRef,
+      reservationHash: sourceClose.reservationHash,
+      terminalOwnerRef: sourceClose.terminalOwnerRef,
+      terminalOwnerHash: sourceClose.terminalOwnerHash,
+    });
+    const runTransitionHash = hashCanonicalJson({
+      schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+      reservationRef: runClose.reservationRef,
+      reservationHash: runClose.reservationHash,
+      terminalOwnerRef: runClose.terminalOwnerRef,
+      terminalOwnerHash: runClose.terminalOwnerHash,
+    });
+    const h2Payload = Object.freeze({
+      schema: "setfarm.internal-production-owner-admission-head.v1",
+      version: 2,
+      predecessorHeadHash: sourceClose.ownerAdmissionHeadPredecessorHash,
+      transitionKind: "close",
+      transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${sourceTransitionHash}`,
+      transitionHash: sourceTransitionHash,
+      migrationApplication,
+    });
+    const h3Payload = Object.freeze({
+      schema: "setfarm.internal-production-owner-admission-head.v1",
+      version: 3,
+      predecessorHeadHash: runClose.ownerAdmissionHeadPredecessorHash,
+      transitionKind: "close",
+      transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${runTransitionHash}`,
+      transitionHash: runTransitionHash,
+      migrationApplication,
+    });
+    headHistory.push(
+      head(1, h1Hash, h1Payload, true),
+      head(2, sourceClose.ownerAdmissionHeadSuccessorHash, h2Payload, true),
+      head(3, runClose.ownerAdmissionHeadSuccessorHash, h3Payload, true),
+    );
+    const sourceCloseAuthority = authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(
+      sourceClose.closeRef,
+      sourceClose.closeHash,
+    ));
+    const runCloseAuthority = authorityByKey.get(recoverySourceBootstrapAuthorityKeyV1(
+      runClose.closeRef,
+      runClose.closeHash,
+    ));
+    if (!sourceCloseAuthority || !runCloseAuthority) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_CLOSE_AUTHORITY_MISSING");
+    }
+    authorityHistory.push(sourceCloseAuthority, runCloseAuthority);
+    if (currentVersion === 4 || historicalReleased) {
+      if (!targetReleaseAuthority) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DATABASE_H4_AUTHORITY_MISSING");
+      const release = validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(targetReleaseAuthority.authorityBody);
+      const releaseTransitionHash = hashCanonicalJson({
+        schema: "setfarm.internal-production-global-owner-admission-fence-release-transition.v1",
+        fenceRef: release.fenceRef,
+        fenceHash: release.fenceHash,
+        releaseAuthority: release.releaseAuthority,
+      });
+      const h4Payload = Object.freeze({
+        schema: "setfarm.internal-production-owner-admission-head.v1",
+        version: 4,
+        predecessorHeadHash: release.ownerAdmissionHeadPredecessorHash,
+        transitionKind: "release",
+        transitionRef: `setfarm://internal-production/global-owner-admission-fence-release-transition/sha256/${releaseTransitionHash}`,
+        transitionHash: releaseTransitionHash,
+        migrationApplication,
+      });
+      headHistory.push(currentVersion === 4
+        ? head(4, rawOwner.headHash, currentHeadPayload, false)
+        : head(4, release.ownerAdmissionHeadSuccessorHash, h4Payload, false));
+      authorityHistory.push(targetReleaseAuthority);
+    }
+  }
+  const projectionReleased = headHistory.length === 4;
+  // A released operation is historical authority: later global owner work may
+  // advance the live head, but it cannot replace or amend this exact H1-H4 set.
+  const projectionReservations = projectionReleased
+    ? Object.freeze([sourceReservation, runReservation])
+    : Object.freeze(projectedReservations);
+  const expectedAuthorityKeys = new Set<string>(authorityHistory.map((authority) => (
+    recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash)
+  )));
+  for (const reservation of projectionReservations) {
+    if (typeof reservation.bindingHash === "string" && OWNER_ADMISSION_SHA256_V1.test(reservation.bindingHash)) {
+      expectedAuthorityKeys.add(recoverySourceBootstrapAuthorityKeyV1(
+        `setfarm://internal-production/bound-owner-reservations/${reservation.bindingHash}`,
+        reservation.bindingHash,
+      ));
+    }
+  }
+  const projectionAuthorityRows = projectionReleased
+    ? Object.freeze(allAuthorityRows.filter((authority) => expectedAuthorityKeys.has(
+        recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash),
+      )))
+    : Object.freeze(allAuthorityRows);
+  const unrelatedAuthorityCount = projectionAuthorityRows.filter((authority) => !expectedAuthorityKeys.has(
+    recoverySourceBootstrapAuthorityKeyV1(authority.authorityRef, authority.authorityHash),
+  )).length;
+  const projectedHead = projectionReleased && currentVersion > 4
+    ? headHistory[3]!
+    : rawOwner;
+  const projectedHeadVersion = Number(projectedHead.headVersion);
+  const activeFenceBody = projectedHeadVersion === 1 || projectedHeadVersion === 3 ? fence : null;
+  const projectedOwner = Object.freeze({
+    ...rawOwner,
+    headVersion: projectedHead.headVersion,
+    headHash: projectedHead.headHash,
+    activeFenceRef: projectedHead.activeFenceRef,
+    activeFenceHash: projectedHead.activeFenceHash,
+    activeTargetFamilyHash: projectedHead.activeTargetFamilyHash,
+    migrationApplicationEvidenceHash: projectedHead.migrationApplicationEvidenceHash,
+    headPayload: projectedHead.headPayload,
+    activeFenceCount: activeFenceBody === null ? 0 : 1,
+    activeFenceBody,
+    authorityKind: activeFenceBody === null ? null : fenceAuthority.authorityKind,
+    phaseKey: activeFenceBody === null ? null : fenceAuthority.phaseKey,
+    predecessorHeadHash: activeFenceBody === null ? null : fenceAuthority.predecessorHeadHash,
+    successorHeadHash: activeFenceBody === null ? null : fenceAuthority.successorHeadHash,
+    headActiveFenceRef: projectedHead.activeFenceRef,
+    headActiveFenceHash: projectedHead.activeFenceHash,
+    headHistory: Object.freeze(headHistory),
+    authorityHistory: Object.freeze(authorityHistory),
+    allAuthorityRows: projectionAuthorityRows,
+    unrelatedAuthorityCount,
+  }) as unknown as RecoverySourceBootstrapOwnerProjectionRowV1;
+  return Object.freeze({
+    ownerRows: Object.freeze([projectedOwner]),
+    reservationRows: projectionReservations,
+  });
+}
+
+function recoverySourceBootstrapExpectedRunIdV1(
+  operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+    pendingInputRef: operation.pendingInputRef,
+    pendingInputHash: operation.pendingInputHash,
+  });
+}
+
+export async function classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    recoveryState: string;
+    recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
+  }>,
+): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> {
+  const expectedRunId = recoverySourceBootstrapExpectedRunIdV1(input.recoveryOperationAuthority);
+  const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
+    SELECT head.head_version::integer AS "headVersion",
+           head.head_hash AS "headHash",
+           head.active_fence_ref AS "activeFenceRef",
+           head.active_fence_hash AS "activeFenceHash",
+           head.active_target_family_hash AS "activeTargetFamilyHash",
+           head.migration_application_evidence_hash AS "migrationApplicationEvidenceHash",
+           head.head_payload AS "headPayload",
+           COALESCE((
+             SELECT jsonb_agg(jsonb_build_object(
+               'authorityRef',authority.authority_ref,
+               'authorityHash',authority.authority_hash,
+               'authorityKind',authority.authority_kind,
+               'phaseKey',authority.phase_key,
+               'predecessorHeadHash',authority.predecessor_head_hash,
+               'successorHeadHash',authority.successor_head_hash,
+               'authorityBody',authority.authority_body
+             ) ORDER BY authority.authority_kind,authority.authority_ref)
+               FROM public.internal_production_owner_admission_authorities_v1 authority
+           ),'[]'::jsonb) AS "allAuthorityRows"
+      FROM public.internal_production_owner_admission_head_v1 head
+  `;
+  const reservationRows = await sql<RecoverySourceBootstrapReservationProjectionRowV1[]>`
+    SELECT category,state,owner_key AS "ownerKey",owner_key_hash AS "ownerKeyHash",
+           producer_purpose_hash AS "producerPurposeHash",
+           producer_implementation_id AS "producerImplementationId",
+           producer_implementation_hash AS "producerImplementationHash",
+           reservation_head_predecessor_hash AS "reservationHeadPredecessorHash",
+           reservation_ref AS "reservationRef",reservation_hash AS "reservationHash",
+           reservation_payload AS "reservationBody",canonical_owner_identity AS "canonicalOwnerIdentity",
+           binding_hash AS "bindingHash",binding_payload AS "bindingBody",close_kind AS "closeKind",
+           terminal_owner_ref AS "terminalOwnerRef",terminal_owner_hash AS "terminalOwnerHash",
+           close_head_predecessor_hash AS "closeHeadPredecessorHash",
+           close_head_successor_hash AS "closeHeadSuccessorHash",
+           preserved_fence_ref AS "preservedFenceRef",preserved_fence_hash AS "preservedFenceHash",
+           close_ref AS "closeRef",close_hash AS "closeHash",close_payload AS "closeBody",
+           head_version::integer AS "headVersion"
+      FROM public.internal_production_owner_reservations_v1
+     ORDER BY reservation_ref
+  `;
+  const expectedRunRows = await sql<RecoverySourceBootstrapRunProjectionRowV1[]>`
+    /* exact-id states: running,resuming,cancelling,failing,completed,failed,cancelled */
+    SELECT id AS "runId",workflow_id AS "workflowId",task,status AS state,status,
+           context,notify_url AS "notifyUrl",protocol,protocol_version AS "protocolVersion",
+           compiler_release_sha AS "compilerReleaseSha",
+           activation_preflight_hash AS "activationPreflightHash",
+           release_admission_hash AS "releaseAdmissionHash",
+           created_at::text AS "createdAt",updated_at::text AS "updatedAt"
+      FROM public.runs
+     WHERE id=${expectedRunId}
+  `;
+  const activeRunRows = await sql<RecoverySourceBootstrapRunProjectionRowV1[]>`
+    SELECT id AS "runId",workflow_id AS "workflowId",task,status AS state,status,
+           context,notify_url AS "notifyUrl",protocol,protocol_version AS "protocolVersion",
+           compiler_release_sha AS "compilerReleaseSha",
+           activation_preflight_hash AS "activationPreflightHash",
+           release_admission_hash AS "releaseAdmissionHash",
+           created_at::text AS "createdAt",updated_at::text AS "updatedAt"
+      FROM public.runs
+     WHERE status IN ('running','resuming','cancelling','failing')
+     ORDER BY id
+  `;
+  const projectedRows = projectRecoverySourceBootstrapPersistenceRowsV1(
+    input.recoveryOperationAuthority,
+    ownerRows,
+    reservationRows,
+  );
+  return requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1({
+    recoveryState: input.recoveryState,
+    recoveryOperationAuthority: input.recoveryOperationAuthority,
+    ownerRows: projectedRows.ownerRows,
+    reservationRows: projectedRows.reservationRows,
+    expectedRunRows,
+    activeRunRows,
+  });
+}
+
+export async function assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1(
+  sql: InternalProductionPgTransactionSql,
+  input: Readonly<{
+    runId: string;
+    workflowState: string;
+    protocol: string;
+    runContext: string | Readonly<Record<string, unknown>>;
+  }>,
+): Promise<void> {
+  const migrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (migrationRows.length === 0) return;
+  if (
+    migrationRows.length !== 1
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
+  await lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+  let parsedRunContext: Readonly<Record<string, unknown>>;
+  if (typeof input.runContext === "string") {
+    let parsed: unknown;
+    try { parsed = JSON.parse(input.runContext); } catch {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+    parsedRunContext = parsed as Readonly<Record<string, unknown>>;
+  } else {
+    parsedRunContext = input.runContext;
+  }
+  const specialReservationRows = await sql<Array<{
+    producerImplementationId: string;
+    category: string;
+    ownerKey: string;
+  }>>`
+    SELECT producer_implementation_id AS "producerImplementationId",
+           category,
+           owner_key AS "ownerKey"
+      FROM public.internal_production_owner_reservations_v1
+     WHERE producer_implementation_id='a-recovery-source-bootstrap-run-v1'
+       AND category='run'
+       AND owner_key=${input.runId}
+       FOR UPDATE
+  `;
+  const specialOwnerEvidence = specialReservationRows.length > 0;
+  const specialContext = parsedRunContext.schema
+    === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1";
+  if (!specialOwnerEvidence && !specialContext) return;
+  if (!specialOwnerEvidence || !specialContext) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_DISCRIMINATOR_CORRUPTION");
+  }
+  const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
+    SELECT head.head_version::integer AS "headVersion",
+           head.head_hash AS "headHash",
+           head.active_fence_ref AS "activeFenceRef",
+           head.active_fence_hash AS "activeFenceHash",
+           head.active_target_family_hash AS "activeTargetFamilyHash",
+           head.migration_application_evidence_hash AS "migrationApplicationEvidenceHash",
+           head.head_payload AS "headPayload",
+           inventory."allAuthorityRows"
+      FROM public.internal_production_owner_admission_head_v1 head
+     CROSS JOIN LATERAL (
+           SELECT COALESCE(jsonb_agg(jsonb_build_object(
+               'authorityRef',authority.authority_ref,
+               'authorityHash',authority.authority_hash,
+               'authorityKind',authority.authority_kind,
+               'phaseKey',authority.phase_key,
+               'predecessorHeadHash',authority.predecessor_head_hash,
+               'successorHeadHash',authority.successor_head_hash,
+               'authorityBody',authority.authority_body
+             ) ORDER BY authority.authority_kind,authority.authority_ref),'[]'::jsonb) AS "allAuthorityRows"
+             FROM public.internal_production_owner_admission_authorities_v1 authority
+     ) inventory
+       FOR UPDATE OF head
+  `;
+  const reservationRows = await sql<RecoverySourceBootstrapReservationProjectionRowV1[]>`
+    SELECT category,state,owner_key AS "ownerKey",owner_key_hash AS "ownerKeyHash",
+           producer_purpose_hash AS "producerPurposeHash",
+           producer_implementation_id AS "producerImplementationId",
+           producer_implementation_hash AS "producerImplementationHash",
+           reservation_head_predecessor_hash AS "reservationHeadPredecessorHash",
+           reservation_ref AS "reservationRef",reservation_hash AS "reservationHash",
+           reservation_payload AS "reservationBody",canonical_owner_identity AS "canonicalOwnerIdentity",
+           binding_hash AS "bindingHash",binding_payload AS "bindingBody",close_kind AS "closeKind",
+           terminal_owner_ref AS "terminalOwnerRef",terminal_owner_hash AS "terminalOwnerHash",
+           close_head_predecessor_hash AS "closeHeadPredecessorHash",
+           close_head_successor_hash AS "closeHeadSuccessorHash",
+           preserved_fence_ref AS "preservedFenceRef",preserved_fence_hash AS "preservedFenceHash",
+           close_ref AS "closeRef",close_hash AS "closeHash",close_payload AS "closeBody",
+           head_version::integer AS "headVersion"
+      FROM public.internal_production_owner_reservations_v1
+     ORDER BY reservation_ref
+       FOR UPDATE
+  `;
+  const expectedRunContext = parsedRunContext;
+  const expectedRunId = hashCanonicalJson({
+    schema: "setfarm.internal-production-recovery-source-bootstrap-run-owner-key.v1",
+    pendingInputRef: expectedRunContext.pendingInputRef,
+    pendingInputHash: expectedRunContext.pendingInputHash,
+  });
+  const expectedRunRows = await sql<RecoverySourceBootstrapRunProjectionRowV1[]>`
+    SELECT id AS "runId",workflow_id AS "workflowId",task,status AS state,status,
+           context,notify_url AS "notifyUrl",protocol,protocol_version AS "protocolVersion",
+           compiler_release_sha AS "compilerReleaseSha",
+           activation_preflight_hash AS "activationPreflightHash",
+           release_admission_hash AS "releaseAdmissionHash",
+           created_at::text AS "createdAt",updated_at::text AS "updatedAt"
+      FROM public.runs
+     WHERE id=${expectedRunId}
+       FOR UPDATE
+  `;
+  const activeRunRows = await sql<RecoverySourceBootstrapRunProjectionRowV1[]>`
+    SELECT id AS "runId",workflow_id AS "workflowId",task,status AS state,status,
+           context,notify_url AS "notifyUrl",protocol,protocol_version AS "protocolVersion",
+           compiler_release_sha AS "compilerReleaseSha",
+           activation_preflight_hash AS "activationPreflightHash",
+           release_admission_hash AS "releaseAdmissionHash",
+           created_at::text AS "createdAt",updated_at::text AS "updatedAt"
+      FROM public.runs
+     WHERE status IN ('running','resuming','cancelling','failing')
+     ORDER BY id
+       FOR UPDATE
+  `;
+  if (expectedRunRows.length !== 1 || input.runId !== expectedRunId) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_RUN_CROSSED");
+  }
+  const expectedRun = expectedRunRows[0]!;
+  const expectedRunState = expectedRun.state ?? expectedRun.status;
+  const rawExpectedRunContext = expectedRun.context ?? expectedRun.runContext;
+  let expectedRunContextRow: unknown;
+  if (typeof rawExpectedRunContext === "string") {
+    try { expectedRunContextRow = JSON.parse(rawExpectedRunContext); } catch {
+      throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+    }
+  } else {
+    expectedRunContextRow = rawExpectedRunContext;
+  }
+  if (!expectedRunContextRow || typeof expectedRunContextRow !== "object" || Array.isArray(expectedRunContextRow)) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_RUN_CONTEXT_INVALID");
+  }
+  if (
+    (expectedRun.runId ?? expectedRun.id) !== input.runId
+    || expectedRunState !== input.workflowState
+    || expectedRun.protocol !== input.protocol
+    || !sameJsonValueV1(expectedRunContextRow, expectedRunContext)
+  ) throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_RUN_CROSSED");
+  const owner = ownerRows[0];
+  const sourceReservation = reservationRows.find((candidate) => (
+    candidate.category === "source-run"
+    && candidate.reservationRef === expectedRunContext.targetSourceRunReservationRef
+    && candidate.reservationHash === expectedRunContext.targetSourceRunReservationHash
+  ));
+  const runReservation = reservationRows.find((candidate) => (
+    candidate.category === "run"
+    && candidate.ownerKey === expectedRunId
+    && candidate.reservationRef === expectedRunContext.targetRunReservationRef
+    && candidate.reservationHash === expectedRunContext.targetRunReservationHash
+  ));
+  if (!owner || !sourceReservation || !runReservation) {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_OWNER_CORRUPTION");
+  }
+  const reconstructedOperation = Object.freeze({
+    schema: expectedRunContext.schema === "setfarm.internal-production-recovery-source-bootstrap-run-context.v1"
+      ? "setfarm.internal-production-recovery-source-bootstrap-operation.v1"
+      : expectedRunContext.schema,
+    purpose: expectedRunContext.purpose,
+    repository: expectedRunContext.repository,
+    workflow: expectedRunContext.workflow,
+    protocol: expectedRunContext.protocol,
+    promptManifestHash: expectedRunContext.promptManifestHash,
+    pendingInputRef: expectedRunContext.pendingInputRef,
+    pendingInputHash: expectedRunContext.pendingInputHash,
+    baseSourceSha: expectedRunContext.baseSourceSha,
+    baseSourceTreeHash: expectedRunContext.baseSourceTreeHash,
+    buildHash: expectedRunContext.buildHash,
+    activationPreflightHash: expectedRunContext.activationPreflightHash,
+    releaseAdmissionHash: expectedRunContext.releaseAdmissionHash,
+    targetSourceRunReservationRef: sourceReservation.reservationRef,
+    targetSourceRunReservationHash: sourceReservation.reservationHash,
+    targetRunReservationRef: runReservation.reservationRef,
+    targetRunReservationHash: runReservation.reservationHash,
+    targetRunLaunchCompositeHash: expectedRunContext.targetRunLaunchCompositeHash,
+    ownerAdmissionFenceRef: expectedRunContext.ownerAdmissionFenceRef,
+    ownerAdmissionFenceHash: expectedRunContext.ownerAdmissionFenceHash,
+    startIntentRef: expectedRunContext.startIntentRef,
+    startIntentHash: expectedRunContext.startIntentHash,
+    startOutboxRef: expectedRunContext.startOutboxRef,
+    startOutboxHash: expectedRunContext.startOutboxHash,
+    operationRef: expectedRunContext.operationRef,
+    operationHash: expectedRunContext.operationHash,
+  });
+  const operationAuthority = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(reconstructedOperation);
+  const projectedRows = projectRecoverySourceBootstrapPersistenceRowsV1(
+    operationAuthority,
+    ownerRows,
+    reservationRows
+  );
+  const disposition = requireExactInternalProductionRecoverySourceBootstrapRunPersistenceV1({
+    recoveryState: "prepared",
+    recoveryOperationAuthority: operationAuthority,
+    ownerRows: projectedRows.ownerRows,
+    reservationRows: projectedRows.reservationRows,
+    expectedRunRows,
+    activeRunRows
+  });
+  if (disposition.state === "released") return;
+  if (disposition.state !== "active" && disposition.state !== "pair_closed") {
+    throw new Error("RECOVERY_SOURCE_BOOTSTRAP_TERMINAL_OWNER_CORRUPTION");
+  }
+  throw new Error("RECOVERY_SOURCE_BOOTSTRAP_DELIVERY_PENDING");
+}
+
 export async function resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1(
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ runId: string }>,
@@ -4609,6 +4988,21 @@ export async function resolveInternalProductionRecoverySourceBootstrapActualRunT
 }> | null> {
   exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_ACTUAL_TERMINAL_INPUT_INVALID");
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
+  const migrationRows = await sql<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+    state: string;
+  }>>`
+    SELECT version,name,checksum,state
+      FROM public.setfarm_schema_migrations
+     WHERE version=32
+  `;
+  if (migrationRows.length === 0) return null;
+  if (
+    migrationRows.length !== 1
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])
+  ) throw new Error("INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_MIGRATION32_JOURNAL_INVALID");
   const pairs = await sql<Array<{ reservation_ref: string; reservation_hash: string }>>`
     SELECT reservation_ref,reservation_hash
       FROM internal_production_owner_reservations_v1
@@ -5098,7 +5492,10 @@ export async function auditCurrentInternalProductionBaselineBootstrapHandoffMigr
     "SELECT version,name,checksum,state FROM public.setfarm_schema_migrations WHERE version=32 LIMIT 2",
   );
   const row = rows[0];
-  if (rows.length !== 1 || !row || Number(row.version) !== 32 || row.name !== "contract-spine-bootstrap-main-claim-handoff-v1" || !/^[a-f0-9]{64}$/.test(row.checksum) || row.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
+  if (
+    rows.length !== 1
+    || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(row)
+  ) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
   await verifyBootstrapMainClaimHandoffV1Schema(sql);
   return Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: row.checksum, migrationState: "current", schemaProjectionHash: hashCanonicalJson(await projectBootstrapMainClaimHandoffV1Schema(sql)) });
 }
@@ -5172,11 +5569,80 @@ async function observeExactCurrentEntryMigration33V1(): Promise<InternalProducti
   });
 }
 
+export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1(): Promise<Readonly<{
+  schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1";
+  state: "absent" | "current";
+  migrationName: "033_v3_recovery_claim_runtime_publication_v1";
+  journal: null | Readonly<{ ordinal: 33; state: "current"; checksum: string }>;
+  catalog: null | Readonly<{
+    bootstrapHandoffOperationTablePresent: true;
+    bootstrapHandoffOperationIdUnique: true;
+    bootstrapHandoffClaimIdUnique: true;
+    terminalReceiptPairColumnsPresent: true;
+    ownerReservationSidecarPresent: true;
+    ownerAdmissionHeadPresent: true;
+  }>;
+}>> {
+  return getSql().begin("isolation level repeatable read read only", async (rawSql) => {
+    const sql = rawSql as InternalProductionPgTransactionSql;
+    const rows = await sql<Array<CurrentEntryMigrationJournalRowV1>>`
+      SELECT version, name, checksum, state
+      FROM public.setfarm_schema_migrations
+      WHERE version >= 32
+      ORDER BY version
+    `;
+    if (rows.some((row) => Number(row.version) !== 32 && Number(row.version) !== 33)) {
+      throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_UNKNOWN_VERSION");
+    }
+    const migration32 = rows.find((row) => Number(row.version) === 32);
+    const migration33 = rows.find((row) => Number(row.version) === 33);
+    if (rows.length !== (migration33 === undefined ? 1 : 2)
+      || !migration32
+      || migration32.name !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+      || migration32.checksum !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_CHECKSUM
+      || migration32.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID");
+    const migrationName =
+      V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.name;
+    if (migration33 === undefined) return Object.freeze({
+      schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
+      state: "absent" as const,
+      migrationName,
+      journal: null,
+      catalog: null,
+    });
+    if (migration33.name !== migrationName
+      || migration33.checksum
+        !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum
+      || migration33.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
+    await verifyV3RecoveryClaimRuntimePublicationV1(sql);
+    return Object.freeze({
+      schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
+      state: "current" as const,
+      migrationName,
+      journal: Object.freeze({ ordinal: 33 as const, state: "current" as const, checksum: migration33.checksum }),
+      catalog: Object.freeze({
+        bootstrapHandoffOperationTablePresent: true as const,
+        bootstrapHandoffOperationIdUnique: true as const,
+        bootstrapHandoffClaimIdUnique: true as const,
+        terminalReceiptPairColumnsPresent: true as const,
+        ownerReservationSidecarPresent: true as const,
+        ownerAdmissionHeadPresent: true as const,
+      }),
+    });
+  }) as unknown as Promise<Readonly<{
+    schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1";
+    state: "absent" | "current";
+    migrationName: "033_v3_recovery_claim_runtime_publication_v1";
+    journal: null | Readonly<{ ordinal: 33; state: "current"; checksum: string }>;
+    catalog: null | Readonly<{ bootstrapHandoffOperationTablePresent: true; bootstrapHandoffOperationIdUnique: true; bootstrapHandoffClaimIdUnique: true; terminalReceiptPairColumnsPresent: true; ownerReservationSidecarPresent: true; ownerAdmissionHeadPresent: true }>;
+  }>>;
+}
+
 /** Applies only source-known ordinary successors; guarded migration 32 remains controller-owned. */
 export async function applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1(
 ): Promise<InternalProductionCurrentEntryMigration33ObservationV1> {
   const sql = getSql();
-  await applyContractSpineMigrations(sql);
+  await applyContractSpineMigrationsIfNeeded(sql);
   await verifyContractSpineMigrations(sql);
   return observeExactCurrentEntryMigration33V1();
 }
@@ -5279,7 +5745,7 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
     // closed on a missing or drifted journal; only the explicit migration CLI
     // and isolated test fixtures opt into applying them.
     if (options.contractSpineMode === "apply") {
-      await applyContractSpineMigrations(s);
+      await applyContractSpineMigrationsIfNeeded(s);
     } else {
       await verifyContractSpineMigrations(s);
     }

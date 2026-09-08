@@ -74,6 +74,11 @@ import {
   type InternalProductionOwnerProducerSourceBuildAuthorityAV1,
   type InternalProductionResolvedOwnerTerminalCloseInputV1,
 } from "../../src/internal-production/owner-admission-v1.js";
+import {
+  ownerAdmissionSuccessorV1,
+  validateCurrentInternalProductionOwnerAdmissionHeadV1,
+  validateOwnerAdmissionMigrationApplicationV1,
+} from "../../src/internal-production/owner-admission-head-v1.js";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -419,6 +424,622 @@ test("P4 fence head transitions bind private authority without runtime seams", (
   ]) assert.equal(forbidden in ownerAdmissionApi, false, `${forbidden} must remain db-pg-owned/private`);
 });
 
+test("current owner-admission head binds active fence projection to authenticated ancestry", async () => {
+  const migrationApplicationBody = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1" as const,
+    evidenceHash: SHA_A,
+    authorizationRef: "setfarm://tests/owner-admission/migration-authorization",
+    authorizationHash: SHA_B,
+    authorizationConsumptionRef: "setfarm://tests/owner-admission/migration-consumption",
+    authorizationConsumptionHash: SHA_C,
+  };
+  const migrationApplication = validateOwnerAdmissionMigrationApplicationV1({
+    ...migrationApplicationBody,
+    applicationHash: hashCanonicalJson(migrationApplicationBody),
+  }, SHA_A);
+  const targetFamily = { kind: "none" as const, targetFamilyHash: null };
+  const ownerIdentitySetHash = hashCanonicalJson([]);
+  const fenceTransition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+    purpose: "golden-launch-operation-migration-release-v1",
+    pendingInputRef: "setfarm://tests/owner-admission/pending",
+    pendingInputHash: SHA_B,
+    targetFamilyHash: hashCanonicalJson(targetFamily),
+    ownerIdentitySetHash,
+  });
+  const fenceSuccessor = ownerAdmissionSuccessorV1({
+    version: 0,
+    predecessorHeadHash: "0".repeat(64),
+    transitionKind: "fence",
+    transitionRef: fenceTransition.transitionRef,
+    transitionHash: fenceTransition.transitionHash,
+    migrationApplication,
+  });
+  const fence = createInternalProductionGlobalOwnerAdmissionFenceV1({
+    purpose: "golden-launch-operation-migration-release-v1",
+    pendingInputRef: "setfarm://tests/owner-admission/pending",
+    pendingInputHash: SHA_B,
+    targetFamily,
+    observedUnrelatedReservationCount: 0,
+    observedUnrelatedOwnerCount: 0,
+    ownerIdentitySetHash,
+    predecessorFenceHeadHash: "0".repeat(64),
+    ownerAdmissionHeadHash: fenceSuccessor.hash,
+  });
+  const fenceAuthority = {
+    authority_ref: fence.fenceRef,
+    authority_hash: fence.fenceHash,
+    authority_kind: "fence",
+    phase_key: fence.pendingInputRef,
+    predecessor_head_hash: "0".repeat(64),
+    successor_head_hash: fenceSuccessor.hash,
+    authority_body: fence,
+  };
+  const ordinaryReservation = createInternalProductionOwnerReservationV1({
+    producer: INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0]!,
+    ownerKey: "owner-admission-active-fence-crossed-reservation",
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+  });
+  const crossedReservationSuccessor = ownerAdmissionSuccessorV1({
+    version: fenceSuccessor.version,
+    predecessorHeadHash: fenceSuccessor.hash,
+    transitionKind: "reservation",
+    transitionRef: ordinaryReservation.reservationRef,
+    transitionHash: ordinaryReservation.reservationHash,
+    migrationApplication,
+  });
+  const crossedReservationAuthorityRow = {
+    authority_ref: ordinaryReservation.reservationRef,
+    authority_hash: ordinaryReservation.reservationHash,
+    authority_kind: "reservation",
+    phase_key: ordinaryReservation.reservationRef,
+    predecessor_head_hash: fenceSuccessor.hash,
+    successor_head_hash: crossedReservationSuccessor.hash,
+    authority_body: ordinaryReservation,
+  };
+  const releaseAuthority = {
+    purpose: "golden-launch-operation-migration-release-v1" as const,
+    targetFamilyKind: "none" as const,
+    terminalCoreRef: null,
+    terminalCoreHash: null,
+    targetSetCloseRef: null,
+    targetSetCloseHash: null,
+    occurrenceRef: null,
+    occurrenceHash: null,
+    headRef: null,
+    headHash: null,
+    targetReservationPairCloseRef: null,
+    targetReservationPairCloseHash: null,
+    purposeTerminalKind: "golden-launch-operation-migration-release-terminal" as const,
+    purposeTerminalRef: "setfarm://tests/owner-admission/release-terminal",
+    purposeTerminalHash: SHA_C,
+  };
+  const releaseTransition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+  });
+  const releaseSuccessor = ownerAdmissionSuccessorV1({
+    version: fenceSuccessor.version,
+    predecessorHeadHash: fenceSuccessor.hash,
+    transitionKind: "release",
+    transitionRef: releaseTransition.transitionRef,
+    transitionHash: releaseTransition.transitionHash,
+    migrationApplication,
+  });
+  const release = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: releaseSuccessor.hash,
+  });
+  const releaseAuthorityRow = {
+    authority_ref: release.releaseRef,
+    authority_hash: release.releaseHash,
+    authority_kind: "release",
+    phase_key: release.fenceRef,
+    predecessor_head_hash: fenceSuccessor.hash,
+    successor_head_hash: releaseSuccessor.hash,
+    authority_body: release,
+  };
+  const authorities = new Map<string, readonly unknown[]>([
+    [fenceSuccessor.hash, [fenceAuthority]],
+    [crossedReservationSuccessor.hash, [crossedReservationAuthorityRow]],
+    [releaseSuccessor.hash, [releaseAuthorityRow]],
+  ]);
+  const sql = (async () => [...authorities.values()].flat()) as never;
+  const activeRow = {
+    head_version: fenceSuccessor.version,
+    head_hash: fenceSuccessor.hash,
+    active_fence_ref: fence.fenceRef,
+    active_fence_hash: fence.fenceHash,
+    active_target_family_hash: null,
+    migration_application_evidence_hash: SHA_A,
+    head_payload: fenceSuccessor.payload,
+  };
+  assert.equal(
+    (await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, activeRow)).activeFenceRef,
+    fence.fenceRef,
+  );
+  for (const crossed of [
+    { ...activeRow, active_fence_ref: null, active_fence_hash: null },
+    { ...activeRow, active_fence_ref: "setfarm://tests/owner-admission/crossed", active_fence_hash: SHA_A },
+    { ...activeRow, active_target_family_hash: SHA_C },
+  ]) {
+    await assert.rejects(
+      validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, crossed),
+      /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+    );
+  }
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, {
+      ...activeRow,
+      head_version: crossedReservationSuccessor.version,
+      head_hash: crossedReservationSuccessor.hash,
+      head_payload: crossedReservationSuccessor.payload,
+    }),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  const releasedRow = {
+    ...activeRow,
+    head_version: releaseSuccessor.version,
+    head_hash: releaseSuccessor.hash,
+    head_payload: releaseSuccessor.payload,
+    active_fence_ref: null,
+    active_fence_hash: null,
+  };
+  assert.equal(
+    (await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, releasedRow)).activeFenceRef,
+    null,
+  );
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, {
+      ...releasedRow,
+      active_fence_ref: fence.fenceRef,
+      active_fence_hash: fence.fenceHash,
+    }),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  const crossedReleaseAuthority = Object.freeze({
+    ...releaseAuthority,
+    purpose: "recovery-d-physical-service-restart-authority-cutover-v1" as const,
+    purposeTerminalKind: "recovery-d-physical-service-restart-authority-cutover-terminal" as const,
+  });
+  const crossedReleaseTransition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority: crossedReleaseAuthority,
+  });
+  const crossedReleaseSuccessor = ownerAdmissionSuccessorV1({
+    version: fenceSuccessor.version,
+    predecessorHeadHash: fenceSuccessor.hash,
+    transitionKind: "release",
+    transitionRef: crossedReleaseTransition.transitionRef,
+    transitionHash: crossedReleaseTransition.transitionHash,
+    migrationApplication,
+  });
+  const crossedRelease = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority: crossedReleaseAuthority,
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: crossedReleaseSuccessor.hash,
+  });
+  authorities.set(crossedReleaseSuccessor.hash, [{
+    authority_ref: crossedRelease.releaseRef,
+    authority_hash: crossedRelease.releaseHash,
+    authority_kind: "release",
+    phase_key: crossedRelease.fenceRef,
+    predecessor_head_hash: fenceSuccessor.hash,
+    successor_head_hash: crossedReleaseSuccessor.hash,
+    authority_body: crossedRelease,
+  }]);
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, {
+      ...activeRow,
+      head_version: crossedReleaseSuccessor.version,
+      head_hash: crossedReleaseSuccessor.hash,
+      head_payload: crossedReleaseSuccessor.payload,
+    }),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+});
+
+test("current owner-admission head authenticates a long immutable history from one linear inventory", async () => {
+  const migrationApplicationBody = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1" as const,
+    evidenceHash: SHA_A,
+    authorizationRef: "setfarm://tests/owner-admission/linear/migration-authorization",
+    authorizationHash: SHA_B,
+    authorizationConsumptionRef: "setfarm://tests/owner-admission/linear/migration-consumption",
+    authorizationConsumptionHash: SHA_C,
+  };
+  const migrationApplication = validateOwnerAdmissionMigrationApplicationV1({
+    ...migrationApplicationBody,
+    applicationHash: hashCanonicalJson(migrationApplicationBody),
+  }, SHA_A);
+  const producer = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0]!;
+  const authorities: Array<Readonly<{
+    authority_ref: string;
+    authority_hash: string;
+    authority_kind: "reservation";
+    phase_key: string;
+    predecessor_head_hash: string;
+    successor_head_hash: string;
+    authority_body: unknown;
+  }>> = [];
+  let predecessorHeadHash = "0".repeat(64);
+  let successor = null as ReturnType<typeof ownerAdmissionSuccessorV1> | null;
+  for (let ordinal = 0; ordinal < 3_000; ordinal += 1) {
+    const reservation = createInternalProductionOwnerReservationV1({
+      producer,
+      ownerKey: `owner-admission-linear-${ordinal}`,
+      ownerAdmissionHeadPredecessorHash: predecessorHeadHash,
+    });
+    successor = ownerAdmissionSuccessorV1({
+      version: ordinal,
+      predecessorHeadHash,
+      transitionKind: "reservation",
+      transitionRef: reservation.reservationRef,
+      transitionHash: reservation.reservationHash,
+      migrationApplication,
+    });
+    authorities.push(Object.freeze({
+      authority_ref: reservation.reservationRef,
+      authority_hash: reservation.reservationHash,
+      authority_kind: "reservation",
+      phase_key: reservation.reservationRef,
+      predecessor_head_hash: predecessorHeadHash,
+      successor_head_hash: successor.hash,
+      authority_body: reservation,
+    }));
+    predecessorHeadHash = successor.hash;
+  }
+  assert.ok(successor !== null);
+  let inventoryQueries = 0;
+  const sql = (async () => {
+    inventoryQueries += 1;
+    return authorities;
+  }) as never;
+  const validated = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, {
+    head_version: successor.version,
+    head_hash: successor.hash,
+    active_fence_ref: null,
+    active_fence_hash: null,
+    active_target_family_hash: null,
+    migration_application_evidence_hash: SHA_A,
+    head_payload: successor.payload,
+  });
+  assert.equal(inventoryQueries, 1,
+    "head validation reads the immutable authority inventory once instead of querying once per generation");
+  assert.equal(validated.version, 3_000);
+  assert.equal(validated.hash, successor.hash);
+  assert.equal(validated.activeFenceRef, null);
+});
+
+test("source-run owner-admission fence projection requires its ordered target drain before release", async () => {
+  const migrationApplicationBody = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1" as const,
+    evidenceHash: SHA_A,
+    authorizationRef: "setfarm://tests/owner-admission/source-run/migration-authorization",
+    authorizationHash: SHA_B,
+    authorizationConsumptionRef: "setfarm://tests/owner-admission/source-run/migration-consumption",
+    authorizationConsumptionHash: SHA_C,
+  };
+  const migrationApplication = validateOwnerAdmissionMigrationApplicationV1({
+    ...migrationApplicationBody,
+    applicationHash: hashCanonicalJson(migrationApplicationBody),
+  }, SHA_A);
+  const [sourceRunProducer, runProducer] = INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1.slice(-2);
+  const sourceRunReservation = createInternalProductionOwnerReservationV1({
+    producer: sourceRunProducer!,
+    ownerKey: "owner-admission-source-run",
+    ownerAdmissionHeadPredecessorHash: "0".repeat(64),
+  });
+  const runReservation = createInternalProductionOwnerReservationV1({
+    producer: runProducer!,
+    ownerKey: "owner-admission-run",
+    ownerAdmissionHeadPredecessorHash: "0".repeat(64),
+  });
+  const targetFamily = createInternalProductionSourceRunLaunchTargetFamilyV1({
+    sourceRunReservation,
+    runReservation,
+    targetRunLaunchCompositeHash: SHA_C,
+  });
+  const fenceTransition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+    purpose: "recovery-d-source-delivery-v1",
+    pendingInputRef: "setfarm://tests/owner-admission/source-run/pending",
+    pendingInputHash: SHA_B,
+    targetFamilyHash: targetFamily.targetFamilyHash,
+    ownerIdentitySetHash: hashCanonicalJson([]),
+  });
+  const fenceSuccessor = ownerAdmissionSuccessorV1({
+    version: 0,
+    predecessorHeadHash: "0".repeat(64),
+    transitionKind: "fence",
+    transitionRef: fenceTransition.transitionRef,
+    transitionHash: fenceTransition.transitionHash,
+    migrationApplication,
+  });
+  const fence = createInternalProductionGlobalOwnerAdmissionFenceV1({
+    purpose: "recovery-d-source-delivery-v1",
+    pendingInputRef: "setfarm://tests/owner-admission/source-run/pending",
+    pendingInputHash: SHA_B,
+    targetFamily,
+    observedUnrelatedReservationCount: 0,
+    observedUnrelatedOwnerCount: 0,
+    ownerIdentitySetHash: hashCanonicalJson([]),
+    predecessorFenceHeadHash: "0".repeat(64),
+    ownerAdmissionHeadHash: fenceSuccessor.hash,
+  });
+  const fenceAuthority = {
+    authority_ref: fence.fenceRef,
+    authority_hash: fence.fenceHash,
+    authority_kind: "fence",
+    phase_key: fence.pendingInputRef,
+    predecessor_head_hash: "0".repeat(64),
+    successor_head_hash: fenceSuccessor.hash,
+    authority_body: fence,
+  };
+  const reservationAuthority = (reservation: typeof sourceRunReservation) => ({
+    authority_ref: reservation.reservationRef,
+    authority_hash: reservation.reservationHash,
+    authority_kind: "reservation",
+    phase_key: reservation.reservationRef,
+    predecessor_head_hash: "0".repeat(64),
+    successor_head_hash: fenceSuccessor.hash,
+    authority_body: reservation,
+  });
+  const canonicalIdentity = (
+    category: "source-run" | "run",
+    ownerKey: string,
+    suffix: string,
+    ownerHash: string,
+  ) => validateInternalProductionCanonicalOwnerIdentityV1({
+    schema: "setfarm.internal-production-canonical-owner-identity.v1",
+    category,
+    ownerKey,
+    ownerRef: `setfarm://tests/owner-admission/${suffix}`,
+    ownerHash,
+  });
+  const sourceBound = createInternalProductionBoundOwnerReservationV1({
+    reservation: sourceRunReservation,
+    canonicalOwnerIdentity: canonicalIdentity("source-run", sourceRunReservation.ownerKey, "source-run-owner", SHA_A),
+  });
+  const sourceTerminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: sourceBound.canonicalOwnerIdentity,
+    terminalOwnerRef: "setfarm://tests/owner-admission/source-run-terminal",
+    terminalOwnerHash: SHA_B,
+  });
+  const sourceCloseTransition = {
+    schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+    reservationRef: sourceRunReservation.reservationRef,
+    reservationHash: sourceRunReservation.reservationHash,
+    terminalOwnerRef: sourceTerminal.terminalOwnerRef,
+    terminalOwnerHash: sourceTerminal.terminalOwnerHash,
+  };
+  const sourceCloseSuccessor = ownerAdmissionSuccessorV1({
+    version: fenceSuccessor.version,
+    predecessorHeadHash: fenceSuccessor.hash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${hashCanonicalJson(sourceCloseTransition)}`,
+    transitionHash: hashCanonicalJson(sourceCloseTransition),
+    migrationApplication,
+  });
+  const sourceClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "fence-target",
+    boundReservation: sourceBound,
+    terminalAuthority: sourceTerminal,
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: sourceCloseSuccessor.hash,
+    preservedFenceRef: fence.fenceRef,
+    preservedFenceHash: fence.fenceHash,
+  });
+  const runBound = createInternalProductionBoundOwnerReservationV1({
+    reservation: runReservation,
+    canonicalOwnerIdentity: canonicalIdentity("run", runReservation.ownerKey, "run-owner", SHA_B),
+  });
+  const runTerminal = createInternalProductionTerminalOwnerAuthorityV1({
+    canonicalOwnerIdentity: runBound.canonicalOwnerIdentity,
+    terminalOwnerRef: "setfarm://tests/owner-admission/run-terminal",
+    terminalOwnerHash: SHA_C,
+  });
+  const runCloseTransition = {
+    schema: "setfarm.internal-production-owner-reservation-close-transition.v1",
+    reservationRef: runReservation.reservationRef,
+    reservationHash: runReservation.reservationHash,
+    terminalOwnerRef: runTerminal.terminalOwnerRef,
+    terminalOwnerHash: runTerminal.terminalOwnerHash,
+  };
+  const runCloseSuccessor = ownerAdmissionSuccessorV1({
+    version: sourceCloseSuccessor.version,
+    predecessorHeadHash: sourceCloseSuccessor.hash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${hashCanonicalJson(runCloseTransition)}`,
+    transitionHash: hashCanonicalJson(runCloseTransition),
+    migrationApplication,
+  });
+  const runClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "fence-target",
+    boundReservation: runBound,
+    terminalAuthority: runTerminal,
+    ownerAdmissionHeadPredecessorHash: sourceCloseSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: runCloseSuccessor.hash,
+    preservedFenceRef: fence.fenceRef,
+    preservedFenceHash: fence.fenceHash,
+  });
+  const pairClose = createInternalProductionSourceRunLaunchTargetReservationPairCloseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    targetRunLaunchCompositeHash: targetFamily.targetRunLaunchCompositeHash,
+    sourceRunReservationRef: sourceRunReservation.reservationRef,
+    sourceRunReservationHash: sourceRunReservation.reservationHash,
+    runReservationRef: runReservation.reservationRef,
+    runReservationHash: runReservation.reservationHash,
+    terminalSourceRunRef: sourceTerminal.terminalOwnerRef,
+    terminalSourceRunHash: sourceTerminal.terminalOwnerHash,
+    terminalRunLaunchRef: runTerminal.terminalOwnerRef,
+    terminalRunLaunchHash: runTerminal.terminalOwnerHash,
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: runCloseSuccessor.hash,
+    preservedFenceRef: fence.fenceRef,
+    preservedFenceHash: fence.fenceHash,
+  });
+  const releaseAuthority = Object.freeze({
+    purpose: "recovery-d-source-delivery-v1" as const,
+    targetFamilyKind: "source-run-launch" as const,
+    terminalCoreRef: null,
+    terminalCoreHash: null,
+    targetSetCloseRef: null,
+    targetSetCloseHash: null,
+    occurrenceRef: null,
+    occurrenceHash: null,
+    headRef: null,
+    headHash: null,
+    targetReservationPairCloseRef: pairClose.targetReservationPairCloseRef,
+    targetReservationPairCloseHash: pairClose.targetReservationPairCloseHash,
+    purposeTerminalKind: null,
+    purposeTerminalRef: null,
+    purposeTerminalHash: null,
+  });
+  const releaseTransition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+  });
+  const releaseSuccessor = ownerAdmissionSuccessorV1({
+    version: runCloseSuccessor.version,
+    predecessorHeadHash: runCloseSuccessor.hash,
+    transitionKind: "release",
+    transitionRef: releaseTransition.transitionRef,
+    transitionHash: releaseTransition.transitionHash,
+    migrationApplication,
+  });
+  const release = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+    ownerAdmissionHeadPredecessorHash: runCloseSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: releaseSuccessor.hash,
+  });
+  const closeAuthority = (close: typeof sourceClose) => ({
+    authority_ref: close.closeRef,
+    authority_hash: close.closeHash,
+    authority_kind: "close",
+    phase_key: close.reservationRef,
+    predecessor_head_hash: close.ownerAdmissionHeadPredecessorHash,
+    successor_head_hash: close.ownerAdmissionHeadSuccessorHash,
+    authority_body: close,
+  });
+  const releaseAuthorityRow = {
+    authority_ref: release.releaseRef,
+    authority_hash: release.releaseHash,
+    authority_kind: "release",
+    phase_key: release.fenceRef,
+    predecessor_head_hash: release.ownerAdmissionHeadPredecessorHash,
+    successor_head_hash: release.ownerAdmissionHeadSuccessorHash,
+    authority_body: release,
+  };
+  const authorities = new Map<string, readonly unknown[]>([
+    [fenceSuccessor.hash, [reservationAuthority(runReservation), fenceAuthority, reservationAuthority(sourceRunReservation)]],
+    [sourceCloseSuccessor.hash, [closeAuthority(sourceClose)]],
+    [runCloseSuccessor.hash, [closeAuthority(runClose)]],
+    [releaseSuccessor.hash, [releaseAuthorityRow]],
+  ]);
+  const sql = (async () => [...authorities.values()].flat()) as never;
+  const rowAt = (successor: typeof fenceSuccessor, active: boolean) => ({
+    head_version: successor.version,
+    head_hash: successor.hash,
+    active_fence_ref: active ? fence.fenceRef : null,
+    active_fence_hash: active ? fence.fenceHash : null,
+    active_target_family_hash: active ? targetFamily.targetFamilyHash : null,
+    migration_application_evidence_hash: SHA_A,
+    head_payload: successor.payload,
+  });
+  for (const successor of [fenceSuccessor, sourceCloseSuccessor, runCloseSuccessor]) {
+    assert.equal(
+      (await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(successor, true))).activeTargetFamilyHash,
+      targetFamily.targetFamilyHash,
+    );
+  }
+  assert.equal(
+    (await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(releaseSuccessor, false))).activeFenceRef,
+    null,
+  );
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(fenceSuccessor, false)),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  const earlyReleaseSuccessor = ownerAdmissionSuccessorV1({
+    version: fenceSuccessor.version,
+    predecessorHeadHash: fenceSuccessor.hash,
+    transitionKind: "release",
+    transitionRef: releaseTransition.transitionRef,
+    transitionHash: releaseTransition.transitionHash,
+    migrationApplication,
+  });
+  const earlyRelease = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+    fenceRef: fence.fenceRef,
+    fenceHash: fence.fenceHash,
+    releaseAuthority,
+    ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: earlyReleaseSuccessor.hash,
+  });
+  authorities.set(earlyReleaseSuccessor.hash, [{
+    ...releaseAuthorityRow,
+    authority_ref: earlyRelease.releaseRef,
+    authority_hash: earlyRelease.releaseHash,
+    predecessor_head_hash: fenceSuccessor.hash,
+    successor_head_hash: earlyReleaseSuccessor.hash,
+    authority_body: earlyRelease,
+  }]);
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(earlyReleaseSuccessor, true)),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  const duplicateCloseSuccessor = ownerAdmissionSuccessorV1({
+    version: sourceCloseSuccessor.version,
+    predecessorHeadHash: sourceCloseSuccessor.hash,
+    transitionKind: "close",
+    transitionRef: `setfarm://internal-production/owner-reservation-close-transitions/${hashCanonicalJson(sourceCloseTransition)}`,
+    transitionHash: hashCanonicalJson(sourceCloseTransition),
+    migrationApplication,
+  });
+  const duplicateClose = createInternalProductionOwnerReservationCloseV1({
+    closeKind: "fence-target",
+    boundReservation: sourceBound,
+    terminalAuthority: sourceTerminal,
+    ownerAdmissionHeadPredecessorHash: sourceCloseSuccessor.hash,
+    ownerAdmissionHeadSuccessorHash: duplicateCloseSuccessor.hash,
+    preservedFenceRef: fence.fenceRef,
+    preservedFenceHash: fence.fenceHash,
+  });
+  authorities.set(duplicateCloseSuccessor.hash, [closeAuthority(duplicateClose)]);
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(duplicateCloseSuccessor, true)),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  const sourceReservationAuthority = reservationAuthority(sourceRunReservation);
+  authorities.set(fenceSuccessor.hash, [
+    reservationAuthority(runReservation),
+    fenceAuthority,
+    { ...sourceReservationAuthority, phase_key: "setfarm://tests/owner-admission/source-run/crossed" },
+  ]);
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(fenceSuccessor, true)),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+  authorities.set(fenceSuccessor.hash, [
+    reservationAuthority(runReservation),
+    fenceAuthority,
+    { ...sourceReservationAuthority, authority_body: { ...sourceRunReservation, ownerKey: "crossed" } },
+  ]);
+  await assert.rejects(
+    validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, rowAt(fenceSuccessor, true)),
+    /INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION/,
+  );
+});
+
 test("P4 db owns exact source run fence mutation ports", async () => {
   const source = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
   const database = await import(`../../src/db-pg.ts?p4-fence-ports=${Date.now()}-${Math.random()}`);
@@ -493,7 +1114,7 @@ const hashCanonicalJson=(v:any)=>createHash("sha256").update(canonical(v)).diges
 const exactObjectKeys=(v:any,keys:readonly string[],message:string)=>{if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).length!==keys.length||!keys.every(k=>Object.prototype.hasOwnProperty.call(v,k)))throw new Error(message)};
 const sameJsonValueV1=(a:any,b:any)=>canonical(a)===canonical(b);
 const createInternalProductionCompletionOwnerCanonicalOwnerIdentityV1=({requestId}:{requestId:string})=>Object.freeze({schema:"setfarm.internal-production-canonical-owner-identity.v1",category:"completion-owner",ownerKey:requestId,ownerRef:"setfarm://runtime-completion/"+requestId,ownerHash:hashCanonicalJson({schema:"setfarm.internal-production-completion-owner.v1",requestId})});
-const validateOwnerAdmissionMigrationApplicationV1=(value:any)=>value; const validateOwnerAdmissionAncestryToGenesisV1=async()=>[];
+const validateCurrentInternalProductionOwnerAdmissionHeadV1=async(_sql:any,row:any)=>Object.freeze({version:Number(row.head_version),hash:row.head_hash,migrationApplication:row.head_payload.migrationApplication,activeFenceRef:row.active_fence_ref,activeFenceHash:row.active_fence_hash,activeTargetFamilyHash:row.active_target_family_hash});
 const resolveOwnerReservationInTransactionV1=async()=>(globalThis as any).__p4BarrierReservation;
 ${production.slice(start, end)}
 ${production.slice(end, targetEnd)}
@@ -1089,6 +1710,7 @@ function p3TestGit(root: string, args: readonly string[], input?: string): strin
 function p3TestGitBytes(root: string, args: readonly string[]): Buffer {
   const result = spawnSync("/usr/bin/git", args, {
     cwd: root,
+    maxBuffer: 64 * 1024 * 1024,
     env: {
       PATH: "/usr/bin:/bin",
       LANG: "C",
@@ -1433,6 +2055,7 @@ test("P3 runner projects authenticated current bytes from import meta root", asy
     childEnvironmentSource,
     /NODE_OPTIONS:\s*"--test-isolation=none --import=\.\/\.setfarm-p3-test-capability-preload\.mjs"/,
   );
+  assert.match(childEnvironmentSource, /TSX_DISABLE_CACHE:\s*"1"/);
   assert.doesNotMatch(childEnvironmentSource, /\.\.\.process\.env|process\.env\.NODE_OPTIONS/);
   assert.doesNotMatch(
     childEnvironmentSource,
@@ -2149,6 +2772,56 @@ test("P3 runner freezes the complete secure physical-mode domain before projecti
   assert.match(runner, /chmodSync\(target, observation\.projectedMode\)/);
 });
 
+test("P3 runner bounds the recovery lifecycle suite in three code-owned process shards", () => {
+  const runner = readFileSync(path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"), "utf8");
+  const lifecycle = readFileSync(path.join(process.cwd(), "tests/findings/v3-recovery-lifecycle-reconciler.test.ts"), "utf8");
+  assert.match(runner, /P3_RECOVERY_LIFECYCLE_TEST_FILE_V1\s*=\s*"tests\/findings\/v3-recovery-lifecycle-reconciler\.test\.ts"/);
+  assert.match(runner, /P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1\s*=\s*Object\.freeze\(\["0\/3",\s*"1\/3",\s*"2\/3"\]/);
+  assert.match(runner, /testShards\.map\(\(\)\s*=>\s*randomBytes\(32\)\)/,
+    "every process shard receives a fresh test capability nonce");
+  assert.match(runner, /markerForTestNonce\(testNonce\)[\s\S]*spawnWithCapabilityV1\([\s\S]*capabilityFrameV1\("test",\s*testNonce\)/,
+    "each fresh marker is published before its matching child capability frame");
+  assert.match(runner, /SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1:\s*input\.recoveryLifecycleShard/);
+  assert.doesNotMatch(runner, /process\.env\.SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1/,
+    "the runner never accepts a caller-selected shard");
+  assert.match(runner, /:\s*Object\.freeze\(\[undefined\]\s*as\s*const\)/,
+    "every non-lifecycle one-file command retains one ordinary child");
+  assert.match(runner, /if\s*\(exitCode\s*!==\s*0\)[\s\S]*process\.exitCode\s*=\s*exitCode;[\s\S]*break;/,
+    "the first nonzero shard stops the aggregate");
+  assert.match(lifecycle, /RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1\s*=\s*3/);
+  assert.match(lifecycle, /\^\(\[0-2\]\)\\\/3\$/);
+  assert.match(lifecycle, /if\s*\(recoveryLifecycleTestShardFrameV1\s*!==\s*undefined\)[\s\S]*authenticateP3ProjectedReadinessTestCapabilityV1\(\)[\s\S]*P3_RECOVERY_LIFECYCLE_TEST_SHARD_UNAUTHENTICATED/,
+    "a defined shard frame is admitted only after the marker/FD3 P3 test capability authenticates");
+  assert.match(lifecycle, /ordinal\s*%\s*RECOVERY_LIFECYCLE_TEST_SHARD_COUNT_V1\s*===\s*recoveryLifecycleTestShardIndexV1/);
+  assert.equal((lifecycle.match(/^\s{2}it\(/gm) ?? []).length, 29,
+    "the exact 29 lifecycle tests are registered through the shard wrapper");
+  assert.equal((lifecycle.match(/nodeIt(?:\.skip)?\(/g) ?? []).length, 2,
+    "only the shard wrapper may register a running or skipped node:test case");
+  const shards = [0, 1, 2].map((shard) => Array.from({ length: 29 }, (_, ordinal) => ordinal).filter((ordinal) => ordinal % 3 === shard));
+  assert.deepEqual(shards.map((shard) => shard.length), [10, 10, 9]);
+  assert.deepEqual([...new Set(shards.flat())].sort((left, right) => left - right), Array.from({ length: 29 }, (_, ordinal) => ordinal));
+  assert.match(lifecycle, /if\s*\(sequence\s*>\s*0\)\s*await database\.reset\(\)/,
+    "relational state remains reset independently inside each bounded process shard");
+});
+
+test("recovery lifecycle shard selection rejects a direct caller without the P3 capability", () => {
+  const result = spawnSync(process.execPath, [
+    "--import", import.meta.resolve("tsx"),
+    "--test", "--test-concurrency=1", "--test-name-pattern=^$",
+    "tests/findings/v3-recovery-lifecycle-reconciler.test.ts",
+  ], {
+    cwd: process.cwd(),
+    env: {
+      PATH: process.env.PATH,
+      SETFARM_P3_RECOVERY_LIFECYCLE_SHARD_V1: "0/3",
+    },
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /P3_RECOVERY_LIFECYCLE_TEST_SHARD_UNAUTHENTICATED/);
+});
+
 test("P3 runner refuses every constructible indexed and physical projection drift before child spawn", async () => {
   if (!process.env.SETFARM_PG_URL?.includes("/setfarm_p3_")) return;
   const member = "src/execution/attempt-repository.ts";
@@ -2817,7 +3490,7 @@ function activationFixtureReceiptWithOperationPublisherV1(source: string): strin
       "prepareActivationFixtureCurrentEntryOperationV1",
     )
     .replace(
-      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(context,\s*resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(context,\s*resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
       () => {
         continuationReplacements += 1;
         return "\n    return resolved;";
@@ -5313,6 +5986,81 @@ test("real PostgreSQL owner admission begins adopts binds and rejects an unauthe
   const [first, concurrent] = await Promise.all([begin(), begin()]);
   assert.deepEqual(concurrent, first);
   assert.deepEqual(await begin(), first);
+  const migrations = await import(
+    pathToFileURL(path.join(root, "src/db/contract-spine-migrations.js")).href
+  );
+  const migrationSnapshot = async () => {
+    const [head] = await sql<Array<{
+      head_version: string;
+      head_hash: string;
+      head_payload: unknown;
+      advancing_authorities: string;
+      reservation_count: string;
+      authority_count: string;
+    }>>`
+      SELECT head.head_version::text,
+             head.head_hash,
+             head.head_payload,
+             (SELECT COUNT(*)::text
+                FROM internal_production_owner_admission_authorities_v1 authority
+               WHERE authority.successor_head_hash=head.head_hash
+                 AND authority.predecessor_head_hash<>authority.successor_head_hash)
+               AS advancing_authorities,
+             (SELECT COUNT(*)::text FROM internal_production_owner_reservations_v1)
+               AS reservation_count,
+             (SELECT COUNT(*)::text FROM internal_production_owner_admission_authorities_v1)
+               AS authority_count
+        FROM internal_production_owner_admission_head_v1 head
+       WHERE head.singleton=TRUE
+    `;
+    assert.ok(head);
+    return head;
+  };
+  const evolvedHeadBeforeMigrationReobservation = await migrationSnapshot();
+  assert.ok(Number(evolvedHeadBeforeMigrationReobservation.head_version) > 0);
+  assert.notEqual(evolvedHeadBeforeMigrationReobservation.head_hash, "0".repeat(64));
+  assert.equal(
+    hashCanonicalJson(evolvedHeadBeforeMigrationReobservation.head_payload),
+    evolvedHeadBeforeMigrationReobservation.head_hash,
+  );
+  assert.equal(Number(evolvedHeadBeforeMigrationReobservation.advancing_authorities) > 0, true);
+  const evolvedPlan = await migrations.planContractSpineMigrations(sql);
+  assert.equal(evolvedPlan.status, "current");
+  assert.deepEqual(
+    evolvedPlan.migrations.slice(-2).map((migration: { version: number; state: string }) => ({
+      version: migration.version,
+      state: migration.state,
+    })),
+    [{ version: 32, state: "applied" }, { version: 33, state: "applied" }],
+  );
+  assert.equal((await migrations.verifyContractSpineMigrations(sql)).status, "verified");
+  const firstReapply = await migrations.applyContractSpineMigrationsIfNeeded(sql, {
+    releaseSha: "a".repeat(40),
+  });
+  const secondReapply = await migrations.applyContractSpineMigrationsIfNeeded(sql, {
+    releaseSha: "b".repeat(40),
+  });
+  assert.deepEqual(firstReapply.applied, []);
+  assert.deepEqual(firstReapply.adopted, []);
+  assert.deepEqual(firstReapply.guardedPending, []);
+  assert.equal(firstReapply.alreadyApplied.length, 33);
+  assert.deepEqual(secondReapply, firstReapply);
+  const [evolvedHeadAttestation] = await sql<Array<{
+    attested_rows: number;
+    release_count: number;
+    current_release: string | null;
+  }>>`
+    SELECT COUNT(*) FILTER (WHERE verified_at IS NOT NULL)::integer AS attested_rows,
+           COUNT(DISTINCT verified_release_sha)::integer AS release_count,
+           MIN(verified_release_sha) AS current_release
+      FROM setfarm_schema_migrations
+  `;
+  assert.deepEqual(evolvedHeadAttestation, {
+    attested_rows: 33,
+    release_count: 1,
+    current_release: "b".repeat(40),
+  });
+  assert.deepEqual(await migrationSnapshot(), evolvedHeadBeforeMigrationReobservation);
   const storedCreationVersion = (await sql<Array<{ head_version: string }>>`
     SELECT head_version::text FROM internal_production_owner_reservations_v1
      WHERE reservation_ref=${first.reservationRef}

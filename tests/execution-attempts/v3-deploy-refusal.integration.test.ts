@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { publishSingleClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishSingleClaimRuntime,
+} from "../../src/execution/claim-runtime-publication.js";
+import { persistWorkflowRunInTransaction } from "../../src/execution/run-persistence.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import {
   completeV3DeployAuthorityRefusal,
@@ -16,6 +22,93 @@ import { createRunTerminationRepository } from "../../src/execution/run-terminat
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { rethrowV3DeployAuthorityAfterObservation } from "../../src/installer/steps/11-deploy/preclaim.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+type TestDatabase = Awaited<ReturnType<typeof createIsolatedTestDatabase>>;
+
+async function persistOwnedDeployRun(
+  database: TestDatabase,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    claimAgentId: string;
+    task: string;
+    context: string;
+    releaseSha: string;
+    releaseAdmissionHash: string;
+  }>,
+): Promise<void> {
+  await database.sql.begin((transaction) => persistWorkflowRunInTransaction(
+    transaction as PgTransactionSql,
+    {
+      run: {
+        id: input.runId,
+        runNumber: input.runId.endsWith("started") ? 8802 : 8801,
+        workflowId: "feature-dev",
+        task: input.task,
+        context: input.context,
+        notifyUrl: null,
+        createdAt: "2026-07-13T12:00:00.000Z",
+        protocol: {
+          mode: "v3",
+          version: 1,
+          compilerReleaseSha: input.releaseSha,
+          activationPreflightHash: "e".repeat(64),
+          releaseAdmissionHash: input.releaseAdmissionHash,
+          releaseAdmissionKind: "release_go",
+          canaryAdmission: null,
+        },
+      },
+      steps: [{
+        id: input.stepDbId,
+        stepId: "deploy",
+        agentId: input.claimAgentId,
+        stepIndex: 11,
+        inputTemplate: "",
+        expects: "",
+        status: "running",
+        maxRetries: 3,
+        type: "single",
+        loopConfig: null,
+      }],
+    },
+  ));
+}
+
+async function insertOwnedDeployClaim(
+  database: TestDatabase,
+  input: Readonly<{ runId: string; claimAgentId: string }>,
+): Promise<number> {
+  const claimId = await database.sql.begin(async (transaction) => {
+    const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+      SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+    `;
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-single-runtime-v1",
+      rows,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId: input.runId,
+      workflowStepId: "deploy",
+      storyId: null,
+      claimAgentId: input.claimAgentId,
+      claimedAt: new Date("2026-07-13T12:00:00.000Z"),
+    });
+  }) as number;
+  const owners = await database.sql<Array<{ category: string; owner_key: string; state: string }>>`
+    SELECT category, owner_key, state
+      FROM internal_production_owner_reservations_v1
+     WHERE category IN ('claim', 'run')
+       AND ((category = 'claim' AND owner_key = ${String(claimId)})
+         OR (category = 'run' AND owner_key = ${input.runId}))
+     ORDER BY category
+  `;
+  assert.deepEqual(owners.map((row) => ({ ...row })), [
+    { category: "claim", owner_key: String(claimId), state: "bound" },
+    { category: "run", owner_key: input.runId, state: "bound" },
+  ]);
+  return claimId;
+}
 
 test("deploy refusal cause class preserves the producer boundary category", () => {
   assert.equal(v3DeployOperationalFailureClass("V3_DEPLOY_PACKET_INVALID"), "contract_invalid");
@@ -34,31 +127,16 @@ test("deploy authority failure becomes compiler-owned terminal refusal with zero
     const runtimeAgentId = "deployer-runtime";
     const releaseSha = "d".repeat(40);
     const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'deploy accepted candidate', 'running',
-        ${JSON.stringify({ task: "deploy accepted candidate" })}, 'v3',
-        ${releaseSha}, ${"e".repeat(64)}, ${releaseAdmissionHash}
-      )
-    `;
-    await database.sql`
-      INSERT INTO steps (
-        id, run_id, step_id, agent_id, step_index, input_template, expects,
-        status, type, retry_count, max_retries
-      ) VALUES (
-        ${stepDbId}, ${runId}, 'deploy', ${claimAgentId}, 11, '', '',
-        'running', 'single', 0, 3
-      )
-    `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'deploy', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
-    `;
-    const claimId = claims[0]!.id;
+    await persistOwnedDeployRun(database, {
+      runId,
+      stepDbId,
+      claimAgentId,
+      task: "deploy accepted candidate",
+      context: JSON.stringify({ task: "deploy accepted candidate" }),
+      releaseSha,
+      releaseAdmissionHash,
+    });
+    const claimId = await insertOwnedDeployClaim(database, { runId, claimAgentId });
     const sessions = createRuntimeSessionRepository(database.sql);
     const session = await sessions.reserve({
       sessionId: "RTS_v3-deploy-refusal-session",
@@ -224,30 +302,16 @@ test("deploy refusal leaves a started runtime claim to the canonical termination
     const runtimeAgentId = "deployer-runtime";
     const releaseSha = "d".repeat(40);
     const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'deploy started-runtime refusal', 'running', '{}', 'v3',
-        ${releaseSha}, ${"e".repeat(64)}, ${releaseAdmissionHash}
-      )
-    `;
-    await database.sql`
-      INSERT INTO steps (
-        id, run_id, step_id, agent_id, step_index, input_template, expects,
-        status, type, retry_count, max_retries
-      ) VALUES (
-        ${stepDbId}, ${runId}, 'deploy', ${claimAgentId}, 11, '', '',
-        'running', 'single', 0, 3
-      )
-    `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'deploy', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
-    `;
-    const claimId = claims[0]!.id;
+    await persistOwnedDeployRun(database, {
+      runId,
+      stepDbId,
+      claimAgentId,
+      task: "deploy started-runtime refusal",
+      context: "{}",
+      releaseSha,
+      releaseAdmissionHash,
+    });
+    const claimId = await insertOwnedDeployClaim(database, { runId, claimAgentId });
     const sessions = createRuntimeSessionRepository(database.sql);
     const session = await sessions.reserve({
       sessionId: "RTS_v3-deploy-refusal-started",

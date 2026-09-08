@@ -39,6 +39,56 @@ describe("05-setup-build step module", () => {
     );
   });
 
+  it("recovery setup-build completes from the authenticated clean base without mutation or main publication", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf8");
+    const stepOps = fs.readFileSync("src/installer/step-ops.ts", "utf8");
+    const runtimeAuthority = fs.readFileSync("src/execution/recovery-source-bootstrap-runtime-authority-v1.ts", "utf8");
+    const recovery = preclaim.indexOf("isInternalProductionRecoverySourceBootstrapRunContextV1(ctx.context)");
+    const authenticate = preclaim.indexOf("requireActiveInternalProductionRecoverySourceBootstrapSetupV1", recovery);
+    const recoveryEnd = preclaim.indexOf("let executedConverterSource", authenticate);
+    const recoveryBranch = preclaim.slice(recovery, recoveryEnd);
+    const semanticGate = preclaim.indexOf('ctx.context["product_semantics_version"] !== "v2"');
+    const optOut = preclaim.indexOf("SETFARM_DISABLE_AUTO_SETUP_BUILD");
+    const install = preclaim.indexOf('execFileSync("npm", ["install"]');
+    const converter = preclaim.indexOf("compileSetupBuildProductPacket", recovery);
+    assert.ok(recovery > 0 && authenticate > recovery && recoveryEnd > authenticate,
+      "recovery setup-build must authenticate, complete through its claim, and return");
+    assert.ok(recoveryEnd < semanticGate && recoveryEnd < optOut && recoveryEnd < install && recoveryEnd < converter,
+      "recovery setup-build must bypass mutable semantics/scaffold/install/converter paths");
+    assert.match(recoveryBranch, /completeStep\(step\.id, output, ctx\.claimEnvelope\)/,
+      "recovery setup-build completion retains the immutable claim envelope");
+    assert.match(recoveryBranch, /return;\s*\}\s*$/,
+      "recovery setup-build exits before generic mutable setup");
+
+    const completion = stepOps.slice(
+      stepOps.indexOf('if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done")', stepOps.indexOf("pr-each story branches target main")),
+      stepOps.indexOf("let v3DeployReceipt", stepOps.indexOf("pr-each story branches target main")),
+    );
+    const completionRecovery = completion.indexOf("isInternalProductionRecoverySourceBootstrapRunContextV1(context)");
+    const completionAuth = completion.indexOf("requireActiveInternalProductionRecoverySourceBootstrapSetupV1", completionRecovery);
+    const ordinaryPublish = completion.indexOf("publishSetupBaselineToMain", completionAuth);
+    assert.ok(completionRecovery >= 0 && completionAuth > completionRecovery && ordinaryPublish > completionAuth,
+      "setup-build completion authenticates recovery before the ordinary main publication branch");
+    assert.match(completion.slice(completionAuth, ordinaryPublish), /else/,
+      "only non-recovery setup-build completion may publish a baseline to main");
+    const moduleDelegation = stepOps.slice(
+      stepOps.indexOf("// Step module delegation"),
+      stepOps.indexOf("// DB Auto-Provisioning"),
+    );
+    const earlyRecoveryAuth = stepOps.indexOf("isRecoverySetupBuildCompletion");
+    const firstCompletionContextWrite = stepOps.indexOf("await persistCompletionContext();", earlyRecoveryAuth);
+    assert.ok(earlyRecoveryAuth >= 0 && firstCompletionContextWrite > earlyRecoveryAuth,
+      "setup-build recovery is authenticated before the generic completion context write");
+    assert.match(moduleDelegation, /if\s*\(\s*!isRecoverySetupModuleCompletion[\s\S]*_stepModule\.onComplete/,
+      "authenticated recovery bypasses generic setup-repo and setup-build module onComplete side effects");
+    assert.match(preclaim, /import\("\.\.\/\.\.\/\.\.\/execution\/recovery-source-bootstrap-runtime-authority-v1\.js"\)/,
+      "setup-build loads recovery authority without entering the installer run/baseline import cycle");
+    assert.doesNotMatch(stepOps, /import\("\.\/run\.js"\)[\s\S]*requireActiveInternalProductionRecoverySourceBootstrap(?:Setup|Run)V1/,
+      "completion recovery gates avoid the installer run/baseline import cycle");
+    assert.match(runtimeAuthority, /requireActiveInternalProductionRecoverySourceBootstrapRunV1[\s\S]*requireExactInternalProductionRecoverySourceBootstrapActiveRunAuthorityV1/,
+      "post-setup recovery uses the shared exact active-run authority module");
+  });
+
   it("rejects contaminated ready baselines before repository or context mutation", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-build-language-"));
     const localizedName = String.fromCharCode(

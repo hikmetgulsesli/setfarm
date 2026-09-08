@@ -233,7 +233,6 @@ export async function createIsolatedMigration31TestDatabase(): Promise<TestDatab
     assert.equal(pending.status, "exact_pending_guarded_successor");
     assert.equal(pending.migration.version, 32);
     assert.equal(pending.migration.state, "pending");
-    await verifyP3ReadinessUnavailableV1();
     return database;
   } catch (error) {
     await database.cleanup();
@@ -546,6 +545,8 @@ export async function createIsolatedTestDatabase(
         "contract-spine-bootstrap-main-claim-handoff-v1",
       ]);
       await applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1();
+      const successor = await applyContractSpineMigrations(db.getSql());
+      assert.deepEqual(successor.guardedPending, []);
       assert.equal((await verifyContractSpineMigrations(db.getSql())).status, "verified");
     };
 
@@ -785,7 +786,7 @@ function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
       "prepareP3FixtureCurrentEntryOperationV1",
     )
     .replace(
-      /\s+const controllerLock = await acquireTask12ControllerLockV1\(resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
+      /\s+const controllerLock = await acquireTask12ControllerLockV1\(context, resolved\.operationHash\);\s+try \{ return await ensureTask12PreparedCurrentEntryStatusV1\(context, resolved\); \}\s+finally \{ releaseTask12ControllerLockV1\(controllerLock\); \}/g,
       () => {
         continuationReplacements += 1;
         return "\n    return resolved;";

@@ -17,7 +17,6 @@ import {
   CLEANUP_THROTTLE_MS,
   RUN_STATUS,
   STORY_STATUS,
-  PROTECTED_CONTEXT_KEYS,
   isStepOutputContextKeyProtected,
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
@@ -43,6 +42,7 @@ import {
   type V3ImplementationAttemptResult,
 } from "../execution/v3-implementation-attempt.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../execution/recovery-source-bootstrap-run-authority-v1.js";
 import {
   compileCompilerEnglishAdmissionV1,
   compilerEnglishAdmissionReceiptV1,
@@ -146,6 +146,7 @@ import {
   createV3RecoveryWorkRouter,
   type V3RecoveryRoutedWork,
 } from "../recovery/v3-recovery-work-router.js";
+
 import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import type { V3RecoveryClaimHandoffV1 } from "../recovery/v3-recovery-claim-authority.js";
@@ -205,6 +206,21 @@ import {
   shouldMaterializeRepoDeployEnvironment,
   shouldRunLegacyDeployCompletionGuard,
 } from "./steps/11-deploy/env-policy.js";
+
+async function syncRunBaseBranchV1(
+  runId: string,
+  context: Readonly<Record<string, string>>,
+  repoPath: string,
+): Promise<boolean> {
+  if (isInternalProductionRecoverySourceBootstrapRunContextV1(context)) {
+    const { syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1 } = await import(
+      "../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+    );
+    await syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1({ runId, context });
+    return true;
+  }
+  return syncBaseBranch(repoPath, "main");
+}
 
 class V3PlatformPreclaimLifecycleError extends Error {
   readonly hardPreClaim = true;
@@ -2440,7 +2456,7 @@ async function confirmFailedSystemSmokeGate(
   firstFailure: string,
 ): Promise<{ ok: boolean; output: string; failure: string; infraFailure: boolean }> {
   logger.warn(`[${logPrefix}] Smoke failed; re-running once before routing to QA-FIX: ${firstFailure.slice(0, 200)}`, { runId });
-  syncBaseBranch(repoPath, "main");
+  await syncRunBaseBranchV1(runId, context, repoPath);
   const confirmGate = runSystemSmokeGate(repoPath, runId, `${stepId}-confirm`);
   if (confirmGate.ok) {
     context["smoke_test_result"] = `pass after confirm rerun (first smoke failure treated as transient)\n${confirmGate.output}`;
@@ -2461,7 +2477,7 @@ async function ensureSystemSmokeBeforeAutoVerify(
   const repoPath = context["repo"] || context["REPO"] || "";
   if (!repoPath) return true;
 
-  syncBaseBranch(repoPath, "main");
+  await syncRunBaseBranchV1(runId, context, repoPath);
   const buildGate = runPostMergeBuildGate(repoPath, context["build_cmd"] || "npm run build", runId, "verify");
   if (!buildGate.ok) {
     const failure = `BUILD_FAILED: Post-merge build failed for ${story.story_id} on current main.\n${buildGate.failure}`;
@@ -6504,7 +6520,7 @@ async function claimSingleStep(
     try {
       const { buildPreFlightReport, formatPreFlightForAgent } = await import("./static-analysis.js");
       const analysisBranch = context["story_branch"] || context["branch"];
-      const repoPath = context["repo"];
+      const repoPath = context["story_workdir"] || context["repo"];
       if (analysisBranch && analysisBranch !== "main") {
         try {
           execFileSync("git", ["fetch", "--prune", "origin", "main", analysisBranch], {
@@ -7776,7 +7792,7 @@ export async function claimStep(
           blockRepository,
           ...((isPrEach || v3SupervisorRetryPreparationSource)
             ? {
-                syncBeforePin: ({ repo }: { repo: string }) => {
+                syncBeforePin: async ({ repo }: { repo: string }) => {
                   if (v3SupervisorRetryPreparationSource) {
                     execFileSync(
                       "git",
@@ -7792,6 +7808,14 @@ export async function claimStep(
                       ],
                       { cwd: repo, timeout: 20_000, stdio: ["ignore", "ignore", "pipe"] },
                     );
+                  } else if (isInternalProductionRecoverySourceBootstrapRunContextV1(context)) {
+                    const { syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1 } = await import(
+                      "../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+                    );
+                    await syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1({
+                      runId: step.run_id,
+                      context,
+                    });
                   } else if (!syncBaseBranch(repo, "main")) {
                     throw new Error("V3_NORMAL_PRECLAIM_PR_EACH_SYNC_FAILED");
                   }
@@ -9349,6 +9373,28 @@ export async function completeStep(
     if (restored.length !== 1) throw new Error("STEP_COMPLETION_CONTEXT_RESTORE_CAS_LOST");
     completionOwnedContextJson = restoredContextJson;
   };
+  const isRecoverySetupBuildCompletion =
+    step.step_id === "setup-build"
+    && parsed["status"]?.toLowerCase() === "done"
+    && isInternalProductionRecoverySourceBootstrapRunContextV1(context);
+  const isRecoverySetupRepoCompletion =
+    step.step_id === "setup-repo"
+    && parsed["status"]?.toLowerCase() === "done"
+    && isInternalProductionRecoverySourceBootstrapRunContextV1(context);
+  const isRecoverySetupModuleCompletion = isRecoverySetupBuildCompletion || isRecoverySetupRepoCompletion;
+  if (isRecoverySetupBuildCompletion) {
+    const { requireActiveInternalProductionRecoverySourceBootstrapSetupV1 } = await import("../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+    await requireActiveInternalProductionRecoverySourceBootstrapSetupV1({
+      runId: step.run_id,
+      context,
+    });
+  } else if (isRecoverySetupRepoCompletion) {
+    const { requireActiveInternalProductionRecoverySourceBootstrapRunV1 } = await import("../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+    await requireActiveInternalProductionRecoverySourceBootstrapRunV1({
+      runId: step.run_id,
+      context,
+    });
+  }
   if (!isNativeV3ImplementCompletion && !atomicNativeV3PlanCompletion && !atomicNativeV3StoriesCompletion) {
     await persistCompletionContext();
   }
@@ -9370,7 +9416,7 @@ export async function completeStep(
         await failStep(stepId, _modErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
-      if (_stepModule.onComplete) {
+      if (!isRecoverySetupModuleCompletion && _stepModule.onComplete) {
         try {
           let completeCurrentStoryId = "";
           if (step.current_story_id) {
@@ -9803,13 +9849,21 @@ ${prd}`;
   // scaffold/build baseline to main before implement starts. Without this,
   // US-001 branches from an empty/stale main and every later PR collides.
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
-    const setupBranch = normalizeRunBranchContext(context, step.run_id, context["repo"] || "");
-    await persistCompletionContext();
-    const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", setupBranch, step.run_id);
-    if (!baselinePublished) {
-      const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
-      await failStep(stepId, reason, completionAuthority?.envelope);
-      return { advanced: false, runCompleted: false };
+    if (isInternalProductionRecoverySourceBootstrapRunContextV1(context)) {
+      const { requireActiveInternalProductionRecoverySourceBootstrapSetupV1 } = await import("../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+      await requireActiveInternalProductionRecoverySourceBootstrapSetupV1({
+        runId: step.run_id,
+        context,
+      });
+    } else {
+      const setupBranch = normalizeRunBranchContext(context, step.run_id, context["repo"] || "");
+      await persistCompletionContext();
+      const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", setupBranch, step.run_id);
+      if (!baselinePublished) {
+        const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
+        await failStep(stepId, reason, completionAuthority?.envelope);
+        return { advanced: false, runCompleted: false };
+      }
     }
   }
 
@@ -10092,6 +10146,14 @@ ${prd}`;
     const repoPath = context["repo"] || "";
     const smokeScript = resolvePlatformScript("smoke-test.mjs");
     const stackContract = resolveOperationalStackContract(context, false);
+    const isRecovery = isInternalProductionRecoverySourceBootstrapRunContextV1(context);
+    if (isRecovery) {
+      const { requireActiveInternalProductionRecoverySourceBootstrapRunV1 } = await import("../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+      await requireActiveInternalProductionRecoverySourceBootstrapRunV1({
+        runId: step.run_id,
+        context,
+      });
+    }
     if (!isBrowserRuntimeStack(stackContract)) {
       context["smoke_test_result"] = smokeResult || `stack-specific final evidence required for ${stackContract.packId || "unknown stack"}; browser smoke skipped`;
       await recordGateObservation({
@@ -10123,7 +10185,7 @@ ${prd}`;
           logger.warn(`[final-test-smoke-gate] loop_config lookup failed: ${String(loopErr).slice(0, 160)}`, { runId: step.run_id });
         }
 
-        if (isPrEachFinal) {
+        if (isPrEachFinal && !isRecovery) {
           try {
             execFileSync("git", ["checkout", "main"], { cwd: repoPath, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
             execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repoPath, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
@@ -10193,9 +10255,16 @@ ${prd}`;
   // After final-test completes successfully, verify the feature branch is merged into main.
   // Agents sometimes skip or silently fail the merge — this guardrail ensures it happens.
   if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
-    const mergeBranch = context["branch"] || "feature/initial-prd";
-    const mergeRepo = context["repo"] || "";
-    if (mergeRepo && mergeBranch) {
+    if (isInternalProductionRecoverySourceBootstrapRunContextV1(context)) {
+      const { requireActiveInternalProductionRecoverySourceBootstrapRunV1 } = await import("../execution/recovery-source-bootstrap-runtime-authority-v1.js");
+      await requireActiveInternalProductionRecoverySourceBootstrapRunV1({
+        runId: step.run_id,
+        context,
+      });
+    } else {
+      const mergeBranch = context["branch"] || "feature/initial-prd";
+      const mergeRepo = context["repo"] || "";
+      if (mergeRepo && mergeBranch) {
       let isPrEachFinal = false;
       try {
         const loopRow = await pgGet<{ loop_config?: any }>(
@@ -10274,6 +10343,7 @@ ${prd}`;
         await updateRunContext(step.run_id, context);
         await failStep(stepId, "Feature branch not merged into main — source code missing", completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
+      }
       }
     }
   }
@@ -13456,8 +13526,8 @@ async function handleSuperviseEachCompletion(
   authenticatedRuntimeSessionId?: string,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const parsedOutput = parseOutputKeyValues(output);
-  for (const key of PROTECTED_CONTEXT_KEYS) {
-    if (key in parsedOutput) {
+  for (const key of Object.keys(parsedOutput)) {
+    if (isStepOutputContextKeyProtected(key, context)) {
       logger.warn(`[handleSuperviseEach] Stripped protected key "${key}" from output`, { runId: superviseStep.run_id });
       delete parsedOutput[key];
     }
@@ -14349,8 +14419,8 @@ async function handleVerifyEachCompletion(
   );
 
   // Guard: strip protected keys from parsed output to prevent seed value corruption
-  for (const key of PROTECTED_CONTEXT_KEYS) {
-    if (key in parsedOutput) {
+  for (const key of Object.keys(parsedOutput)) {
+    if (isStepOutputContextKeyProtected(key, context)) {
       logger.warn(`[handleVerifyEach] Stripped protected key "${key}" from output`, { runId: verifyStep.run_id });
       delete parsedOutput[key];
     }
@@ -14746,7 +14816,7 @@ async function handleVerifyEachCompletion(
 
       const repoPath = context["repo"] || context["REPO"] || "";
       if (repoPath) {
-        syncBaseBranch(repoPath, "main");
+        await syncRunBaseBranchV1(verifyStep.run_id, context, repoPath);
         const buildGate = runPostMergeBuildGate(repoPath, context["build_cmd"] || "npm run build", verifyStep.run_id, verifyStep.step_id);
         if (!buildGate.ok) {
           const failure = `BUILD_FAILED: Post-merge build failed for ${verifiedStoryId} on current main.\n${buildGate.failure}`;
@@ -15040,7 +15110,7 @@ ${failure}`,
         // A merged PR is not enough; run the same smoke gate normal verify uses
         // before marking the story verified.
         const repoPath = context["repo"] || context["REPO"] || "";
-        if (repoPath) syncBaseBranch(repoPath, "main");
+        if (repoPath) await syncRunBaseBranchV1(runId, context, repoPath);
         if (repoPath) {
           try {
             const issues = runQualityChecks(repoPath);

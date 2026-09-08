@@ -26,12 +26,26 @@ import { cleanupWorktrees, cleanAgentWorkspace, syncBaseBranch } from "./worktre
 import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
 import { syncActiveCrons } from "./agent-cron.js";
 import { resolvePlatformScript } from "./paths.js";
+import { cleanupCompletedInternalProductionRecoverySourceBootstrapRepositoryV1 } from "../execution/recovery-source-bootstrap-repository-cleanup-v1.js";
+import { isInternalProductionRecoverySourceBootstrapRunContextV1 } from "../execution/recovery-source-bootstrap-run-authority-v1.js";
 
-function runMedicAutoVerifySmokeGate(repoPath: string, runId: string, storyId: string): boolean {
+async function runMedicAutoVerifySmokeGate(
+  repoPath: string,
+  runId: string,
+  storyId: string,
+  context: Readonly<Record<string, unknown>>,
+): Promise<boolean> {
   const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) return true;
   try {
-    syncBaseBranch(repoPath, "main");
+    if (isInternalProductionRecoverySourceBootstrapRunContextV1(context)) {
+      const { syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1 } = await import(
+        "../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+      );
+      await syncActiveInternalProductionRecoverySourceBootstrapRunBranchV1({ runId, context });
+    } else {
+      syncBaseBranch(repoPath, "main");
+    }
     execFileSync("node", [smokeScript, repoPath], {
       cwd: repoPath,
       timeout: 240_000,
@@ -76,8 +90,8 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
   const _txResult: any = await pgBegin(async (sql) => {
     // Serialize advancement with termination requests and claim publication.
     // A cancelling/failing run must never expose another pending step.
-    const runRows = await sql.unsafe<Array<{ status: string; workflow_id: string }>>(
-      "SELECT status, workflow_id FROM runs WHERE id = $1 FOR UPDATE",
+    const runRows = await sql.unsafe<Array<{ status: string; workflow_id: string; context: string | null }>>(
+      "SELECT status, workflow_id, context FROM runs WHERE id = $1 FOR UPDATE",
       [runId],
     );
     const run = runRows[0];
@@ -158,6 +172,14 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       // caller runs them AFTER the transaction commits.
       return { advanced: true, runCompleted: false, _postCommit: { kind: "sync", nextStepId: next.id, nextAgentId: next.step_id, wfId: wfId || "" } } as any;
     } else {
+      let completedContext: Readonly<Record<string, unknown>>;
+      try {
+        const parsed = JSON.parse(run.context ?? "{}");
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+        completedContext = parsed as Readonly<Record<string, unknown>>;
+      } catch {
+        throw new Error("PIPELINE_COMPLETION_RUN_CONTEXT_INVALID");
+      }
       await transitionRunToTerminalInTransaction(sql, {
         runId,
         status: "completed",
@@ -170,6 +192,7 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
         _postCommit: {
           kind: "completed",
           wfId: wfId || "",
+          recoveryRun: isInternalProductionRecoverySourceBootstrapRunContextV1(completedContext),
           agentIds: agentRows.map((row: any) => String(row.agent_id || "")).filter(Boolean),
         },
       } as any;
@@ -197,8 +220,16 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       emitEvent({ ts: now(), event: "run.completed", runId, workflowId: pc.wfId });
       logger.info("Run completed", { runId, workflowId: pc.wfId });
       await archiveRunProgress(runId);
-      await cleanupWorktrees(runId);
-      await cleanupLocalBranches(runId);
+      if (pc.recoveryRun) {
+        try {
+          await cleanupCompletedInternalProductionRecoverySourceBootstrapRepositoryV1({ runId });
+        } catch (error) {
+          logger.warn(`[advance] Recovery repository cleanup refused: ${String(error)}`, { runId });
+        }
+      } else {
+        await cleanupWorktrees(runId);
+        await cleanupLocalBranches(runId);
+      }
       try {
         for (const agentId of pc.agentIds as string[]) cleanAgentWorkspace(agentId);
       } catch (e) { logger.warn(`[advance] Workspace cleanup failed: ${String(e)}`, {}); }
@@ -333,8 +364,31 @@ STORIES_SKIPPED: ${skippedCount}
 STORIES_FAILED: ${originalFailedCount}
 SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skipped (${originalFailedCount} originally failed)`;
 
-  // Early worktree cleanup
-  await cleanupWorktrees(runId);
+  const loopRun = await pgGet<{ status: string; context: string | null }>(
+    "SELECT status,context FROM runs WHERE id = $1",
+    [runId],
+  );
+  if (loopRun === undefined || !["running", "resuming"].includes(loopRun.status)) {
+    throw new Error("LOOP_COMPLETION_RUN_STATE_CROSSED");
+  }
+  const loopRunContextBytes = loopRun?.context ?? "";
+  let loopRunContext: Readonly<Record<string, unknown>>;
+  try {
+    const parsed = JSON.parse(loopRunContextBytes);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    loopRunContext = parsed as Readonly<Record<string, unknown>>;
+  } catch {
+    throw new Error("LOOP_COMPLETION_RUN_CONTEXT_INVALID");
+  }
+  const recoveryLoop = isInternalProductionRecoverySourceBootstrapRunContextV1(loopRunContext);
+  if (recoveryLoop) {
+    const { requireMutationActiveInternalProductionRecoverySourceBootstrapRunV1 } = await import(
+      "../execution/recovery-source-bootstrap-runtime-authority-v1.js"
+    );
+    await requireMutationActiveInternalProductionRecoverySourceBootstrapRunV1({ runId, context: loopRunContext });
+  } else {
+    await cleanupWorktrees(runId);
+  }
 
   const loopStepRow = await pgGet<{ loop_config: string | null; run_id: string }>(
     "SELECT loop_config, run_id FROM steps WHERE id = $1",
@@ -345,11 +399,17 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
 
   // Atomic: mark loop done + verify done must happen together
   await pgBegin(async (sql) => {
-    const lockedRun = await sql.unsafe<Array<{ context: string | null }>>(
-      "SELECT context FROM runs WHERE id = $1 FOR UPDATE",
+    const lockedRun = await sql.unsafe<Array<{ status: string; context: string | null }>>(
+      "SELECT status,context FROM runs WHERE id = $1 FOR UPDATE",
       [runId],
     );
     if (lockedRun.length !== 1) throw new Error("LOOP_COMPLETION_RUN_LOCK_MISSING");
+    if (!["running", "resuming"].includes(lockedRun[0]!.status)) {
+      throw new Error("LOOP_COMPLETION_RUN_STATE_CROSSED");
+    }
+    if (recoveryLoop && lockedRun[0]!.context !== loopRunContextBytes) {
+      throw new Error("LOOP_COMPLETION_RECOVERY_RUN_CROSSED");
+    }
     await sql.unsafe(
       "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3",
       [loopSummaryOutput, now(), loopStepId]
@@ -365,7 +425,7 @@ VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
       );
     }
 
-    if (loopConfig?.verifyEach || loopConfig?.mergeStrategy === "pr-each") {
+    if (!recoveryLoop && (loopConfig?.verifyEach || loopConfig?.mergeStrategy === "pr-each")) {
       const runRow = lockedRun[0];
       let context: Record<string, any> = {};
       try { context = JSON.parse(runRow?.context || "{}"); } catch {}
@@ -400,10 +460,20 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
 
   const ctxRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1", [runId]);
   let repoPath = "";
+  let runContext: Readonly<Record<string, unknown>> = Object.freeze({});
   try {
     const ctx = ctxRow?.context ? JSON.parse(ctxRow.context) : {};
+    if (ctx === null || typeof ctx !== "object" || Array.isArray(ctx)) throw new Error();
+    runContext = ctx as Readonly<Record<string, unknown>>;
     repoPath = ctx.repo || ctx.REPO || "";
-  } catch {}
+  } catch (error) {
+    logger.warn(`[medic-auto-verify] Invalid run context: ${String(error)}`, { runId });
+    return false;
+  }
+  if (!repoPath) {
+    logger.warn("[medic-auto-verify] Run repository is unavailable", { runId });
+    return false;
+  }
 
   let verified = 0;
   let skipped = 0;
@@ -417,7 +487,7 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
         continue;
       }
     }
-    if (!runMedicAutoVerifySmokeGate(repoPath, runId, story.story_id)) {
+    if (!await runMedicAutoVerifySmokeGate(repoPath, runId, story.story_id, runContext)) {
       skipped++;
       continue;
     }
