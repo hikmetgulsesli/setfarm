@@ -1747,7 +1747,7 @@ function exactPoisonTask3ProbeExpressionV1(
   const invoke = invocation === "prepare-current-entry"
     ? "value=await m.prepareInternalProductionCurrentEntryOperationV1()"
     : "await m.resumeExactPoisonQuarantinePublisherCoreV1()";
-  return `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4C_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);Reflect.set(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1",Array.isArray(values.appearance)?values.appearance[0]:null);let outcome="returned",message=null,value=null;try{${invoke}}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,admissionCalls:probe.admissionCalls,cursors:probe.cursors}))})()`;
+  return `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4C_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const mutationPorts={calls:[]};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);Reflect.set(globalThis,"__p4cExactPoisonMutationPortsV1",mutationPorts);Reflect.set(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1",Array.isArray(values.appearance)?values.appearance[0]:null);let outcome="returned",message=null,value=null;try{${invoke}}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,admissionCalls:probe.admissionCalls,cursors:probe.cursors,mutationCalls:mutationPorts.calls}))})()`;
 }
 
 function runExactPoisonTask3FixtureV1(
@@ -1841,6 +1841,43 @@ function instrumentExactPoisonTask3BoundaryFixtureV1(
       ? `\n    if (!existsSync(${JSON.stringify(fault.marker)})) { writeFileSync(${JSON.stringify(fault.marker)}, "lost\\n", { flag: "wx", mode: 0o600 }); throw new Error("P4C_POST_ADMISSION_RESPONSE_LOSS"); }`
       : `\n    { const candidate=Reflect.get(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1") as undefined|null|{target:string;bytes:Buffer}; if (!candidate || !Buffer.isBuffer(candidate.bytes)) throw new Error("P4C_OVERLAY_APPEARANCE_MISSING"); mkdirSync(path.dirname(candidate.target),{recursive:true,mode:0o700}); writeFileSync(candidate.target,candidate.bytes,{flag:"wx",mode:0o600}); }`;
     source = source.replace(core, () => core.replace(admission, `${admission}${hook}`));
+  }
+  writeFileSync(modulePath, source);
+}
+
+function instrumentExactPoisonTask3WriterContentionLatchFixtureV1(
+  root: string,
+  acquiredPath: string,
+  releasePath: string,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const core = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
+  const boundary = "  const heldWriter = acquireExactPoisonRecoveryWriterV1();\n  try {\n    heldWriter.assertStable();";
+  assert.equal(core.split(boundary).length - 1, 1, "task3 contention fixture locates one stable post-acquisition H boundary");
+  const latch = `${boundary}
+    writeFileSync(${JSON.stringify(acquiredPath)}, String(process.pid) + "\\n", { flag: "a", mode: 0o600 });
+    { const wait = new Int32Array(new SharedArrayBuffer(4)); let released = false; while (!released) { try { lstatSync(${JSON.stringify(releasePath)}); released = true; } catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); } } }
+    heldWriter.assertStable();`;
+  writeFileSync(modulePath, source.replace(core, () => core.replace(boundary, latch)));
+}
+
+function instrumentExactPoisonTask3MutationPortsFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const cleanupDeclaration = "function cleanupPinnedTask12CurrentStatusCasQ1V1(";
+  assert.equal(source.split(cleanupDeclaration).length - 1, 1, "task3 mutation fixture locates the real current-status cleanup port");
+  source = source.replace(cleanupDeclaration, `export ${cleanupDeclaration}`);
+  for (const port of [
+    Object.freeze({ label: "database-migration", name: "applyInternalProductionBaselineBootstrapHandoffMigrationV1", firstStatement: "  const context = await selectCurrentEntryStoreContextV1();" }),
+    Object.freeze({ label: "service-restart", name: "restartInternalProductionBaselineServiceV1", firstStatement: "  const authorization = await resolveInternalProductionBaselineServiceRestartAuthorizationV1(input);" }),
+    Object.freeze({ label: "mission-control", name: "prepareInternalProductionBaselineServiceRestartV1", firstStatement: '  if (!isPlainRecord(input) || !hasExactKeys(input, ["service"]) || !Object.hasOwn(BASELINE_RESTART_ACTIONS_V1, input.service)) currentEntryFail("baseline restart service input is invalid");' }),
+    Object.freeze({ label: "current-status-cleanup", name: "cleanupPinnedTask12CurrentStatusCasQ1V1", firstStatement: "  const directory = path.dirname(target);" }),
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, port.name);
+    assert.equal(region.split(port.firstStatement).length - 1, 1, `${port.label}: task3 fixture locates the first mutation-capable statement`);
+    const hook = `  { const probe = Reflect.get(globalThis, "__p4cExactPoisonMutationPortsV1") as undefined | { calls: string[] }; if (probe === undefined) throw new Error("P4C_MUTATION_PORT_PROBE_MISSING:${port.label}"); probe.calls.push(${JSON.stringify(port.label)}); throw new Error(${JSON.stringify(`P4C_MUTATION_PORT_CALLED:${port.label}`)}); }\n`;
+    source = source.replace(region, () => region.replace(port.firstStatement, `${hook}${port.firstStatement}`));
   }
   writeFileSync(modulePath, source);
 }
@@ -14190,6 +14227,22 @@ function instrumentExactPoisonRecoveryTransientObserverFixtureV1(
   ambiguityProbe: Readonly<{ pid: number; observedPath: string }> | null = null,
 ): void {
   rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const p4bAuthority = rehashFixtureRecordV1(
+    JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+    (body) => { (body.controllerSource as Record<string, unknown>).buildHash = "4".repeat(64); },
+  );
+  const p4bPending = rehashFixtureRecordV1(
+    JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+    "pendingBootstrapHandoffMigrationRef",
+    "pendingBootstrapHandoffMigrationHash",
+    "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+    (body) => { (body.controllerSource as Record<string, unknown>).buildHash = "4".repeat(64); },
+  );
+  assert.notEqual(p4bAuthority.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "the P4b current audit fixture must not reinterpret frozen e2");
+  assert.notEqual(p4bPending.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, "the P4b current pending fixture must not reinterpret frozen ce");
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
   if (scanLatch !== null) {
@@ -14240,7 +14293,22 @@ ${transient.slice(bodyEnd)}`;
     }
     if (observeStartPath !== "") writeFileSync(observeStartPath, "started\\n", { flag: "wx", mode: 0o600 });
     const operation = requireExactPoisonRecoverySnapshotV1(fixedLegacyCurrentEntryOperationPathV1(), "P4b transient observer operation");
-    const observed = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter);
+    const authorityValue = ${JSON.stringify(p4bAuthority.value)};
+    const pendingValue = ${JSON.stringify(p4bPending.value)};
+    const currentPrerequisites = Object.freeze({
+      authorityV3Migration31Audit: Object.freeze({
+        value: authorityValue,
+        bytes: Buffer.from(${JSON.stringify(p4bAuthority.bytes.toString("base64"))}, "base64"),
+        pair: Object.freeze({ authorityV3Migration31AuditRef: ${JSON.stringify(p4bAuthority.ref)}, authorityV3Migration31AuditHash: ${JSON.stringify(p4bAuthority.hash)} }),
+      }),
+      pendingBootstrapHandoffMigration: Object.freeze({
+        value: pendingValue,
+        bytes: Buffer.from(${JSON.stringify(p4bPending.bytes.toString("base64"))}, "base64"),
+        pair: Object.freeze({ pendingBootstrapHandoffMigrationRef: ${JSON.stringify(p4bPending.ref)}, pendingBootstrapHandoffMigrationHash: ${JSON.stringify(p4bPending.hash)} }),
+      }),
+    });
+    const expectedPublished = await buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(currentPrerequisites);
+    const observed = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
     observed.assertStableOriginals();
     heldWriter.assertStable();
     if (observedPath !== "") writeFileSync(observedPath, "observed\\n", { flag: "wx", mode: 0o600 });
@@ -14570,28 +14638,6 @@ function runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(
     } catch(error) { outcome="threw"; message=String(error); }
     process.stdout.write(JSON.stringify({outcome,message,stableOutcome,admission}));
   })()`);
-}
-
-function exactPoisonOverlayVictimsV1(root: string): ReadonlyMap<string, Buffer> {
-  const workspace = path.dirname(root);
-  const victims = new Map<string, Buffer>();
-  for (const [name, bytes] of [
-    ["successor-publication", "publication-victim\n"],
-    ["database", "database-victim\n"],
-    ["owner", "owner-victim\n"],
-    ["service", "service-victim\n"],
-    ["migration", "migration-victim\n"],
-    ["cleanup", "cleanup-victim\n"],
-  ] as const) {
-    const target = path.join(workspace, ".p4c-overlay-external-victims", name);
-    fixtureFile(workspace, path.relative(workspace, target), bytes, 0o600);
-    victims.set(target, readFileSync(target));
-  }
-  return victims;
-}
-
-function assertExactPoisonOverlayVictimsUnchangedV1(victims: ReadonlyMap<string, Buffer>, label: string): void {
-  for (const [target, bytes] of victims) assert.deepEqual(readFileSync(target), bytes, `${label}: ${path.basename(target)} remains byte-identical`);
 }
 
 function replaceExactPoisonRawSecondV1(
@@ -17186,7 +17232,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.deepEqual(beforeOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: the original 10-directory/5-file body is unchanged before admission`);
         assert.equal(canonicalHash(beforeOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: the original inventory hash is unchanged before admission`);
         assert.deepEqual(beforeOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: the original five file identities are unchanged before admission`);
-        const victims = exactPoisonOverlayVictimsV1(root);
         const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
         assert.equal(result.status, 0, `${prefix.label}: ${result.stderr}`);
         assert.equal(result.stderr, "", prefix.label);
@@ -17249,7 +17294,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.deepEqual(afterOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: original inventory serialization stays frozen`);
         assert.equal(canonicalHash(afterOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: original inventory hash stays frozen`);
         assert.deepEqual(afterOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: original identities stay frozen`);
-        assertExactPoisonOverlayVictimsUnchangedV1(victims, prefix.label);
         for (const reserved of [
           "current-entry-store-quarantine-dispositions",
           "current-entry-store-successor-edges",
@@ -17288,7 +17332,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original, statFault);
         const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
         const options = mutate(root, original, overlay);
-        const victims = exactPoisonOverlayVictimsV1(root);
         const before = filesystemTreeSnapshot(original.store);
         const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, options);
         assert.equal(result.status, 0, `${label}: ${result.stderr}`);
@@ -17302,7 +17345,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           assert.equal(existsSync(options.appearance.target), true, `${label}: the copied race seam creates only the competing settled record`);
           assert.deepEqual(readFileSync(options.appearance.target), options.appearance.bytes, `${label}: the concurrent record is preserved exactly`);
         }
-        assertExactPoisonOverlayVictimsUnchangedV1(victims, label);
         for (const reserved of [
           "current-entry-store-quarantine-dispositions",
           "current-entry-store-successor-edges",
@@ -17411,6 +17453,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       const original = seedExactOriginalPoisonStoreV1(root);
       instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, false, false);
+      instrumentExactPoisonTask3MutationPortsFixtureV1(root);
       finalizeExactPoisonTask3FixtureV1(root, "fixture task3 current prerequisite recovery");
       const overlay = publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
       assert.notEqual(overlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "the independently built current audit must not reuse frozen e2");
@@ -17418,7 +17461,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
       const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
       const protectedBefore = exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay);
-      const victims = exactPoisonOverlayVictimsV1(root);
 
       const result = runExactPoisonTask3FixtureV1(root, observations, "prepare-current-entry");
       assert.equal(result.status, 0, result.stderr);
@@ -17428,10 +17470,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         message: string | null;
         value: Readonly<Record<string, unknown>> | null;
         admissionCalls: number;
+        mutationCalls: readonly string[];
       }>;
       assert.equal(observed.outcome, "returned", observed.message ?? "current-pair recovery did not return");
       assert.equal(observed.message, null);
       assert.ok(observed.admissionCalls >= 1, "prepare enters the real held-writer exact-poison admission");
+      assert.deepEqual(observed.mutationCalls, [], "recovery crosses no database migration, service restart, Mission Control, or current-status cleanup port");
       assert.deepEqual(observed.value, admitted.chain.records.successorOperation.value, "prepare returns the exact current-pair successor operation");
       assertExactPoisonRecoveryConvergedV1(original, admitted.chain, "current-pair recovery");
 
@@ -17453,8 +17497,24 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(bracket[12]?.value, overlay[0].value, "audit observation B equals A exactly");
       assert.deepEqual(bracket[13]?.value, overlay[1].value, "pending observation B equals A exactly");
       assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay), protectedBefore, "frozen and overlay history retains bytes and physical identities");
-      assertExactPoisonOverlayVictimsUnchangedV1(victims, "current-pair recovery");
       assert.equal(existsSync(path.join(original.store, admitted.chain.successorStoreRelativeRoot, "operations")), false, "the stop fixture performs no post-operation status mutation");
+
+      const mutationControl = runFixtureExpression(root, `(async()=>{const probe={calls:[]};Reflect.set(globalThis,"__p4cExactPoisonMutationPortsV1",probe);const definitions=[
+        ["database-migration","applyInternalProductionBaselineBootstrapHandoffMigrationV1",[{}]],
+        ["service-restart","restartInternalProductionBaselineServiceV1",[{}]],
+        ["mission-control","prepareInternalProductionBaselineServiceRestartV1",[{service:"mission-control"}]],
+        ["current-status-cleanup","cleanupPinnedTask12CurrentStatusCasQ1V1",[]],
+      ];const messages=[];for(const [label,name,args] of definitions){try{const port=Reflect.get(m,name);if(typeof port!=="function")throw new Error("P4C_MUTATION_PORT_UNAVAILABLE:"+label);await port(...args);messages.push("returned")}catch(error){messages.push(String(error))}}process.stdout.write(JSON.stringify({calls:probe.calls,messages}))})()`);
+      assert.equal(mutationControl.status, 0, mutationControl.stderr);
+      assert.equal(mutationControl.stderr, "");
+      const mutationControlObserved = JSON.parse(mutationControl.stdout) as Readonly<{ calls: readonly string[]; messages: readonly string[] }>;
+      assert.deepEqual(mutationControlObserved.calls, ["database-migration", "service-restart", "mission-control", "current-status-cleanup"], "the probes count a deliberate call to every actual mutation-capable entry port");
+      assert.deepEqual(mutationControlObserved.messages, [
+        "Error: P4C_MUTATION_PORT_CALLED:database-migration",
+        "Error: P4C_MUTATION_PORT_CALLED:service-restart",
+        "Error: P4C_MUTATION_PORT_CALLED:mission-control",
+        "Error: P4C_MUTATION_PORT_CALLED:current-status-cleanup",
+      ], "each mutation-capable entry port throws before its first real side effect");
 
       const source = readFileSync(observerSource, "utf8");
       const reader = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
@@ -17627,22 +17687,45 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
 
     {
       const fixture = setup("concurrent", [0, 1], null);
+      const fixtureParent = path.dirname(fixture.root);
+      const acquiredPath = path.join(fixtureParent, "p4c-writer-acquired");
+      const releasePath = path.join(fixtureParent, "p4c-writer-release");
+      const contenderStartedPath = path.join(fixtureParent, "p4c-contender-started");
+      let owner: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+      let contender: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
       try {
         const before = exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay);
+        instrumentExactPoisonTask3WriterContentionLatchFixtureV1(fixture.root, acquiredPath, releasePath);
         const expression = exactPoisonTask3ProbeExpressionV1(fixture.root, fixture.observations, "publisher-core");
-        const attempts = await Promise.all([
-          runFixtureExpressionAsync(fixture.root, expression),
-          runFixtureExpressionAsync(fixture.root, expression),
-        ]);
+        owner = runFixtureExpressionAsync(fixture.root, expression);
+        waitForFixturePredicateV1(() => existsSync(acquiredPath), "first recovery attempt post-acquisition H latch", 1_500);
+        const writerPaths = exactPoisonRecoveryWriterPathsFixtureV1(fixture.original.store);
+        assert.equal(exactPoisonRecoveryWriterArtifactsFixtureV1(writerPaths).includes(path.basename(writerPaths.lockPath)), true, "the latched first attempt demonstrably owns the fixed H writer");
+
+        const contenderExpression = `(async()=>{const fs=await import("node:fs");fs.writeFileSync(${JSON.stringify(contenderStartedPath)},"started\\n",{flag:"wx",mode:0o600});return ${expression}})()`;
+        contender = runFixtureExpressionAsync(fixture.root, contenderExpression);
+        waitForFixturePredicateV1(() => existsSync(contenderStartedPath), "second recovery attempt starts while H is held");
+        const contentionWait = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.wait(contentionWait, 0, 0, 250);
+        assert.equal(readFileSync(acquiredPath, "utf8").trim().split("\n").length, 1, "the second attempt cannot cross the post-acquisition boundary while the first owns H");
+        const authorityWhileHeld = recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators).filter((entry) => {
+          const basename = path.posix.basename(String(entry.locator));
+          return basename !== path.basename(writerPaths.lockPath) && !basename.startsWith(writerPaths.tempPrefix);
+        });
+        assert.deepEqual(authorityWhileHeld, [], "the contending attempt cannot publish recovery authority while H is held");
+
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const attempts = await Promise.all([owner, contender]);
         const observed = attempts.map((attempt, index) => parse(attempt, `concurrent:${index}`));
-        assert.ok(observed.some((attempt) => attempt.outcome === "returned"), "one writer contender publishes or adopts the exact successor");
-        if (observed.some((attempt) => attempt.outcome === "threw")) {
-          const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "concurrent:retry");
-          assert.equal(retry.outcome, "returned", retry.message ?? "the losing contender cannot adopt the winner");
-        }
+        assert.equal(observed[0]!.outcome, "returned", observed[0]!.message ?? "the admitted H owner did not publish");
+        if (observed[1]!.outcome === "threw") assert.match(observed[1]!.message ?? "", /writer|owner|lock|contention|live/i, "a refused contender fails only on the held H writer");
+        const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "concurrent:retry");
+        assert.equal(retry.outcome, "returned", retry.message ?? "the losing contender cannot adopt the winner on retry");
         assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, "concurrent exact successor");
         assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay), before, "concurrent writers never replace legacy or overlay records");
       } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        await Promise.allSettled([...(owner === null ? [] : [owner]), ...(contender === null ? [] : [contender])]);
         removeFixture(fixture.root);
       }
     }
@@ -20003,8 +20086,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     ]) assert.equal(Reflect.get(loaded, valueName), undefined, `${valueName} is absent from the runtime public ABI`);
 
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2, "P5c-P preserves the final literal exact2 contract");
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 15,
-      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, and two migration-status context fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
+      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, two migration-status context fences, and two current-prerequisite builder fences");
   });
 
   it("P5c-P freezes read-only writer-owner and publication F observers plus the exact P0-P5 topology", () => {
