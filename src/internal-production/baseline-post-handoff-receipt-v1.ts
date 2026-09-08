@@ -2052,7 +2052,12 @@ function readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(
   } finally {
     guard.close();
   }
-  return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });
+  try {
+    return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });
+  } catch (error) {
+    if (isEnoent(error)) currentEntryFail("current-entry authority record changed after presence observation");
+    throw error;
+  }
 }
 
 function readCurrentEntryAuthorityRecordSnapshotIfPresentV1(context: SelectedCurrentEntryStoreContextV1, target: string): FileSnapshot | null {
@@ -6513,8 +6518,12 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const heldWriter = acquireExactPoisonRecoveryWriterV1();
   try {
     heldWriter.assertStable();
-    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
-    const validatePostVisible = async (context: ExactPoisonRecoveryPinnedCommitChainV1): Promise<void> => {
+    const existing = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
+    heldWriter.assertStable();
+    const validatePostVisible = async (
+      context: ExactPoisonRecoveryPinnedCommitChainV1,
+      admission?: ExactPoisonQuarantineAdmissionV1,
+    ): Promise<void> => {
       heldWriter.assertStable();
       context.assertStable();
       await durablyAuthenticateSuccessorActivationCommitV1(context);
@@ -6524,12 +6533,12 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       heldWriter.assertStable();
       context.assertStable();
     };
-    const existing = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
     if (existing.state === "complete") {
       try { await validatePostVisible(existing.context); }
       finally { existing.context.close(); }
       return;
     }
+    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
     for (const { phase, ordinal } of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
       if (ordinal === 5) {
@@ -6539,7 +6548,7 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       }
       if (ordinal === 6) {
         const context = await openExactPoisonRecoveryPinnedCommitChainV1();
-        try { await validatePostVisible(context); }
+        try { await validatePostVisible(context, admission); }
         finally { context.close(); }
       }
     }

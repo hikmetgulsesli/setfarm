@@ -774,7 +774,12 @@ function canonicalFixtureRecordV1(value: Readonly<Record<string, unknown>>): Buf
 
 function task12FixturePresentedPathV1(candidate: string): string {
   const resolved = path.resolve(candidate);
-  return process.platform === "darwin" && resolved.startsWith("/private/var/")
+  return process.platform === "darwin" && (
+    resolved === "/private/tmp"
+    || resolved.startsWith("/private/tmp/")
+    || resolved === "/private/var"
+    || resolved.startsWith("/private/var/")
+  )
     ? resolved.slice("/private".length)
     : resolved;
 }
@@ -1829,7 +1834,10 @@ function writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(
 ): void {
   for (const [index, candidate] of overlay.entries()) {
     if (!present.includes(index)) continue;
-    const locator = path.relative(store, candidate.target);
+    const locator = path.relative(
+      task12FixturePresentedPathV1(store),
+      task12FixturePresentedPathV1(candidate.target),
+    );
     assert.equal(locator.startsWith("..") || path.isAbsolute(locator), false, "current prerequisite fixture stays inside the legacy store");
     writeStrictCurrentEntryFixtureRecordV1(store, locator, candidate.bytes);
   }
@@ -2033,7 +2041,7 @@ function exactPoisonTask3ProtectedHistorySnapshotV1(
   const files = protectedFiles.map((target) => {
     const stats = lstatSync(target, { bigint: true });
     return Object.freeze({
-      target: target.replace(/^\/private/, ""),
+      target: task12FixturePresentedPathV1(target),
       bytesBase64: readFileSync(target).toString("base64"),
       deviceDecimal: stats.dev.toString(10),
       inodeDecimal: stats.ino.toString(10),
@@ -4197,16 +4205,20 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
     ]);
     assert.equal((source.match(/\bselectCurrentEntryStoreContextV1\b/g) ?? []).length, PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.length + 1,
       "P5c-S keeps the sole selector definition plus exactly one call in each declared active public wrapper; no alias may escape the selected effect graph");
-    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\b/g) ?? []).length, 3,
-      "P5c-S keeps the selected-context creator at its definition and two reviewed construction sites only");
+    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\s*\(/g) ?? []).length, 3,
+      "P5c-S keeps exactly the creator definition and two reviewed construction calls");
+    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\b/g) ?? []).length, 4,
+      "P5c-S keeps only the creator definition, its one exact parameter-type reference, and two reviewed construction calls");
+    assert.equal((source.match(/Parameters<typeof createSelectedCurrentEntryStoreContextV1>\[0\]/g) ?? []).length, 1,
+      "P5c-S keeps one exact creator-derived selector helper input type");
     assert.equal((source.match(/\bselectedCurrentEntryStoreContextStatesV1\b/g) ?? []).length, 3,
       "P5c-S keeps the selected-context WeakMap at its declaration plus exact set/get ownership sites only");
     assert.deepEqual({ selectedStateRequire: (source.match(/\brequireSelectedCurrentEntryStoreContextStateV1\b/g) ?? []).length, selectedRootOpen: (source.match(/\bopenSelectedCurrentEntryPrerequisiteRootReaderV1\b/g) ?? []).length },
-      { selectedStateRequire: 15, selectedRootOpen: 7 },
-      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including migration status context fencing, and retains the early pre-schema plus selected-pass root acquisitions");
+      { selectedStateRequire: 17, selectedRootOpen: 7 },
+      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including both no-write prerequisite builders and migration status context fencing");
     assert.deepEqual({ pinnedChain: (source.match(/\bopenExactPoisonRecoveryPinnedCommitChainV1\b/g) ?? []).length, detachedProgress: (source.match(/\bobserveExactPoisonPostVisibleProgressPassNoWriteV1\b/g) ?? []).length },
-      { pinnedChain: 6, detachedProgress: 3 },
-      "P5c-S keeps detached pinned-chain/progress observer identifiers at their already audited ownership sites and cannot capture either through an arrow alias");
+      { pinnedChain: 8, detachedProgress: 3 },
+      "P5c-S keeps pinned-chain identifiers at the reviewed selector, durability, historical-operation, and two committed-prerequisite fallback sites while progress observation stays detached and exact");
     assert.deepEqual({ processEnv: (source.match(/\bprocess\.env\b/g) ?? []).length, denoEnv: (source.match(/\bDeno\.env\b/g) ?? []).length, bunEnv: (source.match(/\bBun\.env\b/g) ?? []).length, globalThis: (source.match(/\bglobalThis\b/g) ?? []).length, asyncLocal: (source.match(/\bAsyncLocalStorage\b/g) ?? []).length },
       { processEnv: 3, denoEnv: 0, bunEnv: 0, globalThis: 0, asyncLocal: 0 },
       "P5c-S permits only the three reviewed database observation leaves to read the database URL and adds no other ambient channel");
@@ -4763,12 +4775,10 @@ function instrumentPhase5cPreStatusFixtureV1(root: string): void {
   let source = readFileSync(modulePath, "utf8");
   const copiedWorkspaceLiteral = "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());";
   assert.equal(source.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
-  source = source.replace(copiedWorkspaceLiteral, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`);
-  const copiedPresentation = `const target = process.platform === "darwin" && resolvedTarget.startsWith("/private/var/")
-    ? resolvedTarget.slice("/private".length)
-    : resolvedTarget;`;
-  assert.equal(source.split(copiedPresentation).length - 1, 1, "P5c-P copied fixture retains one macOS lexical-presentation branch");
-  source = source.replace(copiedPresentation, "const target = resolvedTarget;");
+  source = source.replace(
+    copiedWorkspaceLiteral,
+    `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`,
+  );
   const selectedServiceCall = "await observeInternalProductionServiceCensusV1()";
   const serviceProbeCall = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown}).next("service") as InternalProductionServiceCensusV1';
   const ensureStart = source.indexOf("async function ensureTask12PreparedCurrentEntryStatusV1(");
@@ -14771,7 +14781,7 @@ function deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(
   assert.equal(candidates.length, 2, "copied private builders derive exactly two overlay candidates");
   return Object.freeze(candidates.map((candidate) => Object.freeze({
     kind: candidate.kind,
-    target: candidate.target.replace(/^\/private/, ""),
+    target: task12FixturePresentedPathV1(candidate.target),
     value: candidate.value,
     bytes: Buffer.from(candidate.bytesBase64, "base64"),
     pair: candidate.pair,
@@ -15043,9 +15053,7 @@ function fixturePbaPortSource(options: FixtureOptions): string {
 function createFixture(options: FixtureOptions = {}): string {
   assert.equal(existsSync(observerSource), true, "production observer module must exist before fixture creation");
   const physicalFixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-oa17-observer-")));
-  const fixtureRoot = process.platform === "darwin" && physicalFixtureRoot.startsWith("/private/var/")
-    ? physicalFixtureRoot.slice("/private".length)
-    : physicalFixtureRoot;
+  const fixtureRoot = task12FixturePresentedPathV1(physicalFixtureRoot);
   const root = path.join(fixtureRoot, "setfarm");
   fixtureFile(root, "scripts/write-build-info.mjs", readFileSync(path.join(sourceRoot, "scripts/write-build-info.mjs")));
   fixtureFile(root, "scripts/build-generation-retention.mjs", readFileSync(path.join(sourceRoot, "scripts/build-generation-retention.mjs")));
@@ -17439,7 +17447,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.equal(observed.stableOutcome, "returned", `${prefix.label}: ${observed.admission?.stableMessage ?? "stability was not returned"}`);
         assert.deepEqual(observed.admission?.currentPrerequisiteOverlay.map((candidate) => ({
           kind: candidate.kind,
-          target: candidate.target.replace(/^\/private/, ""),
+          target: task12FixturePresentedPathV1(candidate.target),
           value: candidate.value,
           bytesBase64: candidate.bytesBase64,
           pair: candidate.pair,
@@ -18256,7 +18264,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       'await durablyAuthenticateSuccessorActivationSealV1(',
       'ordinal === 6',
       'await openExactPoisonRecoveryPinnedCommitChainV1()',
-      'try { await validatePostVisible(context); }',
+      'try { await validatePostVisible(context, admission); }',
     ];
     let cursor = -1;
     for (const marker of ordered) {
@@ -19109,8 +19117,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
     assert.match(
       validator,
-      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<(?:void|ExactPoisonPostVisibleZeroProgressSelectionV1)>/,
-      "the B1 entry remains one private context-only validator while the P5c-Z slice strengthens its result",
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,\s*admitted\?: ExactPoisonQuarantineAdmissionV1,?\s*\): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1>/,
+      "the B1 entry remains one private pinned-context validator with only the exact optional publisher admission capability",
     );
     assert.doesNotMatch(validator, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|resumeExactPoisonQuarantine|durablyAuthenticateSuccessorActivationSealV1|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync|latest|mtime|process\.env|globalThis/, "the B1 validator boundary retains no recursion, scan, writer, publisher, or ambient authority");
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function revalidatePostVisibleCurrentEntryStoreV1|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B1 adds no public seam, runtime env seam, or fourth marker family");
@@ -38518,7 +38526,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.equal(result.publication.length, 2, "the two public wrappers publish exactly once each");
       assert.deepEqual(result.publication.map((entry) => ({
         ...entry,
-        target: entry.target.replace(/^\/private/, ""),
+        target: task12FixturePresentedPathV1(entry.target),
       })), [
         {
           target: currentEntryPrerequisiteRecord(fixture, "authority-v3-migration31-audits", result.authority.pair.hash),
