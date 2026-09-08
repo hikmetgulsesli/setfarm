@@ -1758,6 +1758,56 @@ function runExactPoisonTask3FixtureV1(
   return runFixtureExpression(root, exactPoisonTask3ProbeExpressionV1(root, observations, invocation));
 }
 
+function runP4cRecoveryPrerequisiteBoundaryMutationFixtureV1(
+  root: string,
+  expected: Readonly<Record<string, unknown>>,
+  mutation: "public-observer" | "ambient-latest",
+): ReturnType<typeof spawnSync> {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const expose = (marker: string): void => {
+    assert.equal(source.split(marker).length - 1, 1, `Task 4 copied recovery fixture locates ${marker}`);
+    source = source.replace(marker, `export ${marker}`);
+  };
+  expose("async function observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(");
+  expose("async function canonicalRecordBytes(");
+  for (const [name, kind] of [
+    ["buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1", "authority"],
+    ["buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1", "pending"],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    const headerEnd = region.indexOf("{\n");
+    assert.notEqual(headerEnd, -1, `Task 4 copied private ${kind} builder has a body`);
+    const instrumented = `${region.slice(0, headerEnd + 2)}  const p4cTask4Probe = Reflect.get(globalThis, "__p4cTask4PrerequisiteProbeV1") as undefined | { privateBuilder(kind: string): unknown };\n  if (p4cTask4Probe !== undefined) return p4cTask4Probe.privateBuilder(${JSON.stringify(kind)}) as never;\n${region.slice(headerEnd + 2)}`;
+    source = source.replace(region, () => instrumented);
+  }
+  const recovery = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+  const privateAuthority = "const authority = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);";
+  assert.equal(recovery.split(privateAuthority).length - 1, 1, "Task 4 copied recovery has one private authority-builder boundary");
+  let mutatedRecovery: string;
+  if (mutation === "public-observer") {
+    const publicObserver = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionAuthorityV3Migration31AuditV1");
+    const headerEnd = publicObserver.indexOf("{\n");
+    assert.notEqual(headerEnd, -1, "Task 4 copied public authority observer has a body");
+    const instrumentedPublicObserver = `${publicObserver.slice(0, headerEnd + 2)}  const p4cTask4Probe = Reflect.get(globalThis, "__p4cTask4PrerequisiteProbeV1") as undefined | { publicObserver(): unknown };\n  if (p4cTask4Probe !== undefined) return p4cTask4Probe.publicObserver() as never;\n${publicObserver.slice(headerEnd + 2)}`;
+    source = source.replace(publicObserver, () => instrumentedPublicObserver);
+    mutatedRecovery = recovery.replace(
+      privateAuthority,
+      "const authority = await observeCurrentInternalProductionAuthorityV3Migration31AuditV1();",
+    );
+  } else {
+    mutatedRecovery = recovery.replace(
+      privateAuthority,
+      "const authority = await (Reflect.get(globalThis, \"__p4cTask4PrerequisiteProbeV1\") as { latest(kind: string): Promise<unknown> }).latest(\"authority\") as never;",
+    );
+  }
+  source = source.replace(recovery, () => mutatedRecovery);
+  writeFileSync(modulePath, source);
+
+  const transported = JSON.stringify(fixtureTransportValueV1(expected));
+  return runFixtureExpression(root, `(async()=>{const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const expected=revive(${transported});const privateCalls=[];const latestCalls=[];let publicCalls=0;const record=(kind)=>{const selected=expected[kind==="authority"?"authorityV3Migration31Audit":"pendingBootstrapHandoffMigration"];const refKey=kind==="authority"?"authorityV3Migration31AuditRef":"pendingBootstrapHandoffMigrationRef";const hashKey=kind==="authority"?"authorityV3Migration31AuditHash":"pendingBootstrapHandoffMigrationHash";return Object.freeze({value:selected.value,bytes:selected.bytes,pair:Object.freeze({ref:selected.pair[refKey],hash:selected.pair[hashKey]})})};const probe={privateBuilder:(kind)=>{privateCalls.push(kind);return record(kind)},publicObserver:()=>{publicCalls+=1;throw new Error("P4C_TASK4_PUBLIC_PREREQUISITE_OBSERVER_CALLED")},latest:async(kind)=>{latestCalls.push(kind);const selected=record(kind);const core=structuredClone(selected.value);const refKey="authorityV3Migration31AuditRef";const hashKey="authorityV3Migration31AuditHash";delete core[refKey];delete core[hashKey];core.currentAuthorityAuditHash=core.currentAuthorityAuditHash==="f".repeat(64)?"e".repeat(64):"f".repeat(64);const crypto=await import("node:crypto");const coreBytes=await m.canonicalRecordBytes(core);const hash=crypto.createHash("sha256").update(coreBytes.subarray(0,-1)).digest("hex");const value=Object.freeze({...core,[refKey]:"setfarm://internal-production/authority-v3-migration31-audit/sha256/"+hash,[hashKey]:hash});return Object.freeze({value,bytes:await m.canonicalRecordBytes(value),pair:Object.freeze({ref:value[refKey],hash:value[hashKey]})})}};Reflect.set(globalThis,"__p4cTask4PrerequisiteProbeV1",probe);let outcome="returned",message=null;try{const actual=await m.observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1();if(actual.authorityV3Migration31Audit.pair.authorityV3Migration31AuditRef!==expected.authorityV3Migration31Audit.pair.authorityV3Migration31AuditRef||actual.authorityV3Migration31Audit.pair.authorityV3Migration31AuditHash!==expected.authorityV3Migration31Audit.pair.authorityV3Migration31AuditHash||actual.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationRef!==expected.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationRef||actual.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationHash!==expected.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationHash)throw new Error("P4C_TASK4_PRIVATE_PAIR_BOUNDARY_FAILED")}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,privateCalls,publicCalls,latestCalls}))})()`);
+}
+
 function finalizeExactPoisonTask3FixtureV1(root: string, label: string): void {
   git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
   git(root, ["commit", "-qm", label]);
@@ -17534,6 +17584,43 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     } finally {
       removeFixture(root);
     }
+  });
+
+  it("P4c recovery boundary rejects public and ambient prerequisite replacement mutations", () => {
+    const runMutation = (mutation: "public-observer" | "ambient-latest") => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        const expected = buildExactPoisonPublisherRawObservationsV1(original, admitted).prerequisites[0] as Readonly<Record<string, unknown>>;
+        const result = runP4cRecoveryPrerequisiteBoundaryMutationFixtureV1(root, expected, mutation);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stderr, "");
+        return JSON.parse(result.stdout) as Readonly<{
+          outcome: "returned" | "threw";
+          message: string | null;
+          privateCalls: readonly string[];
+          publicCalls: number;
+          latestCalls: readonly string[];
+        }>;
+      } finally {
+        removeFixture(root);
+      }
+    };
+
+    const publicObserver = runMutation("public-observer");
+    assert.equal(publicObserver.outcome, "threw", "the copied recovery boundary must stop at a reintroduced public observer");
+    assert.match(publicObserver.message ?? "", /P4C_TASK4_PUBLIC_PREREQUISITE_OBSERVER_CALLED/);
+    assert.deepEqual(publicObserver.privateCalls, [], "the public observer replaces rather than supplements the private builder");
+    assert.equal(publicObserver.publicCalls, 1);
+    assert.deepEqual(publicObserver.latestCalls, []);
+
+    const ambientLatest = runMutation("ambient-latest");
+    assert.equal(ambientLatest.outcome, "threw", "the copied recovery boundary must reject an ambient/latest replacement pair");
+    assert.match(ambientLatest.message ?? "", /P4C_TASK4_PRIVATE_PAIR_BOUNDARY_FAILED/);
+    assert.deepEqual(ambientLatest.privateCalls, ["pending"], "only the unmodified pending builder remains private");
+    assert.equal(ambientLatest.publicCalls, 0);
+    assert.deepEqual(ambientLatest.latestCalls, ["authority"]);
   });
 
   it("P4c exact-poison overlay recovery survives response loss and concurrent publication", async () => {
