@@ -775,9 +775,7 @@ function canonicalFixtureRecordV1(value: Readonly<Record<string, unknown>>): Buf
 function task12FixturePresentedPathV1(candidate: string): string {
   const resolved = path.resolve(candidate);
   return process.platform === "darwin" && (
-    resolved === "/private/tmp"
-    || resolved.startsWith("/private/tmp/")
-    || resolved === "/private/var"
+    resolved === "/private/var"
     || resolved.startsWith("/private/var/")
   )
     ? resolved.slice("/private".length)
