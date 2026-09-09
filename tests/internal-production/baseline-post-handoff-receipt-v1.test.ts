@@ -1991,6 +1991,147 @@ function runExactPoisonHistoricalPrerequisiteResolutionFixtureV1(
   return runFixtureExpression(root, `(async()=>{const probe={calls:[]};Reflect.set(globalThis,"__p4cHistoricalPrerequisiteUnavailableV1",probe);const attempt=async(fn)=>{try{return {outcome:"returned",value:await fn(),message:null}}catch(error){return {outcome:"threw",value:null,message:String(error)}}};const successorAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(successorAuthorityPair)}));const successorPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(successorPendingPair)}));const legacyAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(legacyAuthorityPair)}));const legacyPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(legacyPendingPair)}));const arbitraryAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1({authorityV3Migration31AuditRef:"setfarm://internal-production/authority-v3-migration31-audit/sha256/${arbitraryAuthorityHash}",authorityV3Migration31AuditHash:"${arbitraryAuthorityHash}"}));const arbitraryPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1({pendingBootstrapHandoffMigrationRef:"setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${arbitraryPendingHash}",pendingBootstrapHandoffMigrationHash:"${arbitraryPendingHash}"}));process.stdout.write(JSON.stringify({successorAuthority,successorPending,legacyAuthority,legacyPending,arbitraryAuthority,arbitraryPending,calls:probe.calls}))})()`);
 }
 
+type ExactPoisonHistoricalPrerequisiteKindFixtureV1 =
+  | "authorityV3Migration31Audit"
+  | "pendingBootstrapHandoffMigration";
+
+type ExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1 =
+  | "absent-to-present"
+  | "present-to-absent"
+  | "same-byte-replacement"
+  | "other-byte-replacement";
+
+async function runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(
+  kind: ExactPoisonHistoricalPrerequisiteKindFixtureV1,
+  race: ExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1,
+): Promise<Readonly<{
+  outcome: "returned" | "threw";
+  message: string | null;
+  value: Readonly<Record<string, unknown>> | null;
+  events: readonly string[];
+  matches: number;
+  mutationApplied: boolean;
+  replacementRetained: boolean;
+  replacementBytesSha256: string;
+  replacementInode: string;
+  initialInode: string | null;
+  exactBasenamePresent: boolean;
+  displacedRetained: boolean;
+  displacedBytesSha256: string | null;
+  displacedInode: string | null;
+}>> {
+  const root = createFixture();
+  const readyPath = path.join(path.dirname(root), `p4c-historical-${kind}-${race}-ready`);
+  const releasePath = path.join(path.dirname(root), `p4c-historical-${kind}-${race}-release`);
+  let running: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+  try {
+    installExactCurrentSuccessorGitFixtureV1(root);
+    const original = seedExactOriginalPoisonStoreV1(root);
+    const successor = buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+    const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, successor);
+    rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+    seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+    instrumentExactPoisonDurabilityFixtureV1(root);
+
+    const index = kind === "authorityV3Migration31Audit" ? 0 : 1;
+    const legacyBasename = kind === "authorityV3Migration31Audit"
+      ? "authority-v3-migration31-audit.json"
+      : "pending-bootstrap-handoff-migration.json";
+    const legacyTarget = path.join(original.store, legacyBasename);
+    const initialBytes = kind === "authorityV3Migration31Audit"
+      ? exactCurrentAuthorityV31FixtureBytesV1()
+      : exactCurrentPendingFixtureBytesV1();
+    assert.equal(existsSync(legacyTarget), false, `${kind}:${race}: exact-poison seed leaves the compatibility basename absent`);
+    if (race !== "absent-to-present") {
+      writeFileSync(legacyTarget, initialBytes, { flag: "wx", mode: 0o600 });
+      chmodSync(legacyTarget, 0o600);
+    }
+    const initialStats = race === "absent-to-present" ? null : lstatSync(legacyTarget, { bigint: true });
+
+    const pair = kind === "authorityV3Migration31Audit"
+      ? Object.freeze({
+        authorityV3Migration31AuditRef: successor[index].pair.ref,
+        authorityV3Migration31AuditHash: successor[index].pair.hash,
+      })
+      : Object.freeze({
+        pendingBootstrapHandoffMigrationRef: successor[index].pair.ref,
+        pendingBootstrapHandoffMigrationHash: successor[index].pair.hash,
+      });
+    const invocation = kind === "authorityV3Migration31Audit"
+      ? `m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(pair)})`
+      : `m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(pair)})`;
+    const fault = Object.freeze({
+      kind: "commit",
+      boundary: "pre-fsync",
+      occurrence: 1,
+      action: "latch",
+      readyPath,
+      releasePath,
+    });
+    running = runFixtureExpressionAsync(root, `(async()=>{const probe={events:[],matches:0,fault:${JSON.stringify(fault)}};Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,events:probe.events,matches:probe.matches}))})()`);
+    waitForFixturePredicateV1(() => existsSync(readyPath), `${kind}:${race}: committed-successor C-authentication latch`);
+
+    let replacementBytes: Buffer | null;
+    let displacedTarget: string | null = null;
+    if (race === "absent-to-present") {
+      replacementBytes = initialBytes;
+    } else {
+      displacedTarget = `${legacyTarget}.${race}.held`;
+      renameSync(legacyTarget, displacedTarget);
+      replacementBytes = race === "present-to-absent"
+        ? null
+        : race === "same-byte-replacement"
+          ? initialBytes
+          : successor[index].bytes;
+    }
+    if (replacementBytes !== null) {
+      writeFileSync(legacyTarget, replacementBytes, { flag: "wx", mode: 0o600 });
+      chmodSync(legacyTarget, 0o600);
+    }
+    const replacementEvidenceTarget = replacementBytes === null ? displacedTarget! : legacyTarget;
+    const replacementStats = lstatSync(replacementEvidenceTarget, { bigint: true });
+    if (initialStats !== null && race !== "present-to-absent") assert.notEqual(replacementStats.ino, initialStats.ino, `${kind}:${race}: mutation creates a distinct legacy basename inode`);
+    writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+
+    const result = await running;
+    assert.equal(result.status, 0, `${kind}:${race}: ${result.stderr}`);
+    assert.equal(result.stderr, "", `${kind}:${race}`);
+    const observed = JSON.parse(result.stdout) as Readonly<{
+      outcome: "returned" | "threw";
+      message: string | null;
+      value: Readonly<Record<string, unknown>> | null;
+      events: readonly string[];
+      matches: number;
+    }>;
+    return Object.freeze({
+      ...observed,
+      mutationApplied: race === "present-to-absent" ? !existsSync(legacyTarget) : existsSync(legacyTarget),
+      replacementRetained: replacementBytes !== null
+        && existsSync(legacyTarget)
+        && lstatSync(legacyTarget, { bigint: true }).ino === replacementStats.ino,
+      replacementBytesSha256: createHash("sha256").update(readFileSync(replacementEvidenceTarget)).digest("hex"),
+      replacementInode: replacementStats.ino.toString(10),
+      initialInode: initialStats?.ino.toString(10) ?? null,
+      exactBasenamePresent: existsSync(legacyTarget),
+      displacedRetained: displacedTarget !== null
+        && existsSync(displacedTarget)
+        && initialStats !== null
+        && lstatSync(displacedTarget, { bigint: true }).ino === initialStats.ino
+        && readFileSync(displacedTarget).equals(initialBytes),
+      displacedBytesSha256: displacedTarget !== null && existsSync(displacedTarget)
+        ? createHash("sha256").update(readFileSync(displacedTarget)).digest("hex")
+        : null,
+      displacedInode: displacedTarget !== null && existsSync(displacedTarget)
+        ? lstatSync(displacedTarget, { bigint: true }).ino.toString(10)
+        : null,
+    });
+  } finally {
+    if (running !== null && !existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+    if (running !== null) await Promise.allSettled([running]);
+    removeFixture(root);
+  }
+}
+
 function instrumentExactPoisonTask3WriterContentionLatchFixtureV1(
   root: string,
   acquiredPath: string,
@@ -17790,6 +17931,54 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       } finally {
         removeFixture(root);
       }
+    });
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    it(`P4c committed successor fallback rejects fixed legacy basename appearance during C authentication: ${kind}`, async () => {
+      const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, "absent-to-present");
+      assert.equal(observed.matches, 1, `${kind}: the mutation is latched inside the real C durability authentication`);
+      assert.equal(observed.mutationApplied, true, `${kind}: the fixed legacy basename appears only after initial ENOENT`);
+      assert.equal(observed.outcome, "threw", `${kind}: retained legacy absence must reject later basename appearance`);
+      assert.match(observed.message ?? "", /fixed legacy historical prerequisite|appeared|changed/i, `${kind}: failure names the retained legacy boundary`);
+      assert.equal(observed.value, null, `${kind}: no successor prerequisite value crosses the raced legacy boundary`);
+      assert.equal(observed.replacementRetained, true, `${kind}: the resolver never cleans the appearing legacy record`);
+      assert.equal(observed.initialInode, null, `${kind}: the fallback began from exact legacy ENOENT`);
+      assert.ok(observed.replacementInode.length > 0 && observed.replacementBytesSha256.length === 64, `${kind}: the appearing record remains inspectable evidence`);
+    });
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    for (const race of ["same-byte-replacement", "other-byte-replacement"] as const) {
+      it(`P4c committed successor fallback rejects fixed legacy basename replacement during C authentication: ${kind}: ${race}`, async () => {
+        const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, race);
+        assert.equal(observed.matches, 1, `${kind}:${race}: the mutation is latched inside the real C durability authentication`);
+        assert.equal(observed.mutationApplied, true, `${kind}:${race}: replacement occurs after the unequal legacy snapshot is validated`);
+        assert.equal(observed.outcome, "threw", `${kind}:${race}: a retained unequal legacy inode cannot authorize its replacement`);
+        assert.match(observed.message ?? "", /fixed legacy historical prerequisite|changed/i, `${kind}:${race}: failure names the retained legacy snapshot`);
+        assert.equal(observed.value, null, `${kind}:${race}: no successor prerequisite value crosses the replaced legacy boundary`);
+        assert.equal(observed.replacementRetained, true, `${kind}:${race}: the resolver never cleans the replacement evidence`);
+        assert.notEqual(observed.initialInode, null, `${kind}:${race}: the fallback began from one present unequal legacy snapshot`);
+        assert.notEqual(observed.replacementInode, observed.initialInode, `${kind}:${race}: the replacement has a distinct inode`);
+        assert.equal(observed.replacementBytesSha256.length, 64, `${kind}:${race}: replacement bytes remain inspectable evidence`);
+      });
+    }
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    it(`P4c committed successor fallback rejects fixed legacy basename disappearance during C authentication: ${kind}`, async () => {
+      const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, "present-to-absent");
+      assert.equal(observed.matches, 1, `${kind}: disappearance is latched inside the real C durability authentication`);
+      assert.equal(observed.mutationApplied, true, `${kind}: the valid unequal legacy basename disappears only after its snapshot is validated`);
+      assert.equal(observed.outcome, "threw", `${kind}: retained legacy presence must reject later basename disappearance`);
+      assert.match(observed.message ?? "", /fixed legacy historical prerequisite|absent|changed/i, `${kind}: failure names the retained legacy snapshot`);
+      assert.equal(observed.value, null, `${kind}: no successor prerequisite value crosses the disappeared legacy boundary`);
+      assert.equal(observed.exactBasenamePresent, false, `${kind}: the exact legacy basename remains absent after the race`);
+      assert.equal(observed.replacementRetained, false, `${kind}: the resolver does not fabricate a basename replacement`);
+      assert.equal(observed.displacedRetained, true, `${kind}: the displaced valid legacy inode and bytes remain evidence`);
+      assert.notEqual(observed.initialInode, null, `${kind}: the fallback began from one present unequal legacy snapshot`);
+      assert.equal(observed.displacedInode, observed.initialInode, `${kind}: the displaced evidence is the exact initially retained inode`);
+      assert.equal(observed.displacedBytesSha256, observed.replacementBytesSha256, `${kind}: the displaced evidence retains its initial exact bytes`);
     });
   }
 

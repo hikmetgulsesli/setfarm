@@ -2073,6 +2073,19 @@ type CurrentEntryPrerequisiteSnapshotV1 = Readonly<{
   absentContentLocator: string | null;
 }>;
 
+type FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1 = Readonly<
+  | {
+    state: "absent";
+    kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+    legacyLocator: string;
+  }
+  | {
+    state: "present-unequal";
+    kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+    legacySnapshot: FileSnapshot;
+  }
+>;
+
 type CurrentEntryPrerequisiteRootReaderV1 = Readonly<{
   store: Readonly<{ directory: string; device: bigint }>;
   root: DirectorySnapshot;
@@ -2454,7 +2467,7 @@ export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
       return await resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(pair, rootReader, retained);
     } catch (error) {
       const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "authorityV3Migration31Audit", expected.authorityV3Migration31AuditHash!);
-      await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
+      const fallbackAuthority = await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
         "authorityV3Migration31Audit",
         expected,
         rootReader,
@@ -2462,7 +2475,7 @@ export async function resolveInternalProductionAuthorityV3Migration31AuditV1(
         retained,
         error,
       );
-      return await resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath);
+      return await resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath, fallbackAuthority);
     }
   } finally {
     rootReader.close();
@@ -2572,7 +2585,7 @@ export async function resolveInternalProductionPendingBootstrapHandoffMigrationV
       return await resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(pair, rootReader, retained);
     } catch (error) {
       const contentPath = currentEntryPrerequisiteRecordPathAtRootV1(rootReader.store.directory, "pendingBootstrapHandoffMigration", expected.pendingBootstrapHandoffMigrationHash!);
-      await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
+      const fallbackAuthority = await requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
         "pendingBootstrapHandoffMigration",
         expected,
         rootReader,
@@ -2580,7 +2593,7 @@ export async function resolveInternalProductionPendingBootstrapHandoffMigrationV
         retained,
         error,
       );
-      return await resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath);
+      return await resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1(expected, rootReader, contentPath, fallbackAuthority);
     }
   } finally {
     rootReader.close();
@@ -2678,6 +2691,27 @@ function assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(
   rootReader.assertStable();
 }
 
+function assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(
+  authority: FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1,
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
+  rootReader: CurrentEntryPrerequisiteRootReaderV1,
+  label: string,
+): void {
+  rootReader.assertStable();
+  const legacyLocator = path.join(rootReader.store.directory, CURRENT_ENTRY_FILES[kind]);
+  if (authority.kind !== kind) currentEntryFail(`${label} kind is crossed`);
+  if (authority.state === "absent") {
+    if (authority.legacyLocator !== legacyLocator) currentEntryFail(`${label} absence locator is crossed`);
+    if (readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(rootReader.store, legacyLocator) !== null) {
+      currentEntryFail(`${label} appeared across committed successor fallback`);
+    }
+  } else {
+    if (authority.legacySnapshot.locator !== legacyLocator) currentEntryFail(`${label} snapshot locator is crossed`);
+    assertExactPoisonRecoverySnapshotStableV1(authority.legacySnapshot, label);
+  }
+  rootReader.assertStable();
+}
+
 async function requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
   kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration",
   expected: Readonly<Record<string, string>>,
@@ -2685,12 +2719,18 @@ async function requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
   contentPath: string,
   retained: readonly CurrentEntryPrerequisiteSnapshotV1[],
   fixedFailure: unknown,
-): Promise<void> {
+): Promise<FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1> {
   rootReader.assertStable();
   if (retained.length > 1) currentEntryFail("fixed legacy historical prerequisite retained multiple records");
   const snapshot = retained[0];
+  let authority: FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1;
   if (snapshot === undefined) {
     if (!isEnoent(fixedFailure)) throw fixedFailure;
+    authority = Object.freeze({
+      state: "absent" as const,
+      kind,
+      legacyLocator: path.join(rootReader.store.directory, CURRENT_ENTRY_FILES[kind]),
+    });
   } else {
     if (snapshot.absentContentLocator === null) throw fixedFailure;
     if (snapshot.absentContentLocator !== contentPath) currentEntryFail("fixed legacy historical prerequisite absence locator is crossed");
@@ -2719,15 +2759,29 @@ async function requireCommittedExactPoisonPrerequisiteFallbackEligibilityV1(
     }
     assertExactPoisonRecoverySnapshotStableV1(snapshot.source, "fixed legacy historical prerequisite fallback");
     rootReader.assertStable();
+    authority = Object.freeze({
+      state: "present-unequal" as const,
+      kind,
+      legacySnapshot: snapshot.source,
+    });
   }
   assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, `fixed legacy ${kind}`);
+  assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(
+    authority,
+    kind,
+    rootReader,
+    "fixed legacy historical prerequisite fallback",
+  );
+  return authority;
 }
 
 async function resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1(
   expected: Readonly<Record<string, string>>,
   rootReader: CurrentEntryPrerequisiteRootReaderV1,
   contentPath: string,
+  fallbackAuthority: FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "authorityV3Migration31Audit", rootReader, "fixed legacy historical prerequisite fallback");
   const context = await openExactPoisonRecoveryPinnedCommitChainV1();
   try {
     const current = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(context).authorityV3Migration31Audit;
@@ -2741,7 +2795,9 @@ async function resolveInternalProductionAuthorityV3Migration31AuditAtCommittedEx
     context.assertStable();
     context.successorRootParent.assertStable();
     assertExactPoisonRecoveryPinnedRecordStableV1(context.successorAuthorityV31, "historical committed successor authority-v31 audit");
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "authorityV3Migration31Audit", rootReader, "fixed legacy historical prerequisite fallback");
     await durablyAuthenticateSuccessorActivationCommitV1(context);
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "authorityV3Migration31Audit", rootReader, "fixed legacy historical prerequisite fallback");
     assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy authority-v31 audit");
     context.assertStable();
     context.successorRootParent.assertStable();
@@ -2753,6 +2809,7 @@ async function resolveInternalProductionAuthorityV3Migration31AuditAtCommittedEx
     context.successorRootParent.assertStable();
     context.assertStable();
     assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy authority-v31 audit");
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "authorityV3Migration31Audit", rootReader, "fixed legacy historical prerequisite fallback");
     return parsed;
   } finally {
     context.close();
@@ -2763,7 +2820,9 @@ async function resolveInternalProductionPendingBootstrapHandoffMigrationAtCommit
   expected: Readonly<Record<string, string>>,
   rootReader: CurrentEntryPrerequisiteRootReaderV1,
   contentPath: string,
+  fallbackAuthority: FixedLegacyHistoricalPrerequisiteFallbackAuthorityV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "pendingBootstrapHandoffMigration", rootReader, "fixed legacy historical prerequisite fallback");
   const context = await openExactPoisonRecoveryPinnedCommitChainV1();
   try {
     const current = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(context).pendingBootstrapHandoffMigration;
@@ -2777,7 +2836,9 @@ async function resolveInternalProductionPendingBootstrapHandoffMigrationAtCommit
     context.assertStable();
     context.successorRootParent.assertStable();
     assertExactPoisonRecoveryPinnedRecordStableV1(context.successorPending, "historical committed successor pending migration");
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "pendingBootstrapHandoffMigration", rootReader, "fixed legacy historical prerequisite fallback");
     await durablyAuthenticateSuccessorActivationCommitV1(context);
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "pendingBootstrapHandoffMigration", rootReader, "fixed legacy historical prerequisite fallback");
     assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy pending migration");
     context.assertStable();
     context.successorRootParent.assertStable();
@@ -2789,6 +2850,7 @@ async function resolveInternalProductionPendingBootstrapHandoffMigrationAtCommit
     context.successorRootParent.assertStable();
     context.assertStable();
     assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, contentPath, "fixed legacy pending migration");
+    assertFixedLegacyHistoricalPrerequisiteFallbackAuthorityStableV1(fallbackAuthority, "pendingBootstrapHandoffMigration", rootReader, "fixed legacy historical prerequisite fallback");
     return parsed;
   } finally {
     context.close();
