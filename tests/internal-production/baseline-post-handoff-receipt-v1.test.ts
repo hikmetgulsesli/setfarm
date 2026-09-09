@@ -13957,16 +13957,29 @@ function instrumentPhase5bNestedPrerequisiteFixtureV1(root: string): void {
   const selectedFallback = "  const legacy = fixedCurrentEntryPath(context, kind);";
   const historicalFallbackLegacy = "  const legacyLocator = path.join(store.directory, CURRENT_ENTRY_FILES[kind]);";
   const historicalFallbackPinned = "  const legacyLocator = path.join(rootReader.store.directory, CURRENT_ENTRY_FILES[kind]);";
-  assert.equal(source.split(selectedFallback).length - 1, 1, "P5b-B3 instruments one selected-root fallback boundary");
-  const historicalLegacyCount = source.split(historicalFallbackLegacy).length - 1;
-  const historicalPinnedCount = source.split(historicalFallbackPinned).length - 1;
+  const selectedFallbackReader = topLevelFunctionRegionV1(source, "readCurrentEntryPrerequisiteRecordAtRootV1");
+  assert.equal(selectedFallbackReader.split(selectedFallback).length - 1, 1, "P5b-B3 instruments one selected-root fallback boundary");
+  const selectedFallbackReaderStart = source.indexOf(selectedFallbackReader);
+  const selectedFallbackIndex = source.indexOf(selectedFallback, selectedFallbackReaderStart);
+  assert.ok(selectedFallbackIndex >= selectedFallbackReaderStart && selectedFallbackIndex < selectedFallbackReaderStart + selectedFallbackReader.length,
+    "P5b-B3 pins selected-root fallback instrumentation to the selected prerequisite reader");
+  source = source.slice(0, selectedFallbackIndex)
+    + `  p5bB3MaybeDriftPrerequisiteRootV1("active", kind, "after-content-enoent");\n${selectedFallback}\n  p5bB3RecordFallbackOpenV1(legacy.directory, path.join(legacy.directory, legacy.basename));`
+    + source.slice(selectedFallbackIndex + selectedFallback.length);
+
+  const historicalFallbackReader = topLevelFunctionRegionV1(source, "readFixedLegacyCurrentEntryPrerequisiteRecordAtRootV1");
+  const historicalLegacyCount = historicalFallbackReader.split(historicalFallbackLegacy).length - 1;
+  const historicalPinnedCount = historicalFallbackReader.split(historicalFallbackPinned).length - 1;
   assert.equal(historicalLegacyCount + historicalPinnedCount, 1, "P5b-B3 instruments exactly one legacy or pinned historical-root fallback boundary");
-  source = source.replace(selectedFallback, `  p5bB3MaybeDriftPrerequisiteRootV1("active", kind, "after-content-enoent");\n${selectedFallback}\n  p5bB3RecordFallbackOpenV1(legacy.directory, path.join(legacy.directory, legacy.basename));`);
-  if (historicalLegacyCount === 1) {
-    source = source.replace(historicalFallbackLegacy, `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallbackLegacy}\n  p5bB3RecordFallbackOpenV1(store.directory, legacyLocator);`);
-  } else {
-    source = source.replace(historicalFallbackPinned, `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallbackPinned}\n  p5bB3RecordFallbackOpenV1(rootReader.store.directory, legacyLocator);`);
-  }
+  const historicalFallbackReaderStart = source.indexOf(historicalFallbackReader);
+  const historicalFallback = historicalLegacyCount === 1 ? historicalFallbackLegacy : historicalFallbackPinned;
+  const historicalFallbackIndex = source.indexOf(historicalFallback, historicalFallbackReaderStart);
+  assert.ok(historicalFallbackIndex >= historicalFallbackReaderStart && historicalFallbackIndex < historicalFallbackReaderStart + historicalFallbackReader.length,
+    "P5b-B3 pins historical fallback instrumentation to the fixed prerequisite reader");
+  const historicalFallbackRoot = historicalLegacyCount === 1 ? "store.directory" : "rootReader.store.directory";
+  source = source.slice(0, historicalFallbackIndex)
+    + `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallback}\n  p5bB3RecordFallbackOpenV1(${historicalFallbackRoot}, legacyLocator);`
+    + source.slice(historicalFallbackIndex + historicalFallback.length);
 
   const historicalResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
   const resolverStart = source.indexOf(historicalResolver);
