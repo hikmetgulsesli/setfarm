@@ -19535,8 +19535,11 @@ async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservat
   const value = await resolveTask12RecordV1(context, input, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1, "fresh-runtime-and-owner-observations", "current-entry fresh runtime/owner observation");
   if (!hasExactKeys(value, ["schema", "currentEntryStatus", "entryAuthority", "serviceCensus", "completeZeroOwnerCensusObservation", "completeZeroOwnerCensusObservationBody", "controllerRuntimeSourceRelations", "observedAt", "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash"]) || value.schema !== "setfarm.internal-production-current-entry-fresh-runtime-and-owner-observation.v1" || typeof value.observedAt !== "string" || !RFC3339_MILLIS.test(value.observedAt)) currentEntryFail("current-entry fresh runtime/owner observation shape is invalid");
   if (!isPlainRecord(value.currentEntryStatus) || !isPlainRecord(value.entryAuthority) || !isPlainRecord(value.completeZeroOwnerCensusObservation) || !isPlainRecord(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh dependency evidence is invalid");
-  requirePair(value.currentEntryStatus, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1);
+  const currentEntryStatus = requirePair(value.currentEntryStatus, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1) as InternalProductionCurrentEntryAuthorityStatusPairV1;
   const entryAuthority = requirePair(value.entryAuthority, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1) as InternalProductionCurrentEntryAuthorityPairV1;
+  const status = await resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context, currentEntryStatus);
+  if (status.state !== "ready") currentEntryFail("current-entry fresh status is not ready");
+  if (canonicalComparable(status.entryAuthority) !== canonicalComparable(entryAuthority)) currentEntryFail("current-entry fresh status entry authority is crossed");
   const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, entryAuthority);
   requireTask12StoredControllerRuntimeSourceRelationsV1(authority, value);
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);

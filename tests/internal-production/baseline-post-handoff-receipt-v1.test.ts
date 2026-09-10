@@ -39757,10 +39757,10 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     return JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
   }
 
-  function currentEntryVerifierRecordsV1(root: string, family: "complete-zero" | "fresh" | "verification"): readonly string[] {
+  function currentEntryVerifierRecordsV1(root: string, family: "complete-zero" | "fresh" | "verification" | "status"): readonly string[] {
     const directory = family === "complete-zero"
       ? path.join(path.dirname(root), "data/internal-production-baseline/complete-zero-owner-census-observation-v1/records/sha256")
-      : path.join(currentEntryStore(root), "records", family === "fresh" ? "fresh-runtime-and-owner-observations" : "verifications", "sha256");
+      : path.join(currentEntryStore(root), "records", family === "fresh" ? "fresh-runtime-and-owner-observations" : family === "status" ? "statuses" : "verifications", "sha256");
     if (!existsSync(directory)) return Object.freeze([]);
     const records: string[] = [];
     const visit = (target: string): void => { for (const name of readdirSync(target)) { const member = path.join(target, name); if (lstatSync(member).isDirectory()) visit(member); else if (name.endsWith(".json")) records.push(member); } };
@@ -39959,6 +39959,61 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       assert.equal(ordered.length, 33);
       assert.deepEqual(ordered.map(({ name }) => name), [...pairKeys.map(([name]) => name), "currentEntryAuthority", "currentEntryStatus", "completeZeroOwnerCensusObservation", "freshRuntimeAndOwnerObservation"]);
       assert.equal(verification.resolvedAuthoritySetHash, canonicalHash(ordered), "receipt commits the exact literal 33-pair order");
+
+      const rejectFreshStatusPairV1 = (
+        label: string,
+        statusPair: CurrentEntryVerifierAcceptancePairV1,
+        pattern: RegExp,
+      ): void => {
+        const candidateBody = structuredClone(freshValue) as Record<string, unknown>;
+        delete candidateBody.freshRuntimeAndOwnerObservationRef;
+        delete candidateBody.freshRuntimeAndOwnerObservationHash;
+        candidateBody.currentEntryStatus = statusPair;
+        const candidateHash = canonicalHash(candidateBody);
+        const candidatePair = Object.freeze({
+          freshRuntimeAndOwnerObservationRef: `setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/${candidateHash}`,
+          freshRuntimeAndOwnerObservationHash: candidateHash,
+        });
+        const candidateTarget = path.join(fixture.store, "records", "fresh-runtime-and-owner-observations", "sha256", candidateHash.slice(0, 2), `${candidateHash}.json`);
+        phase5cEnsurePublicationParentV1(candidateTarget);
+        writeFileSync(candidateTarget, canonicalFixtureRecordV1(Object.freeze({ ...candidateBody, ...candidatePair })), { mode: 0o600 });
+        const locatorsBefore = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+        const verificationRecordsBefore = currentEntryVerifierRecordsV1(fixture.root, "verification");
+        const result = currentEntryVerifierRunV1(fixture, { resolveFreshPair: candidatePair });
+        assert.equal(result.outcome, "threw", `${label} must fail closed at the exported pair-only fresh resolver`);
+        assert.match(String(result.message), pattern);
+        assert.equal(result.serviceCalls, 0, `${label} rejection does not add a live service observation`);
+        assert.equal(result.operationalMutationCalls, 0);
+        assert.equal(result.protectedBefore, result.protectedAfter);
+        assert.deepEqual(result.publicationEvents, []);
+        assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), verificationRecordsBefore, `${label} does not publish a success receipt`);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), locatorsBefore);
+      };
+      const nonexistentStatusHash = "e".repeat(64);
+      const nonexistentStatusPair = Object.freeze({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${nonexistentStatusHash}`, statusHash: nonexistentStatusHash });
+      const nonexistentStatusTarget = path.join(fixture.store, "records", "statuses", "sha256", nonexistentStatusHash.slice(0, 2), `${nonexistentStatusHash}.json`);
+      assert.equal(existsSync(nonexistentStatusTarget), false);
+      const historicalStatus = currentEntryVerifierRecordsV1(fixture.root, "status")
+        .map((target) => JSON.parse(readFileSync(target, "utf8")) as Readonly<Record<string, unknown>>)
+        .find((candidate) => candidate.state !== "ready" && candidate.operationHash === (fixture.status as Readonly<Record<string, unknown>>).operationHash);
+      assert.notEqual(historicalStatus, undefined, "fixture retains a non-ready historical status for the same operation");
+      const historicalStatusPair = Object.freeze({ statusRef: String(historicalStatus!.statusRef), statusHash: String(historicalStatus!.statusHash) });
+      const differentEntryAuthorityHash = "d".repeat(64);
+      const differentEntryAuthorityPair = Object.freeze({ entryAuthorityRef: `setfarm://internal-production/current-entry-authority/sha256/${differentEntryAuthorityHash}`, entryAuthorityHash: differentEntryAuthorityHash });
+      const crossedReadyStatusBody = structuredClone(fixture.status) as Record<string, unknown>;
+      delete crossedReadyStatusBody.statusRef;
+      delete crossedReadyStatusBody.statusHash;
+      crossedReadyStatusBody.entryAuthority = differentEntryAuthorityPair;
+      const crossedReadyStatusHash = canonicalHash(crossedReadyStatusBody);
+      const crossedReadyStatusPair = Object.freeze({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${crossedReadyStatusHash}`, statusHash: crossedReadyStatusHash });
+      const crossedReadyStatusTarget = path.join(fixture.store, "records", "statuses", "sha256", crossedReadyStatusHash.slice(0, 2), `${crossedReadyStatusHash}.json`);
+      phase5cEnsurePublicationParentV1(crossedReadyStatusTarget);
+      writeFileSync(crossedReadyStatusTarget, canonicalFixtureRecordV1(Object.freeze({ ...crossedReadyStatusBody, ...crossedReadyStatusPair })), { mode: 0o600 });
+      for (const [label, pair, pattern] of [
+        ["nonexistent current-entry status", nonexistentStatusPair, /ENOENT|current-entry status/],
+        ["historical non-ready current-entry status", historicalStatusPair, /fresh status is not ready/],
+        ["ready current-entry status naming another entry authority", crossedReadyStatusPair, /fresh status entry authority is crossed/],
+      ] as const) rejectFreshStatusPairV1(label, pair, pattern);
 
       const crossedFreshBody = structuredClone(freshValue) as Record<string, unknown>;
       delete crossedFreshBody.freshRuntimeAndOwnerObservationRef;
