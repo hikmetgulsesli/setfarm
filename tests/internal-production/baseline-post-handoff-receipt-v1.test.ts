@@ -39387,6 +39387,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const evidenceBody = Object.freeze({
       schema: "fixture.product-build-authority-v2-delivery-evidence.v1",
       marker: "current-entry-verifier-acceptance",
+      currentSource: Object.freeze({
+        branch: "main",
+        clean: true,
+        sha: "8".repeat(40),
+        treeHash: "9".repeat(40),
+        buildHash: "a".repeat(64),
+        originMainSha: "8".repeat(40),
+      }),
       focusedTests: focused,
     });
     const deliveryEvidenceHash = canonicalHash(evidenceBody);
@@ -39558,7 +39566,25 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const preparedStatus = JSON.parse(preparedStatusResult.stdout) as Readonly<Record<string, unknown>>;
     const serviceResult = runFixtureExpression(root, "m.observeInternalProductionServiceCensusV1().then((value)=>process.stdout.write(JSON.stringify(value)))");
     assert.equal(serviceResult.status, 0, serviceResult.stderr);
-    const service = JSON.parse(serviceResult.stdout) as Readonly<Record<string, unknown>>;
+    const serviceBody = JSON.parse(serviceResult.stdout) as Record<string, unknown>;
+    delete serviceBody.censusHash;
+    const missionControl = serviceBody.missionControl as Record<string, unknown>;
+    Object.assign(missionControl, {
+      loadedSourceSha: "8".repeat(40),
+      loadedTreeHash: "9".repeat(40),
+      loadedBuildHash: "a".repeat(64),
+    });
+    missionControl.generationHash = canonicalHash({
+      schema: "setfarm.internal-production-loaded-service-generation.v1",
+      label: "com.setrox.mission-control",
+      serviceIdentityHash: missionControl.serviceIdentityHash,
+      source: {
+        sha: missionControl.loadedSourceSha,
+        treeHash: missionControl.loadedTreeHash,
+        buildHash: missionControl.loadedBuildHash,
+      },
+    });
+    const service = Object.freeze({ ...serviceBody, censusHash: canonicalHash(serviceBody) });
 
     const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
     const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, true);
@@ -39801,6 +39827,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     fixture: ReturnType<typeof currentEntryVerifierReadyFixtureV1>,
     fault: "extra-wrapper-key" | "extra-body-key" | "missing-body" | "wrong-body-schema" | "wrong-operation" | "crossed-census" | "crossed-body-hash" | "openclaw-source-authority" | "service-member-shape" | "restore",
     mutateService?: (service: Record<string, unknown>) => void,
+    mutateAuthority?: (authority: Record<string, unknown>) => void,
   ): Readonly<{
     authority: Readonly<Record<string, unknown>>;
     authorityPair: CurrentEntryVerifierAcceptancePairV1;
@@ -39867,6 +39894,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         loaded.loadedRuntimeServiceAuthorityHash = loadedRuntimeServiceAuthorityHash;
       }
     }
+    mutateAuthority?.(authorityBody);
     const entryAuthorityHash = canonicalHash(authorityBody);
     const authorityPair = Object.freeze({ entryAuthorityRef: `setfarm://internal-production/current-entry-authority/sha256/${entryAuthorityHash}`, entryAuthorityHash });
     const authority = Object.freeze({ ...authorityBody, ...authorityPair });
@@ -40112,8 +40140,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         mutateService: (service: Record<string, unknown>) => void,
         verifyReceipt = false,
         expectedFailure = /service census member is invalid|service generation is crossed|process identity hash is not SHA-256/,
+        mutateAuthority?: (authority: Record<string, unknown>) => void,
       ): void => {
-        const variant = currentEntryVerifierActivateAuthorityVariantV1(fixture, "service-member-shape", mutateService);
+        const variant = currentEntryVerifierActivateAuthorityVariantV1(fixture, "service-member-shape", mutateService, mutateAuthority);
         const loaded = variant.authority.loadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>;
         const loadedPair = Object.freeze({
           loadedRuntimeServiceAuthorityRef: String(loaded.loadedRuntimeServiceAuthorityRef),
@@ -40205,22 +40234,24 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         ["crossed spawner generation hash", (service: Record<string, unknown>) => { (service.spawner as Record<string, unknown>).generationHash = "d".repeat(64); }, false],
       ] as const) rejectServiceMemberCandidateV1(label, mutateService, verifyReceipt);
 
-      const driftDashboardSourceAuthorityV1 = (
+      const driftLoadedServiceSourceAuthorityV1 = (
         service: Record<string, unknown>,
+        member: "spawner" | "dashboard" | "missionControl",
+        label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control",
         drift: Readonly<{ source?: boolean; tree?: boolean; build?: boolean }>,
       ): void => {
-        const dashboard = service.dashboard as Record<string, unknown>;
-        if (drift.source) dashboard.loadedSourceSha = "d".repeat(40);
-        if (drift.tree) dashboard.loadedTreeHash = "e".repeat(40);
-        if (drift.build) dashboard.loadedBuildHash = "f".repeat(64);
-        dashboard.generationHash = canonicalHash({
+        const loadedService = service[member] as Record<string, unknown>;
+        if (drift.source) loadedService.loadedSourceSha = "d".repeat(40);
+        if (drift.tree) loadedService.loadedTreeHash = "e".repeat(40);
+        if (drift.build) loadedService.loadedBuildHash = "f".repeat(64);
+        loadedService.generationHash = canonicalHash({
           schema: "setfarm.internal-production-loaded-service-generation.v1",
-          label: "com.setrox.setfarm-dashboard",
-          serviceIdentityHash: dashboard.serviceIdentityHash,
+          label,
+          serviceIdentityHash: loadedService.serviceIdentityHash,
           source: {
-            sha: dashboard.loadedSourceSha,
-            treeHash: dashboard.loadedTreeHash,
-            buildHash: dashboard.loadedBuildHash,
+            sha: loadedService.loadedSourceSha,
+            treeHash: loadedService.loadedTreeHash,
+            buildHash: loadedService.loadedBuildHash,
           },
         });
       };
@@ -40231,9 +40262,39 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         ["dashboard build authority drift", { build: true }, false],
       ] as const) rejectServiceMemberCandidateV1(
         label,
-        (service) => driftDashboardSourceAuthorityV1(service, drift),
+        (service) => driftLoadedServiceSourceAuthorityV1(service, "dashboard", "com.setrox.setfarm-dashboard", drift),
         verifyReceipt,
         /stored runtime source authority is crossed/,
+      );
+      rejectServiceMemberCandidateV1(
+        "controller/spawner/dashboard authority drift from current-entry operation",
+        (service) => {
+          const drift = { source: true, tree: true, build: true } as const;
+          driftLoadedServiceSourceAuthorityV1(service, "spawner", "com.setrox.setfarm-spawner", drift);
+          driftLoadedServiceSourceAuthorityV1(service, "dashboard", "com.setrox.setfarm-dashboard", drift);
+        },
+        true,
+        /stored controller source authority is crossed/,
+        (authority) => {
+          authority.controllerSourceAuthority = Object.freeze({
+            controllerSourceSha: "d".repeat(40),
+            controllerTreeHash: "e".repeat(40),
+            controllerBuildHash: "f".repeat(64),
+          });
+        },
+      );
+      for (const [label, drift, verifyReceipt] of [
+        ["Mission Control tree authority drift", { tree: true }, false],
+        ["Mission Control build authority drift", { build: true }, false],
+        ["Mission Control source/tree/build authority drift", { source: true, tree: true, build: true }, true],
+      ] as const) rejectServiceMemberCandidateV1(
+        label,
+        (service) => driftLoadedServiceSourceAuthorityV1(service, "missionControl", "com.setrox.mission-control", drift),
+        verifyReceipt,
+        /stored Mission Control source authority is crossed/,
+        drift.source
+          ? (authority) => { authority.missionControlSourceSha = "d".repeat(40); }
+          : undefined,
       );
 
       const openClawVariant = currentEntryVerifierActivateAuthorityVariantV1(fixture, "openclaw-source-authority");

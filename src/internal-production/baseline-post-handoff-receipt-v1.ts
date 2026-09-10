@@ -19313,10 +19313,11 @@ function deriveTask12ControllerRuntimeSourceRelationsV1(
   });
 }
 
-function requireTask12StoredControllerRuntimeSourceRelationsV1(
+async function requireTask12StoredControllerRuntimeSourceRelationsV1(
+  context: SelectedCurrentEntryStoreContextV1,
   authority: Readonly<Record<string, unknown>>,
   fresh: Readonly<Record<string, unknown>>,
-): void {
+): Promise<void> {
   const serviceCensus = requireExactPoisonPostVisibleServiceCensusEffectV1(fresh.serviceCensus);
   const openClaw = serviceCensus.openClaw as Readonly<Record<string, unknown>>;
   if (
@@ -19332,6 +19333,19 @@ function requireTask12StoredControllerRuntimeSourceRelationsV1(
   requireGitHash(controllerSourceAuthority.controllerSourceSha, "current-entry stored controller source SHA");
   requireGitHash(controllerSourceAuthority.controllerTreeHash, "current-entry stored controller tree");
   requireSha256(controllerSourceAuthority.controllerBuildHash, "current-entry stored controller build");
+  const currentEntryOperation = requirePair(authority.currentEntryOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1;
+  const operation = await resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context, currentEntryOperation);
+  const operationControllerSource = requireSource(operation.controllerSource);
+  if (
+    controllerSourceAuthority.controllerSourceSha !== operationControllerSource.sha
+    || controllerSourceAuthority.controllerTreeHash !== operationControllerSource.treeHash
+    || controllerSourceAuthority.controllerBuildHash !== operationControllerSource.buildHash
+  ) currentEntryFail("current-entry stored controller source authority is crossed with current-entry operation");
+  const operationPbaPair = requirePair(operation.productBuildAuthorityV2DeliveryEvidence, "deliveryEvidenceRef", "deliveryEvidenceHash", "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/");
+  const authorityPbaPair = requirePair(authority.productBuildAuthorityV2DeliveryEvidence, "deliveryEvidenceRef", "deliveryEvidenceHash", "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/");
+  if (canonicalComparable(authorityPbaPair) !== canonicalComparable(operationPbaPair)) currentEntryFail("current-entry stored Mission Control delivery authority is crossed with current-entry operation");
+  const operationPbaResponse = parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(operation.productBuildAuthorityV2Observation.response);
+  const operationMissionControlSource = requireSource(operationPbaResponse.evidence.currentSource);
   const loaded = requireTask12LoadedRuntimeServiceAuthorityV1(authority);
   for (const name of ["spawner", "dashboard", "missionControl", "openClaw"] as const) {
     if (canonicalComparable(loaded.body[name]) !== canonicalComparable(serviceCensus[name])) currentEntryFail("current-entry stored service census and loaded runtime authority are crossed");
@@ -19347,8 +19361,13 @@ function requireTask12StoredControllerRuntimeSourceRelationsV1(
     || dashboard.loadedSourceSha !== controllerSourceAuthority.controllerSourceSha
     || dashboard.loadedTreeHash !== controllerSourceAuthority.controllerTreeHash
     || dashboard.loadedBuildHash !== controllerSourceAuthority.controllerBuildHash
-    || authority.missionControlSourceSha !== missionControl.loadedSourceSha
   ) currentEntryFail("current-entry stored runtime source authority is crossed");
+  if (
+    authority.missionControlSourceSha !== missionControl.loadedSourceSha
+    || missionControl.loadedSourceSha !== operationMissionControlSource.sha
+    || missionControl.loadedTreeHash !== operationMissionControlSource.treeHash
+    || missionControl.loadedBuildHash !== operationMissionControlSource.buildHash
+  ) currentEntryFail("current-entry stored Mission Control source authority is crossed with current-entry operation");
   const expected = deriveTask12ControllerRuntimeSourceRelationsV1(controllerSourceAuthority, loaded.pair, serviceCensus);
   if (!isPlainRecord(fresh.controllerRuntimeSourceRelations) || canonicalComparable(fresh.controllerRuntimeSourceRelations) !== canonicalComparable(expected)) currentEntryFail("current-entry runtime source relations are crossed");
 }
@@ -19545,7 +19564,7 @@ async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservat
   if (status.state !== "ready") currentEntryFail("current-entry fresh status is not ready");
   if (canonicalComparable(status.entryAuthority) !== canonicalComparable(entryAuthority)) currentEntryFail("current-entry fresh status entry authority is crossed");
   const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, entryAuthority);
-  requireTask12StoredControllerRuntimeSourceRelationsV1(authority, value);
+  await requireTask12StoredControllerRuntimeSourceRelationsV1(context, authority, value);
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");
   return value;
