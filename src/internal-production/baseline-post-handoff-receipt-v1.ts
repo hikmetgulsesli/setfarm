@@ -19338,11 +19338,15 @@ function requireTask12StoredControllerRuntimeSourceRelationsV1(
   }
   if (loaded.body.observedServiceCensusHash !== serviceCensus.censusHash) currentEntryFail("current-entry stored service census hash and loaded runtime authority are crossed");
   const spawner = serviceCensus.spawner as Readonly<Record<string, unknown>>;
+  const dashboard = serviceCensus.dashboard as Readonly<Record<string, unknown>>;
   const missionControl = serviceCensus.missionControl as Readonly<Record<string, unknown>>;
   if (
     spawner.loadedSourceSha !== controllerSourceAuthority.controllerSourceSha
     || spawner.loadedTreeHash !== controllerSourceAuthority.controllerTreeHash
     || spawner.loadedBuildHash !== controllerSourceAuthority.controllerBuildHash
+    || dashboard.loadedSourceSha !== controllerSourceAuthority.controllerSourceSha
+    || dashboard.loadedTreeHash !== controllerSourceAuthority.controllerTreeHash
+    || dashboard.loadedBuildHash !== controllerSourceAuthority.controllerBuildHash
     || authority.missionControlSourceSha !== missionControl.loadedSourceSha
   ) currentEntryFail("current-entry stored runtime source authority is crossed");
   const expected = deriveTask12ControllerRuntimeSourceRelationsV1(controllerSourceAuthority, loaded.pair, serviceCensus);

@@ -40111,6 +40111,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         label: string,
         mutateService: (service: Record<string, unknown>) => void,
         verifyReceipt = false,
+        expectedFailure = /service census member is invalid|service generation is crossed|process identity hash is not SHA-256/,
       ): void => {
         const variant = currentEntryVerifierActivateAuthorityVariantV1(fixture, "service-member-shape", mutateService);
         const loaded = variant.authority.loadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>;
@@ -40180,13 +40181,13 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         const verificationRecordsBefore = currentEntryVerifierRecordsV1(fixture.root, "verification");
         const freshResult = currentEntryVerifierRunV1(fixture, { resolveFreshPair: candidateFreshPair });
         assert.equal(freshResult.outcome, "threw", `${label} must fail closed at the exported pair-only fresh resolver`);
-        assert.match(String(freshResult.message), /service census member is invalid|service generation is crossed|process identity hash is not SHA-256/);
+        assert.match(String(freshResult.message), expectedFailure);
         assert.equal(freshResult.operationalMutationCalls, 0);
         assert.deepEqual(freshResult.publicationEvents, []);
         if (verifyReceipt) {
           const verificationResult = currentEntryVerifierRunV1(fixture, { resolvePair: candidateVerificationPair, serviceOverride: variant.service });
           assert.equal(verificationResult.outcome, "threw", `${label} must fail closed at the pair-only verification resolver`);
-          assert.match(String(verificationResult.message), /service census member is invalid|service generation is crossed|process identity hash is not SHA-256/);
+          assert.match(String(verificationResult.message), expectedFailure);
           assert.equal(verificationResult.operationalMutationCalls, 0);
           assert.deepEqual(verificationResult.publicationEvents, []);
         }
@@ -40203,6 +40204,37 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         ["invalid dashboard process hash", (service: Record<string, unknown>) => { (service.dashboard as Record<string, unknown>).processIdentityHash = "not-a-sha256"; }, false],
         ["crossed spawner generation hash", (service: Record<string, unknown>) => { (service.spawner as Record<string, unknown>).generationHash = "d".repeat(64); }, false],
       ] as const) rejectServiceMemberCandidateV1(label, mutateService, verifyReceipt);
+
+      const driftDashboardSourceAuthorityV1 = (
+        service: Record<string, unknown>,
+        drift: Readonly<{ source?: boolean; tree?: boolean; build?: boolean }>,
+      ): void => {
+        const dashboard = service.dashboard as Record<string, unknown>;
+        if (drift.source) dashboard.loadedSourceSha = "d".repeat(40);
+        if (drift.tree) dashboard.loadedTreeHash = "e".repeat(40);
+        if (drift.build) dashboard.loadedBuildHash = "f".repeat(64);
+        dashboard.generationHash = canonicalHash({
+          schema: "setfarm.internal-production-loaded-service-generation.v1",
+          label: "com.setrox.setfarm-dashboard",
+          serviceIdentityHash: dashboard.serviceIdentityHash,
+          source: {
+            sha: dashboard.loadedSourceSha,
+            treeHash: dashboard.loadedTreeHash,
+            buildHash: dashboard.loadedBuildHash,
+          },
+        });
+      };
+      for (const [label, drift, verifyReceipt] of [
+        ["dashboard source/tree/build authority drift", { source: true, tree: true, build: true }, true],
+        ["dashboard source SHA authority drift", { source: true }, false],
+        ["dashboard tree authority drift", { tree: true }, false],
+        ["dashboard build authority drift", { build: true }, false],
+      ] as const) rejectServiceMemberCandidateV1(
+        label,
+        (service) => driftDashboardSourceAuthorityV1(service, drift),
+        verifyReceipt,
+        /stored runtime source authority is crossed/,
+      );
 
       const openClawVariant = currentEntryVerifierActivateAuthorityVariantV1(fixture, "openclaw-source-authority");
       const openClawLoaded = openClawVariant.authority.loadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>;
