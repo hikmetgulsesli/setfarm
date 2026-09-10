@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const tsxLoader = import.meta.resolve("tsx");
 const helperSourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-service-restart-helper-v1.ts");
@@ -448,15 +448,44 @@ test("P4 helper rejects insecure settlement-store ancestors", async () => {
   }
 });
 
-test("P4 startup family imports are inert in a fresh database-free child", () => {
+function runStartupFamilyImportProbe({
+  injectedImportUrl = null,
+  retainedRequestPath = null,
+}: Readonly<{ injectedImportUrl?: string | null; retainedRequestPath?: string | null }> = {}) {
   const repository = path.resolve(import.meta.dirname, "../..");
+  const instrumentedModuleUrls = [
+    "baseline-post-handoff-receipt-v1.ts",
+    "baseline-spawner-startup-admission-v1.ts",
+    "baseline-restart-authority-retirement-v1.ts",
+    "baseline-service-restart-helper-v1.ts",
+    "baseline-service-restart-sequence-v1.ts",
+  ].flatMap((basename) => {
+    const absolute = path.join(repository, "src/internal-production", basename);
+    const physical = realpathSync(absolute);
+    return [pathToFileURL(absolute).href, pathToFileURL(physical).href];
+  });
+  if (injectedImportUrl !== null) {
+    instrumentedModuleUrls.push(injectedImportUrl);
+    const physical = realpathSync(fileURLToPath(injectedImportUrl));
+    instrumentedModuleUrls.push(pathToFileURL(physical).href);
+  }
   const environment = { ...process.env };
   delete environment.SETFARM_PG_URL;
   delete environment.SETFARM_TEST_PG_ADMIN_URL;
+  if (retainedRequestPath !== null) environment.UV_THREADPOOL_SIZE = "1";
   const program = `
+    import {createHook} from "node:async_hooks";
     import childProcess from "node:child_process";
+    import {pbkdf2} from "node:crypto";
+    import dns from "node:dns";
     import fs from "node:fs";
-    import {syncBuiltinESMExports} from "node:module";
+    import http from "node:http";
+    import https from "node:https";
+    import {registerHooks,syncBuiltinESMExports} from "node:module";
+    import net from "node:net";
+    import tls from "node:tls";
+    const probeSourceUrl=import.meta.url;
+    const instrumentedModuleUrls=Object.freeze(${JSON.stringify([...new Set(instrumentedModuleUrls)])});
     await Promise.all([
       import("./src/internal-production/baseline-post-handoff-receipt-v1.ts?prewarm=receipt"),
       import("./src/internal-production/baseline-spawner-startup-admission-v1.ts?prewarm=startup"),
@@ -464,25 +493,187 @@ test("P4 startup family imports are inert in a fresh database-free child", () =>
       import("./src/internal-production/baseline-service-restart-helper-v1.ts?prewarm=helper"),
       import("./src/internal-production/baseline-service-restart-sequence-v1.ts?prewarm=sequence")
     ]);
+    const evaluationSetKey="__setfarmP4StartupImportEvaluationV1";
+    const evaluatedSetKey="__setfarmP4StartupImportsEvaluatedV1";
+    const activeInstrumentedModuleEvaluations=new Set();
+    const evaluatedInstrumentedModuleUrls=new Set();
+    globalThis[evaluationSetKey]=activeInstrumentedModuleEvaluations;
+    globalThis[evaluatedSetKey]=evaluatedInstrumentedModuleUrls;
+    const isInstrumentedModuleUrl=(url)=>instrumentedModuleUrls.some((candidate)=>url===candidate || url.startsWith(candidate+"?"));
+    registerHooks({
+      load(url,context,nextLoad){
+        const loaded=nextLoad(url,context);
+        if(!isInstrumentedModuleUrl(url)) return loaded;
+        if(loaded.format!=="module" || loaded.source===null || loaded.source===undefined){
+          throw new Error("IMPORT_INSTRUMENTATION_SOURCE_MISSING:"+url);
+        }
+        const prefix="globalThis["+JSON.stringify(evaluationSetKey)+"].add("+JSON.stringify(url)+");globalThis["+JSON.stringify(evaluatedSetKey)+"].add("+JSON.stringify(url)+");\\n";
+        const suffix="\\nglobalThis["+JSON.stringify(evaluationSetKey)+"].delete("+JSON.stringify(url)+");\\n";
+        const sourceText=typeof loaded.source==="string" ? loaded.source : new TextDecoder().decode(loaded.source);
+        return {...loaded,source:prefix+sourceText+suffix};
+      }
+    });
+    const allowedTaintedAsyncResourceTypes=Object.freeze([]);
+    const allowedTaintedAsyncResourceTypeSet=new Set(allowedTaintedAsyncResourceTypes);
+    const taintedAsyncIds=new Set();
+    const observedTaintedAsyncResourceTypes=new Set();
+    const importEvaluationHook=createHook({
+      init(asyncId,type,triggerAsyncId){
+        if(activeInstrumentedModuleEvaluations.size===0 && !taintedAsyncIds.has(triggerAsyncId)) return;
+        taintedAsyncIds.add(asyncId);
+        if(!allowedTaintedAsyncResourceTypeSet.has(type)) observedTaintedAsyncResourceTypes.add(type);
+      },
+      destroy(asyncId){
+        taintedAsyncIds.delete(asyncId);
+      }
+    });
+    importEvaluationHook.enable();
     const forbidden=(name)=>{throw new Error("IMPORT_SIDE_EFFECT_"+name)};
-    const originalOpenSync=fs.openSync;
+    const retainedStat=fs.promises.stat.bind(fs.promises);
     for(const name of ["spawn","spawnSync","exec","execSync","execFile","execFileSync","fork"]){
       childProcess[name]=()=>forbidden("child_process."+name);
     }
-    for(const name of ["appendFileSync","chmodSync","chownSync","copyFileSync","cpSync","linkSync","mkdirSync","renameSync","rmSync","rmdirSync","symlinkSync","truncateSync","unlinkSync","writeFileSync"]){
-      fs[name]=()=>forbidden("fs."+name);
+    const historicalReadOnlySyncCallableNames=Object.freeze([
+      "accessSync","existsSync","fstatSync","lstatSync","opendirSync","readFileSync",
+      "readdirSync","readlinkSync","realpathSync","statSync","statfsSync","readSync"
+    ]);
+    const historicalReadOnlySyncCallableNameSet=new Set(historicalReadOnlySyncCallableNames);
+    for(const name of historicalReadOnlySyncCallableNames){
+      const descriptor=Object.getOwnPropertyDescriptor(fs,name);
+      if(descriptor===undefined) continue;
+      if(typeof descriptor.value!=="function") forbidden("instrumentation_read_only_sync_semantics_"+name);
     }
-    for(const name of ["appendFile","chmod","chown","copyFile","cp","link","mkdir","open","rename","rm","rmdir","symlink","truncate","unlink","writeFile","write","writeSync","ftruncate","ftruncateSync"]){
-      fs[name]=()=>forbidden("fs."+name);
-    }
-    fs.openSync=(target,flags,...rest)=>{
-      const mutating=typeof flags==="string" ? /[wa+]/.test(flags) : (flags&(fs.constants.O_WRONLY|fs.constants.O_RDWR|fs.constants.O_APPEND|fs.constants.O_CREAT|fs.constants.O_TRUNC))!==0;
-      if(mutating) return forbidden("fs.openSync.mutating");
-      return originalOpenSync(target,flags,...rest);
+    const originalSyncCallableNames=Reflect.ownKeys(fs).filter((key)=>
+      typeof key==="string"
+      && key.endsWith("Sync")
+      && typeof Object.getOwnPropertyDescriptor(fs,key)?.value==="function"
+    );
+    const originalSyncCallableDescriptors=new Map(originalSyncCallableNames.map((name)=>[
+      name,Object.getOwnPropertyDescriptor(fs,name)
+    ]));
+    const syncCallableClassifications=new Map();
+    const forbiddenSyncCallables=new Map();
+    const isNodeReadFileSyncInternalClose=()=>{
+      const immediateCaller=(new Error().stack ?? "").split("\\n").slice(1).find((frame)=>!frame.includes(probeSourceUrl));
+      return immediateCaller!==undefined && /^at (?:Object\\.)?readFileSync \\(node:fs:\\d+:\\d+\\)$/.test(immediateCaller.trim());
     };
+    const originalOpenSync=fs.openSync;
+    const isMutatingOpenSync=(args)=>{
+      const flags=args[1];
+      return typeof flags==="string"
+        ? /[wa+]/.test(flags)
+        : typeof flags==="number"
+          && (flags&(fs.constants.O_WRONLY|fs.constants.O_RDWR|fs.constants.O_APPEND|fs.constants.O_CREAT|fs.constants.O_TRUNC))!==0;
+    };
+    const guardedOpenSync=new Proxy(originalOpenSync,{
+      apply(target,thisArg,args){
+        if(isMutatingOpenSync(args)) return forbidden("fs.openSync.mutating");
+        return Reflect.apply(target,thisArg,args);
+      },
+      construct(target,args,newTarget){
+        if(isMutatingOpenSync(args)) return forbidden("fs.openSync.mutating");
+        return Reflect.construct(target,args,newTarget);
+      }
+    });
+    const protectedSyncCallablePrototypes=new Map();
+    const protectSyncCallableAuthority=(name,original,replacement)=>{
+      const ownCallableKeys=Reflect.ownKeys(original).filter((key)=>{
+        const descriptor=Object.getOwnPropertyDescriptor(original,key);
+        return typeof descriptor?.value==="function" || typeof descriptor?.get==="function" || typeof descriptor?.set==="function";
+      });
+      if(ownCallableKeys.length!==0) forbidden("instrumentation_sync_function_authority_"+name+":"+ownCallableKeys.map(String).join(","));
+      const functionPrototypeDescriptor=Object.getOwnPropertyDescriptor(original,"prototype");
+      const functionPrototype=functionPrototypeDescriptor?.value;
+      if(functionPrototype===null || typeof functionPrototype!=="object"){
+        protectedSyncCallablePrototypes.set(name,null);
+        return;
+      }
+      const prototypeCallableKeys=Reflect.ownKeys(functionPrototype).filter((key)=>{
+        const descriptor=Object.getOwnPropertyDescriptor(functionPrototype,key);
+        return key!=="constructor" && (typeof descriptor?.value==="function" || typeof descriptor?.get==="function" || typeof descriptor?.set==="function");
+      });
+      if(prototypeCallableKeys.length!==0) forbidden("instrumentation_sync_prototype_authority_"+name+":"+prototypeCallableKeys.map(String).join(","));
+      const constructorDescriptor=Object.getOwnPropertyDescriptor(functionPrototype,"constructor");
+      if(constructorDescriptor===undefined || constructorDescriptor.value!==original) forbidden("instrumentation_sync_prototype_constructor_"+name);
+      Object.defineProperty(functionPrototype,"constructor",{...constructorDescriptor,value:replacement});
+      protectedSyncCallablePrototypes.set(name,functionPrototype);
+    };
+    for(const name of originalSyncCallableNames){
+      const descriptor=originalSyncCallableDescriptors.get(name);
+      if(descriptor===undefined || typeof descriptor.value!=="function") forbidden("instrumentation_sync_inventory_changed_"+name);
+      const original=descriptor.value;
+      if(historicalReadOnlySyncCallableNameSet.has(name)){
+        syncCallableClassifications.set(name,"read-only");
+        continue;
+      }
+      const replacement=name==="openSync" ? guardedOpenSync : new Proxy(original,{
+        apply(target,thisArg,args){
+          if(name==="closeSync" && isNodeReadFileSyncInternalClose()) return Reflect.apply(target,thisArg,args);
+          return forbidden("fs."+name);
+        },
+        construct(_target,_args,_newTarget){
+          return forbidden("fs."+name);
+        }
+      });
+      Object.defineProperty(fs,name,{...descriptor,value:replacement});
+      protectSyncCallableAuthority(name,original,replacement);
+      syncCallableClassifications.set(name,name==="openSync" ? "open" : "forbidden");
+      if(name!=="openSync") forbiddenSyncCallables.set(name,replacement);
+    }
+    for(const name of ["appendFile","chmod","chown","copyFile","cp","link","mkdir","open","rename","rm","rmdir","symlink","truncate","unlink","writeFile","write","ftruncate"]){
+      fs[name]=()=>forbidden("fs."+name);
+    }
     for(const name of ["appendFile","chmod","chown","copyFile","cp","link","mkdir","open","rename","rm","rmdir","symlink","truncate","unlink","writeFile"]){
       fs.promises[name]=()=>forbidden("fs.promises."+name);
     }
+    const afterSyncCallableNames=Reflect.ownKeys(fs).filter((key)=>
+      typeof key==="string"
+      && key.endsWith("Sync")
+      && typeof Object.getOwnPropertyDescriptor(fs,key)?.value==="function"
+    );
+    if(JSON.stringify(afterSyncCallableNames)!==JSON.stringify(originalSyncCallableNames)){
+      forbidden("instrumentation_sync_callable_inventory");
+    }
+    for(const name of afterSyncCallableNames){
+      const currentDescriptor=Object.getOwnPropertyDescriptor(fs,name);
+      const originalDescriptor=originalSyncCallableDescriptors.get(name);
+      const current=currentDescriptor?.value;
+      const classification=syncCallableClassifications.get(name);
+      const classifiedExactly=
+        classification==="read-only" && current===originalDescriptor?.value
+        || classification==="open" && name==="openSync" && current===guardedOpenSync
+        || classification==="forbidden" && current===forbiddenSyncCallables.get(name);
+      const descriptorSemanticsPreserved=
+        currentDescriptor?.writable===originalDescriptor?.writable
+        && currentDescriptor?.enumerable===originalDescriptor?.enumerable
+        && currentDescriptor?.configurable===originalDescriptor?.configurable;
+      let callableAuthorityClosed=true;
+      if(classification!=="read-only"){
+        const ownCallableKeys=Reflect.ownKeys(current).filter((key)=>{
+          const descriptor=Object.getOwnPropertyDescriptor(current,key);
+          return typeof descriptor?.value==="function" || typeof descriptor?.get==="function" || typeof descriptor?.set==="function";
+        });
+        const functionPrototype=Object.getOwnPropertyDescriptor(current,"prototype")?.value;
+        const expectedPrototype=protectedSyncCallablePrototypes.get(name);
+        callableAuthorityClosed=ownCallableKeys.length===0
+          && (expectedPrototype===null || functionPrototype===expectedPrototype && functionPrototype.constructor===current);
+      }
+      if(!classifiedExactly || !descriptorSemanticsPreserved || !callableAuthorityClosed) forbidden("instrumentation_sync_classification_"+name);
+    }
+    for(const name of ["connect","createConnection"]){
+      net[name]=()=>forbidden("net."+name);
+    }
+    net.Socket.prototype.connect=()=>forbidden("net.Socket.connect");
+    for(const name of ["get","request"]){
+      http[name]=()=>forbidden("http."+name);
+      https[name]=()=>forbidden("https."+name);
+    }
+    tls.connect=()=>forbidden("tls.connect");
+    for(const name of ["lookup","resolve","resolve4","resolve6","resolveAny","resolveCaa","resolveCname","resolveMx","resolveNaptr","resolveNs","resolvePtr","resolveSoa","resolveSrv","resolveTxt","reverse"]){
+      dns[name]=()=>forbidden("dns."+name);
+      dns.promises[name]=()=>forbidden("dns.promises."+name);
+    }
+    if(typeof globalThis.fetch==="function") globalThis.fetch=()=>forbidden("fetch");
     syncBuiltinESMExports();
     const before=process._getActiveHandles().length;
     const requestsBefore=new Set(process._getActiveRequests());
@@ -491,24 +682,243 @@ test("P4 startup family imports are inert in a fresh database-free child", () =>
       import("./src/internal-production/baseline-spawner-startup-admission-v1.ts?inert=startup"),
       import("./src/internal-production/baseline-restart-authority-retirement-v1.ts?inert=retirement"),
       import("./src/internal-production/baseline-service-restart-helper-v1.ts?inert=helper"),
-      import("./src/internal-production/baseline-service-restart-sequence-v1.ts?inert=sequence")
+      import("./src/internal-production/baseline-service-restart-sequence-v1.ts?inert=sequence"),
+      ...(${JSON.stringify(injectedImportUrl)}===null ? [] : [import(${JSON.stringify(injectedImportUrl)})])
     ]);
+    const expectedInstrumentedEvaluationCount=5+(${JSON.stringify(injectedImportUrl)}===null ? 0 : 1);
+    if(activeInstrumentedModuleEvaluations.size!==0 || evaluatedInstrumentedModuleUrls.size!==expectedInstrumentedEvaluationCount){
+      throw new Error("IMPORT_EVALUATION_INSTRUMENTATION_MISMATCH:"+evaluatedInstrumentedModuleUrls.size+"/"+expectedInstrumentedEvaluationCount);
+    }
+    const retainedRequestPath=${JSON.stringify(retainedRequestPath)};
+    if(retainedRequestPath!==null){
+      pbkdf2("startup-import-probe","setfarm",40_000_000,32,"sha256",()=>{});
+      void retainedStat(retainedRequestPath);
+    }
+    const requestQuiescenceDeadline=process.hrtime.bigint()+2_000_000_000n;
     let newRequests=[];
-    for(let attempt=0;attempt<16;attempt++){
-      await new Promise((resolve)=>setImmediate(resolve));
+    let consecutiveZeroRequestObservations=0;
+    do {
+      await new Promise((resolve)=>setTimeout(resolve,5));
       newRequests=process._getActiveRequests().filter((request)=>!requestsBefore.has(request));
-      if(newRequests.length===0) break;
+      consecutiveZeroRequestObservations=newRequests.length===0 ? consecutiveZeroRequestObservations+1 : 0;
+    } while(consecutiveZeroRequestObservations<2 && process.hrtime.bigint()<requestQuiescenceDeadline);
+    if(observedTaintedAsyncResourceTypes.size!==0){
+      throw new Error("IMPORT_TAINTED_ASYNC_RESOURCE:"+[...observedTaintedAsyncResourceTypes].sort().join(","));
     }
     if(process._getActiveHandles().length!==before) throw new Error("IMPORT_CREATED_ACTIVE_HANDLE");
-    if(newRequests.length!==0) throw new Error("IMPORT_CREATED_ACTIVE_REQUEST");
+    if(consecutiveZeroRequestObservations!==2){
+      const requestKinds=newRequests.map((request)=>request?.constructor?.name ?? typeof request).join(",");
+      throw new Error("IMPORT_CREATED_ACTIVE_REQUEST:"+requestKinds);
+    }
+    importEvaluationHook.disable();
     process.stdout.write("IMPORT_INERT_OK\\n");
   `;
-  const child = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
+  return spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
     cwd: repository,
     env: environment,
     encoding: "utf8",
     timeout: 10_000,
   });
+}
+
+test("P4 startup family imports are inert in a fresh database-free child", () => {
+  const child = runStartupFamilyImportProbe();
   assert.equal(child.status, 0, child.stderr);
   assert.equal(child.stdout, "IMPORT_INERT_OK\n");
+});
+
+test("P4 startup inert-import provenance rejects a fast completed filesystem request", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-fast-request-"));
+  try {
+    const injectedModulePath = path.join(fixture, "fast-request.mjs");
+    writeFileSync(injectedModulePath, `import fs from "node:fs"; await fs.promises.stat(${JSON.stringify(helperSourcePath)});\n`);
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_TAINTED_ASYNC_RESOURCE:[^\n]*FSREQPROMISE/);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import provenance rejects a fast completed statfs request", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-statfs-"));
+  try {
+    const injectedModulePath = path.join(fixture, "fast-statfs-request.mjs");
+    writeFileSync(injectedModulePath, `import fs from "node:fs"; await fs.promises.statfs(${JSON.stringify(helperSourcePath)});\n`);
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_TAINTED_ASYNC_RESOURCE:[^\n]*FSREQPROMISE/);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import synchronous inventory rejects mkdtempSync", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-mkdtemp-sync-"));
+  try {
+    const injectedModulePath = path.join(fixture, "mkdtemp-sync.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import {mkdtempSync} from "node:fs";\nmkdtempSync(${JSON.stringify(path.join(fixture, "created-"))});\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_SIDE_EFFECT_fs\.mkdtempSync/);
+    assert.deepEqual(readdirSync(fixture), ["mkdtemp-sync.mjs"]);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import synchronous inventory rejects prototype constructor escape", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-sync-prototype-"));
+  try {
+    const injectedModulePath = path.join(fixture, "sync-prototype.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nfs.mkdtempSync.prototype.constructor(${JSON.stringify(path.join(fixture, "created-"))});\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_SIDE_EFFECT_fs\.mkdtempSync/);
+    assert.deepEqual(readdirSync(fixture), ["sync-prototype.mjs"]);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import synchronous inventory preserves nested read-only calls", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-read-only-sync-"));
+  try {
+    const injectedModulePath = path.join(fixture, "read-only-sync.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nif(fs.realpathSync.native(${JSON.stringify(helperSourcePath)})!==${JSON.stringify(realpathSync(helperSourcePath))}) throw new Error("READ_ONLY_SYNC_SEMANTICS_CHANGED");\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, "IMPORT_INERT_OK\n");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import synchronous inventory rejects mutator reentrancy from read-only options", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-sync-reentrancy-"));
+  try {
+    const injectedModulePath = path.join(fixture, "sync-reentrancy.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nfs.statSync(${JSON.stringify(helperSourcePath)},{get bigint(){fs.mkdtempSync(${JSON.stringify(path.join(fixture, "created-"))});return false;}});\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_SIDE_EFFECT_fs\.mkdtempSync/);
+    assert.deepEqual(readdirSync(fixture), ["sync-reentrancy.mjs"]);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import synchronous inventory rejects close reentrancy from readFileSync options", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-close-reentrancy-"));
+  try {
+    const injectedModulePath = path.join(fixture, "close-reentrancy.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nconst descriptor=fs.openSync(${JSON.stringify(helperSourcePath)},"r");\nfs.readFileSync(${JSON.stringify(helperSourcePath)},{get encoding(){fs.closeSync(descriptor);return "utf8";}});\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_SIDE_EFFECT_fs\.closeSync/);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import provenance rejects an accessor-created write stream", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-write-stream-"));
+  try {
+    const victimPath = path.join(fixture, "victim.txt");
+    const injectedModulePath = path.join(fixture, "write-stream.mjs");
+    writeFileSync(victimPath, "unchanged\n");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nconst stream=new fs.WriteStream(${JSON.stringify(victimPath)},{flags:"wx"});\nawait new Promise((resolve,reject)=>{stream.once("error",resolve);stream.once("open",()=>reject(new Error("WRITE_STREAM_UNEXPECTEDLY_OPENED")));});\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_TAINTED_ASYNC_RESOURCE:[^\n]*(?:FSREQCALLBACK|TickObject)/);
+    assert.equal(child.stdout, "");
+    assert.equal(readFileSync(victimPath, "utf8"), "unchanged\n");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+for (const asyncEffect of [
+  { name: "timer", source: "setTimeout(()=>{},0);\n", resourceType: "Timeout" },
+  {
+    name: "crypto work",
+    source: 'import {pbkdf2} from "node:crypto"; await new Promise((resolve,reject)=>pbkdf2("p4","salt",1,8,"sha256",(error)=>error?reject(error):resolve()));\n',
+    resourceType: "PBKDF2REQUEST",
+  },
+] as const) {
+  test(`P4 startup inert-import provenance rejects ${asyncEffect.name}`, () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-async-effect-"));
+    try {
+      const injectedModulePath = path.join(fixture, "async-effect.mjs");
+      writeFileSync(injectedModulePath, asyncEffect.source);
+      const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+      assert.notEqual(child.status, 0, child.stdout);
+      assert.match(child.stderr, new RegExp(`IMPORT_TAINTED_ASYNC_RESOURCE:[^\\n]*${asyncEffect.resourceType}`));
+      assert.equal(child.stdout, "");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+}
+
+test("P4 startup inert-import provenance rejects an otherwise inert Promise", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-promise-"));
+  try {
+    const injectedModulePath = path.join(fixture, "promise.mjs");
+    writeFileSync(injectedModulePath, "new Promise(()=>{});\n");
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_TAINTED_ASYNC_RESOURCE:[^\n]*PROMISE/);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import provenance follows a detached Promise chain to fast filesystem work", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-import-detached-promise-"));
+  try {
+    const injectedModulePath = path.join(fixture, "detached-promise.mjs");
+    writeFileSync(
+      injectedModulePath,
+      `import fs from "node:fs";\nlet chain=Promise.resolve();\nfor(let index=0;index<200;index++) chain=chain.then(()=>{});\nvoid chain.then(()=>fs.promises.stat(${JSON.stringify(helperSourcePath)}));\n`,
+    );
+    const child = runStartupFamilyImportProbe({ injectedImportUrl: pathToFileURL(injectedModulePath).href });
+    assert.notEqual(child.status, 0, child.stdout);
+    assert.match(child.stderr, /IMPORT_TAINTED_ASYNC_RESOURCE:[^\n]*FSREQPROMISE/);
+    assert.equal(child.stdout, "");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("P4 startup inert-import quiescence rejects a retained active request", () => {
+  const child = runStartupFamilyImportProbe({ retainedRequestPath: helperSourcePath });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /IMPORT_CREATED_ACTIVE_REQUEST:FSReqPromise/);
+  assert.equal(child.stdout, "");
 });
