@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -47,6 +47,8 @@ const EXACT_POISON_OPERATION_REF_V1 = `setfarm://internal-production/current-ent
 const EXACT_POISON_OPERATION_BYTES_SHA256_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
 const EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1 = "9e07f9bd60955a9a681b7365a3c48cb087ff7d46459a5b9885283e0a3492ce65";
 const EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1 = "768164cd178850a940282fea1c4b107559c88cb633b510fc9082bcd047e581a7";
+const EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1 = "e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025";
+const EXACT_POISON_CURRENT_PENDING_HASH_V1 = "ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015";
 const EXACT_POISON_OPERATION_BYTES_BASE64_V1 = [
   "eyJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXQiOnsiYXV0aG9yaXR5VjNNaWdyYXRpb24zMUF1ZGl0SGFzaCI6IjMxOTU3NmU0NjMyZjUyYjAzZjlkZDFj",
   "NWE4ZWM4OTNiOGZmZTQwOTE1MjRkZWFhYzY5Mjc5MmEzODlkZGY3NmQiLCJhdXRob3JpdHlWM01pZ3JhdGlvbjMxQXVkaXRSZWYiOiJzZXRmYXJtOi8vaW50",
@@ -772,7 +774,10 @@ function canonicalFixtureRecordV1(value: Readonly<Record<string, unknown>>): Buf
 
 function task12FixturePresentedPathV1(candidate: string): string {
   const resolved = path.resolve(candidate);
-  return process.platform === "darwin" && resolved.startsWith("/private/var/")
+  return process.platform === "darwin" && (
+    resolved === "/private/var"
+    || resolved.startsWith("/private/var/")
+  )
     ? resolved.slice("/private".length)
     : resolved;
 }
@@ -1519,6 +1524,7 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   original: ExactOriginalPoisonStoreFixtureV1,
   fault: string | null,
   inventoryAlreadyRewritten = false,
+  instrumentPrerequisites = true,
 ): void {
   if (!inventoryAlreadyRewritten) rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
@@ -1536,6 +1542,17 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   const coreMarker = "async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
   assert.equal(source.split(coreMarker).length - 1, 1, "production must retain one private zero-input publisher core");
   source = source.replace(coreMarker, `export ${coreMarker}`);
+  for (const marker of [
+    "async function selectCurrentEntryStoreContextV1(",
+    "async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(",
+    "async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(",
+  ]) {
+    assert.equal(source.split(marker).length - 1, 1, `copied publisher fixture locates ${marker}`);
+    source = source.replace(marker, `export ${marker}`);
+  }
+  const prerequisitePathMarker = "function currentEntryPrerequisiteRecordPathV1(";
+  assert.equal(source.split(prerequisitePathMarker).length - 1, 1, "copied publisher fixture locates the prerequisite path builder");
+  source = source.replace(prerequisitePathMarker, `export ${prerequisitePathMarker}`);
   const admissionMarker = "async function observeExactPoisonQuarantineAdmissionV1(";
   assert.equal(source.split(admissionMarker).length - 1, 1, "production must retain one private exact-poison admission boundary");
   const admissionStart = source.indexOf(admissionMarker);
@@ -1562,7 +1579,9 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
   const rawCalls = Object.freeze([
     Object.freeze({ source: "observeCurrentInternalProductionCleanSetfarmSourceBuildV1()", target: `${probe}.next("source")` }),
     Object.freeze({ source: "observeCurrentPba()", target: `${probe}.next("pba")` }),
-    Object.freeze({ source: "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1()", target: `${probe}.next("prerequisites")` }),
+    ...(instrumentPrerequisites
+      ? [Object.freeze({ source: "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1()", target: `${probe}.next("prerequisites")` })]
+      : []),
     Object.freeze({ source: "observeInternalProductionServiceCensusV1()", target: `${probe}.next("service")` }),
     Object.freeze({ source: "observeLegacyDatabaseCensusV1()", target: `${probe}.next("database")` }),
     Object.freeze({ source: "observePhysicalInventoryV1(", target: `${probe}.nextPhysical(` }),
@@ -1575,6 +1594,12 @@ function instrumentExactPoisonPublisherCoreFixtureV1(
     admissionRegion = admissionRegion.replaceAll(rawCall.source, rawCall.target);
   }
   source = source.slice(0, rawStart) + admissionRegion + source.slice(rawEnd);
+  if (instrumentPrerequisites) {
+    const wrapper = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionV1");
+    const prerequisiteCall = "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1()";
+    assert.equal(wrapper.split(prerequisiteCall).length - 1, 1, "the held-writer admission wrapper owns prerequisite observation A");
+    source = source.replace(wrapper, () => wrapper.replace(prerequisiteCall, `${probe}.next("prerequisites")`));
+  }
   const admissionCall = "await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter)";
   assert.ok(source.includes(admissionCall), "publisher core must call the private admission boundary with only its strict operation and held writer");
   const countedAdmission = 'await (()=>{const probe=Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as undefined|{admissionCalls:number};if(!probe)throw new Error("P4_EXACT_POISON_ADMISSION_PROBE_MISSING");probe.admissionCalls+=1;return observeExactPoisonQuarantineAdmissionV1(operation,heldWriter)})()';
@@ -1712,6 +1737,464 @@ function runExactPoisonPublisherCoreFixtureV1(
   const transportPath = path.join(path.dirname(root), ".p4-exact-poison-admission.json");
   fixtureFile(path.dirname(root), ".p4-exact-poison-admission.json", `${transported}\n`, 0o600);
   return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>{const fault=${JSON.stringify(gitFault)};if(fault!==null)throw new Error("P4_EXACT_POISON_SYNTHETIC_GIT_"+fault.toUpperCase());return next("syntheticGit")}};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,admissionCalls:probe.admissionCalls,cursors:probe.cursors}))})()`);
+}
+
+function exactPoisonTask3ProbeExpressionV1(
+  root: string,
+  observations: Readonly<Record<string, readonly unknown[]>>,
+  invocation: "publisher-core" | "prepare-current-entry",
+): string {
+  const transported = JSON.stringify(fixtureTransportValueV1(observations));
+  const transportPath = path.join(path.dirname(root), ".p4c-exact-poison-current-admission.json");
+  fixtureFile(path.dirname(root), ".p4c-exact-poison-current-admission.json", `${transported}\n`, 0o600);
+  const invoke = invocation === "prepare-current-entry"
+    ? "value=await m.prepareInternalProductionCurrentEntryOperationV1()"
+    : "await m.resumeExactPoisonQuarantinePublisherCoreV1()";
+  return `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4C_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const mutationPorts={calls:[]};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);Reflect.set(globalThis,"__p4cExactPoisonMutationPortsV1",mutationPorts);Reflect.set(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1",Array.isArray(values.appearance)?values.appearance[0]:null);let outcome="returned",message=null,value=null;try{${invoke}}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,admissionCalls:probe.admissionCalls,cursors:probe.cursors,mutationCalls:mutationPorts.calls}))})()`;
+}
+
+function runExactPoisonTask3FixtureV1(
+  root: string,
+  observations: Readonly<Record<string, readonly unknown[]>>,
+  invocation: "publisher-core" | "prepare-current-entry" = "publisher-core",
+): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, exactPoisonTask3ProbeExpressionV1(root, observations, invocation));
+}
+
+function runP4cRecoveryPrerequisiteBoundaryMutationFixtureV1(
+  root: string,
+  expected: Readonly<Record<string, unknown>>,
+  mutation: "public-observer" | "ambient-latest",
+): ReturnType<typeof spawnSync> {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const expose = (marker: string): void => {
+    assert.equal(source.split(marker).length - 1, 1, `Task 4 copied recovery fixture locates ${marker}`);
+    source = source.replace(marker, `export ${marker}`);
+  };
+  expose("async function observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1(");
+  expose("async function canonicalRecordBytes(");
+  for (const [name, kind] of [
+    ["buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1", "authority"],
+    ["buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1", "pending"],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    const headerEnd = region.indexOf("{\n");
+    assert.notEqual(headerEnd, -1, `Task 4 copied private ${kind} builder has a body`);
+    const instrumented = `${region.slice(0, headerEnd + 2)}  const p4cTask4Probe = Reflect.get(globalThis, "__p4cTask4PrerequisiteProbeV1") as undefined | { privateBuilder(kind: string): unknown };\n  if (p4cTask4Probe !== undefined) return p4cTask4Probe.privateBuilder(${JSON.stringify(kind)}) as never;\n${region.slice(headerEnd + 2)}`;
+    source = source.replace(region, () => instrumented);
+  }
+  const recovery = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+  const privateAuthority = "const authority = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);";
+  assert.equal(recovery.split(privateAuthority).length - 1, 1, "Task 4 copied recovery has one private authority-builder boundary");
+  let mutatedRecovery: string;
+  if (mutation === "public-observer") {
+    const publicObserver = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionAuthorityV3Migration31AuditV1");
+    const headerEnd = publicObserver.indexOf("{\n");
+    assert.notEqual(headerEnd, -1, "Task 4 copied public authority observer has a body");
+    const instrumentedPublicObserver = `${publicObserver.slice(0, headerEnd + 2)}  const p4cTask4Probe = Reflect.get(globalThis, "__p4cTask4PrerequisiteProbeV1") as undefined | { publicObserver(): unknown };\n  if (p4cTask4Probe !== undefined) return p4cTask4Probe.publicObserver() as never;\n${publicObserver.slice(headerEnd + 2)}`;
+    source = source.replace(publicObserver, () => instrumentedPublicObserver);
+    mutatedRecovery = recovery.replace(
+      privateAuthority,
+      "const authority = await observeCurrentInternalProductionAuthorityV3Migration31AuditV1();",
+    );
+  } else {
+    mutatedRecovery = recovery.replace(
+      privateAuthority,
+      "const authority = await (Reflect.get(globalThis, \"__p4cTask4PrerequisiteProbeV1\") as { latest(kind: string): Promise<unknown> }).latest(\"authority\") as never;",
+    );
+  }
+  source = source.replace(recovery, () => mutatedRecovery);
+  writeFileSync(modulePath, source);
+
+  const transported = JSON.stringify(fixtureTransportValueV1(expected));
+  return runFixtureExpression(root, `(async()=>{const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const expected=revive(${transported});const privateCalls=[];const latestCalls=[];let publicCalls=0;const record=(kind)=>{const selected=expected[kind==="authority"?"authorityV3Migration31Audit":"pendingBootstrapHandoffMigration"];const refKey=kind==="authority"?"authorityV3Migration31AuditRef":"pendingBootstrapHandoffMigrationRef";const hashKey=kind==="authority"?"authorityV3Migration31AuditHash":"pendingBootstrapHandoffMigrationHash";return Object.freeze({value:selected.value,bytes:selected.bytes,pair:Object.freeze({ref:selected.pair[refKey],hash:selected.pair[hashKey]})})};const probe={privateBuilder:(kind)=>{privateCalls.push(kind);return record(kind)},publicObserver:()=>{publicCalls+=1;throw new Error("P4C_TASK4_PUBLIC_PREREQUISITE_OBSERVER_CALLED")},latest:async(kind)=>{latestCalls.push(kind);const selected=record(kind);const core=structuredClone(selected.value);const refKey="authorityV3Migration31AuditRef";const hashKey="authorityV3Migration31AuditHash";delete core[refKey];delete core[hashKey];core.currentAuthorityAuditHash=core.currentAuthorityAuditHash==="f".repeat(64)?"e".repeat(64):"f".repeat(64);const crypto=await import("node:crypto");const coreBytes=await m.canonicalRecordBytes(core);const hash=crypto.createHash("sha256").update(coreBytes.subarray(0,-1)).digest("hex");const value=Object.freeze({...core,[refKey]:"setfarm://internal-production/authority-v3-migration31-audit/sha256/"+hash,[hashKey]:hash});return Object.freeze({value,bytes:await m.canonicalRecordBytes(value),pair:Object.freeze({ref:value[refKey],hash:value[hashKey]})})}};Reflect.set(globalThis,"__p4cTask4PrerequisiteProbeV1",probe);let outcome="returned",message=null;try{const actual=await m.observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1();if(actual.authorityV3Migration31Audit.pair.authorityV3Migration31AuditRef!==expected.authorityV3Migration31Audit.pair.authorityV3Migration31AuditRef||actual.authorityV3Migration31Audit.pair.authorityV3Migration31AuditHash!==expected.authorityV3Migration31Audit.pair.authorityV3Migration31AuditHash||actual.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationRef!==expected.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationRef||actual.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationHash!==expected.pendingBootstrapHandoffMigration.pair.pendingBootstrapHandoffMigrationHash)throw new Error("P4C_TASK4_PRIVATE_PAIR_BOUNDARY_FAILED")}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,privateCalls,publicCalls,latestCalls}))})()`);
+}
+
+function finalizeExactPoisonTask3FixtureV1(root: string, label: string): void {
+  git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+  git(root, ["commit", "-qm", label]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const prepared = runProducer(root, "--prepare");
+  assert.equal(prepared.status, 0, prepared.stderr);
+  materializeOutputs(root);
+  const finalized = runProducer(root, "--finalize");
+  assert.equal(finalized.status, 0, finalized.stderr);
+}
+
+function writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(
+  store: string,
+  overlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+  present: readonly number[],
+): void {
+  for (const [index, candidate] of overlay.entries()) {
+    if (!present.includes(index)) continue;
+    const locator = path.relative(
+      task12FixturePresentedPathV1(store),
+      task12FixturePresentedPathV1(candidate.target),
+    );
+    assert.equal(locator.startsWith("..") || path.isAbsolute(locator), false, "current prerequisite fixture stays inside the legacy store");
+    writeStrictCurrentEntryFixtureRecordV1(store, locator, candidate.bytes);
+  }
+}
+
+function buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(
+  root: string,
+): readonly [
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+] {
+  const authority = phase5bNestedPrerequisiteAlternateRecordV1(
+    "authorityV3Migration31Audit",
+    JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+  );
+  const pending = phase5bNestedPrerequisiteAlternateRecordV1(
+    "pendingBootstrapHandoffMigration",
+    JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+  );
+  assert.deepEqual(authority.value.controllerSource, pending.value.controllerSource, "distinct current prerequisite records retain one exact source");
+  assert.notEqual(authority.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "distinct audit pair does not reuse frozen e2");
+  assert.notEqual(pending.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, "distinct pending pair does not reuse frozen ce");
+  return Object.freeze([
+    Object.freeze({
+      kind: "authorityV3Migration31Audit" as const,
+      target: currentEntryPrerequisiteRecord(root, "authority-v3-migration31-audits", authority.hash),
+      value: authority.value,
+      bytes: authority.bytes,
+      pair: Object.freeze({ ref: authority.ref, hash: authority.hash }),
+    }),
+    Object.freeze({
+      kind: "pendingBootstrapHandoffMigration" as const,
+      target: currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", pending.hash),
+      value: pending.value,
+      bytes: pending.bytes,
+      pair: Object.freeze({ ref: pending.ref, hash: pending.hash }),
+    }),
+  ]);
+}
+
+function publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(
+  root: string,
+): readonly [
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+] {
+  const observed = runFixtureExpression(root, `Promise.all([m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1(),m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()]).then(([authority,pending])=>process.stdout.write(JSON.stringify({authority,pending})))`);
+  assert.equal(observed.status, 0, observed.stderr);
+  const values = JSON.parse(observed.stdout) as Readonly<{
+    authority: Readonly<Record<string, string>>;
+    pending: Readonly<Record<string, string>>;
+  }>;
+  const authorityTarget = currentEntryPrerequisiteRecord(root, "authority-v3-migration31-audits", values.authority.authorityV3Migration31AuditHash!);
+  const pendingTarget = currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", values.pending.pendingBootstrapHandoffMigrationHash!);
+  return Object.freeze([
+    Object.freeze({
+      kind: "authorityV3Migration31Audit" as const,
+      target: authorityTarget,
+      value: values.authority,
+      bytes: readFileSync(authorityTarget),
+      pair: Object.freeze({ ref: values.authority.authorityV3Migration31AuditRef!, hash: values.authority.authorityV3Migration31AuditHash! }),
+    }),
+    Object.freeze({
+      kind: "pendingBootstrapHandoffMigration" as const,
+      target: pendingTarget,
+      value: values.pending,
+      bytes: readFileSync(pendingTarget),
+      pair: Object.freeze({ ref: values.pending.pendingBootstrapHandoffMigrationRef!, hash: values.pending.pendingBootstrapHandoffMigrationHash! }),
+    }),
+  ] as const);
+}
+
+function instrumentExactPoisonTask3BoundaryFixtureV1(
+  root: string,
+  fault: Readonly<
+    | { boundary: "post-admission-response-loss"; marker: string }
+    | { boundary: "post-commit-response-loss"; marker: string }
+    | { boundary: "post-admission-overlay-appearance" }
+    | { boundary: "post-admission-replacement-latch"; readyPath: string; releasePath: string }
+  >,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  if (fault.boundary === "post-commit-response-loss") {
+    const region = topLevelFunctionRegionV1(source, "exactPoisonRecoveryPublicationFaultV1");
+    const body = "  // A deliberately inert, module-private seam. Copied-module crash tests replace\n  // only literal call sites; production has no environment or global switch.\n";
+    assert.equal(region.split(body).length - 1, 1, "task3 copied response-loss fixture locates the inert publication seam");
+    const hooked = region.replace(body, `  if (_phase === "successor-activation-commit" && _boundary === "final-reopen" && !existsSync(${JSON.stringify(fault.marker)})) { writeFileSync(${JSON.stringify(fault.marker)}, "lost\\n", { flag: "wx", mode: 0o600 }); throw new Error("P4C_POST_COMMIT_RESPONSE_LOSS"); }\n`);
+    source = source.replace(region, () => hooked);
+  } else {
+    const core = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
+    const admission = "    const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);";
+    assert.equal(core.split(admission).length - 1, 1, "task3 copied fixture locates one post-admission boundary");
+    const hook = fault.boundary === "post-admission-response-loss"
+      ? `\n    if (!existsSync(${JSON.stringify(fault.marker)})) { writeFileSync(${JSON.stringify(fault.marker)}, "lost\\n", { flag: "wx", mode: 0o600 }); throw new Error("P4C_POST_ADMISSION_RESPONSE_LOSS"); }`
+      : fault.boundary === "post-admission-overlay-appearance"
+        ? `\n    { const candidate=Reflect.get(globalThis,"__p4cExactPoisonTask3OverlayAppearanceV1") as undefined|null|{target:string;bytes:Buffer}; if (!candidate || !Buffer.isBuffer(candidate.bytes)) throw new Error("P4C_OVERLAY_APPEARANCE_MISSING"); mkdirSync(path.dirname(candidate.target),{recursive:true,mode:0o700}); writeFileSync(candidate.target,candidate.bytes,{flag:"wx",mode:0o600}); }`
+        : `\n    { writeFileSync(${JSON.stringify(fault.readyPath)}, "ready\\n", { flag: "wx", mode: 0o600 }); const wait = new Int32Array(new SharedArrayBuffer(4)); while (!existsSync(${JSON.stringify(fault.releasePath)})) Atomics.wait(wait, 0, 0, 5); }`;
+    source = source.replace(core, () => core.replace(admission, `${admission}${hook}`));
+  }
+  writeFileSync(modulePath, source);
+}
+
+function instrumentExactPoisonHistoricalPrerequisiteUnavailabilityFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  for (const [name, label] of [
+    ["observeCurrentInternalProductionCleanSetfarmSourceBuildV1", "source-observer"],
+    ["selectCurrentEntryStoreContextV1", "current-store-selector"],
+    ["observeCurrentInternalProductionAuthorityV3Migration31AuditV1", "current-audit-observer"],
+    ["observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1", "current-pending-observer"],
+    ["buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1", "current-audit-builder"],
+    ["buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1", "current-database-builder"],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    const body = region.indexOf("{\n");
+    assert.notEqual(body, -1, `${label}: copied historical resolver fixture finds the real current boundary`);
+    const hooked = `${region.slice(0, body + 2)}  { const probe = Reflect.get(globalThis, "__p4cHistoricalPrerequisiteUnavailableV1") as undefined | { calls: string[] }; if (probe !== undefined) { probe.calls.push(${JSON.stringify(label)}); throw new Error(${JSON.stringify(`P4C_CURRENT_AUTHORITY_UNAVAILABLE:${label}`)}); } }\n${region.slice(body + 2)}`;
+    source = source.replace(region, () => hooked);
+  }
+  writeFileSync(modulePath, source);
+}
+
+function runExactPoisonHistoricalPrerequisiteResolutionFixtureV1(
+  root: string,
+  successor: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+): ReturnType<typeof spawnSync> {
+  const legacyAuthority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+  const legacyPending = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
+  const successorAuthorityPair = Object.freeze({
+    authorityV3Migration31AuditRef: successor[0].pair.ref,
+    authorityV3Migration31AuditHash: successor[0].pair.hash,
+  });
+  const successorPendingPair = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: successor[1].pair.ref,
+    pendingBootstrapHandoffMigrationHash: successor[1].pair.hash,
+  });
+  const legacyAuthorityPair = phase5bNestedPrerequisitePairV1("authorityV3Migration31Audit", legacyAuthority);
+  const legacyPendingPair = phase5bNestedPrerequisitePairV1("pendingBootstrapHandoffMigration", legacyPending);
+  const arbitraryAuthorityHash = "f".repeat(64);
+  const arbitraryPendingHash = "0".repeat(64);
+  assert.equal(new Set([
+    successor[0].pair.hash,
+    successor[1].pair.hash,
+    String(legacyAuthority.authorityV3Migration31AuditHash),
+    String(legacyPending.pendingBootstrapHandoffMigrationHash),
+    arbitraryAuthorityHash,
+    arbitraryPendingHash,
+  ]).size, 6, "historical resolution fixture uses six distinct exact hashes");
+  return runFixtureExpression(root, `(async()=>{const probe={calls:[]};Reflect.set(globalThis,"__p4cHistoricalPrerequisiteUnavailableV1",probe);const attempt=async(fn)=>{try{return {outcome:"returned",value:await fn(),message:null}}catch(error){return {outcome:"threw",value:null,message:String(error)}}};const successorAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(successorAuthorityPair)}));const successorPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(successorPendingPair)}));const legacyAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(legacyAuthorityPair)}));const legacyPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(legacyPendingPair)}));const arbitraryAuthority=await attempt(()=>m.resolveInternalProductionAuthorityV3Migration31AuditV1({authorityV3Migration31AuditRef:"setfarm://internal-production/authority-v3-migration31-audit/sha256/${arbitraryAuthorityHash}",authorityV3Migration31AuditHash:"${arbitraryAuthorityHash}"}));const arbitraryPending=await attempt(()=>m.resolveInternalProductionPendingBootstrapHandoffMigrationV1({pendingBootstrapHandoffMigrationRef:"setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${arbitraryPendingHash}",pendingBootstrapHandoffMigrationHash:"${arbitraryPendingHash}"}));process.stdout.write(JSON.stringify({successorAuthority,successorPending,legacyAuthority,legacyPending,arbitraryAuthority,arbitraryPending,calls:probe.calls}))})()`);
+}
+
+type ExactPoisonHistoricalPrerequisiteKindFixtureV1 =
+  | "authorityV3Migration31Audit"
+  | "pendingBootstrapHandoffMigration";
+
+type ExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1 =
+  | "absent-to-present"
+  | "present-to-absent"
+  | "same-byte-replacement"
+  | "other-byte-replacement";
+
+async function runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(
+  kind: ExactPoisonHistoricalPrerequisiteKindFixtureV1,
+  race: ExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1,
+): Promise<Readonly<{
+  outcome: "returned" | "threw";
+  message: string | null;
+  value: Readonly<Record<string, unknown>> | null;
+  events: readonly string[];
+  matches: number;
+  mutationApplied: boolean;
+  replacementRetained: boolean;
+  replacementBytesSha256: string;
+  replacementInode: string;
+  initialInode: string | null;
+  exactBasenamePresent: boolean;
+  displacedRetained: boolean;
+  displacedBytesSha256: string | null;
+  displacedInode: string | null;
+}>> {
+  const root = createFixture();
+  const readyPath = path.join(path.dirname(root), `p4c-historical-${kind}-${race}-ready`);
+  const releasePath = path.join(path.dirname(root), `p4c-historical-${kind}-${race}-release`);
+  let running: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+  try {
+    installExactCurrentSuccessorGitFixtureV1(root);
+    const original = seedExactOriginalPoisonStoreV1(root);
+    const successor = buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+    const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, successor);
+    rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+    seedExactPoisonStrictChainFixtureV1(root, admitted.chain, "C");
+    instrumentExactPoisonDurabilityFixtureV1(root);
+
+    const index = kind === "authorityV3Migration31Audit" ? 0 : 1;
+    const legacyBasename = kind === "authorityV3Migration31Audit"
+      ? "authority-v3-migration31-audit.json"
+      : "pending-bootstrap-handoff-migration.json";
+    const legacyTarget = path.join(original.store, legacyBasename);
+    const initialBytes = kind === "authorityV3Migration31Audit"
+      ? exactCurrentAuthorityV31FixtureBytesV1()
+      : exactCurrentPendingFixtureBytesV1();
+    assert.equal(existsSync(legacyTarget), false, `${kind}:${race}: exact-poison seed leaves the compatibility basename absent`);
+    if (race !== "absent-to-present") {
+      writeFileSync(legacyTarget, initialBytes, { flag: "wx", mode: 0o600 });
+      chmodSync(legacyTarget, 0o600);
+    }
+    const initialStats = race === "absent-to-present" ? null : lstatSync(legacyTarget, { bigint: true });
+
+    const pair = kind === "authorityV3Migration31Audit"
+      ? Object.freeze({
+        authorityV3Migration31AuditRef: successor[index].pair.ref,
+        authorityV3Migration31AuditHash: successor[index].pair.hash,
+      })
+      : Object.freeze({
+        pendingBootstrapHandoffMigrationRef: successor[index].pair.ref,
+        pendingBootstrapHandoffMigrationHash: successor[index].pair.hash,
+      });
+    const invocation = kind === "authorityV3Migration31Audit"
+      ? `m.resolveInternalProductionAuthorityV3Migration31AuditV1(${JSON.stringify(pair)})`
+      : `m.resolveInternalProductionPendingBootstrapHandoffMigrationV1(${JSON.stringify(pair)})`;
+    const fault = Object.freeze({
+      kind: "commit",
+      boundary: "pre-fsync",
+      occurrence: 1,
+      action: "latch",
+      readyPath,
+      releasePath,
+    });
+    running = runFixtureExpressionAsync(root, `(async()=>{const probe={events:[],matches:0,fault:${JSON.stringify(fault)}};Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",probe);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,events:probe.events,matches:probe.matches}))})()`);
+    waitForFixturePredicateV1(() => existsSync(readyPath), `${kind}:${race}: committed-successor C-authentication latch`);
+
+    let replacementBytes: Buffer | null;
+    let displacedTarget: string | null = null;
+    if (race === "absent-to-present") {
+      replacementBytes = initialBytes;
+    } else {
+      displacedTarget = `${legacyTarget}.${race}.held`;
+      renameSync(legacyTarget, displacedTarget);
+      replacementBytes = race === "present-to-absent"
+        ? null
+        : race === "same-byte-replacement"
+          ? initialBytes
+          : successor[index].bytes;
+    }
+    if (replacementBytes !== null) {
+      writeFileSync(legacyTarget, replacementBytes, { flag: "wx", mode: 0o600 });
+      chmodSync(legacyTarget, 0o600);
+    }
+    const replacementEvidenceTarget = replacementBytes === null ? displacedTarget! : legacyTarget;
+    const replacementStats = lstatSync(replacementEvidenceTarget, { bigint: true });
+    if (initialStats !== null && race !== "present-to-absent") assert.notEqual(replacementStats.ino, initialStats.ino, `${kind}:${race}: mutation creates a distinct legacy basename inode`);
+    writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+
+    const result = await running;
+    assert.equal(result.status, 0, `${kind}:${race}: ${result.stderr}`);
+    assert.equal(result.stderr, "", `${kind}:${race}`);
+    const observed = JSON.parse(result.stdout) as Readonly<{
+      outcome: "returned" | "threw";
+      message: string | null;
+      value: Readonly<Record<string, unknown>> | null;
+      events: readonly string[];
+      matches: number;
+    }>;
+    return Object.freeze({
+      ...observed,
+      mutationApplied: race === "present-to-absent" ? !existsSync(legacyTarget) : existsSync(legacyTarget),
+      replacementRetained: replacementBytes !== null
+        && existsSync(legacyTarget)
+        && lstatSync(legacyTarget, { bigint: true }).ino === replacementStats.ino,
+      replacementBytesSha256: createHash("sha256").update(readFileSync(replacementEvidenceTarget)).digest("hex"),
+      replacementInode: replacementStats.ino.toString(10),
+      initialInode: initialStats?.ino.toString(10) ?? null,
+      exactBasenamePresent: existsSync(legacyTarget),
+      displacedRetained: displacedTarget !== null
+        && existsSync(displacedTarget)
+        && initialStats !== null
+        && lstatSync(displacedTarget, { bigint: true }).ino === initialStats.ino
+        && readFileSync(displacedTarget).equals(initialBytes),
+      displacedBytesSha256: displacedTarget !== null && existsSync(displacedTarget)
+        ? createHash("sha256").update(readFileSync(displacedTarget)).digest("hex")
+        : null,
+      displacedInode: displacedTarget !== null && existsSync(displacedTarget)
+        ? lstatSync(displacedTarget, { bigint: true }).ino.toString(10)
+        : null,
+    });
+  } finally {
+    if (running !== null && !existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+    if (running !== null) await Promise.allSettled([running]);
+    removeFixture(root);
+  }
+}
+
+function instrumentExactPoisonTask3WriterContentionLatchFixtureV1(
+  root: string,
+  acquiredPath: string,
+  releasePath: string,
+): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const core = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
+  const boundary = "  const heldWriter = acquireExactPoisonRecoveryWriterV1();\n  try {\n    heldWriter.assertStable();";
+  assert.equal(core.split(boundary).length - 1, 1, "task3 contention fixture locates one stable post-acquisition H boundary");
+  const latch = `${boundary}
+    writeFileSync(${JSON.stringify(acquiredPath)}, String(process.pid) + "\\n", { flag: "a", mode: 0o600 });
+    { const wait = new Int32Array(new SharedArrayBuffer(4)); let released = false; while (!released) { try { lstatSync(${JSON.stringify(releasePath)}); released = true; } catch (error) { if (!isEnoent(error)) throw error; Atomics.wait(wait, 0, 0, 5); } } }
+    heldWriter.assertStable();`;
+  writeFileSync(modulePath, source.replace(core, () => core.replace(boundary, latch)));
+}
+
+function instrumentExactPoisonTask3MutationPortsFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const cleanupDeclaration = "function cleanupPinnedTask12CurrentStatusCasQ1V1(";
+  assert.equal(source.split(cleanupDeclaration).length - 1, 1, "task3 mutation fixture locates the real current-status cleanup port");
+  source = source.replace(cleanupDeclaration, `export ${cleanupDeclaration}`);
+  for (const port of [
+    Object.freeze({ label: "database-migration", name: "applyInternalProductionBaselineBootstrapHandoffMigrationV1", firstStatement: "  const context = await selectCurrentEntryStoreContextV1();" }),
+    Object.freeze({ label: "service-restart", name: "restartInternalProductionBaselineServiceV1", firstStatement: "  const authorization = await resolveInternalProductionBaselineServiceRestartAuthorizationV1(input);" }),
+    Object.freeze({ label: "mission-control", name: "prepareInternalProductionBaselineServiceRestartV1", firstStatement: '  if (!isPlainRecord(input) || !hasExactKeys(input, ["service"]) || !Object.hasOwn(BASELINE_RESTART_ACTIONS_V1, input.service)) currentEntryFail("baseline restart service input is invalid");' }),
+    Object.freeze({ label: "current-status-cleanup", name: "cleanupPinnedTask12CurrentStatusCasQ1V1", firstStatement: "  const directory = path.dirname(target);" }),
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, port.name);
+    assert.equal(region.split(port.firstStatement).length - 1, 1, `${port.label}: task3 fixture locates the first mutation-capable statement`);
+    const hook = `  { const probe = Reflect.get(globalThis, "__p4cExactPoisonMutationPortsV1") as undefined | { calls: string[] }; if (probe === undefined) throw new Error("P4C_MUTATION_PORT_PROBE_MISSING:${port.label}"); probe.calls.push(${JSON.stringify(port.label)}); throw new Error(${JSON.stringify(`P4C_MUTATION_PORT_CALLED:${port.label}`)}); }\n`;
+    source = source.replace(region, () => region.replace(port.firstStatement, `${hook}${port.firstStatement}`));
+  }
+  writeFileSync(modulePath, source);
+}
+
+function exactPoisonTask3ProtectedHistorySnapshotV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  overlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+): Readonly<Record<string, unknown>> {
+  const protectedFiles = [...original.originalLocators.map((locator) => path.join(original.store, locator)), ...overlay.filter((candidate) => existsSync(candidate.target)).map((candidate) => candidate.target)];
+  const files = protectedFiles.map((target) => {
+    const stats = lstatSync(target, { bigint: true });
+    return Object.freeze({
+      target: task12FixturePresentedPathV1(target),
+      bytesBase64: readFileSync(target).toString("base64"),
+      deviceDecimal: stats.dev.toString(10),
+      inodeDecimal: stats.ino.toString(10),
+      linkCount: stats.nlink.toString(10),
+      mode: `0${(stats.mode & 0o7777n).toString(8)}`,
+      uidDecimal: stats.uid.toString(10),
+    });
+  });
+  return Object.freeze({
+    files: Object.freeze(files),
+    authorityHistory: filesystemTreeSnapshot(path.join(original.store, "records/authority-v3-migration31-audits")),
+    pendingHistory: filesystemTreeSnapshot(path.join(original.store, "records/pending-bootstrap-handoff-migrations")),
+    original: observeExactOriginalPoisonIdentityV1(original.store),
+  });
 }
 
 function assertExactPoisonPublishedRecordV1(store: string, record: ExactPoisonStrictChainRecordV1, label: string): void {
@@ -2087,18 +2570,26 @@ function seedExactPoisonRecoveryInvalidLeafStateV1(
 function configureExactPoisonRecoveryLeafHarnessV1(
   root: string,
   fault: ExactPoisonRecoveryLeafFaultFixtureV1 | null = null,
+  options: Readonly<{ currentPrerequisites?: "frozen" | "distinct" }> = {},
 ): Readonly<{
   original: ExactOriginalPoisonStoreFixtureV1;
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>;
   observations: Readonly<Record<string, readonly unknown[]>>;
+  currentOverlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ] | null;
 }> {
   installExactCurrentSuccessorGitFixtureV1(root);
   const original = seedExactOriginalPoisonStoreV1(root);
-  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+  const currentOverlay = options.currentPrerequisites === "distinct"
+    ? buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root)
+    : null;
+  const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, currentOverlay ?? undefined);
   const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
   instrumentExactPoisonRecoveryLeafFixtureV1(root, fault);
   instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
-  return Object.freeze({ original, admitted, observations });
+  return Object.freeze({ original, admitted, observations, currentOverlay });
 }
 
 type ExactPoisonDurabilityKindFixtureV1 = "seal" | "commit";
@@ -3853,16 +4344,20 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
     ]);
     assert.equal((source.match(/\bselectCurrentEntryStoreContextV1\b/g) ?? []).length, PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1.length + 1,
       "P5c-S keeps the sole selector definition plus exactly one call in each declared active public wrapper; no alias may escape the selected effect graph");
-    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\b/g) ?? []).length, 3,
-      "P5c-S keeps the selected-context creator at its definition and two reviewed construction sites only");
+    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\s*\(/g) ?? []).length, 3,
+      "P5c-S keeps exactly the creator definition and two reviewed construction calls");
+    assert.equal((source.match(/\bcreateSelectedCurrentEntryStoreContextV1\b/g) ?? []).length, 4,
+      "P5c-S keeps only the creator definition, its one exact parameter-type reference, and two reviewed construction calls");
+    assert.equal((source.match(/Parameters<typeof createSelectedCurrentEntryStoreContextV1>\[0\]/g) ?? []).length, 1,
+      "P5c-S keeps one exact creator-derived selector helper input type");
     assert.equal((source.match(/\bselectedCurrentEntryStoreContextStatesV1\b/g) ?? []).length, 3,
       "P5c-S keeps the selected-context WeakMap at its declaration plus exact set/get ownership sites only");
     assert.deepEqual({ selectedStateRequire: (source.match(/\brequireSelectedCurrentEntryStoreContextStateV1\b/g) ?? []).length, selectedRootOpen: (source.match(/\bopenSelectedCurrentEntryPrerequisiteRootReaderV1\b/g) ?? []).length },
-      { selectedStateRequire: 15, selectedRootOpen: 7 },
-      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including migration status context fencing, and retains the early pre-schema plus selected-pass root acquisitions");
+      { selectedStateRequire: 17, selectedRootOpen: 7 },
+      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including both no-write prerequisite builders and migration status context fencing");
     assert.deepEqual({ pinnedChain: (source.match(/\bopenExactPoisonRecoveryPinnedCommitChainV1\b/g) ?? []).length, detachedProgress: (source.match(/\bobserveExactPoisonPostVisibleProgressPassNoWriteV1\b/g) ?? []).length },
-      { pinnedChain: 6, detachedProgress: 3 },
-      "P5c-S keeps detached pinned-chain/progress observer identifiers at their already audited ownership sites and cannot capture either through an arrow alias");
+      { pinnedChain: 8, detachedProgress: 3 },
+      "P5c-S keeps pinned-chain identifiers at the reviewed selector, durability, historical-operation, and two committed-prerequisite fallback sites while progress observation stays detached and exact");
     assert.deepEqual({ processEnv: (source.match(/\bprocess\.env\b/g) ?? []).length, denoEnv: (source.match(/\bDeno\.env\b/g) ?? []).length, bunEnv: (source.match(/\bBun\.env\b/g) ?? []).length, globalThis: (source.match(/\bglobalThis\b/g) ?? []).length, asyncLocal: (source.match(/\bAsyncLocalStorage\b/g) ?? []).length },
       { processEnv: 3, denoEnv: 0, bunEnv: 0, globalThis: 0, asyncLocal: 0 },
       "P5c-S permits only the three reviewed database observation leaves to read the database URL and adds no other ambient channel");
@@ -4375,14 +4870,14 @@ function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
       source = source.replace(importAnchor, "  renameSync,\n  rmdirSync,\n  unlinkSync,");
     }
     assert.equal(source.split(lowerMarker).length - 1, 1, "P5c-Z instruments exactly one detached no-write candidate builder");
-    assert.equal(source.split(upperMarker).length - 1, 1, "P5c-Z instruments exactly one context-only post-visible fence");
+    assert.equal(source.split(upperMarker).length - 1, 1, "P5c-Z instruments exactly one admitted-capability-aware post-visible fence");
     const upperStart = source.indexOf(upperMarker);
     const validatorStart = source.indexOf("async function revalidatePostVisibleCurrentEntryStoreV1(", upperStart);
     assert.ok(validatorStart > upperStart, "the post-visible fence precedes the exact Z validator");
     const upperRegion = source.slice(upperStart, validatorStart);
-    const observedCall = /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(([^,]+),\s*originals\.evidence\);/;
+    const observedCall = /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(([^,]+),\s*originals\.evidence,\s*([^)]+)\);/;
     assert.equal([...upperRegion.matchAll(new RegExp(observedCall.source, "g"))].length, 1, "P5c-Z observes one detached lower result inside the owned-originals lifetime");
-    const hookedUpper = upperRegion.replace(observedCall, (_match, operationExpression: string) => `const rawObserved = await observeExactPoisonRecoveryCandidatesNoWriteV1(${operationExpression}, originals.evidence);
+    const hookedUpper = upperRegion.replace(observedCall, (_match, operationExpression: string, prerequisiteExpression: string) => `const rawObserved = await observeExactPoisonRecoveryCandidatesNoWriteV1(${operationExpression}, originals.evidence, ${prerequisiteExpression});
     const p5cProbe = Reflect.get(globalThis, "__p5cZeroProgressProbeV1") as undefined | {lowerReturnCalls:number;mutation:Readonly<{kind:string;index?:number;field?:string}>;transientApplied:boolean;rootIdentity:null|Readonly<Record<string,string>>};
     let observed = rawObserved;
     if (p5cProbe) {
@@ -4419,12 +4914,10 @@ function instrumentPhase5cPreStatusFixtureV1(root: string): void {
   let source = readFileSync(modulePath, "utf8");
   const copiedWorkspaceLiteral = "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());";
   assert.equal(source.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
-  source = source.replace(copiedWorkspaceLiteral, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`);
-  const copiedPresentation = `const target = process.platform === "darwin" && resolvedTarget.startsWith("/private/var/")
-    ? resolvedTarget.slice("/private".length)
-    : resolvedTarget;`;
-  assert.equal(source.split(copiedPresentation).length - 1, 1, "P5c-P copied fixture retains one macOS lexical-presentation branch");
-  source = source.replace(copiedPresentation, "const target = resolvedTarget;");
+  source = source.replace(
+    copiedWorkspaceLiteral,
+    `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`,
+  );
   const selectedServiceCall = "await observeInternalProductionServiceCensusV1()";
   const serviceProbeCall = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown}).next("service") as InternalProductionServiceCensusV1';
   const ensureStart = source.indexOf("async function ensureTask12PreparedCurrentEntryStatusV1(");
@@ -9105,7 +9598,7 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
   let publisher = source.slice(publisherStart, publisherEnd);
   const heldProgress = `      heldWriter.assertStable();
       context.assertStable();
-      await revalidatePostVisibleCurrentEntryStoreV1(context);
+      await revalidatePostVisibleCurrentEntryStoreV1(context, admission);
       heldWriter.assertStable();
       context.assertStable();`;
   assert.equal(publisher.split(heldProgress).length - 1, 1, "P5c-S publisher has one H-bracketed post-visible validator");
@@ -13464,16 +13957,29 @@ function instrumentPhase5bNestedPrerequisiteFixtureV1(root: string): void {
   const selectedFallback = "  const legacy = fixedCurrentEntryPath(context, kind);";
   const historicalFallbackLegacy = "  const legacyLocator = path.join(store.directory, CURRENT_ENTRY_FILES[kind]);";
   const historicalFallbackPinned = "  const legacyLocator = path.join(rootReader.store.directory, CURRENT_ENTRY_FILES[kind]);";
-  assert.equal(source.split(selectedFallback).length - 1, 1, "P5b-B3 instruments one selected-root fallback boundary");
-  const historicalLegacyCount = source.split(historicalFallbackLegacy).length - 1;
-  const historicalPinnedCount = source.split(historicalFallbackPinned).length - 1;
+  const selectedFallbackReader = topLevelFunctionRegionV1(source, "readCurrentEntryPrerequisiteRecordAtRootV1");
+  assert.equal(selectedFallbackReader.split(selectedFallback).length - 1, 1, "P5b-B3 instruments one selected-root fallback boundary");
+  const selectedFallbackReaderStart = source.indexOf(selectedFallbackReader);
+  const selectedFallbackIndex = source.indexOf(selectedFallback, selectedFallbackReaderStart);
+  assert.ok(selectedFallbackIndex >= selectedFallbackReaderStart && selectedFallbackIndex < selectedFallbackReaderStart + selectedFallbackReader.length,
+    "P5b-B3 pins selected-root fallback instrumentation to the selected prerequisite reader");
+  source = source.slice(0, selectedFallbackIndex)
+    + `  p5bB3MaybeDriftPrerequisiteRootV1("active", kind, "after-content-enoent");\n${selectedFallback}\n  p5bB3RecordFallbackOpenV1(legacy.directory, path.join(legacy.directory, legacy.basename));`
+    + source.slice(selectedFallbackIndex + selectedFallback.length);
+
+  const historicalFallbackReader = topLevelFunctionRegionV1(source, "readFixedLegacyCurrentEntryPrerequisiteRecordAtRootV1");
+  const historicalLegacyCount = historicalFallbackReader.split(historicalFallbackLegacy).length - 1;
+  const historicalPinnedCount = historicalFallbackReader.split(historicalFallbackPinned).length - 1;
   assert.equal(historicalLegacyCount + historicalPinnedCount, 1, "P5b-B3 instruments exactly one legacy or pinned historical-root fallback boundary");
-  source = source.replace(selectedFallback, `  p5bB3MaybeDriftPrerequisiteRootV1("active", kind, "after-content-enoent");\n${selectedFallback}\n  p5bB3RecordFallbackOpenV1(legacy.directory, path.join(legacy.directory, legacy.basename));`);
-  if (historicalLegacyCount === 1) {
-    source = source.replace(historicalFallbackLegacy, `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallbackLegacy}\n  p5bB3RecordFallbackOpenV1(store.directory, legacyLocator);`);
-  } else {
-    source = source.replace(historicalFallbackPinned, `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallbackPinned}\n  p5bB3RecordFallbackOpenV1(rootReader.store.directory, legacyLocator);`);
-  }
+  const historicalFallbackReaderStart = source.indexOf(historicalFallbackReader);
+  const historicalFallback = historicalLegacyCount === 1 ? historicalFallbackLegacy : historicalFallbackPinned;
+  const historicalFallbackIndex = source.indexOf(historicalFallback, historicalFallbackReaderStart);
+  assert.ok(historicalFallbackIndex >= historicalFallbackReaderStart && historicalFallbackIndex < historicalFallbackReaderStart + historicalFallbackReader.length,
+    "P5b-B3 pins historical fallback instrumentation to the fixed prerequisite reader");
+  const historicalFallbackRoot = historicalLegacyCount === 1 ? "store.directory" : "rootReader.store.directory";
+  source = source.slice(0, historicalFallbackIndex)
+    + `  p5bB3MaybeDriftPrerequisiteRootV1("historical-standalone", kind, "after-content-enoent");\n${historicalFallback}\n  p5bB3RecordFallbackOpenV1(${historicalFallbackRoot}, legacyLocator);`
+    + source.slice(historicalFallbackIndex + historicalFallback.length);
 
   const historicalResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
   const resolverStart = source.indexOf(historicalResolver);
@@ -13656,6 +14162,41 @@ function assertExactPoisonRecoveryConvergedV1(
   const reobserved = observeExactOriginalPoisonIdentityV1(original.store);
   assert.deepEqual(reobserved.inventoryBody, original.inventoryBody, `${label}: original inventory`);
   assert.deepEqual(reobserved.predecessorFileIdentities, original.predecessorFileIdentities, `${label}: original file identities`);
+}
+
+function assertExactPoisonDistinctCurrentPairSuccessorV1(
+  original: ExactOriginalPoisonStoreFixtureV1,
+  chain: ExactPoisonStrictChainFixtureV1,
+  currentOverlay: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
+  label: string,
+): void {
+  const authorityPair = Object.freeze({
+    authorityV3Migration31AuditRef: currentOverlay[0].pair.ref,
+    authorityV3Migration31AuditHash: currentOverlay[0].pair.hash,
+  });
+  const pendingPair = Object.freeze({
+    pendingBootstrapHandoffMigrationRef: currentOverlay[1].pair.ref,
+    pendingBootstrapHandoffMigrationHash: currentOverlay[1].pair.hash,
+  });
+  const proofOperation = Reflect.get(chain.embedded.zeroEffectProof.value, "successorOperation") as Readonly<Record<string, unknown>>;
+  assert.notEqual(currentOverlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, `${label}: current audit pair is distinct from frozen e2`);
+  assert.notEqual(currentOverlay[1].pair.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, `${label}: current pending pair is distinct from frozen ce`);
+  assert.deepEqual(chain.records.successorAuthorityV31.bytes, currentOverlay[0].bytes, `${label}: modeled successor audit bytes are the exact current bytes`);
+  assert.deepEqual(chain.records.successorPending.bytes, currentOverlay[1].bytes, `${label}: modeled successor pending bytes are the exact current bytes`);
+  assert.deepEqual(chain.records.successorOperation.value.authorityV3Migration31Audit, authorityPair, `${label}: modeled successor operation binds only the current audit pair`);
+  assert.deepEqual(chain.records.successorOperation.value.pendingBootstrapHandoffMigration, pendingPair, `${label}: modeled successor operation binds only the current pending pair`);
+  assert.deepEqual(proofOperation.authorityV3Migration31Audit, authorityPair, `${label}: zero-effect proof binds the current audit pair`);
+  assert.deepEqual(proofOperation.pendingBootstrapHandoffMigration, pendingPair, `${label}: zero-effect proof binds the current pending pair`);
+  assert.deepEqual(chain.embedded.successorGenesis.value.authorityV3Migration31Audit, authorityPair, `${label}: genesis binds the current audit pair`);
+  assert.deepEqual(chain.embedded.successorGenesis.value.pendingBootstrapHandoffMigration, pendingPair, `${label}: genesis binds the current pending pair`);
+  assert.deepEqual(readFileSync(path.join(original.store, chain.records.successorAuthorityV31.locator)), currentOverlay[0].bytes, `${label}: published successor audit is byte-identical current state`);
+  assert.deepEqual(readFileSync(path.join(original.store, chain.records.successorPending.locator)), currentOverlay[1].bytes, `${label}: published successor pending is byte-identical current state`);
+  const publishedOperation = JSON.parse(readFileSync(path.join(original.store, chain.records.successorOperation.locator), "utf8")) as Readonly<Record<string, unknown>>;
+  assert.deepEqual(publishedOperation.authorityV3Migration31Audit, authorityPair, `${label}: published successor operation never falls back to frozen e2`);
+  assert.deepEqual(publishedOperation.pendingBootstrapHandoffMigration, pendingPair, `${label}: published successor operation never falls back to frozen ce`);
 }
 
 type ExactPoisonRecoveryWriterBoundaryFixtureV1 =
@@ -14031,6 +14572,22 @@ function instrumentExactPoisonRecoveryTransientObserverFixtureV1(
   ambiguityProbe: Readonly<{ pid: number; observedPath: string }> | null = null,
 ): void {
   rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const p4bAuthority = rehashFixtureRecordV1(
+    JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+    "authorityV3Migration31AuditRef",
+    "authorityV3Migration31AuditHash",
+    "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+    (body) => { (body.controllerSource as Record<string, unknown>).buildHash = "4".repeat(64); },
+  );
+  const p4bPending = rehashFixtureRecordV1(
+    JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>,
+    "pendingBootstrapHandoffMigrationRef",
+    "pendingBootstrapHandoffMigrationHash",
+    "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/",
+    (body) => { (body.controllerSource as Record<string, unknown>).buildHash = "4".repeat(64); },
+  );
+  assert.notEqual(p4bAuthority.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "the P4b current audit fixture must not reinterpret frozen e2");
+  assert.notEqual(p4bPending.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, "the P4b current pending fixture must not reinterpret frozen ce");
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
   if (scanLatch !== null) {
@@ -14081,7 +14638,22 @@ ${transient.slice(bodyEnd)}`;
     }
     if (observeStartPath !== "") writeFileSync(observeStartPath, "started\\n", { flag: "wx", mode: 0o600 });
     const operation = requireExactPoisonRecoverySnapshotV1(fixedLegacyCurrentEntryOperationPathV1(), "P4b transient observer operation");
-    const observed = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter);
+    const authorityValue = ${JSON.stringify(p4bAuthority.value)};
+    const pendingValue = ${JSON.stringify(p4bPending.value)};
+    const currentPrerequisites = Object.freeze({
+      authorityV3Migration31Audit: Object.freeze({
+        value: authorityValue,
+        bytes: Buffer.from(${JSON.stringify(p4bAuthority.bytes.toString("base64"))}, "base64"),
+        pair: Object.freeze({ authorityV3Migration31AuditRef: ${JSON.stringify(p4bAuthority.ref)}, authorityV3Migration31AuditHash: ${JSON.stringify(p4bAuthority.hash)} }),
+      }),
+      pendingBootstrapHandoffMigration: Object.freeze({
+        value: pendingValue,
+        bytes: Buffer.from(${JSON.stringify(p4bPending.bytes.toString("base64"))}, "base64"),
+        pair: Object.freeze({ pendingBootstrapHandoffMigrationRef: ${JSON.stringify(p4bPending.ref)}, pendingBootstrapHandoffMigrationHash: ${JSON.stringify(p4bPending.hash)} }),
+      }),
+    });
+    const expectedPublished = await buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(currentPrerequisites);
+    const observed = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedPublished);
     observed.assertStableOriginals();
     heldWriter.assertStable();
     if (observedPath !== "") writeFileSync(observedPath, "observed\\n", { flag: "wx", mode: 0o600 });
@@ -14125,9 +14697,13 @@ function instrumentExactPoisonRecoveryCoreAdmissionOrderFixtureV1(root: string):
 function buildExactPoisonPublisherAdmissionFixtureV1(
   root: string,
   original: ExactOriginalPoisonStoreFixtureV1,
+  currentOverlay?: readonly [
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+    ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
+  ],
 ): Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }> {
-  const currentAuthorityV31Bytes = exactCurrentAuthorityV31FixtureBytesV1();
-  const currentPendingBytes = exactCurrentPendingFixtureBytesV1();
+  const currentAuthorityV31Bytes = currentOverlay?.[0].bytes ?? exactCurrentAuthorityV31FixtureBytesV1();
+  const currentPendingBytes = currentOverlay?.[1].bytes ?? exactCurrentPendingFixtureBytesV1();
   const serviceCensus = exactZeroEffectServiceCensusV1();
   const physicalInventory = exactZeroEffectPhysicalInventoryV1();
   const chain = buildExactPoisonStrictChainFixtureV1(root, {
@@ -14258,6 +14834,155 @@ function buildExactPoisonPublisherRawObservationsV1(
       ownerCensus: rowTail.ownerCensus,
     })),
   });
+}
+
+type ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1 = Readonly<{
+  kind: "authorityV3Migration31Audit" | "pendingBootstrapHandoffMigration";
+  target: string;
+  value: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+  pair: Readonly<{ ref: string; hash: string }>;
+}>;
+
+function instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(
+  root: string,
+  original: ExactOriginalPoisonStoreFixtureV1,
+  statFault: "uid" | "device" | null = null,
+): void {
+  rewriteExactPoisonPhysicalInventoryFixtureV1(root, original);
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  const expose = (marker: string, replacement: string): void => {
+    assert.equal(source.split(marker).length - 1, 1, `copied overlay fixture locates ${marker}`);
+    source = source.replace(marker, replacement);
+  };
+  expose("async function selectCurrentEntryStoreContextV1(", "export async function selectCurrentEntryStoreContextV1(");
+  expose("async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(", "export async function buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(");
+  expose("async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(", "export async function buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(");
+  expose("function currentEntryPrerequisiteRecordPathV1(", "export function currentEntryPrerequisiteRecordPathV1(");
+  expose("function fixedLegacyCurrentEntryOperationPathV1(", "export function fixedLegacyCurrentEntryOperationPathV1(");
+  expose("function requireExactPoisonRecoverySnapshotV1(", "export function requireExactPoisonRecoverySnapshotV1(");
+  expose("function observeExactPoisonQuarantinedInventoryV1(", "export function observeExactPoisonQuarantinedInventoryV1(");
+  expose("async function observeExactPoisonQuarantineAdmissionCoreV1(", "export async function observeExactPoisonQuarantineAdmissionCoreV1(");
+  const overlayBuilder = "async function buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(";
+  if (source.includes(overlayBuilder)) source = source.replace(overlayBuilder, `export ${overlayBuilder}`);
+
+  const admission = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionCoreV1");
+  const observedCall = "  const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory, admittedCurrentPrerequisites);";
+  const frontierCall = "  assertExactPoisonRecoveryFrontierV1(observed.candidates, heldWriter);";
+  assert.equal(admission.split(observedCall).length - 1, 1, "copied overlay fixture isolates one unrelated no-write candidate build");
+  assert.equal(admission.split(frontierCall).length - 1, 1, "copied overlay fixture isolates one unrelated recovery frontier");
+  const isolatedAdmission = admission
+    .replace(observedCall, "  const observed = Object.freeze({ candidates: Object.freeze([]) }) as unknown as ExactPoisonRecoveryNoWriteFenceV1;")
+    .replace(frontierCall, "  void observed;");
+  source = source.replace(admission, () => isolatedAdmission);
+
+  const inventory = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantinedInventoryV1");
+  const writerLockMember = '["records", new Set([recoveryLock, "authority-v3-migration31-audits", "pending-bootstrap-handoff-migrations"])],';
+  assert.equal(inventory.split(writerLockMember).length - 1, 1, "copied overlay fixture isolates the unrelated held-writer lock member");
+  const finalFence = "  assertStableOriginals();\n  return Object.freeze({";
+  assert.equal(inventory.split(finalFence).length - 1, 1, "copied overlay fixture locates the inventory final stability fence");
+  const hookedInventory = inventory
+    .replace(writerLockMember, '["records", new Set(["authority-v3-migration31-audits", "pending-bootstrap-handoff-migrations"])],')
+    .replace(
+      finalFence,
+      `  { const hook = Reflect.get(globalThis, "__p4cExactPoisonOverlayFinalFenceV1"); if (typeof hook === "function") (hook as () => void)(); }\n${finalFence}`,
+    );
+  source = source.replace(inventory, () => hookedInventory);
+
+  if (statFault !== null) {
+    const identityMarker = "  const expectedUid = rootStats.uid;\n  const expectedDevice = rootStats.dev;";
+    assert.equal(source.split(identityMarker).length - 1, 1, `copied overlay ${statFault} fault owns one stat seam`);
+    source = source.replace(
+      identityMarker,
+      `  const expectedUid = rootStats.uid + ${statFault === "uid" ? "1n" : "0n"};\n  const expectedDevice = rootStats.dev + ${statFault === "device" ? "1n" : "0n"};`,
+    );
+  }
+  writeFileSync(modulePath, source);
+  git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+  git(root, ["commit", "-qm", `fixture exact-poison current prerequisite overlay${statFault === null ? "" : ` ${statFault}`}`]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const prepared = runProducer(root, "--prepare");
+  assert.equal(prepared.status, 0, prepared.stderr);
+  materializeOutputs(root);
+  const finalized = runProducer(root, "--finalize");
+  assert.equal(finalized.status, 0, finalized.stderr);
+}
+
+function deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(
+  root: string,
+): readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1] {
+  const result = runFixtureExpression(root, `(async()=>{
+    const context=await m.selectCurrentEntryStoreContextV1();
+    const authority=await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+    const pending=await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+    const overlay=Object.freeze([
+      Object.freeze({kind:"authorityV3Migration31Audit",target:m.currentEntryPrerequisiteRecordPathV1(context,"authorityV3Migration31Audit",authority.pair.hash),value:authority.value,bytes:authority.bytes,pair:authority.pair}),
+      Object.freeze({kind:"pendingBootstrapHandoffMigration",target:m.currentEntryPrerequisiteRecordPathV1(context,"pendingBootstrapHandoffMigration",pending.pair.hash),value:pending.value,bytes:pending.bytes,pair:pending.pair}),
+    ]);
+    process.stdout.write(JSON.stringify(overlay.map((candidate)=>({...candidate,bytesBase64:candidate.bytes.toString("base64"),bytes:undefined}))));
+  })()`);
+  assert.equal(result.status, 0, result.stderr);
+  const candidates = JSON.parse(result.stdout) as readonly Readonly<{
+    kind: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1["kind"];
+    target: string;
+    value: Readonly<Record<string, unknown>>;
+    bytesBase64: string;
+    pair: Readonly<{ ref: string; hash: string }>;
+  }>[];
+  assert.equal(candidates.length, 2, "copied private builders derive exactly two overlay candidates");
+  return Object.freeze(candidates.map((candidate) => Object.freeze({
+    kind: candidate.kind,
+    target: task12FixturePresentedPathV1(candidate.target),
+    value: candidate.value,
+    bytes: Buffer.from(candidate.bytesBase64, "base64"),
+    pair: candidate.pair,
+  }))) as unknown as readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1];
+}
+
+function runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(
+  root: string,
+  options: Readonly<{
+    appearance?: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1;
+    duplicateExpected?: true;
+  }> = {},
+): ReturnType<typeof spawnSync> {
+  return runFixtureExpression(root, `(async()=>{
+    const fs=await import("node:fs");
+    const path=await import("node:path");
+    const context=await m.selectCurrentEntryStoreContextV1();
+    const authority=await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+    const pending=await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+    const currentPrerequisites=Object.freeze({
+      authorityV3Migration31Audit:Object.freeze({value:authority.value,bytes:authority.bytes,pair:Object.freeze({authorityV3Migration31AuditRef:authority.pair.ref,authorityV3Migration31AuditHash:authority.pair.hash})}),
+      pendingBootstrapHandoffMigration:Object.freeze({value:pending.value,bytes:pending.bytes,pair:Object.freeze({pendingBootstrapHandoffMigrationRef:pending.pair.ref,pendingBootstrapHandoffMigrationHash:pending.pair.hash})}),
+    });
+    const fallback=Object.freeze([
+      Object.freeze({kind:"authorityV3Migration31Audit",target:m.currentEntryPrerequisiteRecordPathV1(context,"authorityV3Migration31Audit",authority.pair.hash),value:authority.value,bytes:authority.bytes,pair:authority.pair}),
+      Object.freeze({kind:"pendingBootstrapHandoffMigration",target:m.currentEntryPrerequisiteRecordPathV1(context,"pendingBootstrapHandoffMigration",pending.pair.hash),value:pending.value,bytes:pending.bytes,pair:pending.pair}),
+    ]);
+    const builtExpected=typeof m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1==="function"
+      ? await m.buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1(currentPrerequisites)
+      : fallback;
+    const expected=${options.duplicateExpected === true ? "Object.freeze([builtExpected[0],builtExpected[0]])" : "builtExpected"};
+    ${options.appearance === undefined ? "" : `Reflect.set(globalThis,"__p4cExactPoisonOverlayFinalFenceV1",()=>{Reflect.deleteProperty(globalThis,"__p4cExactPoisonOverlayFinalFenceV1");const target=${JSON.stringify(options.appearance.target)};fs.mkdirSync(path.dirname(target),{recursive:true,mode:0o700});fs.chmodSync(path.dirname(target),0o700);fs.writeFileSync(target,Buffer.from(${JSON.stringify(options.appearance.bytes.toString("base64"))},"base64"),{mode:0o600});});`}
+    const operation=m.requireExactPoisonRecoverySnapshotV1(m.fixedLegacyCurrentEntryOperationPathV1(),"P4c copied exact-poison operation");
+    const heldWriter=Object.freeze({assertStable:()=>{}});
+    let outcome="returned",message=null,admission=null,stableOutcome="not-called";
+    try {
+      const observed=await m.observeExactPoisonQuarantineAdmissionCoreV1(operation,heldWriter,expected,currentPrerequisites);
+      let stableMessage=null;
+      try { observed.assertStableOriginals(); stableOutcome="returned"; } catch(error) { stableOutcome="threw"; stableMessage=String(error); }
+      admission={
+        inventoryBody:observed.inventoryBody,
+        inventoryHash:observed.inventoryHash,
+        predecessorFileIdentities:observed.predecessorFileIdentities,
+        currentPrerequisiteOverlay:observed.currentPrerequisiteOverlay?.map((candidate)=>({...candidate,bytesBase64:candidate.bytes.toString("base64"),bytes:undefined})),
+        stableMessage,
+      };
+    } catch(error) { outcome="threw"; message=String(error); }
+    process.stdout.write(JSON.stringify({outcome,message,stableOutcome,admission}));
+  })()`);
 }
 
 function replaceExactPoisonRawSecondV1(
@@ -14480,9 +15205,7 @@ function fixturePbaPortSource(options: FixtureOptions): string {
 function createFixture(options: FixtureOptions = {}): string {
   assert.equal(existsSync(observerSource), true, "production observer module must exist before fixture creation");
   const physicalFixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-oa17-observer-")));
-  const fixtureRoot = process.platform === "darwin" && physicalFixtureRoot.startsWith("/private/var/")
-    ? physicalFixtureRoot.slice("/private".length)
-    : physicalFixtureRoot;
+  const fixtureRoot = task12FixturePresentedPathV1(physicalFixtureRoot);
   const root = path.join(fixtureRoot, "setfarm");
   fixtureFile(root, "scripts/write-build-info.mjs", readFileSync(path.join(sourceRoot, "scripts/write-build-info.mjs")));
   fixtureFile(root, "scripts/build-generation-retention.mjs", readFileSync(path.join(sourceRoot, "scripts/build-generation-retention.mjs")));
@@ -16816,6 +17539,808 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("P4c exact-poison inventory admits every settled current prerequisite overlay prefix", () => {
+    const prefixes = Object.freeze([
+      Object.freeze({ label: "none", present: Object.freeze([] as number[]) }),
+      Object.freeze({ label: "audit-only", present: Object.freeze([0]) }),
+      Object.freeze({ label: "pending-only", present: Object.freeze([1]) }),
+      Object.freeze({ label: "both", present: Object.freeze([0, 1]) }),
+    ]);
+    for (const prefix of prefixes) {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+        const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        assert.equal(new Set(overlay.map((candidate) => candidate.target)).size, 2, `${prefix.label}: exact targets are unique`);
+        assert.equal(new Set(overlay.map((candidate) => candidate.pair.hash)).size, 2, `${prefix.label}: exact hashes are unique`);
+        for (const [index, candidate] of overlay.entries()) {
+          assert.equal(candidate.target, currentEntryPrerequisiteRecord(
+            root,
+            candidate.kind === "authorityV3Migration31Audit" ? "authority-v3-migration31-audits" : "pending-bootstrap-handoff-migrations",
+            candidate.pair.hash,
+          ), `${prefix.label}: candidate path follows the existing content locator`);
+          assert.equal(candidate.bytes.toString("utf8"), `${canonical(candidate.value)}\n`, `${prefix.label}: candidate bytes are canonical plus LF`);
+          assert.equal(candidate.value[candidate.kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditHash" : "pendingBootstrapHandoffMigrationHash"], candidate.pair.hash);
+          if (prefix.present.includes(index)) {
+            mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+            chmodSync(path.dirname(candidate.target), 0o700);
+            writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+          }
+        }
+        const absentParents = overlay
+          .filter((_candidate, index) => !prefix.present.includes(index))
+          .map((candidate) => Object.freeze({ target: candidate.target, parent: path.dirname(candidate.target), before: lstatSync(path.dirname(path.dirname(candidate.target)), { bigint: true }) }));
+        const beforeOriginal = observeExactOriginalPoisonIdentityV1(original.store);
+        assert.deepEqual(beforeOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: the original 10-directory/5-file body is unchanged before admission`);
+        assert.equal(canonicalHash(beforeOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: the original inventory hash is unchanged before admission`);
+        assert.deepEqual(beforeOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: the original five file identities are unchanged before admission`);
+        const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+        assert.equal(result.status, 0, `${prefix.label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", prefix.label);
+        const observed = JSON.parse(result.stdout) as Readonly<{
+          outcome: "returned" | "threw";
+          message: string | null;
+          stableOutcome: "returned" | "threw" | "not-called";
+          admission: null | Readonly<{
+            currentPrerequisiteOverlay: readonly Readonly<{
+              kind: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1["kind"];
+              target: string;
+              value: Readonly<Record<string, unknown>>;
+              bytesBase64: string;
+              pair: Readonly<{ ref: string; hash: string }>;
+              state: "absent" | "present";
+            }>[];
+            stableMessage: string | null;
+          }>;
+        }>;
+        assert.equal(observed.outcome, "returned", `${prefix.label}: ${observed.message ?? "no admission result"}`);
+        assert.equal(observed.message, null, prefix.label);
+        assert.equal(observed.stableOutcome, "returned", `${prefix.label}: ${observed.admission?.stableMessage ?? "stability was not returned"}`);
+        assert.deepEqual(observed.admission?.currentPrerequisiteOverlay.map((candidate) => ({
+          kind: candidate.kind,
+          target: task12FixturePresentedPathV1(candidate.target),
+          value: candidate.value,
+          bytesBase64: candidate.bytesBase64,
+          pair: candidate.pair,
+          state: candidate.state,
+        })), overlay.map((candidate, index) => ({
+          kind: candidate.kind,
+          target: candidate.target,
+          value: candidate.value,
+          bytesBase64: candidate.bytes.toString("base64"),
+          pair: candidate.pair,
+          state: prefix.present.includes(index) ? "present" : "absent",
+        })), `${prefix.label}: admission returns the exact internally-derived overlay and settled state`);
+        for (const [index, candidate] of overlay.entries()) {
+          if (!prefix.present.includes(index)) continue;
+          const stats = lstatSync(candidate.target, { bigint: true });
+          const rootStats = lstatSync(original.store, { bigint: true });
+          assert.equal(stats.isFile() && !stats.isSymbolicLink(), true, `${prefix.label}: present overlay is regular`);
+          assert.equal(stats.mode & 0o7777n, 0o600n, `${prefix.label}: present overlay mode`);
+          assert.equal(stats.uid, rootStats.uid, `${prefix.label}: present overlay UID`);
+          assert.equal(stats.dev, rootStats.dev, `${prefix.label}: present overlay device`);
+          assert.equal(stats.nlink, 1n, `${prefix.label}: present overlay link count`);
+          assert.deepEqual(readFileSync(candidate.target), candidate.bytes, `${prefix.label}: present overlay bytes`);
+        }
+        for (const absence of absentParents) {
+          assert.equal(existsSync(absence.target), false, `${prefix.label}: absent overlay remains absent`);
+          const after = lstatSync(path.dirname(path.dirname(absence.target)), { bigint: true });
+          assert.equal(after.isDirectory() && !after.isSymbolicLink(), true, `${prefix.label}: absence parent is authenticated`);
+          assert.deepEqual(
+            { dev: after.dev, ino: after.ino, mode: after.mode, uid: after.uid },
+            { dev: absence.before.dev, ino: absence.before.ino, mode: absence.before.mode, uid: absence.before.uid },
+            `${prefix.label}: absence parent remains stable`,
+          );
+        }
+        const afterOriginal = observeExactOriginalPoisonIdentityV1(original.store);
+        assert.deepEqual(afterOriginal.inventoryBody, original.inventoryBody, `${prefix.label}: original inventory serialization stays frozen`);
+        assert.equal(canonicalHash(afterOriginal.inventoryBody), original.inventoryHash, `${prefix.label}: original inventory hash stays frozen`);
+        assert.deepEqual(afterOriginal.predecessorFileIdentities, original.predecessorFileIdentities, `${prefix.label}: original identities stay frozen`);
+        for (const reserved of [
+          "current-entry-store-quarantine-dispositions",
+          "current-entry-store-successor-edges",
+          "current-entry-store-successor-activation-seals",
+          "current-entry-store-successor-activation-commits",
+        ]) assert.equal(existsSync(path.join(original.store, "records", reserved)), false, `${prefix.label}: no recovery publication occurs`);
+      } finally {
+        removeFixture(root);
+      }
+    }
+    const source = readFileSync(observerSource, "utf8");
+    const builderName = "buildExactPoisonRecoveryCurrentPrerequisiteOverlayNoWriteV1";
+    const builder = topLevelFunctionRegionV1(source, builderName);
+    const reader = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+    assert.equal((source.match(new RegExp(`^async function ${builderName}\\(`, "gm")) ?? []).length, 1, "the exact overlay has one private builder");
+    assert.equal(source.includes(`export async function ${builderName}(`), false, "the exact overlay builder remains private");
+    assert.equal((reader.match(/buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1\(context\)/g) ?? []).length, 1, "the audit candidate comes only from its no-write builder");
+    assert.equal((reader.match(/buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1\(context\)/g) ?? []).length, 1, "the pending candidate comes only from its no-write builder");
+    assert.doesNotMatch(builder, /buildCurrentInternalProduction(?:AuthorityV3Migration31Audit|PendingBootstrapHandoffMigration)NoWriteV1/, "the overlay is derived from the already admitted prerequisite bundle");
+    assert.doesNotMatch(builder, /\b(?:readdirSync|writeFileSync|renameSync|copyFileSync|linkSync|symlinkSync|unlinkSync|rmSync|mkdirSync)\b|\b(?:latest|mtime)\b/i, "the closed builder neither scans nor mutates storage");
+  });
+
+  it("P4c exact-poison inventory rejects crossed current prerequisite overlays", () => {
+    const runCase = (
+      label: string,
+      mutate: (root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => Readonly<{
+        appearance?: ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1;
+        duplicateExpected?: true;
+      }>,
+      statFault: "uid" | "device" | null = null,
+      expectReturn = false,
+    ): void => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original, statFault);
+        const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        const options = mutate(root, original, overlay);
+        const before = filesystemTreeSnapshot(original.store);
+        const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, options);
+        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", label);
+        const observed = JSON.parse(result.stdout) as Readonly<{ outcome: "returned" | "threw"; message: string | null; admission: null | Readonly<{ currentPrerequisiteOverlay: readonly unknown[] }> }>;
+        assert.equal(observed.outcome, expectReturn ? "returned" : "threw", `${label}: ${observed.message ?? "no error"}`);
+        if (expectReturn) assert.equal(observed.admission?.currentPrerequisiteOverlay.length, 2, `${label}: valid control returns the closed two-record overlay`);
+        else assert.match(observed.message ?? "", /exact-poison|overlay|inventory|directory|record|identity|stable|changed|crossed/i, label);
+        if (options.appearance === undefined) assert.deepEqual(filesystemTreeSnapshot(original.store), before, `${label}: rejection performs no cleanup or publication mutation`);
+        else {
+          assert.equal(existsSync(options.appearance.target), true, `${label}: the copied race seam creates only the competing settled record`);
+          assert.deepEqual(readFileSync(options.appearance.target), options.appearance.bytes, `${label}: the concurrent record is preserved exactly`);
+        }
+        for (const reserved of [
+          "current-entry-store-quarantine-dispositions",
+          "current-entry-store-successor-edges",
+          "current-entry-store-successor-activation-seals",
+          "current-entry-store-successor-activation-commits",
+        ]) assert.equal(existsSync(path.join(original.store, "records", reserved)), false, `${label}: no successor phase is published`);
+      } finally {
+        removeFixture(root);
+      }
+    };
+
+    runCase("valid-control", (_root, _original, overlay) => {
+      const candidate = overlay[0];
+      mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(candidate.target), 0o700);
+      writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+      return Object.freeze({});
+    }, null, true);
+
+    const cases = Object.freeze([
+      Object.freeze({ label: "wrong-path-or-hash-shard", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        const wrongShard = candidate.pair.hash.slice(0, 2) === "ff" ? "fe" : "ff";
+        const target = path.join(path.dirname(path.dirname(candidate.target)), wrongShard, path.basename(candidate.target));
+        mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(target), 0o700);
+        writeFileSync(target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-bytes-expected-basename", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, Buffer.from("{}\n"), { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "third-generation-unknown-sibling", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        const siblingHash = `${candidate.pair.hash.slice(0, 2)}${candidate.pair.hash.slice(2) === "f".repeat(62) ? "e".repeat(62) : "f".repeat(62)}`;
+        writeFileSync(path.join(path.dirname(candidate.target), `${siblingHash}.json`), Buffer.from("{}\n"), { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "exact-temp-sibling", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        writeFileSync(path.join(path.dirname(candidate.target), `.${path.basename(candidate.target)}.00000000-0000-4000-8000-000000000001.tmp`), candidate.bytes, { flag: "wx", mode: 0o600 });
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "partial-empty-shard", mutate: (_root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay.find((entry) => !EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.includes(path.relative(original.store, path.dirname(entry.target)) as never)) ?? overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "symlink-leaf", mutate: (_root: string, original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        symlinkSync(path.join(original.store, original.originalLocators[1]!), candidate.target);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "hard-linked-leaf", mutate: (root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        const source = path.join(path.dirname(root), ".p4c-overlay-hard-link-source");
+        writeFileSync(source, candidate.bytes, { flag: "wx", mode: 0o600 });
+        linkSync(source, candidate.target);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-file-mode", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        chmodSync(path.dirname(candidate.target), 0o700);
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o644 });
+        chmodSync(candidate.target, 0o644);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "wrong-directory-mode", mutate: (_root: string, _original: ExactOriginalPoisonStoreFixtureV1, overlay: readonly [ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1, ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1]) => {
+        const candidate = overlay[0];
+        mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+        writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+        chmodSync(path.dirname(candidate.target), 0o755);
+        return Object.freeze({});
+      } }),
+      Object.freeze({ label: "duplicate-target-and-hash-identity", mutate: () => Object.freeze({ duplicateExpected: true as const }) }),
+    ]);
+    for (const testCase of cases) runCase(testCase.label, testCase.mutate);
+    for (const statFault of ["uid", "device"] as const) runCase(`simulated-${statFault}-crossing`, (_root, _original, overlay) => {
+      const candidate = overlay[0];
+      mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(candidate.target), 0o700);
+      writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+      return Object.freeze({});
+    }, statFault);
+    runCase("overlay-presence-changes-at-final-fence", (_root, _original, overlay) => Object.freeze({ appearance: overlay[0] }));
+  });
+
+  it("P4c exact-poison recovery binds current prerequisite pairs without mutating legacy history", () => {
+    const root = createFixture({ stopAfterCurrentEntryOperationPublication: true });
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, false, false);
+      instrumentExactPoisonTask3MutationPortsFixtureV1(root);
+      finalizeExactPoisonTask3FixtureV1(root, "fixture task3 current prerequisite recovery");
+      const overlay = publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      assert.notEqual(overlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, "the independently built current audit must not reuse frozen e2");
+      assert.notEqual(overlay[1].pair.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, "the independently built current pending record must not reuse frozen ce");
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+      const protectedBefore = exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay);
+
+      const result = runExactPoisonTask3FixtureV1(root, observations, "prepare-current-entry");
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      const observed = JSON.parse(result.stdout) as Readonly<{
+        outcome: "returned" | "threw";
+        message: string | null;
+        value: Readonly<Record<string, unknown>> | null;
+        admissionCalls: number;
+        mutationCalls: readonly string[];
+      }>;
+      assert.equal(observed.outcome, "returned", observed.message ?? "current-pair recovery did not return");
+      assert.equal(observed.message, null);
+      assert.ok(observed.admissionCalls >= 1, "prepare enters the real held-writer exact-poison admission");
+      assert.deepEqual(observed.mutationCalls, [], "recovery crosses no database migration, service restart, Mission Control, or current-status cleanup port");
+      assert.deepEqual(observed.value, admitted.chain.records.successorOperation.value, "prepare returns the exact current-pair successor operation");
+      assertExactPoisonRecoveryConvergedV1(original, admitted.chain, "current-pair recovery");
+
+      const disposition = JSON.parse(readFileSync(path.join(original.store, admitted.chain.records.disposition.locator), "utf8")) as Readonly<Record<string, unknown>>;
+      const genesis = Reflect.get(disposition, "successorGenesis") as Readonly<Record<string, unknown>>;
+      const proof = Reflect.get(disposition, "zeroEffectProof") as Readonly<Record<string, unknown>>;
+      assert.deepEqual(Reflect.get(genesis, "authorityV3Migration31Audit"), {
+        authorityV3Migration31AuditRef: overlay[0].pair.ref,
+        authorityV3Migration31AuditHash: overlay[0].pair.hash,
+      });
+      assert.deepEqual(Reflect.get(genesis, "pendingBootstrapHandoffMigration"), {
+        pendingBootstrapHandoffMigrationRef: overlay[1].pair.ref,
+        pendingBootstrapHandoffMigrationHash: overlay[1].pair.hash,
+      });
+      const bracket = admitted.chain.completeZeroEffectBracket! as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(Reflect.get(proof, "completeZeroEffectBracketHash"), canonicalHash(bracket));
+      assert.deepEqual(bracket[2]?.value, overlay[0].value, "audit observation A is the independently derived current value");
+      assert.deepEqual(bracket[3]?.value, overlay[1].value, "pending observation A is the independently derived current value");
+      assert.deepEqual(bracket[12]?.value, overlay[0].value, "audit observation B equals A exactly");
+      assert.deepEqual(bracket[13]?.value, overlay[1].value, "pending observation B equals A exactly");
+      assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay), protectedBefore, "frozen and overlay history retains bytes and physical identities");
+      assert.equal(existsSync(path.join(original.store, admitted.chain.successorStoreRelativeRoot, "operations")), false, "the stop fixture performs no post-operation status mutation");
+
+      const mutationControl = runFixtureExpression(root, `(async()=>{const probe={calls:[]};Reflect.set(globalThis,"__p4cExactPoisonMutationPortsV1",probe);const definitions=[
+        ["database-migration","applyInternalProductionBaselineBootstrapHandoffMigrationV1",[{}]],
+        ["service-restart","restartInternalProductionBaselineServiceV1",[{}]],
+        ["mission-control","prepareInternalProductionBaselineServiceRestartV1",[{service:"mission-control"}]],
+        ["current-status-cleanup","cleanupPinnedTask12CurrentStatusCasQ1V1",[]],
+      ];const messages=[];for(const [label,name,args] of definitions){try{const port=Reflect.get(m,name);if(typeof port!=="function")throw new Error("P4C_MUTATION_PORT_UNAVAILABLE:"+label);await port(...args);messages.push("returned")}catch(error){messages.push(String(error))}}process.stdout.write(JSON.stringify({calls:probe.calls,messages}))})()`);
+      assert.equal(mutationControl.status, 0, mutationControl.stderr);
+      assert.equal(mutationControl.stderr, "");
+      const mutationControlObserved = JSON.parse(mutationControl.stdout) as Readonly<{ calls: readonly string[]; messages: readonly string[] }>;
+      assert.deepEqual(mutationControlObserved.calls, ["database-migration", "service-restart", "mission-control", "current-status-cleanup"], "the probes count a deliberate call to every actual mutation-capable entry port");
+      assert.deepEqual(mutationControlObserved.messages, [
+        "Error: P4C_MUTATION_PORT_CALLED:database-migration",
+        "Error: P4C_MUTATION_PORT_CALLED:service-restart",
+        "Error: P4C_MUTATION_PORT_CALLED:mission-control",
+        "Error: P4C_MUTATION_PORT_CALLED:current-status-cleanup",
+      ], "each mutation-capable entry port throws before its first real side effect");
+
+      const source = readFileSync(observerSource, "utf8");
+      const reader = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+      assert.equal((reader.match(/buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1\(/g) ?? []).length, 1, "recovery current A/B uses the private audit builder");
+      assert.equal((reader.match(/buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1\(/g) ?? []).length, 1, "recovery current A/B uses the private pending builder");
+      assert.doesNotMatch(reader, /EXACT_POISON_CURRENT_(?:AUTHORITY_V31|PENDING)_HASH_V1|requireExactPoisonRecoverySnapshotV1|observeCurrentInternalProduction(?:AuthorityV3Migration31Audit|PendingBootstrapHandoffMigration)V1/, "recovery current has no frozen-path or public-observer semantic input");
+      const closedRecoveryGraph = [
+        "resumeExactPoisonQuarantineBeforeSelectionV1",
+        "observeExactPoisonQuarantineAdmissionV1",
+        "observeExactPoisonQuarantineAdmissionCoreV1",
+        "observeExactPoisonRecoveryCandidatesNoWriteV1",
+        "observeExactPoisonRecoveryPostVisibleZeroFenceV1",
+        "assertExactPoisonRecoveryPublicationFenceV1",
+        "resumeExactPoisonQuarantinePublisherCoreV1",
+      ].map((name) => topLevelFunctionRegionV1(source, name)).join("\n");
+      assert.doesNotMatch(closedRecoveryGraph, /observeCurrentInternalProductionAuthorityV3Migration31AuditV1|observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1/, "the bounded recovery graph excludes public prerequisite observers");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const prefix of [
+    Object.freeze({ label: "none", present: Object.freeze([] as number[]) }),
+    Object.freeze({ label: "audit-only", present: Object.freeze([0]) }),
+    Object.freeze({ label: "pending-only", present: Object.freeze([1]) }),
+    Object.freeze({ label: "both", present: Object.freeze([0, 1]) }),
+  ] as const) {
+    it(`P4c committed successor prerequisite pairs remain historically resolvable after ${prefix.label} overlay`, () => {
+      const root = createFixture({ stopAfterCurrentEntryOperationPublication: true });
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const overlay = buildDistinctExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+        writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, overlay, prefix.present);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
+        const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+        instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+        instrumentExactPoisonHistoricalPrerequisiteUnavailabilityFixtureV1(root);
+        assert.notEqual(overlay[0].pair.hash, EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1, `${prefix.label}: successor audit differs from frozen legacy audit`);
+        assert.notEqual(overlay[1].pair.hash, EXACT_POISON_CURRENT_PENDING_HASH_V1, `${prefix.label}: successor pending differs from frozen legacy pending`);
+        const protectedBefore = exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay);
+
+        const recovery = runExactPoisonTask3FixtureV1(root, observations);
+        assert.equal(recovery.status, 0, `${prefix.label}: ${recovery.stderr}`);
+        assert.equal(recovery.stderr, "", prefix.label);
+        const recovered = JSON.parse(recovery.stdout) as Readonly<{ outcome: "returned" | "threw"; message: string | null }>;
+        assert.equal(recovered.outcome, "returned", `${prefix.label}: ${recovered.message ?? "recovery did not commit"}`);
+        assertExactPoisonRecoveryConvergedV1(original, admitted.chain, `${prefix.label}: committed successor`);
+
+        const result = runExactPoisonHistoricalPrerequisiteResolutionFixtureV1(root, overlay);
+        assert.equal(result.status, 0, `${prefix.label}: ${result.stderr}`);
+        assert.equal(result.stderr, "", prefix.label);
+        const resolved = JSON.parse(result.stdout) as Readonly<{
+          successorAuthority: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          successorPending: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          legacyAuthority: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          legacyPending: Readonly<{ outcome: "returned" | "threw"; value: Readonly<Record<string, unknown>> | null; message: string | null }>;
+          arbitraryAuthority: Readonly<{ outcome: "returned" | "threw"; value: null; message: string | null }>;
+          arbitraryPending: Readonly<{ outcome: "returned" | "threw"; value: null; message: string | null }>;
+          calls: readonly string[];
+        }>;
+        assert.deepEqual(
+          [resolved.successorAuthority.outcome, resolved.successorPending.outcome],
+          ["returned", "returned"],
+          `${prefix.label}: both committed successor prerequisite pairs resolve (${resolved.successorAuthority.message ?? "audit returned"}; ${resolved.successorPending.message ?? "pending returned"})`,
+        );
+        assert.deepEqual(resolved.successorAuthority.value, overlay[0].value, `${prefix.label}: exact successor audit bytes parse to the committed value`);
+        assert.deepEqual(resolved.successorPending.value, overlay[1].value, `${prefix.label}: exact successor pending bytes parse to the committed value`);
+        assert.deepEqual(
+          [resolved.legacyAuthority.outcome, resolved.legacyPending.outcome],
+          ["returned", "returned"],
+          `${prefix.label}: both frozen legacy pairs remain resolvable (${resolved.legacyAuthority.message ?? "audit returned"}; ${resolved.legacyPending.message ?? "pending returned"})`,
+        );
+        assert.deepEqual(resolved.legacyAuthority.value, JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")), `${prefix.label}: frozen audit value is unchanged`);
+        assert.deepEqual(resolved.legacyPending.value, JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8")), `${prefix.label}: frozen pending value is unchanged`);
+        assert.deepEqual(
+          [resolved.arbitraryAuthority.outcome, resolved.arbitraryPending.outcome],
+          ["threw", "threw"],
+          `${prefix.label}: arbitrary well-shaped pairs remain rejected`,
+        );
+        assert.ok(resolved.arbitraryAuthority.message !== null && resolved.arbitraryPending.message !== null, `${prefix.label}: arbitrary rejection retains a diagnostic`);
+        assert.deepEqual(resolved.calls, [], `${prefix.label}: historical resolution uses no current observer, store selector, source observer, or database-backed builder`);
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(original, overlay), protectedBefore, `${prefix.label}: resolution is read-only across frozen and overlay history`);
+      } finally {
+        removeFixture(root);
+      }
+    });
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    it(`P4c committed successor fallback rejects fixed legacy basename appearance during C authentication: ${kind}`, async () => {
+      const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, "absent-to-present");
+      assert.equal(observed.matches, 1, `${kind}: the mutation is latched inside the real C durability authentication`);
+      assert.equal(observed.mutationApplied, true, `${kind}: the fixed legacy basename appears only after initial ENOENT`);
+      assert.equal(observed.outcome, "threw", `${kind}: retained legacy absence must reject later basename appearance`);
+      assert.match(observed.message ?? "", /fixed legacy historical prerequisite|appeared|changed/i, `${kind}: failure names the retained legacy boundary`);
+      assert.equal(observed.value, null, `${kind}: no successor prerequisite value crosses the raced legacy boundary`);
+      assert.equal(observed.replacementRetained, true, `${kind}: the resolver never cleans the appearing legacy record`);
+      assert.equal(observed.initialInode, null, `${kind}: the fallback began from exact legacy ENOENT`);
+      assert.ok(observed.replacementInode.length > 0 && observed.replacementBytesSha256.length === 64, `${kind}: the appearing record remains inspectable evidence`);
+    });
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    for (const race of ["same-byte-replacement", "other-byte-replacement"] as const) {
+      it(`P4c committed successor fallback rejects fixed legacy basename replacement during C authentication: ${kind}: ${race}`, async () => {
+        const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, race);
+        assert.equal(observed.matches, 1, `${kind}:${race}: the mutation is latched inside the real C durability authentication`);
+        assert.equal(observed.mutationApplied, true, `${kind}:${race}: replacement occurs after the unequal legacy snapshot is validated`);
+        assert.equal(observed.outcome, "threw", `${kind}:${race}: a retained unequal legacy inode cannot authorize its replacement`);
+        assert.match(observed.message ?? "", /fixed legacy historical prerequisite|changed/i, `${kind}:${race}: failure names the retained legacy snapshot`);
+        assert.equal(observed.value, null, `${kind}:${race}: no successor prerequisite value crosses the replaced legacy boundary`);
+        assert.equal(observed.replacementRetained, true, `${kind}:${race}: the resolver never cleans the replacement evidence`);
+        assert.notEqual(observed.initialInode, null, `${kind}:${race}: the fallback began from one present unequal legacy snapshot`);
+        assert.notEqual(observed.replacementInode, observed.initialInode, `${kind}:${race}: the replacement has a distinct inode`);
+        assert.equal(observed.replacementBytesSha256.length, 64, `${kind}:${race}: replacement bytes remain inspectable evidence`);
+      });
+    }
+  }
+
+  for (const kind of ["authorityV3Migration31Audit", "pendingBootstrapHandoffMigration"] as const) {
+    it(`P4c committed successor fallback rejects fixed legacy basename disappearance during C authentication: ${kind}`, async () => {
+      const observed = await runExactPoisonHistoricalPrerequisiteCommitRaceFixtureV1(kind, "present-to-absent");
+      assert.equal(observed.matches, 1, `${kind}: disappearance is latched inside the real C durability authentication`);
+      assert.equal(observed.mutationApplied, true, `${kind}: the valid unequal legacy basename disappears only after its snapshot is validated`);
+      assert.equal(observed.outcome, "threw", `${kind}: retained legacy presence must reject later basename disappearance`);
+      assert.match(observed.message ?? "", /fixed legacy historical prerequisite|absent|changed/i, `${kind}: failure names the retained legacy snapshot`);
+      assert.equal(observed.value, null, `${kind}: no successor prerequisite value crosses the disappeared legacy boundary`);
+      assert.equal(observed.exactBasenamePresent, false, `${kind}: the exact legacy basename remains absent after the race`);
+      assert.equal(observed.replacementRetained, false, `${kind}: the resolver does not fabricate a basename replacement`);
+      assert.equal(observed.displacedRetained, true, `${kind}: the displaced valid legacy inode and bytes remain evidence`);
+      assert.notEqual(observed.initialInode, null, `${kind}: the fallback began from one present unequal legacy snapshot`);
+      assert.equal(observed.displacedInode, observed.initialInode, `${kind}: the displaced evidence is the exact initially retained inode`);
+      assert.equal(observed.displacedBytesSha256, observed.replacementBytesSha256, `${kind}: the displaced evidence retains its initial exact bytes`);
+    });
+  }
+
+  it("P4c recovery boundary rejects public and ambient prerequisite replacement mutations", () => {
+    const runMutation = (mutation: "public-observer" | "ambient-latest") => {
+      const root = createFixture();
+      try {
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        const expected = buildExactPoisonPublisherRawObservationsV1(original, admitted).prerequisites[0] as Readonly<Record<string, unknown>>;
+        const result = runP4cRecoveryPrerequisiteBoundaryMutationFixtureV1(root, expected, mutation);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stderr, "");
+        return JSON.parse(result.stdout) as Readonly<{
+          outcome: "returned" | "threw";
+          message: string | null;
+          privateCalls: readonly string[];
+          publicCalls: number;
+          latestCalls: readonly string[];
+        }>;
+      } finally {
+        removeFixture(root);
+      }
+    };
+
+    const publicObserver = runMutation("public-observer");
+    assert.equal(publicObserver.outcome, "threw", "the copied recovery boundary must stop at a reintroduced public observer");
+    assert.match(publicObserver.message ?? "", /P4C_TASK4_PUBLIC_PREREQUISITE_OBSERVER_CALLED/);
+    assert.deepEqual(publicObserver.privateCalls, [], "the public observer replaces rather than supplements the private builder");
+    assert.equal(publicObserver.publicCalls, 1);
+    assert.deepEqual(publicObserver.latestCalls, []);
+
+    const ambientLatest = runMutation("ambient-latest");
+    assert.equal(ambientLatest.outcome, "threw", "the copied recovery boundary must reject an ambient/latest replacement pair");
+    assert.match(ambientLatest.message ?? "", /P4C_TASK4_PRIVATE_PAIR_BOUNDARY_FAILED/);
+    assert.deepEqual(ambientLatest.privateCalls, ["pending"], "only the unmodified pending builder remains private");
+    assert.equal(ambientLatest.publicCalls, 0);
+    assert.deepEqual(ambientLatest.latestCalls, ["authority"]);
+  });
+
+  it("P4c exact-poison overlay recovery survives response loss and concurrent publication", async () => {
+    const prefixes = Object.freeze([
+      Object.freeze({ label: "none", present: Object.freeze([] as number[]) }),
+      Object.freeze({ label: "audit-only", present: Object.freeze([0]) }),
+      Object.freeze({ label: "pending-only", present: Object.freeze([1]) }),
+      Object.freeze({ label: "both", present: Object.freeze([0, 1]) }),
+    ]);
+    const parse = (result: Readonly<{ status: number | null; stdout: string; stderr: string }>, label: string) => {
+      assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+      assert.equal(result.stderr, "", label);
+      return JSON.parse(result.stdout) as Readonly<{
+        outcome: "returned" | "threw";
+        message: string | null;
+        admissionCalls: number;
+        cursors: Readonly<Record<string, number>>;
+      }>;
+    };
+    const setup = (
+      label: string,
+      present: readonly number[],
+      fault: Readonly<
+        | { boundary: "post-admission-response-loss"; marker: string }
+        | { boundary: "post-commit-response-loss"; marker: string }
+        | { boundary: "post-admission-overlay-appearance" }
+        | { boundary: "post-admission-replacement-latch"; readyPath: string; releasePath: string }
+      > | null,
+    ) => {
+      const root = createFixture();
+      const original = seedExactOriginalPoisonStoreV1(root);
+      if (fault !== null) instrumentExactPoisonTask3BoundaryFixtureV1(root, fault);
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null);
+      finalizeExactPoisonTask3FixtureV1(root, `fixture task3 ${label}`);
+      const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, overlay, present);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, overlay);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+      return Object.freeze({ root, original, overlay, admitted, observations });
+    };
+
+    const runPostAdmissionReplacementRace = async (kind: "overlay-file" | "shard-parent"): Promise<void> => {
+      const readyPath = path.join(tmpdir(), `setfarm-p4c-${kind}-ready-${process.pid}-${randomUUID()}`);
+      const releasePath = path.join(tmpdir(), `setfarm-p4c-${kind}-release-${process.pid}-${randomUUID()}`);
+      const fixture = setup(kind, [0, 1], {
+        boundary: "post-admission-replacement-latch",
+        readyPath,
+        releasePath,
+      });
+      let attempt: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+      let displacedParent: Readonly<{ target: string; inode: bigint }> | null = null;
+      const displacedFiles: Array<Readonly<{ target: string; inode: bigint; bytes: Buffer }>> = [];
+      try {
+        const candidateIndex = fixture.overlay.findIndex((candidate) => {
+          const shard = path.relative(fixture.original.store, path.dirname(candidate.target)).split(path.sep).join("/");
+          return !EXACT_ORIGINAL_POISON_DIRECTORY_LOCATORS_V1.includes(shard as never);
+        });
+        assert.notEqual(candidateIndex, -1, `${kind}: replacement candidate shard is outside frozen original topology`);
+        const candidate = fixture.overlay[candidateIndex]!;
+        const originalBefore = observeExactOriginalPoisonIdentityV1(fixture.original.store);
+        const overlayBefore = fixture.overlay.map((entry) => Object.freeze({
+          target: entry.target,
+          bytes: readFileSync(entry.target),
+          stats: lstatSync(entry.target, { bigint: true }),
+        }));
+        const recoveryBefore = recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators);
+        assert.deepEqual(recoveryBefore, [], `${kind}: authenticated durable prefix is initially empty`);
+
+        attempt = runFixtureExpressionAsync(
+          fixture.root,
+          exactPoisonTask3ProbeExpressionV1(fixture.root, fixture.observations, "publisher-core"),
+        );
+        waitForFixturePredicateV1(() => existsSync(readyPath), `${kind}: post-admission pre-fence latch`, 5_000);
+
+        if (kind === "overlay-file") {
+          const prior = overlayBefore[candidateIndex]!;
+          const backup = path.join(fixture.root, `.p4c-${kind}-original-${randomUUID()}`);
+          renameSync(candidate.target, backup);
+          writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+          chmodSync(candidate.target, 0o600);
+          const replacement = lstatSync(candidate.target, { bigint: true });
+          const retained = lstatSync(backup, { bigint: true });
+          assert.equal(retained.ino, prior.stats.ino, `${kind}: displaced admitted file keeps its inode at the external evidence path`);
+          assert.deepEqual(readFileSync(backup), prior.bytes, `${kind}: displaced admitted file keeps its bytes`);
+          displacedFiles.push(Object.freeze({ target: backup, inode: prior.stats.ino, bytes: prior.bytes }));
+          assert.notEqual(replacement.ino, prior.stats.ino, `${kind}: same-path replacement has a distinct inode`);
+          assert.deepEqual(readFileSync(candidate.target), prior.bytes, `${kind}: same-path replacement deliberately retains equal bytes`);
+        } else {
+          const shard = path.dirname(candidate.target);
+          const shardBefore = lstatSync(shard, { bigint: true });
+          const members = readdirSync(shard).map((name) => {
+            const target = path.join(shard, name);
+            const stats = lstatSync(target, { bigint: true });
+            assert.equal(stats.isFile() && !stats.isSymbolicLink(), true, `${kind}: admitted shard member is a regular file`);
+            return Object.freeze({ name, bytes: readFileSync(target), stats });
+          });
+          const backup = path.join(fixture.root, `.p4c-${kind}-original-${randomUUID()}`);
+          renameSync(shard, backup);
+          mkdirSync(shard, { mode: 0o700 });
+          chmodSync(shard, 0o700);
+          for (const member of members) {
+            const replacement = path.join(shard, member.name);
+            copyFileSync(path.join(backup, member.name), replacement);
+            chmodSync(replacement, 0o600);
+          }
+          assert.equal(lstatSync(backup, { bigint: true }).ino, shardBefore.ino, `${kind}: displaced admitted shard keeps its directory inode`);
+          displacedParent = Object.freeze({ target: backup, inode: shardBefore.ino });
+          assert.notEqual(lstatSync(shard, { bigint: true }).ino, shardBefore.ino, `${kind}: same-path shard replacement has a distinct inode`);
+          for (const member of members) {
+            const retained = lstatSync(path.join(backup, member.name), { bigint: true });
+            const replacement = lstatSync(path.join(shard, member.name), { bigint: true });
+            assert.equal(retained.ino, member.stats.ino, `${kind}: displaced member ${member.name} keeps its inode`);
+            assert.notEqual(replacement.ino, member.stats.ino, `${kind}: replacement member ${member.name} has a distinct inode`);
+            assert.deepEqual(readFileSync(path.join(backup, member.name)), member.bytes, `${kind}: displaced member ${member.name} keeps its bytes`);
+            assert.deepEqual(readFileSync(path.join(shard, member.name)), member.bytes, `${kind}: replacement member ${member.name} keeps equal bytes`);
+            displacedFiles.push(Object.freeze({ target: path.join(backup, member.name), inode: member.stats.ino, bytes: member.bytes }));
+          }
+        }
+
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const result = parse(await attempt, kind);
+        assert.equal(result.outcome, "threw", `${kind}: admitted replacement must fail closed`);
+        assert.match(result.message ?? "", /exact-poison|overlay|inventory|identity|stable|changed|replaced/i, `${kind}: rejection is caused by the admitted topology drift`);
+        assert.deepEqual(
+          recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators),
+          recoveryBefore,
+          `${kind}: no successor mutation advances beyond the authenticated empty durable prefix`,
+        );
+        assert.deepEqual(observeExactOriginalPoisonIdentityV1(fixture.original.store), originalBefore, `${kind}: frozen original bytes and inodes remain exact`);
+        if (displacedParent !== null) {
+          assert.equal(lstatSync(displacedParent.target, { bigint: true }).ino, displacedParent.inode, `${kind}: displaced shard inode remains exact after rejection`);
+        }
+        for (const victim of displacedFiles) {
+          assert.equal(lstatSync(victim.target, { bigint: true }).ino, victim.inode, `${kind}: displaced overlay inode remains exact after rejection`);
+          assert.deepEqual(readFileSync(victim.target), victim.bytes, `${kind}: displaced overlay bytes remain exact after rejection`);
+        }
+        for (const [index, prior] of overlayBefore.entries()) {
+          if (index === candidateIndex || path.dirname(prior.target) === path.dirname(candidate.target) && kind === "shard-parent") continue;
+          const after = lstatSync(prior.target, { bigint: true });
+          assert.equal(after.ino, prior.stats.ino, `${kind}: unaffected overlay ${index} keeps its inode`);
+          assert.deepEqual(readFileSync(prior.target), prior.bytes, `${kind}: unaffected overlay ${index} keeps its bytes`);
+        }
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        if (attempt !== null) await attempt;
+        if (existsSync(readyPath)) rmSync(readyPath);
+        if (existsSync(releasePath)) rmSync(releasePath);
+        removeFixture(fixture.root);
+      }
+    };
+
+    for (const prefix of prefixes) {
+      const markerRoot = path.join(tmpdir(), `setfarm-p4c-post-admission-${process.pid}-${prefix.label}-${randomUUID()}`);
+      const fixture = setup(prefix.label, prefix.present, { boundary: "post-admission-response-loss", marker: markerRoot });
+      try {
+        const before = exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay);
+        const first = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), `${prefix.label}: first`);
+        assert.equal(first.outcome, "threw", `${prefix.label}: the first response is lost after admission`);
+        assert.match(first.message ?? "", /P4C_POST_ADMISSION_RESPONSE_LOSS/, prefix.label);
+        assert.equal(existsSync(markerRoot), true, `${prefix.label}: the response-loss boundary was reached after real admission`);
+        assert.deepEqual(recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators), [], `${prefix.label}: no successor phase precedes the lost admission response`);
+        const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), `${prefix.label}: retry`);
+        assert.equal(retry.outcome, "returned", `${prefix.label}: ${retry.message ?? "retry did not converge"}`);
+        assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, `${prefix.label}: response-loss retry`);
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay), before, `${prefix.label}: prefix history is never replaced`);
+      } finally {
+        if (existsSync(markerRoot)) rmSync(markerRoot);
+        removeFixture(fixture.root);
+      }
+    }
+
+    {
+      const marker = path.join(tmpdir(), `setfarm-p4c-post-commit-${process.pid}-${randomUUID()}`);
+      const fixture = setup("post-commit", [0, 1], { boundary: "post-commit-response-loss", marker });
+      try {
+        const before = exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay);
+        const first = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "post-commit:first");
+        assert.equal(first.outcome, "threw");
+        assert.match(first.message ?? "", /P4C_POST_COMMIT_RESPONSE_LOSS/);
+        assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, "post-commit durable-before-ack");
+        const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "post-commit:retry");
+        assert.equal(retry.outcome, "returned", retry.message ?? "durable successor was not adopted");
+        assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, "post-commit adoption");
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay), before, "post-commit replay preserves prerequisite history");
+      } finally {
+        if (existsSync(marker)) rmSync(marker);
+        removeFixture(fixture.root);
+      }
+    }
+
+    {
+      const marker = path.join(tmpdir(), `setfarm-p4c-public-observer-${process.pid}-${randomUUID()}`);
+      const fixture = setup("public-observer", [], { boundary: "post-admission-response-loss", marker });
+      try {
+        const originalBefore = observeExactOriginalPoisonIdentityV1(fixture.original.store);
+        const first = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "public-observer:first");
+        assert.equal(first.outcome, "threw");
+        assert.match(first.message ?? "", /P4C_POST_ADMISSION_RESPONSE_LOSS/);
+        const published = publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(fixture.root);
+        assert.deepEqual(published.map((candidate) => ({ target: candidate.target, bytes: candidate.bytes })), fixture.overlay.map((candidate) => ({ target: candidate.target, bytes: candidate.bytes })), "public observers settle exactly the expected absent overlay");
+        const beforeRetry = exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay);
+        const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "public-observer:retry");
+        assert.equal(retry.outcome, "returned", retry.message ?? "retry did not admit newly settled expected overlay");
+        assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, "public-observer retry");
+        assert.deepEqual(observeExactOriginalPoisonIdentityV1(fixture.original.store), originalBefore, "public settling and retry preserve frozen originals");
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay), beforeRetry, "retry never replaces public overlay records");
+      } finally {
+        if (existsSync(marker)) rmSync(marker);
+        removeFixture(fixture.root);
+      }
+    }
+
+    {
+      const fixture = setup("in-attempt-appearance", [], { boundary: "post-admission-overlay-appearance" });
+      try {
+        const observations = Object.freeze({ ...fixture.observations, appearance: Object.freeze([fixture.overlay[0]]) });
+        const result = parse(runExactPoisonTask3FixtureV1(fixture.root, observations), "in-attempt-appearance");
+        assert.equal(result.outcome, "threw", "overlay state changing after admission must fail closed");
+        assert.match(result.message ?? "", /exact-poison|overlay|stable|changed|appeared|inventory/i);
+        assert.deepEqual(recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators), [], "appearance fails before successor mutation");
+        assert.deepEqual(readFileSync(fixture.overlay[0].target), fixture.overlay[0].bytes, "the concurrently settled overlay is preserved");
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+
+    await runPostAdmissionReplacementRace("overlay-file");
+    await runPostAdmissionReplacementRace("shard-parent");
+
+    {
+      const fixture = setup("prerequisite-a-b-drift", [0, 1], null);
+      try {
+        const prerequisiteA = fixture.observations.prerequisites![0] as Readonly<Record<string, unknown>>;
+        const authorityA = Reflect.get(prerequisiteA, "authorityV3Migration31Audit") as Readonly<Record<string, unknown>>;
+        const authorityValue = Reflect.get(authorityA, "value") as Readonly<Record<string, unknown>>;
+        const changed = rehashFixtureRecordV1(
+          authorityValue,
+          "authorityV3Migration31AuditRef",
+          "authorityV3Migration31AuditHash",
+          "setfarm://internal-production/authority-v3-migration31-audit/sha256/",
+          (core) => {
+            const controllerSource = structuredClone(core.controllerSource) as Record<string, unknown>;
+            controllerSource.buildHash = controllerSource.buildHash === "f".repeat(64) ? "e".repeat(64) : "f".repeat(64);
+            core.controllerSource = controllerSource;
+          },
+        );
+        const prerequisiteB = Object.freeze({
+          ...prerequisiteA,
+          authorityV3Migration31Audit: Object.freeze({
+            value: changed.value,
+            bytes: changed.bytes,
+            pair: Object.freeze({ authorityV3Migration31AuditRef: changed.ref, authorityV3Migration31AuditHash: changed.hash }),
+          }),
+        });
+        const observations = Object.freeze({ ...fixture.observations, prerequisites: Object.freeze([prerequisiteA, prerequisiteB]) });
+        const result = parse(runExactPoisonTask3FixtureV1(fixture.root, observations), "prerequisite-a-b-drift");
+        assert.equal(result.outcome, "threw", "a changed current source-bound prerequisite B must fail closed");
+        assert.match(result.message ?? "", /prerequisite|A\/B|drift|source|overlay/i);
+        assert.ok((result.cursors.prerequisites ?? 0) >= 2, "the failure is caused by the real A/B prerequisite boundary");
+        assert.deepEqual(recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators), [], "A/B drift fails before successor mutation");
+      } finally {
+        removeFixture(fixture.root);
+      }
+    }
+
+    {
+      const fixture = setup("concurrent", [0, 1], null);
+      const fixtureParent = path.dirname(fixture.root);
+      const acquiredPath = path.join(fixtureParent, "p4c-writer-acquired");
+      const releasePath = path.join(fixtureParent, "p4c-writer-release");
+      const contenderStartedPath = path.join(fixtureParent, "p4c-contender-started");
+      let owner: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+      let contender: Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> | null = null;
+      try {
+        const before = exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay);
+        instrumentExactPoisonTask3WriterContentionLatchFixtureV1(fixture.root, acquiredPath, releasePath);
+        const expression = exactPoisonTask3ProbeExpressionV1(fixture.root, fixture.observations, "publisher-core");
+        owner = runFixtureExpressionAsync(fixture.root, expression);
+        waitForFixturePredicateV1(() => existsSync(acquiredPath), "first recovery attempt post-acquisition H latch", 1_500);
+        const writerPaths = exactPoisonRecoveryWriterPathsFixtureV1(fixture.original.store);
+        assert.equal(exactPoisonRecoveryWriterArtifactsFixtureV1(writerPaths).includes(path.basename(writerPaths.lockPath)), true, "the latched first attempt demonstrably owns the fixed H writer");
+
+        const contenderExpression = `(async()=>{const fs=await import("node:fs");fs.writeFileSync(${JSON.stringify(contenderStartedPath)},"started\\n",{flag:"wx",mode:0o600});return ${expression}})()`;
+        contender = runFixtureExpressionAsync(fixture.root, contenderExpression);
+        waitForFixturePredicateV1(() => existsSync(contenderStartedPath), "second recovery attempt starts while H is held");
+        const contentionWait = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.wait(contentionWait, 0, 0, 250);
+        assert.equal(readFileSync(acquiredPath, "utf8").trim().split("\n").length, 1, "the second attempt cannot cross the post-acquisition boundary while the first owns H");
+        const authorityWhileHeld = recoveryPhaseSnapshotV1(fixture.original.store, fixture.original.originalLocators).filter((entry) => {
+          const basename = path.posix.basename(String(entry.locator));
+          return basename !== path.basename(writerPaths.lockPath) && !basename.startsWith(writerPaths.tempPrefix);
+        });
+        assert.deepEqual(authorityWhileHeld, [], "the contending attempt cannot publish recovery authority while H is held");
+
+        writeFileSync(releasePath, "release\n", { flag: "wx", mode: 0o600 });
+        const attempts = await Promise.all([owner, contender]);
+        const observed = attempts.map((attempt, index) => parse(attempt, `concurrent:${index}`));
+        assert.equal(observed[0]!.outcome, "returned", observed[0]!.message ?? "the admitted H owner did not publish");
+        if (observed[1]!.outcome === "threw") assert.match(observed[1]!.message ?? "", /writer|owner|lock|contention|live/i, "a refused contender fails only on the held H writer");
+        const retry = parse(runExactPoisonTask3FixtureV1(fixture.root, fixture.observations), "concurrent:retry");
+        assert.equal(retry.outcome, "returned", retry.message ?? "the losing contender cannot adopt the winner on retry");
+        assertExactPoisonRecoveryConvergedV1(fixture.original, fixture.admitted.chain, "concurrent exact successor");
+        assert.deepEqual(exactPoisonTask3ProtectedHistorySnapshotV1(fixture.original, fixture.overlay), before, "concurrent writers never replace legacy or overlay records");
+      } finally {
+        if (!existsSync(releasePath)) writeFileSync(releasePath, "release\n", { mode: 0o600 });
+        await Promise.allSettled([...(owner === null ? [] : [owner]), ...(contender === null ? [] : [contender])]);
+        removeFixture(fixture.root);
+      }
+    }
+  });
+
   it("P4 exact-poison publisher leaves an authorized e2 ce strict chain preselection-complete", () => {
     const root = createFixture();
     try {
@@ -16939,7 +18464,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       'await durablyAuthenticateSuccessorActivationSealV1(',
       'ordinal === 6',
       'await openExactPoisonRecoveryPinnedCommitChainV1()',
-      'try { await validatePostVisible(context); }',
+      'try { await validatePostVisible(context, admission); }',
     ];
     let cursor = -1;
     for (const marker of ordered) {
@@ -16950,11 +18475,15 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(source.split("durablyAuthenticateSuccessorActivationSealV1(").length - 1, 2, "only definition and publisher call S durability");
     const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
     const historicalResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
-    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 4, "C durability has exactly one definition, one publisher call, one current-selector call, and one historical-resolver call");
+    const historicalAuthorityResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1");
+    const historicalPendingResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 6, "C durability has exactly one definition, one publisher call, one current-selector call, and three exact historical-resolver calls");
     assert.equal(commitRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "C durability retains one private definition");
     assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
     assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
     assert.equal(historicalResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical strict-C resolution invokes C durability exactly once");
+    assert.equal(historicalAuthorityResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed audit resolution invokes C durability exactly once");
+    assert.equal(historicalPendingResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed pending resolution invokes C durability exactly once");
     assert.match(core, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/, "publisher fences the generic C helper with the exact H writer and pinned C context immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
@@ -16984,7 +18513,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         }>;
         assert.deepEqual({ outcome: observed.outcome, message: observed.message }, { outcome: "returned", message: null });
         assert.equal(observed.value.frozen, true);
-        assert.equal(observed.value.successorRoot, path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
+        assert.equal(observed.value.successorRoot, realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot)));
         assert.deepEqual(observed.value.successorOperationPair, {
           ref: harness.admitted.chain.records.successorOperation.value.operationRef,
           hash: harness.admitted.chain.records.successorOperation.value.operationHash,
@@ -17364,7 +18893,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       /const selectedCurrentEntryStoreContextStatesV1\s*=\s*new WeakMap<\s*SelectedCurrentEntryStoreContextV1\s*,\s*Readonly<\{\s*storeRoot:\s*string;\s*operation:\s*InternalProductionCurrentEntryOperationPairV1\s*\|\s*null;\s*selectionKind:\s*"legacy-store-absent"\s*\|\s*"legacy-operation-absent"\s*\|\s*"legacy-edge-absent"\s*\|\s*"successor-zero-progress"\s*\|\s*"successor-pre-status"\s*\|\s*"successor-progress";\s*\}>\s*>\(\);/,
       "the sole WeakMap value has exactly the ordered storeRoot, nullable operation pair, and six-kind selection state",
     );
-    assert.equal(source.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 2, "only the creator definition and selector call may create a handle");
+    assert.equal(source.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 3, "only the creator definition, selector, and exact-poison private-builder reader may create a handle");
     const createRegion = topLevelFunctionRegionV1(source, "createSelectedCurrentEntryStoreContextV1");
     assert.equal(createRegion.split("selectedCurrentEntryStoreContextStatesV1.set(").length - 1, 1, "only the creator registers a handle in the WeakMap");
     assert.match(createRegion, /Object\.freeze\(/, "the creator freezes the opaque handle before registration");
@@ -17378,6 +18907,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.doesNotMatch(requireRegion, /directorySnapshot|(?:lstat|stat|fstat|open|readFile|readdir|exists|realpath|mkdir|writeFile|link|unlink|rename)Sync|fixedWorkspaceAuthorityPathV1|selectCurrentEntryStoreContextV1|durablyAuthenticate|postVisible|process\.env|globalThis/, "authentication rejects an unregistered handle without filesystem, path, selection, durability, or ambient work");
     const selectorRegion = topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1");
     assert.equal(selectorRegion.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 1, "the selector mints exactly one handle on a selected branch");
+    const exactPoisonPrerequisiteReader = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+    assert.equal(exactPoisonPrerequisiteReader.split("createSelectedCurrentEntryStoreContextV1(").length - 1, 1, "the exact-poison reader mints its sole private-builder capability explicitly");
+    assert.match(exactPoisonPrerequisiteReader, /storeRoot:\s*fixedLegacyCurrentEntryRootV1\(\)[\s\S]*operation:\s*exactPoisonOperationPairV1\(\)[\s\S]*selectionKind:\s*"legacy-edge-absent"/, "the recovery-only capability is fixed to the authenticated poison predecessor and never caller-selected");
+    assert.doesNotMatch(exactPoisonPrerequisiteReader, /selectCurrentEntryStoreContextV1|observeCurrentInternalProductionAuthorityV3Migration31AuditV1|observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1/, "the recovery-only capability neither reselects nor enters a public prerequisite observer");
     assert.doesNotMatch(selectorRegion.slice(0, selectorRegion.indexOf("{")), /root|path|input|context/, "the selector accepts no caller root, path, or context");
     assert.doesNotMatch(
       selectorRegion,
@@ -17421,8 +18954,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.doesNotMatch(region, /^(?:export\s+)?async\s+function/m, `${consumer.name}: remains synchronous`);
       assert.doesNotMatch(region, /\bawait\b|selectCurrentEntryStoreContextV1\(|durablyAuthenticateSuccessorActivation|postVisible|PostVisible|WeakMap|process\.env|AsyncLocalStorage/, `${consumer.name}: performs no selection, durability, post-visible validation, await, or ambient lookup`);
     }
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 14,
-      "the authenticator is consumed by the eleven synchronous path groups, selected effect executor, and migration-status pre/post context fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 16,
+      "the authenticator is consumed by the eleven synchronous path groups, two private no-write prerequisite builders, selected effect executor, and migration-status pre/post context fences");
     const fixedPathRegion = topLevelFunctionRegionV1(source, "fixedCurrentEntryPath");
     assert.match(fixedPathRegion, /context:\s*SelectedCurrentEntryStoreContextV1/);
     assert.match(fixedPathRegion, /readCurrentEntryStore\(context/);
@@ -17784,8 +19317,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
     assert.match(
       validator,
-      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<(?:void|ExactPoisonPostVisibleZeroProgressSelectionV1)>/,
-      "the B1 entry remains one private context-only validator while the P5c-Z slice strengthens its result",
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,\s*admitted\?: ExactPoisonQuarantineAdmissionV1,?\s*\): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1>/,
+      "the B1 entry remains one private pinned-context validator with only the exact optional publisher admission capability",
     );
     assert.doesNotMatch(validator, /selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|resumeExactPoisonQuarantine|durablyAuthenticateSuccessorActivationSealV1|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync|latest|mtime|process\.env|globalThis/, "the B1 validator boundary retains no recursion, scan, writer, publisher, or ambient authority");
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function revalidatePostVisibleCurrentEntryStoreV1|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B1 adds no public seam, runtime env seam, or fourth marker family");
@@ -18748,7 +20281,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(pinnedBuilder, /successorRoot,?[\s\S]*successorRootParent:\s*successorRootParent\.pin/, "the context owns the exact genesis-derived successor-root descriptor");
 
     const lower = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCandidatesNoWriteV1");
-    assert.match(lower, /^async function observeExactPoisonRecoveryCandidatesNoWriteV1\(\s*operation: FileSnapshot,\s*inventory: ExactPoisonRecoveryInventoryEvidenceV1,?\s*\): Promise<ExactPoisonRecoveryNoWriteFenceV1>/);
+    assert.match(lower, /^async function observeExactPoisonRecoveryCandidatesNoWriteV1\(\s*operation: FileSnapshot,\s*inventory: ExactPoisonRecoveryInventoryEvidenceV1,\s*admittedCurrentPrerequisites: ExactPoisonRecoveryPrerequisitesV1,?\s*\): Promise<ExactPoisonRecoveryNoWriteFenceV1>/);
     for (const label of PHASE5C_Z_BRACKET_LABELS_V1) assert.match(lower, new RegExp(`observation: ["']${label}["']`), `the no-write fence retains exact bracket member ${label}`);
     assert.equal(lower.split("hashCanonicalJson(completeZeroEffectBracket)").length - 1, 1, "the exact fourteen-member bracket is hashed once");
     assert.equal(lower.split("inventory.assertStableOriginals()").length - 1, 2, "original pins fence the entire asynchronous fourteen-member observation and candidate construction");
@@ -18759,12 +20292,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const admissionWrapper = topLevelFunctionRegionV1(source, "observeExactPoisonQuarantineAdmissionV1");
     const postVisibleFence = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryPostVisibleZeroFenceV1");
     assert.equal(source.split("observeExactPoisonRecoveryCandidatesNoWriteV1(").length - 1, 3, "the lower no-write builder has one definition and exactly admission/post-visible call sites");
-    assert.equal(admissionWrapper.split("observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished)").length - 1, 1, "the writer admission wrapper delegates exactly once to its writer-bound core");
-    assert.equal(admission.split("observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory)").length - 1, 1, "writer admission delegates candidate construction after its own inventory authentication");
-    assert.match(admission, /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, inventory\);[\s\S]*assertExactPoisonRecoveryFrontierV1\(observed\.candidates, heldWriter\);[\s\S]*inventory\.assertStableOriginals\(\);[\s\S]*heldWriter\.assertStable\(\)/, "writer admission retains builder then frontier then original/H stability order");
-    assert.match(postVisibleFence, /^async function observeExactPoisonRecoveryPostVisibleZeroFenceV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<void>/);
+    assert.equal(admissionWrapper.split("observeExactPoisonQuarantineAdmissionCoreV1(operation, heldWriter, expectedPublished, currentPrerequisites)").length - 1, 1, "the writer admission wrapper delegates its exact A bundle and derived overlay once to the writer-bound core");
+    assert.equal(admission.split("observeExactPoisonRecoveryCandidatesNoWriteV1(operation, inventory, admittedCurrentPrerequisites)").length - 1, 1, "writer admission delegates candidate construction with its admitted current bundle");
+    assert.match(admission, /const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, inventory, admittedCurrentPrerequisites\);[\s\S]*assertExactPoisonRecoveryFrontierV1\(observed\.candidates, heldWriter\);[\s\S]*inventory\.assertStableOriginals\(\);[\s\S]*heldWriter\.assertStable\(\)/, "writer admission retains builder then frontier then original/H stability order");
+    const admissionType = source.slice(source.indexOf("type ExactPoisonQuarantineAdmissionV1"), source.indexOf("const EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1"));
+    for (const field of ["currentPrerequisites: ExactPoisonRecoveryPrerequisitesV1", "expectedCurrentPrerequisiteOverlay: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1", "currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[]", "assertStableOriginals: () => void"]) {
+      assert.equal(admissionType.includes(field), true, `the admission capability retains ${field}`);
+    }
+    assert.match(postVisibleFence, /^async function observeExactPoisonRecoveryPostVisibleZeroFenceV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,\s*admitted\?: ExactPoisonQuarantineAdmissionV1,?\s*\): Promise<void>/);
     assert.doesNotMatch(postVisibleFence, /observeExactPoisonQuarantineAdmissionV1|ExactPoisonRecoveryWriterV1|heldWriter|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync/);
-    assert.match(postVisibleFence, /const originals = openExactPoisonRecoveryPostVisibleOriginalsV1\(context\);[\s\S]*const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1\(context\.operation\);[\s\S]*const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, originals\.evidence\);[\s\S]*assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(observed\.candidates, expectedCandidates\);[\s\S]*observed\.completeZeroEffectBracketHash !== context\.zeroEffectProof\.completeZeroEffectBracketHash[\s\S]*finally\s*\{\s*originals\.close\(\);\s*\}/, "post-visible validation projects only the pinned predecessor operation, compares detached bracket/exact-seven candidates, and closes all original pins");
+    assert.match(postVisibleFence, /const durableCurrentPrerequisites = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1\(context\);[\s\S]*const currentPrerequisites = admitted\?\.currentPrerequisites \?\? durableCurrentPrerequisites;[\s\S]*assertExactPoisonRecoveryPrerequisitesEqualV1\([\s\S]*currentPrerequisites,[\s\S]*durableCurrentPrerequisites,[\s\S]*const originals = openExactPoisonRecoveryPostVisibleOriginalsV1\(context\);[\s\S]*const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1\(context\.operation\);[\s\S]*const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, originals\.evidence, currentPrerequisites\);[\s\S]*assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(observed\.candidates, expectedCandidates\);[\s\S]*observed\.completeZeroEffectBracketHash !== context\.zeroEffectProof\.completeZeroEffectBracketHash[\s\S]*finally\s*\{\s*originals\.close\(\);\s*\}/, "post-visible validation reuses admitted authority or pinned durable prerequisites, compares detached bracket/exact-seven candidates, and closes all original pins");
     const pinnedSnapshot = topLevelFunctionRegionV1(source, "exactPoisonRecoveryPinnedRecordFileSnapshotV1");
     assert.match(pinnedSnapshot, /^function exactPoisonRecoveryPinnedRecordFileSnapshotV1\(\s*record: ExactPoisonRecoveryPinnedRecordV1,?\s*\): FileSnapshot/);
     assert.match(pinnedSnapshot, /locator:\s*record\.target/);
@@ -18804,14 +20341,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
     assert.match(
       validator,
-      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,?\s*\): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1>/,
-      "the validator has the exact private context-only Z signature",
+      /^async function revalidatePostVisibleCurrentEntryStoreV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,\s*admitted\?: ExactPoisonQuarantineAdmissionV1,?\s*\): Promise<ExactPoisonPostVisibleZeroProgressSelectionV1>/,
+      "the validator has the exact pinned context plus optional admitted-capability signature",
     );
     const absenceCall = "assertExactPoisonPostVisibleZeroProgressPrefixAbsentV1(context)";
     assert.equal(validator.split(absenceCall).length - 1, 2, "Z checks the exact operations-prefix absence before and after the full no-write fence");
-    assert.equal(validator.split("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context)").length - 1, 1, "Z performs one complete no-write A/B fence");
+    assert.equal(validator.split("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context, admitted)").length - 1, 1, "Z performs one complete admitted-bundle no-write A/B fence");
     const firstAbsence = validator.indexOf(absenceCall);
-    const fence = validator.indexOf("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context)");
+    const fence = validator.indexOf("await observeExactPoisonRecoveryPostVisibleZeroFenceV1(context, admitted)");
     const secondAbsence = validator.indexOf(absenceCall, firstAbsence + absenceCall.length);
     const literalReturn = validator.indexOf('selectionKind: "successor-zero-progress"');
     const rootBaseline = validator.indexOf("const rootIdentity = exactPoisonPostVisibleSuccessorRootIdentityV1(context)");
@@ -18877,7 +20414,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
     assert.match(
       publisher,
-      /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
+      /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context, admission\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
       "publisher keeps the H-derived writer and same pinned C context stable across helper and validator",
     );
     const historical = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
@@ -18910,7 +20447,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       );
       const successorOperation = harness.admitted.chain.records.successorOperation.value;
       assert.deepEqual(observed.value, {
-        storeRoot: path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot),
+        storeRoot: realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot)),
         operation: { operationRef: successorOperation.operationRef, operationHash: successorOperation.operationHash },
         selectionKind: "successor-zero-progress",
       });
@@ -19163,8 +20700,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     ]) assert.equal(Reflect.get(loaded, valueName), undefined, `${valueName} is absent from the runtime public ABI`);
 
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2, "P5c-P preserves the final literal exact2 contract");
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 15,
-      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, and two migration-status context fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
+      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, two migration-status context fences, and two current-prerequisite builder fences");
   });
 
   it("P5c-P freezes read-only writer-owner and publication F observers plus the exact P0-P5 topology", () => {
@@ -19371,7 +20908,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(selector, /await durablyAuthenticateSuccessorActivationCommitV1\(context\)[\s\S]*await revalidatePostVisibleCurrentEntryStoreV1\(context\)[\s\S]*context\.close\(\)[\s\S]*createSelectedCurrentEntryStoreContextV1\(selection\)/,
       "selector keeps helper, validator, close, then synchronous mint for Z/P/S");
     const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
-    assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
+    assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context, admission\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
       "publisher retains H ownership across the same P-capable validator");
     const historical = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
     assert.equal(historical.split("revalidatePostVisibleCurrentEntryStoreV1(").length - 1, 0, "historical identity never enters current P validation");
@@ -33130,7 +34667,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the detached pre-mint A/B pass remains selection-only and is never handed to normalization or effect execution");
 
     const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
-    assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
+    assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context, admission\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
       "the held H writer and pinned context bracket both successful and throwing S validation");
     assert.match(publisher, /finally\s*\{\s*heldWriter\.close\(\);\s*\}/,
       "the sole H writer closes from the publisher finalizer when S throws");
@@ -33146,8 +34683,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(canonicalHash(typeExports), "c655b478e687a8df2f04f49017de4e288e108a97a2c2428fcab97dbf3978f998",
       "S preserves the exact ordered public type export set while every S contract remains private");
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2);
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 15,
-      "S adds the selected-operation recheck at the Q normalization frontier and the migration-status pre/post context fence to the exact active-store consumers");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
+      "S retains the two private no-write prerequisite builders and adds the selected-operation recheck at the Q normalization frontier plus the migration-status pre/post context fence");
   });
 
   it("P5c-S resumes retained pre-schema and migration history in exact CAS order before later effects", () => {
@@ -34699,7 +36236,17 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const root = createFixture();
         try {
           const fault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary, occurrence: 1 });
-          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault);
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault, { currentPrerequisites: "distinct" });
+          assert.notEqual(
+            harness.admitted.chain.records.successorAuthorityV31.value.authorityV3Migration31AuditHash,
+            EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1,
+            `${phase.phase}/${boundary}: replay matrix audit pair must be distinct from frozen e2`,
+          );
+          assert.notEqual(
+            harness.admitted.chain.records.successorPending.value.pendingBootstrapHandoffMigrationHash,
+            EXACT_POISON_CURRENT_PENDING_HASH_V1,
+            `${phase.phase}/${boundary}: replay matrix pending pair must be distinct from frozen ce`,
+          );
           const first = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
           assert.equal(first.status, 0, `${phase.phase}/${boundary}: ${first.stderr}`);
           assert.equal(first.stderr, "", `${phase.phase}/${boundary}: first call stderr`);
@@ -34721,6 +36268,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const retryObserved = JSON.parse(retry.stdout) as Readonly<{ outcome: string; message: string | null }>;
           assert.deepEqual({ outcome: retryObserved.outcome, message: retryObserved.message }, { outcome: "returned", message: null });
           assertExactPoisonRecoveryConvergedV1(harness.original, harness.admitted.chain, `${phase.phase}/${boundary}`);
+          assert.notEqual(harness.currentOverlay, null, `${phase.phase}/${boundary}: distinct current overlay fixture is retained`);
+          assertExactPoisonDistinctCurrentPairSuccessorV1(
+            harness.original,
+            harness.admitted.chain,
+            harness.currentOverlay!,
+            `${phase.phase}/${boundary}`,
+          );
         } finally {
           removeFixture(root);
         }
@@ -37072,6 +38626,132 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.equal(existsSync(currentEntryPrerequisiteRecord(fixture.root, "authority-v3-migration31-audits", second.v31.authorityV3Migration31AuditHash)), true);
     } finally {
       removeFixture(fixture.root);
+    }
+  });
+
+  it("P4c current prerequisite builders remain no-write until public publication", () => {
+    const fixture = createFixture();
+    try {
+      const modulePath = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      let source = readFileSync(modulePath, "utf8");
+      const exposePrivate = (name: string): void => {
+        const marker = `async function ${name}(`;
+        if (source.includes(marker)) source = source.replace(marker, `export async function ${name}(`);
+      };
+      exposePrivate("selectCurrentEntryStoreContextV1");
+      exposePrivate("canonicalRecordBytes");
+      exposePrivate("buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1");
+      exposePrivate("buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1");
+      const publisher = topLevelFunctionRegionV1(source, "publishLegacyZeroRecordV1");
+      const publisherHeader = `function publishLegacyZeroRecordV1(
+  target: string,
+  bytes: Buffer,
+  allowUnequalIncompleteTempCleanup = false,
+  beforeAnyMutation?: () => void,
+): void {
+`;
+      const instrumentedPublisher = publisher.replace(
+        publisherHeader,
+        `export ${publisherHeader}  const p4cProbe = Reflect.get(globalThis, "__p4cCurrentPrerequisitePublicationProbeV1") as undefined | { publication: Array<{ target: string; bytesBase64: string }> };
+  p4cProbe?.publication.push({ target, bytesBase64: bytes.toString("base64") });
+`,
+      );
+      assert.notEqual(instrumentedPublisher, publisher, "fixture instruments the real immutable publication seam");
+      source = source.replace(publisher, () => instrumentedPublisher);
+      writeFileSync(modulePath, source);
+      git(fixture, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      git(fixture, ["commit", "-qm", "fixture current prerequisite publication seam"]);
+      git(fixture, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const prepared = runProducer(fixture, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      materializeOutputs(fixture);
+      const finalized = runProducer(fixture, "--finalize");
+      assert.equal(finalized.status, 0, finalized.stderr);
+
+      const store = currentEntryStore(fixture);
+      const observed = runFixtureExpression(fixture, `(async () => {
+        const fs = await import("node:fs");
+        const probe = { publication: [] };
+        Reflect.set(globalThis, "__p4cCurrentPrerequisitePublicationProbeV1", probe);
+        const context = await m.selectCurrentEntryStoreContextV1();
+        const authority = await m.buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+        const pending = await m.buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+        const beforePublic = { publicationCount: probe.publication.length, storeExists: fs.existsSync(${JSON.stringify(store)}) };
+        const authorityCanonicalBytes = await m.canonicalRecordBytes(authority.value);
+        const pendingCanonicalBytes = await m.canonicalRecordBytes(pending.value);
+        let observedAuthority = null;
+        let observedPending = null;
+        let publicError = null;
+        try {
+          observedAuthority = await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1();
+          observedPending = await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1();
+        } catch (error) {
+          publicError = String(error);
+        }
+        process.stdout.write(JSON.stringify({
+          authority: { value: authority.value, bytesBase64: authority.bytes.toString("base64"), canonicalBytesBase64: authorityCanonicalBytes.toString("base64"), pair: authority.pair },
+          pending: { value: pending.value, bytesBase64: pending.bytes.toString("base64"), canonicalBytesBase64: pendingCanonicalBytes.toString("base64"), pair: pending.pair },
+          beforePublic,
+          observedAuthority,
+          observedPending,
+          publicError,
+          publication: probe.publication,
+        }));
+      })()`);
+      assert.equal(observed.status, 0, observed.stderr);
+      const result = JSON.parse(observed.stdout) as Readonly<{
+        authority: Readonly<{ value: Record<string, string>; bytesBase64: string; canonicalBytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        pending: Readonly<{ value: Record<string, string>; bytesBase64: string; canonicalBytesBase64: string; pair: Readonly<{ ref: string; hash: string }> }>;
+        beforePublic: Readonly<{ publicationCount: number; storeExists: boolean }>;
+        observedAuthority: Record<string, string> | null;
+        observedPending: Record<string, string> | null;
+        publicError: string | null;
+        publication: readonly Readonly<{ target: string; bytesBase64: string }>[];
+      }>;
+
+      assert.deepEqual(result.beforePublic, { publicationCount: 0, storeExists: false }, "both builders leave an absent store untouched");
+      assert.equal(result.authority.bytesBase64, result.authority.canonicalBytesBase64, "the authority builder returns independently canonical bytes");
+      assert.equal(result.pending.bytesBase64, result.pending.canonicalBytesBase64, "the pending builder returns independently canonical bytes");
+      assert.equal(result.publicError, null, "public wrappers accept their builders' canonical bytes");
+      assert.deepEqual(result.observedAuthority, result.authority.value, "the public authority observer returns its builder value");
+      assert.deepEqual(result.observedPending, result.pending.value, "the public pending observer returns its builder value");
+      assert.deepEqual(result.authority.pair, {
+        ref: result.authority.value.authorityV3Migration31AuditRef,
+        hash: result.authority.value.authorityV3Migration31AuditHash,
+      }, "the authority builder returns its exact pair");
+      assert.deepEqual(result.pending.pair, {
+        ref: result.pending.value.pendingBootstrapHandoffMigrationRef,
+        hash: result.pending.value.pendingBootstrapHandoffMigrationHash,
+      }, "the pending builder returns its exact pair");
+      assert.equal(result.publication.length, 2, "the two public wrappers publish exactly once each");
+      assert.deepEqual(result.publication.map((entry) => ({
+        ...entry,
+        target: task12FixturePresentedPathV1(entry.target),
+      })), [
+        {
+          target: currentEntryPrerequisiteRecord(fixture, "authority-v3-migration31-audits", result.authority.pair.hash),
+          bytesBase64: result.authority.bytesBase64,
+        },
+        {
+          target: currentEntryPrerequisiteRecord(fixture, "pending-bootstrap-handoff-migrations", result.pending.pair.hash),
+          bytesBase64: result.pending.bytesBase64,
+        },
+      ], "public wrappers publish the builders' exact canonical bytes to their exact content-addressed targets");
+      assert.equal(readFileSync(result.publication[0]!.target).toString("base64"), result.authority.bytesBase64);
+      assert.equal(readFileSync(result.publication[1]!.target).toString("base64"), result.pending.bytesBase64);
+
+      for (const builder of [
+        topLevelFunctionRegionV1(source, "buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1"),
+        topLevelFunctionRegionV1(source, "buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1"),
+      ]) {
+        assert.doesNotMatch(builder, /readdirSync|latest/i, "a builder never selects a latest record");
+        assert.doesNotMatch(builder, /observeCurrentInternalProduction(?:AuthorityV3Migration31Audit|PendingBootstrapHandoffMigration)V1/, "a builder never calls a public observer");
+        assert.doesNotMatch(builder, /publishLegacyZeroRecordV1|publishCurrentEntryRecord/, "a builder never publishes or repairs a record");
+      }
+      const recovery = topLevelFunctionRegionV1(source, "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1");
+      assert.doesNotMatch(recovery, /observeCurrentInternalProductionAuthorityV3Migration31AuditV1|observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1/, "recovery never calls a public prerequisite observer");
+    } finally {
+      removeFixture(fixture);
     }
   });
 
