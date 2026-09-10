@@ -19564,6 +19564,11 @@ async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservat
   if (status.state !== "ready") currentEntryFail("current-entry fresh status is not ready");
   if (canonicalComparable(status.entryAuthority) !== canonicalComparable(entryAuthority)) currentEntryFail("current-entry fresh status entry authority is crossed");
   const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, entryAuthority);
+  const authorityOperation = requirePair(authority.currentEntryOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  if (
+    status.operationRef !== authorityOperation.operationRef
+    || status.operationHash !== authorityOperation.operationHash
+  ) currentEntryFail("current-entry fresh status operation is crossed with entry authority");
   await requireTask12StoredControllerRuntimeSourceRelationsV1(context, authority, value);
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");

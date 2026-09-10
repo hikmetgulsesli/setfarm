@@ -39419,7 +39419,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const pba = currentEntryVerifierAcceptancePbaV1();
     fixtureFile(root, "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", `const observation=${JSON.stringify(pba.observation)} as const;
 export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1(){return observation}
-export async function resolveProductBuildAuthorityV2DeliveryEvidenceV1(input:Readonly<{deliveryEvidenceRef:string;deliveryEvidenceHash:string}>){if(input.deliveryEvidenceRef!==observation.response.deliveryEvidenceRef||input.deliveryEvidenceHash!==observation.response.deliveryEvidenceHash)throw new Error("CURRENT_ENTRY_VERIFIER_PBA_PAIR_CROSSED");return observation}
+export async function resolveProductBuildAuthorityV2DeliveryEvidenceV1(input:Readonly<{deliveryEvidenceRef:string;deliveryEvidenceHash:string}>){const additional=(Reflect.get(globalThis,"__currentEntryVerifierAcceptanceProbeV1") as undefined|{productBuildAuthorityV2Observations?:readonly (typeof observation)[]})?.productBuildAuthorityV2Observations??[];const found=[observation,...additional].find((candidate)=>input.deliveryEvidenceRef===candidate.response.deliveryEvidenceRef&&input.deliveryEvidenceHash===candidate.response.deliveryEvidenceHash);if(!found)throw new Error("CURRENT_ENTRY_VERIFIER_PBA_PAIR_CROSSED");return found}
 export function parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value:unknown){return value as Record<string,unknown>}
 `);
 
@@ -39735,6 +39735,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       staleOwner?: boolean;
       crossedAudit?: boolean;
       serviceOverride?: Readonly<Record<string, unknown>>;
+      productBuildAuthorityV2Observations?: readonly Readonly<Record<string, unknown>>[];
       resolveFreshPair?: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
       resolvePair?: Readonly<{ currentEntryVerificationRef: string; currentEntryVerificationHash: string }>;
     }> = Object.freeze({}),
@@ -39769,6 +39770,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       operationalMutationCalls: 0,
       operationalMutationNames: [] as string[],
       publicationEvents: [] as string[],
+      productBuildAuthorityV2Observations: options.productBuildAuthorityV2Observations ?? [],
       fault: options.fault === undefined ? null : { ...options.fault, remaining: 1 },
       protectedState: Object.freeze({ serviceState: "unchanged", databaseState: "unchanged", processState: "unchanged" }),
     };
@@ -39796,8 +39798,8 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
 
   function currentEntryVerifierCurrentLocatorSnapshotV1(
     fixture: ReturnType<typeof currentEntryVerifierReadyFixtureV1>,
+    operationHash = String((fixture.authority.currentEntryOperation as Readonly<Record<string, unknown>>).operationHash),
   ): readonly Readonly<Record<string, string | number>>[] {
-    const operationHash = String((fixture.authority.currentEntryOperation as Readonly<Record<string, unknown>>).operationHash);
     const operationDirectory = path.join(fixture.store, "operations", "sha256", operationHash.slice(0, 2), operationHash);
     return filesystemTreeSnapshot(operationDirectory);
   }
@@ -40408,6 +40410,167 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         currentEntryVerifierAssertNewCandidatesRejectedV1(fixture, verificationRecordsBefore, Object.freeze({}), fault);
         currentEntryVerifierActivateAuthorityVariantV1(fixture, "restore");
       }
+
+      const operationAPath = path.join(fixture.store, "current-entry-operation.json");
+      const operationA = JSON.parse(readFileSync(operationAPath, "utf8")) as Record<string, unknown>;
+      const operationBBody = structuredClone(operationA) as Record<string, unknown>;
+      delete operationBBody.operationRef;
+      delete operationBBody.operationHash;
+      const operationBObservation = operationBBody.productBuildAuthorityV2Observation as Record<string, unknown>;
+      const operationBResponse = operationBObservation.response as Record<string, unknown>;
+      const operationBEvidenceBody = structuredClone(operationBResponse.evidence) as Record<string, unknown>;
+      delete operationBEvidenceBody.deliveryEvidenceRef;
+      delete operationBEvidenceBody.deliveryEvidenceHash;
+      operationBEvidenceBody.marker = "current-entry-verifier-status-operation-b";
+      const operationBDeliveryEvidenceHash = canonicalHash(operationBEvidenceBody);
+      const operationBDeliveryEvidencePair = Object.freeze({
+        deliveryEvidenceRef: `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${operationBDeliveryEvidenceHash}`,
+        deliveryEvidenceHash: operationBDeliveryEvidenceHash,
+      });
+      const operationBEvidence = Object.freeze({ ...operationBEvidenceBody, ...operationBDeliveryEvidencePair });
+      const operationBResponseValue = Object.freeze({
+        ...operationBResponse,
+        ...operationBDeliveryEvidencePair,
+        evidence: operationBEvidence,
+      });
+      const operationBObservationValue = Object.freeze({ ...operationBObservation, response: operationBResponseValue });
+      Object.assign(operationBBody, {
+        productBuildAuthorityV2DeliveryEvidence: operationBDeliveryEvidencePair,
+        productBuildAuthorityV2Observation: operationBObservationValue,
+      });
+      const operationBHash = canonicalHash(operationBBody);
+      const operationBPair = Object.freeze({
+        operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationBHash}`,
+        operationHash: operationBHash,
+      });
+      const operationB = Object.freeze({ ...operationBBody, ...operationBPair });
+      writeFileSync(operationAPath, canonicalFixtureRecordV1(operationB), { mode: 0o600 });
+
+      const authorityBBody = structuredClone(fixture.authority) as Record<string, unknown>;
+      delete authorityBBody.entryAuthorityRef;
+      delete authorityBBody.entryAuthorityHash;
+      const loadedBBody = structuredClone((authorityBBody.loadedRuntimeServiceAuthority as Record<string, unknown>).body) as Record<string, unknown>;
+      Object.assign(loadedBBody, {
+        currentEntryOperationRef: operationBPair.operationRef,
+        currentEntryOperationHash: operationBPair.operationHash,
+      });
+      const loadedBHash = canonicalHash(loadedBBody);
+      const loadedBPair = Object.freeze({
+        loadedRuntimeServiceAuthorityRef: `setfarm://internal-production/loaded-runtime-service-authority/sha256/${loadedBHash}`,
+        loadedRuntimeServiceAuthorityHash: loadedBHash,
+      });
+      Object.assign(authorityBBody, {
+        productBuildAuthorityV2DeliveryEvidence: operationBDeliveryEvidencePair,
+        currentEntryOperation: operationBPair,
+        loadedRuntimeServiceAuthority: Object.freeze({ ...loadedBPair, body: Object.freeze(loadedBBody) }),
+      });
+      const authorityBHash = canonicalHash(authorityBBody);
+      const authorityBPair = Object.freeze({
+        entryAuthorityRef: `setfarm://internal-production/current-entry-authority/sha256/${authorityBHash}`,
+        entryAuthorityHash: authorityBHash,
+      });
+      const authorityB = Object.freeze({ ...authorityBBody, ...authorityBPair });
+      const authorityBTarget = path.join(fixture.store, "records", "entry-authorities", "sha256", authorityBHash.slice(0, 2), `${authorityBHash}.json`);
+      phase5cEnsurePublicationParentV1(authorityBTarget);
+      writeFileSync(authorityBTarget, canonicalFixtureRecordV1(authorityB), { mode: 0o600 });
+
+      const statusAAuthorityBBody = structuredClone(fixture.status) as Record<string, unknown>;
+      delete statusAAuthorityBBody.statusRef;
+      delete statusAAuthorityBBody.statusHash;
+      statusAAuthorityBBody.entryAuthority = authorityBPair;
+      const statusAAdmission = statusAAuthorityBBody.spawnerAdmissionTransitionPhase as Record<string, unknown>;
+      statusAAdmission.loadedRuntimeServiceAuthority = loadedBPair;
+      const statusAAuthorityBHash = canonicalHash(statusAAuthorityBBody);
+      const statusAAuthorityBPair = Object.freeze({
+        statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${statusAAuthorityBHash}`,
+        statusHash: statusAAuthorityBHash,
+      });
+      const statusAAuthorityB = Object.freeze({ ...statusAAuthorityBBody, ...statusAAuthorityBPair });
+      assert.equal(statusAAuthorityB.operationRef, (fixture.authority.currentEntryOperation as Readonly<Record<string, unknown>>).operationRef);
+      assert.equal(statusAAuthorityB.operationHash, (fixture.authority.currentEntryOperation as Readonly<Record<string, unknown>>).operationHash);
+      assert.notEqual(statusAAuthorityB.operationHash, operationBPair.operationHash);
+      const statusAAuthorityBTarget = path.join(fixture.store, "records", "statuses", "sha256", statusAAuthorityBHash.slice(0, 2), `${statusAAuthorityBHash}.json`);
+      phase5cEnsurePublicationParentV1(statusAAuthorityBTarget);
+      writeFileSync(statusAAuthorityBTarget, canonicalFixtureRecordV1(statusAAuthorityB), { mode: 0o600 });
+
+      const operationBDirectory = path.join(fixture.store, "operations", "sha256", operationBHash.slice(0, 2), operationBHash);
+      const operationBStatusLocator = path.join(operationBDirectory, "01-current-status.pair.json");
+      const operationBAuthorityLocator = path.join(operationBDirectory, "02-entry-authority.pair.json");
+      phase5cEnsurePublicationParentV1(operationBStatusLocator);
+      writeFileSync(operationBStatusLocator, canonicalFixtureRecordV1(statusAAuthorityBPair), { mode: 0o600 });
+      writeFileSync(operationBAuthorityLocator, canonicalFixtureRecordV1(authorityBPair), { mode: 0o600 });
+
+      const operationBFreshBody = structuredClone(freshValue) as Record<string, unknown>;
+      delete operationBFreshBody.freshRuntimeAndOwnerObservationRef;
+      delete operationBFreshBody.freshRuntimeAndOwnerObservationHash;
+      const operationBRelations = operationBFreshBody.controllerRuntimeSourceRelations as Record<string, unknown>;
+      operationBRelations.loadedRuntimeServiceAuthority = loadedBPair;
+      Object.assign(operationBFreshBody, {
+        currentEntryStatus: statusAAuthorityBPair,
+        entryAuthority: authorityBPair,
+      });
+      const operationBFreshHash = canonicalHash(operationBFreshBody);
+      const operationBFreshPair = Object.freeze({
+        freshRuntimeAndOwnerObservationRef: `setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/${operationBFreshHash}`,
+        freshRuntimeAndOwnerObservationHash: operationBFreshHash,
+      });
+      const operationBFreshTarget = path.join(fixture.store, "records", "fresh-runtime-and-owner-observations", "sha256", operationBFreshHash.slice(0, 2), `${operationBFreshHash}.json`);
+      phase5cEnsurePublicationParentV1(operationBFreshTarget);
+      writeFileSync(operationBFreshTarget, canonicalFixtureRecordV1(Object.freeze({ ...operationBFreshBody, ...operationBFreshPair })), { mode: 0o600 });
+      const operationBOrdered = Object.freeze(ordered.map(({ name, pair }) => Object.freeze({
+        name,
+        pair: name === "productBuildAuthorityV2DeliveryEvidence"
+          ? operationBDeliveryEvidencePair
+          : name === "currentEntryOperation"
+            ? operationBPair
+            : name === "loadedRuntimeServiceAuthority"
+              ? loadedBPair
+              : name === "currentEntryAuthority"
+                ? authorityBPair
+                : name === "currentEntryStatus"
+                  ? statusAAuthorityBPair
+                  : name === "freshRuntimeAndOwnerObservation"
+                    ? operationBFreshPair
+                    : pair,
+      })));
+      assert.equal(operationBOrdered.length, 33);
+      assert.deepEqual(operationBOrdered.map(({ name }) => name), ordered.map(({ name }) => name));
+      const operationBVerificationBody = Object.freeze({
+        schema: "setfarm.internal-production-current-entry-verification.v1",
+        currentStatus: "current",
+        currentEntryStatus: statusAAuthorityBPair,
+        entryAuthority: authorityBPair,
+        resolvedAuthoritySetHash: canonicalHash(operationBOrdered),
+        freshRuntimeAndOwnerObservation: operationBFreshPair,
+      });
+      const operationBVerificationHash = canonicalHash(operationBVerificationBody);
+      const operationBVerificationPair = Object.freeze({
+        currentEntryVerificationRef: `setfarm://internal-production/current-entry-verification/sha256/${operationBVerificationHash}`,
+        currentEntryVerificationHash: operationBVerificationHash,
+      });
+      const operationBVerificationTarget = path.join(fixture.store, "records", "verifications", "sha256", operationBVerificationHash.slice(0, 2), `${operationBVerificationHash}.json`);
+      phase5cEnsurePublicationParentV1(operationBVerificationTarget);
+      writeFileSync(operationBVerificationTarget, canonicalFixtureRecordV1(Object.freeze({ ...operationBVerificationBody, ...operationBVerificationPair })), { mode: 0o600 });
+
+      const operationBLocatorsBefore = currentEntryVerifierCurrentLocatorSnapshotV1(fixture, operationBHash);
+      const operationBVerificationRecordsBefore = currentEntryVerifierRecordsV1(fixture.root, "verification");
+      const operationBOptions = Object.freeze({ productBuildAuthorityV2Observations: Object.freeze([operationBObservationValue]) });
+      const operationBFreshResult = currentEntryVerifierRunV1(fixture, { ...operationBOptions, resolveFreshPair: operationBFreshPair });
+      assert.equal(operationBFreshResult.outcome, "threw", "ready operation-A status naming operation-B authority must fail closed at the exported pair-only fresh resolver");
+      assert.match(String(operationBFreshResult.message), /fresh status operation is crossed with entry authority/);
+      assert.equal(operationBFreshResult.serviceCalls, 0);
+      assert.equal(operationBFreshResult.operationalMutationCalls, 0);
+      assert.equal(operationBFreshResult.protectedBefore, operationBFreshResult.protectedAfter);
+      assert.deepEqual(operationBFreshResult.publicationEvents, []);
+      const operationBVerificationResult = currentEntryVerifierRunV1(fixture, { ...operationBOptions, resolvePair: operationBVerificationPair, serviceOverride: fixture.service });
+      assert.equal(operationBVerificationResult.outcome, "threw", "ready operation-A status naming operation-B authority must fail closed at the pair-only verification resolver");
+      assert.match(String(operationBVerificationResult.message), /fresh status operation is crossed with entry authority/);
+      assert.equal(operationBVerificationResult.serviceCalls, 0);
+      assert.equal(operationBVerificationResult.operationalMutationCalls, 0);
+      assert.equal(operationBVerificationResult.protectedBefore, operationBVerificationResult.protectedAfter);
+      assert.deepEqual(operationBVerificationResult.publicationEvents, []);
+      assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), operationBVerificationRecordsBefore, "rejected operation-crossed status does not publish a new success receipt");
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture, operationBHash), operationBLocatorsBefore, "operation-crossed status does not rewrite operation-B current locators");
     } finally {
       removeFixture(fixture.root);
     }
