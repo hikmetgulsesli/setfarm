@@ -2840,7 +2840,7 @@ const PHASE5B_ACTIVE_PUBLIC_WRAPPER_GRAPH_V1 = Object.freeze([
   Object.freeze({ name: "prepareInternalProductionRecoverySourceBootstrapRunV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "prepareRecoverySourceBootstrapHeldLockV1"]), mutation: "recovery preparation reselects between operation observation and its held-lock graph" }),
   Object.freeze({ name: "resumeActiveInternalProductionRecoverySourceBootstrapRunV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "resumeRecoverySourceBootstrapHeldLockV1"]), mutation: "active recovery resume reselects between operation observation and held-lock resume" }),
   Object.freeze({ name: "resumeInternalProductionCurrentEntryAuthorityV1", delegates: Object.freeze(["observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1", "openExactPoisonPostVisibleSelectedProgressPassV1", "requireExactPoisonPostVisibleProgressEffectV1", "advanceExactPoisonPostVisibleProgressEffectV1"]), mutation: "current-entry resume bypasses its selected operation, fresh owned progress pass, pure planner, or selected-context effect executor" }),
-  Object.freeze({ name: "verifyCurrentInternalProductionCurrentEntryV1", delegates: Object.freeze(["observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1"]), mutation: "verification resolves status, authority, runtime, or receipt from different selected roots" }),
+  Object.freeze({ name: "verifyCurrentInternalProductionCurrentEntryV1", delegates: Object.freeze(["observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1", "resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1", "resolveTask12FreshCoreV1", "resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1"]), mutation: "verification resolves status, authority, authenticated runtime graph, or receipt from different selected roots" }),
 ] as const);
 
 const PHASE5B_PRIVATE_SELECTED_GRAPH_V1 = Object.freeze([
@@ -2871,6 +2871,7 @@ const PHASE5B_PRIVATE_SELECTED_GRAPH_V1 = Object.freeze([
   "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1",
   "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1",
   "openExactPoisonPostVisibleSelectedProgressPassV1",
+  "resolveTask12FreshCoreV1",
 ] as const);
 
 const PHASE5B_HISTORICAL_ZERO_SELECTION_GRAPH_V1 = Object.freeze([
@@ -15465,8 +15466,8 @@ it("P4 current-entry status preserves every crash prefix", async () => {
     'hasExactKeys(manifest, ["ownerProducerManifestActivationRef", "ownerProducerManifestActivationHash", "ownerProducerManifestHeadRef", "ownerProducerManifestHeadHash"])',
     'hasExactKeys(admission, ["phase", "sealedAdmission", "admissionReady", "loadedRuntimeServiceAuthority"])',
     'deriveTask12ResolvedAuthorityPairsV1(',
-    'canonicalComparable(freshServices) !== canonicalComparable(fresh.serviceCensus)',
-    'canonicalComparable(freshOwners) !== canonicalComparable(fresh.completeZeroOwnerCensusObservationBody)',
+    'canonicalComparable(freshServices) !== canonicalComparable(fresh.value.serviceCensus)',
+    'canonicalComparable(freshOwners) !== canonicalComparable(fresh.value.completeZeroOwnerCensusObservationBody)',
     'await resolveInternalProductionBootstrapHandoffCurrentAuditV1(currentAudit as Readonly<{ bootstrapHandoffCurrentAuditRef: string; bootstrapHandoffCurrentAuditHash: string }>, passOwner.operation); passOwner.assertRootStable()',
     'recovery-source-bootstrap-pending-input.json',
     'recovery-source-bootstrap-visibility-head.json',
@@ -20056,7 +20057,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.doesNotMatch(region, /AsyncLocalStorage|globalThis|process\.env|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|JSON\.stringify\(context|structuredClone\(context/, `${wrapper.name}: explicit context threading has no ambient or serialized substitute`);
     }
 
-    assert.equal(PHASE5B_PRIVATE_SELECTED_GRAPH_V1.length, 27, "P5b-B4 freezes the original selected graph plus four operation cores, one selected legacy-zero resolver, and the owned selected-progress opener");
+    assert.equal(PHASE5B_PRIVATE_SELECTED_GRAPH_V1.length, 28, "P5b-B4 freezes the original selected graph plus four operation cores, one selected legacy-zero resolver, the owned selected-progress opener, and the authenticated fresh-graph core");
     const privateSelectedNames = [...source.matchAll(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+WithSelectedCurrentEntryStoreContextV1)\(/gm)]
       .map((match) => match[1]!)
       .concat([
@@ -20064,6 +20065,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         "resumeRecoverySourceBootstrapHeldLockV1",
         ...PHASE5B_MIGRATION_OPERATION_CORE_GRAPH_V1.map((entry) => entry.name),
         "openExactPoisonPostVisibleSelectedProgressPassV1",
+        "resolveTask12FreshCoreV1",
       ])
       .sort();
     assert.deepEqual(privateSelectedNames, [...PHASE5B_PRIVATE_SELECTED_GRAPH_V1].sort(), "P5b-B4 rejects an untracked private selected/held-lock route");
@@ -22326,8 +22328,26 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.deepEqual(calls.map((call) => call.port), expectedCallPorts, `${input.label}: actual branch ports run once in exact order followed by only one adjacent CAS`);
         for (const call of calls) assert.equal(call.effect, input.effect.effect, `${input.label}: every effect result remains bound to the selected exact effect discriminator`);
         const zeroInputPorts = new Set(["observeInternalProductionPreSchemaSpawnerRebindStatusV1", "prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1", "applyOrAdoptInternalProductionCurrentEntryOrdinaryMigration33V1", "activateInternalProductionBaselineOwnerProducerManifestV1", "transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1", "observeInternalProductionServiceCensusV1", "observeCompleteInternalProductionZeroOwnerCensusV1", "auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1", "verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1", "initializeInternalProductionCurrentEntryDatabaseV1", "resumeRecoverySourceBootstrapHeldLockV1"]);
+        const pairOnlyResolverPorts = new Set(["resolveTask12EntryAuthoritySealedAdmissionBodyV1", "resolveTask12EntryAuthorityMigrationAuthorizationBodyV1"]);
         for (const call of calls.slice(0, -1)) {
           if (zeroInputPorts.has(call.port)) assert.equal(call.argCount, 0, `${input.label}: ${call.port} preserves its audited zero-input ABI`);
+          else if (pairOnlyResolverPorts.has(call.port)) {
+            const rebind = input.status.preSchemaSpawnerRebindStatusBody as Readonly<Record<string, unknown>>;
+            const migration = input.status.migrationApplyingPhase as Readonly<Record<string, unknown>>;
+            const source = call.port === "resolveTask12EntryAuthoritySealedAdmissionBodyV1"
+              ? rebind.sealedAdmission as Readonly<Record<string, unknown>>
+              : migration.authorization as Readonly<Record<string, unknown>>;
+            const pair = call.port === "resolveTask12EntryAuthoritySealedAdmissionBodyV1"
+              ? Object.freeze({ sealedAdmissionRef: source.sealedAdmissionRef, sealedAdmissionHash: source.sealedAdmissionHash })
+              : Object.freeze({ authorizationRef: source.authorizationRef, authorizationHash: source.authorizationHash });
+            const result = input.portValues[call.port] as Readonly<Record<string, unknown>>;
+            const resultPair = call.port === "resolveTask12EntryAuthoritySealedAdmissionBodyV1"
+              ? Object.freeze({ sealedAdmissionRef: result.sealedAdmissionRef, sealedAdmissionHash: result.sealedAdmissionHash })
+              : Object.freeze({ authorizationRef: result.authorizationRef, authorizationHash: result.authorizationHash });
+            assert.equal(call.argCount, 1, `${input.label}: ${call.port} preserves its pair-only ABI`);
+            assert.deepEqual(call.args, [pair], `${input.label}: ${call.port} receives only the exact embedded pair`);
+            assert.deepEqual(resultPair, pair, `${input.label}: ${call.port} returns the body for that exact pair`);
+          }
           else if (["publishLegacyZeroRecordV1", "publishTask12HashedRecordV1", "observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1", "observeExactPoisonPostVisibleEntryAuthorityContentEndpointNoWriteV1", "publishExactPoisonPostVisibleTask12ReceiptEndpointV1"].includes(call.port)) assert.equal(call.contextBound, false, `${input.label}: the bounded owned endpoint receives explicit target/body authority, never a selected handle`);
           else assert.equal(call.contextBound || call.operationBound, true, `${input.label}: ${call.port} receives the exact selected context or successor operation authority`);
         }
@@ -22351,13 +22371,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           `${input.label}: actual effect candidate pair bytes parse to its returned pair`);
         const rootFenceCount = timeline.filter((entry) => entry === "selected-root:stable").length;
         const selectedPublicationCount = input.expectedPorts.filter((port) => port === "publishLegacyZeroRecordV1" || port === "publishExactPoisonPostVisibleTask12ReceiptEndpointV1").length;
-        if (input.effect.effect === "publish-entry-authority") assert.equal(rootFenceCount, 12,
-          `${input.label}: fresh census, both endpoint opens, canonicalizations/publications, resolution, build, and CAS have their exact selected-root fences`);
-        else assert.equal(rootFenceCount, input.expectedPorts.length + selectedPublicationCount + 2,
+        assert.equal(rootFenceCount, input.expectedPorts.length + selectedPublicationCount + 2,
           `${input.label}: every awaited effect return, selected-root publication, canonical build, and adjacent CAS boundary has its exact root-only fence`);
         assert.equal(ownerState.rootStableCalls, rootFenceCount, `${input.label}: every observed root fence delegates through the branded owner`);
         assert.equal(ownerState.effectReturned, true, `${input.label}: root-only fencing becomes armed only after a real external result returns`);
-        assert.equal(Number(ownerState.postEffectRootFences), input.effect.effect === "publish-entry-authority" ? 12 : input.expectedPorts.length + 2,
+        assert.equal(Number(ownerState.postEffectRootFences), input.expectedPorts.length + selectedPublicationCount + 2,
           `${input.label}: post-effect root ABA protection stays armed through every effect return, build, and adjacent CAS`);
         assert.deepEqual(timeline.filter((entry) => entry !== "selected-root:stable" && !entry.startsWith("entry-endpoint:")), ["selected-pass:open", "selected-pass:stable", ...input.expectedPorts, "buildExactPoisonPostVisibleProgressNextStatusV1", "advanceTask12CurrentStatusV1", "selected-pass:close"],
           `${input.label}: root-only fences add no extra external effect, publication, build, or CAS work`);
