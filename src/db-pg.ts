@@ -4112,9 +4112,36 @@ export async function resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV
     || typeof input.releaseHash !== "string"
     || !OWNER_ADMISSION_SHA256_V1.test(input.releaseHash)
   ) throw new TypeError("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_PAIR_INVALID");
-  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction((sql) => (
-    resolveGlobalOwnerAdmissionFenceReleaseInTransactionV1(sql, input)
-  ));
+  return OWNER_ADMISSION_REPOSITORY_V1.withTransaction(async (sql) => {
+    const release = await resolveGlobalOwnerAdmissionFenceReleaseInTransactionV1(sql, input);
+    const headRows = await sql<OwnerAdmissionHeadRowV1[]>`
+      SELECT head_version,head_hash,active_fence_ref,active_fence_hash,
+             active_target_family_hash,migration_application_evidence_hash,head_payload
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton=TRUE
+    `;
+    if (headRows.length !== 1 || !headRows[0]) {
+      throw new Error("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_CORRUPTION");
+    }
+    try {
+      const head = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, headRows[0]);
+      const ancestry = await validateOwnerAdmissionAncestryToGenesisV1(
+        sql,
+        head.hash,
+        head.version,
+        head.migrationApplication,
+      );
+      const exactEdges = ancestry.filter(({ authority }) => (
+        authority.authority_kind === "release"
+        && authority.authority_ref === release.releaseRef
+        && authority.authority_hash === release.releaseHash
+      ));
+      if (exactEdges.length !== 1) throw new Error();
+    } catch {
+      throw new Error("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_CORRUPTION");
+    }
+    return release;
+  });
 }
 
 export async function releaseInternalProductionGlobalOwnerAdmissionFenceV1(input: Readonly<{

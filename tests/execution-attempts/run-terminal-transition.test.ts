@@ -1045,6 +1045,7 @@ ${copiedProjectionAndClassifier}
       const runCloseAuthority = authority({ authorityRef: runClose.closeRef, authorityHash: runClose.closeHash, authorityKind: "close", phaseKey: runReservationRef, predecessorHeadHash: h2Hash, successorHeadHash: h3Hash, authorityBody: runClose });
       const releaseProjection = Object.freeze({
         schema: "setfarm.internal-production-global-owner-admission-fence-release.v1",
+        purpose: releaseAuthorityBody.purpose,
         fenceRef: fenceBody.fenceRef,
         fenceHash: fenceBody.fenceHash,
         releaseAuthority: releaseAuthorityBody,
