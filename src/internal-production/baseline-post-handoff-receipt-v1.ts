@@ -10282,11 +10282,71 @@ function requireExactPoisonPostVisiblePreSchemaStatusEffectV1(
   ) currentEntryFail("current-entry progress effect pre-schema status is crossed");
 }
 
+function requireExactPoisonPostVisibleServiceCensusMemberCommonV1(
+  value: Readonly<Record<string, unknown>>,
+  label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
+): void {
+  if (
+    typeof value.pid !== "number"
+    || !Number.isSafeInteger(value.pid)
+    || value.pid < 1
+    || typeof value.processStartTimeEpochMs !== "number"
+    || !Number.isSafeInteger(value.processStartTimeEpochMs)
+    || value.processStartTimeEpochMs < 1
+    || value.processOwnerCount !== 1
+  ) currentEntryFail("current-entry progress effect service census member is invalid");
+  requireSha256(value.processIdentityHash, "current-entry progress effect process identity hash");
+  const serviceIdentityHash = requireSha256(value.serviceIdentityHash, "current-entry progress effect service identity hash");
+  const generationHash = requireSha256(value.generationHash, "current-entry progress effect service generation hash");
+  let source: Readonly<{ sha: string; treeHash: string; buildHash: string }> | null;
+  if (label === "ai.openclaw.gateway") {
+    if (value.loadedSourceSha !== null || value.loadedTreeHash !== null || value.loadedBuildHash !== null) currentEntryFail("current-entry OpenClaw source/build authority must be null");
+    source = null;
+  } else {
+    source = Object.freeze({
+      sha: requireGitHash(value.loadedSourceSha, "current-entry progress effect loaded source SHA"),
+      treeHash: requireGitHash(value.loadedTreeHash, "current-entry progress effect loaded tree"),
+      buildHash: requireSha256(value.loadedBuildHash, "current-entry progress effect loaded build"),
+    });
+  }
+  if (generationHash !== hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source })) currentEntryFail("current-entry progress effect service generation is crossed");
+}
+
+function requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1(value: unknown): void {
+  if (
+    !isPlainRecord(value)
+    || !hasExactKeys(value, ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listener"])
+    || value.listener !== null
+  ) currentEntryFail("current-entry progress effect service census member is invalid");
+  requireExactPoisonPostVisibleServiceCensusMemberCommonV1(value, "com.setrox.setfarm-spawner");
+}
+
+function requireExactPoisonPostVisibleListeningServiceCensusMemberV1(
+  value: unknown,
+  label: "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
+  port: 3333 | 3080 | 18789,
+): void {
+  if (
+    !isPlainRecord(value)
+    || !hasExactKeys(value, ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listenerOwnerCount", "listener"])
+    || value.listenerOwnerCount !== 1
+    || !isPlainRecord(value.listener)
+    || !hasExactKeys(value.listener, ["host", "port", "listenerIdentityHash"])
+    || value.listener.host !== "127.0.0.1"
+    || value.listener.port !== port
+  ) currentEntryFail("current-entry progress effect service census member is invalid");
+  requireSha256(value.listener.listenerIdentityHash, "current-entry progress effect listener identity hash");
+  requireExactPoisonPostVisibleServiceCensusMemberCommonV1(value, label);
+}
+
 function requireExactPoisonPostVisibleServiceCensusEffectV1(value: unknown): Readonly<Record<string, unknown>> {
   if (!isPlainRecord(value) || !hasExactKeys(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"]) || value.schema !== "setfarm.internal-production-service-census.v1") currentEntryFail("current-entry progress effect service census is invalid");
   const body = { ...value }; delete body.censusHash;
   if (typeof value.censusHash !== "string" || hashCanonicalJson(body) !== value.censusHash) currentEntryFail("current-entry progress effect service census is crossed");
-  for (const name of ["spawner", "dashboard", "missionControl", "openClaw"] as const) if (!isPlainRecord(value[name])) currentEntryFail("current-entry progress effect service census member is invalid");
+  requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1(value.spawner);
+  requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.dashboard, "com.setrox.setfarm-dashboard", 3333);
+  requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.missionControl, "com.setrox.mission-control", 3080);
+  requireExactPoisonPostVisibleListeningServiceCensusMemberV1(value.openClaw, "ai.openclaw.gateway", 18789);
   return value;
 }
 
@@ -19195,6 +19255,100 @@ function task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(
   return path.join(state.storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", exactHash.slice(0, 2), `${exactHash}.json`);
 }
 
+function requireTask12LoadedRuntimeServiceAuthorityV1(
+  authority: Readonly<Record<string, unknown>>,
+): Readonly<{ pair: Readonly<Record<string, string>>; body: Readonly<Record<string, unknown>> }> {
+  const embedded = authority.loadedRuntimeServiceAuthority;
+  if (
+    !isPlainRecord(embedded)
+    || !hasExactKeys(embedded, ["loadedRuntimeServiceAuthorityRef", "loadedRuntimeServiceAuthorityHash", "body"])
+    || !isPlainRecord(embedded.body)
+  ) currentEntryFail("loaded runtime service authority embedded shape is invalid");
+  const body = embedded.body as Record<string, unknown>;
+  if (
+    !hasExactKeys(body, ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw"])
+    || body.schema !== "setfarm.internal-production-loaded-runtime-service-authority.v1"
+  ) currentEntryFail("loaded runtime service authority body shape is invalid");
+  const operation = requirePair(authority.currentEntryOperation, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  if (
+    body.currentEntryOperationRef !== operation.operationRef
+    || body.currentEntryOperationHash !== operation.operationHash
+  ) currentEntryFail("loaded runtime service authority operation is crossed");
+  const observedServiceCensusHash = hashCanonicalJson({
+    schema: "setfarm.internal-production-service-census.v1",
+    spawner: body.spawner,
+    dashboard: body.dashboard,
+    missionControl: body.missionControl,
+    openClaw: body.openClaw,
+  });
+  if (body.observedServiceCensusHash !== observedServiceCensusHash) currentEntryFail("loaded runtime service authority census is crossed");
+  const pair = requirePair(
+    {
+      loadedRuntimeServiceAuthorityRef: embedded.loadedRuntimeServiceAuthorityRef,
+      loadedRuntimeServiceAuthorityHash: embedded.loadedRuntimeServiceAuthorityHash,
+    },
+    "loadedRuntimeServiceAuthorityRef",
+    "loadedRuntimeServiceAuthorityHash",
+    "setfarm://internal-production/loaded-runtime-service-authority/sha256/",
+  );
+  if (pair.loadedRuntimeServiceAuthorityHash !== hashCanonicalJson(body)) currentEntryFail("loaded runtime service authority is crossed");
+  return recursivelyFreeze({ pair, body });
+}
+
+function deriveTask12ControllerRuntimeSourceRelationsV1(
+  controllerSourceAuthority: Readonly<Record<string, unknown>>,
+  loadedRuntimeServiceAuthority: Readonly<Record<string, unknown>>,
+  serviceCensus: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const spawner = serviceCensus.spawner as Readonly<Record<string, unknown>>;
+  const dashboard = serviceCensus.dashboard as Readonly<Record<string, unknown>>;
+  const missionControl = serviceCensus.missionControl as Readonly<Record<string, unknown>>;
+  return recursivelyFreeze({
+    controllerSourceAuthority,
+    loadedRuntimeServiceAuthority,
+    spawner: { relation: "equals-controller-source-authority", loadedSourceSha: spawner.loadedSourceSha, loadedTreeHash: spawner.loadedTreeHash, loadedBuildHash: spawner.loadedBuildHash },
+    dashboard: { relation: "authenticated-delivered-runtime", loadedSourceSha: dashboard.loadedSourceSha, loadedTreeHash: dashboard.loadedTreeHash, loadedBuildHash: dashboard.loadedBuildHash },
+    missionControl: { relation: "authenticated-delivered-runtime", loadedSourceSha: missionControl.loadedSourceSha, loadedTreeHash: missionControl.loadedTreeHash, loadedBuildHash: missionControl.loadedBuildHash },
+    openClaw: { relation: "authenticated-process-generation-listener-only", loadedSourceSha: null, loadedTreeHash: null, loadedBuildHash: null },
+  });
+}
+
+function requireTask12StoredControllerRuntimeSourceRelationsV1(
+  authority: Readonly<Record<string, unknown>>,
+  fresh: Readonly<Record<string, unknown>>,
+): void {
+  const serviceCensus = requireExactPoisonPostVisibleServiceCensusEffectV1(fresh.serviceCensus);
+  const openClaw = serviceCensus.openClaw as Readonly<Record<string, unknown>>;
+  if (
+    openClaw.loadedSourceSha !== null
+    || openClaw.loadedTreeHash !== null
+    || openClaw.loadedBuildHash !== null
+  ) currentEntryFail("current-entry OpenClaw source/build authority must be null");
+  const controllerSourceAuthority = authority.controllerSourceAuthority;
+  if (
+    !isPlainRecord(controllerSourceAuthority)
+    || !hasExactKeys(controllerSourceAuthority, ["controllerSourceSha", "controllerTreeHash", "controllerBuildHash"])
+  ) currentEntryFail("current-entry stored controller source authority is invalid");
+  requireGitHash(controllerSourceAuthority.controllerSourceSha, "current-entry stored controller source SHA");
+  requireGitHash(controllerSourceAuthority.controllerTreeHash, "current-entry stored controller tree");
+  requireSha256(controllerSourceAuthority.controllerBuildHash, "current-entry stored controller build");
+  const loaded = requireTask12LoadedRuntimeServiceAuthorityV1(authority);
+  for (const name of ["spawner", "dashboard", "missionControl", "openClaw"] as const) {
+    if (canonicalComparable(loaded.body[name]) !== canonicalComparable(serviceCensus[name])) currentEntryFail("current-entry stored service census and loaded runtime authority are crossed");
+  }
+  if (loaded.body.observedServiceCensusHash !== serviceCensus.censusHash) currentEntryFail("current-entry stored service census hash and loaded runtime authority are crossed");
+  const spawner = serviceCensus.spawner as Readonly<Record<string, unknown>>;
+  const missionControl = serviceCensus.missionControl as Readonly<Record<string, unknown>>;
+  if (
+    spawner.loadedSourceSha !== controllerSourceAuthority.controllerSourceSha
+    || spawner.loadedTreeHash !== controllerSourceAuthority.controllerTreeHash
+    || spawner.loadedBuildHash !== controllerSourceAuthority.controllerBuildHash
+    || authority.missionControlSourceSha !== missionControl.loadedSourceSha
+  ) currentEntryFail("current-entry stored runtime source authority is crossed");
+  const expected = deriveTask12ControllerRuntimeSourceRelationsV1(controllerSourceAuthority, loaded.pair, serviceCensus);
+  if (!isPlainRecord(fresh.controllerRuntimeSourceRelations) || canonicalComparable(fresh.controllerRuntimeSourceRelations) !== canonicalComparable(expected)) currentEntryFail("current-entry runtime source relations are crossed");
+}
+
 async function resolveTask12PredecessorAuthorityPairV1(
   context: SelectedCurrentEntryStoreContextV1,
   name: string,
@@ -19279,15 +19433,10 @@ async function resolveTask12PredecessorAuthorityPairV1(
   if (name === "terminalSettlement") { await resolveInternalProductionRecoverySourceRunTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, { terminalSourceRunRef: String(pair.terminalSettlementRef), terminalSourceRunHash: String(pair.terminalSettlementHash) }); return; }
   if (name === "targetClose") { await resolveInternalProductionSourceRunLaunchTargetReservationPairCloseWithSelectedCurrentEntryStoreContextV1(context, pair as Readonly<{ targetReservationPairCloseRef: string; targetReservationPairCloseHash: string }>); return; }
   if (name === "loadedRuntimeServiceAuthority") {
-    const embedded = authority.loadedRuntimeServiceAuthority;
-    if (!isPlainRecord(embedded) || !isPlainRecord(embedded.body)) currentEntryFail("loaded runtime service authority body is absent");
-    const body = embedded.body as Record<string, unknown>;
-    const hash = hashCanonicalJson(body);
+    const loaded = requireTask12LoadedRuntimeServiceAuthorityV1(authority);
     if (
-      embedded.loadedRuntimeServiceAuthorityRef !== `setfarm://internal-production/loaded-runtime-service-authority/sha256/${hash}`
-      || embedded.loadedRuntimeServiceAuthorityHash !== hash
-      || pair.loadedRuntimeServiceAuthorityRef !== embedded.loadedRuntimeServiceAuthorityRef
-      || pair.loadedRuntimeServiceAuthorityHash !== hash
+      pair.loadedRuntimeServiceAuthorityRef !== loaded.pair.loadedRuntimeServiceAuthorityRef
+      || pair.loadedRuntimeServiceAuthorityHash !== loaded.pair.loadedRuntimeServiceAuthorityHash
     ) currentEntryFail("loaded runtime service authority is crossed");
     return;
   }
@@ -19315,7 +19464,11 @@ async function deriveTask12ResolvedAuthorityPairsV1(
 ): Promise<readonly Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>[]> {
   const orderedPairs: Array<Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>> = [];
   for (const [name, refKey, hashKey, prefix] of TASK12_RESOLVED_PAIR_SPECS_V1) {
-    const pair = requirePair(authority[name], refKey, hashKey, prefix);
+    const member = authority[name];
+    const pairInput = name === "loadedRuntimeServiceAuthority" && isPlainRecord(member)
+      ? { [refKey]: member[refKey], [hashKey]: member[hashKey] }
+      : member;
+    const pair = requirePair(pairInput, refKey, hashKey, prefix);
     const exactPair = recursivelyFreeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] });
     await resolveTask12PredecessorAuthorityPairV1(context, name, exactPair, authority);
     orderedPairs.push(Object.freeze({ name, pair: exactPair }));
@@ -19381,7 +19534,11 @@ async function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservat
 ): Promise<Readonly<Record<string, unknown>>> {
   const value = await resolveTask12RecordV1(context, input, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1, "fresh-runtime-and-owner-observations", "current-entry fresh runtime/owner observation");
   if (!hasExactKeys(value, ["schema", "currentEntryStatus", "entryAuthority", "serviceCensus", "completeZeroOwnerCensusObservation", "completeZeroOwnerCensusObservationBody", "controllerRuntimeSourceRelations", "observedAt", "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash"]) || value.schema !== "setfarm.internal-production-current-entry-fresh-runtime-and-owner-observation.v1" || typeof value.observedAt !== "string" || !RFC3339_MILLIS.test(value.observedAt)) currentEntryFail("current-entry fresh runtime/owner observation shape is invalid");
-  if (!isPlainRecord(value.completeZeroOwnerCensusObservation) || !isPlainRecord(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero evidence is invalid");
+  if (!isPlainRecord(value.currentEntryStatus) || !isPlainRecord(value.entryAuthority) || !isPlainRecord(value.completeZeroOwnerCensusObservation) || !isPlainRecord(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh dependency evidence is invalid");
+  requirePair(value.currentEntryStatus, "statusRef", "statusHash", TASK12_STATUS_PREFIX_V1);
+  const entryAuthority = requirePair(value.entryAuthority, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1) as InternalProductionCurrentEntryAuthorityPairV1;
+  const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, entryAuthority);
+  requireTask12StoredControllerRuntimeSourceRelationsV1(authority, value);
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");
   return value;
@@ -20544,14 +20701,11 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   if (!isPlainRecord(controllerSourceAuthority) || !isPlainRecord(loadedRuntimeServiceAuthority) || !isPlainRecord(loadedRuntimeServiceAuthority.body)) currentEntryFail("current-entry runtime source authorities are incomplete");
   const loadedBody = loadedRuntimeServiceAuthority.body as Record<string, unknown>;
   if (serviceCensus.spawner.loadedSourceSha !== controllerSourceAuthority.controllerSourceSha || serviceCensus.spawner.loadedTreeHash !== controllerSourceAuthority.controllerTreeHash || serviceCensus.spawner.loadedBuildHash !== controllerSourceAuthority.controllerBuildHash) currentEntryFail("current-entry spawner runtime does not equal controller source");
-  const controllerRuntimeSourceRelations = {
+  const controllerRuntimeSourceRelations = deriveTask12ControllerRuntimeSourceRelationsV1(
     controllerSourceAuthority,
-    loadedRuntimeServiceAuthority: { loadedRuntimeServiceAuthorityRef: loadedRuntimeServiceAuthority.loadedRuntimeServiceAuthorityRef, loadedRuntimeServiceAuthorityHash: loadedRuntimeServiceAuthority.loadedRuntimeServiceAuthorityHash },
-    spawner: { relation: "equals-controller-source-authority", loadedSourceSha: serviceCensus.spawner.loadedSourceSha, loadedTreeHash: serviceCensus.spawner.loadedTreeHash, loadedBuildHash: serviceCensus.spawner.loadedBuildHash },
-    dashboard: { relation: "authenticated-delivered-runtime", loadedSourceSha: serviceCensus.dashboard.loadedSourceSha, loadedTreeHash: serviceCensus.dashboard.loadedTreeHash, loadedBuildHash: serviceCensus.dashboard.loadedBuildHash },
-    missionControl: { relation: "authenticated-delivered-runtime", loadedSourceSha: serviceCensus.missionControl.loadedSourceSha, loadedTreeHash: serviceCensus.missionControl.loadedTreeHash, loadedBuildHash: serviceCensus.missionControl.loadedBuildHash },
-    openClaw: { relation: "authenticated-process-generation-listener-only", loadedSourceSha: null, loadedTreeHash: null, loadedBuildHash: null },
-  };
+    { loadedRuntimeServiceAuthorityRef: loadedRuntimeServiceAuthority.loadedRuntimeServiceAuthorityRef, loadedRuntimeServiceAuthorityHash: loadedRuntimeServiceAuthority.loadedRuntimeServiceAuthorityHash },
+    serviceCensus,
+  );
   if (canonicalComparable(loadedBody.spawner) !== canonicalComparable(serviceCensus.spawner) || canonicalComparable(loadedBody.dashboard) !== canonicalComparable(serviceCensus.dashboard) || canonicalComparable(loadedBody.missionControl) !== canonicalComparable(serviceCensus.missionControl) || canonicalComparable(loadedBody.openClaw) !== canonicalComparable(serviceCensus.openClaw)) currentEntryFail("current-entry loaded runtime authority is stale");
   const currentEntryStatus = { statusRef: status.statusRef, statusHash: status.statusHash };
   const observedAt = new Date().toISOString();
