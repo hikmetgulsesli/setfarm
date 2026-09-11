@@ -1148,9 +1148,11 @@ test("P4 db owns exact source run fence mutation ports", async () => {
 });
 
 test("P4 release resolver rejects a content-valid orphan while retaining a canonical historical release", async () => {
+  const originalDatabaseUrl = process.env.SETFARM_PG_URL;
   const helper = await import("../execution-attempts/test-database.js");
-  const database = await helper.createIsolatedTestDatabase();
+  let database: Awaited<ReturnType<typeof helper.createIsolatedTestDatabase>> | undefined;
   try {
+    database = await helper.createIsolatedTestDatabase();
     const sql = database.sql;
     const headRows = await sql<Array<{
       headVersion: string | number;
@@ -1342,8 +1344,17 @@ test("P4 release resolver rejects a content-valid orphan while retaining a canon
       "a self-valid release row outside the current authenticated ancestry is not authority",
     );
   } finally {
-    await database.cleanup();
+    try {
+      await database?.cleanup();
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.SETFARM_PG_URL;
+      } else {
+        process.env.SETFARM_PG_URL = originalDatabaseUrl;
+      }
+    }
   }
+  assert.equal(process.env.SETFARM_PG_URL, originalDatabaseUrl, "the focused database fixture restores its caller's database authority");
 });
 
 test("P4 completion bootstrap head barrier serializes target mint and atomic release", async () => {
