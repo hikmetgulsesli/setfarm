@@ -19690,6 +19690,9 @@ function requireTask12PredecessorGraphRelationsV1(
   if (!operationMatches(startup) || !matches(startup, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !sourceMatches(startup, "task0Spawner") || startup.predecessorSpawnerServiceIdentityHash !== authorization.predecessorSpawnerServiceIdentityHash || startup.predecessorSpawnerGenerationHash !== authorization.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema startup-token graph is crossed");
   const restart = node("preSchemaSpawnerRestartAuthority");
   if (!operationMatches(restart) || !matches(restart, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(restart, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !sourceMatches(restart, "targetSpawner") || restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || restart.predecessorSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || restart.predecessorSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash || restart.executable !== "/bin/launchctl" || !exact(restart.argv, ["kickstart", "-k", `gui/${String(restart.uid)}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart-authority graph is crossed");
+  const currentUid = process.getuid?.();
+  if (!Number.isSafeInteger(currentUid) || (currentUid as number) < 0) currentEntryFail("current-entry current host uid is unavailable");
+  if (restart.uid !== currentUid || !exact(restart.argv, ["kickstart", "-k", `gui/${String(currentUid)}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart-authority current uid is crossed");
   const predecessor = node("predecessorTerminationObservation");
   if (!operationMatches(predecessor) || !matches(predecessor, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(predecessor, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(predecessor, "restartAuthorityRef", "restartAuthorityHash", "preSchemaSpawnerRestartAuthority") || predecessor.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || predecessor.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessor.predecessorSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || predecessor.predecessorSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema predecessor-termination graph is crossed");
   const replacement = node("replacementProcessObservation");
@@ -19901,7 +19904,13 @@ async function resolveTask12FreshCoreV1(
   requireTask12ReadyStatusAuthorityOverlapV1(status, authority, entryAuthority);
   await requireTask12StoredControllerRuntimeSourceRelationsV1(context, authority, value);
   const predecessorGraph = await authenticateTask12EntryAuthorityPredecessorPairsV1(context, authority, status);
-  const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(value.completeZeroOwnerCensusObservation as Readonly<{ observationRef: string; observationHash: string }>);
+  const freshZeroPair = requirePair(value.completeZeroOwnerCensusObservation, "observationRef", "observationHash", COMPLETE_ZERO_PREFIX_V1);
+  const authorityZeroPair = requirePair(authority.completeZeroOwnerCensusObservation, "observationRef", "observationHash", COMPLETE_ZERO_PREFIX_V1);
+  if (
+    authorityZeroPair.observationRef !== freshZeroPair.observationRef
+    || authorityZeroPair.observationHash !== freshZeroPair.observationHash
+  ) currentEntryFail("current-entry authority complete-zero observation is crossed");
+  const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(authorityZeroPair as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");
   return recursivelyFreeze({ value, currentEntryStatus, entryAuthority, status, authority, predecessorGraph });
 }

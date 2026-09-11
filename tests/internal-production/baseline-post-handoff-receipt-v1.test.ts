@@ -39603,6 +39603,19 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const readPair = (name: string): CurrentEntryVerifierAcceptancePairV1 => JSON.parse(readFileSync(path.join(preSchemaOperationDirectory, name), "utf8")) as CurrentEntryVerifierAcceptancePairV1;
     const postLegacy = readPair("06-post-termination-legacy-zero.pair.json");
     const manifest = currentEntryVerifierManifestFixtureV1();
+    const completeZeroBody = Object.freeze({
+      schema: "setfarm.internal-production-complete-zero-owner-census-observation.v1",
+      census: zeroOwnerCensusFixtureV1(),
+      ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1,
+      ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1,
+      activeProducerManifestSetActivationRef: manifest.receipt.activationRef,
+      activeProducerManifestSetActivationHash: manifest.receipt.activationHash,
+      activeProducerManifestSetHash: manifest.receipt.manifestSetHash,
+      reservationIdentitySetHash: "5".repeat(64),
+      ownerIdentitySetHash: "6".repeat(64),
+    });
+    const completeZeroHash = canonicalHash(completeZeroBody);
+    const completeZeroPair = Object.freeze({ observationRef: `setfarm://internal-production/complete-zero-owner-census-observation/sha256/${completeZeroHash}`, observationHash: completeZeroHash });
     const originalPreSchemaCurrent = preSchema.current as Readonly<Record<string, unknown>>;
     const loadedBody = Object.freeze({
       schema: "setfarm.internal-production-loaded-runtime-service-authority.v1",
@@ -39783,6 +39796,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       terminalSettlement: Object.freeze({ terminalSettlementRef: terminal.terminalSourceRunRef, terminalSettlementHash: terminal.terminalSourceRunHash }),
       targetClose: Object.freeze({ targetReservationPairCloseRef: terminal.targetReservationPairCloseRef, targetReservationPairCloseHash: terminal.targetReservationPairCloseHash }),
       ownerAdmissionFenceRelease: Object.freeze({ ownerAdmissionFenceReleaseRef: release.releaseRef, ownerAdmissionFenceReleaseHash: release.releaseHash }),
+      completeZeroOwnerCensusObservation: completeZeroPair,
       missionControlSourceSha: (service.missionControl as Readonly<Record<string, unknown>>).loadedSourceSha,
     });
     const entryAuthorityHash = canonicalHash(authorityTemplate);
@@ -39858,6 +39872,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       serviceOverride?: Readonly<Record<string, unknown>>;
       productBuildAuthorityV2Observations?: readonly Readonly<Record<string, unknown>>[];
       releaseOverride?: Readonly<Record<string, unknown>>;
+      resolveCompleteZeroPair?: Readonly<{ observationRef: string; observationHash: string }>;
       resolveFreshPair?: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
       resolvePair?: Readonly<{ currentEntryVerificationRef: string; currentEntryVerificationHash: string }>;
     }> = Object.freeze({}),
@@ -39896,11 +39911,13 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       fault: options.fault === undefined ? null : { ...options.fault, remaining: 1 },
       protectedState: Object.freeze({ serviceState: "unchanged", databaseState: "unchanged", processState: "unchanged" }),
     };
-    const invocation = options.resolveFreshPair !== undefined
-      ? `m.resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1(${JSON.stringify(options.resolveFreshPair)})`
-      : options.resolvePair === undefined
-        ? "m.verifyCurrentInternalProductionCurrentEntryV1()"
-        : `m.resolveInternalProductionCurrentEntryVerificationV1(${JSON.stringify(options.resolvePair)})`;
+    const invocation = options.resolveCompleteZeroPair !== undefined
+      ? `m.resolveInternalProductionCompleteZeroOwnerCensusObservationV1(${JSON.stringify(options.resolveCompleteZeroPair)})`
+      : options.resolveFreshPair !== undefined
+        ? `m.resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1(${JSON.stringify(options.resolveFreshPair)})`
+        : options.resolvePair === undefined
+          ? "m.verifyCurrentInternalProductionCurrentEntryV1()"
+          : `m.resolveInternalProductionCurrentEntryVerificationV1(${JSON.stringify(options.resolvePair)})`;
     const expression = `(async()=>{const probe=${JSON.stringify(probe)};Reflect.set(globalThis,"__currentEntryVerifierAcceptanceProbeV1",probe);const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(args.length===0?"2040-01-02T03:04:05.006Z":args[0])}static now(){return Date.parse("2040-01-02T03:04:05.006Z")}};const protectedBefore=JSON.stringify(probe.protectedState);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}const protectedAfter=JSON.stringify(probe.protectedState);process.stdout.write(JSON.stringify({outcome,message,value,publicationEvents:probe.publicationEvents,serviceCalls:probe.serviceCalls,physicalCalls:probe.physicalCalls,databaseCalls:probe.databaseCalls,operationalMutationCalls:probe.operationalMutationCalls,operationalMutationNames:probe.operationalMutationNames,protectedBefore,protectedAfter}))})()`;
     const result = runFixtureExpression(fixture.root, expression);
     assert.equal(result.status, 0, result.stderr);
@@ -40112,6 +40129,110 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       assert.deepEqual(ordered.map(({ name }) => name), [...pairKeys.map(([name]) => name), "currentEntryAuthority", "currentEntryStatus", "completeZeroOwnerCensusObservation", "freshRuntimeAndOwnerObservation"]);
       assert.equal(verification.resolvedAuthoritySetHash, canonicalHash(ordered), "receipt commits the exact literal 33-pair order");
 
+      const buildCompleteZeroAuthorityCrossedGraphV1 = (
+        label: string,
+        authorityZeroPair: CurrentEntryVerifierAcceptancePairV1,
+      ): Readonly<{
+        label: string;
+        freshPair: CurrentEntryVerifierAcceptancePairV1;
+        verificationPair: CurrentEntryVerifierAcceptancePairV1;
+      }> => {
+        const authorityBody = structuredClone(fixture.authority) as Record<string, unknown>;
+        delete authorityBody.entryAuthorityRef;
+        delete authorityBody.entryAuthorityHash;
+        authorityBody.completeZeroOwnerCensusObservation = authorityZeroPair;
+        const authorityHash = canonicalHash(authorityBody);
+        const authorityPair = Object.freeze({ entryAuthorityRef: `setfarm://internal-production/current-entry-authority/sha256/${authorityHash}`, entryAuthorityHash: authorityHash });
+        const authorityTarget = path.join(fixture.store, "records", "entry-authorities", "sha256", authorityHash.slice(0, 2), `${authorityHash}.json`);
+        phase5cEnsurePublicationParentV1(authorityTarget);
+        writeFileSync(authorityTarget, canonicalFixtureRecordV1(Object.freeze({ ...authorityBody, ...authorityPair })), { mode: 0o600 });
+
+        const statusBody = structuredClone(fixture.status) as Record<string, unknown>;
+        delete statusBody.statusRef;
+        delete statusBody.statusHash;
+        statusBody.entryAuthority = authorityPair;
+        const statusHash = canonicalHash(statusBody);
+        const statusPair = Object.freeze({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${statusHash}`, statusHash });
+        const statusTarget = path.join(fixture.store, "records", "statuses", "sha256", statusHash.slice(0, 2), `${statusHash}.json`);
+        phase5cEnsurePublicationParentV1(statusTarget);
+        writeFileSync(statusTarget, canonicalFixtureRecordV1(Object.freeze({ ...statusBody, ...statusPair })), { mode: 0o600 });
+
+        const candidateFreshBody = structuredClone(freshValue) as Record<string, unknown>;
+        delete candidateFreshBody.freshRuntimeAndOwnerObservationRef;
+        delete candidateFreshBody.freshRuntimeAndOwnerObservationHash;
+        Object.assign(candidateFreshBody, { currentEntryStatus: statusPair, entryAuthority: authorityPair });
+        const candidateFreshHash = canonicalHash(candidateFreshBody);
+        const candidateFreshPair = Object.freeze({ freshRuntimeAndOwnerObservationRef: `setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/${candidateFreshHash}`, freshRuntimeAndOwnerObservationHash: candidateFreshHash });
+        const candidateFreshTarget = path.join(fixture.store, "records", "fresh-runtime-and-owner-observations", "sha256", candidateFreshHash.slice(0, 2), `${candidateFreshHash}.json`);
+        phase5cEnsurePublicationParentV1(candidateFreshTarget);
+        writeFileSync(candidateFreshTarget, canonicalFixtureRecordV1(Object.freeze({ ...candidateFreshBody, ...candidateFreshPair })), { mode: 0o600 });
+
+        const candidateOrdered = Object.freeze(ordered.map(({ name, pair }) => Object.freeze({
+          name,
+          pair: name === "currentEntryAuthority"
+            ? authorityPair
+            : name === "currentEntryStatus"
+              ? statusPair
+              : name === "freshRuntimeAndOwnerObservation"
+                ? candidateFreshPair
+                : pair,
+        })));
+        assert.equal(candidateOrdered.length, 33, `${label}: exact ordered authority graph remains 33 pairs`);
+        assert.deepEqual(candidateOrdered.map(({ name }) => name), ordered.map(({ name }) => name), `${label}: exact ordered authority graph preserves names and order`);
+        assert.deepEqual(candidateOrdered.find(({ name }) => name === "completeZeroOwnerCensusObservation")?.pair, completePair,
+          `${label}: exact-33 commits the fresh complete-zero pair, not the crossed authority duplicate`);
+        const candidateVerificationBody = Object.freeze({ schema: "setfarm.internal-production-current-entry-verification.v1", currentStatus: "current", currentEntryStatus: statusPair, entryAuthority: authorityPair, resolvedAuthoritySetHash: canonicalHash(candidateOrdered), freshRuntimeAndOwnerObservation: candidateFreshPair });
+        const candidateVerificationHash = canonicalHash(candidateVerificationBody);
+        const candidateVerificationPair = Object.freeze({ currentEntryVerificationRef: `setfarm://internal-production/current-entry-verification/sha256/${candidateVerificationHash}`, currentEntryVerificationHash: candidateVerificationHash });
+        const candidateVerificationTarget = path.join(fixture.store, "records", "verifications", "sha256", candidateVerificationHash.slice(0, 2), `${candidateVerificationHash}.json`);
+        phase5cEnsurePublicationParentV1(candidateVerificationTarget);
+        writeFileSync(candidateVerificationTarget, canonicalFixtureRecordV1(Object.freeze({ ...candidateVerificationBody, ...candidateVerificationPair })), { mode: 0o600 });
+        return Object.freeze({ label, freshPair: candidateFreshPair, verificationPair: candidateVerificationPair });
+      };
+
+      const nonexistentZeroHash = "b".repeat(64);
+      const nonexistentZeroPair = Object.freeze({ observationRef: `setfarm://internal-production/complete-zero-owner-census-observation/sha256/${nonexistentZeroHash}`, observationHash: nonexistentZeroHash });
+      const nonexistentZeroTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/complete-zero-owner-census-observation-v1/records/sha256", nonexistentZeroHash.slice(0, 2), `${nonexistentZeroHash}.json`);
+      assert.equal(existsSync(nonexistentZeroTarget), false, "nonexistent authority complete-zero pair has no stored body");
+
+      const unrelatedZeroBody = structuredClone(freshValue.completeZeroOwnerCensusObservationBody) as Record<string, unknown>;
+      delete unrelatedZeroBody.observationRef;
+      delete unrelatedZeroBody.observationHash;
+      unrelatedZeroBody.ownerIdentitySetHash = "c".repeat(64);
+      const unrelatedZeroHash = canonicalHash(unrelatedZeroBody);
+      const unrelatedZeroPair = Object.freeze({ observationRef: `setfarm://internal-production/complete-zero-owner-census-observation/sha256/${unrelatedZeroHash}`, observationHash: unrelatedZeroHash });
+      assert.notDeepEqual(unrelatedZeroPair, completePair, "unrelated complete-zero pair differs from the fresh observation");
+      const unrelatedZeroTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/complete-zero-owner-census-observation-v1/records/sha256", unrelatedZeroHash.slice(0, 2), `${unrelatedZeroHash}.json`);
+      phase5cEnsurePublicationParentV1(unrelatedZeroTarget);
+      writeFileSync(unrelatedZeroTarget, canonicalFixtureRecordV1(Object.freeze({ ...unrelatedZeroBody, ...unrelatedZeroPair })), { mode: 0o600 });
+      const unrelatedZeroResolved = currentEntryVerifierRunV1(fixture, { resolveCompleteZeroPair: unrelatedZeroPair });
+      assert.equal(unrelatedZeroResolved.outcome, "returned", String(unrelatedZeroResolved.message));
+      assert.deepEqual({ observationRef: (unrelatedZeroResolved.value as Readonly<Record<string, unknown>>).observationRef, observationHash: (unrelatedZeroResolved.value as Readonly<Record<string, unknown>>).observationHash }, unrelatedZeroPair,
+        "unrelated complete-zero record is independently pair-resolver-valid");
+
+      const completeZeroAuthorityCrossedGraphs = Object.freeze([
+        buildCompleteZeroAuthorityCrossedGraphV1("nonexistent authority complete-zero pair", nonexistentZeroPair),
+        buildCompleteZeroAuthorityCrossedGraphV1("unrelated valid authority complete-zero pair", unrelatedZeroPair),
+      ]);
+      const completeZeroCrossedLocatorsBefore = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const completeZeroCrossedVerificationRecordsBefore = currentEntryVerifierRecordsV1(fixture.root, "verification");
+      const completeZeroAuthorityCrossedResults = completeZeroAuthorityCrossedGraphs.flatMap((candidate) => ([
+        Object.freeze({ label: candidate.label, surface: "fresh", result: currentEntryVerifierRunV1(fixture, { resolveFreshPair: candidate.freshPair }) }),
+        Object.freeze({ label: candidate.label, surface: "verification", result: currentEntryVerifierRunV1(fixture, { resolvePair: candidate.verificationPair, serviceOverride: fixture.service }) }),
+      ]));
+      for (const { label, surface, result } of completeZeroAuthorityCrossedResults) {
+        assert.equal(result.outcome, "threw", `${surface}: ${label} must reject the crossed authority complete-zero pair`);
+        assert.match(String(result.message), /current-entry authority complete-zero observation is crossed/,
+          `${surface}: ${label} fails at the exact authority/fresh complete-zero relation`);
+        assert.equal(result.operationalMutationCalls, 0, `${surface}: ${label} performs no operational mutation`);
+        assert.equal(result.protectedBefore, result.protectedAfter, `${surface}: ${label} leaves protected state unchanged`);
+        assert.deepEqual(result.publicationEvents, [], `${surface}: ${label} publishes no authority or success receipt`);
+        assert.equal(result.serviceCalls, 0, `${surface}: ${label} is rejected before new live service observation`);
+      }
+      assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), completeZeroCrossedVerificationRecordsBefore,
+        "complete-zero relation candidates publish no new success receipt");
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), completeZeroCrossedLocatorsBefore,
+        "complete-zero relation candidates do not rewrite current locators");
       const rejectFreshStatusPairV1 = (
         label: string,
         statusPair: CurrentEntryVerifierAcceptancePairV1,
@@ -40942,6 +41063,159 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         return Object.freeze({ label, freshPair, verificationPair, pattern, releaseOverride });
       };
 
+      const rehashStoredCurrentEntryVerifierRecordV1 = (
+        recordsRoot: string,
+        kind: string,
+        sourceHash: string,
+        refKey: string,
+        hashKey: string,
+        prefix: string,
+        mutate: (body: Record<string, unknown>) => void,
+      ): Readonly<Record<string, unknown>> => {
+        const sourceTarget = path.join(recordsRoot, kind, "sha256", sourceHash.slice(0, 2), `${sourceHash}.json`);
+        const sourceRecord = JSON.parse(readFileSync(sourceTarget, "utf8")) as Readonly<Record<string, unknown>>;
+        const rehashed = rehashFixtureRecordV1(sourceRecord, refKey, hashKey, prefix, mutate);
+        const target = path.join(recordsRoot, kind, "sha256", rehashed.hash.slice(0, 2), `${rehashed.hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, rehashed.bytes, { mode: 0o600 });
+        return rehashed.value;
+      };
+      const preSchemaRecordsRoot = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+      const migrationRecordsRoot = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-manifest-migration32-v1/records");
+      const currentUid = process.getuid?.();
+      assert.equal(Number.isSafeInteger(currentUid) && Number(currentUid) >= 0, true, "current host exposes a canonical uid for current-entry verification");
+      const alternateUid = Number(currentUid) + 1;
+      assert.equal(Number.isSafeInteger(alternateUid), true);
+
+      const canonicalRestartPair = fixture.authority.preSchemaSpawnerRestartAuthority as Readonly<Record<string, string>>;
+      const alternateRestart = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "restart-authority", canonicalRestartPair.restartAuthorityHash!, "restartAuthorityRef", "restartAuthorityHash", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/", (body) => {
+        body.uid = alternateUid;
+        body.argv = Object.freeze(["kickstart", "-k", `gui/${alternateUid}/com.setrox.setfarm-spawner`]);
+      });
+      const alternateRestartPair = Object.freeze({ restartAuthorityRef: String(alternateRestart.restartAuthorityRef), restartAuthorityHash: String(alternateRestart.restartAuthorityHash) });
+
+      const canonicalPredecessorPair = fixture.authority.predecessorTerminationObservation as Readonly<Record<string, string>>;
+      const alternatePredecessor = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "predecessor-termination", canonicalPredecessorPair.predecessorTerminationObservationHash!, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "setfarm://internal-production/pre-schema-spawner-predecessor-termination-observation/sha256/", (body) => {
+        body.restartAuthorityRef = alternateRestartPair.restartAuthorityRef;
+        body.restartAuthorityHash = alternateRestartPair.restartAuthorityHash;
+      });
+      const alternatePredecessorPair = Object.freeze({ predecessorTerminationObservationRef: String(alternatePredecessor.predecessorTerminationObservationRef), predecessorTerminationObservationHash: String(alternatePredecessor.predecessorTerminationObservationHash) });
+
+      const canonicalReplacementPair = fixture.authority.replacementProcessObservation as Readonly<Record<string, string>>;
+      const alternateReplacement = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "replacement-process", canonicalReplacementPair.replacementProcessObservationHash!, "replacementProcessObservationRef", "replacementProcessObservationHash", "setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/", (body) => {
+        body.restartAuthorityRef = alternateRestartPair.restartAuthorityRef;
+        body.restartAuthorityHash = alternateRestartPair.restartAuthorityHash;
+        body.predecessorTerminationObservationRef = alternatePredecessorPair.predecessorTerminationObservationRef;
+        body.predecessorTerminationObservationHash = alternatePredecessorPair.predecessorTerminationObservationHash;
+      });
+      const alternateReplacementPair = Object.freeze({ replacementProcessObservationRef: String(alternateReplacement.replacementProcessObservationRef), replacementProcessObservationHash: String(alternateReplacement.replacementProcessObservationHash) });
+
+      const canonicalSealedPair = fixture.authority.preSchemaSpawnerSealedAdmission as Readonly<Record<string, string>>;
+      const alternateSealed = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "sealed-admission", canonicalSealedPair.sealedAdmissionHash!, "sealedAdmissionRef", "sealedAdmissionHash", "setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/", (body) => {
+        body.preSchemaSpawnerRestartAuthorityRef = alternateRestartPair.restartAuthorityRef;
+        body.preSchemaSpawnerRestartAuthorityHash = alternateRestartPair.restartAuthorityHash;
+        body.predecessorTerminationObservationRef = alternatePredecessorPair.predecessorTerminationObservationRef;
+        body.predecessorTerminationObservationHash = alternatePredecessorPair.predecessorTerminationObservationHash;
+        body.replacementProcessObservationRef = alternateReplacementPair.replacementProcessObservationRef;
+        body.replacementProcessObservationHash = alternateReplacementPair.replacementProcessObservationHash;
+      });
+      const alternateSealedPair = Object.freeze({ sealedAdmissionRef: String(alternateSealed.sealedAdmissionRef), sealedAdmissionHash: String(alternateSealed.sealedAdmissionHash) });
+
+      const canonicalMigrationAuthorizationPair = fixture.authority.preManifestMigration32Authorization as Readonly<Record<string, string>>;
+      const alternateUidMigrationAuthorization = rehashStoredCurrentEntryVerifierRecordV1(migrationRecordsRoot, "authorizations", canonicalMigrationAuthorizationPair.authorizationHash!, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-manifest-migration32-authorization/sha256/", (body) => {
+        body.sealedSpawnerAdmissionRef = alternateSealedPair.sealedAdmissionRef;
+        body.sealedSpawnerAdmissionHash = alternateSealedPair.sealedAdmissionHash;
+      });
+      const alternateUidMigrationAuthorizationPair = Object.freeze({ authorizationRef: String(alternateUidMigrationAuthorization.authorizationRef), authorizationHash: String(alternateUidMigrationAuthorization.authorizationHash) });
+
+      const canonicalMigrationConsumptionPair = fixture.authority.preManifestMigration32AuthorizationConsumption as Readonly<Record<string, string>>;
+      const alternateUidMigrationConsumption = rehashStoredCurrentEntryVerifierRecordV1(migrationRecordsRoot, "consumptions", canonicalMigrationConsumptionPair.consumptionHash!, "consumptionRef", "consumptionHash", "setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/", (body) => {
+        body.authorizationRef = alternateUidMigrationAuthorizationPair.authorizationRef;
+        body.authorizationHash = alternateUidMigrationAuthorizationPair.authorizationHash;
+        body.sealedSpawnerAdmissionRef = alternateSealedPair.sealedAdmissionRef;
+        body.sealedSpawnerAdmissionHash = alternateSealedPair.sealedAdmissionHash;
+      });
+      const alternateUidMigrationConsumptionPair = Object.freeze({ consumptionRef: String(alternateUidMigrationConsumption.consumptionRef), consumptionHash: String(alternateUidMigrationConsumption.consumptionHash) });
+
+      const canonicalMigrationReceiptPair = fixture.authority.bootstrapHandoffMigrationReceipt as Readonly<Record<string, string>>;
+      const alternateUidMigrationReceipt = rehashStoredCurrentEntryVerifierRecordV1(migrationRecordsRoot, "receipts", canonicalMigrationReceiptPair.migrationReceiptHash!, "migrationReceiptRef", "migrationReceiptHash", "setfarm://internal-production/baseline-bootstrap-handoff-migration-receipt/sha256/", (body) => {
+        Object.assign(body, {
+          preSchemaSpawnerRestartAuthorityRef: alternateRestartPair.restartAuthorityRef,
+          preSchemaSpawnerRestartAuthorityHash: alternateRestartPair.restartAuthorityHash,
+          predecessorTerminationObservationRef: alternatePredecessorPair.predecessorTerminationObservationRef,
+          predecessorTerminationObservationHash: alternatePredecessorPair.predecessorTerminationObservationHash,
+          replacementProcessObservationRef: alternateReplacementPair.replacementProcessObservationRef,
+          replacementProcessObservationHash: alternateReplacementPair.replacementProcessObservationHash,
+          preSchemaSpawnerSealedAdmissionRef: alternateSealedPair.sealedAdmissionRef,
+          preSchemaSpawnerSealedAdmissionHash: alternateSealedPair.sealedAdmissionHash,
+          preManifestMigration32AuthorizationRef: alternateUidMigrationAuthorizationPair.authorizationRef,
+          preManifestMigration32AuthorizationHash: alternateUidMigrationAuthorizationPair.authorizationHash,
+          preManifestMigration32AuthorizationConsumptionRef: alternateUidMigrationConsumptionPair.consumptionRef,
+          preManifestMigration32AuthorizationConsumptionHash: alternateUidMigrationConsumptionPair.consumptionHash,
+        });
+      });
+      const alternateUidMigrationReceiptPair = Object.freeze({ migrationReceiptRef: String(alternateUidMigrationReceipt.migrationReceiptRef), migrationReceiptHash: String(alternateUidMigrationReceipt.migrationReceiptHash) });
+
+      const canonicalCurrentAuditPair = fixture.authority.bootstrapHandoffCurrentAudit as Readonly<Record<string, string>>;
+      const alternateUidCurrentAudit = rehashStoredCurrentEntryVerifierRecordV1(migrationRecordsRoot, "current-audits", canonicalCurrentAuditPair.bootstrapHandoffCurrentAuditHash!, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", "setfarm://internal-production/bootstrap-handoff-current-audit/sha256/", (body) => {
+        body.migrationReceipt = alternateUidMigrationReceiptPair;
+      });
+      const alternateUidCurrentAuditPair = Object.freeze({ bootstrapHandoffCurrentAuditRef: String(alternateUidCurrentAudit.bootstrapHandoffCurrentAuditRef), bootstrapHandoffCurrentAuditHash: String(alternateUidCurrentAudit.bootstrapHandoffCurrentAuditHash) });
+
+      const canonicalAdmissionReadyPair = fixture.authority.task0SpawnerAdmissionReady as Readonly<Record<string, string>>;
+      const alternateAdmissionReady = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "admission-ready", canonicalAdmissionReadyPair.admissionReadyHash!, "admissionReadyRef", "admissionReadyHash", "setfarm://internal-production/task0-spawner-admission-ready/sha256/", (body) => {
+        Object.assign(body, {
+          restartAuthorityRef: alternateRestartPair.restartAuthorityRef,
+          restartAuthorityHash: alternateRestartPair.restartAuthorityHash,
+          predecessorTerminationObservationRef: alternatePredecessorPair.predecessorTerminationObservationRef,
+          predecessorTerminationObservationHash: alternatePredecessorPair.predecessorTerminationObservationHash,
+          replacementProcessObservationRef: alternateReplacementPair.replacementProcessObservationRef,
+          replacementProcessObservationHash: alternateReplacementPair.replacementProcessObservationHash,
+          sealedAdmissionRef: alternateSealedPair.sealedAdmissionRef,
+          sealedAdmissionHash: alternateSealedPair.sealedAdmissionHash,
+          migrationReceiptRef: alternateUidMigrationReceiptPair.migrationReceiptRef,
+          migrationReceiptHash: alternateUidMigrationReceiptPair.migrationReceiptHash,
+          migrationCurrentAuditRef: alternateUidCurrentAuditPair.bootstrapHandoffCurrentAuditRef,
+          migrationCurrentAuditHash: alternateUidCurrentAuditPair.bootstrapHandoffCurrentAuditHash,
+        });
+      });
+      const alternateAdmissionReadyPair = Object.freeze({ admissionReadyRef: String(alternateAdmissionReady.admissionReadyRef), admissionReadyHash: String(alternateAdmissionReady.admissionReadyHash) });
+
+      const canonicalRebindStatusPair = fixture.authority.preSchemaSpawnerRebindStatus as Readonly<Record<string, string>>;
+      const alternateRebindStatus = rehashStoredCurrentEntryVerifierRecordV1(preSchemaRecordsRoot, "status", canonicalRebindStatusPair.statusHash!, "statusRef", "statusHash", "setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/", (body) => {
+        body.restartAuthority = alternateRestartPair;
+        const dispatch = body.dispatchPrefix as Record<string, unknown>;
+        dispatch.predecessorTerminationObservation = alternatePredecessorPair;
+        dispatch.replacementProcessObservation = alternateReplacementPair;
+        body.sealedAdmission = alternateSealedPair;
+        body.admissionReady = alternateAdmissionReadyPair;
+      });
+      const alternateRebindStatusPair = Object.freeze({ statusRef: String(alternateRebindStatus.statusRef), statusHash: String(alternateRebindStatus.statusHash) });
+      const alternateUidAuthorityPairs = Object.freeze({
+        preSchemaSpawnerRestartAuthority: alternateRestartPair,
+        predecessorTerminationObservation: alternatePredecessorPair,
+        replacementProcessObservation: alternateReplacementPair,
+        preSchemaSpawnerSealedAdmission: alternateSealedPair,
+        preManifestMigration32Authorization: alternateUidMigrationAuthorizationPair,
+        preManifestMigration32AuthorizationConsumption: alternateUidMigrationConsumptionPair,
+        bootstrapHandoffMigrationReceipt: alternateUidMigrationReceiptPair,
+        bootstrapHandoffCurrentAudit: alternateUidCurrentAuditPair,
+        task0SpawnerAdmissionReady: alternateAdmissionReadyPair,
+        preSchemaSpawnerRebindStatus: alternateRebindStatusPair,
+      });
+      const alternateUidGraph = buildHashValidDualEdgeGraphV1("restart authority for another host uid", alternateUidAuthorityPairs, (status, pairs) => {
+        status.preSchemaSpawnerRebindStatus = pairs.preSchemaSpawnerRebindStatus;
+        status.preSchemaSpawnerRebindStatusBody = alternateRebindStatus;
+        const migration = status.migrationApplyingPhase as Record<string, unknown>;
+        migration.authorization = pairs.preManifestMigration32Authorization;
+        migration.consumption = pairs.preManifestMigration32AuthorizationConsumption;
+        migration.migrationReceipt = pairs.bootstrapHandoffMigrationReceipt;
+        migration.currentAudit = pairs.bootstrapHandoffCurrentAudit;
+        const admission = status.spawnerAdmissionTransitionPhase as Record<string, unknown>;
+        admission.sealedAdmission = pairs.preSchemaSpawnerSealedAdmission;
+        admission.admissionReady = pairs.task0SpawnerAdmissionReady;
+      }, /pre-schema restart-authority current uid is crossed/);
+
       const rebindAuthorizationPair = fixture.authority.preSchemaSpawnerRebindAuthorization as Readonly<Record<string, string>>;
       const rebindAuthorizationTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", rebindAuthorizationPair.authorizationHash!.slice(0, 2), `${rebindAuthorizationPair.authorizationHash}.json`);
       const crossedRebindAuthorizationBody = JSON.parse(readFileSync(rebindAuthorizationTarget, "utf8")) as Record<string, unknown>;
@@ -41064,6 +41338,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       const forgedReleasePair = Object.freeze({ ownerAdmissionFenceReleaseRef: forgedRelease.releaseRef, ownerAdmissionFenceReleaseHash: forgedRelease.releaseHash });
 
       const hashValidDualEdgeCases = Object.freeze([
+        alternateUidGraph,
         Object.freeze({ label: "pre-mutation operation", freshPair: edgeCrossedFreshPair, verificationPair: edgeCrossedVerificationPair, pattern: /pre-mutation loaded runtime service authority operation is crossed/, releaseOverride: undefined }),
         buildHashValidDualEdgeGraphV1("pre-schema authorization operation", Object.freeze({ preSchemaSpawnerRebindAuthorization: crossedRebindAuthorizationPair, preSchemaSpawnerRebindStatus: crossedRebindPair }), (status, pairs) => { status.preSchemaSpawnerRebindStatus = pairs.preSchemaSpawnerRebindStatus; status.preSchemaSpawnerRebindStatusBody = Object.freeze({ ...rebindBody, ...crossedRebindPair }); }, /pre-schema authorization operation is crossed/),
         buildHashValidDualEdgeGraphV1("migration consumption authorization", Object.freeze({ preManifestMigration32AuthorizationConsumption: crossedConsumptionPair }), (status, pairs) => { (status.migrationApplyingPhase as Record<string, unknown>).consumption = pairs.preManifestMigration32AuthorizationConsumption; }, /migration-32 consumption authorization is crossed/),
