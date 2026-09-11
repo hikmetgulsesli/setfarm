@@ -15880,9 +15880,11 @@ type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>
 type PhysicalProcessV1=Readonly<{uid:number;pid:number;ppid:number;pgid:number;stat:string;lstart:string;command:string;cwd:null}>;
 const CURRENT_ENTRY_MAX_BYTES=1048576;
 const fault=process.env.FAULT??"none";
-const pid=74152;
+const initialPid=74152;
+let restartedDuringOwnerCensus=false;
+const currentPid=()=>fault==="restart_during_owner_census"&&restartedDuringOwnerCensus?74153:initialPid;
 const observedProgram=fault==="alternate_executable"?"/bin/sh":process.execPath;
-const rawListener=Buffer.from("p74152\0c"+path.basename(observedProgram)+"\0\nf14\0n*:3080\0\n");
+const rawListener=(observedPid:number)=>Buffer.from("p"+observedPid+"\0c"+path.basename(observedProgram)+"\0\nf14\0n*:3080\0\n");
 let endpointCalls=0;
 const endpointTokens:Array<string|null>=[];
 let diskIdentityReads=0;
@@ -15909,6 +15911,7 @@ const missionControlEnvironmentNames=["CLI_PATH","MC_HOST","MC_INTERNAL_URL","MC
 function boundedChildBytes(executable:string,args:readonly string[],label:string,input?:Buffer){
   if(executable==="/bin/launchctl"){
     launchctlCalls+=1;
+    const observedPid=currentPid();
     const plist=JSON.parse(readFileSync(process.env.PLIST_PATH!,"utf8"));
     if(fault==="alternate_executable")plist.ProgramArguments[0]=observedProgram;
     const launchEnvironment={...plist.EnvironmentVariables};
@@ -15926,7 +15929,7 @@ function boundedChildBytes(executable:string,args:readonly string[],label:string
     const stdoutPath=fault==="launch_log"?plist.StandardOutPath+".crossed":plist.StandardOutPath;
     const type=fault==="launch_type"?"Daemon":"LaunchAgent";
     const activeCount=fault==="launch_active_count"?"2":"1";
-    const text="gui/"+process.getuid!()+"/com.setrox.mission-control = {\n\tpath = "+launchPath+"\n\tstate = "+state+"\n\tprogram = "+program+"\n\tworking directory = "+workingDirectory+"\n\tstdout path = "+stdoutPath+"\n\tstderr path = "+plist.StandardErrorPath+"\n\targuments = {\n"+launchArguments.map((value:string)=>"\t\t"+value+"\n").join("")+"\t}\n\tenvironment = {\n"+Object.entries(launchEnvironment).map(([name,value])=>"\t\t"+name+" => "+value+"\n").join("")+"\t\tOSLogRateLimit => 64\n\t\tXPC_SERVICE_NAME => com.setrox.mission-control\n\t}\n\tpid = "+pid+"\n\ttype = "+type+"\n\tactive count = "+activeCount+"\n"+(fault==="bracket_launchctl"&&launchctlCalls>1?"\tlast exit code = 1\n":"\tlast exit code = 0\n")+"}\n";
+    const text="gui/"+process.getuid!()+"/com.setrox.mission-control = {\n\tpath = "+launchPath+"\n\tstate = "+state+"\n\tprogram = "+program+"\n\tworking directory = "+workingDirectory+"\n\tstdout path = "+stdoutPath+"\n\tstderr path = "+plist.StandardErrorPath+"\n\targuments = {\n"+launchArguments.map((value:string)=>"\t\t"+value+"\n").join("")+"\t}\n\tenvironment = {\n"+Object.entries(launchEnvironment).map(([name,value])=>"\t\t"+name+" => "+value+"\n").join("")+"\t\tOSLogRateLimit => 64\n\t\tXPC_SERVICE_NAME => com.setrox.mission-control\n\t}\n\tpid = "+observedPid+"\n\ttype = "+type+"\n\tactive count = "+activeCount+"\n"+(fault==="bracket_launchctl"&&launchctlCalls>1?"\tlast exit code = 1\n":"\tlast exit code = 0\n")+"}\n";
     if(fault!=="launch_invalid_utf8"&&fault!=="launch_invalid_utf8_drift")return Buffer.from(text,"utf8");
     const marker=Buffer.from("\tlast exit code = 0","utf8");
     const bytes=Buffer.from(text,"utf8");
@@ -15942,17 +15945,18 @@ function boundedChildBytes(executable:string,args:readonly string[],label:string
 }
 function boundedChildText(executable:string,args:readonly string[],label:string,input?:Buffer){return strictUtf8(boundedChildBytes(executable,args,label,input),label)}
 function runPhysicalCommandV1(executable:string,args:readonly string[]){
-  const expected=["-nP","-a","-p","74152","-iTCP:3080","-sTCP:LISTEN","-F0pcfn"];
-  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-p","74152","-o","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])){authorityPsCalls+=1;return Object.freeze({status:0,stdout:Buffer.from((fault==="bracket_process_raw"&&authorityPsCalls>1?"   ":"  ")+process.getuid!()+" 74152 1 74152 Ss Sun Aug 16 15:42:28 2026 "+observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n")});}
-  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-axo","command="])){ownerCensusCalls+=1;const command=observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n";return Object.freeze({status:0,stdout:Buffer.from(fault==="owner_census"?command+command:command)});}
+  const observedPid=currentPid();
+  const expected=["-nP","-a","-p",String(observedPid),"-iTCP:3080","-sTCP:LISTEN","-F0pcfn"];
+  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-p",String(observedPid),"-o","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])){authorityPsCalls+=1;return Object.freeze({status:0,stdout:Buffer.from((fault==="bracket_process_raw"&&authorityPsCalls>1?"   ":"  ")+process.getuid!()+" "+observedPid+" 1 "+observedPid+" Ss Sun Aug 16 15:42:28 2026 "+observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n")});}
+  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-axo","command="])){ownerCensusCalls+=1;const command=observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n";restartedDuringOwnerCensus=true;return Object.freeze({status:0,stdout:Buffer.from(fault==="owner_census"?command+command:command)});}
   if(executable!=="/usr/sbin/lsof"||JSON.stringify(args)!==JSON.stringify(expected))throw new Error("crossed Mission Control physical invocation");
   lsofCalls+=1;
-  return Object.freeze({status:0,stdout:fault==="bracket_listener"&&lsofCalls>1?Buffer.from("p74152\0cnode\0\nf15\0n*:3080\0\n"):rawListener});
+  return Object.freeze({status:0,stdout:fault==="bracket_listener"&&lsofCalls>1?Buffer.from("p"+observedPid+"\0cnode\0\nf15\0n*:3080\0\n"):rawListener(observedPid)});
 }
 async function observeMissionControlLoadedBuildAuthorityV1(expectedPid:number,token?:string){
   endpointCalls+=1;
   endpointTokens.push(token??null);
-  if(expectedPid!==pid)throw new Error("crossed endpoint PID input");
+  if(expectedPid!==initialPid)throw new Error("crossed endpoint PID input");
   return Object.freeze({sha:"1".repeat(40),treeHash:"2".repeat(40),buildHash:"3".repeat(64)});
 }
 ${fragments}
@@ -17392,7 +17396,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         "environment_pg_invalid", "environment_path_relative", "alternate_executable", "loaded_environment", "launch_token_drift", "launch_token_missing", "launch_environment_key", "launch_arguments", "launch_program", "launch_state",
         "launch_path", "launch_working_directory", "launch_log", "launch_type", "launch_active_count", "launch_invalid_utf8", "launch_invalid_utf8_drift",
         "plist_environment", "plist_token_drift", "plist_token_missing", "plist_label", "plist_arguments", "plist_program", "plist_keepalive", "plist_runatload",
-        "plist_interval", "plist_working_directory", "plist_log", "plist_environment_key", "owner_census", "bracket_launchctl", "bracket_process_raw", "bracket_listener",
+        "plist_interval", "plist_working_directory", "plist_log", "plist_environment_key", "owner_census", "restart_during_owner_census", "bracket_launchctl", "bracket_process_raw", "bracket_listener",
       ]) {
         const crossed = runMissionControlServiceHarness(fault);
         assert.notEqual(crossed.status, 0, `${fault} must fail through the integrated Mission Control observer`);

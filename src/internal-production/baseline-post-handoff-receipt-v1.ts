@@ -7641,6 +7641,14 @@ async function observeMissionControlLoadedBuildServiceV1(): Promise<InternalProd
   const label = "com.setrox.mission-control";
   const before = observeMissionControlEndpointAuthorityPassV1();
   const source = await observeMissionControlLoadedBuildAuthorityV1(before.pid, before.token);
+  const row = before.process.row;
+  const processStartTimeEpochMs = Date.parse(row.lstart);
+  if (!Number.isSafeInteger(processStartTimeEpochMs) || processStartTimeEpochMs < 1) currentEntryFail("Mission Control process start is invalid");
+  const commandCensusBytes = runPhysicalCommandV1("/bin/ps", ["-axo", "command="]).stdout;
+  const commandCensus = strictUtf8(commandCensusBytes, "Mission Control global process census");
+  if (commandCensus.includes("\r") || commandCensus.includes("\0") || !commandCensus.endsWith("\n")) currentEntryFail("Mission Control global process census is malformed");
+  const processOwnerCount = commandCensus.slice(0, -1).split("\n").filter((candidate) => candidate === row.command).length;
+  if (processOwnerCount !== 1) currentEntryFail("Mission Control process owner count is not exactly one");
   const after = observeMissionControlEndpointAuthorityPassV1();
   if (
     before.token !== after.token || before.pid !== after.pid
@@ -7655,14 +7663,6 @@ async function observeMissionControlLoadedBuildServiceV1(): Promise<InternalProd
     || !before.listener.bytes.equals(after.listener.bytes)
     || canonicalComparable(before.listener.value) !== canonicalComparable(after.listener.value)
   ) currentEntryFail("Mission Control service changed across loaded-build observation");
-  const row = after.process.row;
-  const processStartTimeEpochMs = Date.parse(row.lstart);
-  if (!Number.isSafeInteger(processStartTimeEpochMs) || processStartTimeEpochMs < 1) currentEntryFail("Mission Control process start is invalid");
-  const commandCensusBytes = runPhysicalCommandV1("/bin/ps", ["-axo", "command="]).stdout;
-  const commandCensus = strictUtf8(commandCensusBytes, "Mission Control global process census");
-  if (commandCensus.includes("\r") || commandCensus.includes("\0") || !commandCensus.endsWith("\n")) currentEntryFail("Mission Control global process census is malformed");
-  const processOwnerCount = commandCensus.slice(0, -1).split("\n").filter((candidate) => candidate === row.command).length;
-  if (processOwnerCount !== 1) currentEntryFail("Mission Control process owner count is not exactly one");
   const serviceIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-service-identity.v1", label, command: row.command });
   const generationHash = hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source });
   return recursivelyFreeze({
