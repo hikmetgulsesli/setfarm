@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import {
   closeSync,
   constants,
@@ -7283,20 +7284,26 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
   });
 }
 
-function boundedChildText(executable: string, args: readonly string[], label: string, input?: Buffer): string {
+function boundedChildBytes(executable: string, args: readonly string[], label: string, input?: Buffer): Buffer {
   const result = spawnSync(executable, [...args], {
     env: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }),
     shell: false,
-    encoding: "utf8",
+    encoding: "buffer",
     timeout: 10_000,
     maxBuffer: 1_048_576,
     input,
     stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
-  if (result.error || result.signal || result.status !== 0 || result.stderr !== "") {
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
+  const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? "");
+  if (result.error || result.signal || result.status !== 0 || stderr.length !== 0 || stdout.length > 1_048_576) {
     currentEntryFail(`${label} observation failed`);
   }
-  return result.stdout;
+  return stdout;
+}
+
+function boundedChildText(executable: string, args: readonly string[], label: string, input?: Buffer): string {
+  return strictUtf8(boundedChildBytes(executable, args, label, input), label);
 }
 
 function fixedMissionControlRootV1(): string {
@@ -7310,29 +7317,367 @@ function fixedMissionControlRootV1(): string {
   return root;
 }
 
-function parseMissionControlBuildIdentityV1(bytes: Buffer): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
-  if (bytes.length === 0 || bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("Mission Control build identity size is invalid");
-  const text = strictUtf8(bytes, "Mission Control build identity");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    currentEntryFail("Mission Control build identity is not JSON");
-  }
-  if (!isPlainRecord(parsed) || !hasExactKeys(parsed, ["schema", "sourceSha", "treeHash", "buildHash"]) || parsed.schema !== "mission-control.internal-production-build-identity.v1") {
-    currentEntryFail("Mission Control build identity is invalid");
-  }
-  const sourceSha = requireGitHash(parsed.sourceSha, "Mission Control source SHA");
-  const treeHash = requireGitHash(parsed.treeHash, "Mission Control tree hash");
-  const buildHash = requireSha256(parsed.buildHash, "Mission Control build hash");
-  const expected = { schema: "mission-control.internal-production-build-identity.v1", sourceSha, treeHash, buildHash };
-  if (text !== `${JSON.stringify(expected)}\n`) currentEntryFail("Mission Control build identity wire bytes are invalid");
+const MISSION_CONTROL_LOADED_BUILD_PATH_V1 = "/api/internal-production/product-build-authority-v2-loaded-build";
+const MISSION_CONTROL_LOADED_BUILD_PREFIX_V1 = "mission-control://internal-production/product-build-authority-v2-loaded-build/sha256/";
+const MISSION_CONTROL_STARTUP_INSTANCE_UUID_V4_V1 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function parseMissionControlLoadedBuildAuthorityV1(
+  value: unknown,
+  expectedPid: number,
+): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["schema", "loadedBuildRef", "loadedBuildHash", "startupInstance", "loadedBuild"])) currentEntryFail("Mission Control loaded-build response is invalid");
+  if (value.schema !== "mission-control.product-build-authority-v2-loaded-build-response.v1" || !isPlainRecord(value.startupInstance) || !hasExactKeys(value.startupInstance, ["schema", "pid", "instanceId"]) || value.startupInstance.schema !== "mission-control.product-build-authority-v2-startup-instance.v1" || value.startupInstance.pid !== expectedPid || typeof value.startupInstance.instanceId !== "string" || !MISSION_CONTROL_STARTUP_INSTANCE_UUID_V4_V1.test(value.startupInstance.instanceId)) currentEntryFail("Mission Control loaded-build startup instance is crossed");
+  const loadedBuild = value.loadedBuild;
+  if (!isPlainRecord(loadedBuild) || !hasExactKeys(loadedBuild, ["schema", "entryModulePath", "entryModuleHash", "buildIdentity", "buildIdentityHash"]) || loadedBuild.schema !== "mission-control.product-build-authority-v2-loaded-build.v1" || loadedBuild.entryModulePath !== "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js") currentEntryFail("Mission Control loaded-build body is invalid");
+  requireSha256(loadedBuild.entryModuleHash, "Mission Control loaded-build entry module hash");
+  const identity = loadedBuild.buildIdentity;
+  if (!isPlainRecord(identity) || !hasExactKeys(identity, ["schema", "sourceSha", "treeHash", "buildHash"]) || identity.schema !== "mission-control.internal-production-build-identity.v1") currentEntryFail("Mission Control loaded-build identity is invalid");
+  const sourceSha = requireGitHash(identity.sourceSha, "Mission Control loaded source SHA");
+  const treeHash = requireGitHash(identity.treeHash, "Mission Control loaded tree hash");
+  const buildHash = requireSha256(identity.buildHash, "Mission Control loaded build hash");
+  const buildIdentity = Object.freeze({ schema: "mission-control.internal-production-build-identity.v1", sourceSha, treeHash, buildHash });
+  if (loadedBuild.buildIdentityHash !== sha256(`${JSON.stringify(buildIdentity)}\n`)) currentEntryFail("Mission Control loaded-build identity hash is crossed");
+  const loadedBuildHash = requireSha256(value.loadedBuildHash, "Mission Control loaded-build hash");
+  if (loadedBuildHash !== hashCanonicalJson(loadedBuild) || value.loadedBuildRef !== `${MISSION_CONTROL_LOADED_BUILD_PREFIX_V1}${loadedBuildHash}`) currentEntryFail("Mission Control loaded-build pair is crossed");
   return Object.freeze({ sha: sourceSha, treeHash, buildHash });
 }
 
-function loadedMissionControlSourceV1(): Readonly<{ sha: string; treeHash: string; buildHash: string }> {
-  const identityPath = path.join(fixedMissionControlRootV1(), "dist-server", "internal-production-build-identity.v1.json");
-  return parseMissionControlBuildIdentityV1(readStableRegular(identityPath, CURRENT_ENTRY_MAX_BYTES, lstatSync(path.dirname(identityPath), { bigint: true }).dev, 1).bytes);
+function requireMissionControlOperationalTokenV1(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length < 32) currentEntryFail(`${label} is invalid`);
+  return value;
+}
+
+async function requestMissionControlLoadedBuildAuthorityV1(tokenValue: string): Promise<Readonly<{
+  statusCode: number;
+  headers: Readonly<Record<string, string | string[] | undefined>>;
+  bytes: Buffer;
+}>> {
+  const token = requireMissionControlOperationalTokenV1(tokenValue, "Mission Control loaded-build operational token");
+  return new Promise((resolve, reject) => {
+    let request: ReturnType<typeof httpRequest> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (error: unknown, value?: Readonly<{ statusCode: number; headers: Readonly<Record<string, string | string[] | undefined>>; bytes: Buffer }>): void => {
+      if (settled) return;
+      settled = true;
+      if (deadline !== undefined) clearTimeout(deadline);
+      if (error !== null) reject(error);
+      else resolve(value!);
+    };
+    try {
+      request = httpRequest({
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: 3080,
+        method: "GET",
+        path: MISSION_CONTROL_LOADED_BUILD_PATH_V1,
+        agent: false,
+        headers: Object.freeze({
+          accept: "application/json",
+          connection: "close",
+          "x-setfarm-operational-token": token,
+        }),
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        let length = 0;
+        response.on("data", (chunk: Buffer | string) => {
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+          length += bytes.length;
+          if (length > CURRENT_ENTRY_MAX_BYTES) {
+            const error = new Error("Mission Control loaded-build response is too large");
+            finish(error);
+            request?.destroy(error);
+            return;
+          }
+          chunks.push(bytes);
+        });
+        response.once("error", (error) => finish(error));
+        response.once("end", () => finish(null, Object.freeze({ statusCode: response.statusCode ?? 0, headers: response.headers, bytes: Buffer.concat(chunks) })));
+      });
+      if (settled) return;
+      deadline = setTimeout(() => {
+        if (settled) return;
+        const error = new Error("Mission Control loaded-build absolute deadline expired");
+        finish(error);
+        request?.destroy(error);
+      }, 10_000);
+      request.setTimeout(10_000, () => {
+        if (settled) return;
+        const error = new Error("Mission Control loaded-build request timed out");
+        finish(error);
+        request?.destroy(error);
+      });
+      request.once("error", (error) => finish(error));
+      request.end();
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+async function observeMissionControlLoadedBuildAuthorityV1(expectedPid: number, token: string): Promise<Readonly<{ sha: string; treeHash: string; buildHash: string }>> {
+  let response: Awaited<ReturnType<typeof requestMissionControlLoadedBuildAuthorityV1>>;
+  try {
+    response = await requestMissionControlLoadedBuildAuthorityV1(token);
+  } catch {
+    currentEntryFail("Mission Control loaded-build observation failed");
+  }
+  if (response.statusCode !== 200 || response.headers["cache-control"] !== "no-store, max-age=0, must-revalidate" || response.headers.pragma !== "no-cache" || response.headers.expires !== "0" || typeof response.headers["content-type"] !== "string" || !/^application\/json(?:;\s*charset=utf-8)?$/.test(response.headers["content-type"]) || response.headers["content-encoding"] !== undefined || response.bytes.length === 0 || response.bytes.length > CURRENT_ENTRY_MAX_BYTES) currentEntryFail("Mission Control loaded-build HTTP response is invalid");
+  const text = strictUtf8(response.bytes, "Mission Control loaded-build response");
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { currentEntryFail("Mission Control loaded-build response is not JSON"); }
+  if (text !== JSON.stringify(value)) currentEntryFail("Mission Control loaded-build response bytes are noncanonical");
+  return parseMissionControlLoadedBuildAuthorityV1(value, expectedPid);
+}
+
+const MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1 = Object.freeze([
+  "CLI_PATH", "MC_HOST", "MC_INTERNAL_URL", "MC_PORT", "PATH", "PROJECTS_DIR", "PROJECTS_JSON",
+  "SETFARM_DIR", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL", "SETFARM_REPO_DIR", "SETFARM_URL",
+] as const);
+
+type MissionControlLaunchProjectionV1 = Readonly<{
+  path: string;
+  state: "running";
+  program: string;
+  workingDirectory: string;
+  stdoutPath: string;
+  stderrPath: string;
+  arguments: readonly string[];
+  environment: Readonly<Record<string, string>>;
+  pid: number;
+  type: "LaunchAgent";
+  activeCount: 1;
+}>;
+
+type MissionControlPlistProjectionV1 = Readonly<{
+  EnvironmentVariables: Readonly<Record<string, string>>;
+  KeepAlive: true;
+  Label: "com.setrox.mission-control";
+  ProgramArguments: readonly [string, string];
+  RunAtLoad: true;
+  StandardErrorPath: string;
+  StandardOutPath: string;
+  WorkingDirectory: string;
+}>;
+
+type MissionControlEndpointAuthorityPassV1 = Readonly<{
+  token: string;
+  pid: number;
+  launchctl: Readonly<{ bytes: Buffer; projection: MissionControlLaunchProjectionV1 }>;
+  plist: Readonly<{ bytes: Buffer; stats: BigIntStats; projection: MissionControlPlistProjectionV1 }>;
+  executable: Readonly<{ realpath: string; stats: BigIntStats }>;
+  process: Readonly<{ bytes: Buffer; row: PhysicalProcessV1 }>;
+  listener: Readonly<{ bytes: Buffer; value: Readonly<{ pid: number; command: string; fileDescriptor: number; endpoint: "*:3080" }> }>;
+}>;
+
+function requireMissionControlColonPathListV1(value: unknown): string {
+  if (typeof value !== "string" || value.includes("\0") || value.includes("\r") || value.includes("\n")) currentEntryFail("Mission Control PATH is invalid");
+  const entries = value.split(":");
+  if (entries.length === 0 || entries.some((entry) => entry.length === 0 || !path.isAbsolute(entry))) currentEntryFail("Mission Control PATH must contain only nonempty absolute paths");
+  return value;
+}
+
+function requireMissionControlPostgresqlConnectionUrlV1(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || /[\0\r\n\s]/.test(value)) currentEntryFail("Mission Control PostgreSQL URL is invalid");
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { currentEntryFail("Mission Control PostgreSQL URL is invalid"); }
+  if (
+    (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:")
+    || !value.startsWith(`${parsed.protocol}//`)
+    || parsed.hostname.length === 0 || parsed.pathname.length <= 1 || parsed.hash !== ""
+  ) currentEntryFail("Mission Control PostgreSQL URL is invalid");
+  return value;
+}
+
+function observeMissionControlExecutableIdentityV1(program: string): Readonly<{ realpath: string; stats: BigIntStats }> {
+  let realpath: string;
+  let expectedRealpath: string;
+  let stats: BigIntStats;
+  try {
+    realpath = realpathSync(program);
+    expectedRealpath = realpathSync(process.execPath);
+    stats = lstatSync(realpath, { bigint: true });
+  } catch {
+    currentEntryFail("Mission Control endpoint-authority executable identity is unavailable");
+  }
+  if (
+    realpath !== expectedRealpath || !stats.isFile() || stats.isSymbolicLink() || stats.nlink < 1n || stats.size < 1n
+    || (Number(stats.mode & 0o7777n) & 0o111) === 0 || (Number(stats.mode & 0o7777n) & 0o022) !== 0
+  ) currentEntryFail("Mission Control endpoint-authority executable identity is crossed");
+  return Object.freeze({ realpath, stats });
+}
+
+function requireMissionControlPlistProjectionV1(value: unknown): MissionControlPlistProjectionV1 {
+  const label = "com.setrox.mission-control";
+  const home = userInfo().homedir;
+  const missionControlRoot = fixedMissionControlRootV1();
+  if (!isPlainRecord(value) || !hasExactKeys(value, [
+    "EnvironmentVariables", "KeepAlive", "Label", "ProgramArguments", "RunAtLoad",
+    "StandardErrorPath", "StandardOutPath", "WorkingDirectory",
+  ])) currentEntryFail("Mission Control endpoint-authority plist keys are invalid");
+  if (
+    value.Label !== label || value.KeepAlive !== true || value.RunAtLoad !== true
+    || value.WorkingDirectory !== missionControlRoot
+    || value.StandardOutPath !== path.join(home, ".openclaw", "logs", "mission-control.out.log")
+    || value.StandardErrorPath !== path.join(home, ".openclaw", "logs", "mission-control.err.log")
+    || !Array.isArray(value.ProgramArguments) || value.ProgramArguments.length !== 2
+    || typeof value.ProgramArguments[0] !== "string" || typeof value.ProgramArguments[1] !== "string"
+    || !path.isAbsolute(value.ProgramArguments[0])
+    || value.ProgramArguments[1] !== path.join(missionControlRoot, "dist-server", "index.js")
+  ) currentEntryFail("Mission Control endpoint-authority plist body is crossed");
+  if (!isPlainRecord(value.EnvironmentVariables) || !hasExactKeys(value.EnvironmentVariables, MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1)) currentEntryFail("Mission Control endpoint-authority plist environment keys are invalid");
+  for (const name of MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1) {
+    if (typeof value.EnvironmentVariables[name] !== "string" || value.EnvironmentVariables[name].length === 0) currentEntryFail("Mission Control endpoint-authority plist environment value is invalid");
+  }
+  if (
+    value.EnvironmentVariables.MC_HOST !== "0.0.0.0"
+    || value.EnvironmentVariables.MC_PORT !== "3080"
+    || value.EnvironmentVariables.MC_INTERNAL_URL !== "http://127.0.0.1:3080"
+    || value.EnvironmentVariables.SETFARM_URL !== "http://127.0.0.1:3333"
+    || value.EnvironmentVariables.CLI_PATH !== path.join(home, ".local", "bin")
+    || value.EnvironmentVariables.PROJECTS_DIR !== path.join(home, "projects")
+    || value.EnvironmentVariables.PROJECTS_JSON !== path.join(home, "projects", "mission-control", "projects.json")
+    || value.EnvironmentVariables.SETFARM_DIR !== path.join(home, ".openclaw", "setfarm")
+    || value.EnvironmentVariables.SETFARM_REPO_DIR !== path.join(home, "ai", "setrox", "setfarm")
+  ) currentEntryFail("Mission Control endpoint-authority plist environment is crossed");
+  requireMissionControlColonPathListV1(value.EnvironmentVariables.PATH);
+  requireMissionControlPostgresqlConnectionUrlV1(value.EnvironmentVariables.SETFARM_PG_URL);
+  requireMissionControlOperationalTokenV1(value.EnvironmentVariables.SETFARM_OPERATIONAL_WRITE_TOKEN, "Mission Control plist launch token");
+  return recursivelyFreeze(value) as MissionControlPlistProjectionV1;
+}
+
+function parseMissionControlLaunchProjectionV1(
+  bytes: Buffer,
+  uid: number,
+  plistPath: string,
+  plist: MissionControlPlistProjectionV1,
+): MissionControlLaunchProjectionV1 {
+  const label = "com.setrox.mission-control";
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > 1_048_576) currentEntryFail("Mission Control endpoint-authority launchctl bytes are invalid");
+  const text = strictUtf8(bytes, "Mission Control endpoint-authority launchctl");
+  if (text.includes("\0") || text.includes("\r") || !text.startsWith(`gui/${uid}/${label} = {\n`) || !text.endsWith("}\n")) currentEntryFail("Mission Control endpoint-authority launchctl envelope is invalid");
+  const pathValue = oneLaunchctlScalarV1(text, "path", label);
+  const state = oneLaunchctlScalarV1(text, "state", label);
+  const program = oneLaunchctlScalarV1(text, "program", label);
+  const workingDirectory = oneLaunchctlScalarV1(text, "working directory", label);
+  const stdoutPath = oneLaunchctlScalarV1(text, "stdout path", label);
+  const stderrPath = oneLaunchctlScalarV1(text, "stderr path", label);
+  const pidText = oneLaunchctlScalarV1(text, "pid", label);
+  const type = oneLaunchctlScalarV1(text, "type", label);
+  const activeCountText = oneLaunchctlScalarV1(text, "active count", label);
+  const argumentsValue = oneLaunchctlBlockV1(text, "arguments", label);
+  const environment = launchctlEnvironmentBlockV1(text, "environment", label);
+  const pid = /^[1-9][0-9]*$/.test(pidText) ? Number(pidText) : NaN;
+  if (
+    pathValue !== plistPath || state !== "running" || program !== plist.ProgramArguments[0]
+    || workingDirectory !== plist.WorkingDirectory || stdoutPath !== plist.StandardOutPath || stderrPath !== plist.StandardErrorPath
+    || type !== "LaunchAgent" || activeCountText !== "1" || !Number.isSafeInteger(pid)
+    || canonicalComparable(argumentsValue) !== canonicalComparable(plist.ProgramArguments)
+  ) currentEntryFail("Mission Control endpoint-authority launchctl projection is crossed");
+  const expectedEnvironmentNames = [...MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1, "OSLogRateLimit", "XPC_SERVICE_NAME"];
+  if (!hasExactKeys(environment, expectedEnvironmentNames) || environment.OSLogRateLimit !== "64" || environment.XPC_SERVICE_NAME !== label) currentEntryFail("Mission Control endpoint-authority loaded environment keys are invalid");
+  for (const name of MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1) {
+    if (environment[name] !== plist.EnvironmentVariables[name]) currentEntryFail("Mission Control loaded/plist launch environment is crossed");
+  }
+  return recursivelyFreeze({
+    path: pathValue,
+    state: "running" as const,
+    program,
+    workingDirectory,
+    stdoutPath,
+    stderrPath,
+    arguments: argumentsValue,
+    environment,
+    pid,
+    type: "LaunchAgent" as const,
+    activeCount: 1 as const,
+  });
+}
+
+function observeMissionControlEndpointAuthorityPassV1(): MissionControlEndpointAuthorityPassV1 {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("Mission Control endpoint authority UID is invalid");
+  const label = "com.setrox.mission-control";
+  const plistPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${label}.plist`);
+  const parent = lstatSync(path.dirname(plistPath), { bigint: true });
+  const plist = readStableRegular(plistPath, CURRENT_ENTRY_MAX_BYTES, parent.dev, 1);
+  if (plist.stats.uid !== BigInt(uid!) || (Number(plist.stats.mode & 0o7777n) & 0o022) !== 0) currentEntryFail("Mission Control endpoint-authority plist ownership is invalid");
+  const converted = boundedChildText("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], "Mission Control endpoint-authority plist", plist.bytes);
+  let parsed: unknown;
+  try { parsed = JSON.parse(converted); } catch { currentEntryFail("Mission Control endpoint-authority plist is not JSON"); }
+  const plistProjection = requireMissionControlPlistProjectionV1(parsed);
+  const executable = observeMissionControlExecutableIdentityV1(plistProjection.ProgramArguments[0]);
+
+  const launchctlBytes = boundedChildBytes("/bin/launchctl", ["print", `gui/${uid}/${label}`], `${label} endpoint-authority launchctl`);
+  const launchctlProjection = parseMissionControlLaunchProjectionV1(launchctlBytes, uid!, plistPath, plistProjection);
+  const loadedToken = requireMissionControlOperationalTokenV1(launchctlProjection.environment.SETFARM_OPERATIONAL_WRITE_TOKEN, "Mission Control loaded launch token");
+  if (loadedToken !== plistProjection.EnvironmentVariables.SETFARM_OPERATIONAL_WRITE_TOKEN) currentEntryFail("Mission Control loaded/plist launch token is crossed");
+  const pid = launchctlProjection.pid;
+
+  const processBytes = runPhysicalCommandV1("/bin/ps", ["-p", String(pid), "-o", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout;
+  const rows = parsePhysicalProcessesV1(processBytes);
+  if (rows.length !== 1) currentEntryFail("Mission Control endpoint-authority process is ambiguous");
+  const row = rows[0]!;
+  if (
+    row.uid !== uid || row.pid !== pid || row.ppid !== 1 || row.pgid !== pid || row.stat.includes("Z")
+    || row.command !== plistProjection.ProgramArguments.join(" ")
+  ) currentEntryFail("Mission Control endpoint-authority process is crossed");
+
+  const listenerBytes = runPhysicalCommandV1("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP:3080", "-sTCP:LISTEN", "-F0pcfn"]).stdout;
+  const listener = parseMissionControlListenerV1(listenerBytes, pid);
+  if (listener.command !== path.basename(plistProjection.ProgramArguments[0])) currentEntryFail("Mission Control endpoint-authority listener command is crossed");
+  return Object.freeze({
+    token: loadedToken,
+    pid,
+    launchctl: Object.freeze({ bytes: launchctlBytes, projection: launchctlProjection }),
+    plist: Object.freeze({ bytes: plist.bytes, stats: plist.stats, projection: plistProjection }),
+    executable,
+    process: Object.freeze({ bytes: processBytes, row }),
+    listener: Object.freeze({ bytes: listenerBytes, value: listener }),
+  });
+}
+
+async function observeMissionControlLoadedBuildServiceV1(): Promise<InternalProductionListeningServiceCensusV1> {
+  const label = "com.setrox.mission-control";
+  const before = observeMissionControlEndpointAuthorityPassV1();
+  const source = await observeMissionControlLoadedBuildAuthorityV1(before.pid, before.token);
+  const after = observeMissionControlEndpointAuthorityPassV1();
+  if (
+    before.token !== after.token || before.pid !== after.pid
+    || !before.launchctl.bytes.equals(after.launchctl.bytes)
+    || canonicalComparable(before.launchctl.projection) !== canonicalComparable(after.launchctl.projection)
+    || !sameStableRegularV1(before.plist, after.plist)
+    || canonicalComparable(before.plist.projection) !== canonicalComparable(after.plist.projection)
+    || before.executable.realpath !== after.executable.realpath
+    || !sameRegularMetadata(before.executable.stats, after.executable.stats)
+    || !before.process.bytes.equals(after.process.bytes)
+    || canonicalComparable(before.process.row) !== canonicalComparable(after.process.row)
+    || !before.listener.bytes.equals(after.listener.bytes)
+    || canonicalComparable(before.listener.value) !== canonicalComparable(after.listener.value)
+  ) currentEntryFail("Mission Control service changed across loaded-build observation");
+  const row = after.process.row;
+  const processStartTimeEpochMs = Date.parse(row.lstart);
+  if (!Number.isSafeInteger(processStartTimeEpochMs) || processStartTimeEpochMs < 1) currentEntryFail("Mission Control process start is invalid");
+  const commandCensusBytes = runPhysicalCommandV1("/bin/ps", ["-axo", "command="]).stdout;
+  const commandCensus = strictUtf8(commandCensusBytes, "Mission Control global process census");
+  if (commandCensus.includes("\r") || commandCensus.includes("\0") || !commandCensus.endsWith("\n")) currentEntryFail("Mission Control global process census is malformed");
+  const processOwnerCount = commandCensus.slice(0, -1).split("\n").filter((candidate) => candidate === row.command).length;
+  if (processOwnerCount !== 1) currentEntryFail("Mission Control process owner count is not exactly one");
+  const serviceIdentityHash = hashCanonicalJson({ schema: "setfarm.internal-production-service-identity.v1", label, command: row.command });
+  const generationHash = hashCanonicalJson({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source });
+  return recursivelyFreeze({
+    pid: after.pid,
+    processStartTimeEpochMs,
+    processIdentityHash: sha256(`${after.pid}\n${row.lstart}\n`),
+    serviceIdentityHash,
+    generationHash,
+    loadedSourceSha: source.sha,
+    loadedTreeHash: source.treeHash,
+    loadedBuildHash: source.buildHash,
+    processOwnerCount: 1 as const,
+    listenerOwnerCount: 1 as const,
+    listener: Object.freeze({ host: "127.0.0.1" as const, port: 3080 as const, listenerIdentityHash: sha256(after.listener.bytes) }),
+  });
 }
 
 function requireMissionControlListenerEnvironmentV1(loaded: Record<string, unknown>, plist: Record<string, unknown>): void {
@@ -7718,7 +8063,7 @@ export async function observeInternalProductionServiceCensusV1(): Promise<Intern
     schema: "setfarm.internal-production-service-census.v1" as const,
     spawner: observeServiceProcessV1("com.setrox.setfarm-spawner", null, source) as InternalProductionServiceCensusSpawnerV1,
     dashboard: observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, source) as InternalProductionListeningServiceCensusV1,
-    missionControl: observeServiceProcessV1("com.setrox.mission-control", 3080, loadedMissionControlSourceV1()) as InternalProductionListeningServiceCensusV1,
+    missionControl: await observeMissionControlLoadedBuildServiceV1(),
     openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
   };
   return recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
@@ -19700,6 +20045,28 @@ function requireTask12PredecessorGraphRelationsV1(
   const predecessorIdentity = node("predecessorSpawnerProcessIdentity");
   const replacementIdentity = node("replacementSpawnerProcessIdentity");
   if (restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessor.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || predecessor.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessorIdentity.processIdentityHash === replacementIdentity.processIdentityHash || replacement.differsFromPredecessorProcessIdentity !== true) currentEntryFail("pre-schema process-identity graph is crossed");
+  const loadedRuntime = node("loadedRuntimeServiceAuthority");
+  const loadedSpawner = loadedRuntime.spawner;
+  if (
+    !isPlainRecord(loadedSpawner)
+    || loadedSpawner.pid !== replacementIdentity.pid
+    || loadedSpawner.processStartTimeEpochMs !== replacementIdentity.processStartTimeEpochMs
+    || loadedSpawner.processIdentityHash !== replacementIdentity.processIdentityHash
+    || loadedSpawner.serviceIdentityHash !== replacement.replacementSpawnerServiceIdentityHash
+    || loadedSpawner.generationHash !== replacement.actualSpawnerGenerationHash
+  ) currentEntryFail("loaded runtime spawner admission identity is crossed");
+  for (const name of ["dashboard", "missionControl"] as const) {
+    const admittedService = preMutationCensus[name] as Readonly<Record<string, unknown>>;
+    const loadedService = loadedRuntime[name];
+    if (
+      !isPlainRecord(loadedService)
+      || loadedService.pid !== admittedService.pid
+      || loadedService.processStartTimeEpochMs !== admittedService.processStartTimeEpochMs
+      || loadedService.processIdentityHash !== admittedService.processIdentityHash
+      || loadedService.serviceIdentityHash !== admittedService.serviceIdentityHash
+      || loadedService.generationHash !== admittedService.generationHash
+    ) currentEntryFail(`loaded runtime ${name} process continuity is crossed`);
+  }
   const postLegacy = node("postPredecessorTerminationLegacyZeroOwnerObservation");
   if (!matches(postLegacy, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "authorityV3Migration31Audit") || !sourceMatches(postLegacy, "cleanSetfarm") || postLegacy.observedSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash) currentEntryFail("post-termination legacy zero-owner graph is crossed");
   const freshLegacy = node("freshLegacyZeroOwnerObservation");

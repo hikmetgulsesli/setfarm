@@ -12405,11 +12405,12 @@ function phase5cSExternalRawCausalChainFixtureV1(
   arrow: typeof PHASE5C_S_EXTERNAL_RAW_ARROWS_V1[number],
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
+  selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
-  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}`;
+  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}:${selectedSpawnerGeneration?.serviceIdentityHash ?? "default"}:${selectedSpawnerGeneration?.generationHash ?? "default"}`;
   const cached = PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.get(key);
   if (cached !== undefined) return cached;
-  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation);
+  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation, selectedSpawnerGeneration);
   PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.set(key, value);
   return value;
 }
@@ -12418,6 +12419,7 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   arrow: typeof PHASE5C_S_EXTERNAL_RAW_ARROWS_V1[number],
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
+  selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
   const authenticSelectedOperation = (arrow.family === "pre-schema" && recoveryVariant === "B") || arrow.family === "migration-32" || arrow.family === "current-audit"
     ? (selectedOperation ?? phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1())
@@ -12438,14 +12440,16 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   const pairFrom = (value: Readonly<Record<string, unknown>>, refKey: string, hashKey: string): Readonly<Record<string, unknown>> => Object.freeze({ [refKey]: value[refKey], [hashKey]: value[hashKey] });
   const status = (body: Readonly<Record<string, unknown>>, prefix: string): Readonly<Record<string, unknown>> => withPair(body, "statusRef", "statusHash", prefix);
   if (arrow.family === "pre-schema") {
-    const legacyValue = withPair(Object.freeze({ schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1", observationKind: "legacy-pre-manifest-existing-live-truth", authorityV3Migration31AuditRef: migration31Audit.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: migration31Audit.authorityV3Migration31AuditHash, cleanSetfarmSourceSha: controllerSource.sha, cleanSetfarmTreeHash: controllerSource.treeHash, cleanSetfarmBuildHash: controllerSource.buildHash, observedSpawnerGenerationHash: "5".repeat(64), census: zeroOwnerCensusFixtureV1(), allThirtySixScalarCountsZero: true, ownerReservationSidecarState: "absent-before-migration-32", ownerAdmissionHeadState: "absent-before-migration-32", manifestActivationState: "absent-before-initial-a-activation" }), "observationRef", "observationHash", "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/");
+    const predecessorSpawnerServiceIdentityHash = selectedSpawnerGeneration?.serviceIdentityHash ?? "4".repeat(64);
+    const predecessorSpawnerGenerationHash = selectedSpawnerGeneration?.generationHash ?? "5".repeat(64);
+    const legacyValue = withPair(Object.freeze({ schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1", observationKind: "legacy-pre-manifest-existing-live-truth", authorityV3Migration31AuditRef: migration31Audit.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: migration31Audit.authorityV3Migration31AuditHash, cleanSetfarmSourceSha: controllerSource.sha, cleanSetfarmTreeHash: controllerSource.treeHash, cleanSetfarmBuildHash: controllerSource.buildHash, observedSpawnerGenerationHash: predecessorSpawnerGenerationHash, census: zeroOwnerCensusFixtureV1(), allThirtySixScalarCountsZero: true, ownerReservationSidecarState: "absent-before-migration-32", ownerAdmissionHeadState: "absent-before-migration-32", manifestActivationState: "absent-before-initial-a-activation" }), "observationRef", "observationHash", "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/");
     const legacy = pairFrom(legacyValue, "observationRef", "observationHash");
-    const authorizationBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1", purpose: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, authorityV3Migration31AuditRef: migration31Audit.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: migration31Audit.authorityV3Migration31AuditHash, legacyZeroOwnerObservationRef: legacy.observationRef, legacyZeroOwnerObservationHash: legacy.observationHash, cleanSetfarmSourceSha: controllerSource.sha, cleanSetfarmTreeHash: controllerSource.treeHash, cleanSetfarmBuildHash: controllerSource.buildHash, predecessorSpawnerServiceIdentityHash: "4".repeat(64), predecessorSpawnerGenerationHash: "5".repeat(64) });
+    const authorizationBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1", purpose: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, authorityV3Migration31AuditRef: migration31Audit.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: migration31Audit.authorityV3Migration31AuditHash, legacyZeroOwnerObservationRef: legacy.observationRef, legacyZeroOwnerObservationHash: legacy.observationHash, cleanSetfarmSourceSha: controllerSource.sha, cleanSetfarmTreeHash: controllerSource.treeHash, cleanSetfarmBuildHash: controllerSource.buildHash, predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash });
     const authorizationValue = withPair(authorizationBody, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/");
     const authorization = pairFrom(authorizationValue, "authorizationRef", "authorizationHash");
     const predecessorProcessIdentityValue = Object.freeze({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: 101, processStartTimeEpochMs: 1_700_000_000_101, processIdentityHash: "6".repeat(64) });
     const predecessorProcessIdentityHash = canonicalHash(predecessorProcessIdentityValue);
-    const startupBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-startup-token.v1", startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, task0SpawnerSourceSha: controllerSource.sha, task0SpawnerTreeHash: controllerSource.treeHash, task0SpawnerBuildHash: controllerSource.buildHash, predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorProcessIdentityHash}`, predecessorSpawnerProcessIdentityHash: predecessorProcessIdentityHash, predecessorSpawnerServiceIdentityHash: "4".repeat(64), predecessorSpawnerGenerationHash: "5".repeat(64) });
+    const startupBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-startup-token.v1", startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, task0SpawnerSourceSha: controllerSource.sha, task0SpawnerTreeHash: controllerSource.treeHash, task0SpawnerBuildHash: controllerSource.buildHash, predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorProcessIdentityHash}`, predecessorSpawnerProcessIdentityHash: predecessorProcessIdentityHash, predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash });
     const startupValue = withPair(startupBody, "startupTokenRef", "startupTokenHash", "setfarm://internal-production/pre-schema-spawner-startup-token/sha256/");
     const startupToken = pairFrom(startupValue, "startupTokenRef", "startupTokenHash");
     const restartUid = process.getuid?.() ?? 501;
@@ -12747,6 +12751,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   blocked = false,
   selectedOperation?: Readonly<Record<string, unknown>>,
   mirrorContentIntoWorkspaceAuthority = false,
+  selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
 ): Readonly<{
   operation: Readonly<{ operationRef: string; operationHash: string }>;
   current: Readonly<Record<string, unknown>>;
@@ -12777,7 +12782,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
     assert.ok(arrow, `pre-schema physical ordinal ${ordinal} exists`);
     return arrow;
   });
-  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation));
+  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, selectedSpawnerGeneration));
   const materials = chains[0]!.materials;
   let current = chains.at(-1)!.next;
   assert.deepEqual(current.currentEntryOperation, Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }), "physical pre-schema status binds the authentic self-hashed operation pair");
@@ -15810,16 +15815,21 @@ process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n"
   }
 }
 
-function runMissionControlServiceHarness(fault = "none"): ReturnType<typeof spawnSync> {
+function runMissionControlServiceHarness(fault = "none", ambientMode: "poison" | "unset" = "poison"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const listenerParserStart = source.indexOf("function parseMissionControlListenerV1(");
   const listenerParserEnd = source.indexOf("\nfunction observeProcessListenersV1(", listenerParserStart);
-  const launchctlHelpersStart = source.indexOf("function oneLaunchctlBlockV1(");
+  const launchctlHelpersStart = source.indexOf("function oneLaunchctlScalarV1(");
   const launchctlHelpersEnd = source.indexOf("\nfunction observeDetachedLaunchProjectionV1(", launchctlHelpersStart);
   const listenerObserverStart = source.indexOf("function requireMissionControlListenerEnvironmentV1(");
   const listenerObserverEnd = source.indexOf("\nconst PHASE_CLOSED_FUTURE_PRODUCERS_V1", listenerObserverStart);
   const serviceObserverStart = source.indexOf("function observeServiceProcessV1(");
   const serviceObserverEnd = source.indexOf("\nexport async function observeInternalProductionServiceCensusV1(", serviceObserverStart);
+  const loadedPassStart = source.indexOf("const MISSION_CONTROL_LAUNCH_ENVIRONMENT_NAMES_V1");
+  const loadedServiceStart = source.indexOf("async function observeMissionControlLoadedBuildServiceV1(");
+  const loadedServiceFunction = loadedServiceStart === -1 ? null : topLevelFunctionRegionV1(source, "observeMissionControlLoadedBuildServiceV1");
+  const operationalTokenFunction = topLevelFunctionRegionV1(source, "requireMissionControlOperationalTokenV1");
+  const loadedServiceRegion = loadedPassStart === -1 || loadedServiceFunction === null ? null : source.slice(loadedPassStart, loadedServiceStart) + loadedServiceFunction;
   for (const [label, offset] of Object.entries({ listenerParserStart, listenerParserEnd, launchctlHelpersStart, launchctlHelpersEnd, listenerObserverStart, listenerObserverEnd, serviceObserverStart, serviceObserverEnd })) {
     assert.notEqual(offset, -1, `Mission Control production slice is missing ${label}`);
   }
@@ -15828,58 +15838,261 @@ function runMissionControlServiceHarness(fault = "none"): ReturnType<typeof spaw
     source.slice(launchctlHelpersStart, launchctlHelpersEnd),
     source.slice(listenerObserverStart, listenerObserverEnd),
     source.slice(serviceObserverStart, serviceObserverEnd).replace("function observeServiceProcessV1(", "export function observeServiceProcessV1("),
+    operationalTokenFunction,
+    ...(loadedServiceRegion === null ? [] : [loadedServiceRegion]),
   ].join("\n");
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-service-")));
   const fixtureHome = path.join(root, "home");
   const missionControlRoot = path.join(fixtureHome, "ai", "setrox", "mission-control");
   const plistPath = path.join(fixtureHome, "Library", "LaunchAgents", "com.setrox.mission-control.plist");
-  const environment = { MC_HOST: "0.0.0.0", MC_PORT: "3080", MC_INTERNAL_URL: "http://127.0.0.1:3080" };
-  fixtureFile(root, "home/Library/LaunchAgents/com.setrox.mission-control.plist", JSON.stringify({ EnvironmentVariables: environment }), 0o600);
+  const missionControlToken = "m".repeat(64);
+  const programArguments = [process.execPath, path.join(missionControlRoot, "dist-server", "index.js")];
+  const environment = {
+    CLI_PATH: path.join(fixtureHome, ".local", "bin"),
+    MC_HOST: "0.0.0.0",
+    MC_INTERNAL_URL: "http://127.0.0.1:3080",
+    MC_PORT: "3080",
+    PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    PROJECTS_DIR: path.join(fixtureHome, "projects"),
+    PROJECTS_JSON: path.join(fixtureHome, "projects", "mission-control", "projects.json"),
+    SETFARM_DIR: path.join(fixtureHome, ".openclaw", "setfarm"),
+    SETFARM_OPERATIONAL_WRITE_TOKEN: missionControlToken,
+    SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+    SETFARM_REPO_DIR: path.join(fixtureHome, "ai", "setrox", "setfarm"),
+    SETFARM_URL: "http://127.0.0.1:3333",
+  };
+  fixtureFile(root, "home/Library/LaunchAgents/com.setrox.mission-control.plist", JSON.stringify({
+    EnvironmentVariables: environment,
+    KeepAlive: true,
+    Label: "com.setrox.mission-control",
+    ProgramArguments: programArguments,
+    RunAtLoad: true,
+    StandardErrorPath: path.join(fixtureHome, ".openclaw", "logs", "mission-control.err.log"),
+    StandardOutPath: path.join(fixtureHome, ".openclaw", "logs", "mission-control.out.log"),
+    WorkingDirectory: missionControlRoot,
+  }), 0o600);
   const harness = String.raw`
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
+type PhysicalProcessV1=Readonly<{uid:number;pid:number;ppid:number;pgid:number;stat:string;lstart:string;command:string;cwd:null}>;
 const CURRENT_ENTRY_MAX_BYTES=1048576;
 const fault=process.env.FAULT??"none";
 const pid=74152;
-const rawListener=Buffer.from("p74152\0cnode\0\nf14\0n*:3080\0\n");
+const observedProgram=fault==="alternate_executable"?"/bin/sh":process.execPath;
+const rawListener=Buffer.from("p74152\0c"+path.basename(observedProgram)+"\0\nf14\0n*:3080\0\n");
+let endpointCalls=0;
+const endpointTokens:Array<string|null>=[];
+let diskIdentityReads=0;
+let lsofCalls=0;
+let launchctlCalls=0;
+let authorityPsCalls=0;
+let ownerCensusCalls=0;
 function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
 function strictUtf8(bytes:Buffer,label:string){const text=bytes.toString("utf8");if(!Buffer.from(text,"utf8").equals(bytes))currentEntryFail(label+" is not UTF-8");return text}
 function isPlainRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype}
+function hasExactKeys(value:Record<string,unknown>,keys:readonly string[]){return JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort())}
 function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const descriptor=Object.getOwnPropertyDescriptor(value as object,key);if(descriptor&&"value" in descriptor)recursivelyFreeze(descriptor.value)}Object.freeze(value)}return value}
 function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const record=value as Record<string,unknown>;return "{"+Object.keys(record).sort().map((key)=>JSON.stringify(key)+":"+canonicalComparable(record[key])).join(",")+"}"}
 function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
 function hashCanonicalJson(value:unknown){return sha256(canonicalComparable(value))}
+function sameStableRegularV1(left:any,right:any){return left.bytes.equals(right.bytes)&&left.stats.dev===right.stats.dev&&left.stats.ino===right.stats.ino&&left.stats.size===right.stats.size&&left.stats.mtimeNs===right.stats.mtimeNs}
+function sameRegularMetadata(left:any,right:any){return left.dev===right.dev&&left.ino===right.ino&&left.mode===right.mode&&left.nlink===right.nlink&&left.uid===right.uid&&left.gid===right.gid&&left.size===right.size&&left.mtimeNs===right.mtimeNs&&left.ctimeNs===right.ctimeNs}
+function parsePhysicalProcessesV1(bytes:Buffer):readonly PhysicalProcessV1[]{const text=bytes.toString("utf8");const match=/^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+[ 0-9][0-9]\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4})\s+(.+)\n$/.exec(text);if(!match)currentEntryFail("process row malformed");return Object.freeze([{uid:Number(match[1]),pid:Number(match[2]),ppid:Number(match[3]),pgid:Number(match[4]),stat:match[5]!,lstart:match[6]!,command:match[7]!,cwd:null}])}
 function fixedMissionControlRootV1(){return process.env.MC_ROOT!}
 function fixedRepositoryRoot(){return process.env.MC_ROOT!}
 function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
 function readStableRegular(target:string){const stats=lstatSync(target,{bigint:true});return Object.freeze({bytes:readFileSync(target),stats})}
-function boundedChildText(executable:string,args:readonly string[],label:string,input?:Buffer){
-  if(executable==="/bin/launchctl")return "gui/"+process.getuid!()+"/com.setrox.mission-control = {\n\tenvironment = {\n\t\tMC_HOST => "+(fault==="loaded_environment"?"127.0.0.1":"0.0.0.0")+"\n\t\tMC_PORT => 3080\n\t\tMC_INTERNAL_URL => http://127.0.0.1:3080\n\t}\n\tpid = "+pid+"\n}\n";
+const missionControlEnvironmentNames=["CLI_PATH","MC_HOST","MC_INTERNAL_URL","MC_PORT","PATH","PROJECTS_DIR","PROJECTS_JSON","SETFARM_DIR","SETFARM_OPERATIONAL_WRITE_TOKEN","SETFARM_PG_URL","SETFARM_REPO_DIR","SETFARM_URL"];
+function boundedChildBytes(executable:string,args:readonly string[],label:string,input?:Buffer){
+  if(executable==="/bin/launchctl"){
+    launchctlCalls+=1;
+    const plist=JSON.parse(readFileSync(process.env.PLIST_PATH!,"utf8"));
+    if(fault==="alternate_executable")plist.ProgramArguments[0]=observedProgram;
+    const launchEnvironment={...plist.EnvironmentVariables};
+    if(fault==="loaded_environment")launchEnvironment.MC_HOST="127.0.0.1";
+    if(fault==="launch_token_drift")launchEnvironment.SETFARM_OPERATIONAL_WRITE_TOKEN="n".repeat(64);
+    if(fault==="launch_token_missing")delete launchEnvironment.SETFARM_OPERATIONAL_WRITE_TOKEN;
+    if(fault==="launch_environment_key")launchEnvironment.UNEXPECTED="crossed";
+    if(fault==="environment_path_relative")launchEnvironment.PATH="relative";
+    if(fault==="environment_pg_invalid")launchEnvironment.SETFARM_PG_URL="x";
+    const launchArguments=fault==="launch_arguments"?[...plist.ProgramArguments,"--crossed"]:plist.ProgramArguments;
+    const program=fault==="launch_program"?"/tmp/crossed-node":plist.ProgramArguments[0];
+    const state=fault==="launch_state"?"waiting":"running";
+    const launchPath=fault==="launch_path"?process.env.PLIST_PATH+".crossed":process.env.PLIST_PATH;
+    const workingDirectory=fault==="launch_working_directory"?"/tmp":plist.WorkingDirectory;
+    const stdoutPath=fault==="launch_log"?plist.StandardOutPath+".crossed":plist.StandardOutPath;
+    const type=fault==="launch_type"?"Daemon":"LaunchAgent";
+    const activeCount=fault==="launch_active_count"?"2":"1";
+    const text="gui/"+process.getuid!()+"/com.setrox.mission-control = {\n\tpath = "+launchPath+"\n\tstate = "+state+"\n\tprogram = "+program+"\n\tworking directory = "+workingDirectory+"\n\tstdout path = "+stdoutPath+"\n\tstderr path = "+plist.StandardErrorPath+"\n\targuments = {\n"+launchArguments.map((value:string)=>"\t\t"+value+"\n").join("")+"\t}\n\tenvironment = {\n"+Object.entries(launchEnvironment).map(([name,value])=>"\t\t"+name+" => "+value+"\n").join("")+"\t\tOSLogRateLimit => 64\n\t\tXPC_SERVICE_NAME => com.setrox.mission-control\n\t}\n\tpid = "+pid+"\n\ttype = "+type+"\n\tactive count = "+activeCount+"\n"+(fault==="bracket_launchctl"&&launchctlCalls>1?"\tlast exit code = 1\n":"\tlast exit code = 0\n")+"}\n";
+    if(fault!=="launch_invalid_utf8"&&fault!=="launch_invalid_utf8_drift")return Buffer.from(text,"utf8");
+    const marker=Buffer.from("\tlast exit code = 0","utf8");
+    const bytes=Buffer.from(text,"utf8");
+    const offset=bytes.indexOf(marker)+marker.length-1;
+    bytes[offset]=fault==="launch_invalid_utf8_drift"&&launchctlCalls>1?0xfe:0xff;
+    return bytes;
+  }
   if(executable==="/bin/ps"&&args.join(" ")==="-p 74152 -o lstart=")return "Sun Aug 16 15:42:28 2026\n";
   if(executable==="/bin/ps"&&args.join(" ")==="-p 74152 -o command=")return process.execPath+" "+process.env.MC_ROOT+"/dist-server/index.js\n";
   if(executable==="/bin/ps"&&args.join(" ")==="-axo command=")return process.execPath+" "+process.env.MC_ROOT+"/dist-server/index.js\n";
-  if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_environment")parsed.EnvironmentVariables.MC_PORT="3081";return JSON.stringify(parsed)}
+  if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="alternate_executable")parsed.ProgramArguments[0]=observedProgram;if(fault==="environment_path_relative")parsed.EnvironmentVariables.PATH="relative";if(fault==="environment_pg_invalid")parsed.EnvironmentVariables.SETFARM_PG_URL="x";if(fault==="plist_environment")parsed.EnvironmentVariables.MC_PORT="3081";if(fault==="plist_token_drift")parsed.EnvironmentVariables.SETFARM_OPERATIONAL_WRITE_TOKEN="n".repeat(64);if(fault==="plist_token_missing")delete parsed.EnvironmentVariables.SETFARM_OPERATIONAL_WRITE_TOKEN;if(fault==="plist_label")parsed.Label="crossed";if(fault==="plist_arguments")parsed.ProgramArguments=[...parsed.ProgramArguments,"--crossed"];if(fault==="plist_program")parsed.Program=parsed.ProgramArguments[0];if(fault==="plist_keepalive")parsed.KeepAlive=false;if(fault==="plist_runatload")parsed.RunAtLoad=false;if(fault==="plist_interval")parsed.StartInterval=60;if(fault==="plist_working_directory")parsed.WorkingDirectory="/tmp";if(fault==="plist_log")parsed.StandardOutPath+=".crossed";if(fault==="plist_environment_key")parsed.EnvironmentVariables.UNEXPECTED="crossed";return Buffer.from(JSON.stringify(parsed),"utf8")}
   throw new Error("unexpected bounded command "+executable+" "+args.join(" ")+" "+label);
 }
+function boundedChildText(executable:string,args:readonly string[],label:string,input?:Buffer){return strictUtf8(boundedChildBytes(executable,args,label,input),label)}
 function runPhysicalCommandV1(executable:string,args:readonly string[]){
   const expected=["-nP","-a","-p","74152","-iTCP:3080","-sTCP:LISTEN","-F0pcfn"];
-  if(executable!=="/usr/sbin/lsof"||JSON.stringify(args)!==JSON.stringify(expected))throw new Error("crossed Mission Control lsof invocation");
-  return Object.freeze({status:0,stdout:rawListener});
+  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-p","74152","-o","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])){authorityPsCalls+=1;return Object.freeze({status:0,stdout:Buffer.from((fault==="bracket_process_raw"&&authorityPsCalls>1?"   ":"  ")+process.getuid!()+" 74152 1 74152 Ss Sun Aug 16 15:42:28 2026 "+observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n")});}
+  if(executable==="/bin/ps"&&JSON.stringify(args)===JSON.stringify(["-axo","command="])){ownerCensusCalls+=1;const command=observedProgram+" "+process.env.MC_ROOT+"/dist-server/index.js\n";return Object.freeze({status:0,stdout:Buffer.from(fault==="owner_census"?command+command:command)});}
+  if(executable!=="/usr/sbin/lsof"||JSON.stringify(args)!==JSON.stringify(expected))throw new Error("crossed Mission Control physical invocation");
+  lsofCalls+=1;
+  return Object.freeze({status:0,stdout:fault==="bracket_listener"&&lsofCalls>1?Buffer.from("p74152\0cnode\0\nf15\0n*:3080\0\n"):rawListener});
+}
+async function observeMissionControlLoadedBuildAuthorityV1(expectedPid:number,token?:string){
+  endpointCalls+=1;
+  endpointTokens.push(token??null);
+  if(expectedPid!==pid)throw new Error("crossed endpoint PID input");
+  return Object.freeze({sha:"1".repeat(40),treeHash:"2".repeat(40),buildHash:"3".repeat(64)});
 }
 ${fragments}
-const source=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
-const result=observeServiceProcessV1("com.setrox.mission-control",3080,source);
-process.stdout.write(JSON.stringify(result)+"\n");
+const diskSource=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
+(async()=>{
+  const service=${loadedServiceStart === -1 ? "(diskIdentityReads+=1,observeServiceProcessV1(\"com.setrox.mission-control\",3080,diskSource))" : "await observeMissionControlLoadedBuildServiceV1()"};
+  process.stdout.write(JSON.stringify({service,endpointCalls,endpointTokens,diskIdentityReads,launchctlCalls,authorityPsCalls,ownerCensusCalls,lsofCalls})+"\n");
+})().catch((error)=>{process.stderr.write(String(error)+"\nHARNESS_ENDPOINT_CALLS="+endpointCalls);process.exitCode=1});
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
     return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
       cwd: root,
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FIXTURE_HOME: fixtureHome, MC_ROOT: missionControlRoot, PLIST_PATH: plistPath, FAULT: fault },
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FIXTURE_HOME: fixtureHome, MC_ROOT: missionControlRoot, PLIST_PATH: plistPath, MC_TOKEN: missionControlToken, FAULT: fault, ...(ambientMode === "poison" ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "ambient-token-must-not-be-used-000000000000000000000000" } : {}) },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function runMissionControlLoadedBuildRequestHarness(token: string | undefined, fault = "none"): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const operationalTokenFunction = topLevelFunctionRegionV1(source, "requireMissionControlOperationalTokenV1");
+  const requestRegion = topLevelFunctionRegionV1(source, "requestMissionControlLoadedBuildAuthorityV1");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-loaded-build-request-")));
+  const harness = String.raw`
+import { EventEmitter } from "node:events";
+const CURRENT_ENTRY_MAX_BYTES=1048576;
+const MISSION_CONTROL_LOADED_BUILD_PATH_V1="/api/internal-production/product-build-authority-v2-loaded-build";
+const fault=process.env.FAULT??"none";
+const actualSetTimeout=globalThis.setTimeout;
+const actualClearTimeout=globalThis.clearTimeout;
+function setTimeout(callback:(...args:any[])=>void,ms:number){return actualSetTimeout(callback,fault==="stall"||fault==="trickle"?0:ms)}
+function clearTimeout(handle:ReturnType<typeof actualSetTimeout>){return actualClearTimeout(handle)}
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+${operationalTokenFunction}
+let observedOptions:any=null;
+let endArgCount=-1;
+let timeoutMs=-1;
+function httpRequest(options:any,callback:(response:any)=>void){
+  observedOptions=options;
+  const request:any=new EventEmitter();
+  request.setTimeout=(value:number)=>{timeoutMs=value};
+  request.destroy=(error:Error)=>request.emit("error",error);
+  request.end=(...args:any[])=>{
+    endArgCount=args.length;
+    if(fault==="stall")return;
+    queueMicrotask(()=>{
+      const response:any=new EventEmitter();
+      response.statusCode=200;
+      response.headers={"cache-control":"no-store, max-age=0, must-revalidate",pragma:"no-cache",expires:"0","content-type":"application/json; charset=utf-8"};
+      callback(response);
+      if(fault==="trickle"){response.emit("data",Buffer.from("{"));return;}
+      queueMicrotask(()=>{response.emit("data",Buffer.from("{}"));response.emit("end")});
+    });
+  };
+  return request;
+}
+${requestRegion}
+(async()=>{
+  const response=await requestMissionControlLoadedBuildAuthorityV1(process.env.MC_TOKEN!);
+  process.stdout.write(JSON.stringify({observedOptions,endArgCount,timeoutMs,statusCode:response.statusCode,bytes:response.bytes.toString("utf8")}));
+})().catch((error)=>{process.stderr.write(String(error));process.exitCode=1});
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HTTP_PROXY: "http://attacker.invalid:9999",
+        HTTPS_PROXY: "http://attacker.invalid:9999",
+        SETFARM_OPERATIONAL_WRITE_TOKEN: "ambient-token-must-not-be-used-000000000000000000000000",
+        FAULT: fault,
+        ...(token === undefined ? {} : { MC_TOKEN: token }),
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function runMissionControlLoadedBuildResponseHarness(fault = "none"): ReturnType<typeof spawnSync> {
+  const source = readFileSync(observerSource, "utf8");
+  const operationalTokenFunction = topLevelFunctionRegionV1(source, "requireMissionControlOperationalTokenV1");
+  const parseRegion = topLevelFunctionRegionV1(source, "parseMissionControlLoadedBuildAuthorityV1");
+  const requestRegion = topLevelFunctionRegionV1(source, "requestMissionControlLoadedBuildAuthorityV1");
+  const observeRegion = topLevelFunctionRegionV1(source, "observeMissionControlLoadedBuildAuthorityV1");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-loaded-build-response-")));
+  const harness = String.raw`
+import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+const CURRENT_ENTRY_MAX_BYTES=1048576;
+const MISSION_CONTROL_LOADED_BUILD_PATH_V1="/api/internal-production/product-build-authority-v2-loaded-build";
+const MISSION_CONTROL_LOADED_BUILD_PREFIX_V1="mission-control://internal-production/product-build-authority-v2-loaded-build/sha256/";
+const MISSION_CONTROL_STARTUP_INSTANCE_UUID_V4_V1=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const fault=process.env.FAULT??"none";
+function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const text=bytes.toString("utf8");if(!Buffer.from(text,"utf8").equals(bytes))currentEntryFail(label+" is not UTF-8");return text}
+function isPlainRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype}
+function hasExactKeys(value:Record<string,unknown>,keys:readonly string[]){const actual=Object.keys(value).sort();const expected=[...keys].sort();return JSON.stringify(actual)===JSON.stringify(expected)}
+function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const descriptor=Object.getOwnPropertyDescriptor(value as object,key);if(descriptor&&"value" in descriptor)recursivelyFreeze(descriptor.value)}Object.freeze(value)}return value}
+function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const record=value as Record<string,unknown>;return "{"+Object.keys(record).sort().map((key)=>JSON.stringify(key)+":"+canonicalComparable(record[key])).join(",")+"}"}
+function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
+function hashCanonicalJson(value:unknown){return sha256(canonicalComparable(value))}
+function requireSha256(value:unknown,label:string){if(typeof value!=="string"||!/^[a-f0-9]{64}$/.test(value))currentEntryFail(label+" is invalid");return value}
+function requireGitHash(value:unknown,label:string){if(typeof value!=="string"||!/^[a-f0-9]{40}$/.test(value))currentEntryFail(label+" is invalid");return value}
+${operationalTokenFunction}
+const identity=Object.freeze({schema:"mission-control.internal-production-build-identity.v1",sourceSha:"1".repeat(40),treeHash:"2".repeat(40),buildHash:"3".repeat(64)});
+const loadedBuild=Object.freeze({schema:"mission-control.product-build-authority-v2-loaded-build.v1",entryModulePath:"dist-server/services/product-build-authority-v2-delivery-evidence-v1.js",entryModuleHash:"4".repeat(64),buildIdentity:identity,buildIdentityHash:sha256(JSON.stringify(identity)+"\n")});
+const loadedBuildHash=hashCanonicalJson(loadedBuild);
+const responseValue=Object.freeze({schema:"mission-control.product-build-authority-v2-loaded-build-response.v1",loadedBuildRef:MISSION_CONTROL_LOADED_BUILD_PREFIX_V1+loadedBuildHash,loadedBuildHash,startupInstance:Object.freeze({schema:"mission-control.product-build-authority-v2-startup-instance.v1",pid:74152,instanceId:"123e4567-e89b-42d3-a456-426614174000"}),loadedBuild});
+function httpRequest(_options:any,callback:(response:any)=>void){
+  const request:any=new EventEmitter();
+  request.setTimeout=()=>{};
+  request.destroy=(error:Error)=>queueMicrotask(()=>request.emit("error",error));
+  request.end=()=>queueMicrotask(()=>{
+    const response:any=new EventEmitter();
+    response.statusCode=fault==="status"?503:200;
+    response.headers={"cache-control":fault==="cache"?"public":"no-store, max-age=0, must-revalidate",pragma:"no-cache",expires:"0","content-type":fault==="content-type"?"text/plain":"application/json; charset=utf-8",...(fault==="encoding"?{"content-encoding":"gzip"}:{})};
+    callback(response);
+    let bytes=Buffer.from(JSON.stringify(responseValue)+(fault==="noncanonical"?"\n":""));
+    if(fault==="oversize")bytes=Buffer.alloc(CURRENT_ENTRY_MAX_BYTES+1,0x20);
+    queueMicrotask(()=>{response.emit("data",bytes);response.emit("end")});
+  });
+  return request;
+}
+${parseRegion}
+${requestRegion}
+${observeRegion}
+(async()=>{const result=await observeMissionControlLoadedBuildAuthorityV1(74152,"m".repeat(64));process.stdout.write(JSON.stringify(result))})().catch((error)=>{process.stderr.write(String(error));process.exitCode=1});
+`;
+  try {
+    fixtureFile(root, "harness.ts", harness);
+    return spawnSync(process.execPath, ["--import", tsxLoader, path.join(root, "harness.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FAULT: fault },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -16908,13 +17121,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   it("P4 service census resolves Mission Control only from the code-owned primary workspace root", () => {
     const source = readFileSync(observerSource, "utf8");
     const helperStart = source.indexOf("function fixedMissionControlRootV1(): string {");
-    const helperEnd = source.indexOf("\nfunction parseMissionControlBuildIdentityV1(", helperStart);
+    const helperEnd = source.indexOf("\nconst MISSION_CONTROL_LOADED_BUILD_PATH_V1", helperStart);
     assert.notEqual(helperStart, -1, "primary Mission Control root helper must exist");
     assert.notEqual(helperEnd, -1, "primary Mission Control root helper must be private and bounded");
     const helper = source.slice(helperStart, helperEnd)
       .replace("function fixedMissionControlRootV1(): string", "function fixedMissionControlRootV1()")
       .replaceAll("uid!", "uid");
-    assert.equal([...source.matchAll(/fixedMissionControlRootV1\(\)/g)].length, 3);
+    assert.equal([...source.matchAll(/fixedMissionControlRootV1\(\)/g)].length, 3, "the helper definition serves both the strict Mission Control authority pass and the retained generic root guard");
     assert.doesNotMatch(source, /path\.resolve\(fixedRepositoryRoot\(\), "\.\.\/mission-control/);
     const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-mc-primary-root-")));
     const fixtureHome = path.join(fixtureRoot, "home");
@@ -16946,53 +17159,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P4 service census reads the exact Mission Control build-identity wire contract", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "setfarm-mc-build-identity-"));
-    let source = readFileSync(observerSource, "utf8");
-    assert.match(source, /function parseMissionControlBuildIdentityV1\(/);
-    source = source.replace("function parseMissionControlBuildIdentityV1(", "export function parseMissionControlBuildIdentityV1(");
-    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
-    fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
-    fixtureFile(root, "src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
-    fixtureFile(root, "package.json", `${JSON.stringify({ type: "module" })}\n`);
-    const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
-    const run = (bytes: Buffer) => spawnSync(process.execPath, [
-      "--import", tsxLoader, "--input-type=module", "-e",
-      `import(${JSON.stringify(moduleUrl)}).then((m)=>process.stdout.write(JSON.stringify(m.parseMissionControlBuildIdentityV1(Buffer.from(process.env.P4_MC_IDENTITY,'base64')))))`,
-    ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", P4_MC_IDENTITY: bytes.toString("base64") } });
-    const body = {
-      schema: "mission-control.internal-production-build-identity.v1",
-      sourceSha: "1".repeat(40),
-      treeHash: "2".repeat(40),
-      buildHash: "3".repeat(64),
-    };
-    try {
-      const valid = run(Buffer.from(`${JSON.stringify(body)}\n`, "utf8"));
-      assert.equal(valid.status, 0, valid.stderr);
-      assert.deepEqual(JSON.parse(valid.stdout), { sha: body.sourceSha, treeHash: body.treeHash, buildHash: body.buildHash });
-      for (const bytes of [
-        Buffer.from(`${JSON.stringify({ buildHash: body.buildHash, schema: body.schema, sourceSha: body.sourceSha, treeHash: body.treeHash })}\n`),
-        Buffer.from(`${JSON.stringify(body, null, 2)}\n`),
-        Buffer.from(JSON.stringify(body)),
-        Buffer.from(`${JSON.stringify(body)}\r\n`),
-        Buffer.from(`${JSON.stringify(body)}\n\n`),
-        Buffer.from(`{"schema":"${body.schema}","schema":"${body.schema}","sourceSha":"${body.sourceSha}","treeHash":"${body.treeHash}","buildHash":"${body.buildHash}"}\n`),
-        Buffer.from(`${JSON.stringify({ ...body, unexpected: true })}\n`),
-        Buffer.from(`${JSON.stringify({ schema: body.schema, sourceSha: body.sourceSha, treeHash: body.treeHash })}\n`),
-        Buffer.from(`${JSON.stringify({ ...body, schema: "wrong" })}\n`),
-        Buffer.from(`${JSON.stringify({ ...body, sourceSha: "not-a-hash" })}\n`),
-        Buffer.from(`${JSON.stringify({ ...body, treeHash: "not-a-hash" })}\n`),
-        Buffer.from(`${JSON.stringify({ ...body, buildHash: "not-a-hash" })}\n`),
-        Buffer.from("[]\n"),
-        Buffer.from([0xff]),
-      ]) {
-        const refused = run(bytes);
-        assert.notEqual(refused.status, 0);
-        assert.equal(refused.stdout, "");
-      }
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  it("P4 service census uses only Mission Control startup-frozen loaded-build authority", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const census = topLevelFunctionRegionV1(source, "observeInternalProductionServiceCensusV1");
+    assert.match(census, /missionControl:\s*await observeMissionControlLoadedBuildServiceV1\(\)/);
+    assert.doesNotMatch(source, /loadedMissionControlSourceV1|parseMissionControlBuildIdentityV1/);
+    assert.doesNotMatch(source, /path\.join\(fixedMissionControlRootV1\(\),\s*"dist-server",\s*"internal-production-build-identity\.v1\.json"\)/);
+    assert.match(source, /startupInstance\.pid !== expectedPid/);
+    const loadedService = topLevelFunctionRegionV1(source, "observeMissionControlLoadedBuildServiceV1");
+    assert.match(loadedService, /const before = observeMissionControlEndpointAuthorityPassV1\(\)[\s\S]*await observeMissionControlLoadedBuildAuthorityV1\(before\.pid, before\.token\)[\s\S]*const after = observeMissionControlEndpointAuthorityPassV1\(\)/);
+    assert.doesNotMatch(loadedService, /observeServiceProcessV1\(/, "the loaded-build bracket derives the service projection from one strict authority pass on each side, without duplicate generic process rounds");
   });
 
   it("P4 service census authenticates the complete OpenClaw same-PID loopback listener inventory", () => {
@@ -17165,7 +17341,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   it("P4 service census authenticates the Mission Control wildcard listener as logical loopback", () => {
     const root = mkdtempSync(path.join(tmpdir(), "setfarm-mc-listener-"));
     let source = readFileSync(observerSource, "utf8");
-    for (const name of ["parseMissionControlListenerV1", "requireMissionControlListenerEnvironmentV1", "isExpectedPersistentListenerV1"]) {
+    for (const name of ["parseMissionControlListenerV1", "parseMissionControlLoadedBuildAuthorityV1", "requireMissionControlListenerEnvironmentV1", "isExpectedPersistentListenerV1"]) {
       assert.match(source, new RegExp(`function ${name}\\(`));
       source = source.replace(`function ${name}(`, `export function ${name}(`);
     }
@@ -17185,8 +17361,26 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       const integrated = runMissionControlServiceHarness();
       assert.equal(integrated.status, 0, integrated.stderr);
-      const integratedBody = JSON.parse(integrated.stdout);
+      const integratedResult = JSON.parse(integrated.stdout);
+      const integratedBody = integratedResult.service;
+      assert.equal(integratedResult.endpointCalls, 1, "Mission Control census reads the startup-frozen loaded-build endpoint exactly once");
+      assert.deepEqual(integratedResult.endpointTokens, ["m".repeat(64)], "Mission Control endpoint authority comes from the matching launchctl/plist token, not ambient Setfarm state");
+      assert.equal(integratedResult.diskIdentityReads, 0, "Mission Control census does not treat mutable disk identity as loaded authority");
+      assert.deepEqual({
+        launchctl: integratedResult.launchctlCalls,
+        processIdentity: integratedResult.authorityPsCalls,
+        ownerCensus: integratedResult.ownerCensusCalls,
+        listener: integratedResult.lsofCalls,
+      }, { launchctl: 2, processIdentity: 2, ownerCensus: 1, listener: 2 }, "one strict authority pass on each side supplies launch/process/listener identity and one combined owner census");
       assert.equal(integratedBody.pid, 74152);
+      assert.deepEqual({
+        sha: integratedBody.loadedSourceSha,
+        treeHash: integratedBody.loadedTreeHash,
+        buildHash: integratedBody.loadedBuildHash,
+      }, { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) });
+      const absentAmbient = runMissionControlServiceHarness("none", "unset");
+      assert.equal(absentAmbient.status, 0, absentAmbient.stderr);
+      assert.deepEqual(JSON.parse(absentAmbient.stdout).endpointTokens, ["m".repeat(64)], "an absent ambient Setfarm token cannot override valid Mission Control launch authority");
       assert.equal(integratedBody.processOwnerCount, 1);
       assert.equal(integratedBody.listenerOwnerCount, 1);
       assert.deepEqual(integratedBody.listener, {
@@ -17194,10 +17388,100 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         port: 3080,
         listenerIdentityHash: createHash("sha256").update(listenerBytes).digest("hex"),
       });
-      for (const fault of ["loaded_environment", "plist_environment"]) {
+      for (const fault of [
+        "environment_pg_invalid", "environment_path_relative", "alternate_executable", "loaded_environment", "launch_token_drift", "launch_token_missing", "launch_environment_key", "launch_arguments", "launch_program", "launch_state",
+        "launch_path", "launch_working_directory", "launch_log", "launch_type", "launch_active_count", "launch_invalid_utf8", "launch_invalid_utf8_drift",
+        "plist_environment", "plist_token_drift", "plist_token_missing", "plist_label", "plist_arguments", "plist_program", "plist_keepalive", "plist_runatload",
+        "plist_interval", "plist_working_directory", "plist_log", "plist_environment_key", "owner_census", "bracket_launchctl", "bracket_process_raw", "bracket_listener",
+      ]) {
         const crossed = runMissionControlServiceHarness(fault);
         assert.notEqual(crossed.status, 0, `${fault} must fail through the integrated Mission Control observer`);
         assert.equal(crossed.stdout, "");
+        if (["alternate_executable", "environment_path_relative", "environment_pg_invalid"].includes(fault)) {
+          assert.match(crossed.stderr, /HARNESS_ENDPOINT_CALLS=0$/, `${fault} must fail before the endpoint request`);
+        }
+      }
+      const loadedBuildIdentity = Object.freeze({
+        schema: "mission-control.internal-production-build-identity.v1",
+        sourceSha: "1".repeat(40),
+        treeHash: "2".repeat(40),
+        buildHash: "3".repeat(64),
+      });
+      const loadedBuild = Object.freeze({
+        schema: "mission-control.product-build-authority-v2-loaded-build.v1",
+        entryModulePath: "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js",
+        entryModuleHash: "4".repeat(64),
+        buildIdentity: loadedBuildIdentity,
+        buildIdentityHash: createHash("sha256").update(`${JSON.stringify(loadedBuildIdentity)}\n`).digest("hex"),
+      });
+      const loadedBuildHash = canonicalHash(loadedBuild);
+      const loadedBuildResponse = Object.freeze({
+        schema: "mission-control.product-build-authority-v2-loaded-build-response.v1",
+        loadedBuildRef: `mission-control://internal-production/product-build-authority-v2-loaded-build/sha256/${loadedBuildHash}`,
+        loadedBuildHash,
+        startupInstance: Object.freeze({ schema: "mission-control.product-build-authority-v2-startup-instance.v1", pid: 74152, instanceId: "123e4567-e89b-42d3-a456-426614174000" }),
+        loadedBuild,
+      });
+      const parseLoadedBuild = (value: unknown, pid = 74152) => run(`process.stdout.write(JSON.stringify(m.parseMissionControlLoadedBuildAuthorityV1(${JSON.stringify(value)},${pid})))`);
+      const validLoadedBuild = parseLoadedBuild(loadedBuildResponse);
+      assert.equal(validLoadedBuild.status, 0, validLoadedBuild.stderr);
+      assert.deepEqual(JSON.parse(validLoadedBuild.stdout), { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) });
+      for (const mutant of [
+        { ...loadedBuildResponse, schema: "mission-control.product-build-authority-v2-loaded-build-response.v2" },
+        { ...loadedBuildResponse, startupInstance: { ...loadedBuildResponse.startupInstance, pid: 74153 } },
+        { ...loadedBuildResponse, startupInstance: { ...loadedBuildResponse.startupInstance, instanceId: "not-a-uuid" } },
+        { ...loadedBuildResponse, loadedBuildRef: `${loadedBuildResponse.loadedBuildRef}0` },
+        { ...loadedBuildResponse, loadedBuildHash: "5".repeat(64) },
+        { ...loadedBuildResponse, loadedBuild: { ...loadedBuildResponse.loadedBuild, buildIdentityHash: "6".repeat(64) } },
+        { ...loadedBuildResponse, unexpected: true },
+      ]) assert.notEqual(parseLoadedBuild(mutant).status, 0, "Mission Control loaded-build parser rejects schema/PID/ref/hash/shape drift");
+      const operationalToken = "t".repeat(64);
+      assert.doesNotMatch(topLevelFunctionRegionV1(readFileSync(observerSource, "utf8"), "requestMissionControlLoadedBuildAuthorityV1"), /process\.env/, "Mission Control endpoint transport receives its launch authority explicitly");
+      assert.match(topLevelFunctionRegionV1(readFileSync(observerSource, "utf8"), "boundedChildBytes"), /encoding:\s*"buffer"/, "launchctl bytes are retained losslessly before strict decoding and bracket comparison");
+      assert.match(topLevelFunctionRegionV1(readFileSync(observerSource, "utf8"), "boundedChildText"), /strictUtf8\(boundedChildBytes\(/, "text consumers decode the bounded child bytes exactly once with strict UTF-8");
+      const requestResult = runMissionControlLoadedBuildRequestHarness(operationalToken);
+      assert.equal(requestResult.status, 0, requestResult.stderr);
+      const requestEvidence = JSON.parse(requestResult.stdout);
+      assert.deepEqual(requestEvidence.observedOptions, {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: 3080,
+        method: "GET",
+        path: "/api/internal-production/product-build-authority-v2-loaded-build",
+        agent: false,
+        headers: {
+          accept: "application/json",
+          connection: "close",
+          "x-setfarm-operational-token": operationalToken,
+        },
+      }, "Mission Control loaded-build request is direct loopback/no-proxy, exact-path GET with only the operational token");
+      assert.equal(requestEvidence.endArgCount, 0, "Mission Control loaded-build request has no body");
+      assert.equal(requestEvidence.timeoutMs, 10_000);
+      assert.equal(requestEvidence.statusCode, 200);
+      assert.equal(requestEvidence.bytes, "{}");
+      for (const token of [`${"a".repeat(31)} b`, "z".repeat(5_000), "é".repeat(32)]) {
+        const contractToken = runMissionControlLoadedBuildRequestHarness(token);
+        assert.equal(contractToken.status, 0, contractToken.stderr);
+        assert.equal(JSON.parse(contractToken.stdout).observedOptions.headers["x-setfarm-operational-token"], token, "Mission Control client matches the endpoint's exact JavaScript string-length token contract");
+      }
+      for (const fault of ["stall", "trickle"]) {
+        const expired = runMissionControlLoadedBuildRequestHarness(operationalToken, fault);
+        assert.notEqual(expired.status, 0, `${fault} transport must fail at the absolute deadline even when the socket inactivity callback does not fire`);
+        assert.match(expired.stderr, /absolute deadline expired/);
+        assert.equal(expired.stdout, "");
+      }
+      for (const token of [undefined, "short", "é".repeat(16)]) {
+        const invalidToken = runMissionControlLoadedBuildRequestHarness(token);
+        assert.notEqual(invalidToken.status, 0, "Mission Control loaded-build request rejects absent or JavaScript-short tokens before transport");
+        assert.equal(invalidToken.stdout, "");
+      }
+      const validResponse = runMissionControlLoadedBuildResponseHarness();
+      assert.equal(validResponse.status, 0, validResponse.stderr);
+      assert.deepEqual(JSON.parse(validResponse.stdout), { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) });
+      for (const fault of ["status", "cache", "content-type", "encoding", "noncanonical", "oversize"]) {
+        const refused = runMissionControlLoadedBuildResponseHarness(fault);
+        assert.notEqual(refused.status, 0, `${fault} response-layer drift must fail closed`);
+        assert.equal(refused.stdout, "");
       }
       const valid = parse(listenerBytes);
       assert.equal(valid.status, 0, valid.stderr);
@@ -39582,10 +39866,26 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         buildHash: missionControl.loadedBuildHash,
       },
     });
+    const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
+    const observedSpawner = serviceBody.spawner as Readonly<Record<string, unknown>>;
+    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, true, Object.freeze({
+      serviceIdentityHash: String(observedSpawner.serviceIdentityHash),
+      generationHash: String(observedSpawner.generationHash),
+    }));
+    const preSchemaReplacementPair = (preSchema.current as Readonly<Record<string, unknown>>).dispatchPrefix as Readonly<Record<string, unknown>>;
+    const replacementPair = preSchemaReplacementPair.replacementProcessObservation as Readonly<Record<string, string>>;
+    const replacementTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/replacement-process/sha256", replacementPair.replacementProcessObservationHash!.slice(0, 2), `${replacementPair.replacementProcessObservationHash}.json`);
+    const replacement = JSON.parse(readFileSync(replacementTarget, "utf8")) as Readonly<Record<string, unknown>>;
+    const replacementIdentityHash = String(replacement.replacementSpawnerProcessIdentityHash);
+    const replacementIdentityTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
+    const replacementIdentity = JSON.parse(readFileSync(replacementIdentityTarget, "utf8")) as Readonly<Record<string, unknown>>;
+    Object.assign(serviceBody.spawner as Record<string, unknown>, {
+      pid: replacementIdentity.pid,
+      processStartTimeEpochMs: replacementIdentity.processStartTimeEpochMs,
+      processIdentityHash: replacementIdentity.processIdentityHash,
+    });
     const service = Object.freeze({ ...serviceBody, censusHash: canonicalHash(serviceBody) });
 
-    const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
-    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, true);
     const migrationTerminal = retained.migration[1]!.body;
     const currentAuditArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "current-audit")!;
     const currentAuditChain = phase5cSExternalRawCausalChainFixtureV1(currentAuditArrow, "B", operation);
@@ -39594,6 +39894,50 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     currentEntryVerifierWriteRecordV1(root, "current-audits", currentAudit, "bootstrapHandoffCurrentAuditHash");
 
     const store = currentEntryStore(root);
+    const preMutationBody = structuredClone(preparedStatus.preMutationLoadedRuntimeServiceAuthority) as Record<string, unknown>;
+    delete preMutationBody.preMutationLoadedRuntimeServiceAuthorityRef;
+    delete preMutationBody.preMutationLoadedRuntimeServiceAuthorityHash;
+    for (const name of ["dashboard", "missionControl"] as const) {
+      const admittedService = preMutationBody[name] as Record<string, unknown>;
+      const loadedService = service[name] as Readonly<Record<string, unknown>>;
+      Object.assign(admittedService, {
+        pid: loadedService.pid,
+        processStartTimeEpochMs: loadedService.processStartTimeEpochMs,
+        processIdentityHash: loadedService.processIdentityHash,
+        serviceIdentityHash: loadedService.serviceIdentityHash,
+        generationHash: loadedService.generationHash,
+        loadedSourceSha: loadedService.loadedSourceSha,
+        loadedTreeHash: loadedService.loadedTreeHash,
+        loadedBuildHash: loadedService.loadedBuildHash,
+      });
+    }
+    preMutationBody.observedServiceCensusHash = canonicalHash(Object.freeze({
+      schema: "setfarm.internal-production-service-census.v1",
+      spawner: preMutationBody.spawner,
+      dashboard: preMutationBody.dashboard,
+      missionControl: preMutationBody.missionControl,
+      openClaw: preMutationBody.openClaw,
+    }));
+    const preMutationProjection = Object.freeze({
+      schema: preMutationBody.schema,
+      currentEntryOperationRef: preMutationBody.currentEntryOperationRef,
+      currentEntryOperationHash: preMutationBody.currentEntryOperationHash,
+      observedServiceCensusHash: preMutationBody.observedServiceCensusHash,
+      spawner: preMutationBody.spawner,
+      dashboard: preMutationBody.dashboard,
+      missionControl: preMutationBody.missionControl,
+      openClaw: preMutationBody.openClaw,
+    });
+    preMutationBody.serviceProjectionSetHash = canonicalHash(preMutationProjection);
+    const preMutationHash = canonicalHash(preMutationBody);
+    const preMutationPair = Object.freeze({
+      preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${preMutationHash}`,
+      preMutationLoadedRuntimeServiceAuthorityHash: preMutationHash,
+    });
+    const preMutation = Object.freeze({ ...preMutationBody, ...preMutationPair });
+    const preMutationTarget = path.join(store, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationHash.slice(0, 2), `${preMutationHash}.json`);
+    phase5cEnsurePublicationParentV1(preMutationTarget);
+    writeFileSync(preMutationTarget, canonicalFixtureRecordV1(preMutation), { mode: 0o600 });
     const seededRecovery = phase5cSSeedRecoveryAtRootFixtureV1(store, "A");
     const terminal = seededRecovery.value;
     assert.notEqual(seededRecovery.release, null);
@@ -39772,7 +40116,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       pendingBootstrapHandoffMigration: operation.pendingBootstrapHandoffMigration,
       authorityV3FocusedTestReceipt: pba.focused,
       currentEntryOperation: Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }),
-      preMutationLoadedRuntimeServiceAuthority: Object.freeze({ preMutationLoadedRuntimeServiceAuthorityRef: preparedStatus.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: preparedStatus.preMutationLoadedRuntimeServiceAuthorityHash }),
+      preMutationLoadedRuntimeServiceAuthority: preMutationPair,
       preSchemaSpawnerRebindAuthorization: preSchemaCurrent.authorization,
       preSchemaSpawnerStartupToken: preSchemaCurrent.startupToken,
       preSchemaSpawnerRestartAuthority: preSchemaCurrent.restartAuthority,
@@ -39817,9 +40161,8 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       productBuildAuthorityV2DeliveryEvidence: operation.productBuildAuthorityV2DeliveryEvidence,
       authorityV3Migration31Audit: operation.authorityV3Migration31Audit,
       pendingBootstrapHandoffMigration: operation.pendingBootstrapHandoffMigration,
-      preMutationLoadedRuntimeServiceAuthorityRef: preparedStatus.preMutationLoadedRuntimeServiceAuthorityRef,
-      preMutationLoadedRuntimeServiceAuthorityHash: preparedStatus.preMutationLoadedRuntimeServiceAuthorityHash,
-      preMutationLoadedRuntimeServiceAuthority: preparedStatus.preMutationLoadedRuntimeServiceAuthority,
+      ...preMutationPair,
+      preMutationLoadedRuntimeServiceAuthority: preMutation,
       preSchemaSpawnerRebindStatus: Object.freeze({ statusRef: preSchemaCurrent.statusRef, statusHash: preSchemaCurrent.statusHash }),
       preSchemaSpawnerRebindStatusBody: preSchemaCurrent,
       migrationApplyingPhase: migrationPhase,
@@ -40435,6 +40778,8 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         })));
         assert.equal(candidateOrdered.length, 33);
         assert.deepEqual(candidateOrdered.map(({ name }) => name), ordered.map(({ name }) => name));
+        assert.deepEqual(candidateOrdered.find(({ name }) => name === "replacementProcessObservation")?.pair, fixture.authority.replacementProcessObservation,
+          `${label} leaves the admitted replacement observation unchanged`);
         const candidateVerificationBody = Object.freeze({
           schema: "setfarm.internal-production-current-entry-verification.v1",
           currentStatus: "current",
@@ -40454,21 +40799,84 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         const locatorsBefore = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
         const verificationRecordsBefore = currentEntryVerifierRecordsV1(fixture.root, "verification");
         const freshResult = currentEntryVerifierRunV1(fixture, { resolveFreshPair: candidateFreshPair });
-        assert.equal(freshResult.outcome, "threw", `${label} must fail closed at the exported pair-only fresh resolver`);
-        assert.match(String(freshResult.message), expectedFailure);
-        assert.equal(freshResult.operationalMutationCalls, 0);
-        assert.deepEqual(freshResult.publicationEvents, []);
-        if (verifyReceipt) {
-          const verificationResult = currentEntryVerifierRunV1(fixture, { resolvePair: candidateVerificationPair, serviceOverride: variant.service });
-          assert.equal(verificationResult.outcome, "threw", `${label} must fail closed at the pair-only verification resolver`);
-          assert.match(String(verificationResult.message), expectedFailure);
-          assert.equal(verificationResult.operationalMutationCalls, 0);
-          assert.deepEqual(verificationResult.publicationEvents, []);
+        const results = [
+          Object.freeze({ surface: "fresh", result: freshResult }),
+          ...(verifyReceipt
+            ? [Object.freeze({ surface: "verification", result: currentEntryVerifierRunV1(fixture, { resolvePair: candidateVerificationPair, serviceOverride: variant.service }) })]
+            : []),
+        ];
+        assert.deepEqual(results.map(({ result }) => result.outcome), Array(results.length).fill("threw"),
+          JSON.stringify(results.map(({ surface, result }) => ({ label, surface, outcome: result.outcome, message: result.message }))));
+        for (const { surface, result } of results) {
+          assert.match(String(result.message), expectedFailure, `${surface}: ${label} must fail at the exact service/admission relation`);
+          assert.equal(result.operationalMutationCalls, 0);
+          assert.equal(result.protectedBefore, result.protectedAfter);
+          assert.deepEqual(result.publicationEvents, []);
         }
         assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), verificationRecordsBefore, `${label} does not publish a new success receipt`);
         assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), locatorsBefore);
         currentEntryVerifierActivateAuthorityVariantV1(fixture, "restore");
       };
+      for (const [field, mutate] of [
+        ["pid", (service: Record<string, unknown>) => { const spawner = service.spawner as Record<string, unknown>; spawner.pid = Number(spawner.pid) + 10_000; }],
+        ["process start", (service: Record<string, unknown>) => { const spawner = service.spawner as Record<string, unknown>; spawner.processStartTimeEpochMs = Number(spawner.processStartTimeEpochMs) + 1_000; }],
+        ["process identity hash", (service: Record<string, unknown>) => { (service.spawner as Record<string, unknown>).processIdentityHash = "d".repeat(64); }],
+      ] as const) rejectServiceMemberCandidateV1(
+        `loaded spawner ${field} drift from admitted replacement`,
+        mutate,
+        true,
+        /loaded runtime spawner admission identity is crossed/,
+      );
+      rejectServiceMemberCandidateV1(
+        "loaded spawner service identity and generation drift from admitted replacement",
+        (service) => {
+          const spawner = service.spawner as Record<string, unknown>;
+          spawner.serviceIdentityHash = "c".repeat(64);
+          spawner.generationHash = canonicalHash({
+            schema: "setfarm.internal-production-loaded-service-generation.v1",
+            label: "com.setrox.setfarm-spawner",
+            serviceIdentityHash: spawner.serviceIdentityHash,
+            source: { sha: spawner.loadedSourceSha, treeHash: spawner.loadedTreeHash, buildHash: spawner.loadedBuildHash },
+          });
+        },
+        true,
+        /loaded runtime spawner admission identity is crossed/,
+      );
+      for (const [member, label, serviceLabel] of [
+        ["dashboard", "dashboard", "com.setrox.setfarm-dashboard"],
+        ["missionControl", "Mission Control", "com.setrox.mission-control"],
+      ] as const) rejectServiceMemberCandidateV1(
+        `loaded ${label} delivered generation drift from pre-mutation observation`,
+        (service) => {
+          const loadedService = service[member] as Record<string, unknown>;
+          loadedService.serviceIdentityHash = "f".repeat(64);
+          loadedService.generationHash = canonicalHash({
+            schema: "setfarm.internal-production-loaded-service-generation.v1",
+            label: serviceLabel,
+            serviceIdentityHash: loadedService.serviceIdentityHash,
+            source: {
+              sha: loadedService.loadedSourceSha,
+              treeHash: loadedService.loadedTreeHash,
+              buildHash: loadedService.loadedBuildHash,
+            },
+          });
+        },
+        true,
+        new RegExp(`loaded runtime ${member} process continuity is crossed`),
+      );
+      for (const [member, label] of [
+        ["dashboard", "dashboard"],
+        ["missionControl", "Mission Control"],
+      ] as const) for (const [field, mutate] of [
+        ["pid", (loadedService: Record<string, unknown>) => { loadedService.pid = Number(loadedService.pid) + 10_000; }],
+        ["process start", (loadedService: Record<string, unknown>) => { loadedService.processStartTimeEpochMs = Number(loadedService.processStartTimeEpochMs) + 1_000; }],
+        ["process identity hash", (loadedService: Record<string, unknown>) => { loadedService.processIdentityHash = "e".repeat(64); }],
+      ] as const) rejectServiceMemberCandidateV1(
+        `loaded ${label} ${field} drift from pre-mutation observation`,
+        (service) => mutate(service[member] as Record<string, unknown>),
+        true,
+        new RegExp(`loaded runtime ${member} process continuity is crossed`),
+      );
       for (const [label, mutateService, verifyReceipt] of [
         ["extra dashboard service member key", (service: Record<string, unknown>) => { (service.dashboard as Record<string, unknown>).unexpected = true; }, true],
         ["wrong dashboard listener host", (service: Record<string, unknown>) => { ((service.dashboard as Record<string, unknown>).listener as Record<string, unknown>).host = "0.0.0.0"; }, false],
