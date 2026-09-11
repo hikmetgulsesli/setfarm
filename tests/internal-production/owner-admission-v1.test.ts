@@ -2988,12 +2988,16 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     .replace("  assertAgentRuntimeAvailable();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"runtime\\n");\n  assertAgentRuntimeAvailable();`)
     .replace("  await pgMigrate();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"migration\\n");\n  await pgMigrate();`)
     .replace("  const listener = postgres(pgUrl, { max: 1 });", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"listener\\n");\n  const listener = postgres(pgUrl, { max: 1 });`)
+    .replace(
+      '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");',
+      '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
+    )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
   writeFileSync(spawnerPath, spawnerBytes);
   writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
     cwd: fixture,
-    env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex" },
+    env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex", SETFARM_TEST_SEALED_SIGNAL_WINDOW: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
