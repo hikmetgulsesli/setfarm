@@ -1887,30 +1887,14 @@ function publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(
   ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
   ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
 ] {
-  const observed = runFixtureExpression(root, `Promise.all([m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1(),m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()]).then(([authority,pending])=>process.stdout.write(JSON.stringify({authority,pending})))`);
-  assert.equal(observed.status, 0, observed.stderr);
-  const values = JSON.parse(observed.stdout) as Readonly<{
-    authority: Readonly<Record<string, string>>;
-    pending: Readonly<Record<string, string>>;
-  }>;
-  const authorityTarget = currentEntryPrerequisiteRecord(root, "authority-v3-migration31-audits", values.authority.authorityV3Migration31AuditHash!);
-  const pendingTarget = currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", values.pending.pendingBootstrapHandoffMigrationHash!);
-  return Object.freeze([
-    Object.freeze({
-      kind: "authorityV3Migration31Audit" as const,
-      target: authorityTarget,
-      value: values.authority,
-      bytes: readFileSync(authorityTarget),
-      pair: Object.freeze({ ref: values.authority.authorityV3Migration31AuditRef!, hash: values.authority.authorityV3Migration31AuditHash! }),
-    }),
-    Object.freeze({
-      kind: "pendingBootstrapHandoffMigration" as const,
-      target: pendingTarget,
-      value: values.pending,
-      bytes: readFileSync(pendingTarget),
-      pair: Object.freeze({ ref: values.pending.pendingBootstrapHandoffMigrationRef!, hash: values.pending.pendingBootstrapHandoffMigrationHash! }),
-    }),
-  ] as const);
+  // Seed already-settled pre-fix prefixes without asking the now-guarded public
+  // publisher to create another generation in the contaminated legacy store.
+  const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+  for (const candidate of overlay) {
+    mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+    writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+  }
+  return overlay;
 }
 
 function instrumentExactPoisonTask3BoundaryFixtureV1(
@@ -17830,6 +17814,241 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(admission.chain.records.successorPending.value.controllerSource, successorSource);
       assert.equal(admission.chain.records.seal.value.completeZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
       assert.equal(admission.chain.records.commit.value.postSealCompleteZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("historical prerequisite cold recovery admits authenticated prior generation without selecting it", () => {
+    // Missing historical admission rejects this valid prior-generation shard; selecting
+    // it as current would cross the independent second-generation pair assertions.
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const history = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, [0, 1]);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      // Only the disposable copy substitutes incident identities. The historical
+      // bytes, schemas, Git ancestry and content hashes are validated by real code.
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", history[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", history[1].pair.hash));
+      git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      git(root, ["commit", "--allow-empty", "-qm", "fixture source advances after historical prerequisites"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(runProducer(root, "--prepare").status, 0);
+      materializeOutputs(root);
+      assert.equal(runProducer(root, "--finalize").status, 0);
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      assert.notEqual(current[0].pair.hash, history[0].pair.hash);
+      assert.notEqual(current[1].pair.hash, history[1].pair.hash);
+      const before = filesystemTreeSnapshot(original.store);
+      const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout);
+      assert.equal(observed.outcome, "returned", observed.message);
+      assert.deepEqual(observed.admission.currentPrerequisiteOverlay.map((entry: { pair: unknown }) => entry.pair), current.map((entry) => entry.pair));
+      assert.equal(observed.stableOutcome, "returned");
+      assert.deepEqual(filesystemTreeSnapshot(original.store), before);
+      assert.deepEqual(observeExactOriginalPoisonIdentityV1(original.store).inventoryBody, original.inventoryBody);
+      const rejectsHistory = (label: string): void => {
+        const rejected = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+        assert.equal(rejected.status, 0, rejected.stderr);
+        const failure = JSON.parse(rejected.stdout);
+        assert.equal(failure.outcome, "threw", label);
+        assert.match(failure.message, /historical|inventory|overlay|record|mode|link|identity|pair|hash/i, label);
+      };
+      writeFileSync(history[0].target, current[0].bytes);
+      rejectsHistory("a different valid canonical audit cannot occupy the historical hash locator");
+      writeFileSync(history[0].target, history[0].bytes);
+      chmodSync(history[0].target, 0o644);
+      rejectsHistory("historical file must be private 0600");
+      chmodSync(history[0].target, 0o600);
+      const historicalSaved = path.join(path.dirname(root), "held-historical-audit.json");
+      renameSync(history[0].target, historicalSaved);
+      symlinkSync(historicalSaved, history[0].target);
+      rejectsHistory("historical symlink is not followed");
+      unlinkSync(history[0].target);
+      linkSync(historicalSaved, history[0].target);
+      rejectsHistory("historical hardlink is rejected");
+      unlinkSync(history[0].target);
+      renameSync(historicalSaved, history[0].target);
+      chmodSync(path.dirname(history[0].target), 0o755);
+      rejectsHistory("historical parent must remain private 0700");
+      chmodSync(path.dirname(history[0].target), 0o700);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, current, [0, 1]);
+      git(root, ["commit", "--allow-empty", "-qm", "fixture third source generation"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(runProducer(root, "--prepare").status, 0);
+      materializeOutputs(root);
+      assert.equal(runProducer(root, "--finalize").status, 0);
+      rejectsHistory("valid but unallowlisted prior generation must not become general historical admission");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const bothHistoricalRecords of [true, false]) {
+  it(`historical prerequisite cold recovery publishes V2 and cold-pins ${bothHistoricalRecords ? "both historical records" : "one historical record and one absence"}`, () => {
+    // Omitting durable history or reopening only its hash would accept a replaced
+    // inode after controller exit. This exercises the real publisher and cold pins.
+    const root = createFixture({ stopAfterCurrentEntryOperationPublication: true });
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonTask3BoundaryFixtureV1(root, { boundary: "post-commit-response-loss", marker: path.join(path.dirname(root), "history-commit-response-loss") });
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, false, false);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replace("async function openExactPoisonRecoveryPinnedCommitChainV1(", "export async function openExactPoisonRecoveryPinnedCommitChainV1(")
+        .replace("async function parseCurrentEntryStoreQuarantineDispositionV1(", "export async function parseCurrentEntryStoreQuarantineDispositionV1(")
+        .replace("function openExactPoisonRecoveryPostVisibleOriginalsV1(", "export function openExactPoisonRecoveryPostVisibleOriginalsV1("));
+      finalizeExactPoisonTask3FixtureV1(root, "fixture historical generation");
+      const history = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, bothHistoricalRecords ? [0, 1] : [0]);
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", history[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", history[1].pair.hash));
+      finalizeExactPoisonTask3FixtureV1(root, "fixture recovery generation");
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, current);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+      const published = runExactPoisonTask3FixtureV1(root, observations);
+      assert.equal(published.status, 0, published.stderr);
+      assert.equal(JSON.parse(published.stdout).outcome, "threw", published.stdout);
+      assert.match(JSON.parse(published.stdout).message, /P4C_POST_COMMIT_RESPONSE_LOSS/);
+      const resumed = runExactPoisonTask3FixtureV1(root, observations);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      assert.equal(JSON.parse(resumed.stdout).outcome, "returned", resumed.stdout);
+      const edge = JSON.parse(readFileSync(path.join(original.store, admitted.chain.records.edge.locator), "utf8"));
+      const dispositionHash = edge.disposition.dispositionHash as string;
+      const dispositionPath = path.join(original.store, "records/current-entry-store-quarantine-dispositions/sha256", dispositionHash.slice(0, 2), `${dispositionHash}.json`);
+      const disposition = JSON.parse(readFileSync(dispositionPath, "utf8"));
+      assert.equal(disposition.schema, "setfarm.internal-production-current-entry-store-quarantine-disposition.v2");
+      assert.deepEqual(disposition.quarantinedInventory, { inventoryBody: original.inventoryBody, inventoryHash: original.inventoryHash });
+      assert.deepEqual(disposition.successorGenesis.authorityV3Migration31Audit, { authorityV3Migration31AuditRef: current[0].pair.ref, authorityV3Migration31AuditHash: current[0].pair.hash });
+      const historicalInventory = disposition.historicalPrerequisiteInventory;
+      assert.equal(historicalInventory.inventoryHash, canonicalHash(historicalInventory.inventoryBody));
+      assert.deepEqual(historicalInventory.inventoryBody.orderedRecords.map((entry: { hash: string }) => entry.hash), history.map((entry) => entry.pair.hash));
+      assert.deepEqual(historicalInventory.inventoryBody.orderedRecords.map((entry: { state: string }) => entry.state), bothHistoricalRecords ? ["present", "present"] : ["present", "absent"]);
+      for (const mutation of ["unknown-field", "crossed-order", "v1-with-history", "missing-history"] as const) {
+        const core = structuredClone(disposition);
+        delete core.dispositionRef;
+        delete core.dispositionHash;
+        if (mutation === "unknown-field") core.historicalPrerequisiteInventory.inventoryBody.orderedRecords[0].file.extra = true;
+        if (mutation === "crossed-order") core.historicalPrerequisiteInventory.inventoryBody.orderedRecords.reverse();
+        if (mutation === "v1-with-history") core.schema = "setfarm.internal-production-current-entry-store-quarantine-disposition.v1";
+        if (mutation === "missing-history") delete core.historicalPrerequisiteInventory;
+        if (core.historicalPrerequisiteInventory) core.historicalPrerequisiteInventory.inventoryHash = canonicalHash(core.historicalPrerequisiteInventory.inventoryBody);
+        const hash = canonicalHash(core);
+        const ref = `setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/${hash}`;
+        const malformed = { ...core, dispositionRef: ref, dispositionHash: hash };
+        const parsed = runFixtureExpression(root, `(async()=>{try{await m.parseCurrentEntryStoreQuarantineDispositionV1(Buffer.from(${JSON.stringify(Buffer.from(`${canonical(malformed)}\n`).toString("base64"))},"base64"),${JSON.stringify({ ref, hash })});process.stdout.write("returned");}catch(error){process.stdout.write("threw:"+String(error));}})()`);
+        assert.equal(parsed.status, 0, parsed.stderr);
+        assert.match(parsed.stdout, /^threw:.*(?:field|historical|inventory|schema)/i, mutation);
+      }
+      const replay = (): { outcome: string; message: string | null } => {
+        const result = runFixtureExpression(root, `(async()=>{let context,originals;try{context=await m.openExactPoisonRecoveryPinnedCommitChainV1();originals=m.openExactPoisonRecoveryPostVisibleOriginalsV1(context);originals.evidence.assertStableOriginals();process.stdout.write(JSON.stringify({outcome:"returned",message:null}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}finally{originals?.close();context?.close();}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout);
+      };
+      assert.equal(replay().outcome, "returned");
+      const legacyBeforePublic = filesystemTreeSnapshot(path.join(original.store, "records/authority-v3-migration31-audits"));
+      const selectedPublishers = runFixtureExpression(root, exactPoisonTask3ProbeExpressionV1(root, observations, "publisher-core").replace("await m.resumeExactPoisonQuarantinePublisherCoreV1()", "value=[(await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()).authorityV3Migration31AuditHash,(await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()).pendingBootstrapHandoffMigrationHash]"));
+      assert.equal(selectedPublishers.status, 0, selectedPublishers.stderr);
+      assert.equal(JSON.parse(selectedPublishers.stdout).outcome, "returned", selectedPublishers.stdout);
+      assert.deepEqual(JSON.parse(selectedPublishers.stdout).value, current.map((entry) => entry.pair.hash), "ordinary publishers remain usable in the authenticated selected successor");
+      assert.deepEqual(filesystemTreeSnapshot(path.join(original.store, "records/authority-v3-migration31-audits")), legacyBeforePublic);
+      // Current source advances independently: immutable historical replay must not
+      // consult current builders or re-select the previous generation as current.
+      git(root, ["commit", "--allow-empty", "-qm", "fixture post-commit source advance"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(replay().outcome, "returned");
+      if (!bothHistoricalRecords) {
+        const shardExisted = existsSync(path.dirname(history[1].target));
+        writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, [1]);
+        assert.equal(replay().outcome, "threw", "the exact historically absent pair cannot appear after commit");
+        unlinkSync(history[1].target);
+        if (!shardExisted) rmdirSync(path.dirname(history[1].target));
+        assert.equal(replay().outcome, "returned");
+      }
+      const saved = `${history[0].target}.held`;
+      renameSync(history[0].target, saved);
+      writeFileSync(history[0].target, history[0].bytes, { flag: "wx", mode: 0o600 });
+      assert.equal(replay().outcome, "threw", "equal bytes at a replaced historical inode must fail cold replay");
+      const resolvedOperation = admitted.chain.records.successorOperation.value;
+      const publicReplay = runFixtureExpression(root, `(async()=>{try{await m.resolveInternalProductionCurrentEntryOperationV1(${JSON.stringify({ operationRef: resolvedOperation.operationRef, operationHash: resolvedOperation.operationHash })});process.stdout.write("returned");}catch(error){process.stdout.write("threw:"+String(error));}})()`);
+      assert.equal(publicReplay.status, 0, publicReplay.stderr);
+      assert.match(publicReplay.stdout, /^threw:.*historical/i, "public historical operation replay must transitively pin its V2 history");
+      unlinkSync(history[0].target);
+      renameSync(saved, history[0].target);
+      assert.equal(replay().outcome, "returned");
+      const historicalParent = path.dirname(history[0].target);
+      const savedParent = path.join(path.dirname(root), "held-historical-parent");
+      renameSync(historicalParent, savedParent);
+      mkdirSync(historicalParent, { mode: 0o700 });
+      renameSync(path.join(savedParent, path.basename(history[0].target)), history[0].target);
+      assert.equal(replay().outcome, "threw", "same historical file under a replaced parent inode must fail");
+      renameSync(history[0].target, path.join(savedParent, path.basename(history[0].target)));
+      rmdirSync(historicalParent);
+      renameSync(savedParent, historicalParent);
+      assert.equal(replay().outcome, "returned");
+      const foreign = path.join(historicalParent, "unexpected.json");
+      writeFileSync(foreign, history[0].bytes, { flag: "wx", mode: 0o600 });
+      assert.equal(replay().outcome, "threw", "historical shard appearance cannot be ignored on cold replay");
+      unlinkSync(foreign);
+      assert.equal(replay().outcome, "returned");
+      renameSync(history[0].target, `${history[0].target}.held`);
+      assert.equal(replay().outcome, "threw", "deleted historical record must fail cold replay");
+    } finally {
+      removeFixture(root);
+    }
+  });
+  }
+
+  it("historical prerequisite cold recovery deduplicates only completely equal current/history records", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, current, [0, 1]);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      // This direct inventory-consumer test uses already validated real builder
+      // records. No source observer runs after substituting this copied allowlist.
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", current[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", current[1].pair.hash));
+      const transported = current.map((record) => ({ ...record, bytes: record.bytes.toString("base64") }));
+      const before = filesystemTreeSnapshot(original.store);
+      for (const crossed of [false, true]) {
+        const result = runFixtureExpression(root, `(async()=>{const context=await m.selectCurrentEntryStoreContextV1();const expected=${JSON.stringify(transported)}.map(record=>({...record,target:m.currentEntryPrerequisiteRecordPathV1(context,record.kind,record.pair.hash),bytes:Buffer.from(record.bytes,"base64")}));const history=expected.map(record=>({...record}));${crossed ? 'history[0]={...history[0],bytes:Buffer.from("{}\\n")};' : ""}try{const operation=m.requireExactPoisonRecoverySnapshotV1(m.fixedLegacyCurrentEntryOperationPathV1(),"overlap operation");const value=m.observeExactPoisonQuarantinedInventoryV1(operation,{assertStable:()=>{}},expected,history);value.assertStableOriginals();process.stdout.write(JSON.stringify({outcome:"returned",count:value.currentPrerequisiteOverlay.length}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, crossed ? "threw" : "returned", observed.message);
+        if (crossed) assert.match(observed.message, /overlap is crossed/);
+        else assert.equal(observed.count, 2);
+        assert.deepEqual(filesystemTreeSnapshot(original.store), before);
+      }
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("historical prerequisite cold recovery public publishers refuse unrecovered poison before writes", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const before = filesystemTreeSnapshot(original.store);
+      for (const name of ["observeCurrentInternalProductionAuthorityV3Migration31AuditV1", "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1"]) {
+        const result = runFixtureExpression(root, `(async()=>{try{await m[${JSON.stringify(name)}]();process.stdout.write(JSON.stringify({outcome:"returned"}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, "threw", name);
+        assert.match(observed.message, /prepare-current-entry/);
+        assert.deepEqual(filesystemTreeSnapshot(original.store), before, "public publisher refuses before creating even a prerequisite shard");
+      }
     } finally {
       removeFixture(root);
     }

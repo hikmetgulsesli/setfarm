@@ -2311,10 +2311,21 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
   return observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
 }
 
+function assertCurrentPrerequisitePublicationStoreV1(context: SelectedCurrentEntryStoreContextV1): void {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  if (state.storeRoot !== fixedLegacyCurrentEntryRootV1()) return;
+  const operation = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(fixedLegacyCurrentEntryOperationPathV1(), "prerequisite publication operation");
+  if (operation !== null && sha256(operation.observed.bytes) === EXACT_POISON_OPERATION_BYTES_SHA256_V1) {
+    currentEntryFail("unrecovered exact-poison prerequisite publication is forbidden; run prepare-current-entry");
+  }
+}
+
 async function observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  assertCurrentPrerequisitePublicationStoreV1(context);
   const record = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+  assertCurrentPrerequisitePublicationStoreV1(context);
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", record.pair.hash),
     record.bytes,
@@ -2378,7 +2389,9 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
 async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  assertCurrentPrerequisitePublicationStoreV1(context);
   const record = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  assertCurrentPrerequisitePublicationStoreV1(context);
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", record.pair.hash),
     record.bytes,
@@ -3461,10 +3474,11 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
   bytes: Buffer,
   expected: CurrentEntryStoreRecordPairV1,
 ): Promise<CurrentEntryStoreQuarantineDispositionV1> {
+  const historyBearing = strictCanonicalRecord(bytes, "quarantine disposition").schema === "setfarm.internal-production-current-entry-store-quarantine-disposition.v2";
   const parsed = parseCurrentEntryStoreHashedWrapperV1(
     bytes,
     "quarantine disposition",
-    ["schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory", "zeroEffectProof", "successorGenesis"],
+    ["schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory", "zeroEffectProof", "successorGenesis", ...(historyBearing ? ["historicalPrerequisiteInventory"] : [])],
     "dispositionRef",
     "dispositionHash",
     CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1,
@@ -3472,7 +3486,7 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
   );
   assertCurrentEntryStorePairEqualV1(parsed.pair, expected, "quarantine disposition");
   if (
-    parsed.value.schema !== "setfarm.internal-production-current-entry-store-quarantine-disposition.v1"
+    parsed.value.schema !== (historyBearing ? "setfarm.internal-production-current-entry-store-quarantine-disposition.v2" : "setfarm.internal-production-current-entry-store-quarantine-disposition.v1")
     || parsed.value.reason !== "p3-projected-fixture-workspace-root-contamination-v1"
   ) currentEntryFail("quarantine disposition discriminator is invalid");
   requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "quarantine disposition");
@@ -3492,6 +3506,7 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
     || !isPlainRecord(inventory.inventoryBody)
     || hashCanonicalJson(inventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
   ) currentEntryFail("quarantined inventory is crossed");
+  if (historyBearing) await parseExactPoisonHistoricalInventoryV1(parsed.value.historicalPrerequisiteInventory);
   const zeroEffectProof = await parseCurrentEntryStoreZeroEffectProofV1(parsed.value.zeroEffectProof);
   const successorGenesis = parseCurrentEntryStoreSuccessorGenesisV1(parsed.value.successorGenesis, zeroEffectProof);
   return Object.freeze({ value: recursivelyFreeze(parsed.value), pair: parsed.pair, zeroEffectProof, successorGenesis });
@@ -3946,6 +3961,7 @@ type ExactPoisonRecoveryInventoryEvidenceV1 = Readonly<{
   inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
   predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
   currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
+  historicalPrerequisiteInventory?: Readonly<Record<string, unknown>>;
   assertStableOriginals: () => void;
 }>;
 
@@ -3978,6 +3994,93 @@ type ExactPoisonQuarantineAdmissionV1 = Readonly<{
 
 const EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1 = "e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025";
 const EXACT_POISON_CURRENT_PENDING_HASH_V1 = "ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015";
+// Independently authenticated incident history; never a source of current pairs.
+const EXACT_POISON_HISTORICAL_PREREQUISITES_V1 = Object.freeze([
+  Object.freeze({ kind: "authorityV3Migration31Audit" as const, hash: "8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6" }),
+  Object.freeze({ kind: "pendingBootstrapHandoffMigration" as const, hash: "b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab" }),
+]);
+
+async function observeExactPoisonHistoricalPrerequisitesNoWriteV1(): Promise<readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[]> {
+  const records: ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = [];
+  const root = fixedLegacyCurrentEntryRootV1();
+  for (const { kind, hash } of EXACT_POISON_HISTORICAL_PREREQUISITES_V1) {
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(root, kind, hash);
+    const snapshot = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target, "exact-poison historical prerequisite");
+    if (snapshot === null) continue;
+    const value = strictCanonicalRecord(snapshot.observed.bytes, "exact-poison historical prerequisite");
+    const refKey = kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditRef" : "pendingBootstrapHandoffMigrationRef";
+    const hashKey = kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditHash" : "pendingBootstrapHandoffMigrationHash";
+    const prefix = kind === "authorityV3Migration31Audit" ? "setfarm://internal-production/authority-v3-migration31-audit/sha256/" : "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/";
+    const expected = Object.freeze({ [refKey]: `${prefix}${hash}`, [hashKey]: hash });
+    if (kind === "authorityV3Migration31Audit") await parseAuthorityV3Migration31AuditBody(value, expected);
+    else parsePendingBootstrapHandoffMigrationBody(value, expected);
+    assertExactPoisonRecoverySnapshotStableV1(snapshot, "exact-poison historical prerequisite");
+    records.push(Object.freeze({ kind, target, value, bytes: snapshot.observed.bytes, pair: Object.freeze({ ref: `${prefix}${hash}`, hash }) }));
+  }
+  return Object.freeze(records);
+}
+
+function buildExactPoisonHistoricalInventoryV1(files: readonly FileSnapshot[]): Readonly<Record<string, unknown>> {
+  const root = fixedLegacyCurrentEntryRootV1();
+  const rootIdentity = lstatSync(root, { bigint: true });
+  const orderedRecords = EXACT_POISON_HISTORICAL_PREREQUISITES_V1.map(({ kind, hash }) => {
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(root, kind, hash);
+    const locator = path.relative(root, target);
+    const file = files.find((entry) => entry.locator === target);
+    const parents: Readonly<Record<string, unknown>>[] = [];
+    const segments = path.dirname(locator).split(path.sep);
+    for (let index = 0; index <= segments.length; index += 1) {
+      const parentLocator = index === 0 ? "." : segments.slice(0, index).join(path.sep);
+      const parentTarget = path.join(root, parentLocator);
+      let stats: BigIntStats;
+      try { stats = lstatSync(parentTarget, { bigint: true }); } catch (error) {
+        if (!isEnoent(error) || file !== undefined || index !== segments.length) throw error;
+        break;
+      }
+      if (!stats.isDirectory() || stats.isSymbolicLink() || (stats.mode & 0o7777n) !== 0o700n || stats.uid !== rootIdentity.uid || stats.dev !== rootIdentity.dev) currentEntryFail("exact-poison historical prerequisite parent identity is crossed");
+      parents.push(Object.freeze({ locator: parentLocator, deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino), uidDecimal: String(stats.uid), mode: "0700", members: index >= segments.length - 1 ? Object.freeze(readdirSync(parentTarget).sort(compareBytes)) : null }));
+    }
+    if (file === undefined) {
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target, "exact-poison absent historical prerequisite") !== null) currentEntryFail("exact-poison historical prerequisite appeared while observed");
+      return Object.freeze({ kind, hash, locator, state: "absent", parents: Object.freeze(parents) });
+    }
+    const stats = file.observed.stats;
+    if (file.observed.mode !== 0o600 || stats.nlink !== 1n || stats.uid !== rootIdentity.uid || stats.dev !== rootIdentity.dev) currentEntryFail("exact-poison historical prerequisite file identity is crossed");
+    assertExactPoisonRecoverySnapshotStableV1(file, "exact-poison historical inventory file");
+    return Object.freeze({ kind, hash, locator, state: "present", parents: Object.freeze(parents), file: Object.freeze({ deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino), uidDecimal: String(stats.uid), mode: "0600", linkCount: 1, byteLength: file.observed.bytes.length, bytesSha256: sha256(file.observed.bytes), bytesBase64: file.observed.bytes.toString("base64") }) });
+  });
+  const inventoryBody = recursivelyFreeze({ schema: "setfarm.internal-production-current-entry-historical-prerequisite-inventory.v1", storeLocator: exactPoisonQuarantinedStoreLocatorV1(), orderedRecords });
+  return recursivelyFreeze({ inventoryBody, inventoryHash: hashCanonicalJson(inventoryBody) });
+}
+
+async function parseExactPoisonHistoricalInventoryV1(value: unknown): Promise<void> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["inventoryBody", "inventoryHash"]) || !isPlainRecord(value.inventoryBody) || hashCanonicalJson(value.inventoryBody) !== requireSha256(value.inventoryHash, "historical prerequisite inventory hash")) currentEntryFail("historical prerequisite inventory hash is crossed");
+  const body = value.inventoryBody;
+  if (!hasExactKeys(body, ["schema", "storeLocator", "orderedRecords"]) || body.schema !== "setfarm.internal-production-current-entry-historical-prerequisite-inventory.v1" || body.storeLocator !== exactPoisonQuarantinedStoreLocatorV1() || !Array.isArray(body.orderedRecords) || body.orderedRecords.length !== 2) currentEntryFail("historical prerequisite inventory schema is invalid");
+  let positiveCount = 0;
+  for (const [index, expected] of EXACT_POISON_HISTORICAL_PREREQUISITES_V1.entries()) {
+    const record = body.orderedRecords[index];
+    if (!isPlainRecord(record) || !hasExactKeys(record, ["kind", "hash", "locator", "state", "parents", ...(record.state === "present" ? ["file"] : [])]) || record.kind !== expected.kind || record.hash !== expected.hash || !["present", "absent"].includes(String(record.state))) currentEntryFail("historical prerequisite inventory record is crossed");
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(fixedLegacyCurrentEntryRootV1(), expected.kind, expected.hash);
+    const locator = path.relative(fixedLegacyCurrentEntryRootV1(), target);
+    const segments = path.dirname(locator).split(path.sep);
+    if (record.locator !== locator || !Array.isArray(record.parents) || (record.parents.length !== segments.length + 1 && !(record.state === "absent" && record.parents.length === segments.length))) currentEntryFail("historical prerequisite parent topology is crossed");
+    for (const [parentIndex, parent] of record.parents.entries()) {
+      if (!isPlainRecord(parent) || !hasExactKeys(parent, ["locator", "deviceDecimal", "inodeDecimal", "uidDecimal", "mode", "members"]) || parent.locator !== (parentIndex === 0 ? "." : segments.slice(0, parentIndex).join(path.sep)) || parent.mode !== "0700" || ![parent.deviceDecimal, parent.inodeDecimal, parent.uidDecimal].every((entry) => typeof entry === "string" && /^(?:0|[1-9][0-9]*)$/.test(entry))) currentEntryFail("historical prerequisite parent identity is invalid");
+      if (parentIndex < segments.length - 1 ? parent.members !== null : !Array.isArray(parent.members) || parent.members.some((entry: unknown) => typeof entry !== "string" || !entry || entry === "." || entry === ".." || entry.includes("/")) || canonicalComparable(parent.members) !== canonicalComparable([...new Set(parent.members)].sort(compareBytes))) currentEntryFail("historical prerequisite parent membership is invalid");
+    }
+    if (record.state === "absent") continue;
+    positiveCount += 1;
+    const file = record.file;
+    if (!isPlainRecord(file) || !hasExactKeys(file, ["deviceDecimal", "inodeDecimal", "uidDecimal", "mode", "linkCount", "byteLength", "bytesSha256", "bytesBase64"]) || file.mode !== "0600" || file.linkCount !== 1 || ![file.deviceDecimal, file.inodeDecimal, file.uidDecimal].every((entry) => typeof entry === "string" && /^(?:0|[1-9][0-9]*)$/.test(entry)) || typeof file.bytesBase64 !== "string") currentEntryFail("historical prerequisite file identity is invalid");
+    const bytes = Buffer.from(file.bytesBase64, "base64");
+    if (bytes.toString("base64") !== file.bytesBase64 || bytes.length !== file.byteLength || sha256(bytes) !== file.bytesSha256) currentEntryFail("historical prerequisite file bytes are crossed");
+    const stored = strictCanonicalRecord(bytes, "historical prerequisite inventory bytes");
+    if (expected.kind === "authorityV3Migration31Audit") await parseAuthorityV3Migration31AuditBody(stored, { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${expected.hash}`, authorityV3Migration31AuditHash: expected.hash });
+    else parsePendingBootstrapHandoffMigrationBody(stored, { pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${expected.hash}`, pendingBootstrapHandoffMigrationHash: expected.hash });
+  }
+  if (positiveCount === 0) currentEntryFail("history-bearing disposition has no historical prerequisites");
+}
 const EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1 = Object.freeze([
   ".",
   "records",
@@ -4389,6 +4492,7 @@ function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
   expectedPublished: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1,
+  historicalPrerequisites: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = [],
 ): ExactPoisonRecoveryInventoryEvidenceV1 {
   heldWriter.assertStable();
   const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4408,6 +4512,15 @@ function observeExactPoisonQuarantinedInventoryV1(
     ["records/pending-bootstrap-handoff-migrations/sha256/ce", new Set([`${EXACT_POISON_CURRENT_PENDING_HASH_V1}.json`])],
   ]);
   const overlayCandidates = requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(expectedPublished);
+  const physicalCandidates = [...overlayCandidates];
+  for (const historical of historicalPrerequisites) {
+    const overlap = physicalCandidates.find((candidate) => candidate.target === historical.target || candidate.pair.hash === historical.pair.hash);
+    if (overlap) {
+      if (canonicalComparable({ ...overlap, bytes: undefined }) !== canonicalComparable({ ...historical, bytes: undefined }) || !overlap.bytes.equals(historical.bytes)) {
+        currentEntryFail("exact-poison historical/current prerequisite overlap is crossed");
+      }
+    } else physicalCandidates.push(historical);
+  }
   const rootStats = lstatSync(root, { bigint: true });
   const expectedUid = rootStats.uid;
   const expectedDevice = rootStats.dev;
@@ -4423,7 +4536,7 @@ function observeExactPoisonQuarantinedInventoryV1(
     parentSnapshot: DirectorySnapshot;
   }>> = [];
   const overlayByShard = new Map<string, ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[]>();
-  for (const candidate of overlayCandidates) {
+  for (const candidate of physicalCandidates) {
     const shardTarget = path.dirname(candidate.target);
     const shardLocator = path.relative(root, shardTarget);
     if (
@@ -4591,6 +4704,13 @@ function observeExactPoisonQuarantinedInventoryV1(
   if (canonicalComparable(identities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)) {
     currentEntryFail("exact-poison predecessor file identities are crossed");
   }
+  const historicalPrerequisiteInventory = historicalPrerequisites.length === 0 ? undefined : buildExactPoisonHistoricalInventoryV1(
+    historicalPrerequisites.map((candidate) => {
+      const file = overlayFileSnapshots.find((entry) => entry.candidate.target === candidate.target);
+      if (!file) currentEntryFail("exact-poison historical prerequisite disappeared before inventory");
+      return file.snapshot;
+    }),
+  );
   const assertStableOriginals = (): void => {
     heldWriter.assertStable();
     const stableWriterTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4612,6 +4732,10 @@ function observeExactPoisonQuarantinedInventoryV1(
     for (const { candidate, snapshot } of overlayFileSnapshots) {
       assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable overlay record ${candidate.kind}`);
     }
+    if (historicalPrerequisiteInventory !== undefined) {
+      const historicalFiles = overlayFileSnapshots.filter(({ candidate }) => historicalPrerequisites.some((entry) => entry.target === candidate.target)).map(({ snapshot }) => snapshot);
+      if (canonicalComparable(buildExactPoisonHistoricalInventoryV1(historicalFiles)) !== canonicalComparable(historicalPrerequisiteInventory)) currentEntryFail("exact-poison historical prerequisite inventory changed across fence");
+    }
     for (const absent of absentOverlayShards) {
       assertDirectory(absent.parentTarget, absent.parentSnapshot, `parent of stable absent exact-poison overlay shard ${absent.locator}`);
       try {
@@ -4630,6 +4754,7 @@ function observeExactPoisonQuarantinedInventoryV1(
     inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
     predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
     currentPrerequisiteOverlay,
+    ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory }),
     assertStableOriginals,
   });
 }
@@ -4891,11 +5016,12 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const successorStoreHash = hashCanonicalJson(genesisCore);
   const successorGenesis = recursivelyFreeze({ ...genesisCore, successorStoreHash });
   const dispositionCore = recursivelyFreeze({
-    schema: "setfarm.internal-production-current-entry-store-quarantine-disposition.v1",
+    schema: inventory.historicalPrerequisiteInventory === undefined ? "setfarm.internal-production-current-entry-store-quarantine-disposition.v1" : "setfarm.internal-production-current-entry-store-quarantine-disposition.v2",
     reason: "p3-projected-fixture-workspace-root-contamination-v1",
     predecessorOperation: exactPoisonOperationPairV1(),
     contaminationFingerprint,
     quarantinedInventory: { inventoryBody: inventory.inventoryBody, inventoryHash: inventory.inventoryHash },
+    ...(inventory.historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory: inventory.historicalPrerequisiteInventory }),
     zeroEffectProof,
     successorGenesis,
   });
@@ -4973,7 +5099,8 @@ async function observeExactPoisonQuarantineAdmissionCoreV1(
     derivedCurrentPrerequisiteOverlay,
     "exact-poison expected current prerequisite overlay",
   );
-  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedCurrentPrerequisiteOverlay);
+  const historicalPrerequisites = await observeExactPoisonHistoricalPrerequisitesNoWriteV1();
+  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedCurrentPrerequisiteOverlay, historicalPrerequisites);
   assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
     inventory.currentPrerequisiteOverlay,
     expectedCurrentPrerequisiteOverlay,
@@ -5232,8 +5359,10 @@ async function openExactPoisonRecoveryPinnedChainV1(
   const parsed = await readExactPoisonRecoveryChainV1(operation, includeCommit);
   const records: ExactPoisonRecoveryPinnedRecordV1[] = [];
   const parents = new Map<string, ExactPoisonRecoveryOwnedParentV1>();
+  let historicalPins: Readonly<{ assertStable: () => void; close: () => void }> | undefined;
   let closed = false;
   try {
+    historicalPins = openExactPoisonHistoricalInventoryPinsV1(parsed.dispositionValue.value.historicalPrerequisiteInventory);
     for (const [index, snapshot] of parsed.snapshots.entries()) {
       const record = openExactPoisonRecoveryPinnedRecordV1(snapshot.locator, `exact-poison pinned chain member ${index}`);
       records.push(record);
@@ -5269,15 +5398,18 @@ async function openExactPoisonRecoveryPinnedChainV1(
     }
     const assertStable = (): void => {
       if (closed) currentEntryFail("exact-poison pinned chain is closed");
+      historicalPins!.assertStable();
       for (const parent of parents.values()) parent.pin.assertStable();
       for (const [index, record] of records.entries()) {
         assertExactPoisonRecoveryPinnedRecordStableV1(record, `exact-poison pinned chain member ${index}`);
       }
       for (const parent of parents.values()) parent.pin.assertStable();
+      historicalPins!.assertStable();
     };
     const close = (): void => {
       if (closed) return;
       closed = true;
+      historicalPins!.close();
       for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
       for (const parent of [...parents.values()].reverse()) parent.close();
     };
@@ -5315,6 +5447,7 @@ async function openExactPoisonRecoveryPinnedChainV1(
   } catch (error) {
     if (!closed) {
       closed = true;
+      historicalPins?.close();
       for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
       for (const parent of [...parents.values()].reverse()) parent.close();
     }
@@ -5953,6 +6086,50 @@ function exactPoisonRecoveryPinnedRecordFileSnapshotV1(
   });
 }
 
+function openExactPoisonHistoricalInventoryPinsV1(
+  inventory: unknown,
+): Readonly<{ assertStable: () => void; close: () => void }> {
+  const directories: ExactPoisonRecoveryOwnedParentV1[] = [];
+  const files: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    for (const file of files) closeSync(file.descriptor);
+    for (const directory of directories.reverse()) directory.close();
+  };
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("historical prerequisite pins are closed");
+    if (inventory === undefined) return;
+    for (const directory of directories) directory.pin.assertStable();
+    for (const file of files) assertExactPoisonRecoveryPinnedRecordStableV1(file, "historical prerequisite");
+    const observed = buildExactPoisonHistoricalInventoryV1(files.map(exactPoisonRecoveryPinnedRecordFileSnapshotV1));
+    if (canonicalComparable(observed) !== canonicalComparable(inventory)) currentEntryFail("historical prerequisite pinned inventory is crossed");
+    for (const directory of directories) directory.pin.assertStable();
+  };
+  try {
+    if (inventory !== undefined) {
+      // Called only after the strict V2 parser authenticates these exact incident
+      // locators, canonical stored bytes, and historical Git/migration relations.
+      if (!isPlainRecord(inventory) || !isPlainRecord(inventory.inventoryBody) || !Array.isArray(inventory.inventoryBody.orderedRecords)) currentEntryFail("historical prerequisite inventory is invalid");
+      const root = fixedLegacyCurrentEntryRootV1();
+      for (const record of inventory.inventoryBody.orderedRecords) {
+        if (!isPlainRecord(record) || !Array.isArray(record.parents) || typeof record.locator !== "string") currentEntryFail("historical prerequisite record is invalid");
+        for (const parent of record.parents) {
+          if (!isPlainRecord(parent) || typeof parent.locator !== "string") currentEntryFail("historical prerequisite parent is invalid");
+          directories.push(openExactPoisonRecoveryPinnedParentV1(path.join(root, parent.locator)));
+        }
+        if (record.state === "present") files.push(openExactPoisonRecoveryPinnedRecordV1(path.join(root, record.locator), "historical prerequisite"));
+      }
+    }
+    assertStable();
+    return Object.freeze({ assertStable, close });
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
 function openExactPoisonRecoveryPostVisibleOriginalsV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
 ): ExactPoisonRecoveryPostVisibleOriginalsV1 {
@@ -6034,6 +6211,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
       return record;
     });
     if (directoryPins.length !== 10 || filePins.length !== 5) currentEntryFail("post-visible original pin count is crossed");
+    const historicalPrerequisiteInventory = context.dispositionValue.value.historicalPrerequisiteInventory;
     const assertStableOriginals = (): void => {
       if (closed) currentEntryFail("post-visible original pins are closed");
       context.assertStable();
@@ -6051,6 +6229,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
         inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
         predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
         currentPrerequisiteOverlay: Object.freeze([]),
+        ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory: historicalPrerequisiteInventory as Readonly<Record<string, unknown>> }),
         assertStableOriginals,
       }),
       close,
