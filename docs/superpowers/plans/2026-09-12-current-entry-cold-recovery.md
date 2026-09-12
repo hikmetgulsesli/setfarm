@@ -268,6 +268,58 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ### Cold intent publication and retained controller lifetime
 
+The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
+in the existing retirement File Map member. The future helper can independently
+authenticate its real inherited FD3/4/5 without duplicating weaker genesis or
+incident validators in the helper module. It binds canonical intent/frame,
+nonce, exact lock/intent inodes, live controller parent/start/command identity,
+full existing cold observation and bound V2 epoch-one/genesis, then independently
+observes and compares the exact launch profile and runtime-only environment.
+Its own compiled module, fixed helper argv, empty Node execArgv, cwd and actual
+Node path must agree. Original directory/file metadata and bytes are rechecked
+across the awaited profile observation; only the final intent-only prefix is
+recognized. Public census/release/reclaim behavior is unchanged and still refuses
+that prefix. No public export, helper main entry, dispatch or live process effect
+is enabled. Full fresh cold/zero-owner observation under a distinct opaque
+owned-intent context remains the next integration step, not a property of this
+inherited-state authenticator alone.
+
+The owning retirement test now compiles the real retirement, locator, environment
+leaf and legacy validators into an actual disposable child at the fixed helper
+path. Only its profile-observation port is controlled independently of FD3.
+Physical macOS temporary paths are canonicalized in the fixture, not production.
+Tests cover same-byte foreign FD4/5, linked FD3, nonce/environment/profile crosses,
+wrong entry and real intermediate parent, same-byte intent/epoch replacement,
+ancestor replacement, cold-root create/delete ABA, extra dispatch, oversized
+intent and secret-bearing observer exceptions. Real same-inode lock/intent
+growth consumes at most the original size plus one EOF byte, in64KiB chunks.
+
+Independent review found a refusal-path cleanup ownership loss: a pre-close
+failure left11 directory descriptors unreachable. The regression first failed
+11 versus0. Cleanup now retries a transient failure and retains persistently
+unfinished cleanup in a private set; subsequent authentication must drain it
+before acquiring more pins. Borrowed FD3/4/5 and the controller lease are never
+closed/released. Successful returned guards remain explicitly closeable. This
+retains the existing pre-close-failure model; it does not claim recovery from
+arbitrary post-success close exceptions or descriptor reuse.
+
+Scoped verification: retirement42/42 (37.374s), TypeScript and whitespace
+passed. Final persistent-cleanup and growth cases passed2/2 (3.192s); independent
+re-review found no remaining material issue within this inherited-state slice.
+Receipt import-inert1/1 (1.113s), exact source manifest17/17 (5.830s), and live
+Mission Control API3080/dashboard3333 HTTP200 checks also passed.
+No full P3 or live cold acceptance has run.
+
+Next causally required collector correction, same receipt/test File Map members:
+read-only real Darwin evidence showed the current physical collector compares
+the entire two ps arrays, including its own different probe PIDs and unrelated
+scheduler-state churn. Exact production parser/comparator refused two530-row
+snapshots solely on this unstable global evidence. Factor two complete bounded
+collection passes and compare all authority-bearing ownership, root/worktree,
+reference, persistent-process and listener evidence; do not add process-name/PID
+exemptions or weaken parsing, zero-owner or service identity checks. Require
+regressions for both harmless unrelated churn and newly appeared/changed owners.
+
 The next private transport slice is `openColdSpawnerHelperFrameV1` in the same
 retirement module. It opens the exact intent read-only for FD5 and creates an
 empty private0600 scratch inode, separately opens it read-only, unlinks and

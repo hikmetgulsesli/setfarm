@@ -161,6 +161,7 @@ type ColdBootstrapIntentStateV1 = {
 };
 let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
+const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -935,8 +936,8 @@ function validateColdEpochOneHeadV1(value: unknown, bytes: Buffer, receipt: Read
 }
 
 function sameColdFileMetadataV1(before: BigIntStats, after: BigIntStats): boolean {
-  return before.dev === after.dev && before.ino === after.ino && before.uid === after.uid && before.mode === after.mode
-    && before.nlink === after.nlink && before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+  return before.dev === after.dev && before.ino === after.ino && before.uid === after.uid && before.gid === after.gid && before.mode === after.mode
+    && before.nlink === after.nlink && before.size === after.size && before.birthtimeNs === after.birthtimeNs && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 }
 
 function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maximumLinks = 1): Buffer {
@@ -949,7 +950,7 @@ function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maxim
     const bytes = Buffer.alloc(Number(expected.size));
     let offset = 0;
     while (offset < bytes.length) {
-      const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      const count = readSync(descriptor, bytes, offset, Math.min(65_536, bytes.length - offset), offset);
       if (count < 1) fail("cold publication candidate is truncated");
       offset += count;
     }
@@ -1319,6 +1320,113 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
     try { if (writer !== undefined) closeSync(writer); }
     finally { try { if (reader !== undefined) closeSync(reader); }
       finally { try { if (intentDescriptor !== undefined) closeSync(intentDescriptor); } finally { if (!guardClosed) guard.close(); } } }
+  }
+}
+
+// This is independent authentication of the inherited controller capability,
+// not a zero-owner census, dispatch permission or a public journal exception.
+// The fixed helper will retain this evidence across its subsequent live bracket.
+async function authenticateColdSpawnerHelperIntentV1() {
+  const guards: PrivateDirectoryGuardV1[] = [];
+  let closing = false, closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closing = true;
+    while (guards.length > 0) { guards[guards.length - 1]!.close(); guards.pop(); }
+    closed = true;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
+  try {
+    // A failed cleanup remains owned. Do not acquire further pins while an
+    // earlier refusal still has unfinished cleanup in this helper process.
+    for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
+    const transport = await import("./baseline-spawner-launch-environment-v1.js");
+    const frameBytes = transport.readInternalProductionSpawnerUntrustedInheritedFrameV1();
+    const frameStats = fstatSync(3, { bigint: true });
+    const frame = coldRecordV1(JSON.parse(frameBytes.toString("utf8")), ["schema", "intentRef", "intentHash", "lockIdentity", "intentIdentity", "environment", "nonce"], "helper frame");
+    if (!frameBytes.equals(Buffer.from(`${canonical(frame)}\n`))
+      || frame.schema !== "setfarm.internal-production-cold-spawner-bootstrap-helper-capability.v1"
+      || typeof frame.nonce !== "string" || !SHA256.test(frame.nonce)) fail("cold helper frame is invalid");
+    const paths = rootPaths();
+    const root = path.join(paths.root, "cold-spawner-bootstrap-v1");
+    const intentPath = path.join(root, "intent.json");
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root));
+    const rootStats = lstatSync(root, { bigint: true });
+    const uid = BigInt(process.getuid!());
+    if (rootStats.uid !== uid) fail("cold helper intent root owner is crossed");
+    const readInherited = (fd: number, target: string, maximum: number) => {
+      const held = fstatSync(fd, { bigint: true });
+      if (held.size > BigInt(maximum) || !sameColdFileMetadataV1(held, lstatSync(target, { bigint: true }))) fail("cold helper inherited identity is crossed");
+      const bytes = readColdGenesisCandidateV1(target, held);
+      if (!sameColdFileMetadataV1(held, fstatSync(fd, { bigint: true }))) fail("cold helper inherited file changed");
+      return { stats: held, bytes };
+    };
+    const lockFile = readInherited(4, paths.lock, 65_536);
+    const intentFile = readInherited(5, intentPath, COLD_GENESIS_MAX_BYTES_V1);
+    const lock = parseLockRecord(lockFile.bytes);
+    const intent = coldRecordV1(JSON.parse(intentFile.bytes.toString("utf8")), ["schema", "purpose", "coldObservation", "launchProfile", "transitionLock", "lockIdentity", "epochRef", "epochHash", "genesisRef", "genesisHash", "nonceHash", "maximumDispatchCount", "intentRef", "intentHash"], "helper intent");
+    if (!intentFile.bytes.equals(Buffer.from(`${canonical(intent)}\n`))
+      || intent.schema !== "setfarm.internal-production-cold-spawner-bootstrap-intent.v1" || intent.purpose !== "exact-poison-sealed-cold-spawner-v1"
+      || intent.maximumDispatchCount !== 1 || intent.intentRef !== `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${coldHashV1(intent.intentHash, "intent")}`
+      || intent.nonceHash !== sha256(frame.nonce) || intent.intentRef !== frame.intentRef || intent.intentHash !== frame.intentHash
+      || canonical(lock) !== canonical(intent.transitionLock) || canonical(intent.lockIdentity) !== canonical(descriptorIdentity(4))
+      || canonical(frame.lockIdentity) !== canonical(intent.lockIdentity) || canonical(frame.intentIdentity) !== canonical(descriptorIdentity(5))) fail("cold helper intent binding is crossed");
+    coldSelfHashV1(intent, "intentHash", ["intentRef"]);
+    const cold = validateColdBootstrapObservationV1(intent.coldObservation);
+    const genesisPath = coldGenesisReceiptPathV1(coldHashV1(intent.genesisHash, "helper genesis"));
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(genesisPath)));
+    const genesisStats = lstatSync(genesisPath, { bigint: true });
+    const genesisBytes = readColdGenesisCandidateV1(genesisPath, genesisStats);
+    const genesis = parseColdEpochGenesisReceiptV1(genesisBytes);
+    const epochStats = lstatSync(paths.epoch, { bigint: true });
+    const epochBytes = readColdGenesisCandidateV1(paths.epoch, epochStats);
+    const epoch = validateColdEpochOneHeadV1(JSON.parse(epochBytes.toString("utf8")), epochBytes, genesis);
+    if (["epochRef", "epochHash", "genesisRef", "genesisHash"].some((key) => intent[key] !== epoch[key])
+      || coldGenesisStableIdentityV1(cold) !== coldGenesisStableIdentityV1(genesis.coldObservation as Readonly<Record<string, unknown>>)) fail("cold helper genesis binding is crossed");
+    const assertStable = (): void => {
+      if (closing || closed) fail("cold helper authentication is closed");
+      for (const guard of guards) guard.assertStable();
+      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
+      const directory = opendirSync(root, { bufferSize: 1 });
+      try {
+        if (directory.readSync()?.name !== "intent.json" || directory.readSync() !== null) fail("cold helper prefix is not intent-only");
+      } finally { directory.closeSync(); }
+      for (const [fd, target, expected, maximum] of [[4, paths.lock, lockFile, 65_536], [5, intentPath, intentFile, COLD_GENESIS_MAX_BYTES_V1]] as const) {
+        const current = readInherited(fd, target, maximum);
+        if (!sameColdFileMetadataV1(expected.stats, current.stats) || !expected.bytes.equals(current.bytes)) fail("cold helper inherited authority drifted");
+      }
+      for (const [target, stats, bytes] of [[genesisPath, genesisStats, genesisBytes], [paths.epoch, epochStats, epochBytes]] as const) {
+        if (!readColdGenesisCandidateV1(target, stats).equals(bytes)) fail("cold helper bound history drifted");
+      }
+      if (!sameColdFileMetadataV1(frameStats, fstatSync(3, { bigint: true }))
+        || !frameBytes.equals(transport.readInternalProductionSpawnerUntrustedInheritedFrameV1())) fail("cold helper private frame changed");
+      const parent = boundedPsProcessIdentity(lock.pid as number);
+      if (process.ppid !== lock.pid || !parent || parent.processStartTimeEpochMs !== lock.processStartTimeEpochMs
+        || parent.processIdentityHash !== lock.processIdentityHash) fail("cold helper controller parent is crossed");
+      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
+      for (const guard of guards) guard.assertStable();
+    };
+    assertStable();
+    const observer = await import("./baseline-post-handoff-receipt-v1.js");
+    const observed = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
+    const profile = observed.profile;
+    if (canonical(profile) !== canonical(intent.launchProfile) || canonical(profile.source) !== canonical(cold.source)
+      || canonical(observed.environment) !== canonical(frame.environment) || profile.uid !== Number(uid)
+      || profile.repository !== repositoryRoot() || profile.cwd !== process.cwd() || profile.executable.path !== process.execPath
+      || process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== path.join(profile.repository, "dist/internal-production/baseline-service-restart-helper-v1.js")
+      || fileURLToPath(import.meta.url) !== path.join(profile.repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js")) fail("cold helper launch profile or snapshot is crossed");
+    assertStable();
+    const authenticated = { intent: freezeColdDataV1(intent), assertStable, close };
+    Object.defineProperty(authenticated, "environment", { value: observed.environment, enumerable: false });
+    return Object.freeze(authenticated);
+  } catch {
+    try { close(); } catch {
+      pendingColdHelperAuthenticationCleanupV1.add(close);
+      // Finish a transient pre-close interruption when possible. Persistent
+      // errors keep their exact remaining handles reachable and fence reentry.
+      try { close(); } catch { /* Retained until cleanup succeeds or process exit. */ }
+    }
+    return fail("cold helper authentication failed");
   }
 }
 
