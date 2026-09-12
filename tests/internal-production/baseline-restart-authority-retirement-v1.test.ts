@@ -318,6 +318,173 @@ function coldGenesisTreeSnapshotV1(root: string): unknown[] {
   return entries;
 }
 
+async function createColdIntentFixtureV1() {
+  const original = readFileSync(sourcePath, "utf8");
+  assert.ok(original.includes("async function prepareColdSpawnerBootstrapIntentV1()"), "cold intent producer is not implemented");
+  const source = original.replace("    return created;\n", "    if (path.basename(file) === 'intent.json') globalThis.__coldIntentPublicationHook?.();\n    return created;\n")
+    .replace("try { linkSync(temporary, file); }", "try { linkSync(temporary, file); if(path.basename(file)==='intent.json')globalThis.__coldIntentLinkedHook?.(); }")
+    .replace("        const genesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(genesisPath, lstatSync(genesisPath, { bigint: true })));", "        globalThis.__coldIntentBeforeGenesisReadHook?.(genesisPath);\n        const genesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(genesisPath, lstatSync(genesisPath, { bigint: true })));\n        globalThis.__coldIntentAfterGenesisReadHook?.(genesisPath);")
+    .replace("    fsyncParent(target);\n", "    globalThis.__coldIntentRootSyncHook?.();\n    fsyncParent(target);\n") + `
+export { prepareColdSpawnerBootstrapIntentV1 };
+export function inspectColdIntentFixtureV1(){const state=retainedColdBootstrapIntentV1;if(!state)return null;const held=heldLease(state.lease);return {phase:state.phase,descriptor:held.descriptor,lockBytesHash:sha256(held.lockBytes.toString()),intent:state.intent,nonceHash:sha256(state.nonce)};}
+export function closeColdIntentFixtureV1(){if(retainedColdBootstrapIntentV1){const lease=retainedColdBootstrapIntentV1.lease;retainedColdBootstrapIntentV1.rootGuard?.close();closeSync(heldLease(lease).descriptor);leases.delete(lease);retainedColdBootstrapIntentV1=null;}}
+`;
+  const fixture = await createColdEpochGenesisFixtureV1(source);
+  const port = path.join(fixture.fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  writeFileSync(port, readFileSync(port, "utf8") + '\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){return globalThis.__coldIntentProfile;}\n');
+  const observation = Reflect.get(globalThis, "__coldGenesisObservation");
+  const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source: observation.source, uid: process.getuid!(),
+    repository: fixture.fixture, cwd: fixture.fixture, arguments: [path.join(fixture.fixture, "dist/spawner.js")],
+    environmentHash: "f".repeat(64) };
+  Reflect.set(globalThis, "__coldIntentProfile", { profile: { ...profileBody, profileHash: sha256(canonical(profileBody)) }, environment: { FIXTURE_SECRET: "never-persist-cold-snapshot" } });
+  return fixture;
+}
+
+test("cold intent refuses a fresh observation crossed from its bound genesis", async () => {
+  for (const swapReceipt of [false, true]) {
+  const fixture = await createColdIntentFixtureV1();
+  let originalReceipt: Buffer | undefined;
+  if (swapReceipt) {
+    Reflect.set(globalThis, "__coldIntentBeforeGenesisReadHook", (target: string) => {
+      originalReceipt = readFileSync(target);
+      const body = JSON.parse(originalReceipt.toString());
+      delete body.genesisRef; delete body.genesisHash;
+      body.coldObservation = Reflect.get(globalThis, "__coldGenesisObservation");
+      const genesisHash = sha256(canonical(body));
+      writeFileSync(target, `${canonical({ ...body, genesisRef: `setfarm://internal-production/cold-epoch-genesis/sha256/${genesisHash}`, genesisHash })}\n`);
+    });
+    Reflect.set(globalThis, "__coldIntentAfterGenesisReadHook", (target: string) => { writeFileSync(target, originalReceipt!); });
+  }
+  let observations = 0;
+  Reflect.set(globalThis, "__coldGenesisObserverHook", () => {
+    if (++observations !== 3) return;
+    const observation = structuredClone(Reflect.get(globalThis, "__coldGenesisObservation"));
+    observation.authorityV3Migration31Audit = { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"9".repeat(64)}`, authorityV3Migration31AuditHash: "9".repeat(64) };
+    delete observation.observationHash;
+    Reflect.set(globalThis, "__coldGenesisObservation", { ...observation, observationHash: sha256(canonical(observation)) });
+  });
+  try {
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /genesis.*crossed/);
+    assert.equal(observations, 3);
+    assert.equal(existsSync(path.join(fixture.root, "cold-spawner-bootstrap-v1")), false);
+    assert.equal(existsSync(fixture.lock), false, "pre-intent refusal can release its ordinary lease");
+  } finally {
+    fixture.isolated.closeColdIntentFixtureV1();
+    Reflect.deleteProperty(globalThis, "__coldIntentProfile");
+    Reflect.deleteProperty(globalThis, "__coldIntentBeforeGenesisReadHook");
+    Reflect.deleteProperty(globalThis, "__coldIntentAfterGenesisReadHook");
+    fixture.cleanup();
+  }
+  }
+});
+
+test("cold intent does not report publication if the final record disappears", async () => {
+  const fixture = await createColdIntentFixtureV1();
+  Reflect.set(globalThis, "__coldIntentPublicationHook", () => { unlinkSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/intent.json")); });
+  try {
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /intent.*absent/);
+    assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, "intent-only");
+    assert.equal(existsSync(fixture.lock), true);
+  } finally {
+    fixture.isolated.closeColdIntentFixtureV1();
+    Reflect.deleteProperty(globalThis, "__coldIntentPublicationHook");
+    Reflect.deleteProperty(globalThis, "__coldIntentProfile");
+    fixture.cleanup();
+  }
+});
+
+test("cold intent repairs only its own root-sync and linked-temporary publication prefixes", async () => {
+  for (const boundary of ["root-sync", "linked-temporary"] as const) {
+    const fixture = await createColdIntentFixtureV1();
+    const hook = boundary === "root-sync" ? "__coldIntentRootSyncHook" : "__coldIntentLinkedHook";
+    let failures = 0;
+    Reflect.set(globalThis, hook, () => { if (failures++ === 0) throw new Error(`fixture ${boundary} interruption`); });
+    try {
+      await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /interruption/);
+      const retained = fixture.isolated.inspectColdIntentFixtureV1();
+      assert.equal(retained.phase, "intent-only");
+      assert.equal(fstatSync(retained.descriptor).nlink, 1);
+      const root = path.join(fixture.root, "cold-spawner-bootstrap-v1");
+      const members = readdirSync(root);
+      if (boundary === "root-sync") assert.deepEqual(members, []);
+      else {
+        assert.equal(members.length, 2);
+        const [left, right] = members.map((name) => lstatSync(path.join(root, name), { bigint: true }));
+        assert.equal(left!.ino, right!.ino);
+        assert.equal(left!.nlink, 2n);
+      }
+      const adopted = await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+      const after = fixture.isolated.inspectColdIntentFixtureV1();
+      assert.equal(after.descriptor, retained.descriptor);
+      assert.equal(after.nonceHash, retained.nonceHash);
+      assert.equal(adopted.intentHash, retained.intent.intentHash);
+      assert.deepEqual(readdirSync(root), ["intent.json"]);
+      assert.equal(lstatSync(path.join(root, "intent.json")).nlink, 1);
+    } finally {
+      fixture.isolated.closeColdIntentFixtureV1();
+      Reflect.deleteProperty(globalThis, hook);
+      Reflect.deleteProperty(globalThis, "__coldIntentProfile");
+      fixture.cleanup();
+    }
+  }
+});
+
+test("cold intent publication retains its lease and exact prefix across response loss", async () => {
+  const fixture = await createColdIntentFixtureV1();
+  let lossCount = 0;
+  Reflect.set(globalThis, "__coldIntentPublicationHook", () => { if (lossCount++ === 0) throw new Error("fixture intent acknowledgement lost"); });
+  try {
+    const pending = fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /already active/);
+    await assert.rejects(pending, /acknowledgement lost/);
+    const before = fixture.isolated.inspectColdIntentFixtureV1();
+    assert.equal(before.phase, "intent-only");
+    assert.equal(fstatSync(before.descriptor).nlink, 1, "uncertain publication retains its usable physical lease");
+    const lockBefore = readFileSync(fixture.lock);
+    const intentFile = path.join(fixture.root, "cold-spawner-bootstrap-v1/intent.json");
+    const intentBefore = readFileSync(intentFile);
+    assert.ok(!intentBefore.includes("never-persist-cold-snapshot"));
+    assert.equal(JSON.parse(intentBefore.toString()).nonceHash, before.nonceHash);
+    assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /COLD_BOOTSTRAP_UNSETTLED/);
+    const adopted = await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+    const after = fixture.isolated.inspectColdIntentFixtureV1();
+    assert.equal(after.descriptor, before.descriptor);
+    assert.equal(after.lockBytesHash, before.lockBytesHash);
+    assert.equal(after.nonceHash, before.nonceHash);
+    assert.equal(adopted.intentHash, before.intent.intentHash);
+    assert.deepEqual(readFileSync(fixture.lock), lockBefore);
+    assert.deepEqual(readFileSync(intentFile), intentBefore);
+    assert.deepEqual(readdirSync(path.dirname(intentFile)), ["intent.json"], "preparation has no dispatch or process effect");
+    const freshController = await import(`${pathToFileURL(path.join(fixture.fixture, "src/internal-production/baseline-restart-authority-retirement-v1.ts")).href}?new-controller=${Date.now()}`);
+    const beforeFreshController = coldGenesisTreeSnapshotV1(fixture.root);
+    await assert.rejects(freshController.prepareColdSpawnerBootstrapIntentV1(), /cold/);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), beforeFreshController, "a new controller cannot acquire around unfinished cold history");
+    const foreign = path.join(path.dirname(intentFile), "dispatch.json");
+    writeFileSync(foreign, "foreign\n", { mode: 0o600 });
+    const crossedPrefix = coldGenesisTreeSnapshotV1(fixture.root);
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /intent-only/);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), crossedPrefix, "foreign dispatch evidence is not adopted or removed");
+    unlinkSync(foreign);
+    writeFileSync(intentFile, "crossed\n");
+    const crossedBytes = coldGenesisTreeSnapshotV1(fixture.root);
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /crossed/);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), crossedBytes, "crossed intent is not overwritten");
+    writeFileSync(intentFile, intentBefore);
+    const movedRoot = `${fixture.root}-original`;
+    renameSync(fixture.root, movedRoot);
+    mkdirSync(fixture.root, { mode: 0o700 });
+    for (const name of readdirSync(movedRoot)) renameSync(path.join(movedRoot, name), path.join(fixture.root, name));
+    const replacedRoot = coldGenesisTreeSnapshotV1(fixture.root);
+    await assert.rejects(fixture.isolated.prepareColdSpawnerBootstrapIntentV1(), /directory changed|ancestor|root.*crossed/);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), replacedRoot, "moving the exact lock and prefix under a foreign parent must not confer ownership");
+  } finally {
+    fixture.isolated.closeColdIntentFixtureV1();
+    Reflect.deleteProperty(globalThis, "__coldIntentProfile");
+    Reflect.deleteProperty(globalThis, "__coldIntentPublicationHook");
+    fixture.cleanup();
+  }
+});
+
 test("cold journal absence is read-only and pins the nearest physical ancestor", async () => {
   const original = readFileSync(sourcePath, "utf8");
   const needle = '    try { lstatSync(target); fail("COLD_BOOTSTRAP_UNSETTLED:';
@@ -1095,7 +1262,13 @@ test("P4 retirement recovers an exact abandoned acquisition after a post-lock di
     const externalRoot = path.join(fixture, "external-post-lock-retirement-store");
     const lock = path.join(root, "physical-service-restart-authority.transition.lock");
     mkdirSync(externalRoot, { mode: 0o700 });
-    const descriptorsBefore = readdirSync("/dev/fd").length;
+    const descriptorNamesBefore = readdirSync("/dev/fd");
+    const descriptorsBefore = descriptorNamesBefore.length;
+    const liveDescriptorInventory = (names: readonly string[]) => new Map(names.flatMap((name) => {
+      try { const stats = fstatSync(Number(name), { bigint: true }); return [[name, `${stats.dev}:${stats.ino}:${stats.mode}`] as const]; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "EBADF") return []; throw error; }
+    }));
+    const descriptorInventoryBefore = liveDescriptorInventory(descriptorNamesBefore);
     Reflect.set(globalThis, "__setfarmP4RetirementPostLockRaceHook", () => {
       renameSync(root, heldRoot);
       symlinkSync(externalRoot, root);
@@ -1110,7 +1283,11 @@ test("P4 retirement recovers an exact abandoned acquisition after a post-lock di
     const retryLease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
     await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(retryLease);
     assert.equal(existsSync(lock), false, "retry release must leave no transition lock");
-    assert.equal(readdirSync("/dev/fd").length, descriptorsBefore, "abandoned acquisition must not leak a descriptor");
+    const descriptorsAfter = readdirSync("/dev/fd");
+    const added = [...liveDescriptorInventory(descriptorsAfter)].filter(([descriptor, identity]) => descriptorInventoryBefore.get(descriptor) !== identity);
+    const diagnostic = descriptorsAfter.length !== descriptorsBefore && added.length > 0
+      ? spawnSync("/usr/sbin/lsof", ["-nP", "-a", "-p", String(process.pid), "-d", added.map(([descriptor]) => descriptor).join(",")], { encoding: "utf8", timeout: 4000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } }).stdout : "";
+    assert.equal(descriptorsAfter.length, descriptorsBefore, `abandoned acquisition must not leak a descriptor: ${JSON.stringify(added)} ${diagnostic}`);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

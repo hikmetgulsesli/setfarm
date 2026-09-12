@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  opendirSync,
   readSync,
   readFileSync,
   readdirSync,
@@ -149,6 +150,17 @@ type RawPhysicalTransitionLockStateV1 = Readonly<{
 const rawPhysicalTransitionLocksV1 = new WeakMap<object, RawPhysicalTransitionLockStateV1>();
 let retainedColdGenesisRawV1: RawPhysicalTransitionLockV1 | null = null;
 let coldGenesisInvocationActiveV1 = false;
+type ColdBootstrapIntentStateV1 = {
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  phase: "intent-only" | "helper-may-have-run" | "claim-observed" | "settled";
+  intent: Readonly<Record<string, unknown>>;
+  environment: Readonly<Record<string, string>>;
+  nonce: string;
+  rootIdentity: BigIntStats | null;
+  rootGuard: PrivateDirectoryGuardV1;
+};
+let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
+let coldBootstrapIntentInvocationActiveV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -1111,6 +1123,113 @@ async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProdu
     }
     throw error;
   }
+}
+
+function assertColdIntentLeaseV1(state: ColdBootstrapIntentStateV1): void {
+  state.rootGuard.assertStable();
+  const held = heldLease(state.lease);
+  const lock = parseLockRecord(held.lockBytes);
+  const identity = descriptorIdentity(held.descriptor);
+  const atPath = lstatSync(rootPaths().lock, { bigint: true });
+  if (lock.pid !== process.pid || identity.devDecimal !== String(atPath.dev) || identity.inoDecimal !== String(atPath.ino)
+    || canonical(state.intent.transitionLock) !== canonical(lock) || canonical(state.intent.lockIdentity) !== canonical(identity)
+    || !readColdGenesisCandidateV1(rootPaths().lock, atPath).equals(held.lockBytes)) fail("cold intent physical lease is crossed");
+  const epoch = assertEpochOneActive();
+  if (epoch.schema !== "setfarm.internal-production-physical-service-restart-authority-epoch.v2"
+    || epoch.epochHash !== state.intent.epochHash || epoch.genesisHash !== state.intent.genesisHash) fail("cold intent genesis is crossed");
+  state.rootGuard.assertStable();
+}
+
+function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, requireFinal: boolean): void {
+  const target = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), target);
+  try {
+    guard.assertStable();
+    const root = lstatSync(target, { bigint: true }), expected = state.rootIdentity;
+    if (!expected || !root.isDirectory() || root.isSymbolicLink() || root.uid !== BigInt(process.getuid!())
+      || (root.mode & 0o7777n) !== 0o700n || root.dev !== expected.dev || root.ino !== expected.ino) fail("cold intent root is crossed");
+    const directory = opendirSync(target, { bufferSize: 1 });
+    const entries: Array<{ name: string; stats: BigIntStats }> = [];
+    try {
+      for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+        if (entries.length >= 2 || (entry.name !== "intent.json" && !/^\.intent\.json\.[a-f0-9]{32}\.tmp$/.test(entry.name))) fail("cold intent prefix is not intent-only");
+        const file = path.join(target, entry.name), stats = lstatSync(file, { bigint: true });
+        if (stats.dev !== root.dev || !readColdGenesisCandidateV1(file, stats, 2).equals(Buffer.from(`${canonical(state.intent)}\n`))) fail("cold intent prefix bytes are crossed");
+        entries.push({ name: entry.name, stats });
+      }
+    } finally { directory.closeSync(); }
+    if (requireFinal && !entries.some((entry) => entry.name === "intent.json")) fail("cold intent final record is absent");
+    if (entries.filter((entry) => entry.name !== "intent.json").length > 1) fail("cold intent temporary count is crossed");
+    if (entries.length === 2) {
+      const [left, right] = entries;
+      const linked = left!.stats.ino === right!.stats.ino && left!.stats.nlink === 2n && right!.stats.nlink === 2n;
+      const collision = left!.stats.ino !== right!.stats.ino && left!.stats.nlink === 1n && right!.stats.nlink === 1n;
+      if (!linked && !collision) fail("cold intent recovery links are crossed");
+    } else if (entries.some((entry) => entry.stats.nlink !== 1n)) fail("cold intent member has a foreign link");
+    for (const entry of entries) if (!sameColdFileMetadataV1(entry.stats, lstatSync(path.join(target, entry.name), { bigint: true }))) fail("cold intent member changed");
+    if (!sameColdFileMetadataV1(root, lstatSync(target, { bigint: true }))) fail("cold intent prefix changed");
+    guard.assertStable();
+  } finally { guard.close(); }
+}
+
+// Private preparation for the fixed controller. No helper dispatch, process
+// effect or public live entry point is enabled by this publication stage.
+async function prepareColdSpawnerBootstrapIntentV1() {
+  if (coldBootstrapIntentInvocationActiveV1) fail("cold intent invocation is already active");
+  coldBootstrapIntentInvocationActiveV1 = true;
+  try {
+    if (retainedColdBootstrapIntentV1 === null) {
+      const observer = await import("./baseline-post-handoff-receipt-v1.js");
+      const lease = await acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      let rootGuard: PrivateDirectoryGuardV1 | null = null;
+      try {
+        rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
+        rootGuard.assertStable();
+        const held = heldLease(lease);
+        const profile = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
+        const cold = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+        const epoch = assertEpochOneActive();
+        if (epoch.schema !== "setfarm.internal-production-physical-service-restart-authority-epoch.v2"
+          || canonical(profile.profile.source) !== canonical(cold.source)) fail("cold intent launch source is crossed");
+        const genesisPath = coldGenesisReceiptPathV1(epoch.genesisHash as string);
+        const genesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(genesisPath, lstatSync(genesisPath, { bigint: true })));
+        if (genesis.genesisRef !== epoch.genesisRef || genesis.genesisHash !== epoch.genesisHash) fail("cold intent genesis pair is crossed");
+        if (coldGenesisStableIdentityV1(genesis.coldObservation as Readonly<Record<string, unknown>>) !== coldGenesisStableIdentityV1(cold)) fail("cold intent genesis prerequisites are crossed");
+        rootGuard.assertStable();
+        const nonce = randomBytes(32).toString("hex");
+        const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-intent.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
+          coldObservation: cold, launchProfile: profile.profile, transitionLock: parseLockRecord(held.lockBytes), lockIdentity: descriptorIdentity(held.descriptor),
+          epochRef: epoch.epochRef, epochHash: epoch.epochHash, genesisRef: epoch.genesisRef, genesisHash: epoch.genesisHash, nonceHash: sha256(nonce), maximumDispatchCount: 1 };
+        const intentHash = sha256(canonical(body));
+        const intent = freezeColdDataV1({ ...body, intentRef: `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${intentHash}`, intentHash });
+        if (Buffer.byteLength(`${canonical(intent)}\n`, "utf8") > COLD_GENESIS_MAX_BYTES_V1) fail("cold intent exceeds its record cap");
+        // Retain the only usable lease and nonce before the first journal-root
+        // mutation. Unsettled errors must never call ordinary lease release.
+        retainedColdBootstrapIntentV1 = { lease, phase: "intent-only", intent, environment: profile.environment, nonce, rootIdentity: null, rootGuard };
+        rootGuard = null;
+      } catch (error) {
+        try { rootGuard?.close(); }
+        finally { await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease); }
+        throw error;
+      }
+    }
+    const state = retainedColdBootstrapIntentV1;
+    if (state.phase !== "intent-only") fail("cold intent is past the preparation-only boundary");
+    assertColdIntentLeaseV1(state);
+    const target = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
+    if (state.rootIdentity === null) {
+      state.rootGuard.assertStable();
+      mkdirSync(target, { mode: 0o700 });
+      state.rootIdentity = lstatSync(target, { bigint: true });
+      state.rootGuard.assertStable();
+    }
+    fsyncParent(target);
+    assertColdIntentOnlyPrefixV1(state, false);
+    writeNoReplace(path.join(target, "intent.json"), state.intent);
+    assertColdIntentOnlyPrefixV1(state, true);
+    assertColdIntentLeaseV1(state);
+    return state.intent;
+  } finally { coldBootstrapIntentInvocationActiveV1 = false; }
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

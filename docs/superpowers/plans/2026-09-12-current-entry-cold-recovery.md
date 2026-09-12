@@ -266,6 +266,44 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ## Progress ledger — 2026-09-12
 
+### Cold intent publication and retained controller lifetime
+
+The retirement module now contains private `prepareColdSpawnerBootstrapIntentV1`
+for the future fixed controller. It acquires real bound genesis/epoch-one and
+the physical lease, observes the launch profile and fresh cold prerequisites,
+and binds the exact genesis pair, stable prerequisite identity, profile, lock,
+one-dispatch limit and nonce commitment in a durable intent. The nonce and
+plaintext environment remain in private retained process state only. Before
+the first cold-root mutation, that state owns the lease and independent physical
+ancestor guard. No public live entry point, helper invocation or child launch
+is enabled by this slice.
+
+Intent-only repair uses the same lease, nonce and exact bytes. It permits only
+its own empty-root, complete temporary, linked temporary/final or final prefix;
+foreign members, crossed bytes and new-controller attempts refuse without
+cleanup. Dispatch/claim phases cannot return to preparation. Ordinary public
+census still rejects every unsettled cold prefix. Preparation replay is only
+durability repair, never fresh launch admission; the future helper must refresh
+the scoped prerequisites independently before its exclusive dispatch marker.
+
+Behavioral RED first proved the producer absent. Review-driven REDs then proved
+ancestor replacement with unchanged lock/prefix inodes, fresh prerequisites
+crossed from genesis, a valid alternate genesis temporarily substituted at the
+bound content path, and final-intent disappearance after publication. The fixes
+retain the original directory guard, require exact genesis ref/hash plus stable
+identity, and require the final intent on the post-publication pass. Four focused
+tests pass, including concurrent-call refusal, acknowledgment loss, root-sync
+interruption, linked-temporary repair and no secret persistence. Independent
+re-review found no remaining material issue in this bounded stage.
+
+The full retirement file passed35/35 on the latest run (23.268s), and also
+passed35/35 on the preceding diagnostic run (23.271s). An earlier run had34/35:
+the old abandoned-acquisition test saw process-global FD count442 versus441;
+its immediate isolated run passed. Cause remains unproven. Keep its strict raw
+zero-delta assertion unchanged and add live inode/device/mode delta plus bounded
+`lsof` diagnostics for a recurrence; do not claim the intermittent issue fixed
+or assume it is the previously proven receipt-fixture loader-cache race.
+
 ### Detached launch environment refinement
 
 The real zero-argument launch-profile candidate now brackets the existing full
