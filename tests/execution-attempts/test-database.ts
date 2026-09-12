@@ -37,6 +37,8 @@ import {
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { observeLegacyFindingPublicationInventoryV1 } from "../../src/findings/finding-publication-v1.js";
+import { validateLegacyFindingPublicationInventoryV1, type LegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 import {
   convergenceArtifactRef,
   createV3ReleaseAdmissionV1,
@@ -769,6 +771,7 @@ function completeP3PbaObservationV1(vendorProducerCommit: string) {
 function createP3LegacyMigrationProvenanceV1(
   operation: import("../../src/internal-production/baseline-post-handoff-receipt-v1.js").InternalProductionCurrentEntryOperationV1,
   templateDatabase: string,
+  inventory?: LegacyFindingPublicationInventoryV1,
 ) {
   const fact = (name: string) => hashCanonicalJson({ schema: "setfarm.p3-template-activation-fact.v1", database: templateDatabase, name });
   const censusKeys = [
@@ -780,7 +783,8 @@ function createP3LegacyMigrationProvenanceV1(
     "ownedListenerCount", "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount",
   ];
   const legacyBody = {
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    schema: inventory === undefined ? "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" : "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    ...(inventory === undefined ? {} : { legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(inventory) }),
     observationKind: "legacy-pre-manifest-existing-live-truth",
     ...operation.authorityV3Migration31Audit,
     cleanSetfarmSourceSha: operation.controllerSource.sha, cleanSetfarmTreeHash: operation.controllerSource.treeHash,
@@ -855,7 +859,11 @@ function p3FixtureReceiptWithOperationPublisherV1(source: string, root: string):
   assert.equal(continuationReplacements, 2, "P3 fixture operation publisher must stop at both status-continuation boundaries");
   assert.match(fixturePublisher, /export async function prepareP3FixtureCurrentEntryOperationV1/);
   assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
-  const provenancePublisher = `
+  return `${fixtureBoundSource}\n${fixturePublisher}\n${p3FixtureLegacyProvenancePublisherSourceV1()}\n`;
+}
+
+function p3FixtureLegacyProvenancePublisherSourceV1(): string {
+  return `
 export async function publishP3FixtureLegacyMigrationProvenanceV1(value) {
   publishLegacyZeroRecordV1(legacyZeroPathV1(value.legacy.observationHash), await canonicalRecordBytes(value.legacy));
   for (const [kind,record,refKey,hashKey,prefix] of [
@@ -872,7 +880,52 @@ export async function publishP3FixtureLegacyMigrationProvenanceV1(value) {
   return resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1({migrationApplication:{...body,applicationHash:hashCanonicalJson(body)},migrationSourceSha:value.evidence.migrationSourceSha});
 }
 `;
-  return `${fixtureBoundSource}\n${fixturePublisher}\n${provenancePublisher}\n`;
+}
+
+// This capability-gated test adapter exposes existing private leaves only in
+// exact-URL module instances. It adds no runtime port and changes no source file.
+export async function applyP3LegacyFindingMigration32ForTestV1(database: TestDatabase) {
+  authenticateP3ProjectedReadinessTestCapabilityV1();
+  const marker = readP3MarkerV1();
+  assert.ok(database.database.startsWith(`${marker.runDatabasePrefix}_empty_`));
+  assert.equal((await database.sql`SELECT current_database() AS name`)[0]?.name, database.database);
+  const journal = await database.sql`SELECT version,state FROM setfarm_schema_migrations WHERE version>=32 ORDER BY version`;
+  assert.deepEqual([...journal], [], "pending guarded migration has not published a journal row");
+  const pending = await inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql);
+  assert.equal(pending.status, "exact_pending_guarded_successor");
+  assert.equal(pending.migration.version, 32);
+  assert.equal(pending.migration.state, "pending");
+  const nonce = randomBytes(12).toString("hex");
+  const receiptUrl = `${pathToFileURL(path.join(P3_FIXTURE_SOURCE_ROOT, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href}?p3-legacy=${nonce}`;
+  const dbUrl = `${pathToFileURL(path.join(P3_FIXTURE_SOURCE_ROOT, "src/db-pg.ts")).href}?p3-legacy=${nonce}`;
+  const hook = `let receiptUrl,dbUrl,publisher;
+export function initialize(data){({receiptUrl,dbUrl,publisher}=data)}
+export async function load(url,context,nextLoad){
+  const result=await nextLoad(url,context);
+  if(url!==receiptUrl && url!==dbUrl)return result;
+  const suffix=url===receiptUrl?publisher:"\\nexport { observePostManifestFindingPublicationOwnersV1 as observeP3LegacyFindingOwnersV1 };\\n";
+  return {...result,source:Buffer.from(result.source).toString("utf8")+suffix};
+}`;
+  register(`data:text/javascript;base64,${Buffer.from(hook).toString("base64")}#${nonce}`, {
+    parentURL: import.meta.url, data: { receiptUrl, dbUrl, publisher: p3FixtureLegacyProvenancePublisherSourceV1() },
+  });
+  const receipt = await import(receiptUrl);
+  const operation = await receipt.observePreparedInternalProductionCurrentEntryOperationV1();
+  assert.ok(operation);
+  const inventory = await database.sql.begin("isolation level repeatable read read only", async (sql) => {
+    const parents = await sql`SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload FROM finding_sets ORDER BY finding_set_hash LIMIT 4097`;
+    const children = await sql`SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload FROM findings ORDER BY finding_set_hash,finding_id LIMIT 65537`;
+    const runs = await sql`SELECT id,status FROM runs WHERE id IN (SELECT run_id FROM finding_sets) ORDER BY id LIMIT 4097`;
+    return observeLegacyFindingPublicationInventoryV1(parents, children, runs);
+  });
+  const provenance = createP3LegacyMigrationProvenanceV1(operation, database.database, inventory);
+  assert.deepEqual(await receipt.publishP3FixtureLegacyMigrationProvenanceV1(provenance), inventory);
+  await applyBootstrapMainClaimHandoffGuardedMigration32V1(database.sql, mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1(provenance.evidence));
+  const exposed = await import(dbUrl);
+  return async () => database.sql.begin("isolation level repeatable read read only", async (sql) => {
+    const counts = await sql`SELECT COUNT(*)::integer AS count FROM findings WHERE status='open'`;
+    return exposed.observeP3LegacyFindingOwnersV1(sql, counts[0]!.count) as Promise<number>;
+  });
 }
 
 function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorCommit: string }> {

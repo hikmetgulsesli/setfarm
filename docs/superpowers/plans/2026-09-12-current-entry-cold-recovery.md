@@ -100,7 +100,7 @@ evidence only as required to bind the private inventory. Any extracted pure
 locator/publication module must enter the owning literal File Maps and source
   projections before the combined gate.
 
-- [ ] Reproduce different authority locations with an executing linked-worktree
+- [x] Reproduce different authority locations with an executing linked-worktree
   fixture. Converge producers/readers/helper FD validation and private-directory
   anchors on a single fixed-workspace locator; retain the separate executing
   source identity. Refuse symlinks/foreign roots; no store migration or fallback.
@@ -111,11 +111,11 @@ locator/publication module must enter the owning literal File Maps and source
   conflicting restart history. Publish immutable genesis then no-replace bound
   head, fsync/reopen, then ordinary admission. Test response loss, competing
   genesis, epoch two, source drift and every partial publication prefix.
-- [ ] Reproduce terminal published findings incorrectly counted as owners with
+- [x] Reproduce terminal published findings incorrectly counted as owners with
   real immutable parent/child rows in the disposable PG harness. Extract shared
   pure canonical publication validation; preserve the terminal closure's same
   rules. Reject orphan/malformed/partial sets and active associated ownership.
-- [ ] Bind exact settled pre-32 membership and terminal relations in hashed
+- [x] Bind exact settled pre-32 membership and terminal relations in hashed
   versioned private evidence, replayed through guarded migration-32 authority.
   Post-32 accept a missing reservation only for that exact authenticated legacy
   membership. Test modern missing-sidecar refusal, crossed/missing members,
@@ -451,3 +451,17 @@ passed. Whole-branch delivery and live recovery remain pending.
   including the public modern census through authentic V1-empty migration
   provenance. All disposable databases were dropped. A genuine pre32-to-post32
   nonempty legacy integration test remains next.
+- Genuine nonempty pre32-to-post32 integration now passed with real immutable
+  run/parent/children rows, actual guarded32 application and real current-head
+  ancestry plus fixed-file V2 provenance. The test-only exact-URL adapter exposes
+  the existing private SELECT leaf; it grants no runtime export or A activation.
+  It proves a later complete unreserved publication is refused, with unchanged
+  rows/head/journal after both observations. Initial fixture assertion incorrectly
+  expected a pending journal32 row; actual pending exists in the migration plan,
+  not the stored journal. The corrected fixture checks exact pending plan and
+  no journal32/33 rows before application. Full owning PG suite passed 15/15
+  (139.198s); all disposable databases were dropped. TypeScript, 16 source
+  manifest checks and independent test-adapter review passed.
+- Read-only live recheck remains migration31 applied, four open findings, no
+  owner-reservation sidecar and only terminal runs (83 cancelled,18 completed,
+  196 failed). No live migration, issue mutation or service restart occurred.

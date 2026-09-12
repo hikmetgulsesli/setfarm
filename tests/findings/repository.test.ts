@@ -13,7 +13,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { validateCurrentInternalProductionOwnerAdmissionHeadV1 } from "../../src/internal-production/owner-admission-head-v1.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
-import { createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
+import { applyP3LegacyFindingMigration32ForTestV1, createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -191,6 +191,42 @@ it("legacy schema31 census authenticates terminal published findings without mut
     rmSync(fixture, { recursive: true, force: true });
     await database.cleanup();
   }
+});
+
+it("post32 legacy census accepts only the complete inventory frozen before real guarded migration", async () => {
+  const database = await createIsolatedMigration31TestDatabase();
+  try {
+    const { sql } = database;
+    const value = structuredFindingSet();
+    await sql`INSERT INTO runs (id,workflow_id,task,status,protocol,compiler_release_sha,activation_preflight_hash)
+      VALUES (${value.runId},'feature-dev','legacy migration provenance','failed','shadow',${SHA_A},${HASH_A})`;
+    const publish = async (findingSet: FindingSetV1) => {
+      await sql`INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload)
+        VALUES (${findingSet.findingSetHash},${findingSet.findingSetId},${findingSet.runId},${findingSet.storyId},${findingSet.packetHash},${findingSet.sliceHash},
+          ${findingSet.sourceRevision.sha},${findingSet.sourceRevision.treeHash},${sql.json(findingSet.findings.map((finding) => finding.findingId))},${sql.json(findingSet)})`;
+      for (const finding of findingSet.findings) await sql`INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${findingSet.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},${finding.status},${hashCanonicalJson(finding.sourceLocators)},${sql.json(finding)})`;
+    };
+    await publish(value);
+    const observe = await applyP3LegacyFindingMigration32ForTestV1(database);
+    const snapshot = async () => ({
+      parents: [...await sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      runs: [...await sql`SELECT * FROM runs ORDER BY id`],
+      owners: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`],
+      head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1`],
+      journal: [...await sql`SELECT * FROM setfarm_schema_migrations ORDER BY version`],
+    });
+    const before = await snapshot();
+    assert.equal(before.owners.length, 0, "legacy publication has no modern sidecar");
+    assert.equal(before.children[0]!.status, "open");
+    assert.equal(await observe(), 0);
+    assert.deepEqual(await snapshot(), before, "post32 legacy census is strictly read-only");
+    await publish(structuredFindingSet(HASH_C, "US-NOT-IN-MIGRATION"));
+    const withUnreserved = await snapshot();
+    await assert.rejects(observe(), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/);
+    assert.deepEqual(await snapshot(), withUnreserved, "unknown publication must refuse without repairing or adopting it");
+  } finally { await database.cleanup(); }
 });
 
 it("post32 census excludes authenticated closed modern finding publication without mutating issues", async () => {
