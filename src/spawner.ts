@@ -4,7 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
-import { observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
+import { consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -404,7 +404,7 @@ let spawnerLockFd: number | null = null;
 type SpawnerStartupParentV1 = Readonly<{ path: string; identity: fs.BigIntStats }>;
 type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[] };
 const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
-let spawnerColdStartupPhaseV1: "idle" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
+let spawnerColdStartupPhaseV1: "idle" | "singleton-held" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
 let spawnerColdStartupStopV1: (() => void) | null = null;
 const spawnerColdStartupReadinessCleanupV1 = new Set<() => void>();
 
@@ -544,11 +544,7 @@ function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void 
   if (spawnerLockFd === owned.descriptor) spawnerLockFd = null;
 }
 
-export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
-  if (!["claim-ready", "sealed"].includes(spawnerColdStartupPhaseV1) || !spawnerColdStartupStopV1
-    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
-    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_COLD_STARTUP_OWNERSHIP_UNAVAILABLE");
-  const observe = (file: string, expectedBytes: Buffer, lock: boolean) => {
+function observeOwnedSpawnerStartupFileV1(file: string, expectedBytes: Buffer, lock: boolean) {
     const physical = observeSpawnerStartupFileParentsV1(file).file;
     const owned = spawnerStartupFilesV1.find((value) => value.file === physical);
     if (!owned || !owned.identity || owned.unlinked || (lock && owned.descriptor !== spawnerLockFd) || !owned.bytes.equals(expectedBytes)) throw Error("SPAWNER_COLD_STARTUP_FILE_NOT_OWNED");
@@ -566,9 +562,21 @@ export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
     return Object.freeze({ path: physical, devDecimal: String(original.dev), inoDecimal: String(original.ino), uid: Number(original.uid), mode: Number(original.mode & 0o7777n),
       byteLength: expectedBytes.length, bytesHash: crypto.createHash("sha256").update(expectedBytes).digest("hex"),
       identityHash: crypto.createHash("sha256").update(JSON.stringify([original.dev, original.ino, original.uid, original.gid, original.mode, original.nlink, original.size, original.birthtimeNs, original.mtimeNs, original.ctimeNs].map(String))).digest("hex") });
-  };
+}
+
+export function observeInternalProductionColdSpawnerSingletonOwnershipV1() {
+  if (spawnerColdStartupPhaseV1 !== "singleton-held" || !spawnerColdStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
+    || spawnerStartupFilesV1.length !== 1 || spawnerLockFd === null) throw Error("SPAWNER_COLD_SINGLETON_OWNERSHIP_UNAVAILABLE");
+  return observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true);
+}
+
+export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
+  if (!["claim-ready", "sealed"].includes(spawnerColdStartupPhaseV1) || !spawnerColdStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
+    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_COLD_STARTUP_OWNERSHIP_UNAVAILABLE");
   return Object.freeze({ schema: "setfarm.internal-production-cold-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
-    singleton: observe(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observe(PID_FILE, Buffer.from(String(process.pid)), false) });
+    singleton: observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observeOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)), false) });
 }
 
 async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
@@ -596,13 +604,16 @@ async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
     spawnerColdStartupReadinessCleanupV1.add(closeReadiness);
     // Cold startup never reclaims an unbound predecessor lock or PID residue.
     spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
-    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
     const stopped = new Promise<void>((resolve) => {
       spawnerColdStartupStopV1 = () => { spawnerColdStartupPhaseV1 = "stopping"; resolve(); };
       process.once("SIGTERM", spawnerColdStartupStopV1);
       process.once("SIGINT", spawnerColdStartupStopV1);
     });
     keepAlive = setInterval(() => {}, 60_000);
+    spawnerColdStartupPhaseV1 = "singleton-held";
+    await consumeInternalProductionColdSpawnerPidResidueV1();
+    observeInternalProductionColdSpawnerSingletonOwnershipV1();
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
     spawnerColdStartupPhaseV1 = "claim-ready";
     claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();
     if (!["stopping"].includes(spawnerColdStartupPhaseV1)) spawnerColdStartupPhaseV1 = "sealed";

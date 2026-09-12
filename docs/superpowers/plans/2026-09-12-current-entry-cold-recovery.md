@@ -692,6 +692,79 @@ rebind work and reviewed clean main; no guard override is used.
 Independent final review found no remaining must-fix issue in this six-file
 absent-file transport slice and confirmed it is ready for a scoped commit.
 
+### Exact cold PID-residue consumption
+
+**Files:** `src/spawner.ts` owns the singleton phase and startup-file observer;
+`src/internal-production/baseline-restart-authority-retirement-v1.ts` owns the
+authenticated residue consumer; its existing test owns the real helper/main
+fixtures. Update this plan and the existing exact export assertion, without a
+new File Map member. This implements the already approved stale-dead-PID union,
+not generic dead-file reclamation or a new launch/retry authority.
+
+**Interfaces:** the zero-argument
+`consumeInternalProductionColdSpawnerPidResidueV1(): Promise<void>` consumes
+only the cached child capability's original absence record. It calls the
+zero-argument main-owned
+`observeInternalProductionColdSpawnerSingletonOwnershipV1()` while phase is
+`singleton-held`; the existing two-file claim observer stays strict.
+
+- [x] Seed a real exited fixture predecessor and a canonical 0644 PID file
+  before the cold observation is hashed. Exercise the actual fixed helper and
+  real sealed main, expecting one dispatch, new owned PID/lock, readiness and
+  survival after helper exit. Verify RED from the current exclusive PID create.
+- [x] Extract the existing per-file retained ownership check; retain the
+  two-file observer's phase/cardinality checks. Create the actual singleton,
+  register both stop handlers and enter `singleton-held` before awaiting the
+  one-shot residue consumer. Only after consumption create the new PID:
+
+  ```ts
+  spawnerColdStartupPhaseV1 = "singleton-held";
+  await consumeInternalProductionColdSpawnerPidResidueV1();
+  observeInternalProductionColdSpawnerSingletonOwnershipV1();
+  createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+  spawnerColdStartupPhaseV1 = "claim-ready";
+  ```
+
+- [x] The consumer enters attempted synchronously, authenticates output and
+  original ancestor pins across the main-module await, and rejects replay.
+  For recorded absence require continuing ENOENT. For the recorded residue
+  open only the fixed no-follow/nonblocking PID path, register the reader
+  immediately, and compare all eight recorded metadata fields, full retained
+  FD/path metadata, exact bounded decimal bytes/hash and fresh `ESRCH` twice.
+  Recheck the actual held singleton immediately before unlink, fsync the
+  parent, verify absence and close the reader. Any uncertainty permanently
+  revokes child authority; a removed residue is never reconstructed.
+- [x] Add real boundary negatives: foreign same-byte inode, same-inode
+  write/restore, different dead PID, live/ambiguous PID, symlink/ancestor or
+  singleton replacement, unexpected disappearance, unlink/fsync/close faults,
+  concurrent/replayed consumption and signal during the awaited lookup.
+  Foreign evidence survives; no uncertain claim/readiness or second dispatch.
+- [x] Run the focused real residue group, full retirement, the four ordinary
+  startup regressions, exact manifests, TypeScript and independent review.
+  Commit only the verified slice. Controller settlement/rebind/live rollout
+  remain subsequent required work.
+
+Focused command:
+```sh
+env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test --test-name-pattern='actual fixed cold helper consumes only its authenticated PID residue' tests/internal-production/baseline-restart-authority-retirement-v1.test.ts
+```
+
+**Evidence:** the actual helper/child first refused with `EEXIST` on the exact
+recorded 0644 PID residue. The connected consumer passed the positive case
+(3.089s), then sixteen lifecycle/fault modes (22.685s). Four additional tests
+mutate the PID/lock or report PID reuse only at the second liveness probe,
+proving the final checks rather than merely initial parsing. All twenty passed
+in the full run (28.933s); every refusal preserves unconsumed/foreign evidence,
+publishes no claim/readiness, dispatches once and drains actual owned readers.
+An already unlinked residue is not reconstructed after sync/close uncertainty.
+
+Full retirement 53/53 (190.107s), actual helper transport twenty modes
+(44.891s), historical helper 19/19 (33.288s), ordinary startup four tests
+(39.875s), exact manifests 17/17 (6.614s), gateway 109/109 (3.786s), TypeScript
+no-emit and diff whitespace checks passed. Independent production review found
+no must-fix issue. This closes the local cold absent/stale-PID compatibility
+slice, not controller settlement, rebind, Task 6A or live A–E acceptance.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

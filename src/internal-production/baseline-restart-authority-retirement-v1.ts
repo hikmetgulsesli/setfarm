@@ -2088,8 +2088,63 @@ function authenticateColdSpawnerChildCapabilityV1() {
       outputTreeBytesHash: profile.outputTreeBytesHash as string, releaseManifestBytesHash: profile.releaseManifestBytesHash as string };
     const assertOutputStable = () => { assertStable(); verifyInternalProductionSpawnerLaunchOutputCandidateV1(output); assertStable(); };
     assertOutputStable();
+    let residueAttempted = false, residueConsumed = false;
+    const consumePidResidue = async () => {
+      assertOutputStable();
+      if (residueAttempted || claimStarted) fail("cold child PID residue was already attempted");
+      residueAttempted = true;
+      const startup = await import("../spawner.js");
+      assertOutputStable();
+      const absence = (intent.coldObservation as Record<string, any>).spawnerAbsence;
+      const target = path.join(absence.ancestors.at(-1).path, "spawner.pid");
+      const singleton = startup.observeInternalProductionColdSpawnerSingletonOwnershipV1();
+      if (singleton.path !== path.join(path.dirname(target), "spawner.lock") || singleton.uid !== uid || singleton.mode !== 0o600
+        || singleton.bytesHash !== sha256(`${process.pid}\n`)) fail("cold child PID residue singleton is crossed");
+      const assertOwner = () => {
+        assertOutputStable();
+        if (canonical(startup.observeInternalProductionColdSpawnerSingletonOwnershipV1()) !== canonical(singleton)) fail("cold child PID residue singleton changed");
+      };
+      const assertAbsent = () => {
+        try { lstatSync(target); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+        fail("cold child PID residue is not absent");
+      };
+      const residue = absence.pidFile;
+      if (residue.state === "absent") { assertOwner(); assertAbsent(); assertOwner(); assertAbsent(); residueConsumed = true; return; }
+      const original = lstatSync(target, { bigint: true }), expected = residue.identity;
+      if (!original.isFile() || original.isSymbolicLink() || original.nlink !== 1n || original.size < 1n || original.size > 32n
+        || ["dev", "ino", "uid", "nlink", "size", "mtimeNs", "ctimeNs"].some((key) => String(original[key as keyof BigIntStats]) !== expected[key])
+        || Number(original.mode & 0o7777n) !== expected.mode) fail("cold child original PID residue changed");
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      descriptors.push(descriptor);
+      const assertResidue = () => {
+        if (!sameColdFileMetadataV1(original, fstatSync(descriptor, { bigint: true })) || !sameColdFileMetadataV1(original, lstatSync(target, { bigint: true }))) fail("cold child PID residue identity changed");
+        const bytes = Buffer.alloc(Number(original.size) + 1), count = readSync(descriptor, bytes, 0, bytes.length, 0);
+        if (count !== Number(original.size) || !bytes.subarray(0, count).equals(Buffer.from(String(residue.pid)))
+          || sha256(bytes.subarray(0, count).toString()) !== residue.bytesSha256
+          || !sameColdFileMetadataV1(original, fstatSync(descriptor, { bigint: true })) || !sameColdFileMetadataV1(original, lstatSync(target, { bigint: true }))) fail("cold child PID residue bytes changed");
+      };
+      const assertDead = () => {
+        try { process.kill(residue.pid, 0); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return; throw error; }
+        fail("cold child PID residue is live or reused");
+      };
+      assertOwner(); assertResidue(); assertDead();
+      assertOwner(); assertResidue(); assertDead(); assertOwner(); assertResidue();
+      unlinkSync(target);
+      fsyncParent(target);
+      assertAbsent();
+      const unlinked = fstatSync(descriptor, { bigint: true });
+      if (unlinked.nlink !== 0n || unlinked.dev !== original.dev || unlinked.ino !== original.ino || unlinked.uid !== original.uid
+        || unlinked.gid !== original.gid || unlinked.mode !== original.mode || unlinked.size !== original.size
+        || unlinked.birthtimeNs !== original.birthtimeNs || unlinked.mtimeNs !== original.mtimeNs) fail("cold child consumed PID inode changed");
+      closeSync(descriptor); descriptors.splice(descriptors.indexOf(descriptor), 1);
+      assertOwner(); assertAbsent();
+      residueConsumed = true;
+    };
     const publishClaim = async () => {
       assertOutputStable();
+      if (!residueConsumed) fail("cold child PID residue has not been consumed");
       if (claimStarted) fail("cold child claim was already attempted");
       claimStarted = true;
       const main = await import("../spawner.js");
@@ -2137,7 +2192,7 @@ function authenticateColdSpawnerChildCapabilityV1() {
       assertOutputStable();
       return Object.freeze({ record, identity: coldFileIdentityTupleV1(written), journalIdentity: coldFileIdentityTupleV1(claim.rootStats) });
     };
-    return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, publishClaim, close });
+    return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, consumePidResidue, publishClaim, close });
   } catch {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain unfinished pins without authenticating again. */ } }
     return fail("cold child authentication failed");
@@ -2154,6 +2209,12 @@ function revokeColdSpawnerChildRuntimeV1(): void {
     pendingColdHelperAuthenticationCleanupV1.delete(close);
   };
   try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain cleanup, never the grant. */ } }
+}
+
+export async function consumeInternalProductionColdSpawnerPidResidueV1(): Promise<void> {
+  if (coldChildAuthenticationFailedV1 || coldChildAuthenticationV1 === null) fail("cold child PID residue authentication is unavailable");
+  try { await coldChildAuthenticationV1.consumePidResidue(); }
+  catch { revokeColdSpawnerChildRuntimeV1(); fail("cold child PID residue consumption is uncertain"); }
 }
 
 export async function publishInternalProductionColdSpawnerBootstrapClaimV1() {
