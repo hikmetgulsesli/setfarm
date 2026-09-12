@@ -438,6 +438,85 @@ HTTP 200. No live bootstrap, database change, guarded build, full P3 receipt,
 or Task 6A acceptance is claimed. Next: actual singleton/PID ownership, cold
 claim and sealed stop lifecycle, then helper/controller settlement integration.
 
+### Connected startup-file ownership and ordinary cold fence
+
+**Files:** `src/spawner.ts`, `tests/internal-production/owner-admission-v1.test.ts`,
+`tests/spawner-gateway-recovery.test.ts`, this plan. All are existing File Map
+members. Root remains the only writer; read-only review runs in parallel.
+
+**Causal need:** the current singleton release may remove another dead PID's
+lock, PID publication overwrites an existing file, and sealed/error cleanup
+unconditionally unlinks PID paths. A cold claim cannot safely own those effects.
+Separate creation/stale-reclamation authority from exact-own cleanup before
+connecting the cold claim. Retain the existing byte formats: lock `pid + "\n"`,
+PID `String(pid)`, and the real fixed `.openclaw/setfarm` paths.
+
+- [ ] Add a real copied-main failure test with an incomplete cold journal and
+  forbidden ordinary-admission/provider/DB sentinels. Assert no journal or
+  foreign startup-file change. Add exact-owned cleanup tests with same-byte
+  replacement inodes, symlinks, foreign dead PIDs, partial writes and repeated
+  cleanup. The real created descriptor count must return to zero.
+- [ ] Introduce a private `OwnedSpawnerStartupFileV1` carrying the created FD,
+  fixed path, original inode/owner/mode and exact bytes, plus unlink/close phase.
+  `createOwnedSpawnerStartupFileV1` uses exclusive no-follow creation and retains
+  the FD immediately. `closeOwnedSpawnerStartupFileV1` may unlink only the exact
+  owned inode/bytes, records unlink before close, and retains failed closes.
+  Foreign replacements are preserved; cleanup never invokes stale reclamation.
+- [ ] Ordinary acquisition may reclaim only a bounded no-follow regular
+  single-link owner file containing a canonical nonself PID, with fresh explicit
+  `ESRCH` and original inode/bytes rechecked immediately before unlink. `EPERM`,
+  ambiguous liveness, malformed bytes and replaced paths refuse. Cold lock
+  acquisition will never reclaim a predecessor lock.
+- [ ] Route sealed, normal, error and fatal cleanup through exact-own state.
+  Perform the mandatory strict cold-journal census after actual singleton/PID
+  publication and before `resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1`.
+  A refusal-only preflight before ordinary file mutation must also preserve an
+  already known unsettled journal's startup evidence; it grants no admission and
+  cannot replace the post-protection census. The later authenticated cold branch
+  is separate and cannot be selected by an environment marker alone.
+- [ ] Run the actual-main and ownership negatives, gateway recovery tests,
+  TypeScript no-emit, exact source inventory and whitespace checks; obtain
+  independent review before committing. No live launch follows from this slice.
+
+Compatibility to preserve in the subsequent cold claim: the authenticated cold
+absence observation permits one exact stale-dead PID residue, unlike the lock,
+which must be absent. Consume only that bound residue after fresh identity/bytes
+and `ESRCH` checks; unconditional PID absence must not silently replace this
+approved contract. Controller/helper/child claim and settlement remain separate
+connected work after startup ownership is verified.
+
+Startup ownership implementation evidence: the real main first returned a
+successful duplicate exit for an existing cold journal, then left its PID on
+late-journal refusal. Refusal-only preflight and the mandatory post-PID census
+now fence ordinary admission. Created lock/PID FDs are registered immediately,
+validated against their original path/bytes and retained through exact-own
+cleanup. Same-byte foreign replacements remain untouched; partial/unverified
+publication files stay fenced while their FDs close. Ordinary stale PID restart
+first failed with EEXIST, then passed the bounded definite-death reclamation.
+The twelve-case real-FS matrix covers non-ASCII/double-newline PID bytes, EPERM,
+PID reappearance, file replacement, symlinks/hardlinks, unsafe mode, live owner,
+interrupted close and a cold journal appearing immediately before deletion.
+Non-ASCII bytes first incorrectly granted deletion because ASCII decoding masks
+high bits; UTF-8 decoding plus the exact decimal grammar fixed that RED.
+
+Independent review reproduced a fatal cleanup interruption exiting zero. The
+fatal callback now establishes exit one before retrying/containing cleanup;
+real-FD callback tests confirm unsuccessful termination and completed transient
+cleanup. A final real-main parent rename/symlink regression also failed: leaf
+inode equality alone followed changed ancestry. Capture and recheck each direct
+ancestor's immutable identity around open/publication and before unlink, with
+only the existing fixed Darwin /var alias. Directory timestamps/link counts are
+not authority because legitimate file publication changes them. These checks
+are observation fences, not atomic exclusion of a malicious privileged racer.
+
+Startup slice final gates: seven real-main modes plus actual stale-reclamation,
+publication and fatal-cleanup probes passed 4/4 (34.002s); the added ordinary
+admission sentinel confirms both cold refusals precede that boundary. Gateway
+recovery 109/109 (2.395s), exact File Map 17/17 (5.839s), TypeScript no-emit and
+diff checks passed. Independent review accepted the final ancestor checks and
+cleanup ownership. The ordinary startup compatibility fix does not yet grant
+genuine cold-child startup, publish a claim, or enable helper/controller settling.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

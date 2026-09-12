@@ -4,6 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
+import { observeInternalProductionColdSpawnerBootstrapJournalCensusV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -400,6 +401,9 @@ let lastGatewayPrespawnRestartMs = 0;
 let lastGatewayCleanupRestartMs = 0;
 let lastGuardGatewayRestartMs = 0;
 let spawnerLockFd: number | null = null;
+type SpawnerStartupParentV1 = Readonly<{ path: string; identity: fs.BigIntStats }>;
+type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[] };
+const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -465,35 +469,148 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function observeSpawnerStartupFileParentsV1(file: string): { file: string; parents: readonly SpawnerStartupParentV1[] } {
+  if (!path.isAbsolute(file)) throw Error("SPAWNER_STARTUP_FILE_PATH_INVALID");
+  // Only Darwin's fixed system /var alias is supported, as in the workspace guard.
+  const physical = process.platform === "darwin" && file.startsWith("/var/") ? `/private${file}` : file;
+  const parents: SpawnerStartupParentV1[] = [];
+  for (let current = path.dirname(physical); ; current = path.dirname(current)) {
+    const identity = fs.lstatSync(current, { bigint: true });
+    if (!identity.isDirectory() || identity.isSymbolicLink() || parents.length >= 128) throw Error("SPAWNER_STARTUP_FILE_PARENT_INVALID");
+    parents.push({ path: current, identity });
+    if (path.dirname(current) === current) break;
+  }
+  return { file: physical, parents };
+}
+
+function assertSpawnerStartupFileParentsV1(parents: readonly SpawnerStartupParentV1[]): void {
+  for (const { path: target, identity } of parents) {
+    const current = fs.lstatSync(target, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino
+      || current.uid !== identity.uid || current.gid !== identity.gid || current.mode !== identity.mode
+      || current.birthtimeNs !== identity.birthtimeNs) throw Error("SPAWNER_STARTUP_FILE_PARENT_CHANGED");
+  }
+}
+
+function createOwnedSpawnerStartupFileV1(file: string, bytes: Buffer): OwnedSpawnerStartupFileV1 {
+  const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
+  const descriptor = fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+  const owned: OwnedSpawnerStartupFileV1 = { file, descriptor, bytes, identity: null, unlinked: false, parents: originalParents.parents };
+  spawnerStartupFilesV1.push(owned);
+  assertSpawnerStartupFileParentsV1(owned.parents);
+  const before = fs.fstatSync(descriptor, { bigint: true });
+  if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_STARTUP_FILE_IDENTITY_INVALID");
+  fs.writeFileSync(descriptor, bytes);
+  const after = fs.fstatSync(descriptor, { bigint: true });
+  const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+    && value.dev === before.dev && value.ino === before.ino && value.uid === before.uid && value.gid === before.gid
+    && value.mode === before.mode && value.birthtimeNs === before.birthtimeNs && value.size === BigInt(bytes.length)
+    && value.mtimeNs === after.mtimeNs && value.ctimeNs === after.ctimeNs;
+  const observed = Buffer.alloc(bytes.length + 1);
+  if (!same(after) || !same(fs.lstatSync(file, { bigint: true }))
+    || fs.readSync(descriptor, observed, 0, observed.length, 0) !== bytes.length || !observed.subarray(0, bytes.length).equals(bytes)
+    || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STARTUP_FILE_PUBLICATION_INVALID");
+  owned.identity = after;
+  assertSpawnerStartupFileParentsV1(owned.parents);
+  return owned;
+}
+
+function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void {
+  if (!owned.unlinked && owned.identity !== null) {
+    try {
+      assertSpawnerStartupFileParentsV1(owned.parents);
+      const original = owned.identity, held = fs.fstatSync(owned.descriptor, { bigint: true }), current = fs.lstatSync(owned.file, { bigint: true });
+      const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+        && value.dev === original.dev && value.ino === original.ino && value.uid === original.uid && value.mode === original.mode
+        && value.size === original.size && value.birthtimeNs === original.birthtimeNs && value.mtimeNs === original.mtimeNs && value.ctimeNs === original.ctimeNs;
+      const bytes = Buffer.alloc(owned.bytes.length + 1);
+      if (same(held) && same(current) && fs.readSync(owned.descriptor, bytes, 0, bytes.length, 0) === owned.bytes.length
+        && bytes.subarray(0, owned.bytes.length).equals(owned.bytes) && same(fs.fstatSync(owned.descriptor, { bigint: true }))
+        && same(fs.lstatSync(owned.file, { bigint: true }))) {
+        assertSpawnerStartupFileParentsV1(owned.parents);
+        fs.unlinkSync(owned.file);
+        owned.unlinked = true;
+      }
+    } catch (error) {
+      // A missing or changed path never grants permission to remove another file.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[spawner] Startup-file cleanup preserved an unverified path");
+    }
+  }
+  fs.closeSync(owned.descriptor);
+  spawnerStartupFilesV1.splice(spawnerStartupFilesV1.indexOf(owned), 1);
+  if (spawnerLockFd === owned.descriptor) spawnerLockFd = null;
+}
+
+function publishSpawnerPidFileV1(): void {
+  try { createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid))); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (reclaimDeadSpawnerStartupFileV1(PID_FILE) !== "removed") throw Error("SPAWNER_PID_FILE_UNAVAILABLE");
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+  }
+}
+
+function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
+  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
+  const before = fs.lstatSync(file, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())
+    || (before.mode & 0o022n) !== 0n || before.size < 1n || before.size > 32n) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const reader: OwnedSpawnerStartupFileV1 = { file, descriptor, bytes: Buffer.alloc(0), identity: null, unlinked: false, parents: originalParents.parents };
+  spawnerStartupFilesV1.push(reader);
+  const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+    && value.dev === before.dev && value.ino === before.ino && value.uid === before.uid && value.gid === before.gid
+    && value.mode === before.mode && value.size === before.size && value.birthtimeNs === before.birthtimeNs
+    && value.mtimeNs === before.mtimeNs && value.ctimeNs === before.ctimeNs;
+  try {
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    if (!same(fs.fstatSync(descriptor, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
+    const bytes = Buffer.alloc(Number(before.size) + 1);
+    if (fs.readSync(descriptor, bytes, 0, bytes.length, 0) !== Number(before.size)) throw Error("SPAWNER_STALE_FILE_BYTES_INVALID");
+    const value = bytes.subarray(0, Number(before.size)).toString("utf8");
+    if (!/^[1-9][0-9]{0,9}\n?$/.test(value)) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+    const pid = Number(value.trim());
+    if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || pid === process.pid) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+    const dead = () => {
+      try { process.kill(pid, 0); return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw Error("SPAWNER_STALE_FILE_LIVENESS_UNPROVEN"); }
+    };
+    if (!dead()) return "alive";
+    observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    const current = Buffer.alloc(bytes.length);
+    if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
+      || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
+      || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    fs.unlinkSync(file);
+    return "removed";
+  } finally { closeOwnedSpawnerStartupFileV1(reader); }
+}
+
 function acquireSpawnerSingletonLock(): void {
   fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      spawnerLockFd = fs.openSync(LOCK_FILE, "wx");
-      fs.writeFileSync(spawnerLockFd, `${process.pid}\n`);
+      spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
       return;
     } catch (err: any) {
       if (err?.code !== "EEXIST") throw err;
-      const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
-      if (processIsAlive(existingPid)) {
-        console.warn(`[spawner] Another spawner is already running (PID ${existingPid}); exiting duplicate PID ${process.pid}`);
+      if (reclaimDeadSpawnerStartupFileV1(LOCK_FILE) === "alive") {
+        console.warn(`[spawner] Another spawner is already running; exiting duplicate PID ${process.pid}`);
         process.exit(0);
       }
-      try { fs.unlinkSync(LOCK_FILE); } catch {}
     }
   }
   throw new Error("SPAWNER_LOCK_UNAVAILABLE: could not acquire singleton lock");
 }
 
 function releaseSpawnerSingletonLock(): void {
-  if (spawnerLockFd !== null) {
-    try { fs.closeSync(spawnerLockFd); } catch {}
-    spawnerLockFd = null;
+  let failure: unknown;
+  for (const owned of [...spawnerStartupFilesV1].reverse()) {
+    try { closeOwnedSpawnerStartupFileV1(owned); } catch (error) { failure ??= error; }
   }
-  try {
-    const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
-    if (existingPid === process.pid || !processIsAlive(existingPid)) fs.unlinkSync(LOCK_FILE);
-  } catch {}
+  if (failure) throw failure;
 }
 
 const STORY_WORKDIR_CANDIDATE_KEYS = [
@@ -10683,9 +10800,12 @@ async function main() {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
+  // Refusal-only preflight preserves any already-visible unsettled evidence.
+  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
-  fs.writeFileSync(PID_FILE, String(process.pid));
+  publishSpawnerPidFileV1();
+  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
   if (activeStartupAdmission) {
     const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
@@ -10712,7 +10832,6 @@ async function main() {
       process.once("SIGINT", stop);
     }),
     cleanupSealedProcess: () => {
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
     },
   });
@@ -10832,7 +10951,6 @@ async function main() {
       const failed = results.filter((result) => result.status === "quarantined");
       await runRecoveryCoordinator.close();
       await pgClose();
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
       const exitCode = failed.length > 0 ? 1 : 0;
       process.exitCode = exitCode;
@@ -10842,7 +10960,6 @@ async function main() {
       console.error(`[spawner] Shutdown failed closed: ${String(error).slice(0, 1_000)}`);
       process.exitCode = 1;
       try { await pgClose(); } catch {}
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
       return 1;
     });
@@ -10891,7 +11008,12 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
-    releaseSpawnerSingletonLock();
+    process.exitCode = 1;
+    try { releaseSpawnerSingletonLock(); }
+    catch {
+      try { releaseSpawnerSingletonLock(); }
+      catch { console.error("[spawner] Fatal startup cleanup could not finish before exit"); }
+    }
     console.error(`[spawner] Fatal: ${String(err)}`);
     process.exit(1);
   });

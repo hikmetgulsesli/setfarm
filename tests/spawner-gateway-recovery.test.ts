@@ -474,7 +474,8 @@ describe("spawner gateway recovery wiring", () => {
     const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(spawnerSource, /readUtf8RegularFileAtMostSync\([\s\S]*V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES/);
     assert.match(spawnerSource, /const LOCK_FILE = path\.join\(os\.homedir\(\),\s*"\.openclaw",\s*"setfarm",\s*"spawner\.lock"\)/);
-    assert.match(spawnerSource, /fs\.openSync\(LOCK_FILE,\s*"wx"\)/);
+    assert.match(spawnerSource, /createOwnedSpawnerStartupFileV1\(LOCK_FILE,/);
+    assert.match(spawnerSource, /fs\.constants\.O_CREAT \| fs\.constants\.O_EXCL \| fs\.constants\.O_RDWR \| fs\.constants\.O_NOFOLLOW/);
     assert.match(spawnerSource, /Another spawner is already running/);
     assert.match(spawnerSource, /acquireSpawnerSingletonLock\(\);\s*fs\.mkdirSync\(path\.dirname\(PID_FILE\)/);
     assert.match(spawnerSource, /let shutdownPromise: Promise<number> \| undefined/);
@@ -489,13 +490,16 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /spawn\(process\.execPath,\s*\[daemonScript,\s*String\(port\)\]/);
   });
 
-  it("normalizes runtime PATH so child scripts can resolve node under launch agents", () => {
+  it("normalizes runtime PATH so child scripts can resolve node under launch agents", async () => {
     const source = fs.readFileSync(path.join(root, "src", "runtime-config.ts"), "utf-8");
-    assert.match(source, /import \{ basename,\s*delimiter,\s*dirname,\s*join \} from "node:path"/);
     assert.match(source, /ensureRuntimePath\(\);\s*\}/);
-    assert.match(source, /function ensureRuntimePath\(\): void/);
-    assert.match(source, /const nodeDir = dirname\(process\.execPath\)/);
-    assert.match(source, /process\.env\.PATH = next\.join\(delimiter\)/);
+    const implementation = /function ensureRuntimePath\(\): void \{[\s\S]*?\n\}/.exec(source);
+    assert.ok(implementation);
+    const { normalizeRuntimePathV1 } = await import("../src/internal-production/baseline-spawner-launch-environment-v1.js");
+    const runtime = { execPath: "/verified/node/bin/node", env: { PATH: "/custom/bin:/usr/bin:/custom/bin" } };
+    const run = Function("process", "homedir", "normalizeRuntimePathV1", transformSync(implementation[0], { loader: "ts" }).code + "\nensureRuntimePath();");
+    run(runtime, () => "/fixture/account", normalizeRuntimePathV1);
+    assert.deepEqual(runtime.env.PATH.split(path.delimiter), ["/verified/node/bin", "/fixture/account/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/custom/bin"]);
   });
 
   it("backs off runtime claims on API 429 and rate-limit transcript text", () => {

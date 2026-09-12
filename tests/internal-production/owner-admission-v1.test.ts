@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -3219,15 +3219,131 @@ test("P4 sealed spawner gate authenticates replacement and exits before normal s
   rmSync(fixture, { recursive: true, force: true });
 });
 
+test("ordinary stale startup reclamation requires exact bytes, definite death and an absent cold journal", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8"), tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "releaseSpawnerSingletonLock"].map((name) => {
+    const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-stale-startup-"));
+  try {
+    const runner = path.join(fixture, "stale.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import actualFs from 'node:fs';import actualProcess from 'node:process';import {spawnSync} from 'node:child_process';import path from 'node:path';
+const root=${JSON.stringify(fixture)},ownedDescriptors=new Set(),spawnerStartupFilesV1=[];
+let spawnerLockFd=null,fault='',target='',reads=0,kills=0,censuses=0,interrupted=false;
+const process=Object.create(actualProcess);process.kill=(pid,signal)=>{kills++;if(fault==='eperm')throw Object.assign(Error('fixture permission refusal'),{code:'EPERM'});if(fault==='pid-reappears'&&kills===2)return true;return actualProcess.kill(pid,signal);};
+const fs={...actualFs,openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},closeSync(fd){if(fault==='close'&&!interrupted){interrupted=true;throw Error('fixture pre-close failure')}actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
+readSync(...args){const count=actualFs.readSync(...args);if(++reads===1&&fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,actualFs.readFileSync(target+'.original'),{mode:0o600});}return count;}};
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){censuses++;if(fault==='cold-arrival'&&censuses===2)actualFs.mkdirSync(path.join(root,'cold-journal'));if(actualFs.existsSync(path.join(root,'cold-journal')))throw Error('COLD_BOOTSTRAP_UNSETTLED');}
+${functions}
+const predecessor=spawnSync(actualProcess.execPath,['-e',''],{env:{PATH:'/usr/bin:/bin'}});assert.equal(predecessor.status,0);
+for(fault of ['none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
+ target=path.join(root,fault+'.pid');reads=0;kills=0;censuses=0;interrupted=false;
+ const text=String(fault==='alive'?actualProcess.ppid:predecessor.pid),bytes=Buffer.from(text+(fault==='double-newline'?'\\n\\n':''));if(fault==='non-ascii')bytes[0]|=128;
+ actualFs.writeFileSync(target,bytes,{mode:0o600});
+ if(fault==='symlink'){actualFs.renameSync(target,target+'.original');actualFs.symlinkSync(target+'.original',target);}
+ if(fault==='hardlink')actualFs.linkSync(target,target+'.linked');
+ if(fault==='writable')actualFs.chmodSync(target,0o666);
+ if(fault==='none')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'removed');
+ else if(fault==='alive')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'alive');
+ else assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),undefined,fault+' must not grant stale deletion');
+ releaseSpawnerSingletonLock();assert.equal(ownedDescriptors.size,0,fault+' must close its readers');
+ if(!['none','close'].includes(fault))assert.deepEqual(actualFs.readFileSync(target),bytes,fault+' preserves exact retained evidence');
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 15000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("spawner fatal refusal stays nonzero when startup cleanup is interrupted", () => {
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const boundary = source.slice(source.lastIndexOf('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {'));
+  assert.ok(boundary.includes("main().catch"));
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-fatal-cleanup-"));
+  try {
+    const runner = path.join(fixture, "fatal.mjs");
+    writeFileSync(runner, `
+import {openSync,closeSync} from 'node:fs';
+const descriptor=openSync(import.meta.filename,'r');let attempts=0,closed=false;
+function releaseSpawnerSingletonLock(){if(++attempts===1)throw Error('fixture pre-close failure');closeSync(descriptor);closed=true;}
+async function main(){process.on('unhandledRejection',()=>console.warn('unexpected unhandled cleanup'));throw Error('fixture fatal admission refusal');}
+process.on('exit',()=>process.stdout.write(JSON.stringify({attempts,closed})));
+${boundary.replace('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)', 'if (true)')}
+`);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 1, "cleanup failure cannot turn fatal refusal into a successful exit");
+    assert.deepEqual(JSON.parse(result.stdout), { attempts: 2, closed: true });
+    assert.match(result.stderr, /fixture fatal admission refusal/); assert.doesNotMatch(result.stderr, /unexpected unhandled cleanup/);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("spawner startup-file publication refuses short writes and replaced paths", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const names = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "releaseSpawnerSingletonLock"];
+  const functions = names.map((name) => {
+    const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration, `actual startup ownership implementation is missing: ${name}`);
+    return declaration.getText(tree);
+  }).join("\n");
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-file-publication-"));
+  try {
+    const runner = path.join(fixture, "publication.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import actualFs from 'node:fs';import path from 'node:path';
+const root=${JSON.stringify(fixture)},ownedDescriptors=new Set();
+let spawnerLockFd=null,fault='none',target='';const spawnerStartupFilesV1=[];
+const fs={...actualFs,
+openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},
+closeSync(fd){actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
+writeFileSync(fd,bytes,...args){
+  if(fault==='partial')return actualFs.writeFileSync(fd,bytes.subarray(0,1),...args);
+  if(fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,'foreign',{flag:'wx',mode:0o600});}
+  return actualFs.writeFileSync(fd,bytes,...args);
+}};
+${functions}
+for(fault of ['none','partial','replacement']){
+  target=path.join(root,fault+'.pid');
+  if(fault==='none')createOwnedSpawnerStartupFileV1(target,Buffer.from(String(process.pid)));
+  else assert.throws(()=>createOwnedSpawnerStartupFileV1(target,Buffer.from(String(process.pid))),/STARTUP_FILE/,'publication must verify actual bytes and original path');
+  releaseSpawnerSingletonLock();releaseSpawnerSingletonLock();
+  assert.equal(ownedDescriptors.size,0,'publication refusal closes every owned descriptor');
+  if(fault==='replacement')assert.equal(actualFs.readFileSync(target,'utf8'),'foreign');
+  if(fault==='none')assert.equal(actualFs.existsSync(target),false);
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
+  for (const mode of ["sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
   const fixtureSource = path.join(fixture, "src");
   const pidFile = path.join(fixture, "state/spawner.pid");
   const lockFile = path.join(fixture, "state/spawner.lock");
   const normalMarker = path.join(fixture, "normal-startup-called");
+  const admissionMarker = path.join(fixture, "ordinary-admission-called");
   const providerMarker = path.join(fixture, "provider-discovery-called");
   const ordinaryDirectories = ["agent-scratch", "transcripts", "attempt-workspaces"].map((name) => path.join(fixture, "ordinary", name));
+  const coldRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1");
+  if (mode === "existing-cold") {
+    mkdirSync(coldRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+    writeFileSync(pidFile, String(process.pid)); writeFileSync(lockFile, `${process.pid}\n`);
+  }
+  if (mode === "stale-pid") {
+    const predecessor = spawnSync(process.execPath, ["-e", ""], { env: { PATH: "/usr/bin:/bin" } });
+    assert.equal(predecessor.status, 0);
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+    writeFileSync(pidFile, String(predecessor.pid), { mode: 0o644 });
+  }
   cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
   projectCopiedWorkspaceLocatorV1(fixture, fixture);
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
@@ -3254,6 +3370,7 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     .replace('const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");', `const PID_FILE = ${JSON.stringify(pidFile)};`)
     .replace('const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");', `const LOCK_FILE = ${JSON.stringify(lockFile)};`)
     .replace("  assertAgentRuntimeAvailable();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"runtime\\n");\n  assertAgentRuntimeAvailable();`)
+    .replace("  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();", `  fs.writeFileSync(${JSON.stringify(admissionMarker)}, "entered");\n  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();`)
     .replace("  await pgMigrate();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"migration\\n");\n  await pgMigrate();`)
     .replace("  const listener = postgres(pgUrl, { max: 1 });", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"listener\\n");\n  const listener = postgres(pgUrl, { max: 1 });`)
     .replace(
@@ -3261,6 +3378,11 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
       '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
     )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
+  if (mode === "cold-appears") {
+    const publication = spawnerBytes.includes("  publishSpawnerPidFileV1();") ? "  publishSpawnerPidFileV1();" : "  fs.writeFileSync(PID_FILE, String(process.pid));";
+    assert.equal(spawnerBytes.split(publication).length, 2);
+    spawnerBytes = spawnerBytes.replace(publication, `${publication}\n  fs.mkdirSync(${JSON.stringify(coldRoot)}, {recursive:true,mode:0o700});`);
+  }
   for (const signature of ["function commandFromPath(name: string): string {", "function commandIsUsable(command: string): boolean {", "function kimiWeeklyQuotaExhausted(): boolean {"]) {
     assert.equal(spawnerBytes.split(signature).length, 2, "provider side-effect port is exact");
     spawnerBytes = spawnerBytes.replace(signature, `${signature}\n  fs.appendFileSync(${JSON.stringify(providerMarker)}, "provider\\n"); throw new Error("SEALED_PROVIDER_DISCOVERY_FORBIDDEN");`);
@@ -3285,7 +3407,22 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
   child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => { stdout += chunk; });
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
+    if (mode === "existing-cold" || mode === "cold-appears") {
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      const exit = await closed; clearTimeout(timeout);
+      assert.deepEqual(exit, { code: 1, signal: null }, `${mode}: incomplete cold journal must refuse ordinary startup: ${stderr}`);
+      assert.match(stderr, /COLD_BOOTSTRAP_UNSETTLED/);
+      assert.equal(existsSync(coldRoot), true);
+      assert.deepEqual(readdirSync(coldRoot), [], "ordinary refusal preserves the exact incomplete journal");
+      for (const marker of [admissionMarker, normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(marker), false);
+      if (mode === "existing-cold") {
+        assert.equal(readFileSync(pidFile, "utf8"), String(process.pid));
+        assert.equal(readFileSync(lockFile, "utf8"), `${process.pid}\n`);
+      } else { assert.equal(existsSync(pidFile), false); assert.equal(existsSync(lockFile), false); }
+      continue;
+    }
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`sealed spawner did not wait: ${stderr}`)), 10_000);
       const inspect = () => {
@@ -3298,20 +3435,35 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     });
     assert.equal(existsSync(pidFile), true);
     assert.equal(existsSync(lockFile), true);
+    assert.equal(existsSync(admissionMarker), true, "ordinary sealed fixture reaches its genuine admission boundary");
     assert.equal(existsSync(normalMarker), false);
     assert.equal(existsSync(providerMarker), false, "sealed startup performs no provider CLI or quota discovery");
     for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false, "sealed startup creates no ordinary producer workspace");
+    const replacement = mode === "foreign-pid" ? pidFile : mode === "foreign-lock" ? lockFile : null;
+    let replacementInode: number | undefined;
+    if (replacement) {
+      const bytes = readFileSync(replacement);
+      renameSync(replacement, `${replacement}.original`);
+      writeFileSync(replacement, bytes);
+      replacementInode = lstatSync(replacement).ino;
+    }
+    if (mode === "parent-symlink") {
+      renameSync(path.dirname(pidFile), `${path.dirname(pidFile)}.original`);
+      symlinkSync(`${path.dirname(pidFile)}.original`, path.dirname(pidFile), "dir");
+    }
     child.kill("SIGTERM");
-    const exit = await new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+    const exit = await closed;
     assert.deepEqual(exit, { code: 0, signal: null });
-    assert.equal(existsSync(pidFile), false);
-    assert.equal(existsSync(lockFile), false);
+    assert.equal(existsSync(pidFile), mode === "foreign-pid" || mode === "parent-symlink");
+    assert.equal(existsSync(lockFile), mode === "foreign-lock" || mode === "parent-symlink");
+    if (replacement) assert.equal(lstatSync(replacement).ino, replacementInode, "cleanup preserves a same-byte foreign replacement inode");
     assert.equal(existsSync(normalMarker), false);
     assert.equal(existsSync(providerMarker), false);
     for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     rmSync(fixture, { recursive: true, force: true });
+  }
   }
 });
 
