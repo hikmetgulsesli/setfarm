@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyRuntimeEnvFileV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
 import {
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
   normalizeArtifactCapacityLimits,
@@ -14,15 +15,6 @@ import {
 } from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
-
-function parseEnvValue(raw: string): string {
-  const value = raw.trim();
-  const quote = value[0];
-  if ((quote === '"' || quote === "'") && value[value.length - 1] === quote) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
 
 export function expandRuntimePath(value: string): string {
   return value
@@ -40,20 +32,7 @@ function resolvePackageRoot(): string {
 function loadEnvFile(envDir: string, filename: string, overrideFileValues: boolean): void {
   const envPath = join(envDir, filename);
   if (!existsSync(envPath)) return;
-  const lines = readFileSync(envPath, "utf-8").split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim().replace(/^export\s+/, "");
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = parseEnvValue(trimmed.slice(eq + 1));
-    const alreadyFromProcess = process.env[key] !== undefined && !loadedEnvKeys.has(key);
-    if (alreadyFromProcess) continue;
-    if (!overrideFileValues && process.env[key] !== undefined) continue;
-    process.env[key] = val;
-    loadedEnvKeys.add(key);
-  }
+  applyRuntimeEnvFileV1(process.env, loadedEnvKeys, readFileSync(envPath, "utf-8"), overrideFileValues);
 }
 
 export function loadRuntimeEnv(): void {

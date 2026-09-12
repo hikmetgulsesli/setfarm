@@ -266,6 +266,38 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ## Progress ledger — 2026-09-12
 
+### Detached launch environment refinement
+
+Static imports consume runtime configuration before `spawner.main`, so the
+authenticated detached transport needs a cycle-free environment leaf, not a
+late replacement of `process.env`. Add
+`src/internal-production/baseline-spawner-launch-environment-v1.ts` and modify
+`src/runtime-config.ts`. The first slice extracts the unchanged dotenv
+application rules and adds a bounded pure launch-environment candidate builder;
+it grants no process or filesystem authority. Existing owner-admission tests
+own candidate/ordinary-loader behavior. Later helper/journal integration must
+authenticate exact source/host/lease/profile and inherited snapshot descriptors
+before this candidate can be consumed as a cold environment. Never persist
+plaintext environment values or fall back to ordinary files on a crossed cold
+capability. Add both paths to exact Task0/P3 manifests, runner and owning plan
+and design amendments before checkpointing. No child launch in this slice.
+
+The pure candidate and ordinary-loader slice is implemented. The ordinary
+copied-loader characterization passed before and after parser extraction;
+the new candidate first failed because the projection was absent. Candidate
+coverage includes exact process/file/local precedence, missing versus empty
+files, immutable output, no ambient environment mutation, malformed UTF-8/NUL,
+forbidden loader/guard/test keys, fixed-selector overrides, file/value/key-count
+and total serialized-size limits. Only fixture values appear in assertions;
+ambient-environment stability is compared by digest, not a secret-bearing diff.
+New source-membership RED proved both paths absent from the old manifests.
+The additive amendment now binds exact145/64 in plan/design/checker/runner;
+crossed or missing amendment rows refuse. Focused environment2/2 (0.970s),
+source17/17 (5.821s), real sealed main1/1 (4.485s body), inert imports1/1
+(1.834s), gateway109/109 (2.139s), TypeScript and whitespace passed. Candidate
+review found no material issue. This is not yet authenticated cold consumption
+or a live bootstrap; helper/journal/claim integration remains required.
+
 Task 1: complete — scoped implementation and independent spec/quality review
 passed. Whole-branch delivery and live recovery remain pending.
 

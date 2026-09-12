@@ -74,6 +74,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/internal-production/baseline-service-restart-sequence-v1.ts",
   "src/internal-production/baseline-spawner-startup-admission-v1.ts",
   "src/internal-production/baseline-workspace-authority-path-v1.ts",
+  "src/internal-production/baseline-spawner-launch-environment-v1.ts",
   "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
@@ -84,6 +85,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/recovery/v3-evidence-only-publication.ts",
   "src/recovery/v3-evidence-only-worker.ts",
   "src/recovery/v3-recovery-lifecycle-reconciler.ts",
+  "src/runtime-config.ts",
   "src/server/dashboard.ts",
   "src/server/index.html",
   "src/spawner.ts",
@@ -182,6 +184,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
   "src/internal-production/baseline-workspace-authority-path-v1.ts",
+  "src/internal-production/baseline-spawner-launch-environment-v1.ts",
   "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/medic/checks.ts",
@@ -191,6 +194,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/recovery/v3-evidence-only-publication.ts",
   "src/recovery/v3-evidence-only-worker.ts",
   "src/recovery/v3-recovery-lifecycle-reconciler.ts",
+  "src/runtime-config.ts",
   "tests/claim-log-lifecycle.test.ts",
   "tests/cleanup-ops.test.ts",
   "tests/execution-attempts/attempt-reconciler.test.ts",
@@ -265,19 +269,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 62, "P3 source path cardinality differs");
+  assert.equal(actual.length, 64, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen143");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen145");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen143 order");
+    "P3 source paths do not preserve frozen145 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 62, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 64, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -304,6 +308,21 @@ function assertExactP3ExecutableInventoryV1(input: Readonly<{
   }
   assert.deepEqual([...executable, ...input.helperOnly].sort(),
     P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/")).sort());
+}
+
+function launchEnvironmentAmendmentV1(plan: string): ReadonlyArray<readonly [string, string]> {
+  const heading = "## Detached launch environment amendment v1";
+  assert.equal(plan.split(heading).length, 2, "launch environment amendment cardinality differs");
+  const section = plan.slice(plan.indexOf(heading) + heading.length).split("\n## ")[0]!;
+  const rows = [...section.matchAll(/^(Task 0|P3) insert `([^`]+)` after `([^`]+)`\.$/gm)];
+  const insertions = [
+    ["src/internal-production/baseline-spawner-launch-environment-v1.ts", "src/internal-production/baseline-workspace-authority-path-v1.ts"],
+    ["src/runtime-config.ts", "src/recovery/v3-recovery-lifecycle-reconciler.ts"],
+  ] as const;
+  assert.deepEqual(rows.map((row) => row.slice(1)), insertions.flatMap(([file, after]) => [
+    ["Task 0", file, after], ["P3", file, after],
+  ]), "launch environment amendment insertion paths or order differ");
+  return insertions;
 }
 
 function workspaceStorageAmendmentV1(plan: string): Readonly<{ path: string; task0After: string; p3After: string }> {
@@ -473,6 +492,8 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
   const inventory = legacyFindingInventoryAmendmentV1(plan);
   assert.equal(base.length, 142, "legacy finding inventory amendment Task 0 predecessor differs");
   insertAfter(base, inventory.after, [inventory.path]);
+  assert.equal(base.length, 143, "launch environment amendment Task 0 predecessor differs");
+  for (const [file, after] of launchEnvironmentAmendmentV1(plan)) insertAfter(base, after, [file]);
   return base;
 }
 
@@ -517,6 +538,8 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
   const inventory = legacyFindingInventoryAmendmentV1(plan);
   assert.equal(base.length, 61, "legacy finding inventory amendment P3 predecessor differs");
   insertAfter(inventory.after, [inventory.path]);
+  assert.equal(base.length, 62, "launch environment amendment P3 predecessor differs");
+  for (const [file, after] of launchEnvironmentAmendmentV1(plan)) insertAfter(after, [file]);
   return base;
 }
 
@@ -690,7 +713,7 @@ function p3ExecutableSqlLiteralOccurrences(
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
-    "Task 8 must parse all exact34 production/package paths");
+    "Task 8 must parse all exact36 production/package paths");
 
   const ownerCore = sources["src/internal-production/owner-admission-v1.ts"]!;
   assert.equal(countMatches(ownerCore, /BigInt\(value\) > 9_007_199_254_740_991n/g), 1,
@@ -1048,15 +1071,15 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact62 subset of frozen143", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 62);
+  it("freezes P3 as an ordered exact64 subset of frozen145", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 64);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(production.length, 34);
+    assert.equal(production.length, 36);
     assert.equal(tests.length, 28);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 62);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 64);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
@@ -1091,7 +1114,7 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 62);
+    assert.equal(countOnly.length, 64);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
@@ -1240,6 +1263,22 @@ describe("Task 0 exact source manifest", () => {
     assert.equal(P3_EXACT_SOURCE_PATHS_V1.includes(locator as never), true);
   });
 
+  it("binds both launch-environment files and rejects crossed environment amendments", () => {
+    for (const file of ["src/internal-production/baseline-spawner-launch-environment-v1.ts", "src/runtime-config.ts"]) {
+      assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.includes(file as never), true, file);
+      assert.equal(P3_EXACT_SOURCE_PATHS_V1.includes(file as never), true, file);
+    }
+    const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
+    const heading = "## Detached launch environment amendment v1";
+    for (const crossed of [plan.replace(heading, "## Unknown environment amendment"), `${plan}\n${heading}\n`,
+      plan.replace("Task 0 insert `src/runtime-config.ts`", "Task 0 insert `src/crossed.ts`"),
+      plan.replace("P3 insert `src/runtime-config.ts` after `src/recovery/v3-recovery-lifecycle-reconciler.ts`.", "P3 insert `src/runtime-config.ts` after `src/db-pg.ts`."),
+    ]) {
+      assert.throws(() => extractApprovedTask0SourcePathsV1(crossed), /launch environment amendment/i);
+      assert.throws(() => extractApprovedP3SourcePathsV1(crossed), /launch environment amendment/i);
+    }
+  });
+
   it("includes the shared finding publication validator in both authenticated source inventories", () => {
     const locator = "src/findings/finding-publication-v1.ts";
     assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.includes(locator as never), true);
@@ -1284,8 +1323,8 @@ describe("Task 0 exact source manifest", () => {
     }
   });
 
-  it("accepts the literal 143-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 143);
+  it("accepts the literal 145-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 145);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
@@ -1298,7 +1337,7 @@ describe("Task 0 exact source manifest", () => {
     assert.equal(readFileSync(configPath, "utf8"), "{}\n");
   });
 
-  it("matches frozen143 while preserving every approved P3 exact62 member", () => {
+  it("matches frozen145 while preserving every approved P3 exact64 member", () => {
     const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
     const approved = extractApprovedTask0SourcePathsV1(plan);
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");

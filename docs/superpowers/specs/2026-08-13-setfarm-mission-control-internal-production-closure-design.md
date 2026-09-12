@@ -2735,3 +2735,26 @@ do not grow; SQL schemas, finding issue statuses and terminal hashes do not
 change. Post-migration exemption still requires the authenticated migration
 chain and an exact same-snapshot publication match; this pure module alone
 grants no admission authority.
+
+## Detached launch environment amendment v1
+
+This additive Task 6A refinement extends exact143 Task 0 / exact62 P3 with the
+cycle-free launch-environment leaf and its ordinary runtime-config consumer.
+Static configuration consumers require authentication before cold loading, not
+late replacement inside spawner main. Prior receipts and source tuples remain
+historical; no arbitrary root/environment flag becomes a launch capability.
+
+Task 0 insert `src/internal-production/baseline-spawner-launch-environment-v1.ts` after `src/internal-production/baseline-workspace-authority-path-v1.ts`.
+P3 insert `src/internal-production/baseline-spawner-launch-environment-v1.ts` after `src/internal-production/baseline-workspace-authority-path-v1.ts`.
+Task 0 insert `src/runtime-config.ts` after `src/recovery/v3-recovery-lifecycle-reconciler.ts`.
+P3 insert `src/runtime-config.ts` after `src/recovery/v3-recovery-lifecycle-reconciler.ts`.
+
+Current inventories become Task 0 exact145 and P3 exact64: 36 production/package
+paths and the unchanged 28 test/helper paths (25 database tests, 1 source-only
+test, 2 non-executable helpers). Existing owner-admission tests own environment
+composition, ordinary-loader compatibility and later sealed-child integration.
+The first slice is a bounded pure candidate builder and unchanged ordinary
+dotenv parser extraction, not authenticated consumption or launch authority.
+Future cold consumption must independently bind fixed physical inputs, source,
+host, lease and one-shot dispatch before installing the private snapshot.
+No plaintext environment values enter durable records or diagnostics.

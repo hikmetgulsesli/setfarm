@@ -15,6 +15,89 @@ import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
 import { validateLegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 
+test("ordinary runtime env retains process priority and repeated local-file overrides", () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-env-precedence-")));
+  try {
+    const sourceRoot = path.resolve(import.meta.dirname, "../../src");
+    let source = readFileSync(path.join(sourceRoot, "runtime-config.ts"), "utf8");
+    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity"]) {
+      source = source.replace(`"./${dependency}.js"`, JSON.stringify(pathToFileURL(path.join(sourceRoot, `${dependency}.ts`)).href));
+    }
+    mkdirSync(path.join(fixture, "internal-production"));
+    const leaf = path.join(sourceRoot, "internal-production/baseline-spawner-launch-environment-v1.ts");
+    if (existsSync(leaf)) cpSync(leaf, path.join(fixture, "internal-production", path.basename(leaf)));
+    writeFileSync(path.join(fixture, "runtime-config.ts"), source);
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(path.join(fixture, ".env"), 'KEPT=file\nLOCAL=first\nLOCAL=ignored\nEMPTY=\nexport QUOTED="two words"\n');
+    writeFileSync(path.join(fixture, ".env.local"), "KEPT=local\nLOCAL=second\n");
+    const script = `import{writeFileSync}from'node:fs';import{loadRuntimeEnv}from${JSON.stringify(pathToFileURL(path.join(fixture, "runtime-config.ts")).href)};
+      const first={KEPT:process.env.KEPT,LOCAL:process.env.LOCAL,EMPTY:process.env.EMPTY,QUOTED:process.env.QUOTED};
+      writeFileSync(${JSON.stringify(path.join(fixture, ".env.local"))},'LOCAL=third\\n');loadRuntimeEnv();
+      process.stdout.write(JSON.stringify({first,after:process.env.LOCAL}));`;
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+      cwd: fixture, env: { PATH: "/usr/bin:/bin", SETFARM_ENV_DIR: fixture, KEPT: "process" },
+      encoding: "utf8", timeout: 10_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual(JSON.parse(child.stdout), {
+      first: { KEPT: "process", LOCAL: "second", EMPTY: "", QUOTED: "two words" }, after: "third",
+    });
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("detached launch environment candidate is bounded, inert and preserves dotenv precedence", async () => {
+  const modulePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  assert.equal(existsSync(modulePath), true, "detached launch environment projection is not implemented");
+  const { projectInternalProductionSpawnerLaunchEnvironmentCandidateV1: project } = await import(pathToFileURL(modulePath).href);
+  const base = Object.freeze({
+    HOME: "/fixture/account", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
+    SETFARM_REPO_DIR: "/fixture/repository", SETFARM_ENV_DIR: "/fixture/scripts",
+    SETFARM_PG_URL: "postgresql://fixture.invalid/disposable",
+  });
+  const ordinary = Buffer.from('FROM_FILE=first\nFROM_FILE=ignored\nexport QUOTED="two words"\nLOCAL=base\nEMPTY=\n# ignored\n');
+  const local = Buffer.from("LOCAL=local\nFROM_FILE=local\nSINGLE='literal $HOME'\n");
+  const environmentDigest = () => createHash("sha256").update(JSON.stringify(Object.entries(process.env).sort())).digest("hex");
+  const before = environmentDigest();
+  const value = project(base, [ordinary, local]);
+  assert.deepEqual({ ...value.environment }, {
+    ...base, FROM_FILE: "local", QUOTED: "two words", LOCAL: "local", EMPTY: "", SINGLE: "literal $HOME",
+  });
+  assert.equal(environmentDigest(), before, "pure candidate must not install environment values");
+  assert.ok(Object.isFrozen(value) && Object.isFrozen(value.environment));
+  assert.match(value.environmentHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(project(base, [ordinary, null]).environmentHash, value.environmentHash);
+  assert.notEqual(project(base, [Buffer.from("LOCAL=other"), null]).environmentHash, project(base, [ordinary, null]).environmentHash);
+  assert.deepEqual(value.envFileContentHashes, [
+    createHash("sha256").update(ordinary).digest("hex"), createHash("sha256").update(local).digest("hex"),
+  ]);
+  assert.deepEqual(project(base, [null, null]).envFileContentHashes, [null, null]);
+  assert.notDeepEqual(project(base, [Buffer.alloc(0), null]).envFileContentHashes, [null, null]);
+  for (const key of ["NODE_OPTIONS", "NODE_PATH", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "SETFARM_SKIP_RUNTIME_GUARD", "SETFARM_ALLOW_DIRTY_BUILD", "SETFARM_TEST_PG_ADMIN_URL", "SETFARM_INTERNAL_PRODUCTION_DETACHED_ENV_V1"]) {
+    assert.throws(() => project(base, [Buffer.from(`${key}=sensitive-never-print`), null]), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /LAUNCH_ENVIRONMENT_INVALID/);
+      assert.ok(!error.message.includes("sensitive-never-print"));
+      return true;
+    });
+  }
+  for (const key of Object.keys(base)) {
+    assert.throws(() => project(base, [Buffer.from(`${key}=crossed`), null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  }
+  for (const bytes of [Buffer.from("BAD-KEY=value"), Buffer.from("TOKEN=bad\0value"), Buffer.from([0xff]), Buffer.alloc(262145, 65)]) {
+    assert.throws(() => project(base, [bytes, null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  }
+  assert.throws(() => project({ ...base, EXTRA: "ambient" }, [null, null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.throws(() => project(base, [null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.throws(() => project(base, [Buffer.from(`VALUE=${"x".repeat(65537)}`), null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  const many = Buffer.from(Array.from({ length: 1017 }, (_, index) => `KEY_${index}=x`).join("\n"));
+  assert.equal(Object.keys(project(base, [many, null]).environment).length, 1024);
+  assert.throws(() => project(base, [many, Buffer.from("ONE_TOO_MANY=x")]), /LAUNCH_ENVIRONMENT_INVALID/);
+  const escaped = (offset: number) => Buffer.from(Array.from({ length: 4 }, (_, index) => `KEY_${offset + index}=${"\\".repeat(60000)}`).join("\n"));
+  assert.throws(() => project(base, [escaped(0), escaped(4)]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.notEqual(project({ ...base, SETFARM_REPO_DIR: "/fixture/other" }, [null, null]).environmentHash,
+    project(base, [null, null]).environmentHash);
+});
+
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import * as ownerAdmissionApi from "../../src/internal-production/owner-admission-v1.js";
 import { parseProductBuildAuthorityV2DeliveryEvidenceResponseV1 } from "../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.js";
