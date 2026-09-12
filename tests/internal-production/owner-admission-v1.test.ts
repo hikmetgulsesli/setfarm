@@ -154,7 +154,7 @@ test("ordinary runtime env retains process priority and repeated local-file over
   try {
     const sourceRoot = path.resolve(import.meta.dirname, "../../src");
     let source = readFileSync(path.join(sourceRoot, "runtime-config.ts"), "utf8");
-    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity"]) {
+    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity", "internal-production/baseline-restart-authority-retirement-v1"]) {
       source = source.replace(`"./${dependency}.js"`, JSON.stringify(pathToFileURL(path.join(sourceRoot, `${dependency}.ts`)).href));
     }
     mkdirSync(path.join(fixture, "internal-production"));
@@ -177,6 +177,17 @@ test("ordinary runtime env retains process priority and repeated local-file over
       first: { KEPT: "process", LOCAL: "second", EMPTY: "", QUOTED: "two words" }, after: "third",
     });
   } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("runtime PATH projection shares the ordinary deterministic normalization without effects", async () => {
+  const leaf = await import("../../src/internal-production/baseline-spawner-launch-environment-v1.js") as Record<string, any>;
+  assert.equal(typeof leaf.normalizeRuntimePathV1, "function", "shared effective PATH projection is not implemented");
+  const before = process.env.PATH;
+  const expected = "/fixture/node/bin:/fixture/account/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/custom/bin";
+  assert.equal(leaf.normalizeRuntimePathV1("/bin::/custom/bin:/usr/bin:/custom/bin", "/fixture/account", "/fixture/node/bin/node"), expected);
+  assert.equal(leaf.normalizeRuntimePathV1(expected, "/fixture/account", "/fixture/node/bin/node"), expected, "repeated normalization is exact");
+  assert.equal(leaf.normalizeRuntimePathV1("", "/fixture/account", "/usr/bin/node"), "/usr/bin:/fixture/account/.local/bin:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin");
+  assert.equal(process.env.PATH, before, "projection never installs a process environment");
 });
 
 test("detached launch environment candidate is bounded, inert and preserves dotenv precedence", async () => {

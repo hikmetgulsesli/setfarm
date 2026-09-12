@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
@@ -504,21 +504,39 @@ process.stdout.write(JSON.stringify({schema:frame.schema,intentHash:frame.intent
   }
 });
 
-async function createColdHelperAuthenticationFixtureV1(helperSourceTransform?: (source: string) => string, runnerSetup = "") {
+async function createColdHelperAuthenticationFixtureV1(helperSourceTransform?: (source: string) => string, runnerSetup = "", configureProfile?: (profile: any, root: string) => void) {
   assert.ok(readFileSync(sourcePath, "utf8").includes("async function authenticateColdSpawnerHelperIntentV1()"), "independent cold helper authentication is not implemented");
   const fixture = await createColdFrameFixtureV1();
   const profile = Reflect.get(globalThis, "__coldIntentProfile");
   profile.profile.executable = { path: process.execPath };
+  configureProfile?.(profile, fixture.fixture);
   profile.profile.environmentHash = sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(profile.environment)}`);
   delete profile.profile.profileHash;
   profile.profile.profileHash = sha256(canonical(profile.profile));
   const typescript = await import("typescript");
   const dist = path.join(fixture.fixture, "dist/internal-production");
   mkdirSync(dist, { recursive: true, mode: 0o700 });
+  const compiled = new Set<string>();
   const compile = (relative: string, source: string) => {
+    compiled.add(relative);
     const target = path.join(fixture.fixture, "dist", relative.replace(/\.ts$/, ".js"));
     mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
     writeFileSync(target, typescript.transpileModule(source, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+  };
+  const compileRepositoryModule = (relative: string, transform?: (source: string) => string): void => {
+    if (compiled.has(relative)) return;
+    assert.ok(compiled.size < 128, "runtime fixture static graph is bounded");
+    const original = readFileSync(path.resolve(import.meta.dirname, "../../src", relative), "utf8");
+    const source = transform ? transform(original) : original;
+    compile(relative, source);
+    const tree = typescript.createSourceFile(relative, source, typescript.ScriptTarget.Latest, true);
+    for (const statement of tree.statements) {
+      if (!typescript.isImportDeclaration(statement) || statement.importClause?.isTypeOnly || !typescript.isStringLiteral(statement.moduleSpecifier)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (!statement.importClause?.name && bindings && typescript.isNamedImports(bindings) && bindings.elements.every((element) => element.isTypeOnly)) continue;
+      const specifier = statement.moduleSpecifier.text;
+      if (specifier.startsWith(".")) compileRepositoryModule(path.normalize(path.join(path.dirname(relative), specifier.replace(/\.js$/, ".ts"))));
+    }
   };
   for (const relative of ["internal-production/baseline-workspace-authority-path-v1.ts", "findings/legacy-finding-publication-inventory-v1.ts", "product-compiler/canonical-json.ts"]) compile(relative, readFileSync(path.join(fixture.fixture, "src", relative), "utf8"));
   compile("internal-production/baseline-spawner-launch-environment-v1.ts", readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts"), "utf8"));
@@ -542,19 +560,38 @@ process.stdout.write(JSON.stringify({...result,diagnostic:globalThis.__coldHelpe
   const observer = (body = "") => writeFileSync(path.join(dist, "baseline-post-handoff-receipt-v1.js"), `import {readFileSync,writeFileSync,renameSync,mkdirSync,unlinkSync,readdirSync} from 'node:fs';\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){${body};return ${JSON.stringify(profile)}}\n`);
   observer();
   const intent = await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+  const installRealPhaseReader = () => {
+    // Keep filesystem/ownership checks real; only the independently tested clean-source
+    // observation is controlled, since this isolated tree is not a built Git checkout.
+    const original = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+    const tree = typescript.createSourceFile("receipt.ts", original, typescript.ScriptTarget.Latest, true);
+    const names = new Set(["canonicalComparable", "strictUtf8", "directorySnapshot", "sameDirectory", "assertDirectory", "sameRegularMetadata", "readStableRegular", "fail", "currentEntryFail", "isEnoent", "recursivelyFreeze", "requireAbsentPhasePathV1", "requireAbsentProducerLiteralV1", "assertPhaseSourceEqualV1", "observePhaseClosedZeroV1"]);
+    const declarations = tree.statements.filter((statement) => typescript.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text));
+    assert.equal(declarations.length, names.size);
+    const constantsSource = tree.statements.filter((statement) => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => typescript.isIdentifier(declaration.name) && ["PHASE_CLOSED_FUTURE_PRODUCERS_V1", "MAX_BUILD_FILE_BYTES_V1", "UTF8"].includes(declaration.name.text)));
+    assert.equal(constantsSource.length, 3);
+    compile("internal-production/baseline-post-handoff-receipt-v1.ts", readFileSync(path.join(dist, "baseline-post-handoff-receipt-v1.js"), "utf8") + `
+import {closeSync,constants,fstatSync,lstatSync,openSync,realpathSync} from 'node:fs';
+import path from 'node:path';import {fileURLToPath} from 'node:url';import {TextDecoder} from 'node:util';
+const fixedRepositoryRoot=()=>${JSON.stringify(fixture.fixture)};
+const observeCurrentInternalProductionCleanSetfarmSourceBuildV1=()=>{globalThis.__phaseSourceHook?.();return ${JSON.stringify(intent.coldObservation.source)}};
+${[...constantsSource, ...declarations].map((statement) => statement.getText(tree)).join("\n")}
+export {observePhaseClosedZeroV1};
+`);
+  };
   const handles = fixture.isolated.openColdFrameFixtureV1();
   const state = fixture.isolated.inspectColdIntentFixtureV1();
-  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string } = {}) => {
+  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string; coldMode?: string } = {}) => {
     const child = spawnSync(process.execPath, [overrides.entry ?? runner], { cwd: fixture.fixture, encoding: "utf8", timeout: 15000, maxBuffer: 65536,
       stdio: ["ignore", "pipe", "pipe", overrides.frame ?? handles.frameDescriptor, overrides.lock ?? state.descriptor, overrides.intent ?? handles.intentDescriptor],
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...(overrides.coldMode === undefined ? {} : { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: overrides.coldMode }) } });
     assert.equal(child.status, 0, child.stderr);
     assert.ok(!child.stdout.includes("never-persist-cold-snapshot"));
     assert.ok(!child.stderr.includes("never-persist-cold-snapshot"));
     assert.equal(child.stderr, "");
     return JSON.parse(child.stdout);
   };
-  return { ...fixture, intent, handles, state, runner, observer, run, close: () => {
+  return { ...fixture, intent, handles, state, runner, observer, run, compileRepositoryModule, installRealPhaseReader, profile, close: () => {
     closeSync(handles.frameDescriptor); closeSync(handles.intentDescriptor);
     fixture.isolated.closeColdIntentFixtureV1(); Reflect.deleteProperty(globalThis, "__coldIntentProfile"); fixture.cleanup();
   } };
@@ -571,6 +608,109 @@ test("cold helper independently authenticates inherited intent without journal o
     assert.equal(result.secretEnumerated, false);
     assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
     assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, "intent-only");
+  } finally { fixture.close(); }
+});
+
+test("authenticated helper configuration skips dotenv and retains its exact effective snapshot", async () => {
+  assert.ok(readFileSync(sourcePath, "utf8").includes("async function acquireColdSpawnerHelperContextV1()"), "cold helper context issuer is not implemented");
+  const fixture = await createColdHelperAuthenticationFixtureV1((source) => source + "\nexport { acquireColdSpawnerHelperContextV1 };\n", "", (profile, root) => {
+    profile.profile.home = homedir();
+    profile.environment = { HOME: homedir(), PATH: "/usr/bin:/bin:/custom/bin", LANG: "C", LC_ALL: "C", SETFARM_ENV_DIR: path.join(root, "runtime-env"),
+      SETFARM_REPO_DIR: root, SETFARM_PG_URL: "postgresql://fixture@127.0.0.1:1/disposable", SETFARM_DIR: path.join(root, "runtime"), FIXTURE_SECRET: "never-persist-cold-snapshot" };
+  });
+  try {
+    fixture.compileRepositoryModule("runtime-config.ts", (source) => source.replace('import { existsSync, readFileSync } from "node:fs";', `import { existsSync as actualExistsSync, readFileSync as actualReadFileSync } from "node:fs";
+function existsSync(target:any){if(/\\.env(?:\\.local)?$/.test(String(target)))throw Error('unexpected dotenv existence read');return actualExistsSync(target)}
+function readFileSync(target:any,...args:any[]){if(/\\.env(?:\\.local)?$/.test(String(target)))throw Error('unexpected dotenv content read');return actualReadFileSync(target,...args)}`));
+    symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture.fixture, "node_modules"), "dir");
+    const configDir = fixture.profile.environment.SETFARM_ENV_DIR;
+    mkdirSync(configDir, { mode: 0o700 });
+    writeFileSync(path.join(configDir, ".env.local"), "UNBOUND_NEW_KEY=must-not-load\nFIXTURE_SECRET=crossed\n", { mode: 0o600 });
+    fixture.observer("if(globalThis.__contextFault==='post-profile'&&(globalThis.__profileCalls=(globalThis.__profileCalls??0)+1)===2)throw Error('fixture post-bracket profile refusal')");
+    const receipt = path.join(path.dirname(fixture.runner), "baseline-post-handoff-receipt-v1.js");
+    writeFileSync(receipt, readFileSync(receipt, "utf8") + `
+import {observeInternalProductionColdSpawnerHelperIntentPhaseV1} from './baseline-restart-authority-retirement-v1.js';
+export async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context){
+  globalThis.__issuedContext=context;
+  if(globalThis.__contextFault==='closed-refresh'){let calls=0;globalThis.__phaseSourceHook=()=>{if(++calls===2)context.close()};}
+  observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  const phaseContext=globalThis.__contextFault==='cloned-context'?{...context}:globalThis.__contextFault==='public-phase'?undefined:context;
+  const phase=await observePhaseClosedZeroV1(${JSON.stringify(fixture.intent.coldObservation.source)},phaseContext).catch(error=>{globalThis.__phaseFailure=error.message;throw error});
+  if(Object.keys(phase).length!==18||Object.values(phase).some(value=>value!==0))throw Error('phase did not prove zero');
+  if(globalThis.__contextFault==='bracket-refusal')throw Error('fixture bracket refusal');
+  const {runtimeConfig,loadRuntimeEnv}=await import('../runtime-config.js');
+  globalThis.__coldConfigurationProbe={urlMatches:runtimeConfig.setfarmPgUrl===${JSON.stringify(fixture.profile.environment.SETFARM_PG_URL)},dirMatches:runtimeConfig.setfarmDir===${JSON.stringify(fixture.profile.environment.SETFARM_DIR)},secretMatches:process.env.FIXTURE_SECRET==='never-persist-cold-snapshot',newKeyAbsent:process.env.UNBOUND_NEW_KEY===undefined,path:process.env.PATH};
+  writeFileSync(${JSON.stringify(path.join(configDir, ".env.local"))},'ANOTHER_NEW_KEY=must-not-load\\n');loadRuntimeEnv();
+  if(process.env.ANOTHER_NEW_KEY!==undefined)throw Error('dotenv introduced an unbound key');
+  if(process.env.PATH!==globalThis.__coldConfigurationProbe.path)throw Error('effective PATH drift');
+  observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  return ${JSON.stringify(fixture.intent.coldObservation)};
+}
+`);
+    fixture.installRealPhaseReader();
+    writeFileSync(fixture.runner, `
+import assert from 'node:assert/strict';import {fstatSync} from 'node:fs';
+import {acquireColdSpawnerHelperContextV1,observeInternalProductionColdSpawnerHelperIntentPhaseV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1} from './baseline-restart-authority-retirement-v1.js';
+let context;
+try{
+  context=await acquireColdSpawnerHelperContextV1();
+  assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1(context),/not refreshing/);
+  assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1({...context}));
+  assert.throws(()=>observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),/COLD_BOOTSTRAP_UNSETTLED/);
+  const {loadRuntimeEnv}=await import('../runtime-config.js');
+  loadRuntimeEnv();process.env.UNEXPECTED='drift';assert.throws(()=>loadRuntimeEnv());delete process.env.UNEXPECTED;
+  const probe=globalThis.__coldConfigurationProbe;
+  assert.ok(probe.urlMatches&&probe.dirMatches&&probe.secretMatches&&probe.newKeyAbsent);
+  assert.equal(probe.path,${JSON.stringify([path.dirname(process.execPath), path.join(homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/custom/bin"].filter((entry, index, values) => values.indexOf(entry) === index).join(path.delimiter))});
+  context.close();assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1(context));assert.throws(()=>loadRuntimeEnv());
+  assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);process.stdout.write(JSON.stringify({accepted:true}));
+}catch(error){
+  const {resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1}=await import('./baseline-restart-authority-retirement-v1.js');
+  assert.throws(()=>resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1());
+  if(globalThis.__issuedContext)assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1(globalThis.__issuedContext));
+  assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);
+  process.stdout.write(JSON.stringify({accepted:false,message:error.message,phaseFailure:globalThis.__phaseFailure,revoked:true}));
+}finally{context?.close();}
+`);
+    const before = coldGenesisTreeSnapshotV1(fixture.root);
+    const result = fixture.run({ coldMode: "1" });
+    assert.equal(result.accepted, true, JSON.stringify(result));
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+    const validRunner = readFileSync(fixture.runner);
+    for (const fault of ["cloned-context", "public-phase", "closed-refresh", "bracket-refusal", "post-profile"]) {
+      writeFileSync(fixture.runner, `globalThis.__contextFault=${JSON.stringify(fault)};\n${validRunner.toString("utf8")}`);
+      const refused = fixture.run({ coldMode: "1" });
+      assert.equal(refused.accepted, false, fault);
+      assert.equal(refused.revoked, true, fault);
+      assert.match(refused.message, /cold helper context refresh failed/, fault);
+      if (fault === "public-phase") assert.match(refused.phaseFailure, /COLD_BOOTSTRAP_UNSETTLED/, "own intent never becomes public zero authority");
+      assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+    }
+    writeFileSync(fixture.runner, validRunner);
+    const authorityRoot = path.join(fixture.profile.environment.SETFARM_DIR, "internal-production");
+    mkdirSync(path.dirname(authorityRoot), { recursive: true, mode: 0o700 });
+    for (const kind of ["directory", "dangling-symlink"] as const) {
+      if (kind === "directory") mkdirSync(authorityRoot, { mode: 0o700 });
+      else symlinkSync(path.join(fixture.fixture, "absent-authority"), authorityRoot);
+      try {
+        const refused = fixture.run({ coldMode: "1" });
+        assert.equal(refused.accepted, false, kind);
+        assert.equal(refused.revoked, true);
+        assert.match(refused.phaseFailure, /future producer authority root is present/);
+      } finally { rmSync(authorityRoot, { recursive: kind === "directory" }); }
+    }
+    for (const coldMode of [undefined, "invalid"]) {
+      const refused = fixture.run({ coldMode });
+      assert.equal(refused.accepted, false, "missing or malformed selector cannot authorize configuration");
+      assert.match(refused.message, /cold helper context refresh failed/);
+    }
+    writeFileSync(fixture.runner, `try{await import('../runtime-config.js');process.stdout.write(JSON.stringify({accepted:true}))}catch(error){process.stdout.write(JSON.stringify({accepted:false,message:error.message}))}`);
+    for (const coldMode of ["1", undefined]) {
+      const unauthenticated = fixture.run({ coldMode });
+      assert.equal(unauthenticated.accepted, false);
+      assert.equal(unauthenticated.message, "INTERNAL_PRODUCTION_COLD_HELPER_CONFIGURATION_INVALID", "the exact helper entry refuses before dotenv or defaults even without a selector");
+    }
+    writeFileSync(fixture.runner, validRunner);
   } finally { fixture.close(); }
 });
 
@@ -1268,6 +1408,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1",
     "observeInternalProductionBaselineServiceRestartHelperJournalCensusV1",
     "observeInternalProductionColdSpawnerBootstrapJournalCensusV1",
+    "observeInternalProductionColdSpawnerHelperIntentPhaseV1",
     "observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1",
     "prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1",
     "releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
@@ -1275,6 +1416,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "resolveInternalProductionBaselineServiceRestartHelperRegistryHeadV1",
     "resolveInternalProductionBaselineServiceRestartHelperRegistryRegistrationV1",
     "resolveInternalProductionBaselineServiceRestartHelperRegistryTerminalV1",
+    "resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1",
     "resolveInternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1",
     "resolveInternalProductionServiceRestartAuthorityActivationV1",
     "resolveInternalProductionServiceRestartAuthorityCutoverV1",

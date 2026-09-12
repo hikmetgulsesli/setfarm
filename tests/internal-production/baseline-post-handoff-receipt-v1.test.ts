@@ -46,8 +46,8 @@ const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-test
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
 function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
-  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1"];
-  assert.equal(names.length, 56, "cold recovery adds exactly the three fixed read-only ports");
+  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1"];
+  assert.equal(names.length, 57, "cold recovery adds exactly the four fixed read-only ports");
   assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
   const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
   assert.equal(historical.length, 53);
@@ -17498,6 +17498,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       }
       source += '\nexport const coldBracketForTestV1 = typeof observeExactPoisonColdBootstrapBracketNoWriteV1 === "function" ? observeExactPoisonColdBootstrapBracketNoWriteV1 : undefined;\n';
       fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+      fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
       const authority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8"));
       const pending = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8"));
       const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{
@@ -17527,8 +17528,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
         const record=(value,stem)=>({value,bytes:Buffer.from(JSON.stringify(canonical(value))+"\\n"),pair:{[stem+"Ref"]:value[stem+"Ref"],[stem+"Hash"]:value[stem+"Hash"]}});
         const prerequisites={authorityV3Migration31Audit:record(authority,"authorityV3Migration31Audit"),pendingBootstrapHandoffMigration:record(pending,"pendingBootstrapHandoffMigration")};
-        for(const fault of ["none","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
+        Reflect.set(globalThis,"__coldBracketProbeV1",{port:()=>{throw new Error("untrusted context reached an observation port")}});
+        for(const foreign of [{},{schema:"setfarm.internal-production-cold-helper-context.v1"}]){
+          await assert.rejects(()=>m.observeInternalProductionColdSpawnerHelperBootstrapObservationV1(foreign),/cold helper context is foreign/);
+        }
+        for(const fault of ["none","helper-context","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
           const calls={};
+          const helperContext=fault==="helper-context"?Object.freeze({fixture:"opaque routing identity"}):undefined;
           undo=()=>{};
           if(fault==="edge-present")addEdge();
           Reflect.set(globalThis,"__coldBracketProbeV1",{port:(name,args)=>{
@@ -17557,7 +17563,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             if(name==="observeColdPhysicalInventoryV1"){
               assert.equal(Object.hasOwn(args[0],"spawner"),false);return {...physical,...(fault==="physical-drift"&&n>1?{ownedProcessCount:1}:{})};
             }
-            if(name==="observePhaseClosedZeroV1")return {...Object.fromEntries(phaseKeys.map(k=>[k,0])),...(fault==="phase-nonzero"?{restartReservationCount:1}:{})};
+            if(name==="observePhaseClosedZeroV1"){
+              assert.equal(args[1],helperContext,"both phase passes receive the same explicit context; ordinary remains undefined");
+              return {...Object.fromEntries(phaseKeys.map(k=>[k,0])),...(fault==="phase-nonzero"?{restartReservationCount:1}:{})};
+            }
             if(name==="observeLegacyDatabaseCensusV1"){
               assert.equal(args[0],true,"cold catalog checks remain inside the real read-only DB transaction");
               if(n===2&&fault==="edge-appears")addEdge();
@@ -17580,8 +17589,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             }
             throw new Error("unexpected port:"+name);
           }});
-          if(fault==="none"){
-            const value=await m.coldBracketForTestV1();
+          if(fault==="none"||fault==="helper-context"){
+            const value=await m.coldBracketForTestV1(helperContext);
             assert.equal(value.schema,"setfarm.internal-production-cold-bootstrap-observation.v1");
             assert.equal(value.operation.operationHash,${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)});
             assert.equal(value.contaminationFingerprintHash,${JSON.stringify(EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1)});

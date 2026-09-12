@@ -3,6 +3,19 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, opendirSync, read
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Shared ordinary/effective snapshot transformation. Authentication of the
+// environment and host inputs remains the caller's separate responsibility.
+export function normalizeRuntimePathV1(configuredPath: string, ownerHome: string, executable: string): string {
+  const required = [path.dirname(executable), path.join(ownerHome, ".local", "bin"),
+    "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const next: string[] = [];
+  for (const entry of [...required, ...configuredPath.split(path.delimiter).filter(Boolean)]) {
+    if (!entry || next.includes(entry)) continue;
+    next.push(entry);
+  }
+  return next.join(path.delimiter);
+}
+
 type LaunchOutputCandidateV1 = Readonly<{
   rootIdentity: Readonly<{ devDecimal: string; inoDecimal: string; uid: number }>;
   sourceSha: string;

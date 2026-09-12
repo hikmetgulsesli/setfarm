@@ -162,6 +162,14 @@ type ColdBootstrapIntentStateV1 = {
 let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
+type ColdHelperContextStateV1 = {
+  authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
+  phase: "refreshing" | "ready" | "closing";
+  observationHash: string | null;
+};
+const coldHelperContextsV1 = new WeakMap<object, ColdHelperContextStateV1>();
+let coldHelperRuntimeContextV1: object | null = null;
+let coldHelperContextInvocationActiveV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -1417,8 +1425,8 @@ async function authenticateColdSpawnerHelperIntentV1() {
       || fileURLToPath(import.meta.url) !== path.join(profile.repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js")) fail("cold helper launch profile or snapshot is crossed");
     assertStable();
     const authenticated = { intent: freezeColdDataV1(intent), assertStable, close };
-    Object.defineProperty(authenticated, "environment", { value: observed.environment, enumerable: false });
-    return Object.freeze(authenticated);
+    Object.defineProperty(authenticated, "environment", { value: freezeColdDataV1(observed.environment), enumerable: false });
+    return Object.freeze(authenticated) as typeof authenticated & Readonly<{ environment: Readonly<Record<string, string>> }>;
   } catch {
     try { close(); } catch {
       pendingColdHelperAuthenticationCleanupV1.add(close);
@@ -1428,6 +1436,81 @@ async function authenticateColdSpawnerHelperIntentV1() {
     }
     return fail("cold helper authentication failed");
   }
+}
+
+function heldColdHelperContextV1(context: unknown): ColdHelperContextStateV1 {
+  const state = context && typeof context === "object" ? coldHelperContextsV1.get(context) : undefined;
+  if (!state || state.phase === "closing" || context !== coldHelperRuntimeContextV1) fail("cold helper context is foreign, cloned or closed");
+  state.authentication.assertStable();
+  return state;
+}
+
+export function observeInternalProductionColdSpawnerHelperIntentPhaseV1(context: unknown) {
+  const state = heldColdHelperContextV1(context);
+  if (state.phase !== "refreshing") fail("cold helper context is not refreshing");
+  const intent = state.authentication.intent;
+  const root = lstatSync(path.join(rootPaths().root, "cold-spawner-bootstrap-v1"), { bigint: true });
+  const body = { schema: "setfarm.internal-production-cold-helper-owned-intent-phase.v1", state: "authenticated-own-intent-only", ownedIntentCount: 1,
+    intentRef: intent.intentRef, intentHash: intent.intentHash, epochRef: intent.epochRef, epochHash: intent.epochHash,
+    genesisRef: intent.genesisRef, genesisHash: intent.genesisHash, lockIdentity: intent.lockIdentity, intentIdentity: descriptorIdentity(5),
+    rootIdentity: [root.dev, root.ino, root.uid, root.gid, root.mode, root.nlink, root.size, root.birthtimeNs, root.mtimeNs, root.ctimeNs].map(String) };
+  state.authentication.assertStable();
+  return freezeColdDataV1({ ...body, phaseHash: sha256(canonical(body)) });
+}
+
+// Configuration-only port: no input, publication, launch or phase admission.
+// Runtime configuration must separately require its code-owned cold selector.
+export function resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1() {
+  if (coldHelperRuntimeContextV1 === null) {
+    // Historical fixed helpers never import runtime-config. A new helper that
+    // reaches configuration before FD authentication must not load defaults.
+    if (process.argv[1] === path.join(repositoryRoot(), "dist/internal-production/baseline-service-restart-helper-v1.js")) fail("cold helper runtime snapshot is unavailable");
+    return null;
+  }
+  const state = heldColdHelperContextV1(coldHelperRuntimeContextV1);
+  const snapshot = { schema: "setfarm.internal-production-cold-helper-runtime-snapshot.v1" };
+  Object.defineProperty(snapshot, "environment", { value: state.authentication.environment, enumerable: false });
+  return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>> }>;
+}
+
+// Remains private until the complete fixed helper dispatch path is integrated.
+async function acquireColdSpawnerHelperContextV1() {
+  if (coldHelperContextInvocationActiveV1) fail("cold helper context invocation is already active");
+  for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
+  if (coldHelperRuntimeContextV1 !== null) fail("cold helper context is already retained");
+  coldHelperContextInvocationActiveV1 = true;
+  let close: (() => void) | null = null;
+  try {
+    const authentication = await authenticateColdSpawnerHelperIntentV1();
+    const context = Object.freeze({ schema: "setfarm.internal-production-cold-helper-context.v1", close: () => close!() });
+    const state: ColdHelperContextStateV1 = { authentication, phase: "refreshing", observationHash: null };
+    close = () => {
+      if (!coldHelperContextsV1.has(context)) return;
+      state.phase = "closing";
+      authentication.close();
+      coldHelperContextsV1.delete(context);
+      if (coldHelperRuntimeContextV1 === context) coldHelperRuntimeContextV1 = null;
+      pendingColdHelperAuthenticationCleanupV1.delete(close!);
+    };
+    coldHelperContextsV1.set(context, state);
+    coldHelperRuntimeContextV1 = context;
+    const before = observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+    const observer = await import("./baseline-post-handoff-receipt-v1.js");
+    const cold = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context));
+    const profile = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
+    if (canonical(cold) !== canonical(authentication.intent.coldObservation)
+      || canonical(profile.profile) !== canonical(authentication.intent.launchProfile)
+      || canonical(profile.environment) !== canonical(authentication.environment)
+      || canonical(before) !== canonical(observeInternalProductionColdSpawnerHelperIntentPhaseV1(context))) fail("cold helper fresh observation is crossed");
+    state.observationHash = cold.observationHash as string;
+    state.phase = "ready";
+    return context;
+  } catch {
+    if (close) {
+      try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Keep cleanup reachable and authentication revoked. */ } }
+    }
+    return fail("cold helper context refresh failed");
+  } finally { coldHelperContextInvocationActiveV1 = false; }
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

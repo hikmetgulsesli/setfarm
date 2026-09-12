@@ -4888,7 +4888,7 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
 
 // Evidence only: genesis must repeat this under its physical transition lease,
 // and separately authenticate retirement/cutover history before any mutation.
-async function observeExactPoisonColdBootstrapBracketNoWriteV1() {
+async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: object) {
   const operation = requireExactPoisonRecoverySnapshotV1(
     path.join(fixedLegacyCurrentEntryRootV1(), "current-entry-operation.json"), "cold bootstrap poison operation",
   );
@@ -4941,7 +4941,7 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1() {
       const remainingServices = await observeColdRemainingServicesV1(source);
       const spawnerAbsence = observeColdSpawnerAbsenceV1(source);
       const physical = observeColdPhysicalInventoryV1(remainingServices, 0);
-      const phase = requireExactZeroCountsV1(await observePhaseClosedZeroV1(source), EXACT_POISON_PHASE_ZERO_KEYS_V1, "cold bootstrap phase");
+      const phase = requireExactZeroCountsV1(await observePhaseClosedZeroV1(source, helperContext), EXACT_POISON_PHASE_ZERO_KEYS_V1, "cold bootstrap phase");
       const { legacyFindingPublicationInventory, ...database } = await observeLegacyDatabaseCensusV1(true);
       requireExactZeroCountsV1(database, [
         "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
@@ -4989,6 +4989,15 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1() {
 
 export async function observeInternalProductionColdBootstrapObservationV1() {
   return observeExactPoisonColdBootstrapBracketNoWriteV1();
+}
+
+export async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context: object) {
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const before = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  const observation = await observeExactPoisonColdBootstrapBracketNoWriteV1(context);
+  const after = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  if (canonicalComparable(before) !== canonicalComparable(after)) currentEntryFail("cold helper owned intent changed across full observation");
+  return observation;
 }
 
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
@@ -8134,6 +8143,7 @@ function assertPhaseSourceEqualV1(expected: unknown, observed: unknown): void {
 
 async function observePhaseClosedZeroV1(
   expectedSource: InternalProductionCleanSetfarmSourceBuildV1,
+  helperContext?: object,
 ): Promise<Readonly<{
   ordinaryStartingCount: 0; restartReservationCount: 0; serviceRestartOperationCount: 0;
   launchPreparationCount: 0; preparedLaunchCount: 0; stagedCaseCount: 0; fixtureAttemptCount: 0;
@@ -8145,7 +8155,8 @@ async function observePhaseClosedZeroV1(
   const before = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(expectedSource, before);
   const coldJournal = await import("./baseline-restart-authority-retirement-v1.js");
-  const coldBefore = coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  const coldBefore = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
+    : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
   for (const [locator, producer] of PHASE_CLOSED_FUTURE_PRODUCERS_V1) {
     requireAbsentPhasePathV1(path.join(codeRoot, locator), `${producer} module`);
   }
@@ -8165,7 +8176,8 @@ async function observePhaseClosedZeroV1(
   }
   const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(before, after);
-  const coldAfter = coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  const coldAfter = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
+    : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
   if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("cold journal ancestry changed during phase-zero observation");
   return recursivelyFreeze({
     ordinaryStartingCount: 0, restartReservationCount: 0, serviceRestartOperationCount: 0,

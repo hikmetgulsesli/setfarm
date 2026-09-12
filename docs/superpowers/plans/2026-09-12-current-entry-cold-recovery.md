@@ -268,6 +268,71 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ### Cold intent publication and retained controller lifetime
 
+Next connected helper refresh/configuration slice (existing retirement, receipt,
+runtime-config, launch-environment leaf and owning tests; no new File Map member):
+the operator/helper entry remains zero-argument. Retirement will authenticate
+FD3/4/5 once and retain one explicit WeakMap-backed context through full refresh
+and eventual exclusive dispatch. The receipt's helper-only internal port accepts
+only that opaque object, not caller source/PID/root/flags/evidence; private cold
+bracket and phase functions thread it explicitly. No ambient census switch.
+Only a distinct branded own-intent phase reader may recognize the exact prefix;
+public census/ordinary phase/release/dead-reclaim remain strict. Retirement marks
+the context ready only after its own call to the full receipt observer returns
+and is checked against retained intent. Failure/closing immediately revoke use
+while preserving unfinished cleanup ownership. Snapshot state is configuration
+authority only, never an alternative to the explicit phase context.
+
+Dependency evidence: the cold prerequisite audit dynamically imports db-pg before
+the phase reader, and db-pg statically imports runtime-config. Therefore installing
+plain environment keys is insufficient: ordinary dotenv reads can introduce new
+unbound keys, and repeated loads reread files. A synchronous zero-argument
+retirement resolver may expose only already-authenticated runtime snapshot state
+to runtime-config; it must never reauthenticate/import receipt or accept a setter.
+AST inspection found no static cycle: retirement's graph is only its workspace
+locator, legacy finding validator and canonical JSON helper. Runtime-config will
+skip dotenv for recognized authenticated helper configuration, reject missing or
+changed state, and preserve ordinary loading behavior. Keep raw profile/snapshot
+unchanged, extract the existing PATH normalization into one pure shared function,
+then derive and enforce the deterministic effective map on first/repeated loads.
+No secret snapshot/nonce travels in process launch argv/environment or journals.
+A code-owned non-secret mode marker may select mandatory validation, never grant
+configuration, phase or launch authority by itself.
+
+Connected context/configuration evidence: the private issuer now retains one
+FD-authenticated context, invokes the full cold observer, rechecks the launch
+profile after the bracket, and transitions to ready only on exact retained
+equality. Its separate own-intent phase observation reports one owned intent;
+public zero census and ordinary release/reclaim remain unchanged. Runtime-config
+uses the authenticated snapshot without dotenv reads, shares the ordinary PATH
+normalizer, rejects repeated environment drift, and refuses even a selector-less
+fixed helper that reaches configuration before authentication. That last case
+first failed by reaching the fixture's forbidden dotenv existence read, then
+passed after the fixed-entry guard and generic configuration refusal were added.
+
+The compiled real-FD helper fixture now executes the actual phase-zero function
+and its filesystem readers/absence guards with actual runtime-config. Only the
+clean Git-source and full DB/service observation ports are controlled in this
+composition; this is not a live cold-bootstrap acceptance claim. It covers ready,
+cloned, public, revoked and interrupted contexts, bracket/post-profile refusal,
+present/dangling future authority roots, missing/invalid selectors, unchanged
+borrowed lock/intent descriptors, and unchanged authority bytes/inodes. The full
+receipt bracket test separately proves the same explicit object reaches both
+phase passes and the public helper port rejects forged contexts before any
+observation port. Verification: retirement 43/43 (40.123s), receipt phase/bracket
+3/3 (4.209s), receipt inert/export 1/1 (1.592s), environment/core-focused 4/4
+(2.295s), exact manifest 17/17 (6.175s), and TypeScript no-emit passed. Both live
+HTTP surfaces remained 200; no live DB/schema/service mutation occurred.
+
+Next dispatch seam: keep the issuer private and spawning disabled while adding
+an exclusive dispatch record plus child capability verification. Publishing a
+dispatch necessarily changes the intent-only directory: preserve original
+lock/intent/history pins and introduce an explicit one-way ready-to-dispatch
+transition with exact new-prefix evidence, never a global predicate relaxation.
+Only the invocation that newly publishes may later spawn; existing bytes or a
+lost publication acknowledgement can never authorize redispatch. The child must
+authenticate synchronously before spawner's static runtime-config consumption;
+the helper's in-process WeakMap cannot authorize a different process.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

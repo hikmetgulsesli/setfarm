@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyRuntimeEnvFileV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
+import { applyRuntimeEnvFileV1, normalizeRuntimePathV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
+import { resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import {
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
   normalizeArtifactCapacityLimits,
@@ -15,6 +16,12 @@ import {
 } from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
+let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "cold-helper" = "unloaded";
+let coldHelperEffectiveEnvironmentV1: Readonly<Record<string, string>> | null = null;
+
+function environmentIdentityV1(environment: Readonly<Record<string, string | undefined>>): string {
+  return JSON.stringify(Object.keys(environment).sort().map((key) => [key, environment[key]]));
+}
 
 export function expandRuntimePath(value: string): string {
   return value
@@ -36,6 +43,25 @@ function loadEnvFile(envDir: string, filename: string, overrideFileValues: boole
 }
 
 export function loadRuntimeEnv(): void {
+  const refuse = (): never => { throw new Error("INTERNAL_PRODUCTION_COLD_HELPER_CONFIGURATION_INVALID"); };
+  let snapshot: ReturnType<typeof resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1>;
+  try { snapshot = resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1(); } catch { return refuse(); }
+  const modeKey = "SETFARM_INTERNAL_PRODUCTION_COLD_HELPER";
+  const selected = process.env[modeKey];
+  if (snapshot !== null || selected !== undefined || runtimeEnvironmentModeV1 === "cold-helper") {
+    if (!snapshot || selected !== "1" || runtimeEnvironmentModeV1 === "ordinary") refuse();
+    const environment = snapshot!.environment;
+    const effective = Object.freeze({ ...environment, PATH: normalizeRuntimePathV1(environment.PATH!, homedir(), process.execPath), [modeKey]: "1" });
+    if (coldHelperEffectiveEnvironmentV1 === null) {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, effective);
+      coldHelperEffectiveEnvironmentV1 = effective;
+      runtimeEnvironmentModeV1 = "cold-helper";
+    } else if (environmentIdentityV1(effective) !== environmentIdentityV1(coldHelperEffectiveEnvironmentV1)
+      || environmentIdentityV1(process.env) !== environmentIdentityV1(coldHelperEffectiveEnvironmentV1)) refuse();
+    return;
+  }
+  runtimeEnvironmentModeV1 = "ordinary";
   const explicitEnvDir = process.env.SETFARM_ENV_DIR?.trim();
   const envDirs = explicitEnvDir
     ? [expandRuntimePath(explicitEnvDir)]
@@ -49,26 +75,7 @@ export function loadRuntimeEnv(): void {
 }
 
 function ensureRuntimePath(): void {
-  const nodeDir = dirname(process.execPath);
-  const existing = (process.env.PATH || "")
-    .split(delimiter)
-    .filter(Boolean);
-  const required = [
-    nodeDir,
-    join(homedir(), ".local", "bin"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-  ];
-  const next: string[] = [];
-  for (const entry of [...required, ...existing]) {
-    if (!entry || next.includes(entry)) continue;
-    next.push(entry);
-  }
-  process.env.PATH = next.join(delimiter);
+  process.env.PATH = normalizeRuntimePathV1(process.env.PATH || "", homedir(), process.execPath);
 }
 
 loadRuntimeEnv();
