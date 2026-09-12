@@ -20,6 +20,8 @@ import path from "node:path";
 import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
 import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
+import type { BigIntStats } from "node:fs";
+import { validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
 
 export type InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1 = Readonly<{
   schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1";
@@ -100,6 +102,7 @@ type RestartEpochCommonV1 = Readonly<{
 }>;
 export type InternalProductionPhysicalServiceRestartAuthorityEpochV1 =
   | Readonly<RestartEpochCommonV1 & { epochOrdinal: 1; authorityOwner: "baseline-a"; predecessorEpochRef: null; predecessorEpochHash: null; retirementRef: null; retirementHash: null; startupHooksReadyRef: null; startupHooksReadyHash: null; successorActivationRef: null; successorActivationHash: null }>
+  | Readonly<Omit<RestartEpochCommonV1, "schema"> & { schema: "setfarm.internal-production-physical-service-restart-authority-epoch.v2"; epochOrdinal: 1; authorityOwner: "baseline-a"; predecessorEpochRef: null; predecessorEpochHash: null; retirementRef: null; retirementHash: null; startupHooksReadyRef: null; startupHooksReadyHash: null; successorActivationRef: null; successorActivationHash: null; genesisRef: string; genesisHash: string }>
   | Readonly<RestartEpochCommonV1 & { epochOrdinal: 2; authorityOwner: "recovery-d"; predecessorEpochRef: string; predecessorEpochHash: string; retirementRef: string; retirementHash: string; startupHooksReadyRef: string; startupHooksReadyHash: string; successorActivationRef: string; successorActivationHash: string }>;
 type CutoverStatusShapeV1 = Readonly<{
   schema: "setfarm.internal-production-physical-service-restart-authority-cutover-status.v1";
@@ -141,8 +144,11 @@ type RawPhysicalTransitionLockStateV1 = Readonly<{
   descriptor: number;
   lockBytes: Buffer;
   rootGuard: PrivateDirectoryGuardV1;
+  cleanup: { phase: "held" | "owned-unlink-completed" };
 }>;
 const rawPhysicalTransitionLocksV1 = new WeakMap<object, RawPhysicalTransitionLockStateV1>();
+let retainedColdGenesisRawV1: RawPhysicalTransitionLockV1 | null = null;
+let coldGenesisInvocationActiveV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -263,6 +269,15 @@ function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryG
         if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
       }
       parentGuard.assertStable();
+      const createdGuard = authenticatePrivateDirectoryChainV1(anchor, current);
+      try {
+        createdGuard.assertStable();
+        // Existing prefixes may themselves follow an interrupted mkdir. Make
+        // every authenticated directory link durable before publishing below it.
+        fsyncParent(current);
+        createdGuard.assertStable();
+        parentGuard.assertStable();
+      } finally { createdGuard.close(); }
     } finally {
       parentGuard.close();
     }
@@ -278,6 +293,7 @@ function rootPaths() {
     root,
     lock: path.join(root, "physical-service-restart-authority.transition.lock"),
     epoch: path.join(root, "epoch-head.json"),
+    genesis: path.join(root, "epoch-genesis", "sha256"),
     journal: path.join(root, "pre-schema-helper-journal.json"),
     settlements: path.join(root, "pre-schema-helper-settlements", "sha256"),
     baselineJournals: path.join(root, "baseline-helper-journals", "sha256"),
@@ -317,14 +333,14 @@ function exactCanonicalRecord(value: unknown, keys: readonly string[], label: st
   return value as Record<string, unknown>;
 }
 
-function readStableRetirementBytes(file: string, label: string): Buffer {
+function readStableRetirementBytes(file: string, label: string, maximumBytes = 1_048_576): Buffer {
   const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(file));
   try {
     guard.assertStable();
     const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const before = fstatSync(descriptor, { bigint: true });
-      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.size < 1n || before.size > 1_048_576n) fail(`${label} identity is invalid`);
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || (before.mode & 0o7777n) !== 0o600n || before.size < 1n || before.size > BigInt(maximumBytes)) fail(`${label} identity is invalid`);
       const bytes = readFileSync(descriptor);
       const after = fstatSync(descriptor, { bigint: true });
       const reopened = lstatSync(file, { bigint: true });
@@ -419,7 +435,7 @@ function fsyncParent(file: string): void {
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
-function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: Buffer | null): void {
+function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: Buffer | null, onOwnedUnlink?: () => void): void {
   const held = fstatSync(descriptor, { bigint: true });
   const atPath = lstatSync(lock, { bigint: true });
   const reopened = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -436,6 +452,7 @@ function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: 
     const finalPathStats = lstatSync(lock, { bigint: true });
     if (finalPathStats.dev !== held.dev || finalPathStats.ino !== held.ino || finalPathStats.nlink !== 1n || (finalPathStats.mode & 0o7777n) !== 0o600n) fail("owned transition lock changed immediately before cleanup");
     unlinkSync(lock);
+    onOwnedUnlink?.();
     fsyncParent(lock);
   } finally { closeSync(reopened); }
 }
@@ -671,6 +688,10 @@ function writeNoReplace(file: string, value: unknown): boolean {
       const linked = finalStats.dev === temporaryStats.dev && finalStats.ino === temporaryStats.ino && finalStats.nlink === 2n && temporaryStats.nlink === 2n;
       const collision = finalStats.dev === temporaryStats.dev && finalStats.ino !== temporaryStats.ino && finalStats.nlink === 1n && temporaryStats.nlink === 1n && finalBytes.equals(temporaryBytes);
       if (!finalStats.isFile() || !temporaryStats.isFile() || (finalStats.mode & 0o7777n) !== 0o600n || (temporaryStats.mode & 0o7777n) !== 0o600n || !finalBytes.equals(bytes) || !temporaryBytes.equals(bytes) || (!linked && !collision)) fail("immutable retirement publication collision is crossed");
+      // A recovered complete temporary may precede its original data fsync.
+      // Sync both identities before removing recovery evidence or admitting a head.
+      fsyncSync(temporaryDescriptor);
+      fsyncSync(finalDescriptor);
       const finalPathStats = lstatSync(file, { bigint: true });
       const temporaryPathStats = lstatSync(temporary, { bigint: true });
       if (finalPathStats.dev !== finalStats.dev || finalPathStats.ino !== finalStats.ino || temporaryPathStats.dev !== temporaryStats.dev || temporaryPathStats.ino !== temporaryStats.ino) fail("retirement publication changed before recovery cleanup");
@@ -696,10 +717,376 @@ function pair(value: unknown, refKey: string, hashKey: string): Readonly<Record<
   return Object.freeze(result as Record<string, string>);
 }
 
+const COLD_GENESIS_PREFIX_V1 = "setfarm://internal-production/cold-epoch-genesis/sha256/";
+const COLD_GENESIS_MAX_BYTES_V1 = 8_388_608;
+const COLD_INCIDENT_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
+const COLD_INCIDENT_BYTES_HASH_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
+const COLD_INCIDENT_FINGERPRINT_V1 = "9e07f9bd60955a9a681b7365a3c48cb087ff7d46459a5b9885283e0a3492ce65";
+const COLD_EPOCH_SERVICES_V1 = ["setfarm-spawner", "setfarm-dashboard", "mission-control"] as const;
+const COLD_SYNTHETIC_GIT_ABSENCE_V1 = [
+  { repository: "setfarm", objectSha: "4fc67f20df0e935c703c4658a29dbbaa9aa0a956", objectType: "commit", state: "absent", networkAccess: "forbidden" },
+  { repository: "mission-control", objectSha: "4ec5fc99a076453a87381c0c75e508d25dd8882d", objectType: "commit", state: "absent", networkAccess: "forbidden" },
+] as const;
+
+function coldRecordV1(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype
+    || Reflect.ownKeys(value).some((key) => typeof key !== "string")
+    || canonical(Object.keys(value).sort()) !== canonical([...keys].sort())
+    || Object.values(Object.getOwnPropertyDescriptors(value)).some((descriptor) => !descriptor.enumerable || descriptor.get || descriptor.set || !("value" in descriptor))) fail(`cold ${label} shape is invalid`);
+  return value as Record<string, unknown>;
+}
+
+function coldHashV1(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA256.test(value)) fail(`cold ${label} hash is invalid`);
+  return value;
+}
+
+function coldPairV1(value: unknown, stem: string, prefix: string): Record<string, unknown> {
+  const record = coldRecordV1(value, [`${stem}Ref`, `${stem}Hash`], `${stem} pair`);
+  if (record[`${stem}Ref`] !== `${prefix}${coldHashV1(record[`${stem}Hash`], stem)}`) fail(`cold ${stem} pair is crossed`);
+  return record;
+}
+
+function coldSelfHashV1(record: Record<string, unknown>, hashKey: string, excluded: readonly string[] = []): void {
+  const body = { ...record }; delete body[hashKey];
+  for (const key of excluded) delete body[key];
+  if (coldHashV1(record[hashKey], hashKey) !== sha256(canonical(body))) fail(`cold ${hashKey} is crossed`);
+}
+
+function validateColdBootstrapObservationV1(value: unknown): Readonly<Record<string, unknown>> {
+  const observation = coldRecordV1(value, ["schema", "operation", "operationBytesSha256", "contaminationFingerprintHash", "source",
+    "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "remainingServices", "spawnerAbsence", "physical", "census",
+    "syntheticGitAbsence", "legacyFindingPublicationInventory", "observationHash"], "observation");
+  if (observation.schema !== "setfarm.internal-production-cold-bootstrap-observation.v1"
+    || observation.operationBytesSha256 !== COLD_INCIDENT_BYTES_HASH_V1 || observation.contaminationFingerprintHash !== COLD_INCIDENT_FINGERPRINT_V1) fail("cold incident fingerprint is invalid");
+  const operation = coldPairV1(observation.operation, "operation", "setfarm://internal-production/current-entry-operation/sha256/");
+  if (operation.operationHash !== COLD_INCIDENT_HASH_V1) fail("cold incident is not recognized");
+  const source = coldRecordV1(observation.source, ["branch", "clean", "sha", "treeHash", "buildHash", "originMainSha"], "source");
+  if (source.branch !== "main" || source.clean !== true || source.originMainSha !== source.sha
+    || typeof source.sha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.sha)
+    || typeof source.treeHash !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.treeHash)) fail("cold source is not exact clean main");
+  coldHashV1(source.buildHash, "source build");
+  const loadedSource = { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash };
+  coldPairV1(observation.authorityV3Migration31Audit, "authorityV3Migration31Audit", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
+  coldPairV1(observation.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigration", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
+  const census = coldRecordV1(observation.census, COMPLETE_ZERO_KEYS_V1, "complete census");
+  if (Object.values(census).some((count) => count !== 0)) fail("cold complete census is not zero");
+  const physical = coldRecordV1(observation.physical, ["worktrees", "processes", "listeners", "stale", "ownedProcessCount", "ownedListenerCount", "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount"], "physical inventory");
+  for (const [key, member] of Object.entries(physical)) {
+    if (["worktrees", "processes", "listeners", "stale"].includes(key) ? !Array.isArray(member) || member.length !== 0 : member !== 0) fail("cold physical inventory is not empty");
+  }
+  const services = coldRecordV1(observation.remainingServices, ["dashboard", "missionControl", "openClaw"], "remaining services");
+  const pids = new Set<number>();
+  for (const [key, label, port] of [["dashboard", "com.setrox.setfarm-dashboard", 3333], ["missionControl", "com.setrox.mission-control", 3080], ["openClaw", "ai.openclaw.gateway", 18789]] as const) {
+    const service = coldRecordV1(services[key], ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listenerOwnerCount", "listener"], `${key} service`);
+    if (!Number.isSafeInteger(service.pid) || (service.pid as number) < 1 || pids.has(service.pid as number)
+      || !Number.isSafeInteger(service.processStartTimeEpochMs) || (service.processStartTimeEpochMs as number) < 1
+      || service.processOwnerCount !== 1 || service.listenerOwnerCount !== 1) fail("cold service owner identity is invalid");
+    pids.add(service.pid as number);
+    const loaded = key === "openClaw" ? null : { sha: service.loadedSourceSha, treeHash: service.loadedTreeHash, buildHash: service.loadedBuildHash };
+    if (loaded === null) {
+      if (service.loadedSourceSha !== null || service.loadedTreeHash !== null || service.loadedBuildHash !== null) fail("cold OpenClaw source is crossed");
+    } else {
+      if (typeof loaded.sha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(loaded.sha)
+        || typeof loaded.treeHash !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(loaded.treeHash)) fail("cold service loaded source is invalid");
+      coldHashV1(loaded.buildHash, "service build");
+    }
+    if (key === "dashboard" && canonical(loaded) !== canonical(loadedSource)) fail("cold dashboard source is crossed");
+    coldHashV1(service.processIdentityHash, "service process");
+    coldHashV1(service.serviceIdentityHash, "service identity");
+    if (service.generationHash !== sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash: service.serviceIdentityHash, source: loaded }))) fail("cold service generation is crossed");
+    const listener = coldRecordV1(service.listener, ["host", "port", "listenerIdentityHash"], "listener");
+    if (listener.host !== "127.0.0.1" || listener.port !== port) fail("cold service listener is crossed");
+    coldHashV1(listener.listenerIdentityHash, "listener identity");
+  }
+  const absence = coldRecordV1(observation.spawnerAbsence, ["schema", "source", "uid", "globalSpawnerFamilyCount", "singletonLockState", "pidFile", "ancestors", "launcher", "entrypoint", "entrypointBytesSha256", "plistBytesSha256", "launchProjectionHash", "absenceHash"], "spawner absence");
+  if (absence.schema !== "setfarm.internal-production-cold-spawner-absence.v1" || canonical(absence.source) !== canonical(loadedSource)
+    || !Number.isSafeInteger(absence.uid) || (absence.uid as number) < 0 || absence.uid !== process.getuid?.()
+    || absence.globalSpawnerFamilyCount !== 0 || absence.singletonLockState !== "absent") fail("cold spawner absence is invalid");
+  const metadataKeys = ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"];
+  const metadata = (member: Record<string, unknown>, regular: boolean) => {
+    for (const key of metadataKeys.filter((key) => key !== "mode")) {
+      if (typeof member[key] !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(member[key] as string)) fail("cold filesystem metadata is invalid");
+    }
+    if (member.uid !== String(absence.uid) || BigInt(member.ino as string) < 1n || BigInt(member.nlink as string) < 1n
+      || !Number.isSafeInteger(member.mode) || (member.mode as number) < 0 || (member.mode as number) > 0o7777
+      || (regular && (member.nlink !== "1" || ((member.mode as number) & 0o022) !== 0))) fail("cold filesystem ownership is invalid");
+  };
+  if (!Array.isArray(absence.ancestors) || absence.ancestors.length !== 3) fail("cold singleton ancestors are incomplete");
+  let home = "", device = "";
+  for (const [index, value] of absence.ancestors.entries()) {
+    const ancestor = coldRecordV1(value, ["path", ...metadataKeys], "singleton ancestor"); metadata(ancestor, false);
+    if (typeof ancestor.path !== "string" || !path.isAbsolute(ancestor.path) || path.normalize(ancestor.path) !== ancestor.path
+      || ((ancestor.mode as number) & 0o022) !== 0) fail("cold singleton ancestor path or mode is invalid");
+    if (index === 0) { home = ancestor.path; device = ancestor.dev as string; }
+    if (ancestor.path !== [home, path.join(home, ".openclaw"), path.join(home, ".openclaw", "setfarm")][index] || ancestor.dev !== device) fail("cold singleton ancestor chain is crossed");
+  }
+  const launcher = coldRecordV1(absence.launcher, ["path", "target", ...metadataKeys], "launcher"); metadata(launcher, false);
+  if (launcher.nlink !== "1" || launcher.path !== path.join(home, ".local", "bin", "setfarm")
+    || typeof absence.entrypoint !== "string" || !path.isAbsolute(absence.entrypoint) || path.normalize(absence.entrypoint) !== absence.entrypoint
+    || path.basename(absence.entrypoint) !== "spawner.js" || path.basename(path.dirname(absence.entrypoint)) !== "dist"
+    || launcher.target !== path.join(path.dirname(absence.entrypoint), "cli", "cli.js")) fail("cold launcher binding is crossed");
+  for (const key of ["entrypointBytesSha256", "plistBytesSha256", "launchProjectionHash"]) coldHashV1(absence[key], key);
+  const pidFile = absence.pidFile as Record<string, unknown> | null;
+  if (pidFile?.state === "absent") coldRecordV1(pidFile, ["state"], "PID absence");
+  else {
+    const pid = coldRecordV1(pidFile, ["state", "pid", "bytesSha256", "identity"], "PID residue");
+    if (pid.state !== "stale-dead-pid" || !Number.isSafeInteger(pid.pid) || (pid.pid as number) < 1 || (pid.pid as number) > 2_147_483_647 || pids.has(pid.pid as number)
+      || pid.bytesSha256 !== sha256(String(pid.pid))) fail("cold PID residue is invalid");
+    const identity = coldRecordV1(pid.identity, metadataKeys, "PID metadata"); metadata(identity, true);
+    if (identity.dev !== device || identity.size !== String(String(pid.pid).length)) fail("cold PID metadata is crossed");
+  }
+  coldSelfHashV1(absence, "absenceHash");
+  if (canonical(observation.syntheticGitAbsence) !== canonical(COLD_SYNTHETIC_GIT_ABSENCE_V1)) fail("cold synthetic Git evidence is crossed");
+  validateLegacyFindingPublicationInventoryV1(observation.legacyFindingPublicationInventory);
+  coldSelfHashV1(observation, "observationHash");
+  return freezeColdDataV1(JSON.parse(canonical(observation)) as Record<string, unknown>);
+}
+
+function freezeColdDataV1<T>(value: T): Readonly<T> {
+  if (value && typeof value === "object") {
+    for (const member of Object.values(value)) freezeColdDataV1(member);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function coldGenesisStableIdentityV1(observation: Readonly<Record<string, unknown>>): string {
+  return canonical(Object.fromEntries(["operation", "operationBytesSha256", "contaminationFingerprintHash", "source", "authorityV3Migration31Audit", "pendingBootstrapHandoffMigration", "syntheticGitAbsence", "legacyFindingPublicationInventory"].map((key) => [key, observation[key]])));
+}
+
+function parseColdEpochGenesisReceiptV1(bytes: Buffer): Readonly<Record<string, unknown>> {
+  if (bytes.length < 1 || bytes.length > COLD_GENESIS_MAX_BYTES_V1) fail("cold genesis receipt size is invalid");
+  const record = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "epochOrdinal", "authorityOwner", "services", "coldObservation", "genesisRef", "genesisHash"], "genesis receipt");
+  if (!bytes.equals(Buffer.from(`${canonical(record)}\n`)) || record.schema !== "setfarm.internal-production-cold-epoch-genesis-receipt.v1"
+    || record.purpose !== "exact-poison-cold-recovery-epoch-one-v1" || record.epochOrdinal !== 1 || record.authorityOwner !== "baseline-a"
+    || canonical(record.services) !== canonical(COLD_EPOCH_SERVICES_V1) || record.genesisRef !== `${COLD_GENESIS_PREFIX_V1}${coldHashV1(record.genesisHash, "genesis")}`) fail("cold genesis receipt is invalid");
+  validateColdBootstrapObservationV1(record.coldObservation);
+  coldSelfHashV1(record, "genesisHash", ["genesisRef"]);
+  return freezeColdDataV1(record);
+}
+
+function coldGenesisReceiptPathV1(hash: string): string {
+  coldHashV1(hash, "genesis locator");
+  return path.join(rootPaths().genesis, hash.slice(0, 2), `${hash}.json`);
+}
+
+function validateColdEpochOneHeadV1(value: unknown, bytes: Buffer, receipt: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const head = coldRecordV1(value, ["schema", "epochOrdinal", "authorityOwner", "services", "predecessorEpochRef", "predecessorEpochHash", "retirementRef", "retirementHash", "startupHooksReadyRef", "startupHooksReadyHash", "successorActivationRef", "successorActivationHash", "genesisRef", "genesisHash", "epochRef", "epochHash"], "epoch head");
+  if (!bytes.equals(Buffer.from(`${canonical(head)}\n`)) || head.schema !== "setfarm.internal-production-physical-service-restart-authority-epoch.v2"
+    || head.epochOrdinal !== 1 || head.authorityOwner !== "baseline-a" || canonical(head.services) !== canonical(COLD_EPOCH_SERVICES_V1)
+    || [head.predecessorEpochRef, head.predecessorEpochHash, head.retirementRef, head.retirementHash, head.startupHooksReadyRef, head.startupHooksReadyHash, head.successorActivationRef, head.successorActivationHash].some((member) => member !== null)
+    || head.epochRef !== `setfarm://internal-production/physical-service-restart-authority-epoch/sha256/${coldHashV1(head.epochHash, "epoch")}`) fail("cold epoch head is not bound A-active");
+  coldSelfHashV1(head, "epochHash", ["epochRef"]);
+  if (receipt.genesisRef !== head.genesisRef || receipt.genesisHash !== head.genesisHash) fail("cold epoch genesis binding is crossed");
+  return orderedFrozenV1(head);
+}
+
+function sameColdFileMetadataV1(before: BigIntStats, after: BigIntStats): boolean {
+  return before.dev === after.dev && before.ino === after.ino && before.uid === after.uid && before.mode === after.mode
+    && before.nlink === after.nlink && before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+
+function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maximumLinks = 1): Buffer {
+  if (!expected.isFile() || expected.isSymbolicLink() || expected.uid !== BigInt(process.getuid!())
+    || (expected.mode & 0o7777n) !== 0o600n || expected.nlink < 1n || expected.nlink > BigInt(maximumLinks)
+    || expected.size < 1n || expected.size > BigInt(COLD_GENESIS_MAX_BYTES_V1)) fail("cold publication candidate identity is invalid");
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (!sameColdFileMetadataV1(expected, fstatSync(descriptor, { bigint: true }))) fail("cold publication candidate changed while opened");
+    const bytes = Buffer.alloc(Number(expected.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (count < 1) fail("cold publication candidate is truncated");
+      offset += count;
+    }
+    if (readSync(descriptor, Buffer.alloc(1), 0, 1, offset) !== 0
+      || !sameColdFileMetadataV1(expected, fstatSync(descriptor, { bigint: true }))
+      || !sameColdFileMetadataV1(expected, lstatSync(target, { bigint: true }))) fail("cold publication candidate changed while read");
+    return bytes;
+  } finally { closeSync(descriptor); }
+}
+
+function assertColdEpochOneHeadV1(value: unknown, bytes: Buffer): Readonly<Record<string, unknown>> {
+  const target = coldGenesisReceiptPathV1((value as Record<string, unknown>)?.genesisHash as string);
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(target));
+  try {
+    guard.assertStable();
+    const receipt = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(target, lstatSync(target, { bigint: true })));
+    const head = validateColdEpochOneHeadV1(value, bytes, receipt);
+    guard.assertStable();
+    return head;
+  } finally { guard.close(); }
+}
+
+function observeColdGenesisHistoryV1(raw: RawPhysicalTransitionLockV1 | null): Readonly<{
+  receipt: Readonly<Record<string, unknown>> | null; receiptBytes: Buffer | null; headBytes: Buffer | null;
+  identityWitness: string;
+}> {
+  const paths = rootPaths();
+  const parent = path.dirname(paths.root);
+  const parentGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), parent);
+  try {
+    parentGuard.assertStable();
+    const parentBefore = lstatSync(parent, { bigint: true });
+    for (const sibling of ["pre-schema-spawner-rebind-v1", "baseline-service-restart-v1", "baseline-service-restart-sequence-v1", "baseline-spawner-bootstrap-restart-v1"]) {
+      try { lstatSync(path.join(parent, sibling)); fail(`cold genesis conflicting ${sibling} history is present`); }
+      catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    }
+    let rootIdentity: BigIntStats;
+    try { rootIdentity = lstatSync(paths.root, { bigint: true }); }
+    catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT" || raw !== null) throw error;
+      parentGuard.assertStable();
+      if (!sameColdFileMetadataV1(parentBefore, lstatSync(parent, { bigint: true }))) fail("cold genesis parent changed during absence observation");
+      return Object.freeze({ receipt: null, receiptBytes: null, headBytes: null, identityWitness: "absent" });
+    }
+    const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), paths.root);
+    try {
+      const members: Array<{ relative: string; target: string; stats: BigIntStats; bytes: Buffer | null }> = [];
+      const walk = (directory: string, relative: string): void => {
+        const names = readdirSync(directory).sort();
+        if (names.length > 5) fail("cold genesis history is over cap");
+        for (const name of names) {
+          if (members.length >= 12) fail("cold genesis history is over cap");
+          const locator = relative ? `${relative}/${name}` : name;
+          const target = path.join(directory, name), stats = lstatSync(target, { bigint: true });
+          if (stats.isSymbolicLink() || stats.uid !== BigInt(process.getuid!()) || stats.dev !== rootIdentity.dev) fail("cold genesis history ownership is invalid");
+          if (stats.isDirectory()) {
+            if ((stats.mode & 0o7777n) !== 0o700n || !/^(?:epoch-genesis|epoch-genesis\/sha256|epoch-genesis\/sha256\/[a-f0-9]{2})$/.test(locator)) fail("cold genesis conflicting directory history is present");
+            members.push({ relative: locator, target, stats, bytes: null });
+            walk(target, locator);
+          } else {
+            if (locator !== path.basename(paths.lock) && !/^(?:epoch-head\.json|\.epoch-head\.json\.[a-f0-9]{32}\.tmp|epoch-genesis\/sha256\/[a-f0-9]{2}\/(?:[a-f0-9]{64}\.json|\.[a-f0-9]{64}\.json\.[a-f0-9]{32}\.tmp))$/.test(locator)) fail("cold genesis conflicting file history is present");
+            members.push({ relative: locator, target, stats, bytes: readColdGenesisCandidateV1(target, stats, locator === path.basename(paths.lock) ? 1 : 2) });
+          }
+        }
+      };
+      walk(paths.root, "");
+      const lock = members.find((entry) => entry.relative === path.basename(paths.lock));
+      if (lock) parseLockRecord(lock.bytes!);
+      if (raw !== null) {
+        const state = heldRawPhysicalTransitionLockV1(raw); assertRawPhysicalTransitionLockStableV1(state);
+        if (!lock || !lock.bytes!.equals(state.lockBytes) || String(lock.stats.ino) !== descriptorIdentity(state.descriptor).inoDecimal) fail("cold genesis raw lock is crossed");
+      }
+      const receiptFiles = members.filter((entry) => entry.bytes !== null && entry.relative.startsWith("epoch-genesis/"));
+      const headFiles = members.filter((entry) => entry.bytes !== null && /^(?:epoch-head\.json|\.epoch-head\.json\.)/.test(entry.relative));
+      const requireOnePublication = (files: typeof members, finalName: string): Buffer | null => {
+        if (files.length === 0) return null;
+        if (files.length > 2 || files.filter((entry) => path.basename(entry.target) === finalName).length > 1
+          || files.filter((entry) => path.basename(entry.target) !== finalName).length > 1) fail("cold genesis publication prefix is ambiguous");
+        const first = files[0]!;
+        for (const entry of files) {
+          if (!entry.bytes!.equals(first.bytes!)) fail("cold genesis publication prefix bytes differ");
+          if (entry.stats.nlink === 2n && (files.length !== 2 || files.some((other) => other.stats.ino !== entry.stats.ino || other.stats.dev !== entry.stats.dev))) fail("cold genesis publication link prefix is crossed");
+        }
+        return first.bytes;
+      };
+      let receipt: Readonly<Record<string, unknown>> | null = null, receiptBytes: Buffer | null = null;
+      if (receiptFiles.length > 0) {
+        receipt = parseColdEpochGenesisReceiptV1(receiptFiles[0]!.bytes!);
+        const hash = receipt.genesisHash as string, name = `${hash}.json`;
+        for (const entry of receiptFiles) {
+          const basename = path.basename(entry.target);
+          if (path.basename(path.dirname(entry.target)) !== hash.slice(0, 2)
+            || (basename !== name && !new RegExp(`^\\.${hash}\\.json\\.[a-f0-9]{32}\\.tmp$`).test(basename))) fail("cold genesis receipt locator is crossed");
+        }
+        receiptBytes = requireOnePublication(receiptFiles, name);
+      }
+      const shards = members.filter((entry) => entry.stats.isDirectory() && /^epoch-genesis\/sha256\/[a-f0-9]{2}$/.test(entry.relative));
+      if (shards.length > 1 || (shards.length === 1 && receipt === null)) fail("cold genesis shard has no authenticated candidate");
+      const headBytes = requireOnePublication(headFiles, "epoch-head.json");
+      if (headBytes !== null) {
+        if (receipt === null) fail("cold genesis head has no receipt");
+        if (!receiptFiles.some((entry) => path.basename(entry.target) === `${receipt.genesisHash}.json`)) fail("cold genesis head has no final receipt");
+        validateColdEpochOneHeadV1(JSON.parse(headBytes.toString("utf8")), headBytes, receipt);
+      }
+      for (const entry of members) if (!sameColdFileMetadataV1(entry.stats, lstatSync(entry.target, { bigint: true }))) fail("cold genesis history changed while read");
+      if (!sameColdFileMetadataV1(rootIdentity, lstatSync(paths.root, { bigint: true }))
+        || !sameColdFileMetadataV1(parentBefore, lstatSync(parent, { bigint: true }))) fail("cold genesis history topology changed while read");
+      rootGuard.assertStable(); parentGuard.assertStable();
+      const identity = (stats: BigIntStats) => [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid, stats.nlink, stats.size, stats.mtimeNs, stats.ctimeNs].map(String);
+      const identityWitness = canonical({ parent: identity(parentBefore), root: identity(rootIdentity),
+        members: members.map((entry) => ({ relative: entry.relative, identity: identity(entry.stats) })) });
+      return Object.freeze({ receipt, receiptBytes, headBytes, identityWitness });
+    } finally { rootGuard.close(); }
+  } finally { parentGuard.close(); }
+}
+
+export async function acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
+  if (coldGenesisInvocationActiveV1) fail("cold genesis invocation is already active");
+  coldGenesisInvocationActiveV1 = true;
+  try { return await acquireColdGenesisTransitionLeaseOwnedV1(); }
+  finally { coldGenesisInvocationActiveV1 = false; }
+}
+
+async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
+  observeColdGenesisHistoryV1(null);
+  const observer = await import("./baseline-post-handoff-receipt-v1.js");
+  const before = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+  observeColdGenesisHistoryV1(null);
+  if (retainedColdGenesisRawV1 !== null && heldRawPhysicalTransitionLockV1(retainedColdGenesisRawV1).cleanup.phase === "owned-unlink-completed") {
+    // Finish this invocation's authenticated unlink; never mistake it for a
+    // still-held fence, and never reclaim an externally removed held lock.
+    const pending = retainedColdGenesisRawV1;
+    try { releaseRawPhysicalTransitionLockV1(pending); }
+    finally { if (!rawPhysicalTransitionLocksV1.has(pending)) retainedColdGenesisRawV1 = null; }
+  }
+  const raw = retainedColdGenesisRawV1 ?? await acquireRawPhysicalTransitionLockV1();
+  try {
+    let prefix = observeColdGenesisHistoryV1(raw);
+    const fresh = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+    if (coldGenesisStableIdentityV1(before) !== coldGenesisStableIdentityV1(fresh)) fail("cold genesis prerequisites changed under lock");
+    const reobserved = observeColdGenesisHistoryV1(raw);
+    if (prefix.identityWitness !== reobserved.identityWitness || canonical(prefix.receipt) !== canonical(reobserved.receipt) || !((prefix.headBytes === null && reobserved.headBytes === null)
+      || (prefix.headBytes !== null && reobserved.headBytes !== null && prefix.headBytes.equals(reobserved.headBytes)))) fail("cold genesis prefix changed under lock");
+    let receipt = prefix.receipt;
+    if (receipt !== null) {
+      if (coldGenesisStableIdentityV1(receipt.coldObservation as Readonly<Record<string, unknown>>) !== coldGenesisStableIdentityV1(fresh)) fail("cold genesis retained prerequisites are crossed");
+    } else {
+      const body = { schema: "setfarm.internal-production-cold-epoch-genesis-receipt.v1", purpose: "exact-poison-cold-recovery-epoch-one-v1", epochOrdinal: 1, authorityOwner: "baseline-a", services: COLD_EPOCH_SERVICES_V1, coldObservation: fresh };
+      const genesisHash = sha256(canonical(body));
+      receipt = parseColdEpochGenesisReceiptV1(Buffer.from(`${canonical({ ...body, genesisRef: `${COLD_GENESIS_PREFIX_V1}${genesisHash}`, genesisHash })}\n`));
+    }
+    const headBody = { schema: "setfarm.internal-production-physical-service-restart-authority-epoch.v2", epochOrdinal: 1, authorityOwner: "baseline-a", services: COLD_EPOCH_SERVICES_V1,
+      predecessorEpochRef: null, predecessorEpochHash: null, retirementRef: null, retirementHash: null, startupHooksReadyRef: null, startupHooksReadyHash: null,
+      successorActivationRef: null, successorActivationHash: null, genesisRef: receipt.genesisRef, genesisHash: receipt.genesisHash };
+    const epochHash = sha256(canonical(headBody));
+    const head = { ...headBody, epochRef: `setfarm://internal-production/physical-service-restart-authority-epoch/sha256/${epochHash}`, epochHash };
+    const headBytes = Buffer.from(`${canonical(head)}\n`);
+    if (prefix.headBytes !== null && !prefix.headBytes.equals(headBytes)) fail("cold genesis retained head is crossed");
+    writeNoReplace(coldGenesisReceiptPathV1(receipt.genesisHash as string), receipt);
+    prefix = observeColdGenesisHistoryV1(raw);
+    if (canonical(prefix.receipt) !== canonical(receipt)) fail("cold genesis receipt changed after durable publication");
+    writeNoReplace(rootPaths().epoch, head);
+    prefix = observeColdGenesisHistoryV1(raw);
+    if (!prefix.headBytes?.equals(headBytes) || canonical(prefix.receipt) !== canonical(receipt)) fail("cold genesis durable head is crossed");
+    assertColdEpochOneHeadV1(head, headBytes);
+    const lease = promoteRawPhysicalTransitionLockV1(raw, assertEpochOneActive);
+    if (retainedColdGenesisRawV1 === raw) retainedColdGenesisRawV1 = null;
+    return lease;
+  } catch (error) {
+    // Genesis publishes no dispatch journal. Retain every receipt/head prefix;
+    // release only this exact physical owner, never erase partial authority.
+    try {
+      releaseRawPhysicalTransitionLockV1(raw);
+      if (retainedColdGenesisRawV1 === raw) retainedColdGenesisRawV1 = null;
+    } catch {
+      // Never fall back to acquisition-only cleanup after publication. A
+      // conflicting or indeterminate helper journal must keep its live fence.
+      retainedColdGenesisRawV1 = rawPhysicalTransitionLocksV1.has(raw) ? raw : null;
+    }
+    throw error;
+  }
+}
+
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {
   const { epoch } = rootPaths();
   const bytes = readStableRetirementBytes(epoch, "restart epoch");
   const value = JSON.parse(bytes.toString("utf8")) as unknown;
+  if (value && typeof value === "object" && !Array.isArray(value)
+    && (value as Record<string, unknown>).schema === "setfarm.internal-production-physical-service-restart-authority-epoch.v2") return assertColdEpochOneHeadV1(value, bytes);
   const head = exactCanonicalRecord(value, [
     "schema", "epochOrdinal", "authorityOwner", "services", "predecessorEpochRef", "predecessorEpochHash",
     "retirementRef", "retirementHash", "startupHooksReadyRef", "startupHooksReadyHash",
@@ -795,7 +1182,7 @@ async function acquireRawPhysicalTransitionLockV1(): Promise<RawPhysicalTransiti
     }
     const raw = Object.freeze({ schema: "setfarm.internal-production-raw-physical-transition-lock.v1" as const });
     rootGuard.assertStable();
-    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard });
+    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard, cleanup: { phase: "held" } });
     rootGuardTransferred = true;
     opened = null;
     return raw;
@@ -826,6 +1213,7 @@ function heldRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): RawP
 }
 
 function assertRawPhysicalTransitionLockStableV1(state: RawPhysicalTransitionLockStateV1): void {
+  if (state.cleanup.phase !== "held") fail("raw physical transition lock is awaiting unlink durability");
   state.rootGuard.assertStable();
   const held = descriptorIdentity(state.descriptor);
   const atPath = lstatSync(rootPaths().lock, { bigint: true });
@@ -853,13 +1241,22 @@ function promoteRawPhysicalTransitionLockV1(
 
 function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
   const state = heldRawPhysicalTransitionLockV1(raw);
-  assertRawPhysicalTransitionLockStableV1(state);
-  assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
-  cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes);
+  if (state.cleanup.phase === "held") {
+    assertRawPhysicalTransitionLockStableV1(state);
+    assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes, () => { state.cleanup.phase = "owned-unlink-completed"; });
+  } else {
+    state.rootGuard.assertStable();
+    if (fstatSync(state.descriptor, { bigint: true }).nlink !== 0n) fail("raw completed unlink descriptor is crossed");
+    try { lstatSync(rootPaths().lock); fail("raw completed unlink path is occupied"); }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    fsyncParent(rootPaths().lock);
+    state.rootGuard.assertStable();
+  }
   try { state.rootGuard.assertStable(); }
   finally {
     try { state.rootGuard.close(); }
-    finally { closeSync(state.descriptor); rawPhysicalTransitionLocksV1.delete(raw); }
+    finally { try { closeSync(state.descriptor); } finally { rawPhysicalTransitionLocksV1.delete(raw); } }
   }
 }
 

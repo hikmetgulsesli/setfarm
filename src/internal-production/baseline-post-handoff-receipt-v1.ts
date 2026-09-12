@@ -4987,6 +4987,10 @@ async function observeExactPoisonColdBootstrapBracketNoWriteV1() {
   }
 }
 
+export async function observeInternalProductionColdBootstrapObservationV1() {
+  return observeExactPoisonColdBootstrapBracketNoWriteV1();
+}
+
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   operation: FileSnapshot,
   inventory: ExactPoisonRecoveryInventoryEvidenceV1,
@@ -8387,7 +8391,8 @@ function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: s
     if (canonicalComparable(pidBefore) !== canonicalComparable(pidAfter) || canonicalComparable(launchBefore) !== canonicalComparable(launchAfter)
       || !sameStableRegularV1(plistBefore, plistAfter) || !sameStableRegularV1(entryBefore, entryAfter)
       || !cliAfter.isSymbolicLink() || !sameRegularMetadata(cliBefore, cliAfter) || realpathSync(cli) !== expectedCli) currentEntryFail("cold spawner absence changed during observation");
-    const body = { schema: "setfarm.internal-production-cold-spawner-absence.v1" as const, source, uid,
+    const body = { schema: "setfarm.internal-production-cold-spawner-absence.v1" as const,
+      source: { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash }, uid,
       globalSpawnerFamilyCount: 0 as const, singletonLockState: "absent" as const, pidFile: pidBefore,
       ancestors: pins.map((pin) => ({ path: pin.target, ...metadata(pin.identity) })),
       launcher: { path: cli, target: expectedCli, ...metadata(cliBefore) }, entrypoint: profile.entrypoint,

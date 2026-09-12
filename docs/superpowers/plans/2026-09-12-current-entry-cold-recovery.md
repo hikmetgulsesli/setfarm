@@ -104,7 +104,7 @@ locator/publication module must enter the owning literal File Maps and source
   fixture. Converge producers/readers/helper FD validation and private-directory
   anchors on a single fixed-workspace locator; retain the separate executing
   source identity. Refuse symlinks/foreign roots; no store migration or fallback.
-- [ ] Reproduce absent epoch head with the real lease acquisition path. Add a
+- [x] Reproduce absent epoch head with the real lease acquisition path. Add a
   distinct genesis-specific acquisition of the existing physical lock, not an
   ENOENT-to-epoch-one fallback. Under that lock require exact incident/source,
   three-service/global-spawner absence, complete zero, 31 and no 32/33/A or
@@ -542,3 +542,53 @@ passed. Whole-branch delivery and live recovery remain pending.
   (5.086s), TypeScript and independent review passed. No bound genesis/head or
   cold dispatch exists yet. The abandonment path remains acquisition-only;
   future published cold ownership needs explicit journal retention rules.
+- Next coherent genesis slice (same receipt/retirement File Map): export only
+  a zero-argument read-only wrapper around the private cold bracket; retirement
+  dynamically invokes that fixed port itself. A new zero-argument genesis lease
+  entry accepts no proof/callback/root from callers. Embed the complete cold
+  observation in a strict content-addressed epoch-genesis receipt, then create a
+  V2 epoch-one head bound to its pair. Keep historical V1 and epoch-two parsing
+  unchanged. Discover at most one exact receipt/temp candidate under
+  `epoch-genesis/sha256`; reject unknown retirement and sibling restart history
+  before dead-owner reclamation and again under the retained raw lock. Resume
+  the original receipt bytes only when fresh cold evidence agrees on incident,
+  source, prerequisites, synthetic Git absence and finding inventory. Volatile
+  service observations must pass freshly but do not redefine retained genesis.
+  Reopen durable receipt/head and promote the same lock; no launch is included.
+- Genesis implementation now owns a strict full-observation receipt and bound
+  V2 epoch-one head. Initial behavior RED was the missing zero-input genesis
+  entry. Review-derived REDs reproduced missing ancestor/data fsync, same-byte
+  receipt/head/shard replacement across the awaited observation, and stale raw
+  retention after owned unlink. Fixes preserve strict historical V1/epoch-two
+  readers, use the same physical FD, and retain only authenticated retry state.
+  Own unlink has an explicit phase recorded before directory fsync; external
+  unlink and a foreign replacement never authorize reacquisition or deletion.
+  No live genesis was published and no child was launched.
+- Tests cover nineteen crossed-evidence/history refusals; eight recognized or
+  forbidden publication prefixes; same-byte receipt/head/shard replacement;
+  ancestor and retained-data durability; prerequisite drift; pre/post-unlink
+  and post-close failures; external deletion/foreign locks; competing receipts,
+  unsafe members, incomplete bytes and epoch-two refusal. Empty hash shards
+  without a valid candidate deliberately remain fail-closed, not auto-repaired.
+- The broader receipt check exposed pre-existing coupled-slice contract drift:
+  the historical migration-inventory resolver plus the new cold observer add
+  exactly two read-only runtime ports. The old ordered53 export hash is retained
+  unchanged and those two additions are named explicitly. Seventeen context
+  calls plus one definition are now consistently counted. Exact pre-schema
+  locator assertions follow the reviewed shared-workspace producer root, not
+  the executing source worktree. No runtime guard or negative test was removed.
+  Receipt focused checks passed6/6 (9.321s), source manifests16/16 (5.288s),
+  retirement suite28/28 (21.002s), plus the additional seven-case competing and
+  unsafe-prefix test1/1 (1.649s); TypeScript and diff whitespace passed.
+  Independent final five-file review found no material issue.
+  Final complete retirement rerun including all new cases passed29/29 (19.555s).
+- Next transport integration stays in the existing five runtime families and
+  their owning tests: startup admission coordinates cold intent/dispatch/claim/
+  settlement; retirement owns the same-FD journal and cleanup fencing; the
+  helper authenticates and dispatches direct detached effects; spawner handles
+  inherited cold authority immediately after singleton acquisition and before
+  ordinary admission; receipt phase zero accounts for unfinished cold work.
+  Resume must inspect an existing dispatch/claim before choosing genesis:
+  genesis always requires absence and cannot be blindly reacquired after a real
+  child appears. New direct rebind effects require a separately versioned
+  transport authority; historical V1 launchctl receipts remain read-only.

@@ -45,6 +45,16 @@ const observerSource = path.join(sourceRoot, "src/internal-production/baseline-p
 const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-tests.ts");
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
+function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
+  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1"];
+  assert.equal(names.length, 55, "cold recovery adds exactly the two fixed read-only ports");
+  assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
+  const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
+  assert.equal(historical.length, 53);
+  assert.equal(canonicalHash(historical), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
+    "all historical runtime exports remain exactly ordered and unchanged");
+  return historical;
+}
 const EXACT_POISON_OPERATION_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
 const EXACT_POISON_OPERATION_REF_V1 = `setfarm://internal-production/current-entry-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1}`;
 const EXACT_POISON_OPERATION_BYTES_SHA256_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
@@ -17906,7 +17916,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 2, "one private definition and one prepare call are exact");
     assert.doesNotMatch(source, /export\s+async\s+function\s+resumeExactPoisonQuarantineBeforeSelectionV1/);
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53, "the existing public runtime export set must not widen");
+    assertColdRecoveryRuntimeExportContractV1(runtimeExports);
     assert.equal(runtimeExports.includes("prepareInternalProductionCurrentEntryOperationV1"), true);
     assert.equal(runtimeExports.includes("resumeExactPoisonQuarantineBeforeSelectionV1"), false);
     const loaded = await import(`${pathToFileURL(observerSource).href}?p4-exact-poison-private=${Date.now()}`) as Record<string, unknown>;
@@ -19790,8 +19800,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.doesNotMatch(region, /^(?:export\s+)?async\s+function/m, `${consumer.name}: remains synchronous`);
       assert.doesNotMatch(region, /\bawait\b|selectCurrentEntryStoreContextV1\(|durablyAuthenticateSuccessorActivation|postVisible|PostVisible|WeakMap|process\.env|AsyncLocalStorage/, `${consumer.name}: performs no selection, durability, post-visible validation, await, or ambient lookup`);
     }
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 16,
-      "the authenticator is consumed by the eleven synchronous path groups, two private no-write prerequisite builders, selected effect executor, and migration-status pre/post context fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 17,
+      "the authenticator retains the eleven path groups, two private builders, selected effect executor, selected-operation recheck, and migration-status pre/post fences");
     const fixedPathRegion = topLevelFunctionRegionV1(source, "fixedCurrentEntryPath");
     assert.match(fixedPathRegion, /context:\s*SelectedCurrentEntryStoreContextV1/);
     assert.match(fixedPathRegion, /readCurrentEntryStore\(context/);
@@ -19803,7 +19813,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.doesNotMatch(source, /AsyncLocalStorage|SETFARM_[A-Z0-9_]*CURRENT_ENTRY_(?:ROOT|STORE|CONTEXT)|JSON\.stringify\([^\n]*SelectedCurrentEntryStoreContextV1/);
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function\s+(?:selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|requireSelectedCurrentEntryStoreContextStateV1)/);
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53, "the public runtime export set remains unchanged");
+    assertColdRecoveryRuntimeExportContractV1(runtimeExports);
     const loaded = await import(`${pathToFileURL(observerSource).href}?p5b-private=${Date.now()}`) as Record<string, unknown>;
     for (const privateName of [
       "selectedCurrentEntryStoreContextBrandV1",
@@ -34207,10 +34217,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "pre-schema raw authority is borrowed only from the narrow live successor root and exact operation, then returned as an owner");
     assert.match(preSchemaAtRoot, /operationHash[\s\S]*(?:pre-schema-spawner-rebind-v1|operations)[\s\S]*(?:readdirSync|opendirSync|openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1)\(/,
       "the pre-schema lower reader owns only the exact successor-operation directory whose dynamic F/writer siblings must be complete");
-    assert.match(preSchemaAtRoot, /fixedRepositoryRoot\(\)[\s\S]*data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/operations\/sha256/,
-      "pre-schema operation locators are rooted in the canonical repository-owned producer store, independently of the selected successor store");
-    assert.match(preSchemaAtRoot, /fixedRepositoryRoot\(\)[\s\S]*data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/records/,
-      "pre-schema status, material, and process-identity contents resolve from the canonical repository-owned producer store");
+    assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\("data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/operations\/sha256", operation\.operationHash\)/,
+      "pre-schema operation locators use the shared canonical workspace producer store, independently of source worktrees and selected successor store");
+    assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\("data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/records", kind, "sha256", hash\.slice\(0, 2\), `\$\{hash\}\.json`\)/,
+      "pre-schema status, material, and process-identity contents resolve from the shared canonical workspace producer store");
     assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\([\s\S]*legacy-pre-manifest-zero-owner-observation-v1/,
       "legacy-zero content alone resolves from its canonical workspace-owned store");
     const preSchemaResolverTable = /const\s+resolvers\s*=\s*\[([\s\S]*?)\]\s*as const\s*;/.exec(preSchemaAtRoot);
@@ -35511,16 +35521,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const exports = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)|^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1] ?? match[2]);
     assert.deepEqual(exports.filter((name) => /ExactPoisonPostVisibleProgress|ProgressPass|ProgressStatus|ProgressRaw/.test(name)), []);
     const runtimeExports = [...source.matchAll(/^export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53);
-    assert.equal(canonicalHash(runtimeExports), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
+    const historicalRuntimeExports = assertColdRecoveryRuntimeExportContractV1(runtimeExports);
+    assert.equal(canonicalHash(historicalRuntimeExports), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
       "S preserves the exact ordered public runtime export set, not only a name-pattern subset");
     const typeExports = [...source.matchAll(/^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1]);
     assert.equal(typeExports.length, 26);
     assert.equal(canonicalHash(typeExports), "c655b478e687a8df2f04f49017de4e288e108a97a2c2428fcab97dbf3978f998",
       "S preserves the exact ordered public type export set while every S contract remains private");
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2);
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
-      "S retains the two private no-write prerequisite builders and adds the selected-operation recheck at the Q normalization frontier plus the migration-status pre/post context fence");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 18,
+      "one definition plus seventeen consumers retain both private builders, the selected-operation recheck and migration-status pre/post context fences");
   });
 
   it("P5c-S resumes retained pre-schema and migration history in exact CAS order before later effects", () => {

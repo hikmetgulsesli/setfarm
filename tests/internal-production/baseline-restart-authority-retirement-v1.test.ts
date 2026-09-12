@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -83,6 +83,46 @@ function completeZeroFixture(): Readonly<Record<string, unknown>> {
   return recursivelyFreeze({ ...body, observationRef: `setfarm://internal-production/complete-zero-owner-census-observation/sha256/${observationHash}`, observationHash });
 }
 
+function coldGenesisObservationFixture(fixture: string): Readonly<Record<string, unknown>> {
+  const source = { branch: "main", clean: true, sha: "a".repeat(40), treeHash: "b".repeat(40), buildHash: "c".repeat(64), originMainSha: "a".repeat(40) };
+  const loaded = { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash };
+  const service = (label: string, pid: number, port: number) => {
+    const serviceSource = port === 18789 ? null : loaded;
+    const serviceIdentityHash = sha256(canonical({ label, pid }));
+    return { pid, processStartTimeEpochMs: 1_800_000_000_000 + pid, processIdentityHash: sha256(String(pid)), serviceIdentityHash,
+      generationHash: sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source: serviceSource })),
+      loadedSourceSha: serviceSource?.sha ?? null, loadedTreeHash: serviceSource?.treeHash ?? null, loadedBuildHash: serviceSource?.buildHash ?? null,
+      processOwnerCount: 1, listenerOwnerCount: 1, listener: { host: "127.0.0.1", port, listenerIdentityHash: sha256(String(port)) } };
+  };
+  const uid = process.getuid!();
+  const metadata = { dev: "1", ino: "2", uid: String(uid), mode: 0o700, nlink: "1", size: "0", mtimeNs: "1", ctimeNs: "1" };
+  const absenceBody = { schema: "setfarm.internal-production-cold-spawner-absence.v1", source: loaded, uid,
+    globalSpawnerFamilyCount: 0, singletonLockState: "absent", pidFile: { state: "absent" },
+    ancestors: [fixture, path.join(fixture, ".openclaw"), path.join(fixture, ".openclaw/setfarm")].map((target) => ({ path: target, ...metadata })),
+    launcher: { path: path.join(fixture, ".local/bin/setfarm"), target: path.join(fixture, "dist/cli/cli.js"), ...metadata, mode: 0o755 },
+    entrypoint: path.join(fixture, "dist/spawner.js"), entrypointBytesSha256: "d".repeat(64), plistBytesSha256: "e".repeat(64), launchProjectionHash: "f".repeat(64) };
+  const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [] };
+  const operationHash = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
+  const body = {
+    schema: "setfarm.internal-production-cold-bootstrap-observation.v1",
+    operation: { operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash },
+    operationBytesSha256: "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6",
+    contaminationFingerprintHash: "9e07f9bd60955a9a681b7365a3c48cb087ff7d46459a5b9885283e0a3492ce65", source,
+    authorityV3Migration31Audit: { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"1".repeat(64)}`, authorityV3Migration31AuditHash: "1".repeat(64) },
+    pendingBootstrapHandoffMigration: { pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${"2".repeat(64)}`, pendingBootstrapHandoffMigrationHash: "2".repeat(64) },
+    remainingServices: { dashboard: service("com.setrox.setfarm-dashboard", 1001, 3333), missionControl: service("com.setrox.mission-control", 1002, 3080), openClaw: service("ai.openclaw.gateway", 1003, 18789) },
+    spawnerAbsence: { ...absenceBody, absenceHash: sha256(canonical(absenceBody)) },
+    physical: { worktrees: [], processes: [], listeners: [], stale: [], ownedProcessCount: 0, ownedListenerCount: 0, ownedWorktreeCount: 0, dirtyWorktreeCount: 0, staleChildCount: 0 },
+    census: completeZeroFixture().census,
+    syntheticGitAbsence: [
+      { repository: "setfarm", objectSha: "4fc67f20df0e935c703c4658a29dbbaa9aa0a956", objectType: "commit", state: "absent", networkAccess: "forbidden" },
+      { repository: "mission-control", objectSha: "4ec5fc99a076453a87381c0c75e508d25dd8882d", objectType: "commit", state: "absent", networkAccess: "forbidden" },
+    ],
+    legacyFindingPublicationInventory: { ...inventoryBody, inventoryHash: sha256(canonical(inventoryBody)) },
+  };
+  return recursivelyFreeze({ ...body, observationHash: sha256(canonical(body)) });
+}
+
 function seedPreSchemaHelperClosure(fixture: string): Readonly<Record<string, unknown>> {
   const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -152,6 +192,11 @@ function seedCompletedSequenceHistory(fixture: string, intentKind: "live-rebind"
 function installRetirementFixture(fixture: string, source: string): string {
   const internal = path.join(fixture, "src/internal-production");
   mkdirSync(internal, { recursive: true });
+  for (const relative of ["findings/legacy-finding-publication-inventory-v1.ts", "product-compiler/canonical-json.ts"]) {
+    const target = path.join(fixture, "src", relative);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, readFileSync(path.resolve(import.meta.dirname, "../../src", relative)));
+  }
   installWorkspaceLocatorFixtureV1(internal, fixture);
   const fixtureModulePath = path.join(internal, "baseline-restart-authority-retirement-v1.ts");
   const censusReturn = "return orderedFrozenV1({ ...body, censusHash: sha256(canonical(body)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1;";
@@ -237,6 +282,368 @@ export async function resolveInternalProductionBaselineRestartSequenceReceiptV1(
   return fixtureModulePath;
 }
 
+async function createColdEpochGenesisFixtureV1(source = readFileSync(sourcePath, "utf8")) {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-genesis-case-"));
+  const modulePath = installRetirementFixture(fixture, source);
+  const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+  const epoch = path.join(root, "epoch-head.json"), lock = path.join(root, "physical-service-restart-authority.transition.lock");
+  const historicalHead = readFileSync(epoch);
+  unlinkSync(epoch);
+  const port = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  writeFileSync(port, readFileSync(port, "utf8") + '\nexport async function observeInternalProductionColdBootstrapObservationV1(){await globalThis.__coldGenesisObserverHook?.();return globalThis.__coldGenesisObservation;}\n');
+  Reflect.set(globalThis, "__coldGenesisObservation", coldGenesisObservationFixture(fixture));
+  const isolated = await import(`${pathToFileURL(modulePath).href}?cold-case=${Date.now()}-${Math.random()}`);
+  return { fixture, root, epoch, lock, historicalHead, isolated, cleanup: () => {
+    Reflect.deleteProperty(globalThis, "__coldGenesisObservation");
+    Reflect.deleteProperty(globalThis, "__coldGenesisPublicationFault");
+    Reflect.deleteProperty(globalThis, "__coldGenesisObserverHook");
+    Reflect.deleteProperty(globalThis, "__coldGenesisSyncEvents");
+    Reflect.deleteProperty(globalThis, "__coldGenesisSyncedInodes");
+    Reflect.deleteProperty(globalThis, "__coldGenesisReleaseFault");
+    Reflect.deleteProperty(globalThis, "__coldGenesisRawBefore");
+    rmSync(fixture, { recursive: true, force: true });
+  } };
+}
+
+function coldGenesisTreeSnapshotV1(root: string): unknown[] {
+  const entries: unknown[] = [];
+  const visit = (target: string, relative: string) => {
+    const stats = lstatSync(target, { bigint: true });
+    entries.push({ relative, ino: String(stats.ino), mode: String(stats.mode), uid: String(stats.uid), nlink: String(stats.nlink),
+      size: String(stats.size), mtimeNs: String(stats.mtimeNs), ctimeNs: String(stats.ctimeNs),
+      bytesHash: stats.isFile() ? createHash("sha256").update(readFileSync(target)).digest("hex") : null });
+    if (stats.isDirectory()) for (const name of readdirSync(target).sort()) visit(path.join(target, name), relative ? `${relative}/${name}` : name);
+  };
+  visit(root, "");
+  return entries;
+}
+
+test("cold genesis rejects crossed evidence and conflicting history before any publication or reclamation", async () => {
+  for (const fault of ["foreign-incident", "source-dirty", "nonzero-owner", "missing-counter", "service-pid-cross", "service-generation-cross", "spawner-family", "live-stale-pid", "inventory-cross", "synthetic-cross", "historical-head", "old-helper-history", "old-cutover-history", "unknown-file", "empty-shard", "sibling-pre-schema", "sibling-normal", "sibling-sequence", "sibling-bootstrap"] as const) {
+    const fixture = await createColdEpochGenesisFixtureV1();
+    try {
+      const observation = structuredClone(Reflect.get(globalThis, "__coldGenesisObservation"));
+      if (fault === "foreign-incident") {
+        observation.operation.operationHash = "8".repeat(64);
+        observation.operation.operationRef = `setfarm://internal-production/current-entry-operation/sha256/${observation.operation.operationHash}`;
+      }
+      if (fault === "source-dirty") observation.source.clean = false;
+      if (fault === "nonzero-owner") observation.census.activeRunCount = 1;
+      if (fault === "missing-counter") delete observation.census.recoveryOwnerCount;
+      if (fault === "service-pid-cross") observation.remainingServices.missionControl.pid = observation.remainingServices.dashboard.pid;
+      if (fault === "service-generation-cross") observation.remainingServices.dashboard.generationHash = "9".repeat(64);
+      if (fault === "spawner-family") observation.spawnerAbsence.globalSpawnerFamilyCount = 1;
+      if (fault === "live-stale-pid") {
+        const pid = observation.remainingServices.dashboard.pid;
+        const { path: _path, ...metadata } = observation.spawnerAbsence.ancestors[0];
+        observation.spawnerAbsence.pidFile = { state: "stale-dead-pid", pid, bytesSha256: sha256(String(pid)),
+          identity: { ...metadata, mode: 0o644, nlink: "1", size: String(String(pid).length) } };
+      }
+      if (fault === "inventory-cross") observation.legacyFindingPublicationInventory.inventoryHash = "0".repeat(64);
+      if (fault === "synthetic-cross") observation.syntheticGitAbsence = [];
+      const { absenceHash: _absenceHash, ...absence } = observation.spawnerAbsence;
+      observation.spawnerAbsence.absenceHash = sha256(canonical(absence));
+      const { observationHash: _observationHash, ...body } = observation;
+      observation.observationHash = sha256(canonical(body));
+      Reflect.set(globalThis, "__coldGenesisObservation", recursivelyFreeze(observation));
+      if (fault === "historical-head") writeFileSync(fixture.epoch, fixture.historicalHead, { mode: 0o600 });
+      if (fault === "old-helper-history") writeFileSync(path.join(fixture.root, "pre-schema-helper-journal.json"), "retained\n", { mode: 0o600 });
+      if (fault === "old-cutover-history") mkdirSync(path.join(fixture.root, "cutover-to-recovery-d-v1"), { mode: 0o700 });
+      if (fault === "unknown-file") writeFileSync(path.join(fixture.root, "unknown.json"), "retained\n", { mode: 0o600 });
+      if (fault === "empty-shard") mkdirSync(path.join(fixture.root, "epoch-genesis/sha256/ab"), { recursive: true, mode: 0o700 });
+      const siblings = { "sibling-pre-schema": "pre-schema-spawner-rebind-v1", "sibling-normal": "baseline-service-restart-v1", "sibling-sequence": "baseline-service-restart-sequence-v1", "sibling-bootstrap": "baseline-spawner-bootstrap-restart-v1" } as const;
+      if (fault in siblings) mkdirSync(path.join(path.dirname(fixture.root), siblings[fault as keyof typeof siblings]), { mode: 0o700 });
+      const before = coldGenesisTreeSnapshotV1(path.join(fixture.fixture, "data"));
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /cold|LEGACY_FINDING/, fault);
+      assert.deepEqual(coldGenesisTreeSnapshotV1(path.join(fixture.fixture, "data")), before, `${fault}: rejection must make zero filesystem changes`);
+      assert.equal(existsSync(fixture.lock), false, fault);
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test("cold genesis syncs every receipt ancestor before publishing its head", async () => {
+  const original = readFileSync(sourcePath, "utf8");
+  const source = original.replace("function fsyncParent(file: string): void {", "function fsyncParent(file: string): void { globalThis.__coldGenesisSyncEvents.push(path.dirname(file));")
+    .replace("function writeNoReplace(file: string, value: unknown): boolean {", "function writeNoReplace(file: string, value: unknown): boolean { if(path.basename(file) === 'epoch-head.json') globalThis.__coldGenesisSyncEvents.push('HEAD');");
+  const fixture = await createColdEpochGenesisFixtureV1(source);
+  try {
+    Reflect.set(globalThis, "__coldGenesisSyncEvents", []);
+    const lease = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    const events = Reflect.get(globalThis, "__coldGenesisSyncEvents") as string[];
+    const beforeHead = events.slice(0, events.indexOf("HEAD"));
+    for (const parent of [fixture.root, path.join(fixture.root, "epoch-genesis"), path.join(fixture.root, "epoch-genesis/sha256")]) {
+      assert.ok(beforeHead.includes(parent), `receipt ancestor link must be durable: ${parent}`);
+    }
+  } finally { fixture.cleanup(); }
+});
+
+test("cold genesis rejects same-byte retained history replacement across its awaited observation", async () => {
+  for (const fault of ["receipt", "head", "shard"] as const) {
+    const fixture = await createColdEpochGenesisFixtureV1();
+    try {
+      const lease = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+      const headBytes = readFileSync(fixture.epoch), head = JSON.parse(headBytes.toString("utf8"));
+      const receipt = path.join(fixture.root, "epoch-genesis/sha256", head.genesisHash.slice(0, 2), `${head.genesisHash}.json`);
+      const receiptBytes = readFileSync(receipt);
+      let calls = 0;
+      Reflect.set(globalThis, "__coldGenesisObserverHook", () => {
+        if (++calls !== 2) return;
+        if (fault === "shard") {
+          const shard = path.dirname(receipt), held = path.join(fixture.fixture, "held-shard");
+          renameSync(shard, held); mkdirSync(shard, { mode: 0o700 });
+          renameSync(path.join(held, path.basename(receipt)), receipt);
+        } else {
+          const target = fault === "receipt" ? receipt : fixture.epoch;
+          renameSync(target, path.join(fixture.fixture, "held-record"));
+          writeFileSync(target, fault === "receipt" ? receiptBytes : headBytes, { mode: 0o600 });
+        }
+      });
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /prefix changed under lock/, fault);
+      assert.deepEqual(readFileSync(fixture.epoch), headBytes);
+      assert.deepEqual(readFileSync(receipt), receiptBytes);
+      assert.equal(existsSync(fixture.lock), false);
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test("cold genesis resumes only reachable publication prefixes and resyncs retained file data", async () => {
+  const original = readFileSync(sourcePath, "utf8");
+  const source = original.replaceAll("fsyncSync(", "coldGenesisFixtureFsync(") + '\nfunction coldGenesisFixtureFsync(fd: number){ globalThis.__coldGenesisSyncedInodes.push(String(fstatSync(fd,{bigint:true}).ino)); fsyncSync(fd); }\n';
+  for (const fault of ["receipt-temp", "receipt-linked", "receipt-collision", "receipt-only", "head-temp", "head-linked", "head-collision", "head-with-temp-receipt"] as const) {
+    const fixture = await createColdEpochGenesisFixtureV1(source);
+    try {
+      Reflect.set(globalThis, "__coldGenesisSyncedInodes", []);
+      const lease = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+      const headBytes = readFileSync(fixture.epoch), head = JSON.parse(headBytes.toString("utf8"));
+      const receipt = path.join(fixture.root, "epoch-genesis/sha256", head.genesisHash.slice(0, 2), `${head.genesisHash}.json`);
+      const receiptBytes = readFileSync(receipt);
+      const target = fault.startsWith("head-") && fault !== "head-with-temp-receipt" ? fixture.epoch : receipt;
+      const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${"a".repeat(32)}.tmp`);
+      if (fault.startsWith("receipt-")) unlinkSync(fixture.epoch);
+      if (fault.endsWith("temp") || fault === "head-with-temp-receipt") renameSync(target, temporary);
+      if (fault.endsWith("linked")) linkSync(target, temporary);
+      if (fault.endsWith("collision")) writeFileSync(temporary, readFileSync(target), { mode: 0o600 });
+      const before = coldGenesisTreeSnapshotV1(fixture.root);
+      Reflect.set(globalThis, "__coldGenesisSyncedInodes", []);
+      if (fault === "head-with-temp-receipt") {
+        await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /final receipt/, fault);
+        assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before, "unreachable prefix must be preserved without mutation");
+      } else {
+        const resumed = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+        await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(resumed);
+        assert.deepEqual(readFileSync(receipt), receiptBytes, fault);
+        assert.deepEqual(readFileSync(fixture.epoch), headBytes, fault);
+        assert.equal(existsSync(temporary), false, fault);
+        const synced = Reflect.get(globalThis, "__coldGenesisSyncedInodes") as string[];
+        for (const file of [receipt, fixture.epoch]) assert.ok(synced.includes(String(lstatSync(file, { bigint: true }).ino)), `${fault}: retained final file data must be synced`);
+      }
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test("cold genesis retries release failures without losing a live fence or retaining a closed capability", async () => {
+  for (const fault of ["before-unlink", "after-unlink", "after-close"] as const) {
+    const original = readFileSync(sourcePath, "utf8");
+    const publication = '    writeNoReplace(rootPaths().epoch, head);';
+    const preRelease = 'function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {';
+    const unlink = '    unlinkSync(lock);\n    onOwnedUnlink?.();\n    fsyncParent(lock);';
+    const closed = 'finally { try { closeSync(state.descriptor); } finally { rawPhysicalTransitionLocksV1.delete(raw); } }';
+    for (const needle of [publication, preRelease, unlink, closed]) assert.ok(original.includes(needle), `fault port exists: ${needle}`);
+    const source = original.replace(publication, `    if(globalThis.__coldGenesisPublicationFault) { globalThis.__coldGenesisRawBefore = raw; throw new Error('GENESIS_PUBLICATION_FAULT'); }\n${publication}`)
+      .replace(preRelease, preRelease + '\n  if(globalThis.__coldGenesisReleaseFault === "before-unlink") throw new Error("GENESIS_RELEASE_BEFORE");')
+      .replace(unlink, '    unlinkSync(lock);\n    onOwnedUnlink?.();\n    if(globalThis.__coldGenesisReleaseFault === "after-unlink") throw new Error("GENESIS_RELEASE_UNLINKED");\n    fsyncParent(lock);')
+      .replace(closed, 'finally { closeSync(state.descriptor); rawPhysicalTransitionLocksV1.delete(raw); if(globalThis.__coldGenesisReleaseFault === "after-close") throw new Error("GENESIS_RELEASE_CLOSED"); }')
+      + '\nexport const coldGenesisRawTestState = () => ({ retained: retainedColdGenesisRawV1, mapped: retainedColdGenesisRawV1 ? rawPhysicalTransitionLocksV1.has(retainedColdGenesisRawV1) : false });\n';
+    const fixture = await createColdEpochGenesisFixtureV1(source);
+    try {
+      const warmup = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(warmup);
+      const descriptorsBefore = readdirSync("/dev/fd").length;
+      Reflect.set(globalThis, "__coldGenesisPublicationFault", true);
+      Reflect.set(globalThis, "__coldGenesisReleaseFault", fault);
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /GENESIS_PUBLICATION_FAULT/);
+      const retained = fixture.isolated.coldGenesisRawTestState();
+      if (fault === "before-unlink") {
+        assert.equal(existsSync(fixture.lock), true);
+        assert.equal(retained.retained, Reflect.get(globalThis, "__coldGenesisRawBefore"));
+        assert.equal(retained.mapped, true);
+      }
+      if (fault === "after-close") assert.equal(retained.retained, null, "closed raw capability must never be retained");
+      const lockBytes = existsSync(fixture.lock) ? readFileSync(fixture.lock) : null;
+      Reflect.deleteProperty(globalThis, "__coldGenesisPublicationFault");
+      Reflect.deleteProperty(globalThis, "__coldGenesisReleaseFault");
+      const resumed = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      if (lockBytes) assert.deepEqual(readFileSync(fixture.lock), lockBytes, "live retained physical fence is promoted without reacquisition");
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(resumed);
+      assert.equal(existsSync(fixture.lock), false);
+      assert.equal(fixture.isolated.coldGenesisRawTestState().retained, null);
+      assert.equal(readdirSync("/dev/fd").length, descriptorsBefore, `${fault}: no leaked raw descriptors`);
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test("cold genesis never repairs external lock deletion or overwrites a post-unlink foreign lock", async () => {
+  for (const fault of ["external-unlink", "foreign-after-unlink"] as const) {
+    const original = readFileSync(sourcePath, "utf8");
+    const publication = "    writeNoReplace(rootPaths().epoch, head);";
+    const ownedUnlink = "    onOwnedUnlink?.();";
+    assert.ok(original.includes(publication) && original.includes(ownedUnlink));
+    const source = original.replace(publication, `    if(globalThis.__coldGenesisPublicationFault) { if(globalThis.__coldGenesisReleaseFault === 'external-unlink') unlinkSync(rootPaths().lock); throw new Error('GENESIS_PUBLICATION_FAULT'); }\n${publication}`)
+      .replace(ownedUnlink, `${ownedUnlink}\n    if(globalThis.__coldGenesisReleaseFault === 'foreign-after-unlink') { writeFileSync(lock, 'foreign-lock\\n', { mode: 0o600 }); throw new Error('GENESIS_FOREIGN_LOCK'); }`)
+      + '\nexport function disposeColdGenesisFixtureRaw(){ const raw=retainedColdGenesisRawV1; const state=raw && rawPhysicalTransitionLocksV1.get(raw); if(state){state.rootGuard.close();closeSync(state.descriptor);rawPhysicalTransitionLocksV1.delete(raw);}retainedColdGenesisRawV1=null;}\n';
+    const fixture = await createColdEpochGenesisFixtureV1(source);
+    try {
+      const warmup = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(warmup);
+      const descriptorsBefore = readdirSync("/dev/fd").length;
+      Reflect.set(globalThis, "__coldGenesisPublicationFault", true);
+      Reflect.set(globalThis, "__coldGenesisReleaseFault", fault);
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /GENESIS_PUBLICATION_FAULT/);
+      Reflect.deleteProperty(globalThis, "__coldGenesisPublicationFault");
+      Reflect.deleteProperty(globalThis, "__coldGenesisReleaseFault");
+      const before = coldGenesisTreeSnapshotV1(fixture.root);
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1());
+      assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before, `${fault}: retry neither manufactures nor removes authority`);
+      if (fault === "external-unlink") assert.equal(existsSync(fixture.lock), false);
+      else assert.equal(readFileSync(fixture.lock, "utf8"), "foreign-lock\n");
+      fixture.isolated.disposeColdGenesisFixtureRaw();
+      assert.equal(readdirSync("/dev/fd").length, descriptorsBefore);
+    } finally { fixture.isolated.disposeColdGenesisFixtureRaw(); fixture.cleanup(); }
+  }
+});
+
+test("cold genesis refuses competing receipts, unsafe retained members and epoch two without writes", async () => {
+  for (const fault of ["competing-genesis", "external-hardlink", "receipt-mode", "receipt-symlink", "partial-receipt", "head-only", "epoch-two"] as const) {
+    const fixture = await createColdEpochGenesisFixtureV1();
+    try {
+      const lease = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+      await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+      const head = JSON.parse(readFileSync(fixture.epoch, "utf8"));
+      const receipt = path.join(fixture.root, "epoch-genesis/sha256", head.genesisHash.slice(0, 2), `${head.genesisHash}.json`);
+      if (fault === "competing-genesis") {
+        const candidate = JSON.parse(readFileSync(receipt, "utf8"));
+        candidate.coldObservation.spawnerAbsence.ancestors[0].mtimeNs = "2";
+        const { absenceHash: _absence, ...absenceBody } = candidate.coldObservation.spawnerAbsence;
+        candidate.coldObservation.spawnerAbsence.absenceHash = sha256(canonical(absenceBody));
+        const { observationHash: _observation, ...observationBody } = candidate.coldObservation;
+        candidate.coldObservation.observationHash = sha256(canonical(observationBody));
+        const { genesisRef: _ref, genesisHash: _hash, ...body } = candidate;
+        const hash = sha256(canonical(body));
+        const second = path.join(fixture.root, "epoch-genesis/sha256", hash.slice(0, 2), `${hash}.json`);
+        mkdirSync(path.dirname(second), { recursive: true, mode: 0o700 });
+        writeFileSync(second, `${canonical({ ...body, genesisRef: `setfarm://internal-production/cold-epoch-genesis/sha256/${hash}`, genesisHash: hash })}\n`, { mode: 0o600 });
+      }
+      if (fault === "external-hardlink") linkSync(receipt, path.join(fixture.fixture, "foreign-link"));
+      if (fault === "receipt-mode") chmodSync(receipt, 0o644);
+      if (fault === "receipt-symlink") { const held = path.join(fixture.fixture, "held-receipt"); renameSync(receipt, held); symlinkSync(held, receipt); }
+      if (fault === "partial-receipt") writeFileSync(receipt, "{\n");
+      if (fault === "head-only") unlinkSync(receipt);
+      if (fault === "epoch-two") {
+        const { epochRef: _ref, epochHash: _hash, ...body } = head;
+        body.epochOrdinal = 2; body.authorityOwner = "recovery-d";
+        const hash = sha256(canonical(body));
+        writeFileSync(fixture.epoch, `${canonical({ ...body, epochRef: `setfarm://internal-production/physical-service-restart-authority-epoch/sha256/${hash}`, epochHash: hash })}\n`);
+      }
+      const before = coldGenesisTreeSnapshotV1(fixture.root);
+      await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), undefined, fault);
+      assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before, fault);
+      assert.equal(existsSync(fixture.lock), false);
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test("cold genesis preserves retained evidence on prerequisite drift and incomplete data sync", async () => {
+  const original = readFileSync(sourcePath, "utf8");
+  const needle = "      fsyncSync(finalDescriptor);";
+  assert.ok(original.includes(needle));
+  const fixture = await createColdEpochGenesisFixtureV1(original.replace(needle, `      if(globalThis.__coldGenesisPublicationFault) throw new Error('GENESIS_DATA_SYNC_FAULT');\n${needle}`));
+  try {
+    const lease = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    const headBytes = readFileSync(fixture.epoch), head = JSON.parse(headBytes.toString("utf8"));
+    const receipt = path.join(fixture.root, "epoch-genesis/sha256", head.genesisHash.slice(0, 2), `${head.genesisHash}.json`);
+    const receiptBytes = readFileSync(receipt), originalObservation = Reflect.get(globalThis, "__coldGenesisObservation");
+    const drifted = structuredClone(originalObservation);
+    drifted.authorityV3Migration31Audit.authorityV3Migration31AuditHash = "8".repeat(64);
+    drifted.authorityV3Migration31Audit.authorityV3Migration31AuditRef = `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"8".repeat(64)}`;
+    const { observationHash: _hash, ...body } = drifted;
+    drifted.observationHash = sha256(canonical(body));
+    Reflect.set(globalThis, "__coldGenesisObservation", recursivelyFreeze(drifted));
+    await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /retained prerequisites are crossed/);
+    assert.deepEqual(readFileSync(receipt), receiptBytes);
+    assert.deepEqual(readFileSync(fixture.epoch), headBytes);
+    Reflect.set(globalThis, "__coldGenesisObservation", originalObservation);
+    unlinkSync(fixture.epoch);
+    const temporary = path.join(path.dirname(receipt), `.${path.basename(receipt)}.${"a".repeat(32)}.tmp`);
+    renameSync(receipt, temporary);
+    Reflect.set(globalThis, "__coldGenesisPublicationFault", true);
+    await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /GENESIS_DATA_SYNC_FAULT/);
+    assert.equal(existsSync(fixture.epoch), false, "failed receipt data sync never publishes a head");
+    assert.equal(existsSync(fixture.lock), false);
+    assert.deepEqual(readFileSync(temporary), receiptBytes, "failed sync preserves recovery candidate");
+    Reflect.deleteProperty(globalThis, "__coldGenesisPublicationFault");
+    const resumed = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(resumed);
+    assert.deepEqual(readFileSync(receipt), receiptBytes);
+    assert.deepEqual(readFileSync(fixture.epoch), headBytes);
+  } finally { fixture.cleanup(); }
+});
+
+test("cold epoch genesis creates a durable bound head and resumes without redefining its evidence", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-epoch-genesis-"));
+  try {
+    const modulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"));
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const epochPath = path.join(root, "epoch-head.json"), lockPath = path.join(root, "physical-service-restart-authority.transition.lock");
+    unlinkSync(epochPath);
+    const portPath = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+    writeFileSync(portPath, readFileSync(portPath, "utf8") + `
+export async function observeInternalProductionColdBootstrapObservationV1(){
+  const observation=globalThis.__coldGenesisObservation;
+  globalThis.__coldGenesisObservedLocks.push(existsSync(${JSON.stringify(lockPath)})?readFileSync(${JSON.stringify(lockPath)},"utf8"):null);
+  return observation;
+}\n`.replace("export async function", 'import {existsSync,readFileSync} from "node:fs";\nexport async function'));
+    Reflect.set(globalThis, "__coldGenesisObservation", coldGenesisObservationFixture(fixture));
+    Reflect.set(globalThis, "__coldGenesisObservedLocks", []);
+    const isolated = await import(`${pathToFileURL(modulePath).href}?genesis=${Date.now()}`);
+    const lease = await isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    const headBytes = readFileSync(epochPath);
+    const head = JSON.parse(headBytes.toString("utf8"));
+    assert.equal(head.schema, "setfarm.internal-production-physical-service-restart-authority-epoch.v2");
+    assert.equal(head.epochOrdinal, 1);
+    const receiptPath = path.join(root, "epoch-genesis/sha256", head.genesisHash.slice(0, 2), `${head.genesisHash}.json`);
+    const receiptBytes = readFileSync(receiptPath);
+    const receipt = JSON.parse(receiptBytes.toString("utf8"));
+    assert.equal(receipt.genesisRef, head.genesisRef);
+    assert.deepEqual(receipt.coldObservation, Reflect.get(globalThis, "__coldGenesisObservation"));
+    const observedLocks = Reflect.get(globalThis, "__coldGenesisObservedLocks") as Array<string | null>;
+    assert.equal(observedLocks[0], null, "incident is checked before reclaim or lock mutation");
+    assert.ok(observedLocks.some((value) => value === readFileSync(lockPath, "utf8")), "cold evidence is independently observed under the promoted lock");
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    const fresh = structuredClone(Reflect.get(globalThis, "__coldGenesisObservation"));
+    fresh.spawnerAbsence.ancestors[0].mtimeNs = "2";
+    const { absenceHash: _oldAbsenceHash, ...absence } = fresh.spawnerAbsence;
+    fresh.spawnerAbsence.absenceHash = sha256(canonical(absence));
+    const { observationHash: _oldObservationHash, ...observation } = fresh;
+    fresh.observationHash = sha256(canonical(observation));
+    Reflect.set(globalThis, "__coldGenesisObservation", recursivelyFreeze(fresh));
+    const resumed = await isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    assert.deepEqual(readFileSync(epochPath), headBytes);
+    assert.deepEqual(readFileSync(receiptPath), receiptBytes, "fresh volatile evidence must not redefine original genesis");
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(resumed);
+    const ordinary = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(ordinary);
+    assert.equal(existsSync(lockPath), false);
+  } finally {
+    Reflect.deleteProperty(globalThis, "__coldGenesisObservation");
+    Reflect.deleteProperty(globalThis, "__coldGenesisObservedLocks");
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("cold raw physical lock is not ordinary authority and promotes only the same held descriptor", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-raw-lock-"));
   let descriptorsBefore = 0;
@@ -292,6 +699,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
   const module = await import(`../../src/internal-production/baseline-restart-authority-retirement-v1.js?p4-lease=${Date.now()}`);
   assert.deepEqual(Object.keys(module), [
     "MAX_INTERNAL_PRODUCTION_BASELINE_SERVICE_RESTART_HELPER_REGISTRY_HEAD_ENTRIES_V1",
+    "acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1",
     "acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
     "invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1",
     "invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1",
