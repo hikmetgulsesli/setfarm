@@ -1209,6 +1209,7 @@ export type InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1 =
 
 export type InternalProductionGlobalOwnerAdmissionFenceReleaseV1 = Readonly<{
   schema: "setfarm.internal-production-global-owner-admission-fence-release.v1";
+  purpose: InternalProductionGlobalOwnerAdmissionFencePurposeV1;
   fenceRef: string;
   fenceHash: string;
   releaseAuthority: InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1;
@@ -1877,11 +1878,13 @@ export function createInternalProductionGlobalOwnerAdmissionFenceReleaseV1(input
     "fenceRef", "fenceHash", "releaseAuthority",
     "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
   ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INPUT_KEYS_INVALID");
+  const releaseAuthority = validateFenceReleaseAuthorityV1(input.releaseAuthority);
   const body = {
     schema: "setfarm.internal-production-global-owner-admission-fence-release.v1" as const,
+    purpose: releaseAuthority.purpose,
     fenceRef: canonicalRef(input.fenceRef, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_FENCE_INVALID"),
     fenceHash: sha256(input.fenceHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_FENCE_INVALID"),
-    releaseAuthority: validateFenceReleaseAuthorityV1(input.releaseAuthority),
+    releaseAuthority,
     ownerAdmissionHeadPredecessorHash: sha256(input.ownerAdmissionHeadPredecessorHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_HEAD_INVALID"),
     ownerAdmissionHeadSuccessorHash: sha256(input.ownerAdmissionHeadSuccessorHash, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_HEAD_INVALID"),
   };
@@ -1898,16 +1901,20 @@ export function validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(
 ): InternalProductionGlobalOwnerAdmissionFenceReleaseV1 {
   const release = record(value, "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_INVALID");
   exactKeys(release, [
-    "schema", "fenceRef", "fenceHash", "releaseAuthority",
+    "schema", "purpose", "fenceRef", "fenceHash", "releaseAuthority",
     "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash", "releaseRef", "releaseHash",
   ], "INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_KEYS_INVALID");
   if (release.schema !== "setfarm.internal-production-global-owner-admission-fence-release.v1") {
     fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_SCHEMA_INVALID");
   }
+  const releaseAuthority = validateFenceReleaseAuthorityV1(release.releaseAuthority);
+  if (release.purpose !== releaseAuthority.purpose) {
+    fail("INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_PURPOSE_INVALID");
+  }
   const rebuilt = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
     fenceRef: String(release.fenceRef),
     fenceHash: String(release.fenceHash),
-    releaseAuthority: release.releaseAuthority as InternalProductionGlobalOwnerAdmissionFenceReleaseAuthorityV1,
+    releaseAuthority,
     ownerAdmissionHeadPredecessorHash: String(release.ownerAdmissionHeadPredecessorHash),
     ownerAdmissionHeadSuccessorHash: String(release.ownerAdmissionHeadSuccessorHash),
   });

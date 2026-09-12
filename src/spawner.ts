@@ -9866,8 +9866,9 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
       const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
       if (replacement.replacementSpawnerProcessIdentityHash !== census.spawner.processIdentityHash || replacement.actualSpawnerGenerationHash !== census.spawner.generationHash || replacement.actualSpawnerSourceSha !== executingSource.sha || replacement.actualSpawnerTreeHash !== executingSource.treeHash || replacement.actualSpawnerBuildHash !== executingSource.buildHash) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_REPLACEMENT_IDENTITY_INVALID");
     }
+    const stop = dependencies.waitForStop();
     console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");
-    await dependencies.waitForStop();
+    await stop;
     dependencies.cleanupSealedProcess();
     return "sealed";
   }

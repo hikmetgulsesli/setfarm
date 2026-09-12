@@ -219,7 +219,7 @@ test("P4 source run launch fence authorities are exact pure values", () => {
     ownerAdmissionHeadSuccessorHash: SHA_A,
   });
   assert.deepEqual(Reflect.ownKeys(release), [
-    "schema", "fenceRef", "fenceHash", "releaseAuthority",
+    "schema", "purpose", "fenceRef", "fenceHash", "releaseAuthority",
     "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash",
     "releaseRef", "releaseHash",
   ]);
@@ -257,6 +257,79 @@ test("P4 source run launch fence authorities are exact pure values", () => {
     }),
     /RELEASE_AUTHORITY_BRANCH_INVALID/,
   );
+});
+
+test("P4 fence releases derive one exact top-level purpose for every authority branch", () => {
+  const emptyPairs = Object.freeze({
+    terminalCoreRef: null, terminalCoreHash: null,
+    targetSetCloseRef: null, targetSetCloseHash: null,
+    occurrenceRef: null, occurrenceHash: null,
+    headRef: null, headHash: null,
+    targetReservationPairCloseRef: null, targetReservationPairCloseHash: null,
+    purposeTerminalKind: null, purposeTerminalRef: null, purposeTerminalHash: null,
+  });
+  const authorities = [
+    Object.freeze({
+      ...emptyPairs,
+      purpose: "recovery-d-source-delivery-v1" as const,
+      targetFamilyKind: "source-run-launch" as const,
+      targetReservationPairCloseRef: "setfarm://tests/p4/release-purpose/source-close",
+      targetReservationPairCloseHash: SHA_A,
+    }),
+    Object.freeze({
+      ...emptyPairs,
+      purpose: "recovery-d-physical-service-restart-operation-v1" as const,
+      targetFamilyKind: "recovery-restart" as const,
+      terminalCoreRef: "setfarm://tests/p4/release-purpose/terminal-core", terminalCoreHash: SHA_A,
+      targetSetCloseRef: "setfarm://tests/p4/release-purpose/target-close", targetSetCloseHash: SHA_B,
+      occurrenceRef: "setfarm://tests/p4/release-purpose/occurrence", occurrenceHash: SHA_C,
+      headRef: "setfarm://tests/p4/release-purpose/head", headHash: SHA_A,
+    }),
+    Object.freeze({
+      ...emptyPairs,
+      purpose: "golden-launch-operation-migration-release-v1" as const,
+      targetFamilyKind: "none" as const,
+      purposeTerminalKind: "golden-launch-operation-migration-release-terminal" as const,
+      purposeTerminalRef: "setfarm://tests/p4/release-purpose/golden-terminal",
+      purposeTerminalHash: SHA_B,
+    }),
+    Object.freeze({
+      ...emptyPairs,
+      purpose: "recovery-d-physical-service-restart-authority-cutover-v1" as const,
+      targetFamilyKind: "none" as const,
+      purposeTerminalKind: "recovery-d-physical-service-restart-authority-cutover-terminal" as const,
+      purposeTerminalRef: "setfarm://tests/p4/release-purpose/cutover-terminal",
+      purposeTerminalHash: SHA_C,
+    }),
+  ] as const;
+  for (const releaseAuthority of authorities) {
+    const release = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+      fenceRef: "setfarm://tests/p4/release-purpose/fence",
+      fenceHash: SHA_A,
+      releaseAuthority,
+      ownerAdmissionHeadPredecessorHash: SHA_B,
+      ownerAdmissionHeadSuccessorHash: SHA_C,
+    });
+    assert.equal(release.purpose, releaseAuthority.purpose);
+    assert.deepEqual(Reflect.ownKeys(release), [
+      "schema", "purpose", "fenceRef", "fenceHash", "releaseAuthority",
+      "ownerAdmissionHeadPredecessorHash", "ownerAdmissionHeadSuccessorHash", "releaseRef", "releaseHash",
+    ]);
+    assert.deepEqual(validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1(structuredClone(release)), release);
+    assert.throws(
+      () => validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+        ...release,
+        purpose: release.purpose === "recovery-d-source-delivery-v1"
+          ? "golden-launch-operation-migration-release-v1"
+          : "recovery-d-source-delivery-v1",
+      }),
+      /RELEASE_PURPOSE_INVALID/,
+    );
+    assert.throws(
+      () => validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1({ ...release, extra: true }),
+      /RELEASE_KEYS_INVALID/,
+    );
+  }
 });
 
 test("P4 recovery restart forward ABI is import-free and mutation-unavailable", async () => {
@@ -1072,6 +1145,216 @@ test("P4 db owns exact source run fence mutation ports", async () => {
     } as never),
     /SOURCE_RUN_LAUNCH_PAIR_CLOSE_INPUT_KEYS_INVALID/,
   );
+});
+
+test("P4 release resolver rejects a content-valid orphan while retaining a canonical historical release", async () => {
+  const originalDatabaseUrl = process.env.SETFARM_PG_URL;
+  const helper = await import("../execution-attempts/test-database.js");
+  let database: Awaited<ReturnType<typeof helper.createIsolatedTestDatabase>> | undefined;
+  try {
+    database = await helper.createIsolatedTestDatabase();
+    const sql = database.sql;
+    const headRows = await sql<Array<{
+      headVersion: string | number;
+      headHash: string;
+      activeFenceRef: string | null;
+      activeFenceHash: string | null;
+      activeTargetFamilyHash: string | null;
+      migrationApplicationEvidenceHash: string;
+      headPayload: Readonly<Record<string, unknown>>;
+    }>>`
+      SELECT head_version AS "headVersion", head_hash AS "headHash",
+             active_fence_ref AS "activeFenceRef", active_fence_hash AS "activeFenceHash",
+             active_target_family_hash AS "activeTargetFamilyHash",
+             migration_application_evidence_hash AS "migrationApplicationEvidenceHash",
+             head_payload AS "headPayload"
+        FROM internal_production_owner_admission_head_v1
+       WHERE singleton=TRUE
+    `;
+    assert.equal(headRows.length, 1);
+    const initialHead = headRows[0]!;
+    assert.equal(initialHead.activeFenceRef, null);
+    assert.equal(initialHead.activeFenceHash, null);
+    assert.equal(initialHead.activeTargetFamilyHash, null);
+    const initialVersion = Number(initialHead.headVersion);
+    assert.equal(Number.isSafeInteger(initialVersion) && initialVersion >= 0, true);
+    const migrationApplication = validateOwnerAdmissionMigrationApplicationV1(
+      initialHead.headPayload.migrationApplication,
+      initialHead.migrationApplicationEvidenceHash,
+    );
+
+    const targetFamily = Object.freeze({ kind: "none" as const, targetFamilyHash: null });
+    const pendingInputRef = "setfarm://tests/p4/release-resolver/pending";
+    const pendingInputHash = hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-pending.v1" });
+    const ownerIdentitySetHash = hashCanonicalJson([]);
+    const fenceTransition = createInternalProductionGlobalOwnerAdmissionFenceTransitionV1({
+      purpose: "golden-launch-operation-migration-release-v1",
+      pendingInputRef,
+      pendingInputHash,
+      targetFamilyHash: hashCanonicalJson(targetFamily),
+      ownerIdentitySetHash,
+    });
+    const fenceSuccessor = ownerAdmissionSuccessorV1({
+      version: initialVersion,
+      predecessorHeadHash: initialHead.headHash,
+      transitionKind: "fence",
+      transitionRef: fenceTransition.transitionRef,
+      transitionHash: fenceTransition.transitionHash,
+      migrationApplication,
+    });
+    const fence = createInternalProductionGlobalOwnerAdmissionFenceV1({
+      purpose: "golden-launch-operation-migration-release-v1",
+      pendingInputRef,
+      pendingInputHash,
+      targetFamily,
+      observedUnrelatedReservationCount: 0,
+      observedUnrelatedOwnerCount: 0,
+      ownerIdentitySetHash,
+      predecessorFenceHeadHash: initialHead.headHash,
+      ownerAdmissionHeadHash: fenceSuccessor.hash,
+    });
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1
+        (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body)
+      VALUES (${fence.fenceRef},${fence.fenceHash},'fence',${fence.pendingInputRef},${initialHead.headHash},${fenceSuccessor.hash},${sql.json(fence)})
+    `;
+
+    const releaseAuthority = Object.freeze({
+      purpose: "golden-launch-operation-migration-release-v1" as const,
+      targetFamilyKind: "none" as const,
+      terminalCoreRef: null,
+      terminalCoreHash: null,
+      targetSetCloseRef: null,
+      targetSetCloseHash: null,
+      occurrenceRef: null,
+      occurrenceHash: null,
+      headRef: null,
+      headHash: null,
+      targetReservationPairCloseRef: null,
+      targetReservationPairCloseHash: null,
+      purposeTerminalKind: "golden-launch-operation-migration-release-terminal" as const,
+      purposeTerminalRef: "setfarm://tests/p4/release-resolver/terminal",
+      purposeTerminalHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-terminal.v1" }),
+    });
+    const releaseTransition = createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1({
+      fenceRef: fence.fenceRef,
+      fenceHash: fence.fenceHash,
+      releaseAuthority,
+    });
+    const releaseSuccessor = ownerAdmissionSuccessorV1({
+      version: fenceSuccessor.version,
+      predecessorHeadHash: fenceSuccessor.hash,
+      transitionKind: "release",
+      transitionRef: releaseTransition.transitionRef,
+      transitionHash: releaseTransition.transitionHash,
+      migrationApplication,
+    });
+    const release = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+      fenceRef: fence.fenceRef,
+      fenceHash: fence.fenceHash,
+      releaseAuthority,
+      ownerAdmissionHeadPredecessorHash: fenceSuccessor.hash,
+      ownerAdmissionHeadSuccessorHash: releaseSuccessor.hash,
+    });
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1
+        (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body)
+      VALUES (${release.releaseRef},${release.releaseHash},'release',${release.fenceRef},${release.ownerAdmissionHeadPredecessorHash},${release.ownerAdmissionHeadSuccessorHash},${sql.json(release)})
+    `;
+
+    const laterReservation = createInternalProductionOwnerReservationV1({
+      producer: INTERNAL_PRODUCTION_OWNER_PRODUCER_ROWS_A_V1[0]!,
+      ownerKey: "p4-release-resolver-later-head-advance",
+      ownerAdmissionHeadPredecessorHash: releaseSuccessor.hash,
+    });
+    const laterSuccessor = ownerAdmissionSuccessorV1({
+      version: releaseSuccessor.version,
+      predecessorHeadHash: releaseSuccessor.hash,
+      transitionKind: "reservation",
+      transitionRef: laterReservation.reservationRef,
+      transitionHash: laterReservation.reservationHash,
+      migrationApplication,
+    });
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1
+        (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body)
+      VALUES (${laterReservation.reservationRef},${laterReservation.reservationHash},'reservation',${laterReservation.reservationRef},${releaseSuccessor.hash},${laterSuccessor.hash},${sql.json(laterReservation)})
+    `;
+    const advanced = await sql`
+      UPDATE internal_production_owner_admission_head_v1
+         SET head_version=${laterSuccessor.version}, head_hash=${laterSuccessor.hash},
+             active_fence_ref=NULL, active_fence_hash=NULL, active_target_family_hash=NULL,
+             head_payload=${sql.json(laterSuccessor.payload)}, updated_at=NOW()
+       WHERE singleton=TRUE AND head_version=${initialVersion} AND head_hash=${initialHead.headHash}
+    `;
+    assert.equal(advanced.count, 1);
+    assert.deepEqual(await database.db.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+      releaseRef: release.releaseRef,
+      releaseHash: release.releaseHash,
+    }), release, "a canonical release remains resolvable after later head advancement");
+
+    const crossedPurposeProjection = {
+      schema: "setfarm.internal-production-global-owner-admission-fence-release.v1",
+      purpose: "recovery-d-source-delivery-v1",
+      fenceRef: "setfarm://tests/p4/release-resolver/crossed-purpose-fence",
+      fenceHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-crossed-purpose-fence.v1" }),
+      releaseAuthority,
+      ownerAdmissionHeadPredecessorHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-crossed-purpose-predecessor.v1" }),
+      ownerAdmissionHeadSuccessorHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-crossed-purpose-successor.v1" }),
+    };
+    const crossedPurposeHash = hashCanonicalJson(crossedPurposeProjection);
+    const crossedPurposeRelease = Object.freeze({
+      ...crossedPurposeProjection,
+      releaseRef: `setfarm://internal-production/global-owner-admission-fence-release/sha256/${crossedPurposeHash}`,
+      releaseHash: crossedPurposeHash,
+    });
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1
+        (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body)
+      VALUES (${crossedPurposeRelease.releaseRef},${crossedPurposeRelease.releaseHash},'release',${crossedPurposeRelease.fenceRef},${crossedPurposeRelease.ownerAdmissionHeadPredecessorHash},${crossedPurposeRelease.ownerAdmissionHeadSuccessorHash},${sql.json(crossedPurposeRelease)})
+    `;
+    await assert.rejects(
+      database.db.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+        releaseRef: crossedPurposeRelease.releaseRef,
+        releaseHash: crossedPurposeRelease.releaseHash,
+      }),
+      /INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_PURPOSE_INVALID/,
+      "a stored row cannot cross its top-level purpose with its nested release authority",
+    );
+
+    const orphanFenceHash = hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-orphan-fence.v1" });
+    const orphanRelease = createInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+      fenceRef: `setfarm://internal-production/global-owner-admission-fence/sha256/${orphanFenceHash}`,
+      fenceHash: orphanFenceHash,
+      releaseAuthority,
+      ownerAdmissionHeadPredecessorHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-orphan-predecessor.v1" }),
+      ownerAdmissionHeadSuccessorHash: hashCanonicalJson({ schema: "setfarm.tests.p4-release-resolver-orphan-successor.v1" }),
+    });
+    await sql`
+      INSERT INTO internal_production_owner_admission_authorities_v1
+        (authority_ref,authority_hash,authority_kind,phase_key,predecessor_head_hash,successor_head_hash,authority_body)
+      VALUES (${orphanRelease.releaseRef},${orphanRelease.releaseHash},'release',${orphanRelease.fenceRef},${orphanRelease.ownerAdmissionHeadPredecessorHash},${orphanRelease.ownerAdmissionHeadSuccessorHash},${sql.json(orphanRelease)})
+    `;
+    await assert.rejects(
+      database.db.resolveInternalProductionGlobalOwnerAdmissionFenceReleaseV1({
+        releaseRef: orphanRelease.releaseRef,
+        releaseHash: orphanRelease.releaseHash,
+      }),
+      /^Error: INTERNAL_PRODUCTION_GLOBAL_OWNER_ADMISSION_FENCE_RELEASE_CORRUPTION$/,
+      "a self-valid release row outside the current authenticated ancestry is not authority",
+    );
+  } finally {
+    try {
+      await database?.cleanup();
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.SETFARM_PG_URL;
+      } else {
+        process.env.SETFARM_PG_URL = originalDatabaseUrl;
+      }
+    }
+  }
+  assert.equal(process.env.SETFARM_PG_URL, originalDatabaseUrl, "the focused database fixture restores its caller's database authority");
 });
 
 test("P4 completion bootstrap head barrier serializes target mint and atomic release", async () => {
@@ -2705,12 +2988,16 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     .replace("  assertAgentRuntimeAvailable();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"runtime\\n");\n  assertAgentRuntimeAvailable();`)
     .replace("  await pgMigrate();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"migration\\n");\n  await pgMigrate();`)
     .replace("  const listener = postgres(pgUrl, { max: 1 });", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"listener\\n");\n  const listener = postgres(pgUrl, { max: 1 });`)
+    .replace(
+      '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");',
+      '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
+    )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
   writeFileSync(spawnerPath, spawnerBytes);
   writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
     cwd: fixture,
-    env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex" },
+    env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex", SETFARM_TEST_SEALED_SIGNAL_WINDOW: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
