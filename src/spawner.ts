@@ -651,7 +651,7 @@ function publishSpawnerPidFileV1(): void {
 }
 
 function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
-  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
   const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
   const before = fs.lstatSync(file, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())
@@ -677,7 +677,7 @@ function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw Error("SPAWNER_STALE_FILE_LIVENESS_UNPROVEN"); }
     };
     if (!dead()) return "alive";
-    observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
     const current = Buffer.alloc(bytes.length);
     if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
       || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
@@ -10902,11 +10902,11 @@ async function main() {
 
   // Refusal-only preflight preserves any already-visible unsettled evidence.
   if (await runInternalProductionColdSpawnerStartupV1()) return;
-  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   publishSpawnerPidFileV1();
-  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
   const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
   if (activeStartupAdmission) {
     const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });

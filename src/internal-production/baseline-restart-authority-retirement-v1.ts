@@ -154,13 +154,14 @@ let retainedColdGenesisRawV1: RawPhysicalTransitionLockV1 | null = null;
 let coldGenesisInvocationActiveV1 = false;
 type ColdBootstrapIntentStateV1 = {
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
-  phase: "intent-only" | "helper-may-have-run" | "claim-observed" | "settled";
+  phase: "intent-only" | "helper-may-have-run" | "claim-observed" | "settled" | "releasing";
   intent: Readonly<Record<string, unknown>>;
   environment: Readonly<Record<string, string>>;
   nonce: string;
   rootIdentity: BigIntStats | null;
   rootGuard: PrivateDirectoryGuardV1;
   helperInvocation?: ColdControllerHelperInvocationV1;
+  release?: { lockIdentity: BigIntStats; lockUnlinked: boolean; unlinkSynced: boolean; rootGuardClosing: boolean; rootGuardClosed: boolean; descriptorClosed: boolean };
   settlement?: {
     record: Readonly<Record<string, unknown>>;
     bytes: Buffer;
@@ -186,6 +187,7 @@ let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
 let coldControllerHelperInvocationActiveV1 = false;
 let coldControllerSettlementActiveV1 = false;
+let coldControllerReleaseActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
@@ -631,7 +633,12 @@ function openNewLock(lock: string): Readonly<{ descriptor: number; lockBytes: Bu
 export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(): Readonly<{
   schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1";
   state: "absent"; incompleteOwnerCount: 0; absenceIdentityHash: string; censusHash: string;
+} | {
+  schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1";
+  state: "settled"; incompleteOwnerCount: 0; settlement: Readonly<Record<string, unknown>>; settlementIdentity: readonly string[]; censusHash: string;
 }> {
+  try { for (const close of pendingColdHelperAuthenticationCleanupV1) close(); }
+  catch { return fail("COLD_BOOTSTRAP_UNSETTLED: prior cold cleanup is incomplete"); }
   const workspace = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
   let nearest = path.dirname(target);
@@ -648,6 +655,17 @@ export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(): 
   try {
     guard.assertStable();
     if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("cold journal absence ancestor changed");
+    const siblings = nearest === path.dirname(target) ? readColdDirectoryMembersV1(nearest, 4096) : [];
+    const finalName = "cold-spawner-bootstrap-controller-settlement-v1.json";
+    if (siblings.some(name => name.startsWith(`.${finalName}.`))) fail("COLD_BOOTSTRAP_UNSETTLED: cold settlement publication is incomplete");
+    if (siblings.includes(path.basename(target)) || siblings.includes(finalName)) {
+      try {
+        const settled = observeColdControllerSettlementHistoryV1();
+        guard.assertStable();
+        if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("cold settlement ancestor changed");
+        return settled;
+      } catch { return fail("COLD_BOOTSTRAP_UNSETTLED: cold controller settlement chain is unauthenticated"); }
+    }
     try { lstatSync(target); fail("COLD_BOOTSTRAP_UNSETTLED: cold history has no authenticated controller settlement"); }
     catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
     guard.assertStable();
@@ -656,7 +674,119 @@ export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(): 
       metadata: [before.dev, before.ino, before.mode, before.uid, before.gid, before.nlink, before.size, before.mtimeNs, before.ctimeNs].map(String) }));
     const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1" as const, state: "absent" as const, incompleteOwnerCount: 0 as const, absenceIdentityHash };
     return Object.freeze({ ...body, censusHash: sha256(canonical(body)) });
-  } finally { guard.close(); }
+  } finally { finishRetainedColdCleanupV1(() => guard.close()); }
+}
+
+// Terminal history proves only that cold transport ownership has settled.
+// It never observes or authorizes the old live process, lock or mutable head.
+function observeColdControllerSettlementHistoryV1() {
+  const workspace = resolveInternalProductionBaselineWorkspaceRootV1(), parent = rootPaths().root;
+  const root = path.join(parent, "cold-spawner-bootstrap-v1"), target = path.join(parent, "cold-spawner-bootstrap-controller-settlement-v1.json");
+  const guards: PrivateDirectoryGuardV1[] = [], pins: Array<{ target: string; stats: BigIntStats; bytes: Buffer }> = [];
+  try {
+    guards.push(authenticatePrivateDirectoryChainV1(workspace, root));
+    const journal = lstatSync(root, { bigint: true });
+    const inventory = () => {
+      for (const guard of guards) guard.assertStable();
+      if (journal.uid !== BigInt(process.getuid!()) || !sameColdFileMetadataV1(journal, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["claim.json", "dispatch.json", "intent.json"])
+        || readColdDirectoryMembersV1(parent, 4096).some(name => name.startsWith(`.${path.basename(target)}.`))) fail("cold settlement inventory is crossed");
+    };
+    const read = (file: string, maximum: number, expected?: unknown) => {
+      const stats = lstatSync(file, { bigint: true });
+      if (stats.size > BigInt(maximum) || (expected !== undefined && canonical(coldFileIdentityTupleV1(stats)) !== canonical(expected))) fail("cold settlement original file identity is crossed");
+      const bytes = readColdGenesisCandidateV1(file, stats);
+      pins.push({ target: file, stats, bytes });
+      return { stats, bytes };
+    };
+    inventory();
+    const publication = read(target, 65_536);
+    const record = coldRecordV1(JSON.parse(publication.bytes.toString("utf8")), ["schema", "purpose", "completion", "epochEvidence", "genesisIdentity", "serviceCensus", "settlementRef", "settlementHash"], "controller settlement");
+    if (!publication.bytes.equals(Buffer.from(`${canonical(record)}\n`)) || record.schema !== "setfarm.internal-production-cold-spawner-controller-settlement.v1"
+      || record.purpose !== "exact-poison-sealed-cold-spawner-v1"
+      || record.settlementRef !== `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${coldHashV1(record.settlementHash, "settlement")}`) fail("cold settlement binding is crossed");
+    coldSelfHashV1(record, "settlementHash", ["settlementRef"]);
+    const completion = coldRecordV1(record.completion, ["schema", "intentRef", "intentHash", "intentIdentity", "dispatchRef", "dispatchHash", "dispatchIdentity", "claimRef", "claimHash", "claimIdentity", "journalIdentity"], "settlement completion");
+    if (completion.schema !== "setfarm.internal-production-cold-spawner-helper-completion.v1" || Buffer.byteLength(`${canonical(completion)}\n`) > 4096
+      || canonical(completion.journalIdentity) !== canonical(coldFileIdentityTupleV1(journal))) fail("cold settlement completion is crossed");
+    const intentFile = read(path.join(root, "intent.json"), COLD_GENESIS_MAX_BYTES_V1, completion.intentIdentity);
+    const intent = parseColdSpawnerBootstrapIntentV1(intentFile.bytes);
+    validateColdHistoricalLaunchProfileV1(intent);
+    const dispatch = parseColdSpawnerBootstrapDispatchV1(read(path.join(root, "dispatch.json"), 65_536, completion.dispatchIdentity).bytes, intent,
+      { devDecimal: String(intentFile.stats.dev), inoDecimal: String(intentFile.stats.ino) });
+    const claim = parseColdSpawnerBootstrapClaimV1(read(path.join(root, "claim.json"), 65_536, completion.claimIdentity).bytes, intent, dispatch);
+    for (const stem of ["intent", "dispatch", "claim"]) for (const suffix of ["Ref", "Hash"]) if (completion[`${stem}${suffix}`] !== claim[`${stem}${suffix}`]) fail("cold settlement completion pair is crossed");
+    const genesisPath = coldGenesisReceiptPathV1(intent.genesisHash as string);
+    guards.push(authenticatePrivateDirectoryChainV1(workspace, path.dirname(genesisPath)));
+    const genesis = parseColdEpochGenesisReceiptV1(read(genesisPath, COLD_GENESIS_MAX_BYTES_V1, record.genesisIdentity).bytes);
+    const epochEvidence = coldRecordV1(record.epochEvidence, ["record", "identity"], "settlement epoch evidence");
+    const epochBytes = Buffer.from(`${canonical(epochEvidence.record)}\n`);
+    const epoch = validateColdEpochOneHeadV1(epochEvidence.record, epochBytes, genesis);
+    const epochIdentity = epochEvidence.identity;
+    if (!Array.isArray(epochIdentity) || epochIdentity.length !== 10 || epochIdentity.some(value => typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,29})$/.test(value))
+      || epochIdentity[0] !== String(journal.dev) || BigInt(epochIdentity[1]) < 1n || epochIdentity[2] !== String(process.getuid!())
+      || BigInt(epochIdentity[4]) !== BigInt(constants.S_IFREG | 0o600) || epochIdentity[5] !== "1" || epochIdentity[6] !== String(epochBytes.length)) fail("cold settlement historical epoch identity is invalid");
+    if (["epochRef", "epochHash", "genesisRef", "genesisHash"].some(key => intent[key] !== epoch[key])
+      || coldGenesisStableIdentityV1(intent.coldObservation as Record<string, unknown>) !== coldGenesisStableIdentityV1(genesis.coldObservation as Record<string, unknown>)) fail("cold settlement historical epoch is crossed");
+    assertColdControllerServiceCensusV1(intent, claim, record.serviceCensus);
+    inventory();
+    for (const pin of pins) if (!pin.bytes.equals(readColdGenesisCandidateV1(pin.target, pin.stats))) fail("cold settlement history changed while read");
+    inventory();
+    const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1" as const, state: "settled" as const,
+      incompleteOwnerCount: 0 as const, settlement: record, settlementIdentity: coldFileIdentityTupleV1(publication.stats) };
+    return freezeColdDataV1({ ...body, censusHash: sha256(canonical(body)) });
+  } finally { finishRetainedColdCleanupV1(() => { while (guards.length > 0) { guards.at(-1)!.close(); guards.pop(); } }); }
+}
+
+function validateColdHistoricalLaunchProfileV1(intent: Readonly<Record<string, unknown>>): void {
+  const profile = coldRecordV1(intent.launchProfile, ["schema", "source", "uid", "home", "workspace", "repository", "rootIdentity", "hostDirectories", "executable", "arguments", "cwd", "environmentDirectory", "buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash", "environmentFiles", "profileHash"], "historical launch profile");
+  const absolute = (value: unknown): string => {
+    if (typeof value !== "string" || value.includes("\0") || !path.isAbsolute(value) || path.normalize(value) !== value) fail("cold historical profile path is invalid");
+    return value;
+  };
+  const identityKeys = ["devDecimal", "inoDecimal", "uid", "gid", "mode"];
+  const identity = (value: Record<string, unknown>) => {
+    if (typeof value.devDecimal !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(value.devDecimal)
+      || typeof value.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(value.inoDecimal)
+      || [value.uid, value.gid, value.mode].some(member => !Number.isSafeInteger(member) || (member as number) < 0)
+      || (value.mode as number) > 0o7777) fail("cold historical profile identity is invalid");
+  };
+  const repository = absolute(profile.repository), environmentDirectory = absolute(profile.environmentDirectory);
+  for (const key of ["home", "workspace", "cwd"]) absolute(profile[key]);
+  const absence = (intent.coldObservation as Record<string, any>).spawnerAbsence;
+  if (profile.uid !== process.getuid!() || profile.workspace !== resolveInternalProductionBaselineWorkspaceRootV1() || profile.cwd !== repository
+    || canonical(profile.arguments) !== canonical([path.join(repository, "dist/spawner.js")]) || absence.entrypoint !== path.join(repository, "dist/spawner.js")) fail("cold historical profile entry is crossed");
+  for (const key of ["buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash"]) coldHashV1(profile[key], key);
+  const executable = coldRecordV1(profile.executable, ["path", ...identityKeys, "bytesHash"], "historical executable");
+  absolute(executable.path); identity(executable); coldHashV1(executable.bytesHash, "historical executable bytes");
+  if (executable.uid !== profile.uid || ((executable.mode as number) & 0o111) === 0 || ((executable.mode as number) & 0o022) !== 0) fail("cold historical executable ownership is invalid");
+  const rootIdentity = coldRecordV1(profile.rootIdentity, identityKeys, "historical repository identity"); identity(rootIdentity);
+  if (!Array.isArray(profile.hostDirectories) || profile.hostDirectories.length < 1 || profile.hostDirectories.length > 128) fail("cold historical host directories are invalid");
+  const directories = new Map<string, Record<string, unknown>>();
+  const ordinaryRoots = [profile.home, profile.workspace, repository, environmentDirectory] as string[];
+  const ordinaryPaths = [...ordinaryRoots, path.join(repository, "dist"), path.join(profile.home as string, "Library", "LaunchAgents")];
+  const isAncestor = (ancestor: string, target: string) => target === ancestor || target.startsWith(ancestor.endsWith(path.sep) ? ancestor : `${ancestor}${path.sep}`);
+  for (const value of profile.hostDirectories) {
+    const directory = coldRecordV1(value, ["path", ...identityKeys], "historical host directory");
+    const target = absolute(directory.path); identity(directory);
+    if (directories.has(target) || (directory.uid !== 0 && directory.uid !== profile.uid)) fail("cold historical host directory is crossed");
+    const trustedNodeAdminGroup = process.platform === "darwin" && directory.gid === 80
+      && isAncestor(target, path.dirname(executable.path as string)) && !ordinaryPaths.some(root => isAncestor(target, root));
+    if (((directory.mode as number) & (trustedNodeAdminGroup ? 0o002 : 0o022)) !== 0
+      || (ordinaryRoots.includes(target) && directory.uid !== profile.uid)) fail("cold historical host ownership is invalid");
+    const { path: _target, ...metadata } = directory; directories.set(target, metadata);
+  }
+  for (const value of [...ordinaryPaths, path.dirname(executable.path as string)]) {
+    for (let target = value as string; ; target = path.dirname(target)) { if (!directories.has(target)) fail("cold historical host ancestry is incomplete"); if (path.dirname(target) === target) break; }
+  }
+  if (canonical(directories.get(repository)) !== canonical(rootIdentity)) fail("cold historical repository identity is crossed");
+  if (!Array.isArray(profile.environmentFiles) || profile.environmentFiles.length !== 2) fail("cold historical environment file inventory is invalid");
+  for (const [index, value] of profile.environmentFiles.entries()) {
+    const present = value?.state === "present";
+    const file = coldRecordV1(value, present ? ["path", "state", ...identityKeys, "bytesHash"] : ["path", "state"], "historical environment file");
+    if (file.path !== path.join(environmentDirectory, [".env", ".env.local"][index]!) || (!present && file.state !== "absent")) fail("cold historical environment file is crossed");
+    if (present) { identity(file); coldHashV1(file.bytesHash, "historical environment bytes"); if (file.uid !== profile.uid || ((file.mode as number) & 0o022) !== 0) fail("cold historical environment ownership is invalid"); }
+  }
 }
 
 function assertHelperJournalAllowsLockCleanup(
@@ -1547,7 +1677,7 @@ async function invokeColdSpawnerBootstrapHelperV1() {
   coldControllerHelperInvocationActiveV1 = true;
   try {
     if (retainedColdBootstrapIntentV1 === null) {
-      observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+      if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") fail("COLD_BOOTSTRAP_NOT_ABSENT");
       await prepareColdSpawnerBootstrapIntentV1();
     }
     const state = retainedColdBootstrapIntentV1!;
@@ -1590,7 +1720,7 @@ async function invokeColdSpawnerBootstrapHelperV1() {
   } finally { coldControllerHelperInvocationActiveV1 = false; }
 }
 
-function assertColdControllerServiceCensusV1(state: ColdBootstrapIntentStateV1, claim: Readonly<Record<string, unknown>>, value: unknown): void {
+function assertColdControllerServiceCensusV1(intent: Readonly<Record<string, unknown>>, claim: Readonly<Record<string, unknown>>, value: unknown): void {
   const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "settlement service census");
   if (census.schema !== "setfarm.internal-production-service-census.v1") fail("cold settlement service census schema is crossed");
   coldSelfHashV1(census, "censusHash");
@@ -1603,7 +1733,7 @@ function assertColdControllerServiceCensusV1(state: ColdBootstrapIntentStateV1, 
     generationHash: sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source: loaded })),
     loadedSourceSha: loaded.sha, loadedTreeHash: loaded.treeHash, loadedBuildHash: loaded.buildHash, processOwnerCount: 1, listener: null };
   if (canonical(census.spawner) !== canonical(expected)) fail("cold settlement ordinary spawner is not the retained child");
-  const original = (state.intent.coldObservation as Record<string, any>).remainingServices;
+  const original = (intent.coldObservation as Record<string, any>).remainingServices;
   for (const key of ["dashboard", "missionControl", "openClaw"]) {
     if (canonical(census[key]) !== canonical(original[key]) || original[key].pid === child.pid) fail("cold settlement remaining service changed");
   }
@@ -1623,10 +1753,10 @@ async function settleColdSpawnerBootstrapV1(): Promise<Readonly<Record<string, u
     const observer = await import("./baseline-post-handoff-receipt-v1.js");
     const first = await observer.observeInternalProductionServiceCensusV1();
     independentlyObserveColdControllerClaimV1(state, completion);
-    assertColdControllerServiceCensusV1(state, claim, first);
+    assertColdControllerServiceCensusV1(state.intent, claim, first);
     const second = await observer.observeInternalProductionServiceCensusV1();
     independentlyObserveColdControllerClaimV1(state, completion);
-    assertColdControllerServiceCensusV1(state, claim, second);
+    assertColdControllerServiceCensusV1(state.intent, claim, second);
     if (canonical(first) !== canonical(second)) fail("cold settlement service census changed across observation");
     if (state.settlement && canonical(first) !== canonical(state.settlement.record.serviceCensus)) fail("cold settlement retained service census changed");
     if (!state.settlement) {
@@ -2803,6 +2933,7 @@ export async function acquireInternalProductionPhysicalServiceRestartAuthorityTr
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
 ): Promise<void> {
+  if (retainedColdBootstrapIntentV1?.lease === lease) return releaseColdControllerTransitionLeaseV1(retainedColdBootstrapIntentV1);
   const state = heldLease(lease);
   const paths = rootPaths();
   const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), paths.root);
@@ -2820,6 +2951,82 @@ export async function releaseInternalProductionPhysicalServiceRestartAuthorityTr
       leases.delete(lease);
     }
   }
+}
+
+function releaseColdControllerTransitionLeaseV1(state: ColdBootstrapIntentStateV1): void {
+  if (coldControllerReleaseActiveV1 || coldControllerHelperInvocationActiveV1 || coldControllerSettlementActiveV1 || coldBootstrapIntentInvocationActiveV1) fail("cold controller ownership is active");
+  coldControllerReleaseActiveV1 = true;
+  try {
+    const held = leases.get(state.lease), invocation = state.helperInvocation, settlement = state.settlement, paths = rootPaths();
+    if (!held || !invocation || !settlement?.committed || !settlement.identity || settlement.descriptor !== null
+      || !["settled", "releasing"].includes(state.phase)) fail("COLD_BOOTSTRAP_UNSETTLED: cold controller release has no retained terminal");
+    for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+    const terminal = () => {
+      const census = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+      if (census.state !== "settled" || canonical(census.settlement) !== canonical(settlement.record)
+        || !settlement.bytes.equals(Buffer.from(`${canonical(census.settlement)}\n`))
+        || canonical(census.settlementIdentity) !== canonical(coldFileIdentityTupleV1(settlement.identity!))) fail("cold release terminal is not the original owned publication");
+    };
+    const originalLock = invocation.pins.find(pin => pin.path === paths.lock);
+    if (!originalLock || originalLock.descriptor !== held.descriptor || !originalLock.bytes.equals(held.lockBytes)
+      || canonical(state.intent.transitionLock) !== canonical(parseLockRecord(held.lockBytes))
+      || canonical(state.intent.lockIdentity) !== canonical({ devDecimal: String(originalLock.stats.dev), inoDecimal: String(originalLock.stats.ino) })) fail("cold release physical owner is crossed");
+    const linkedLock = () => {
+      state.rootGuard.assertStable();
+      if (!sameColdFileMetadataV1(originalLock.stats, fstatSync(held.descriptor, { bigint: true }))
+        || !held.lockBytes.equals(readColdGenesisCandidateV1(paths.lock, originalLock.stats))
+        || !sameColdFileMetadataV1(originalLock.stats, fstatSync(held.descriptor, { bigint: true }))) fail("cold release physical lock changed");
+      state.rootGuard.assertStable();
+    };
+    if (!state.release) {
+      terminal(); linkedLock();
+      // Revoke all effectful capabilities before the first owned resource closes.
+      state.release = { lockIdentity: originalLock.stats, lockUnlinked: false, unlinkSynced: false, rootGuardClosing: false, rootGuardClosed: false, descriptorClosed: false };
+      state.phase = "releasing"; held.phase = "released";
+    }
+    const release = state.release;
+    if (!release.lockUnlinked) {
+      terminal(); linkedLock();
+      while (invocation.transportDescriptors.length > 0) { closeSync(invocation.transportDescriptors.at(-1)!); invocation.transportDescriptors.pop(); }
+      while (invocation.authorityDescriptors.length > 0) { closeSync(invocation.authorityDescriptors.at(-1)!); invocation.authorityDescriptors.pop(); }
+      while (invocation.guards.length > 0) { invocation.guards.at(-1)!.close(); invocation.guards.pop(); }
+      terminal(); linkedLock();
+      // The borrowed physical descriptor is not in either owned FD array.
+      // Its final reader has closed successfully before this exact unlink.
+      if (!sameColdFileMetadataV1(originalLock.stats, lstatSync(paths.lock, { bigint: true }))) fail("cold release lock changed immediately before unlink");
+      unlinkSync(paths.lock);
+      release.lockUnlinked = true;
+    }
+    if (!release.unlinkSynced) {
+      state.rootGuard.assertStable();
+      if (release.lockIdentity.nlink === 1n) {
+        // Only our recorded successful unlink permits this one metadata
+        // transition, including resumption after the syscall's return.
+        const unlinked = fstatSync(held.descriptor, { bigint: true });
+        if (unlinked.nlink !== 0n || ["dev", "ino", "uid", "gid", "mode", "size", "birthtimeNs", "mtimeNs"].some(key => unlinked[key as keyof BigIntStats] !== originalLock.stats[key as keyof BigIntStats])) fail("cold release owned unlink is crossed");
+        release.lockIdentity = unlinked;
+      }
+      if (!sameColdFileMetadataV1(release.lockIdentity, fstatSync(held.descriptor, { bigint: true })) || release.lockIdentity.nlink !== 0n) fail("cold release unlinked owner changed");
+      // Our successful unlink ended pathname ownership. A new owner may
+      // already occupy that name; syncing this parent and closing only our
+      // original unlinked descriptor must neither inspect nor remove it.
+      fsyncParent(paths.lock);
+      state.rootGuard.assertStable();
+      release.unlinkSynced = true;
+    }
+    // Past durable unlink there is no physical fence. Only drain this exact
+    // capability; never reacquire or inspect/close a newly reused descriptor.
+    if (!release.rootGuardClosed) {
+      if (!release.rootGuardClosing) { state.rootGuard.assertStable(); release.rootGuardClosing = true; }
+      state.rootGuard.close(); release.rootGuardClosed = true;
+    }
+    if (!release.descriptorClosed) {
+      if (!sameColdFileMetadataV1(release.lockIdentity, fstatSync(held.descriptor, { bigint: true }))) fail("cold release final descriptor changed");
+      closeSync(held.descriptor); release.descriptorClosed = true;
+    }
+    leases.delete(state.lease);
+    retainedColdBootstrapIntentV1 = null;
+  } finally { coldControllerReleaseActiveV1 = false; }
 }
 
 function readSettlement(hash: string): Readonly<Record<string, unknown>> {

@@ -845,8 +845,9 @@ Task 6A/A–E acceptance. Guarded clean-main build remains a delivery gate.
 
 ### Controller settlement and ordinary process bridge
 
-**Files:** existing retirement source/test and receipt source/test, plus this
-plan. Keep the fixed 145/64 File Maps and ordinary 33-pair final graph intact.
+**Files:** existing retirement source/test, receipt source/test, `src/spawner.ts`
+and `tests/internal-production/owner-admission-v1.test.ts`, plus this plan.
+Keep the fixed 145/64 File Maps and ordinary 33-pair final graph intact.
 This is the next causal step: the genuine sealed child must become an
 authenticated predecessor, without fabricating a four-service census member.
 
@@ -880,14 +881,14 @@ authenticated predecessor, without fabricating a four-service census member.
   Partial/throwing writes retain the pending file and lease, but close their
   nonresumable writer via retained retryable cleanup. Every live durability
   retry reobserves both ordinary service passes against the original record.
-- [ ] Authenticate the immutable terminal chain in the public cold census.
+- [x] Authenticate the immutable terminal chain in the public cold census.
   Both final paths absent is absence; an orphan terminal, reserved publication
   temporary or any incomplete/crossed chain remains unsettled. Historical
   validation reopens immutable intent/dispatch/claim/genesis and embedded
   epoch-one evidence; it does not demand the old live lock, controller, child,
   output or mutable epoch head forever. Current admission separately checks
   the genuine process/startup files and current source.
-- [ ] Prove exact publication faults, crossed ordinary identity/source/service
+- [x] Prove exact publication faults, crossed ordinary identity/source/service
   projections, drift across await, same-controller response-loss adoption,
   release only after authenticated terminal, and historical resolution after
   the exact disposable child exits while live admission refuses it.
@@ -950,6 +951,114 @@ Publisher evidence and causal corrections:
   (7.250s), and TypeScript/diff checks pass. This is test-fixture publication
   correctness, not a change to the production watcher or a relaxed assertion.
 
+Historical census and retained release evidence (owning gate complete):
+
+- Both ordinary stale reclamation and actual ordinary spawner main initially
+  accepted a successful non-absent census. Their real RED tests proved stale
+  deletion and startup effects; four call sites now explicitly require absent.
+  Both targeted tests passed (46.341s), including history appearing at the
+  second census. This is not a generic cold-history launch permission.
+- The actual controller terminal initially failed the public census; orphan
+  sibling final files incorrectly returned absence. Public observation now
+  authenticates exact intent/dispatch/claim file and journal tuples, immutable
+  genesis and embedded epoch-one evidence, strict historical launch profile,
+  ordinary service projection and the final publication tuple. Both final
+  paths absent retains the existing absence witness. Reserved pending names,
+  orphan final and any incomplete/crossed chain refuse without writes.
+- Historical observation survives exact child exit, startup cleanup, mutable
+  epoch change and disposable current-output change. Same-byte terminal inode
+  replacement changes the census hash, preserving the phase A/B identity
+  bracket. Historical acceptance does not claim current process liveness.
+- A fresh-controller test proved it reached preparation on settled history;
+  it now refuses before preparation. An independently rehashed profile with
+  an extra authority key initially passed; strict profile/nested environment
+  inventory now refuses it without current-source/environment observation.
+- Independent review found pending reader cleanup was not drained on census
+  reentry. A persistent close fault reproduced successful reentry with an old
+  leaked FD. Public entry now drains exact retained cleanup before acquisition.
+  The 26-mode history matrix passed (66.893s), including persistent reader and
+  guard closes, relative executable/plaintext environment additions, pending
+  arrival, mid-read intent write, same-byte file/directory replacements,
+  rehashed completion/epoch/service crosses and noncanonical terminal bytes.
+  The actual process/history, absence and old prefix tests also passed;
+  combined focused run 4/4 (73.340s).
+- Actual public release initially left 27 managed FDs open; premature release
+  also revoked the only usable unsettled lease. The cold-only release branch
+  now requires the exact retained committed terminal and original physical
+  lock, then revokes effectful use before draining owned resources. Alias pins
+  are not a second close inventory. Mutable epoch and old child lifetime are
+  not teardown requirements. Keep the original lock/root until all ancillary
+  cleanup succeeds; record own unlink before durability cleanup and retain
+  explicit close progress until every resource is closed.
+- The post-owned-unlink checkpoint test first failed to resume because its
+  stored metadata still had one link. Only recorded own unlink now permits
+  the original FD's one-to-zero link transition. The 13-mode release matrix
+  passed (34.509s): owned FD/guard/lock reader failures, unlink and parent-sync
+  faults, post-unlink response loss, final root/physical close, foreign lock,
+  external disappearance, terminal replacement, pending owner and success.
+  Reused-FD sentinel stays open; pre-unlink failures retain the physical fence;
+  post-unlink cleanup never recreates it. Assertions precede fixture teardown.
+- Further independent review found that a new owner at the lock pathname
+  after recorded own unlink prevented the old owner from finishing cleanup.
+  The new-owner test reproduced that refusal. Once own unlink is recorded,
+  require the original unlinked FD and ancestry, sync the parent and drain
+  only that original capability; never inspect/remove the new pathname owner.
+  The expanded 14-mode release matrix passed (44.690s), including preservation
+  of the new owner's full file metadata and bytes. A separately rehashed
+  writable-host profile reproduced a historical semantic-validator omission;
+  static issuer mode/root-ownership rules now apply, with only its existing
+  Darwin Node-only admin-group exception. Expanded history rerun is pending.
+- The broad owning run found a public-error-contract regression: draining a
+  persistently failed helper writer emitted the raw close error. Keep the
+  pending resource retained, acquire nothing, and classify the census as
+  `COLD_BOOTSTRAP_UNSETTLED`. The unchanged dispatch-fault test passed (8.592s).
+  The same broad run also reported a PID-residue fixture failure; its focused
+  20-mode rerun passed (39.641s), but that is not closure evidence until the
+  original complete failure output is reviewed and the owning gate finishes.
+- That initial full owning run completed 60/62 (404.778s); no tests were
+  stopped early. Its second failure was `fixture-residue-owned` ENOENT, not
+  a failed ownership assertion. The real spawner closes readiness FD6 in its
+  cold `finally`, before its outer fatal handler writes the fixture diagnostic.
+  Helper EOF therefore does not prove child diagnostic completion. A new
+  explicit child diagnostic barrier reproduced the exact ENOENT (2.137s).
+  The fixture now releases that barrier and boundedly observes the exact child
+  exiting before reading the unchanged child-measured owned-count of zero.
+  Actual `ps` status, signal/error, stderr and single-row output are checked;
+  teardown releases the barrier. No production sleep/retry or guard change.
+  Expanded 21-mode residue run passed (34.648s). Independent read-only review
+  confirmed the lifecycle ordering. Final coherent full-module rerun follows.
+- Expanded 28-mode historical matrix passed (86.854s), alongside the actual
+  ordinary process/history case (7.648s). Exact manifest and gateway groups
+  passed 126/126 (9.114s); historical helper 19/19 (36.331s); ordinary startup,
+  stale cleanup and fatal-cleanup tests 3/3 (59.959s), plus startup publication
+  refusal 1/1 (0.843s). TypeScript no-emit and whitespace checks passed.
+- The next full owning run completed 61/62 (375.335s). Both previous failures
+  passed. The remaining release-group failure occurred before release fault
+  injection, during controller claim process observation (`cold process
+  ownership is ambiguous`), not descriptor teardown. Its isolated 14-mode
+  rerun passed (40.069s); this alone does not establish a root cause. Fixture
+  diagnostics now preserve the exact failed `ps` status/error/stdout/stderr
+  and child fatal report instead of losing them during teardown. No process
+  probe timeout, retry policy or production refusal was relaxed.
+- Final static-profile review required issuer coverage of `repository/dist`
+  and `home/Library/LaunchAgents`, including their ancestors. A rehashed
+  missing-dist profile reproduced acceptance (3.623s). The four UID-owned
+  roots remain distinct from all six ordinary-mode/ancestry paths; only
+  Node-only ancestors outside that union may use the existing Darwin admin80
+  exception. The real fixture records those originally required directories
+  without changing them. Expanded 33-mode history passed (85.198s), actual
+  ordinary/history case 4.023s, and diagnostic 14-mode release 37.619s.
+  A fresh full owning run uses TAP to expose any failure details immediately.
+- The final unchanged owning run passed 62/62 (409.192s), including release
+  (36.068s), all 33 historical corruption modes (84.392s), and all publisher
+  fault modes (61.115s). TypeScript no-emit and whitespace checks passed.
+  The earlier isolated ambiguous-process observation remains unexplained;
+  retained diagnostics are not a claim that its root cause is fixed. No
+  production process guard was relaxed. Read-only live checks at 02:48 TRT
+  returned HTTP200 for both services, with clean canonical/deployed/MC trees.
+  This closes this historical/release implementation slice only, not Task 6A,
+  the complete P3 gate, live recovery, or the overall internal-production goal.
+
 Historical-census integration must preserve the authority split: authenticated
 settled history removes cold transport ownership but grants no spawner launch
 permission. Require `state === "absent"` explicitly at all four ordinary
@@ -957,6 +1066,41 @@ spawner preflight/reclamation calls and fresh cold-controller invocation.
 Receipt phase-zero may accept an authenticated stable settled census; ordinary
 startup may not. The future operation-bound replacement gets its independently
 authenticated branch rather than interpreting settlement as a launch token.
+
+Next coupled integration (not implemented by the historical/release slice):
+
+1. Keep `preMutationLoadedRuntimeServiceAuthority` in its existing pair prefix,
+   record kind and final 33-pair position. Preserve exact V1 history; new V2
+   adds required `coldSpawnerPredecessor` containing settlement ref/hash and
+   the full final publication identity. Include that field in both projection
+   and authority hashes. Derive it from the fixed authenticated cold census,
+   never caller-provided authority. Creation compares the actual ordinary
+   service census with settlement; historical resolution does not demand the
+   old child remain alive. Do not silently emit V1 for a cold predecessor.
+2. Update prepared-publication builder, nested progress parser, predecessor
+   pair resolver and final projection/hash reconstruction together. Connect
+   pre-mutation spawner PID/start/ordinary hash to the operation's separately
+   authenticated predecessor process and service/generation. The cold intent
+   names original poison; the outer record names the selected successor—those
+   operation pairs must not be incorrectly equated.
+3. Add one zero-argument retirement controller facade. Retained releasing state
+   finishes exact cleanup first; retained settled state releases without
+   revalidating old child liveness; other retained phases use their sole
+   helper invocation and settlement. Existing authenticated terminal history
+   is read-only. Fresh absence may enter full cold genesis; unretained partial
+   history never redispatches. Reobserve original terminal before returning.
+4. Connect preparation/resume before exact-poison quarantine's four-service
+   gates, not after selection. Preserve the already-valid ordinary four-service
+   path. If that path is unavailable, cold fallback must independently prove
+   all strict cold absence/source/three-service/zero-owner conditions; never
+   treat failure of an ordinary census as sufficient cold authority. Existing
+   settled cold history does not itself prove current ordinary liveness.
+5. Prove genuine prepared V2 creation, immutable V1 compatibility, downgrade
+   refusal, crossed settlement/predecessor relations, facade response loss,
+   retained release retry, and preselection ordering. Keep receipt exports57,
+   File Maps145/64 and final33 exact; update the retirement export contract
+   only for the actual zero-argument facade. Direct-detached rebind remains a
+   separate required coupled transport slice before full P3/live delivery.
 
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently

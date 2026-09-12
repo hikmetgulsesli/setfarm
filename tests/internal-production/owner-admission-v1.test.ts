@@ -3236,10 +3236,10 @@ let spawnerLockFd=null,fault='',target='',reads=0,kills=0,censuses=0,interrupted
 const process=Object.create(actualProcess);process.kill=(pid,signal)=>{kills++;if(fault==='eperm')throw Object.assign(Error('fixture permission refusal'),{code:'EPERM'});if(fault==='pid-reappears'&&kills===2)return true;return actualProcess.kill(pid,signal);};
 const fs={...actualFs,openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},closeSync(fd){if(fault==='close'&&!interrupted){interrupted=true;throw Error('fixture pre-close failure')}actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
 readSync(...args){const count=actualFs.readSync(...args);if(++reads===1&&fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,actualFs.readFileSync(target+'.original'),{mode:0o600});}return count;}};
-function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){censuses++;if(fault==='cold-arrival'&&censuses===2)actualFs.mkdirSync(path.join(root,'cold-journal'));if(actualFs.existsSync(path.join(root,'cold-journal')))throw Error('COLD_BOOTSTRAP_UNSETTLED');}
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){censuses++;if(fault==='cold-arrival'&&censuses===2)actualFs.mkdirSync(path.join(root,'cold-journal'));if(actualFs.existsSync(path.join(root,'cold-journal')))throw Error('COLD_BOOTSTRAP_UNSETTLED');return {state:fault==='settled-history'||fault==='settled-arrival'&&censuses===2?'settled':'absent'};}
 ${functions}
 const predecessor=spawnSync(actualProcess.execPath,['-e',''],{env:{PATH:'/usr/bin:/bin'}});assert.equal(predecessor.status,0);
-for(fault of ['none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
+for(fault of ['settled-history','settled-arrival','none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
  target=path.join(root,fault+'.pid');reads=0;kills=0;censuses=0;interrupted=false;
  const text=String(fault==='alive'?actualProcess.ppid:predecessor.pid),bytes=Buffer.from(text+(fault==='double-newline'?'\\n\\n':''));if(fault==='non-ascii')bytes[0]|=128;
  actualFs.writeFileSync(target,bytes,{mode:0o600});
@@ -3322,7 +3322,7 @@ for(fault of ['none','partial','replacement']){
 });
 
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
-  for (const mode of ["sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
+  for (const mode of ["settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
   const fixtureSource = path.join(fixture, "src");
@@ -3346,6 +3346,12 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
   }
   cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
   projectCopiedWorkspaceLocatorV1(fixture, fixture);
+  if (mode.startsWith("settled-")) {
+    const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts"), retirement = readFileSync(retirementPath, "utf8");
+    const start = retirement.indexOf("export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1("), body = retirement.indexOf("  const workspace =", start);
+    assert.ok(start >= 0 && body > start);
+    writeFileSync(retirementPath, retirement.slice(0, body) + `  globalThis.__fixtureColdCensusCalls=(globalThis.__fixtureColdCensusCalls??0)+1;return {state:${mode === "settled-history" ? "'settled'" : "globalThis.__fixtureColdCensusCalls>=2?'settled':'absent'"}};\n` + retirement.slice(body));
+  }
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
   const operationHash = "a".repeat(64);
   const tokenHash = "b".repeat(64);
@@ -3409,13 +3415,15 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
-    if (mode === "existing-cold" || mode === "cold-appears") {
+    if (mode === "existing-cold" || mode === "cold-appears" || mode.startsWith("settled-")) {
       const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
       const exit = await closed; clearTimeout(timeout);
       assert.deepEqual(exit, { code: 1, signal: null }, `${mode}: incomplete cold journal must refuse ordinary startup: ${stderr}`);
-      assert.match(stderr, /COLD_BOOTSTRAP_UNSETTLED/);
-      assert.equal(existsSync(coldRoot), true);
-      assert.deepEqual(readdirSync(coldRoot), [], "ordinary refusal preserves the exact incomplete journal");
+      assert.match(stderr, /COLD_BOOTSTRAP_(?:UNSETTLED|NOT_ABSENT)/);
+      if (!mode.startsWith("settled-")) {
+        assert.equal(existsSync(coldRoot), true);
+        assert.deepEqual(readdirSync(coldRoot), [], "ordinary refusal preserves the exact incomplete journal");
+      }
       for (const marker of [admissionMarker, normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(marker), false);
       if (mode === "existing-cold") {
         assert.equal(readFileSync(pidFile, "utf8"), String(process.pid));
