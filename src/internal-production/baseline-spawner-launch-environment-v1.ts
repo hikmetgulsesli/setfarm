@@ -1,4 +1,28 @@
 import { createHash } from "node:crypto";
+import { fstatSync, readSync, type BigIntStats } from "node:fs";
+
+// Fixed inherited transport slot; returned bytes remain UNTRUSTED. This only
+// prevents unsafe reads. No environment installation or launch is authorized.
+export function readInternalProductionSpawnerUntrustedInheritedFrameV1(): Buffer {
+  try {
+    const before = fstatSync(3, { bigint: true });
+    const uid = process.getuid?.();
+    if (uid === undefined || !before.isFile() || before.uid !== BigInt(uid)
+      || before.nlink !== 0n || (before.mode & 0o7777n) !== 0o600n
+      || before.size < 1n || before.size > 1024n * 1024n) fail();
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(3, bytes, offset, Math.min(64 * 1024, bytes.length - offset), offset);
+      if (count <= 0) fail();
+      offset += count;
+    }
+    const identity = (stats: BigIntStats) => [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid,
+      stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].join(":");
+    if (identity(fstatSync(3, { bigint: true })) !== identity(before)) fail();
+    return bytes;
+  } catch { fail(); }
+}
 
 // Pure composition only. Neither a candidate nor its digest is a launch
 // capability. Physical inputs and the inherited transport must authenticate it.

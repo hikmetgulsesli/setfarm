@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -14,6 +14,54 @@ import { transformSync } from "esbuild";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
 import { validateLegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
+
+test("cold inherited frame reads only bounded private unlinked regular descriptors", async () => {
+  const modulePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  const api = await import(pathToFileURL(modulePath).href);
+  assert.equal(typeof api.readInternalProductionSpawnerUntrustedInheritedFrameV1, "function", "cold inherited frame reader is not implemented");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-frame-")));
+  try {
+    for (const scenario of ["private", "linked", "mode", "empty", "oversized", "pipe", "missing", "mutated"]) {
+      let descriptor: number | undefined;
+      let mutationDescriptor: number | undefined;
+      try {
+        const bytes = scenario === "oversized" ? Buffer.alloc(1048577, 65)
+          : scenario === "empty" ? Buffer.alloc(0) : Buffer.from("fixture-secret-do-not-print");
+        if (!["pipe", "missing"].includes(scenario)) {
+          const file = path.join(fixture, scenario);
+          writeFileSync(file, bytes, { mode: 0o600 });
+          if (scenario === "mode") chmodSync(file, 0o640);
+          descriptor = openSync(file, "r");
+          if (scenario === "mutated") mutationDescriptor = openSync(file, "r+");
+          if (scenario !== "linked") unlinkSync(file);
+          readFileSync(descriptor); // shared descriptor offset is deliberately EOF
+        }
+        const script = `import{createHash}from'node:crypto';import fs from'node:fs';import{syncBuiltinESMExports}from'node:module';
+          if(${JSON.stringify(scenario)}==='mutated'){const original=fs.readSync;fs.readSync=(...args)=>{const count=original(...args);if(args[0]===3)fs.writeSync(4,Buffer.from('X'),0,1,0);return count;};syncBuiltinESMExports();}
+          const {readInternalProductionSpawnerUntrustedInheritedFrameV1:read}=await import(${JSON.stringify(pathToFileURL(modulePath).href)});
+          try{const bytes=read();process.stdout.write(createHash('sha256').update(bytes).digest('hex'));}
+          catch(error){process.stderr.write(error.message);process.exitCode=7;}`;
+        const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+          cwd: fixture, env: { PATH: "/usr/bin:/bin" },
+          stdio: ["ignore", "pipe", "pipe", descriptor ?? (scenario === "pipe" ? "pipe" : "ignore"), mutationDescriptor ?? "ignore"],
+          encoding: "utf8", timeout: 5_000,
+        });
+        assert.equal(child.error, undefined, `${scenario}: reader must not block on a pipe`);
+        if (scenario === "private") {
+          assert.equal(child.status, 0, child.stderr);
+          assert.equal(child.stdout, createHash("sha256").update(bytes).digest("hex"));
+        } else {
+          assert.equal(child.status, 7, `${scenario}: invalid descriptor accepted`);
+          assert.equal(child.stderr, "INTERNAL_PRODUCTION_LAUNCH_ENVIRONMENT_INVALID");
+          assert.equal(child.stdout, "");
+        }
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+        if (mutationDescriptor !== undefined) closeSync(mutationDescriptor);
+      }
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
 
 test("ordinary runtime env retains process priority and repeated local-file overrides", () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-env-precedence-")));

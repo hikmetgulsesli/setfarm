@@ -298,6 +298,28 @@ source17/17 (5.821s), real sealed main1/1 (4.485s body), inert imports1/1
 review found no material issue. This is not yet authenticated cold consumption
 or a live bootstrap; helper/journal/claim integration remains required.
 
+The leaf's fixed FD3 untrusted-frame reader now rejects nonregular, linked,
+foreign-owner, non-0600, empty or over-1MiB descriptors before reading. Positional
+64KiB reads ignore inherited offsets and compare full relevant metadata before
+and after. Every error is secret-free. Its actual-child fixture covers private
+EOF-offset success, linked/mode/empty/oversized/pipe/missing descriptors and a
+same-inode write during reading. Focused frame/environment/sealed4/4 (7.463s),
+inert imports1/1 (1.120s), TypeScript and whitespace passed; independent review
+found no material issue. Returned bytes remain untrusted and repeatable: only
+the future durable dispatch/claim protocol supplies authentication and one-use
+semantics. No cold loader hook or launch has been enabled.
+
+Early-authentication ruling: keep full clean-source/Git/DB/three-service/genesis
+semantics in the controller and independently checking helper. The child must
+synchronously authenticate fixed FD4 lock and FD5 dispatch plus exact intent,
+live helper parent and controller identities, physical host/root, bound epoch
+one/genesis and snapshot commitments. It also verifies authenticated finalized
+output-tree entries and metadata—not only spawner.js/BUILD_INFO—before static
+configuration consumes the snapshot. This avoids a runtime-config/receipt cycle
+without weakening executing-byte freshness. Helper remains alive until the
+actual child claim; controller settles only after helper exit and observed
+PPID1/PGID=PID. Missing claim after dispatch remains fenced, never redispatched.
+
 Task 1: complete — scoped implementation and independent spec/quality review
 passed. Whole-branch delivery and live recovery remain pending.
 
