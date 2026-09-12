@@ -15739,6 +15739,7 @@ function runOpenClawPhysicalInventoryHarness(
   serviceBytes: Buffer,
   physicalBytes: Buffer,
   openClawBroadListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[],
+  persistentMode: "ordinary" | "cold" | "ordinary-without-spawner" = "ordinary",
 ): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const listenerStart = source.indexOf("type OpenClawListenerInventoryV1 =");
@@ -15772,7 +15773,8 @@ function canonicalComparable(value:unknown):string{if(value===null||typeof value
 function compareBytes(left:string,right:string){return Buffer.compare(Buffer.from(left),Buffer.from(right))}
 function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
 const lstart="Sun Aug 16 15:42:28 2026";
-const rows=[1,2,3,94886].map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
+const persistentMode=process.env.PERSISTENT_MODE;
+const rows=(persistentMode==="ordinary"?[1,2,3,94886]:[2,3,94886]).map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
 function parsePhysicalProcessesV1(){return Object.freeze(rows)}
 function runPhysicalCommandV1(executable:string,args:readonly string[]){
   if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789"))return Object.freeze({status:0,stdout:physicalBytes});
@@ -15795,12 +15797,12 @@ function assertPhysicalInventoryPassStableV1(first:unknown,second:unknown){if(ca
 ${fragments}
 const common=(pid:number)=>({pid,processStartTimeEpochMs:Date.parse(lstart),processIdentityHash:sha256(pid+"\n"+lstart+"\n"),processOwnerCount:1});
 const services:any={
-  spawner:{...common(1),listener:null},
+  ...(persistentMode==="cold"?{}:{spawner:{...common(1),listener:null}}),
   dashboard:{...common(2),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3333,listenerIdentityHash:"a".repeat(64)}},
   missionControl:{...common(3),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3080,listenerIdentityHash:"b".repeat(64)}},
   openClaw:{...common(94886),loadedSourceSha:null,loadedTreeHash:null,loadedBuildHash:null,listenerOwnerCount:1,listener:{host:"127.0.0.1",port:18789,listenerIdentityHash:sha256(serviceBytes)}},
 };
-process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n");
+process.stdout.write(JSON.stringify(persistentMode==="cold"?observeColdPhysicalInventoryV1(services,0):observePhysicalInventoryV1(services,0))+"\n");
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
@@ -15812,6 +15814,7 @@ process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n"
         SERVICE_BYTES: serviceBytes.toString("base64"),
         PHYSICAL_BYTES: physicalBytes.toString("base64"),
         OPENCLAW_BROAD: JSON.stringify(openClawBroadListeners),
+        PERSISTENT_MODE: persistentMode,
       },
     });
   } finally {
@@ -17337,6 +17340,25 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.notEqual(refused.status, 0);
       assert.equal(refused.stdout, "");
     }
+  });
+
+  it("cold physical collection uses the actual three services without relaxing ordinary four-service collection", () => {
+    const bytes = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const listeners = [{ pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18789 }];
+    const cold = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold");
+    assert.equal(cold.status, 0, cold.stderr);
+    const value = JSON.parse(cold.stdout);
+    assert.equal(value.ownedProcessCount, 0);
+    assert.equal(value.ownedListenerCount, 0);
+    assert.deepEqual(value.processes, []);
+    assert.deepEqual(value.listeners, []);
+    const ordinary = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "ordinary-without-spawner");
+    assert.notEqual(ordinary.status, 0, "ordinary observation must not admit a missing fourth service");
+    assert.match(ordinary.stderr, /persistent service changed during physical census/);
+    const extra = { pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18790 };
+    const unownedPort = runOpenClawPhysicalInventoryHarness(bytes, bytes, [...listeners, extra], "cold");
+    assert.equal(unownedPort.status, 0, unownedPort.stderr);
+    assert.equal(JSON.parse(unownedPort.stdout).ownedListenerCount, 1, "cold collection retains nonzero owner evidence");
   });
 
   it("P4 physical census binds OpenClaw raw listener bytes before endpoint exemption", () => {

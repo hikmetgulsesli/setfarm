@@ -465,3 +465,14 @@ passed. Whole-branch delivery and live recovery remain pending.
 - Read-only live recheck remains migration31 applied, four open findings, no
   owner-reservation sidecar and only terminal runs (83 cancelled,18 completed,
   196 failed). No live migration, issue mutation or service restart occurred.
+- Cold physical foundation: executing RED proved the three-service leaf was
+  absent. The ordinary wrapper still supplies exactly four persistent services;
+  the new private collection leaf supplies the actual three, sharing the same
+  process, ownership, listener-binding and repeat-scan implementation. It grants
+  no cold admission by itself. Review improved the negative to retain the
+  four-service input while removing its spawner from the real process fixture;
+  it now proves the intended persistent-service drift refusal, not a TypeError.
+  Cold/ordinary and OpenClaw focused tests passed 2/2 (7.978s); TypeScript and
+  all16 source-manifest checks passed. Global all-root daemon/launcher absence,
+  stable singleton/PID residue, complete observation bracket and epoch genesis
+  remain next; no public four-service ABI or verifier pair changed.

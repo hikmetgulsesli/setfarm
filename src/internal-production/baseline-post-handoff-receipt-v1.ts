@@ -7391,7 +7391,7 @@ function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number
 
 function isExpectedPersistentListenerV1(
   listener: Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>,
-  services: InternalProductionServiceCensusV1,
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   serviceBoundOpenClawListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[],
 ): boolean {
   return (listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
@@ -7408,11 +7408,27 @@ function assertPhysicalInventoryPassStableV1(first: unknown, second: unknown): v
 }
 
 function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1, activeRunCount: number): PhysicalInventoryV1 {
+  return observePhysicalInventoryForPersistentServicesV1(services, [services.spawner, services.dashboard, services.missionControl, services.openClaw], activeRunCount);
+}
+
+// A collection leaf only: cold admission must additionally prove global
+// spawner absence and bind the incident/source/zero-owner observation bracket.
+function observeColdPhysicalInventoryV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  activeRunCount: number,
+): PhysicalInventoryV1 {
+  return observePhysicalInventoryForPersistentServicesV1(services, [services.dashboard, services.missionControl, services.openClaw], activeRunCount);
+}
+
+function observePhysicalInventoryForPersistentServicesV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
+  activeRunCount: number,
+): PhysicalInventoryV1 {
   if (process.platform !== "darwin") currentEntryFail("physical census requires Darwin");
   const worktrees = observeManagedWorktreesV1();
   const processes = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
-  const persistent = [services.spawner, services.dashboard, services.missionControl, services.openClaw];
   for (const service of persistent) {
     const row = byPid.get(service.pid);
     if (!row || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
