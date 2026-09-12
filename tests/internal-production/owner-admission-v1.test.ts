@@ -2998,6 +2998,8 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
   const pidFile = path.join(fixture, "state/spawner.pid");
   const lockFile = path.join(fixture, "state/spawner.lock");
   const normalMarker = path.join(fixture, "normal-startup-called");
+  const providerMarker = path.join(fixture, "provider-discovery-called");
+  const ordinaryDirectories = ["agent-scratch", "transcripts", "attempt-workspaces"].map((name) => path.join(fixture, "ordinary", name));
   cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
   projectCopiedWorkspaceLocatorV1(fixture, fixture);
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
@@ -3031,6 +3033,18 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
       '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
     )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
+  for (const signature of ["function commandFromPath(name: string): string {", "function commandIsUsable(command: string): boolean {", "function kimiWeeklyQuotaExhausted(): boolean {"]) {
+    assert.equal(spawnerBytes.split(signature).length, 2, "provider side-effect port is exact");
+    spawnerBytes = spawnerBytes.replace(signature, `${signature}\n  fs.appendFileSync(${JSON.stringify(providerMarker)}, "provider\\n"); throw new Error("SEALED_PROVIDER_DISCOVERY_FORBIDDEN");`);
+  }
+  for (const [index, declaration] of [
+    'const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");',
+    'const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");',
+    'const OPENCLAW_ATTEMPT_WORKSPACE_ROOT = path.join(os.homedir(), ".openclaw", "setfarm", "attempt-workspaces");',
+  ].entries()) {
+    assert.equal(spawnerBytes.split(declaration).length, 2);
+    spawnerBytes = spawnerBytes.replace(declaration, declaration.slice(0, declaration.indexOf("=")) + `= ${JSON.stringify(ordinaryDirectories[index])};`);
+  }
   writeFileSync(spawnerPath, spawnerBytes);
   writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
@@ -3057,12 +3071,16 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     assert.equal(existsSync(pidFile), true);
     assert.equal(existsSync(lockFile), true);
     assert.equal(existsSync(normalMarker), false);
+    assert.equal(existsSync(providerMarker), false, "sealed startup performs no provider CLI or quota discovery");
+    for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false, "sealed startup creates no ordinary producer workspace");
     child.kill("SIGTERM");
     const exit = await new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
     assert.deepEqual(exit, { code: 0, signal: null });
     assert.equal(existsSync(pidFile), false);
     assert.equal(existsSync(lockFile), false);
     assert.equal(existsSync(normalMarker), false);
+    assert.equal(existsSync(providerMarker), false);
+    for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     rmSync(fixture, { recursive: true, force: true });

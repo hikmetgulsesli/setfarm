@@ -633,3 +633,32 @@ passed. Whole-branch delivery and live recovery remain pending.
   This proves the watcher mismatch; direct transport is still unimplemented.
   Live Mission Control/API and Setfarm dashboard remain HTTP200; no live data,
   service, schema or build-retention change was made.
+- Before the cold child gate is added, review found provider discovery already
+  runs at spawner module evaluation (four CLI searches/version probes and an
+  optional Mission Control quota curl). Merely placing a gate in `main` cannot
+  seal that activity. Defer those four CLI resolutions, runtime selection and
+  both runtime-derived concurrency/startup-silence defaults together until
+  after the sealed startup return and before ordinary runtime availability.
+  Preserve resolution order, fallback policy and environment override parsing.
+  File Map refinement: `src/spawner.ts`, owning `owner-admission-v1.test.ts`,
+  and `tests/spawner-gateway-recovery.test.ts` source/default contracts. Add
+  provider-subprocess sentinels to the existing real-main sealed fixture;
+  current normal-startup markers do not observe import-time discovery.
+- The same real-main fixture also projects scratch/transcript/attempt paths
+  into its disposable root. It demonstrates those three ordinary directories
+  are created before sealed admission. Move their existing initialization and
+  agent-CWD assertion after sealed return alongside deferred provider discovery;
+  keep actual singleton/PID acquisition before the child gate. No live path is
+  used by these new side-effect probes.
+- Independent review found an exported-finalizer compatibility regression:
+  `releaseUntransferredPostClaimOwnership` can drain an OpenClaw session without
+  running `main`. Initialize only after its exact runtime/owner identity check
+  and only for the OpenClaw branch, before requesting drain. A source-executing
+  imported finalizer → actual drain → actual cancel regression reproduced zero
+  cancellation commands (RED), then proved cancellation of the exact lookup and
+  task (GREEN). External DB/provider boundaries are disposable doubles; the
+  probe stops before absence observation and does not claim durable settlement.
+  Final gateway109/109 (1.997s), real sealed main1/1 (5.429s), TypeScript and
+  whitespace passed. Independent re-review reports no remaining material
+  finding. Provider order/defaults/overrides remain covered by eight cases.
+  No live provider, service, DB or ordinary directory was touched.

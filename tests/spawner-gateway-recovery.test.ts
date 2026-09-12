@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { transformSync } from "esbuild";
 import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isSetfarmSummaryHelpCommand, isUnsupportedSetfarmSummaryCommand } from "../src/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -248,20 +249,102 @@ describe("spawner gateway recovery wiring", () => {
   it("keeps non-OpenClaw agent concurrency configurable and conservative by default", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" \? 8 : 2/);
-    assert.match(source, /const MAX_CONCURRENT = parsePositiveInt\(process\.env\.SETFARM_MAX_CONCURRENT,\s*DEFAULT_MAX_CONCURRENT\)/);
+    assert.match(source, /MAX_CONCURRENT = parsePositiveInt\(process\.env\.SETFARM_MAX_CONCURRENT,\s*DEFAULT_MAX_CONCURRENT\)/);
     assert.match(source, /trackedRuntimeCount\(\) >= MAX_CONCURRENT/);
   });
 
   it("prefers OpenClaw and Kimi before Codex to avoid Codex quota as the first fallback", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const start = source.indexOf("function resolveAgentRuntime()");
-    const end = source.indexOf("const CODEX_CLI", start);
+    const end = source.indexOf("let CODEX_CLI", start);
     assert.notEqual(start, -1, "resolveAgentRuntime source not found");
     assert.notEqual(end, -1, "resolveAgentRuntime end not found");
     const block = source.slice(start, end);
 
     assert.match(block, /if \(commandIsUsable\(OPENCLAW_CLI\)\) return "openclaw";[\s\S]*if \(commandIsUsable\(KIMI_CLI\)\) return "kimi";[\s\S]*if \(commandIsUsable\(OPENCODE_CLI\)\) return "opencode";[\s\S]*if \(commandIsUsable\(CODEX_CLI\)\) return "codex";/);
     assert.match(block, /requested === "kimi"/);
+  });
+
+  it("initializes provider selection and runtime defaults only once after sealed admission", () => {
+    const source = fs.readFileSync(path.join(root, "src/spawner.ts"), "utf8");
+    const initialize = /function initializeAgentRuntimeV1\(\): void \{[\s\S]*?\n\}/.exec(source)?.[0];
+    const parse = /function parsePositiveInt\([^\n]*\)\s*:\s*number\s*\{[\s\S]*?\n\}/.exec(source)?.[0];
+    assert.ok(initialize && parse);
+    const main = source.slice(source.indexOf("async function main()"));
+    assert.ok(main.indexOf("initializeAgentRuntimeV1();") > main.indexOf('if (startupGate === "sealed") return;'));
+    assert.ok(main.indexOf("initializeAgentRuntimeV1();") < main.indexOf("assertAgentRuntimeAvailable();"));
+    assert.equal(main.split("initializeAgentRuntimeV1();").length - 1, 1);
+    for (const runtime of ["openclaw", "kimi", "codex", "opencode"]) for (const explicit of [false, true]) {
+      const code = transformSync(`
+        let CODEX_CLI, OPENCLAW_CLI, KIMI_CLI, OPENCODE_CLI, AGENT_RUNTIME, MAX_CONCURRENT, AGENT_STARTUP_SILENCE_MS;
+        let agentRuntimeInitializedV1=false;const calls=[];
+        const resolveCodexCli=()=>{calls.push('codex');return 'codex-path';};
+        const resolveOpenClawCli=()=>{calls.push('openclaw');return 'openclaw-path';};
+        const resolveKimiCli=()=>{calls.push('kimi');return 'kimi-path';};
+        const resolveOpencodeCli=()=>{calls.push('opencode');return 'opencode-path';};
+        const resolveAgentRuntime=()=>{calls.push('runtime');if([CODEX_CLI,OPENCLAW_CLI,KIMI_CLI,OPENCODE_CLI].join(',')!=='codex-path,openclaw-path,kimi-path,opencode-path')throw Error('discovery order');return ${JSON.stringify(runtime)};};
+        ${parse}\n${initialize}
+        initializeAgentRuntimeV1();initializeAgentRuntimeV1();
+        return {calls,runtime:AGENT_RUNTIME,concurrency:MAX_CONCURRENT,silence:AGENT_STARTUP_SILENCE_MS};
+      `, { loader: "ts", format: "cjs" }).code;
+      const value = Function("process", code)({ env: explicit ? { SETFARM_MAX_CONCURRENT: "5", SETFARM_AGENT_STARTUP_SILENCE_MS: "12345" } : {} });
+      assert.deepEqual(value.calls, ["codex", "openclaw", "kimi", "opencode", "runtime"]);
+      assert.equal(value.runtime, runtime);
+      assert.equal(value.concurrency, explicit ? 5 : runtime === "openclaw" ? 8 : 2);
+      assert.equal(value.silence, explicit ? 12345 : runtime === "kimi" ? 12 * 60_000 : 4 * 60_000);
+    }
+  });
+
+  it("imported post-claim finalization cancels its exact OpenClaw session before proving drain", async () => {
+    const source = fs.readFileSync(path.join(root, "src/spawner.ts"), "utf8");
+    const functions = [
+      "initializeAgentRuntimeV1", "parsePositiveInt", "releaseUntransferredPostClaimOwnership",
+      "drainDurableRuntimeSession", "forceCancelOpenClawLookupSync",
+    ].map((name) => {
+      const match = new RegExp(`(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n\\}(?=\\n)`).exec(source);
+      assert.ok(match, name);
+      return match[0];
+    });
+    // Keep the actual exported finalizer, drain and cancel branches. Only the
+    // external DB/provider/process boundaries are disposable in-memory doubles.
+    const code = transformSync(`
+      let CODEX_CLI,OPENCLAW_CLI,KIMI_CLI,OPENCODE_CLI,AGENT_RUNTIME,MAX_CONCURRENT,AGENT_STARTUP_SILENCE_MS;
+      let agentRuntimeInitializedV1=false;
+      const process={env:{}};
+      const resolveCodexCli=()=>"codex-path",resolveOpenClawCli=()=>"openclaw-path";
+      const resolveKimiCli=()=>"kimi-path",resolveOpencodeCli=()=>"opencode-path";
+      const resolveAgentRuntime=()=>"openclaw";
+      const commands=[];
+      const session={sessionId:"session-exact",claimId:7,ownerInstanceId:"owner-exact",
+        state:"running",runtimeKind:"openclaw_session",sessionKey:"lookup-exact"};
+      const pgGet=async()=>({claim_outcome:null,runtime_state:"running",
+        active_attempt_count:0,active_delivery_count:0,active_completion_count:0,
+        quarantined_completion_count:0,active_termination_count:0});
+      const getSql=()=>({});
+      const createRuntimeSessionRepository=()=>({findById:async()=>session,
+        requestDrain:async()=>({...session,state:"drain_requested"})});
+      const activeRuntimeEntry=()=>undefined;
+      const openClawTaskIdsForLookupSync=()=>["task-exact"];
+      const uniqueStrings=values=>[...new Set(values)];
+      const AGENT_SAFE_CWD="/disposable-agent-cwd";
+      const buildOpenClawChildEnv=()=>({FIXTURE:"only"});
+      const execFileSync=(command,args,options)=>commands.push({command,args,cwd:options.cwd});
+      const markOpenClawTaskRecordsCancelledForLookupSync=()=>0;
+      const Date={now:()=>{throw Error("FIXTURE_DRAIN_OBSERVATION_BOUNDARY");}};
+      ${functions.join("\n")}
+      export {commands};
+    `, { loader: "ts", format: "esm" }).code;
+    const imported = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+    assert.deepEqual(imported.commands, [], "import must not discover or cancel a provider");
+    await assert.rejects(imported.releaseUntransferredPostClaimOwnership({
+      found: true, runId: "run-exact", stepId: "step-exact", workflowStepId: "work-exact",
+      claimId: 7, claimAgentId: "agent-exact", runtimeSessionId: "session-exact",
+      runtimeOwnerInstanceId: "owner-exact",
+    }, "runtime-agent", "fixture cleanup"), /FIXTURE_DRAIN_OBSERVATION_BOUNDARY/);
+    assert.deepEqual(imported.commands, [
+      { command: "openclaw-path", args: ["tasks", "cancel", "lookup-exact"], cwd: "/disposable-agent-cwd" },
+      { command: "openclaw-path", args: ["tasks", "cancel", "task-exact"], cwd: "/disposable-agent-cwd" },
+    ]);
   });
 
   it("can spawn Kimi in non-interactive print mode with the claim prompt on stdin", () => {

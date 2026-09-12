@@ -300,11 +300,28 @@ function resolveAgentRuntime(): AgentRuntime {
   return requested === "openclaw" ? "openclaw" : requested === "kimi" ? "kimi" : "codex";
 }
 
-const CODEX_CLI = resolveCodexCli();
-const OPENCLAW_CLI = resolveOpenClawCli();
-const KIMI_CLI = resolveKimiCli();
-const OPENCODE_CLI = resolveOpencodeCli();
-const AGENT_RUNTIME: AgentRuntime = resolveAgentRuntime();
+let CODEX_CLI: string;
+let OPENCLAW_CLI: string;
+let KIMI_CLI: string;
+let OPENCODE_CLI: string;
+let AGENT_RUNTIME: AgentRuntime;
+let MAX_CONCURRENT: number;
+let AGENT_STARTUP_SILENCE_MS: number;
+let agentRuntimeInitializedV1 = false;
+
+function initializeAgentRuntimeV1(): void {
+  if (agentRuntimeInitializedV1) return;
+  CODEX_CLI = resolveCodexCli();
+  OPENCLAW_CLI = resolveOpenClawCli();
+  KIMI_CLI = resolveKimiCli();
+  OPENCODE_CLI = resolveOpencodeCli();
+  AGENT_RUNTIME = resolveAgentRuntime();
+  const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
+  MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
+  const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" ? 12 * 60_000 : 4 * 60_000;
+  AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, DEFAULT_AGENT_STARTUP_SILENCE_MS);
+  agentRuntimeInitializedV1 = true;
+}
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
 const ACTIVE_RETRY_STORY_SQL = "(retry_count > 0 OR COALESCE(output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
@@ -312,8 +329,6 @@ const ACTIVE_RETRY_STORY_ALIAS_SQL = "(active_st.retry_count > 0 OR COALESCE(act
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");
-const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
-const MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
 const RUNTIME_USAGE_LIMIT_DEFAULT_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_RUNTIME_USAGE_LIMIT_COOLDOWN_MS, 4 * 60_000);
 const WORKFLOW_DEFER_RETRY_MS = parsePositiveInt(process.env.SETFARM_WORKFLOW_DEFER_RETRY_MS, POLL_INTERVAL_MS);
@@ -345,8 +360,6 @@ const V3_RECOVERY_OWNER_LEASE_MS = Math.max(30_000, V3_RECOVERY_OWNER_HEARTBEAT_
   process.env.SETFARM_V3_RECOVERY_OWNER_LEASE_MS,
   2 * 60_000,
 ));
-const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" ? 12 * 60_000 : 4 * 60_000;
-const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, DEFAULT_AGENT_STARTUP_SILENCE_MS);
 const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS, 2 * 60_000);
@@ -4425,6 +4438,9 @@ export async function releaseUntransferredPostClaimOwnership(
     ) {
       throw new Error(`POST_CLAIM_RUNTIME_IDENTITY_MISMATCH:${claim.runtimeSessionId}`);
     }
+    // This exported cleanup can run without main(); initialize only after the
+    // exact provider-owned session is authenticated, never at module import.
+    if (current.runtimeKind === "openclaw_session") initializeAgentRuntimeV1();
     const draining = current.state === "drain_requested"
       ? current
       : await sessions.requestDrain({
@@ -10667,11 +10683,6 @@ async function main() {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
-  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
-  assertAgentCwdSafe();
-
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
@@ -10706,6 +10717,11 @@ async function main() {
     },
   });
   if (startupGate === "sealed") return;
+  initializeAgentRuntimeV1();
+  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  assertAgentCwdSafe();
   assertAgentRuntimeAvailable();
   console.log(`[spawner] Starting (PID ${process.pid}, runtime=${AGENT_RUNTIME})`);
   await pgMigrate();
