@@ -765,6 +765,84 @@ no-emit and diff whitespace checks passed. Independent production review found
 no must-fix issue. This closes the local cold absent/stale-PID compatibility
 slice, not controller settlement, rebind, Task 6A or live A–E acceptance.
 
+### Retained controller-to-helper handoff
+
+**Files:** existing retirement/helper sources and their existing tests, plus
+this plan. No new File Map member or final verifier pair is introduced.
+The private zero-argument `invokeColdSpawnerBootstrapHelperV1()` advances only
+to `claim-observed`; durable settlement/release and public prepare/resume
+integration remain separate required transitions.
+
+- [x] Make the actual cold helper return a canonical, nonsecret completion
+  envelope through its existing stdout pipe, capped at 4096 bytes. It contains
+  exact intent/dispatch/claim pairs and the helper's original held physical
+  tuples for those files and the final journal root. Copy the evidence before
+  closing pins; emit only after successful owned cleanup. Await stdout write
+  completion; legacy branches keep their existing stdout behavior. Exit zero
+  alone is not completion authority.
+- [x] Add a connected actual-controller fixture. Its first successful call
+  must retain the real helper object, parsed completion and independently
+  observed detached child; inject caller-response loss after retention, then
+  retry and assert one helper/child invocation and the same original claim.
+- [x] The retained intent owns helper invocation, bounded capture and cleanup.
+  Before the sole spawn set `helper-may-have-run`. On every subsequent call
+  observe only that retained invocation; never prepare another frame or spawn
+  again. A fresh controller must inspect/refuse existing cold history before
+  any absence/genesis path. No lease release on unsettled paths.
+- [x] Require bounded canonical stdout plus EOF and the actual retained
+  helper's exit zero/no signal. Independently recheck original lease/source,
+  fixed journal membership/file tuples and claim relations, exact helper
+  departure and child PID/UID/start/command with ppid one and pgid PID. Retain
+  original evidence rather than refreshing post-await expectations.
+- [x] Cover malformed/missing/truncated/duplicate/oversized completion, valid
+  output followed by nonzero exit, actual spawn error, concurrent/repeated
+  invocation, response loss, and post-completion journal/file/child drift.
+  Failure keeps the physical fence and cannot redispatch.
+- [x] Run focused connected gates, retirement/helper regressions, exact
+  manifests, TypeScript and independent review before scoped delivery.
+
+Core ordering:
+```ts
+state.phase = "helper-may-have-run";
+state.helperInvocation = captureActualFixedHelper(state, handles);
+const completion = await state.helperInvocation.completion;
+const claim = independentlyObserveColdChild(state, completion);
+state.phase = "claim-observed";
+return claim;
+```
+
+The actual caller-response-loss fixture first failed with the missing private
+controller entry; the connected implementation now retains one actual helper
+and child across repeated calls. The controller fixture delegates only the
+location-bound output-verifier port to the real compiled verifier: accepting a
+tsx/source-root verifier would weaken the production build-root check.
+
+Independent review exposed two causally necessary root fixes. Failed frame
+acquisition plus an interrupted close lost an unreturned reader (real RED:
+one owned descriptor instead of zero). Remaining exact cleanup is now retained,
+retried once and fences further acquisition if still unfinished. Eight
+reader/writer/intent/guard transient/persistent cases pass. Changed helper code
+also initially executed before controller rejection; launch profile/output are
+now checked before frame creation and at the final awaited observation. A late
+same-byte intent write demonstrated that checking only output after that await
+was insufficient (real RED: a child launched). Original authority FD/path
+metadata, bytes, directory guards and lease are now bracketed immediately
+before spawn and reused after completion. Six prelaunch drift modes pass.
+
+The first complete retirement run finished 56/57, exposing a test transform
+that matched both controller-to-helper and helper-to-child spawn. The actual
+spawn-error negative now targets the complete child-entrypoint launch line
+and asserts exactly one source match. The full twenty-mode real helper group
+then passed (39.169s); the six prelaunch modes passed (3.562s). Sixteen outer
+completion/observation fault modes also passed (28.733s). Independent final
+review found no remaining must-fix in this scoped handoff. Final full owning
+retirement passed 57/57 (221.464s), historical helper 19/19 (29.319s), exact
+manifests 17/17 (7.051s), gateway 109/109 (2.965s), ordinary stale reclamation
+1/1 (1.455s), and the remaining three actual startup/cleanup cases 3/3
+(39.683s). TypeScript no-emit and diff whitespace checks passed. This proves
+the retained local handoff, not durable settlement, release, rebind or live
+Task 6A/A–E acceptance. Guarded clean-main build remains a delivery gate.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

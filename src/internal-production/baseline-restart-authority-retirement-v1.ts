@@ -160,9 +160,20 @@ type ColdBootstrapIntentStateV1 = {
   nonce: string;
   rootIdentity: BigIntStats | null;
   rootGuard: PrivateDirectoryGuardV1;
+  helperInvocation?: ColdControllerHelperInvocationV1;
+};
+type ColdControllerHelperInvocationV1 = {
+  child: ChildProcess | null;
+  completion: Promise<Readonly<Record<string, unknown>>> | null;
+  failed: boolean;
+  transportDescriptors: number[];
+  authorityDescriptors: number[];
+  guards: PrivateDirectoryGuardV1[];
+  pins: Array<Readonly<{ path: string; stats: BigIntStats; bytes: Buffer; descriptor: number }>>;
 };
 let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
+let coldControllerHelperInvocationActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
@@ -1220,6 +1231,16 @@ function assertColdIntentLeaseV1(state: ColdBootstrapIntentStateV1): void {
   state.rootGuard.assertStable();
 }
 
+function finishRetainedColdCleanupV1(close: () => void): void {
+  const retry = () => { close(); pendingColdHelperAuthenticationCleanupV1.delete(retry); };
+  try { retry(); }
+  catch (error) {
+    pendingColdHelperAuthenticationCleanupV1.add(retry);
+    try { retry(); } catch { /* Remaining exact resources stay owned and fence acquisition. */ }
+    throw error;
+  }
+}
+
 function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, requireFinal: boolean): void {
   const target = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
   const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), target);
@@ -1229,6 +1250,7 @@ function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, require
     if (!expected || !root.isDirectory() || root.isSymbolicLink() || root.uid !== BigInt(process.getuid!())
       || (root.mode & 0o7777n) !== 0o700n || root.dev !== expected.dev || root.ino !== expected.ino) fail("cold intent root is crossed");
     const directory = opendirSync(target, { bufferSize: 1 });
+    let directoryClosed = false;
     const entries: Array<{ name: string; stats: BigIntStats }> = [];
     try {
       for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
@@ -1237,7 +1259,7 @@ function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, require
         if (stats.dev !== root.dev || !readColdGenesisCandidateV1(file, stats, 2).equals(Buffer.from(`${canonical(state.intent)}\n`))) fail("cold intent prefix bytes are crossed");
         entries.push({ name: entry.name, stats });
       }
-    } finally { directory.closeSync(); }
+    } finally { finishRetainedColdCleanupV1(() => { if (!directoryClosed) { directory.closeSync(); directoryClosed = true; } }); }
     if (requireFinal && !entries.some((entry) => entry.name === "intent.json")) fail("cold intent final record is absent");
     if (entries.filter((entry) => entry.name !== "intent.json").length > 1) fail("cold intent temporary count is crossed");
     if (entries.length === 2) {
@@ -1249,7 +1271,7 @@ function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, require
     for (const entry of entries) if (!sameColdFileMetadataV1(entry.stats, lstatSync(path.join(target, entry.name), { bigint: true }))) fail("cold intent member changed");
     if (!sameColdFileMetadataV1(root, lstatSync(target, { bigint: true }))) fail("cold intent prefix changed");
     guard.assertStable();
-  } finally { guard.close(); }
+  } finally { finishRetainedColdCleanupV1(() => guard.close()); }
 }
 
 // Private preparation for the fixed controller. No helper dispatch, process
@@ -1313,6 +1335,7 @@ async function prepareColdSpawnerBootstrapIntentV1() {
 }
 
 function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readonly<{ frameDescriptor: number; intentDescriptor: number }> {
+  for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
   if (state !== retainedColdBootstrapIntentV1 || state.phase !== "intent-only") fail("cold helper frame owner is invalid");
   assertColdIntentLeaseV1(state);
   assertColdIntentOnlyPrefixV1(state, true);
@@ -1388,10 +1411,171 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
     }
     return fail("cold helper frame preparation failed");
   } finally {
-    try { if (writer !== undefined) closeSync(writer); }
-    finally { try { if (reader !== undefined) closeSync(reader); }
-      finally { try { if (intentDescriptor !== undefined) closeSync(intentDescriptor); } finally { if (!guardClosed) guard.close(); } } }
+    finishRetainedColdCleanupV1(() => {
+      let primary: unknown = null;
+      try { if (writer !== undefined) { closeSync(writer); writer = undefined; } } catch (error) { primary ??= error; }
+      try { if (reader !== undefined) { closeSync(reader); reader = undefined; } } catch (error) { primary ??= error; }
+      try { if (intentDescriptor !== undefined) { closeSync(intentDescriptor); intentDescriptor = undefined; } } catch (error) { primary ??= error; }
+      try { if (!guardClosed) { guard.close(); guardClosed = true; } } catch (error) { primary ??= error; }
+      if (primary !== null) throw primary;
+    });
   }
+}
+
+function captureColdControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    const pipe = child.stdout;
+    if (!pipe) { reject(Error("cold helper completion pipe is absent")); return; }
+    let ended = false, exited = false, settled = false, count = 0;
+    const chunks: Buffer[] = [];
+    const finish = (error?: Error) => {
+      if (settled || (!error && (!ended || !exited))) return;
+      settled = true;
+      pipe.removeListener("data", onData); pipe.removeListener("end", onEnd); pipe.removeListener("error", onError);
+      child.removeListener("error", onError); child.removeListener("exit", onExit);
+      pipe.on("error", () => {}); pipe.destroy(); child.on("error", () => {}); child.unref();
+      if (error) { reject(error); return; }
+      try {
+        const bytes = Buffer.concat(chunks, count);
+        const value = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "intentRef", "intentHash", "intentIdentity", "dispatchRef", "dispatchHash", "dispatchIdentity", "claimRef", "claimHash", "claimIdentity", "journalIdentity"], "helper completion");
+        if (value.schema !== "setfarm.internal-production-cold-spawner-helper-completion.v1" || !bytes.equals(Buffer.from(`${canonical(value)}\n`))) fail("cold helper completion is crossed");
+        resolve(freezeColdDataV1(value));
+      } catch { reject(Error("cold helper completion is malformed")); }
+    };
+    const onData = (bytes: Buffer) => {
+      if (bytes.length < 1 || count + bytes.length > 4096) { finish(Error("cold helper completion exceeds its cap")); return; }
+      chunks.push(Buffer.from(bytes)); count += bytes.length;
+    };
+    const onError = () => finish(Error("cold helper completion failed"));
+    const onEnd = () => { ended = true; finish(count < 1 ? Error("cold helper completion is absent") : undefined); };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => { exited = true; finish(code !== 0 || signal !== null ? Error("cold helper exit is uncertain") : undefined); };
+    pipe.on("data", onData); pipe.once("end", onEnd); pipe.once("error", onError);
+    child.once("error", onError); child.once("exit", onExit);
+  });
+}
+
+function assertColdControllerAuthorityPinsV1(state: ColdBootstrapIntentStateV1, invocation: ColdControllerHelperInvocationV1): void {
+  assertColdIntentLeaseV1(state);
+  for (const guard of invocation.guards) guard.assertStable();
+  for (const pin of invocation.pins) {
+    if (!sameColdFileMetadataV1(pin.stats, fstatSync(pin.descriptor, { bigint: true }))
+      || !pin.bytes.equals(readColdGenesisCandidateV1(pin.path, pin.stats))
+      || !sameColdFileMetadataV1(pin.stats, fstatSync(pin.descriptor, { bigint: true }))) fail("cold controller original authority changed");
+  }
+  for (const guard of invocation.guards) guard.assertStable();
+  assertColdIntentLeaseV1(state);
+}
+
+function independentlyObserveColdControllerClaimV1(state: ColdBootstrapIntentStateV1, completion: Readonly<Record<string, unknown>>) {
+  const invocation = state.helperInvocation, helper = invocation?.child;
+  if (!invocation || invocation.failed || !helper || helper.exitCode !== 0 || helper.signalCode !== null || !Number.isSafeInteger(helper.pid)) fail("cold controller retained helper outcome is unavailable");
+  const root = path.join(rootPaths().root, "cold-spawner-bootstrap-v1"), profile = state.intent.launchProfile as Record<string, any>;
+  const assertOriginal = () => {
+    assertColdControllerAuthorityPinsV1(state, invocation);
+    const current = lstatSync(root, { bigint: true }), original = state.rootIdentity!;
+    if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])
+      || canonical(coldFileIdentityTupleV1(current)) !== canonical(completion.journalIdentity)
+      || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["claim.json", "dispatch.json", "intent.json"])) fail("cold controller journal is crossed");
+    verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.rootIdentity.uid },
+      sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
+      outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
+  };
+  assertOriginal();
+  const read = (stem: string) => {
+    const target = path.join(root, `${stem}.json`), stats = lstatSync(target, { bigint: true });
+    if (canonical(coldFileIdentityTupleV1(stats)) !== canonical(completion[`${stem}Identity`])) fail("cold controller completion file identity is crossed");
+    return readColdGenesisCandidateV1(target, stats);
+  };
+  const intentBytes = read("intent");
+  if (!intentBytes.equals(Buffer.from(`${canonical(state.intent)}\n`))) fail("cold controller original intent changed");
+  const intentStats = invocation.pins.find(pin => pin.path === path.join(root, "intent.json"))!.stats;
+  const dispatchBytes = read("dispatch"), dispatch = parseColdSpawnerBootstrapDispatchV1(dispatchBytes, state.intent, { devDecimal: String(intentStats.dev), inoDecimal: String(intentStats.ino) });
+  const claimBytes = read("claim"), claim = parseColdSpawnerBootstrapClaimV1(claimBytes, state.intent, dispatch);
+  for (const stem of ["intent", "dispatch", "claim"]) for (const suffix of ["Ref", "Hash"]) if (completion[`${stem}${suffix}`] !== claim[`${stem}${suffix}`]) fail("cold controller completion pair is crossed");
+  if ((dispatch.helper as Record<string, unknown>).pid !== helper.pid) fail("cold controller claim belongs to another helper");
+  const assertChild = () => {
+    if (boundedPsProcessIdentity(helper.pid!) !== null) fail("cold controller helper has not departed");
+    const child = claim.child as Record<string, any>, actual = boundedPsProcessIdentity(child.pid), ownership = observeColdProcessParentGroupV1(child.pid);
+    if (!actual || canonical({ ...actual, ...ownership }) !== canonical({ ...child, ppid: 1 })) fail("cold controller detached child is crossed");
+    const absence = (state.intent.coldObservation as Record<string, any>).spawnerAbsence;
+    for (const ancestor of absence.ancestors) {
+      const stats = lstatSync(ancestor.path, { bigint: true });
+      if (!stats.isDirectory() || stats.isSymbolicLink() || String(stats.dev) !== ancestor.dev || String(stats.ino) !== ancestor.ino
+        || String(stats.uid) !== ancestor.uid || Number(stats.mode & 0o7777n) !== ancestor.mode) fail("cold controller runtime ancestor changed");
+    }
+    const files = claim.startupFiles as Record<string, any>;
+    for (const key of ["singleton", "pidFile"]) {
+      const file = files[key], stats = lstatSync(file.path, { bigint: true });
+      if (stats.size > 32n || sha256(canonical(coldFileIdentityTupleV1(stats))) !== file.identityHash
+        || sha256(readColdGenesisCandidateV1(file.path, stats).toString()) !== file.bytesHash) fail("cold controller claimed startup file changed");
+    }
+  };
+  assertChild(); assertOriginal();
+  if (!intentBytes.equals(read("intent")) || !dispatchBytes.equals(read("dispatch")) || !claimBytes.equals(read("claim"))) fail("cold controller claim read changed");
+  assertChild(); assertOriginal();
+  return claim;
+}
+
+async function assertColdControllerLaunchProfileV1(state: ColdBootstrapIntentStateV1): Promise<void> {
+  const profile = state.intent.launchProfile as Record<string, any>;
+  const output = { rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.rootIdentity.uid },
+    sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
+    outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash };
+  assertColdIntentLeaseV1(state);
+  verifyInternalProductionSpawnerLaunchOutputCandidateV1(output);
+  const observer = await import("./baseline-post-handoff-receipt-v1.js");
+  const current = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
+  if (canonical(current.profile) !== canonical(profile) || canonical(current.environment) !== canonical(state.environment)) fail("cold controller original launch profile changed");
+  verifyInternalProductionSpawnerLaunchOutputCandidateV1(output);
+  assertColdIntentLeaseV1(state);
+}
+
+async function invokeColdSpawnerBootstrapHelperV1() {
+  if (coldControllerHelperInvocationActiveV1) fail("cold controller invocation is already active");
+  coldControllerHelperInvocationActiveV1 = true;
+  try {
+    if (retainedColdBootstrapIntentV1 === null) {
+      observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+      await prepareColdSpawnerBootstrapIntentV1();
+    }
+    const state = retainedColdBootstrapIntentV1!;
+    if (state.phase === "intent-only") {
+      await assertColdControllerLaunchProfileV1(state);
+      const handles = openColdSpawnerHelperFrameV1(state);
+      const invocation: ColdControllerHelperInvocationV1 = { child: null, completion: null, failed: false,
+        transportDescriptors: [handles.frameDescriptor], authorityDescriptors: [handles.intentDescriptor], guards: [], pins: [] };
+      state.helperInvocation = invocation;
+      state.phase = "helper-may-have-run";
+      try {
+        const paths = rootPaths(), profile = state.intent.launchProfile as Record<string, any>;
+        for (const [target, borrowed] of [[path.join(paths.root, "cold-spawner-bootstrap-v1/intent.json"), handles.intentDescriptor], [paths.lock, heldLease(state.lease).descriptor],
+          [paths.epoch, undefined], [coldGenesisReceiptPathV1(state.intent.genesisHash as string), undefined]] as const) {
+          invocation.guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(target)));
+          const descriptor = borrowed ?? openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          if (borrowed === undefined) invocation.authorityDescriptors.push(descriptor);
+          const stats = fstatSync(descriptor, { bigint: true }), bytes = readColdGenesisCandidateV1(target, stats);
+          invocation.pins.push({ path: target, stats, bytes, descriptor });
+        }
+        await assertColdControllerLaunchProfileV1(state);
+        assertColdControllerAuthorityPinsV1(state, invocation);
+        invocation.child = spawn(profile.executable.path, [path.join(profile.repository, "dist/internal-production/baseline-service-restart-helper-v1.js")], {
+          cwd: profile.cwd, shell: false, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: "1" },
+          stdio: ["ignore", "pipe", "ignore", handles.frameDescriptor, heldLease(state.lease).descriptor, handles.intentDescriptor],
+        });
+        invocation.completion = captureColdControllerHelperCompletionV1(invocation.child);
+        void invocation.completion.catch(() => {});
+      } catch { invocation.failed = true; }
+    }
+    const invocation = state.helperInvocation;
+    if (!invocation || !["helper-may-have-run", "claim-observed"].includes(state.phase)) fail("cold controller retained invocation is unavailable");
+    while (invocation.transportDescriptors.length > 0) { closeSync(invocation.transportDescriptors.at(-1)!); invocation.transportDescriptors.pop(); }
+    if (invocation.failed || !invocation.completion) fail("cold controller helper outcome is uncertain");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completion = await Promise.race([invocation.completion, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(Error("cold controller helper outcome is uncertain")), 35_000); })]).finally(() => { if (timer) clearTimeout(timer); });
+    const claim = independentlyObserveColdControllerClaimV1(state, completion);
+    state.phase = "claim-observed";
+    return claim;
+  } finally { coldControllerHelperInvocationActiveV1 = false; }
 }
 
 function parseColdSpawnerBootstrapIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
@@ -1727,7 +1911,12 @@ async function authenticateColdSpawnerHelperIntentV1() {
       if (!sameColdFileMetadataV1(stats, fstatSync(descriptor, { bigint: true })) || !bytes.equals(readColdGenesisCandidateV1(target, stats))) fail("cold helper claim reopen changed");
       childClaim = { record, rootStats: assertJournalIdentity(), stats, bytes, descriptor };
       assertStable(); assertChild(); assertStartup(); assertOutput(); assertStable(); assertJournalIdentity();
-      return record;
+      return freezeColdDataV1(JSON.parse(canonical({ schema: "setfarm.internal-production-cold-spawner-helper-completion.v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, intentIdentity: coldFileIdentityTupleV1(intentFile.stats),
+        dispatchRef: dispatch.record.dispatchRef, dispatchHash: dispatch.record.dispatchHash, dispatchIdentity: coldFileIdentityTupleV1(dispatch.stats),
+        claimRef: record.claimRef, claimHash: record.claimHash, claimIdentity: coldFileIdentityTupleV1(childClaim.stats),
+        journalIdentity: coldFileIdentityTupleV1(childClaim.rootStats),
+      })) as Record<string, unknown>);
     };
     const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, observeChildClaim, close,
       childDescriptors: () => { assertStable(); if (!dispatch || childHandedOff) fail("cold child dispatch is absent or consumed"); childHandedOff = true; return Object.freeze({ frameDescriptor: dispatch.frameDescriptor, dispatchDescriptor: dispatch.descriptor }); } };
@@ -1845,12 +2034,13 @@ function takeColdSpawnerChildLaunchDescriptorsV1(context: unknown) {
   return state.authentication.childDescriptors();
 }
 
-export async function runInternalProductionColdSpawnerHelperV1(): Promise<void> {
+export async function runInternalProductionColdSpawnerHelperV1(): Promise<Readonly<Record<string, unknown>>> {
   if (coldHelperTransportAttemptedV1) fail("cold helper transport was already attempted");
   coldHelperTransportAttemptedV1 = true;
   let context: Awaited<ReturnType<typeof acquireColdSpawnerHelperContextV1>> | undefined;
   let child: ChildProcess | undefined, readiness: Readable | undefined;
   let accepted = false, cleanupFailed = false;
+  let completion: Readonly<Record<string, unknown>> | null = null;
   try {
     context = await acquireColdSpawnerHelperContextV1();
     const state = heldColdHelperContextV1(context);
@@ -1896,7 +2086,7 @@ export async function runInternalProductionColdSpawnerHelperV1(): Promise<void> 
     // Do not use the ordinary two-member context gate after a child may have
     // published. Only this private one-shot spawn can observe its third member.
     if (coldHelperContextsV1.get(context) !== state || state.phase !== "child-launch-handed-off") fail("cold helper claim phase changed");
-    state.authentication.observeChildClaim(child, envelope);
+    completion = state.authentication.observeChildClaim(child, envelope);
     state.phase = "claimed";
     state.authentication.assertStable();
     accepted = true;
@@ -1910,7 +2100,8 @@ export async function runInternalProductionColdSpawnerHelperV1(): Promise<void> 
       catch { cleanupFailed = true; pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain unfinished exact ownership. */ } }
     }
   }
-  if (!accepted || cleanupFailed) fail("cold helper transport is uncertain");
+  if (!accepted || cleanupFailed || completion === null || Buffer.byteLength(`${canonical(completion)}\n`) > 4096) fail("cold helper transport is uncertain");
+  return completion;
 }
 
 function observeColdProcessParentGroupV1(pid: number) {

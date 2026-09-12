@@ -402,7 +402,10 @@ async function main(): Promise<void> {
   if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) {
     if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== "1") fail("cold helper selector is invalid");
     const retirement = await import("./baseline-restart-authority-retirement-v1.js");
-    await retirement.runInternalProductionColdSpawnerHelperV1();
+    const completion = await retirement.runInternalProductionColdSpawnerHelperV1();
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${JSON.stringify(completion)}\n`, (error) => error ? reject(error) : resolve());
+    });
     return;
   }
   const frameBytes = readFileSync(3, { flag: "r" }); // code-owned inherited capability fd: 3

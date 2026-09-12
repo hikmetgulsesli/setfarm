@@ -407,11 +407,11 @@ async function createColdIntentFixtureV1(transformSource?: (source: string) => s
     .replace("    fsyncParent(target);\n", "    globalThis.__coldIntentRootSyncHook?.();\n    fsyncParent(target);\n") + `
 export { prepareColdSpawnerBootstrapIntentV1 };
 export function inspectColdIntentFixtureV1(){const state=retainedColdBootstrapIntentV1;if(!state)return null;const held=heldLease(state.lease);return {phase:state.phase,descriptor:held.descriptor,lockBytesHash:sha256(held.lockBytes.toString()),intent:state.intent,nonceHash:sha256(state.nonce)};}
-export function closeColdIntentFixtureV1(){if(retainedColdBootstrapIntentV1){const lease=retainedColdBootstrapIntentV1.lease;retainedColdBootstrapIntentV1.rootGuard?.close();closeSync(heldLease(lease).descriptor);leases.delete(lease);retainedColdBootstrapIntentV1=null;}}
+export function closeColdIntentFixtureV1(){if(retainedColdBootstrapIntentV1){const lease=retainedColdBootstrapIntentV1.lease,invocation=retainedColdBootstrapIntentV1.helperInvocation;if(invocation){for(const fd of [...invocation.transportDescriptors,...invocation.authorityDescriptors])closeSync(fd);for(const guard of invocation.guards)guard.close();}retainedColdBootstrapIntentV1.rootGuard?.close();closeSync(heldLease(lease).descriptor);leases.delete(lease);retainedColdBootstrapIntentV1=null;}}
 `;
   const fixture = await createColdEpochGenesisFixtureV1(transformSource ? transformSource(source) : source);
   const port = path.join(fixture.fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
-  writeFileSync(port, readFileSync(port, "utf8") + '\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){return globalThis.__coldIntentProfile;}\n');
+  writeFileSync(port, readFileSync(port, "utf8") + '\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){globalThis.__coldControllerBeforeProfile?.();return globalThis.__coldIntentProfile;}\n');
   const observation = Reflect.get(globalThis, "__coldGenesisObservation");
   const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source: observation.source, uid: process.getuid!(),
     repository: fixture.fixture, cwd: fixture.fixture, arguments: [path.join(fixture.fixture, "dist/spawner.js")],
@@ -431,6 +431,11 @@ async function createColdFrameFixtureV1() {
       "  const observedFrameGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);\n  globalThis.__coldFrameGuardReadyHook?.();\n  const guard={assertStable(){observedFrameGuard.assertStable();globalThis.__coldFrameGuardCheckHook?.();},close(){globalThis.__coldFrameGuardCloseHook?.();observedFrameGuard.close();}};",
     );
     return (source.slice(0, start) + frame + source.slice(end))
+    .replace('invocation.child = spawn(profile.executable.path,', 'invocation.child = spawn(globalThis.__coldControllerSpawnPath??profile.executable.path,')
+    .replace('        invocation.completion = captureColdControllerHelperCompletionV1(invocation.child);', '        globalThis.__coldControllerSpawnedHook?.(invocation.child);\n        invocation.completion = captureColdControllerHelperCompletionV1(invocation.child);')
+    .replace('    const claim = independentlyObserveColdControllerClaimV1(state, completion);', '    globalThis.__coldControllerBeforeClaimHook?.();\n    const claim = independentlyObserveColdControllerClaimV1(state, completion);')
+    .replace('35_000', '(globalThis.__coldControllerWaitMs??35_000)')
+    .replace('readInternalProductionSpawnerUntrustedInheritedFrameV1, verifyInternalProductionSpawnerLaunchOutputCandidateV1 }', 'readInternalProductionSpawnerUntrustedInheritedFrameV1, verifyInternalProductionSpawnerLaunchOutputCandidateV1 as initialColdControllerOutputVerifier }')
     .replace("  writeFileSync,", "  writeFileSync as realColdFrameWriteFileSync,")
     .replace("  unlinkSync,", "  unlinkSync as realColdFrameUnlinkSync,")
     .replace("  openSync,", "  openSync as realColdFrameOpenSync,")
@@ -441,7 +446,10 @@ function unlinkSync(target:any){realColdFrameUnlinkSync(target);globalThis.__col
 function fsyncSync(fd:number){realColdFrameFsyncSync(fd);globalThis.__coldFrameSyncHook?.(fd);}
 function openSync(...args:any[]){globalThis.__coldFrameBeforeOpenHook?.(...args);const fd=realColdFrameOpenSync(...args);globalThis.__coldFrameOpenedHook?.(fd,...args);return fd;}
 function closeSync(fd:number){globalThis.__coldFrameBeforeCloseHook?.(fd);realColdFrameCloseSync(fd);globalThis.__coldFrameClosedHook?.(fd);}
+function verifyInternalProductionSpawnerLaunchOutputCandidateV1(value:any){return (globalThis.__coldControllerCompiledOutputVerifier??initialColdControllerOutputVerifier)(value);}
 export function openColdFrameFixtureV1(){return openColdSpawnerHelperFrameV1(retainedColdBootstrapIntentV1!);}
+export async function invokeColdControllerFixtureV1(){const result=await invokeColdSpawnerBootstrapHelperV1();globalThis.__coldControllerAfterObservationHook?.();return result;}
+export async function invokeFreshColdControllerFixtureV1(){const original=retainedColdBootstrapIntentV1;retainedColdBootstrapIntentV1=null;try{return await invokeColdSpawnerBootstrapHelperV1();}finally{retainedColdBootstrapIntentV1=original;}}
 `;
   });
 }
@@ -545,6 +553,43 @@ process.stdout.write(JSON.stringify({schema:frame.schema,intentHash:frame.intent
   }
 });
 
+test("cold helper frame retains failed-acquisition cleanup before any new frame", async () => {
+  for (const kind of ["reader", "writer", "intent", "guard"]) {
+  for (const persistent of [false, true]) {
+    const fixture = await createColdFrameFixtureV1(), owned = new Set<number>();
+    const paths = new Map<number, string>();
+    let reader: number | undefined, failed = false, closeFault = true, opened = 0;
+    try {
+      await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+      Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, target: string, flags: number) => { owned.add(fd); paths.set(fd, target); opened++; if (typeof target === "string" && path.basename(target).startsWith(".cold-helper-capability.") && (flags & 3) === 0) reader = fd; });
+      Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => { owned.delete(fd); paths.delete(fd); });
+      Reflect.set(globalThis, "__coldFrameSyncHook", (fd: number) => { if (!failed && fstatSync(fd).isFile() && fstatSync(fd).nlink === 0) { failed = true; if (kind === "writer") reader = fd; if (kind === "intent") reader = [...paths].find(([, target]) => path.basename(target) === "intent.json")?.[0]; throw Error("fixture frame acquisition failed"); } });
+      const closeInterrupted = () => { if (failed && closeFault) { if (!persistent) closeFault = false; throw Error(`fixture ${kind} cleanup failed`); } };
+      Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => { if (kind !== "guard" && fd === reader) closeInterrupted(); });
+      Reflect.set(globalThis, "__coldFrameGuardCloseHook", () => { if (kind === "guard") closeInterrupted(); });
+      assert.throws(() => fixture.isolated.openColdFrameFixtureV1());
+      assert.equal(failed, true);
+      if (persistent) {
+        assert.ok(owned.size > 0, `${kind}: interrupted ownership remains retained`);
+        if (kind !== "guard") assert.equal(owned.size, 1);
+        const before = opened;
+        assert.throws(() => fixture.isolated.openColdFrameFixtureV1());
+        assert.equal(opened, before, "pending cleanup fences all new acquisition");
+        closeFault = false;
+        const recovered = fixture.isolated.openColdFrameFixtureV1();
+        closeSync(recovered.frameDescriptor); owned.delete(recovered.frameDescriptor);
+        closeSync(recovered.intentDescriptor); owned.delete(recovered.intentDescriptor);
+      }
+      assert.equal(owned.size, 0, "failed acquisition cannot lose an unlinked reader");
+    } finally {
+      for (const key of ["__coldFrameOpenedHook", "__coldFrameClosedHook", "__coldFrameSyncHook", "__coldFrameBeforeCloseHook", "__coldFrameGuardCloseHook"]) Reflect.deleteProperty(globalThis, key);
+      for (const fd of owned) { try { closeSync(fd); } catch { /* Test cleanup after a demonstrated missing owner. */ } }
+      fixture.isolated.closeColdIntentFixtureV1(); fixture.cleanup();
+    }
+  }
+  }
+});
+
 async function createColdHelperAuthenticationFixtureV1(helperSourceTransform?: (source: string) => string, runnerSetup = "", configureProfile?: (profile: any, root: string) => void,
   configureCompiled?: (root: string, profile: any, compileRepositoryModule: (relative: string, transform?: (source: string) => string) => void) => void) {
   assert.ok(readFileSync(sourcePath, "utf8").includes("async function authenticateColdSpawnerHelperIntentV1()"), "independent cold helper authentication is not implemented");
@@ -645,8 +690,16 @@ export {observePhaseClosedZeroV1};
     assert.ok(!child.stderr.includes("never-persist-cold-snapshot"));
     assert.equal(child.stderr, "");
     if (overrides.realCold) {
-      assert.equal(child.stdout, "", "the real fixed helper emits no secret or caller authority");
+      assert.ok(Buffer.byteLength(child.stdout) > 0 && Buffer.byteLength(child.stdout) <= 4096, "the real fixed helper must return bounded origin-bound completion evidence");
+      const completion = JSON.parse(child.stdout);
+      assert.equal(child.stdout, `${canonical(completion)}\n`);
+      assert.equal(completion.schema, "setfarm.internal-production-cold-spawner-helper-completion.v1");
+      for (const [name, key] of [["intent", "intentIdentity"], ["dispatch", "dispatchIdentity"], ["claim", "claimIdentity"], [null, "journalIdentity"]] as const) {
+        const stats = lstatSync(path.join(fixture.root, "cold-spawner-bootstrap-v1", name ? `${name}.json` : ""), { bigint: true });
+        assert.deepEqual(completion[key], [stats.dev, stats.ino, stats.uid, stats.gid, stats.mode, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].map(String));
+      }
       const claim = JSON.parse(readFileSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/claim.json"), "utf8"));
+      for (const stem of ["intent", "dispatch", "claim"]) for (const suffix of ["Ref", "Hash"]) assert.equal(completion[`${stem}${suffix}`], claim[`${stem}${suffix}`]);
       return { accepted: true, childPid: claim.child.pid, claim };
     }
     return JSON.parse(child.stdout);
@@ -948,7 +1001,11 @@ export function residueFixtureOwnedCount(){return residueFixtureOwned.size;}
       const own = observeColdProcessParentGroupV1(process.pid);
       if(globalThis.__fixtureParentTransition&&claim!==null&&own.ppid===helper.pid){globalThis.__fixtureParentTransition=false;const deadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<deadline)spawnSync('/bin/sleep',['0.01']);if(process.ppid!==1)throw Error('fixture parent transition did not occur');writeFileSync(path.join(repositoryRoot(),'fixture-parent-transition'),'fired');}`);
     if (fault === "claim-real-helper-fragmented") source = source.replace('      const onData = (bytes: Buffer) => {', '      const onData = (bytes: Buffer) => {writeFileSync(path.join(repositoryRoot(), "fixture-ready-chunks"), "chunk\\n", {mode:0o600,flag:"a"});');
-    if (fault === "claim-real-helper-spawn-error") source = source.replace('child = spawn(profile.executable.path,', 'child = spawn(path.join(repositoryRoot(), "absent-node"),');
+    if (fault === "claim-real-helper-spawn-error") {
+      const childSpawn = '    child = spawn(profile.executable.path, [path.join(profile.repository, "dist/spawner.js")], {';
+      assert.equal(source.split(childSpawn).length - 1, 1, "spawn-error fixture targets exactly the real helper-to-child launch");
+      source = source.replace(childSpawn, '    child = spawn(path.join(repositoryRoot(), "absent-node"), [path.join(profile.repository, "dist/spawner.js")], {');
+    }
     if (fault === "claim-real-helper-no-eof") source = source.replace('setTimeout(() => finish(Error("cold child readiness timed out")), 30_000)', 'setTimeout(() => finish(Error("cold child readiness timed out")), 1000)');
     if (["claim-real-helper-claim-replace", "claim-real-helper-pid-restore", "claim-real-helper-lock-restore", "claim-real-helper-journal-aba", "claim-real-helper-output-drift"].includes(fault)) source = source.replace('      const target = path.join(root, "claim.json"), stats = lstatSync(target, { bigint: true });', `
       const ready=path.join(repositoryRoot(),'.openclaw/setfarm/fixture-claim-ready'),deadline=Date.now()+4000;
@@ -1231,7 +1288,23 @@ try{
 finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null||child.signalCode!==null)return resolve();child.once('close',resolve);setTimeout(resolve,1000)});}if(readyFd!==undefined)closeSync(readyFd);context?.close();}
 `);
     }
-    if (fault.startsWith("claim-real-helper")) compile("internal-production/baseline-service-restart-helper-v1.ts");
+    if (fault.startsWith("claim-real-helper")) compile("internal-production/baseline-service-restart-helper-v1.ts", source => {
+      const mode = fault.slice("claim-real-helper-controller-wire-".length);
+      if (!fault.startsWith("claim-real-helper-controller-wire-")) return source;
+      const expressions: Record<string, string> = {
+        missing: '""', truncated: 'JSON.stringify(completion).slice(0,-1)', duplicate: 'canonical(completion)+"\\n"+canonical(completion)+"\\n"',
+        oversize: '"x".repeat(4097)', "extra-key": 'canonical({...completion,foreign:true})+"\\n"', noncanonical: 'JSON.stringify(completion,null,2)+"\\n"',
+        "crossed-identity": 'canonical({...completion,claimIdentity:["0",...(completion.claimIdentity as string[]).slice(1)]})+"\\n"',
+      };
+      source = source.replace('    await new Promise<void>((resolve, reject) => {', `
+        writeFileSync(${JSON.stringify(path.join(root, "fixture-controller-wire"))},${JSON.stringify(mode)});
+        let fixtureCompletionText=${expressions[mode] ?? 'canonical(completion)+"\\n"'};
+        ${mode === "fragmented" ? "const half=Math.floor(fixtureCompletionText.length/2);process.stdout.write(fixtureCompletionText.slice(0,half));await new Promise(resolve=>setTimeout(resolve,100));fixtureCompletionText=fixtureCompletionText.slice(half);" : ""}
+    await new Promise<void>((resolve, reject) => {`);
+      source = source.replace('process.stdout.write(`${JSON.stringify(completion)}\\n`,', 'process.stdout.write(fixtureCompletionText,');
+      if (mode === "nonzero") source = source.replace('    return;\n  }\n  const frameBytes', '    process.exitCode=1;return;\n  }\n  const frameBytes');
+      return source;
+    });
     const entries: Array<{ locator: string; mode: number; byteLength: number; sha256: string }> = [];
     const visit = (directory: string) => {
       chmodSync(directory, 0o755);
@@ -1341,6 +1414,135 @@ test("actual fixed cold helper launches one genuine sealed main and exits", asyn
 test("actual fixed cold helper consumes only its authenticated PID residue", async () => {
   for (const mode of ["", "probe-replace", "probe-restore", "probe-singleton", "probe-live", "replace", "restore", "other-dead", "symlink", "ancestor", "singleton", "absent", "live", "eperm", "unlink", "fsync", "close", "concurrent", "replay", "stop"]) {
     await exerciseActualColdHelperV1(`pid-residue${mode ? `-${mode}` : ""}`);
+  }
+});
+
+test("actual cold controller retains one helper result across caller response loss", async () => {
+  const fixture = await createAuthenticatedColdChildFixtureV1("claim-real-helper-controller");
+  let childPid: number | undefined;
+  const identity = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
+  try {
+    // The retained-lease harness runs through tsx; delegate this location-bound
+    // port to the actual compiled verifier, never a fake acceptance result.
+    const output = await import(pathToFileURL(path.join(fixture.fixture, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
+    Reflect.set(globalThis, "__coldControllerCompiledOutputVerifier", output.verifyInternalProductionSpawnerLaunchOutputCandidateV1);
+    const originalLock = readFileSync(fixture.lock);
+    await assert.rejects(fixture.isolated.invokeFreshColdControllerFixtureV1(), /COLD_BOOTSTRAP_UNSETTLED/);
+    assert.deepEqual(readFileSync(fixture.lock), originalLock);
+    Reflect.set(globalThis, "__coldControllerAfterObservationHook", () => { Reflect.deleteProperty(globalThis, "__coldControllerAfterObservationHook"); throw Error("fixture caller response lost"); });
+    await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1(), /fixture caller response lost/);
+    assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, "claim-observed");
+    const recovered = await fixture.isolated.invokeColdControllerFixtureV1();
+    childPid = recovered.child.pid;
+    assert.equal(canonical(await fixture.isolated.invokeColdControllerFixtureV1()), canonical(recovered));
+    assert.equal(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8"), `${childPid}\n`, "caller response loss cannot dispatch another helper or child");
+    const claim = JSON.parse(readFileSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/claim.json"), "utf8"));
+    assert.equal(recovered.claimHash, claim.claimHash);
+    await assert.rejects(fixture.isolated.invokeFreshColdControllerFixtureV1(), /COLD_BOOTSTRAP_UNSETTLED/);
+    assert.deepEqual(readFileSync(fixture.lock), originalLock, "fresh controller cannot reclaim the unsettled lock or start genesis");
+    assert.ok(identity(childPid!).includes(path.join(fixture.fixture, "dist/spawner.js")));
+    assert.equal(fstatSync(fixture.state.descriptor).nlink, 1, "claim observation cannot release the unsettled controller lease");
+  } finally {
+    Reflect.deleteProperty(globalThis, "__coldControllerAfterObservationHook");
+    Reflect.deleteProperty(globalThis, "__coldControllerCompiledOutputVerifier");
+    if (!childPid && existsSync(path.join(fixture.fixture, "fixture-spawn-pids"))) childPid = Number(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim());
+    if (childPid && identity(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) {
+      process.kill(childPid, "SIGTERM");
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && identity(childPid)) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(identity(childPid), "", "controller fixture stops only its exact child before removal");
+    }
+    fixture.close();
+  }
+});
+
+test("cold controller refuses changed helper output before passing a capability", async () => {
+  for (const mode of ["late-intent", "helper", "late-helper", "node-observation", "host-observation", "environment-observation"]) {
+  const fixture = await createAuthenticatedColdChildFixtureV1("claim-real-helper-controller-drift");
+  const identity = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
+  try {
+    const marker = path.join(fixture.fixture, "changed-helper-executed"), helper = path.join(fixture.fixture, "dist/internal-production/baseline-service-restart-helper-v1.js");
+    const replaceHelper = () => writeFileSync(helper, `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},'executed');process.exit(1);`);
+    let profileCalls = 0;
+    if (mode === "helper") replaceHelper();
+    else if (mode === "late-helper") Reflect.set(globalThis, "__coldControllerBeforeProfile", () => { if (++profileCalls === 2) replaceHelper(); });
+    else if (mode === "late-intent") Reflect.set(globalThis, "__coldControllerBeforeProfile", () => {
+      if (++profileCalls === 2) { const intent = path.join(fixture.root, "cold-spawner-bootstrap-v1/intent.json"); writeFileSync(intent, readFileSync(intent)); }
+    });
+    else {
+      const changed = structuredClone(Reflect.get(globalThis, "__coldIntentProfile"));
+      if (mode === "node-observation") changed.profile.executable.bytesHash = "0".repeat(64);
+      if (mode === "host-observation") changed.profile.hostDirectories[0].inoDecimal = "1";
+      if (mode === "environment-observation") changed.environment.PATH += ":/crossed";
+      delete changed.profile.profileHash; changed.profile.profileHash = sha256(canonical(changed.profile));
+      Reflect.set(globalThis, "__coldIntentProfile", changed);
+    }
+    const output = await import(pathToFileURL(path.join(fixture.fixture, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
+    Reflect.set(globalThis, "__coldControllerCompiledOutputVerifier", output.verifyInternalProductionSpawnerLaunchOutputCandidateV1);
+    await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1());
+    assert.equal(existsSync(marker), false, "changed code must not execute with the original inherited capability");
+    assert.equal(existsSync(path.join(fixture.fixture, "fixture-spawn-pids")), false);
+    assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, mode.startsWith("late-") ? "helper-may-have-run" : "intent-only");
+    if (mode.startsWith("late-")) assert.equal(profileCalls, 2, "recheck original authority at the final pre-spawn boundary");
+  } finally {
+    Reflect.deleteProperty(globalThis, "__coldControllerCompiledOutputVerifier"); Reflect.deleteProperty(globalThis, "__coldControllerBeforeProfile");
+    const spawned = path.join(fixture.fixture, "fixture-spawn-pids");
+    const childPid = existsSync(spawned) ? Number(readFileSync(spawned, "utf8").trim()) : undefined;
+    if (childPid && identity(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) {
+      process.kill(childPid, "SIGTERM"); const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && identity(childPid)) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(identity(childPid), "", "prelaunch fixture stops its exact child before removal");
+    }
+    fixture.close();
+  }
+  }
+});
+
+test("cold controller preserves one invocation through completion and observation faults", async () => {
+  for (const mode of ["missing", "truncated", "duplicate", "oversize", "extra-key", "noncanonical", "crossed-identity", "nonzero", "fragmented", "timeout", "concurrent", "spawn-error", "late-claim", "late-journal", "late-output", "late-pid"]) {
+    const wire = ["missing", "truncated", "duplicate", "oversize", "extra-key", "noncanonical", "crossed-identity", "nonzero", "fragmented"].includes(mode);
+    const fixture = await createAuthenticatedColdChildFixtureV1(`claim-real-helper-controller-${wire ? `wire-${mode}` : mode}`);
+    let childPid: number | undefined, helpers = 0, crossed = false;
+    const identity = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
+    try {
+      const output = await import(pathToFileURL(path.join(fixture.fixture, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
+      Reflect.set(globalThis, "__coldControllerCompiledOutputVerifier", output.verifyInternalProductionSpawnerLaunchOutputCandidateV1);
+      Reflect.set(globalThis, "__coldControllerSpawnedHook", () => { helpers++; });
+      if (mode === "spawn-error") Reflect.set(globalThis, "__coldControllerSpawnPath", path.join(fixture.fixture, "absent-node"));
+      if (mode === "timeout") Reflect.set(globalThis, "__coldControllerWaitMs", 1);
+      if (mode.startsWith("late-")) Reflect.set(globalThis, "__coldControllerBeforeClaimHook", () => {
+        if (crossed) return; crossed = true;
+        const journal = path.join(fixture.root, "cold-spawner-bootstrap-v1");
+        if (mode === "late-journal") { const file = path.join(journal, "foreign"); writeFileSync(file, "x", { mode: 0o600 }); unlinkSync(file); }
+        else if (mode === "late-output") writeFileSync(path.join(fixture.fixture, "dist/fixture-dependency.js"), "export const changed=true;\n");
+        else { const file = mode === "late-claim" ? path.join(journal, "claim.json") : path.join(fixture.fixture, ".openclaw/setfarm/spawner.pid"), bytes = readFileSync(file); unlinkSync(file); writeFileSync(file, bytes, { mode: 0o600, flag: "wx" }); }
+      });
+      if (["fragmented", "timeout", "concurrent"].includes(mode)) {
+        if (mode === "timeout") { await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1(), /uncertain/); Reflect.deleteProperty(globalThis, "__coldControllerWaitMs"); }
+        const pending = fixture.isolated.invokeColdControllerFixtureV1();
+        if (mode === "concurrent") await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1(), /already active/);
+        const result = await pending; childPid = result.child.pid;
+        assert.equal(canonical(await fixture.isolated.invokeColdControllerFixtureV1()), canonical(result));
+      } else {
+        await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1(), undefined, mode);
+        await assert.rejects(fixture.isolated.invokeColdControllerFixtureV1(), undefined, `${mode} cannot retry spawn`);
+        assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, "helper-may-have-run");
+      }
+      assert.equal(helpers, 1, `${mode}: retain the actual helper invocation`);
+      if (wire) assert.equal(readFileSync(path.join(fixture.fixture, "fixture-controller-wire"), "utf8"), mode);
+      if (mode.startsWith("late-")) assert.equal(crossed, true);
+      if (mode !== "spawn-error") assert.equal(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim().split("\n").length, 1);
+      assert.equal(fstatSync(fixture.state.descriptor).nlink, 1, "uncertain or merely observed completion never releases the lease");
+    } finally {
+      for (const key of ["__coldControllerCompiledOutputVerifier", "__coldControllerSpawnedHook", "__coldControllerSpawnPath", "__coldControllerWaitMs", "__coldControllerBeforeClaimHook"]) Reflect.deleteProperty(globalThis, key);
+      if (!childPid && existsSync(path.join(fixture.fixture, "fixture-spawn-pids"))) childPid = Number(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim());
+      if (childPid && identity(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) {
+        process.kill(childPid, "SIGTERM"); const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && identity(childPid)) await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(identity(childPid), "", "outer transport fixture waits for its exact child to exit");
+      }
+      fixture.close();
+    }
   }
 });
 
