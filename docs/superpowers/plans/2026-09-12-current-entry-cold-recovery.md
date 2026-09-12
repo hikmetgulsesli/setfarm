@@ -413,9 +413,22 @@ passed. Whole-branch delivery and live recovery remain pending.
 - The additional negative fixture initially attempted an immutable update and
   was correctly refused by `ARTIFACT_IDENTITY_IMMUTABLE`; no guard was disabled.
   It now seeds a distinct malformed publication at birth. A valid older head
-  also fails census adoption of the later close, then restores exact bytes.
+  also fails census adoption of the later close, then restores exact head row values.
   Final real PostgreSQL suite passed 14/14 (122.512s), including unchanged
   issue/publication/sidecar/head snapshots; all test DBs were dropped.
   Actual private-function orphan-sidecar and pure boundary checks passed 4/4;
   source manifest passed 16/16 (5.980s), TypeScript passed, diff check passed.
   This modern-classification slice does not yet grant legacy post32 exemptions.
+- Added the read-only historical migration inventory resolver in the existing
+  receipt File Map entry. The executing fixed-file test first failed because
+  the port was absent. It now resolves authentic authorization/consumption and
+  legacy observation files, preserves the exact 22-field evidence projection,
+  binds source/audit/operation/sealed pairs, and returns V1 empty or exact V2
+  membership. No current-entry selection, evidence minting or mutation occurs.
+  Expanded fixed-file regression passed (13.142s), including source/evidence/
+  consumption/audit crossing, generation/inventory drift, missing exact record,
+  and unchanged filesystem snapshots. TypeScript and diff check passed.
+  DB integration must authenticate current head plus exact journal32 and compare
+  the entire retained inventory even when all legacy rows are missing or owned
+  by modern sidecars. The existing empty P3 template must gain authentic fixed
+  migration evidence before application, not a fallback or head rewrite.

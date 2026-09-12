@@ -26,7 +26,7 @@ import path from "node:path";
 import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
 import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import type { LegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
-import { requireLegacyFindingPublicationInventoryContinuityV1, validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import { createLegacyFindingPublicationInventoryValueV1, requireLegacyFindingPublicationInventoryContinuityV1, validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
 import type { FindingPublicationParentRowV1, FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
@@ -20550,6 +20550,69 @@ export async function resolveInternalProductionPreManifestMigration32Authorizati
   const value = await resolveTask12MigrationRecordV1(input, "consumptions", "consumptionRef", "consumptionHash", TASK12_MIGRATION_PREFIXES_V1.consumption, "migration-32 authorization consumption");
   if (!hasExactKeys(value as Record<string, unknown>, ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "authorizationRef", "authorizationHash", "sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash", "migrationId", "migrationOrdinal", "consumptionRef", "consumptionHash"]) || value.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-consumption.v1" || value.migrationId !== "contract-spine-bootstrap-main-claim-handoff-v1" || value.migrationOrdinal !== 32) currentEntryFail("migration-32 consumption shape is invalid");
   return value;
+}
+
+/** Read-only historical evidence. The caller must anchor the application and source in its DB snapshot. */
+export async function resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1(
+  input: Readonly<{ migrationApplication: unknown; migrationSourceSha: string }>,
+): Promise<import("../findings/legacy-finding-publication-inventory-v1.js").LegacyFindingPublicationInventoryV1> {
+  if (!isPlainRecord(input) || !hasExactKeys(input, ["migrationApplication", "migrationSourceSha"]) || !isPlainRecord(input.migrationApplication)) currentEntryFail("legacy finding migration provenance shape is invalid");
+  const { validateOwnerAdmissionMigrationApplicationV1 } = await import("./owner-admission-head-v1.js");
+  const application = validateOwnerAdmissionMigrationApplicationV1(input.migrationApplication, requireSha256(input.migrationApplication.evidenceHash, "migration application evidence hash"));
+  const authorization = await resolveInternalProductionPreManifestMigration32AuthorizationV1({ authorizationRef: application.authorizationRef, authorizationHash: application.authorizationHash });
+  const consumption = await resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1({ consumptionRef: application.authorizationConsumptionRef, consumptionHash: application.authorizationConsumptionHash });
+  for (const key of ["authorizationRef", "authorizationHash", "currentEntryOperationRef", "currentEntryOperationHash", "sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash"] as const) {
+    if (consumption[key] !== authorization[key]) currentEntryFail("legacy finding migration consumption is crossed");
+  }
+  for (const [refKey, hashKey, prefix] of [
+    ["currentEntryOperationRef", "currentEntryOperationHash", "setfarm://internal-production/current-entry-operation/sha256/"],
+    ["sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash", "setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/"],
+    ["authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/"],
+    ["pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/"],
+  ] as const) requirePair({ [refKey]: authorization[refKey], [hashKey]: authorization[hashKey] }, refKey, hashKey, prefix);
+  const source = requireSource({ branch: "main", clean: true, sha: authorization.cleanSetfarmSourceSha, treeHash: authorization.cleanSetfarmTreeHash, buildHash: authorization.cleanSetfarmBuildHash, originMainSha: authorization.cleanSetfarmSourceSha });
+  if (requireGitHash(input.migrationSourceSha, "migration source SHA") !== source.sha) currentEntryFail("legacy finding migration source is crossed");
+  // Preserve the exact 22-field migration-32 projection; historical evidence is never minted here.
+  const evidence = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1",
+    purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
+    currentEntryOperationRef: authorization.currentEntryOperationRef,
+    currentEntryOperationHash: authorization.currentEntryOperationHash,
+    sealedSpawnerAdmissionRef: authorization.sealedSpawnerAdmissionRef,
+    sealedSpawnerAdmissionHash: authorization.sealedSpawnerAdmissionHash,
+    postPredecessorTerminationLegacyZeroOwnerObservationRef: authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef,
+    postPredecessorTerminationLegacyZeroOwnerObservationHash: authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash,
+    authorityV3Migration31AuditRef: authorization.authorityV3Migration31AuditRef,
+    authorityV3Migration31AuditHash: authorization.authorityV3Migration31AuditHash,
+    pendingBootstrapHandoffMigrationRef: authorization.pendingBootstrapHandoffMigrationRef,
+    pendingBootstrapHandoffMigrationHash: authorization.pendingBootstrapHandoffMigrationHash,
+    cleanSetfarmSourceSha: authorization.cleanSetfarmSourceSha,
+    cleanSetfarmTreeHash: authorization.cleanSetfarmTreeHash,
+    cleanSetfarmBuildHash: authorization.cleanSetfarmBuildHash,
+    migrationSourceSha: source.sha,
+    freshLegacyZeroOwnerObservationRef: authorization.freshLegacyZeroOwnerObservationRef,
+    freshLegacyZeroOwnerObservationHash: authorization.freshLegacyZeroOwnerObservationHash,
+    preManifestMigration32AuthorizationRef: authorization.authorizationRef,
+    preManifestMigration32AuthorizationHash: authorization.authorizationHash,
+    preManifestMigration32AuthorizationConsumptionRef: consumption.consumptionRef,
+    preManifestMigration32AuthorizationConsumptionHash: consumption.consumptionHash,
+  };
+  if (hashCanonicalJson(evidence) !== application.evidenceHash) currentEntryFail("legacy finding migration evidence is crossed");
+  const legacy = [];
+  for (const prefix of ["postPredecessorTerminationLegacyZeroOwnerObservation", "freshLegacyZeroOwnerObservation"] as const) {
+    const pair = requirePair({ observationRef: authorization[`${prefix}Ref`], observationHash: authorization[`${prefix}Hash`] }, "observationRef", "observationHash", LEGACY_ZERO_PREFIX_V1) as InternalProductionLegacyPreManifestZeroOwnerObservationPairV1;
+    const value = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(pair);
+    for (const key of ["authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash"] as const) {
+      if (value[key] !== authorization[key]) currentEntryFail("legacy finding observation migration authority is crossed");
+    }
+    legacy.push(value);
+  }
+  const [post, fresh] = legacy;
+  if (!post || !fresh || canonicalComparable(post.census) !== canonicalComparable(fresh.census) || post.observedSpawnerGenerationHash !== fresh.observedSpawnerGenerationHash) currentEntryFail("legacy finding observation bracket drifted");
+  const postInventory = requireLegacyZeroVersionedFieldsV1(post);
+  const freshInventory = requireLegacyZeroVersionedFieldsV1(fresh);
+  requireLegacyFindingPublicationInventoryContinuityV1(postInventory, freshInventory);
+  return postInventory ?? createLegacyFindingPublicationInventoryValueV1([]);
 }
 
 export async function resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(

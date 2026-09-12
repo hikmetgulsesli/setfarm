@@ -40538,6 +40538,108 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
   }
 
+  it("legacy finding provenance resolves only the migration-bound historical inventory", () => {
+    const fixture = currentEntryVerifierReadyFixtureV1();
+    try {
+      const { root, authority } = fixture;
+      fixtureFile(root, "src/internal-production/owner-admission-head-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-head-v1.ts")));
+      const loadMigration = (kind: string, hash: string) => JSON.parse(readFileSync(path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`), "utf8")) as Record<string, unknown>;
+      const authorizationPair = authority.preManifestMigration32Authorization as Record<string, string>;
+      const consumptionPair = authority.preManifestMigration32AuthorizationConsumption as Record<string, string>;
+      const originalAuthorization = loadMigration("authorizations", authorizationPair.authorizationHash!);
+      const originalConsumption = loadMigration("consumptions", consumptionPair.consumptionHash!);
+      const wrap = (body: Record<string, unknown>, refKey: string, hashKey: string, prefix: string) => {
+        const core = { ...body }; delete core[refKey]; delete core[hashKey];
+        const hash = canonicalHash(core); return { ...core, [refKey]: `${prefix}${hash}`, [hashKey]: hash };
+      };
+      const inputFor = (authorization: Record<string, unknown>, consumption: Record<string, unknown>) => {
+        const evidence = {
+          schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1", purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
+          currentEntryOperationRef: authorization.currentEntryOperationRef, currentEntryOperationHash: authorization.currentEntryOperationHash,
+          sealedSpawnerAdmissionRef: authorization.sealedSpawnerAdmissionRef, sealedSpawnerAdmissionHash: authorization.sealedSpawnerAdmissionHash,
+          postPredecessorTerminationLegacyZeroOwnerObservationRef: authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef,
+          postPredecessorTerminationLegacyZeroOwnerObservationHash: authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash,
+          authorityV3Migration31AuditRef: authorization.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: authorization.authorityV3Migration31AuditHash,
+          pendingBootstrapHandoffMigrationRef: authorization.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: authorization.pendingBootstrapHandoffMigrationHash,
+          cleanSetfarmSourceSha: authorization.cleanSetfarmSourceSha, cleanSetfarmTreeHash: authorization.cleanSetfarmTreeHash, cleanSetfarmBuildHash: authorization.cleanSetfarmBuildHash,
+          migrationSourceSha: authorization.cleanSetfarmSourceSha,
+          freshLegacyZeroOwnerObservationRef: authorization.freshLegacyZeroOwnerObservationRef, freshLegacyZeroOwnerObservationHash: authorization.freshLegacyZeroOwnerObservationHash,
+          preManifestMigration32AuthorizationRef: authorization.authorizationRef, preManifestMigration32AuthorizationHash: authorization.authorizationHash,
+          preManifestMigration32AuthorizationConsumptionRef: consumption.consumptionRef, preManifestMigration32AuthorizationConsumptionHash: consumption.consumptionHash,
+        };
+        assert.equal(Object.keys(evidence).length, 22, "historical migration evidence projection stays exact");
+        const body = { schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1", evidenceHash: canonicalHash(evidence),
+          authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash,
+          authorizationConsumptionRef: consumption.consumptionRef, authorizationConsumptionHash: consumption.consumptionHash };
+        return { migrationApplication: { ...body, applicationHash: canonicalHash(body) }, migrationSourceSha: authorization.cleanSetfarmSourceSha };
+      };
+      const observe = (input: unknown) => {
+        const before = filesystemTreeSnapshot(path.dirname(root));
+        const result = runFixtureExpression(root, `m.resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1(${JSON.stringify(input)}).then(value=>process.stdout.write(JSON.stringify(value)))`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "historical provenance lookup is read-only");
+        return result;
+      };
+      const historical = observe(inputFor(originalAuthorization, originalConsumption));
+      assert.equal(historical.status, 0, historical.stderr);
+      assert.deepEqual(JSON.parse(historical.stdout).entries, []);
+      const inventoryCore = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{ findingSetHash: "1".repeat(64), publicationHash: "2".repeat(64), runId: "legacy-terminal-run", terminalRunStatus: "failed" }] };
+      const inventory = { ...inventoryCore, inventoryHash: canonicalHash(inventoryCore) };
+      const upgradeLegacy = (hash: string, selectedInventory: unknown, overrides: Record<string, unknown> = {}) => {
+        const directory = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256");
+        const original = JSON.parse(readFileSync(path.join(directory, hash.slice(0, 2), `${hash}.json`), "utf8"));
+        const value = wrap({ ...original, schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2", legacyFindingPublicationInventory: selectedInventory, ...overrides }, "observationRef", "observationHash", "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/");
+        const target = path.join(directory, String(value.observationHash).slice(0, 2), `${value.observationHash}.json`);
+        phase5cEnsurePublicationParentV1(target); writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+        return value;
+      };
+      const post = upgradeLegacy(String(originalAuthorization.postPredecessorTerminationLegacyZeroOwnerObservationHash), inventory);
+      const fresh = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), inventory);
+      const authorization = wrap({ ...originalAuthorization,
+        postPredecessorTerminationLegacyZeroOwnerObservationRef: post.observationRef, postPredecessorTerminationLegacyZeroOwnerObservationHash: post.observationHash,
+        freshLegacyZeroOwnerObservationRef: fresh.observationRef, freshLegacyZeroOwnerObservationHash: fresh.observationHash,
+      }, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-manifest-migration32-authorization/sha256/");
+      currentEntryVerifierWriteRecordV1(root, "authorizations", authorization, "authorizationHash");
+      const consumption = wrap({ ...originalConsumption, authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }, "consumptionRef", "consumptionHash", "setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/");
+      currentEntryVerifierWriteRecordV1(root, "consumptions", consumption, "consumptionHash");
+      const input = inputFor(authorization, consumption);
+      const valid = observe(input);
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.deepEqual(JSON.parse(valid.stdout), inventory);
+      const crossedApplication = { ...input.migrationApplication, evidenceHash: "f".repeat(64) };
+      const { applicationHash: _ignored, ...crossedBody } = crossedApplication;
+      crossedApplication.applicationHash = canonicalHash(crossedBody);
+      for (const crossed of [{ ...input, migrationSourceSha: "f".repeat(40) }, { ...input, migrationApplication: crossedApplication }, inputFor(authorization, originalConsumption)]) {
+        const result = observe(crossed);
+        assert.notEqual(result.status, 0, "crossed migration provenance must refuse");
+        assert.match(result.stderr, /legacy finding migration (source|evidence|consumption) is crossed/);
+      }
+      const withAuthorization = (overrides: Record<string, unknown>) => {
+        const next = wrap({ ...authorization, ...overrides }, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-manifest-migration32-authorization/sha256/");
+        currentEntryVerifierWriteRecordV1(root, "authorizations", next, "authorizationHash");
+        const consumed = wrap({ ...consumption, authorizationRef: next.authorizationRef, authorizationHash: next.authorizationHash }, "consumptionRef", "consumptionHash", "setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/");
+        currentEntryVerifierWriteRecordV1(root, "consumptions", consumed, "consumptionHash");
+        return inputFor(next, consumed);
+      };
+      const emptyCore = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [] };
+      const driftedInventory = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), { ...emptyCore, inventoryHash: canonicalHash(emptyCore) });
+      const driftedGeneration = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), inventory, { observedSpawnerGenerationHash: "e".repeat(64) });
+      for (const [changed, expected] of [[driftedInventory, /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/], [driftedGeneration, /legacy finding observation bracket drifted/]] as const) {
+        const result = observe(withAuthorization({ freshLegacyZeroOwnerObservationRef: changed.observationRef, freshLegacyZeroOwnerObservationHash: changed.observationHash }));
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, expected);
+      }
+      const crossedSource = observe(withAuthorization({ cleanSetfarmBuildHash: "e".repeat(64) }));
+      assert.notEqual(crossedSource.status, 0);
+      assert.match(crossedSource.stderr, /legacy finding observation migration authority is crossed/);
+      const crossedAudit = observe(withAuthorization({ authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"e".repeat(64)}`, authorityV3Migration31AuditHash: "e".repeat(64) }));
+      assert.notEqual(crossedAudit.status, 0);
+      assert.match(crossedAudit.stderr, /legacy finding observation migration authority is crossed/);
+      const missing = observe(withAuthorization({ freshLegacyZeroOwnerObservationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${"9".repeat(64)}`, freshLegacyZeroOwnerObservationHash: "9".repeat(64) }));
+      assert.notEqual(missing.status, 0, "other existing historical records cannot replace the exact missing record");
+      assert.match(missing.stderr, /ENOENT|missing|absent/);
+    } finally { removeFixture(fixture.root); }
+  });
+
   function currentEntryVerifierOwnerSnapshotV1(
     fixture: ReturnType<typeof currentEntryVerifierReadyFixtureV1>,
     ownerIdentitySetHash = "6".repeat(64),
