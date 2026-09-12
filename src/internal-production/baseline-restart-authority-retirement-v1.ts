@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import type { Readable } from "node:stream";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -165,12 +166,13 @@ let coldBootstrapIntentInvocationActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
-  phase: "refreshing" | "ready" | "dispatch-publication" | "dispatch-owned" | "child-launch-handed-off" | "closing";
+  phase: "refreshing" | "ready" | "dispatch-publication" | "dispatch-owned" | "child-launch-handed-off" | "claimed" | "closing";
   observationHash: string | null;
 };
 const coldHelperContextsV1 = new WeakMap<object, ColdHelperContextStateV1>();
 let coldHelperRuntimeContextV1: object | null = null;
 let coldHelperContextInvocationActiveV1 = false;
+let coldHelperTransportAttemptedV1 = false;
 let coldChildAuthenticationV1: ReturnType<typeof authenticateColdSpawnerChildCapabilityV1> | null = null;
 let coldChildAuthenticationFailedV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
@@ -966,6 +968,10 @@ function sameColdFileMetadataV1(before: BigIntStats, after: BigIntStats): boolea
     && before.nlink === after.nlink && before.size === after.size && before.birthtimeNs === after.birthtimeNs && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 }
 
+function coldFileIdentityTupleV1(stats: BigIntStats): readonly string[] {
+  return Object.freeze([stats.dev, stats.ino, stats.uid, stats.gid, stats.mode, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].map(String));
+}
+
 function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maximumLinks = 1): Buffer {
   if (!expected.isFile() || expected.isSymbolicLink() || expected.uid !== BigInt(process.getuid!())
     || (expected.mode & 0o7777n) !== 0o600n || expected.nlink < 1n || expected.nlink > BigInt(maximumLinks)
@@ -1464,7 +1470,8 @@ function parseColdSpawnerBootstrapClaimV1(bytes: Buffer, intent: Readonly<Record
   if (ownership.schema !== "setfarm.internal-production-cold-spawner-startup-ownership.v1" || ownership.pid !== child.pid || ownership.uid !== child.uid) fail("cold claim startup owner is crossed");
   const runtime = (intent.coldObservation as Record<string, any>).spawnerAbsence.ancestors.at(-1).path as string;
   for (const [key, name, expected] of [["singleton", "spawner.lock", `${child.pid}\n`], ["pidFile", "spawner.pid", String(child.pid)]]) {
-    const file = coldRecordV1(ownership[key!], ["path", "devDecimal", "inoDecimal", "uid", "mode", "byteLength", "bytesHash"], "claim startup file");
+    const file = coldRecordV1(ownership[key!], ["path", "devDecimal", "inoDecimal", "uid", "mode", "byteLength", "bytesHash", "identityHash"], "claim startup file");
+    coldHashV1(file.identityHash, "claim startup identity");
     if (file.path !== path.join(runtime, name!) || file.uid !== child.uid || file.mode !== 0o600 || file.byteLength !== Buffer.byteLength(expected!) || file.bytesHash !== sha256(expected!)
       || typeof file.devDecimal !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(file.devDecimal)
       || typeof file.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(file.inoDecimal)) fail("cold claim startup file is crossed");
@@ -1532,6 +1539,8 @@ async function authenticateColdSpawnerHelperIntentV1() {
       || coldGenesisStableIdentityV1(cold) !== coldGenesisStableIdentityV1(genesis.coldObservation as Readonly<Record<string, unknown>>)) fail("cold helper genesis binding is crossed");
     let dispatchStarted = false;
     let dispatch: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number; frameDescriptor: number }> | null = null;
+    let childHandedOff = false;
+    let childClaim: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number }> | null = null;
     let childScratch: Readonly<{ path: string; stats: BigIntStats }> | null = null;
     const assertOriginalStable = (): void => {
       if (closing || closed) fail("cold helper authentication is closed");
@@ -1541,8 +1550,9 @@ async function authenticateColdSpawnerHelperIntentV1() {
       // APFS includes the newly created file in a directory's link count.
       // Permit only that single publication delta; exact members/full metadata
       // remain mandatory before intent use and after dispatch publication.
-      const ownNewEntries = dispatchStarted ? (childScratch === null ? 1n : 2n) : 0n;
-      if (currentRoot.nlink !== rootStats.nlink && currentRoot.nlink !== rootStats.nlink + ownNewEntries) fail("cold helper original root link count changed");
+      const ownNewEntries = dispatchStarted ? 1n + (childScratch === null ? 0n : 1n) + (childHandedOff ? 1n : 0n) : 0n;
+      if (currentRoot.nlink !== rootStats.nlink && currentRoot.nlink !== rootStats.nlink + ownNewEntries
+        && !(childHandedOff && currentRoot.nlink === rootStats.nlink + 1n)) fail("cold helper original root link count changed");
       if (childScratch !== null && !sameColdFileMetadataV1(childScratch.stats, lstatSync(childScratch.path, { bigint: true }))) fail("cold child empty frame changed");
       for (const [fd, target, expected, maximum] of [[4, paths.lock, lockFile, 65_536], [5, intentPath, intentFile, COLD_GENESIS_MAX_BYTES_V1]] as const) {
         const current = readInherited(fd, target, maximum);
@@ -1561,14 +1571,16 @@ async function authenticateColdSpawnerHelperIntentV1() {
     const assertStable = (): void => {
       assertOriginalStable();
       if (dispatchStarted && dispatch === null) fail("cold helper dispatch publication is uncertain");
-      const expectedRoot = dispatch?.rootStats ?? rootStats;
+      const expectedRoot = childClaim?.rootStats ?? dispatch?.rootStats ?? rootStats;
       if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
-      const entries = readColdDirectoryMembersV1(root, dispatch === null ? 1 : 2);
-      if (canonical(entries.sort()) !== canonical(dispatch === null ? ["intent.json"] : ["dispatch.json", "intent.json"])) fail("cold helper journal prefix is crossed");
+      const entries = readColdDirectoryMembersV1(root, childClaim !== null ? 3 : dispatch === null ? 1 : 2);
+      if (canonical(entries.sort()) !== canonical(childClaim !== null ? ["claim.json", "dispatch.json", "intent.json"] : dispatch === null ? ["intent.json"] : ["dispatch.json", "intent.json"])) fail("cold helper journal prefix is crossed");
       if (dispatch !== null) {
         if (!sameColdFileMetadataV1(dispatch.stats, fstatSync(dispatch.descriptor, { bigint: true }))
           || !dispatch.bytes.equals(readColdGenesisCandidateV1(path.join(root, "dispatch.json"), dispatch.stats))) fail("cold helper dispatch authority changed");
       }
+      if (childClaim !== null && (!sameColdFileMetadataV1(childClaim.stats, fstatSync(childClaim.descriptor, { bigint: true }))
+        || !childClaim.bytes.equals(readColdGenesisCandidateV1(path.join(root, "claim.json"), childClaim.stats)))) fail("cold helper retained child claim changed");
       assertOriginalStable();
       if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
     };
@@ -1664,8 +1676,61 @@ async function authenticateColdSpawnerHelperIntentV1() {
       assertStable();
       return record;
     };
-    const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, close,
-      childDescriptors: () => { assertStable(); if (!dispatch) fail("cold child dispatch is absent"); return Object.freeze({ frameDescriptor: dispatch.frameDescriptor, dispatchDescriptor: dispatch.descriptor }); } };
+    const observeChildClaim = (child: ChildProcess, readiness: Readonly<Record<string, unknown>>) => {
+      if (!childHandedOff || !dispatch || childClaim || !Number.isSafeInteger(child.pid) || child.exitCode !== null || child.signalCode !== null) fail("cold helper child claim phase is unavailable");
+      assertOriginalStable();
+      if (canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["claim.json", "dispatch.json", "intent.json"])) fail("cold helper child claim prefix is crossed");
+      if (!sameColdFileMetadataV1(dispatch.stats, fstatSync(dispatch.descriptor, { bigint: true }))
+        || !dispatch.bytes.equals(readColdGenesisCandidateV1(path.join(root, "dispatch.json"), dispatch.stats))) fail("cold helper original dispatch changed");
+      const target = path.join(root, "claim.json"), stats = lstatSync(target, { bigint: true });
+      const assertJournalIdentity = () => {
+        const observedRoot = lstatSync(root, { bigint: true });
+        if (canonical(readiness.journalIdentity) !== canonical(coldFileIdentityTupleV1(observedRoot))) fail("cold helper journal identity differs from child readiness");
+        return observedRoot;
+      };
+      assertJournalIdentity();
+      const assertOutput = () => verifyInternalProductionSpawnerLaunchOutputCandidateV1({
+        rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.rootIdentity.uid },
+        sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash,
+        buildInfoBytesHash: profile.buildInfoBytesHash, outputTreeBytesHash: profile.outputTreeBytesHash,
+        releaseManifestBytesHash: profile.releaseManifestBytesHash,
+      });
+      assertOutput(); assertOriginalStable(); assertJournalIdentity();
+      if (stats.size < 1n || stats.size > 65_536n) fail("cold helper claim size is invalid");
+      if (canonical(readiness.claimIdentity) !== canonical(coldFileIdentityTupleV1(stats))) fail("cold helper claim identity differs from child readiness");
+      const bytes = readColdGenesisCandidateV1(target, stats), record = parseColdSpawnerBootstrapClaimV1(bytes, intent, dispatch.record);
+      if (readiness.claimRef !== record.claimRef || readiness.claimHash !== record.claimHash) fail("cold helper claim hash differs from child readiness");
+      const claimedChild = record.child as Record<string, unknown>;
+      if (claimedChild.pid !== child.pid) fail("cold helper claim belongs to another child");
+      const assertChild = () => {
+        if (child.exitCode !== null || child.signalCode !== null) fail("cold helper spawned child exited");
+        const actual = boundedPsProcessIdentity(child.pid!), ownership = observeColdProcessParentGroupV1(child.pid!);
+        if (!actual || canonical({ ...actual, ...ownership }) !== canonical(claimedChild) || ownership.ppid !== process.pid) fail("cold helper spawned child identity changed");
+      };
+      const assertStartup = () => {
+        const absence = cold.spawnerAbsence as Record<string, any>;
+        for (const ancestor of absence.ancestors as Array<Record<string, unknown>>) {
+          const s = lstatSync(ancestor.path as string, { bigint: true });
+          if (!s.isDirectory() || s.isSymbolicLink() || String(s.dev) !== ancestor.dev || String(s.ino) !== ancestor.ino || String(s.uid) !== ancestor.uid || Number(s.mode & 0o7777n) !== ancestor.mode) fail("cold helper original runtime ancestor changed");
+        }
+        const files = record.startupFiles as Record<string, any>;
+        for (const key of ["singleton", "pidFile"]) {
+          const file = files[key], s = lstatSync(file.path, { bigint: true });
+          if (s.size > 32n || String(s.dev) !== file.devDecimal || String(s.ino) !== file.inoDecimal || Number(s.uid) !== file.uid || Number(s.mode & 0o7777n) !== file.mode
+            || file.identityHash !== sha256(canonical(coldFileIdentityTupleV1(s)))
+            || Number(s.size) !== file.byteLength || sha256(readColdGenesisCandidateV1(file.path, s).toString()) !== file.bytesHash) fail("cold helper claimed startup file changed");
+        }
+      };
+      assertChild(); assertStartup();
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      ownedDescriptors.push(descriptor);
+      if (!sameColdFileMetadataV1(stats, fstatSync(descriptor, { bigint: true })) || !bytes.equals(readColdGenesisCandidateV1(target, stats))) fail("cold helper claim reopen changed");
+      childClaim = { record, rootStats: assertJournalIdentity(), stats, bytes, descriptor };
+      assertStable(); assertChild(); assertStartup(); assertOutput(); assertStable(); assertJournalIdentity();
+      return record;
+    };
+    const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, observeChildClaim, close,
+      childDescriptors: () => { assertStable(); if (!dispatch || childHandedOff) fail("cold child dispatch is absent or consumed"); childHandedOff = true; return Object.freeze({ frameDescriptor: dispatch.frameDescriptor, dispatchDescriptor: dispatch.descriptor }); } };
     Object.defineProperty(authenticated, "environment", { value: freezeColdDataV1(observed.environment), enumerable: false });
     return Object.freeze(authenticated) as typeof authenticated & Readonly<{ environment: Readonly<Record<string, string>> }>;
   } catch {
@@ -1778,6 +1843,74 @@ function takeColdSpawnerChildLaunchDescriptorsV1(context: unknown) {
   if (state.phase !== "dispatch-owned") fail("cold child launch descriptors were already consumed or are unavailable");
   state.phase = "child-launch-handed-off";
   return state.authentication.childDescriptors();
+}
+
+export async function runInternalProductionColdSpawnerHelperV1(): Promise<void> {
+  if (coldHelperTransportAttemptedV1) fail("cold helper transport was already attempted");
+  coldHelperTransportAttemptedV1 = true;
+  let context: Awaited<ReturnType<typeof acquireColdSpawnerHelperContextV1>> | undefined;
+  let child: ChildProcess | undefined, readiness: Readable | undefined;
+  let accepted = false, cleanupFailed = false;
+  try {
+    context = await acquireColdSpawnerHelperContextV1();
+    const state = heldColdHelperContextV1(context);
+    const profile = state.authentication.intent.launchProfile as Record<string, any>;
+    publishColdSpawnerHelperDispatchV1(context);
+    const handles = takeColdSpawnerChildLaunchDescriptorsV1(context);
+    state.authentication.assertStable();
+    child = spawn(profile.executable.path, [path.join(profile.repository, "dist/spawner.js")], {
+      cwd: profile.cwd, detached: true, shell: false,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", SETFARM_INTERNAL_PRODUCTION_COLD_CHILD: "1" },
+      stdio: ["ignore", "ignore", "ignore", handles.frameDescriptor, 4, handles.dispatchDescriptor, "pipe"],
+    });
+    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;
+    if (!readiness || typeof readiness.on !== "function") fail("cold child readiness pipe is unavailable");
+    const spawned = child, pipe = readiness;
+    const envelope = await new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+      let settled = false, count = 0;
+      const chunks: Buffer[] = [];
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        pipe.removeListener("data", onData); pipe.removeListener("end", onEnd); pipe.removeListener("error", onError);
+        spawned.removeListener("error", onError); spawned.removeListener("exit", onExit);
+        if (error) { reject(error); return; }
+        try {
+          const bytes = Buffer.concat(chunks, count);
+          const value = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "claimRef", "claimHash", "claimIdentity", "journalIdentity"], "child readiness");
+          if (value.schema !== "setfarm.internal-production-cold-spawner-readiness.v1" || !bytes.equals(Buffer.from(`${canonical(value)}\n`))) fail("cold child readiness is crossed");
+          resolve(freezeColdDataV1(value));
+        } catch { reject(Error("cold child readiness is malformed")); }
+      };
+      const onError = () => finish(Error("cold child readiness failed"));
+      const onExit = () => finish(Error("cold child exited before readiness"));
+      const onData = (bytes: Buffer) => {
+        if (bytes.length < 1 || count + bytes.length > 4096) return finish(Error("cold child readiness exceeds its cap"));
+        chunks.push(Buffer.from(bytes)); count += bytes.length;
+      };
+      const onEnd = () => finish(count > 0 ? undefined : Error("cold child readiness is absent"));
+      const timer = setTimeout(() => finish(Error("cold child readiness timed out")), 30_000);
+      pipe.on("data", onData); pipe.once("end", onEnd); pipe.once("error", onError);
+      spawned.once("error", onError); spawned.once("exit", onExit);
+    });
+    // Do not use the ordinary two-member context gate after a child may have
+    // published. Only this private one-shot spawn can observe its third member.
+    if (coldHelperContextsV1.get(context) !== state || state.phase !== "child-launch-handed-off") fail("cold helper claim phase changed");
+    state.authentication.observeChildClaim(child, envelope);
+    state.phase = "claimed";
+    state.authentication.assertStable();
+    accepted = true;
+  } catch { /* The durable dispatch fence remains the only retry evidence. */ }
+  finally {
+    if (readiness) { readiness.on("error", () => {}); readiness.destroy(); }
+    if (child) { child.on("error", () => {}); child.unref(); }
+    if (context) {
+      const close = () => { context!.close(); pendingColdHelperAuthenticationCleanupV1.delete(close); };
+      try { close(); }
+      catch { cleanupFailed = true; pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain unfinished exact ownership. */ } }
+    }
+  }
+  if (!accepted || cleanupFailed) fail("cold helper transport is uncertain");
 }
 
 function observeColdProcessParentGroupV1(pid: number) {
@@ -1927,10 +2060,13 @@ function authenticateColdSpawnerChildCapabilityV1() {
         if (claim === null || boundedPsProcessIdentity(helper.pid as number) !== null) throw error;
       }
       const own = observeColdProcessParentGroupV1(process.pid);
-      originalParent = originalParent && process.ppid === helper.pid && own.ppid === helper.pid;
-      const departedParent = claim !== null && process.ppid === 1 && own.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
+      // Parent exit may occur after our own process row was read. Reobserve
+      // only that one claimed helper -> pid-one transition, never a new owner.
+      const settledOwn = claim !== null && own.ppid === helper.pid && process.ppid === 1 ? observeColdProcessParentGroupV1(process.pid) : own;
+      originalParent = originalParent && process.ppid === helper.pid && settledOwn.ppid === helper.pid;
+      const departedParent = claim !== null && process.ppid === 1 && settledOwn.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
       if ((!originalParent && !departedParent) || controller?.processIdentityHash !== lock.processIdentityHash
-        || own.uid !== uid || own.pgid !== process.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
+        || own.uid !== uid || own.pgid !== process.pid || settledOwn.uid !== uid || settledOwn.pgid !== process.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
       for (const guard of guards) guard.assertStable();
     };
     const assertStable = () => {
@@ -1999,7 +2135,7 @@ function authenticateColdSpawnerChildCapabilityV1() {
       if (canonical(main.observeInternalProductionColdSpawnerStartupOwnershipV1()) !== canonical(ownership)) fail("cold child startup ownership changed");
       claim = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader, observeStartupOwnership: main.observeInternalProductionColdSpawnerStartupOwnershipV1 };
       assertOutputStable();
-      return record;
+      return Object.freeze({ record, identity: coldFileIdentityTupleV1(written), journalIdentity: coldFileIdentityTupleV1(claim.rootStats) });
     };
     return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, publishClaim, close });
   } catch {
@@ -2023,8 +2159,8 @@ function revokeColdSpawnerChildRuntimeV1(): void {
 export async function publishInternalProductionColdSpawnerBootstrapClaimV1() {
   if (coldChildAuthenticationFailedV1 || coldChildAuthenticationV1 === null) fail("cold child claim authentication is unavailable");
   try {
-    const record = await coldChildAuthenticationV1.publishClaim();
-    return Object.freeze({ claimRef: record.claimRef as string, claimHash: record.claimHash as string, close: revokeColdSpawnerChildRuntimeV1 });
+    const published = await coldChildAuthenticationV1.publishClaim();
+    return Object.freeze({ claimRef: published.record.claimRef as string, claimHash: published.record.claimHash as string, claimIdentity: published.identity, journalIdentity: published.journalIdentity, close: revokeColdSpawnerChildRuntimeV1 });
   } catch { revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }
 }
 
@@ -2047,7 +2183,8 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
   }
   const snapshot = { schema: "setfarm.internal-production-cold-child-runtime-snapshot.v1" };
   Object.defineProperty(snapshot, "environment", { value: coldChildAuthenticationV1.environment, enumerable: false });
-  return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>> }>;
+  Object.defineProperty(snapshot, "close", { value: revokeColdSpawnerChildRuntimeV1, enumerable: false });
+  return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>>; close: () => void }>;
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

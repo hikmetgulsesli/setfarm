@@ -142,7 +142,7 @@ printf '%s' "$count" > '${counter}'
     const restartAuthority = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${restartHash}`, restartAuthorityHash: restartHash };
     const lockPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
     const journalPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
-    mkdirSync(path.dirname(lockPath), { recursive: true });
+    mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
     const ownerProcess = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart=,command="], { encoding: "utf8" });
     assert.equal(ownerProcess.status, 0, ownerProcess.stderr);
     const ownerRow = ownerProcess.stdout.slice(0, -1);

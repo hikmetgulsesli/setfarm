@@ -629,14 +629,25 @@ export {observePhaseClosedZeroV1};
   };
   const handles = fixture.isolated.openColdFrameFixtureV1();
   const state = fixture.isolated.inspectColdIntentFixtureV1();
-  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string; coldMode?: string } = {}) => {
+  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string; coldMode?: string; realCold?: boolean; expectedRefusal?: boolean; label?: string } = {}) => {
     const child = spawnSync(process.execPath, [overrides.entry ?? runner], { cwd: fixture.fixture, encoding: "utf8", timeout: 15000, maxBuffer: 65536,
       stdio: ["ignore", "pipe", "pipe", overrides.frame ?? handles.frameDescriptor, overrides.lock ?? state.descriptor, overrides.intent ?? handles.intentDescriptor],
       env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...(overrides.coldMode === undefined ? {} : { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: overrides.coldMode }) } });
+    if (overrides.expectedRefusal) {
+      assert.equal(child.status, 1, `${overrides.label}: the actual helper must refuse a crossed transport`);
+      assert.equal(child.signal, null); assert.equal(child.error, undefined);
+      assert.equal(child.stdout, ""); assert.ok(!child.stderr.includes("never-persist-cold-snapshot"));
+      return { accepted: false, message: child.stderr };
+    }
     assert.equal(child.status, 0, child.stderr);
     assert.ok(!child.stdout.includes("never-persist-cold-snapshot"));
     assert.ok(!child.stderr.includes("never-persist-cold-snapshot"));
     assert.equal(child.stderr, "");
+    if (overrides.realCold) {
+      assert.equal(child.stdout, "", "the real fixed helper emits no secret or caller authority");
+      const claim = JSON.parse(readFileSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/claim.json"), "utf8"));
+      return { accepted: true, childPid: claim.child.pid, claim };
+    }
     return JSON.parse(child.stdout);
   };
   return { ...fixture, intent, handles, state, runner, observer, run, compileRepositoryModule, installRealPhaseReader, profile, close: () => {
@@ -915,15 +926,26 @@ process.stdout.write(JSON.stringify({accepted:false,diagnostic}));
 
 async function createAuthenticatedColdChildFixtureV1(fault: string) {
   const typescript = await import("typescript");
-  const refusalFault = fault.startsWith("claim-fault-") || ["claim-concurrent", "claim-stop", "claim-replay"].includes(fault);
+  const refusalFault = fault.startsWith("claim-fault-") || ["claim-concurrent", "claim-stop", "claim-replay", "claim-regular-readiness"].includes(fault);
   return createColdHelperAuthenticationFixtureV1((source) => {
+    if (fault.startsWith("claim-real-helper")) source = source.replace('    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;', '    writeFileSync(path.join(repositoryRoot(), "fixture-spawn-pids"), String(child.pid)+"\\n", {mode:0o600,flag:"a"});\n    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;');
+    if (fault === "claim-real-helper-parent-transition") source = source.replace('      const own = observeColdProcessParentGroupV1(process.pid);', `
+      const own = observeColdProcessParentGroupV1(process.pid);
+      if(globalThis.__fixtureParentTransition&&claim!==null&&own.ppid===helper.pid){globalThis.__fixtureParentTransition=false;const deadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<deadline)spawnSync('/bin/sleep',['0.01']);if(process.ppid!==1)throw Error('fixture parent transition did not occur');writeFileSync(path.join(repositoryRoot(),'fixture-parent-transition'),'fired');}`);
+    if (fault === "claim-real-helper-fragmented") source = source.replace('      const onData = (bytes: Buffer) => {', '      const onData = (bytes: Buffer) => {writeFileSync(path.join(repositoryRoot(), "fixture-ready-chunks"), "chunk\\n", {mode:0o600,flag:"a"});');
+    if (fault === "claim-real-helper-spawn-error") source = source.replace('child = spawn(profile.executable.path,', 'child = spawn(path.join(repositoryRoot(), "absent-node"),');
+    if (fault === "claim-real-helper-no-eof") source = source.replace('setTimeout(() => finish(Error("cold child readiness timed out")), 30_000)', 'setTimeout(() => finish(Error("cold child readiness timed out")), 1000)');
+    if (["claim-real-helper-claim-replace", "claim-real-helper-pid-restore", "claim-real-helper-lock-restore", "claim-real-helper-journal-aba", "claim-real-helper-output-drift"].includes(fault)) source = source.replace('      const target = path.join(root, "claim.json"), stats = lstatSync(target, { bigint: true });', `
+      const ready=path.join(repositoryRoot(),'.openclaw/setfarm/fixture-claim-ready'),deadline=Date.now()+4000;
+      while(Date.now()<deadline){try{lstatSync(ready);break}catch{spawnSync('/bin/sleep',['0.01']);}}lstatSync(ready);
+      const target=path.join(root,'claim.json');
+      ${fault === "claim-real-helper-journal-aba" ? "const foreign=path.join(root,'foreign');writeFileSync(foreign,'crossed',{mode:0o600,flag:'wx'});unlinkSync(foreign);" : fault === "claim-real-helper-output-drift" ? "writeFileSync(path.join(repositoryRoot(),'dist/fixture-dependency.js'),'export const crossed = true;\\n');" : fault === "claim-real-helper-claim-replace" ? "const copied=readFileSync(target);unlinkSync(target);writeFileSync(target,copied,{mode:0o600,flag:'wx'});" : `const changed=path.join(repositoryRoot(),'.openclaw/setfarm',${JSON.stringify(fault === "claim-real-helper-pid-restore" ? "spawner.pid" : "spawner.lock")}),copied=readFileSync(changed);writeFileSync(changed,'crossed');writeFileSync(changed,copied);`}
+      const stats=lstatSync(target,{bigint:true});
+      writeFileSync(path.join(repositoryRoot(),'fixture-claim-replaced'),'fired');`);
     if (fault.startsWith("claim")) source = source
       .replace('fail("cold child host ancestry changed")', 'fail("cold child host ancestry changed: " + target)')
       .replace('} catch { revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }', '} catch (error) { writeFileSync(path.join(repositoryRoot(), "fixture-claim-error"), String(error)); revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }')
       .replace('  catch {\n    revokeColdSpawnerChildRuntimeV1();\n    return fail("cold child authentication is revoked");', '  catch (error) {\n    writeFileSync(path.join(repositoryRoot(), "fixture-claim-error"), String(error));\n    revokeColdSpawnerChildRuntimeV1();\n    return fail("cold child authentication is revoked");');
-    if (fault === "claim-helper-departure") source = source.replace("writeFileSync(writer, bytes); fsyncSync(writer); fsyncParent(target);", `writeFileSync(writer, bytes); fsyncSync(writer); fsyncParent(target);
-      const departureDeadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<departureDeadline)spawnSync('/bin/sleep',['0.02']);
-      if(process.ppid!==1)throw Error('fixture helper did not depart at durable claim boundary');`);
     if (fault === "claim-stop") source = source.replace('const main = await import("../spawner.js");', 'const pendingMain=import("../spawner.js");await new Promise(resolve=>setImmediate(resolve));const main=await pendingMain;');
     if (refusalFault) source = source.replace("  openSync,", "  openSync as actualClaimOpenSync,").replace("  closeSync,", "  closeSync as actualClaimCloseSync,")
       .replace("  writeFileSync,", "  writeFileSync as actualClaimWriteFileSync,").replace("  fsyncSync,", "  fsyncSync as actualClaimFsyncSync,") + `
@@ -1063,7 +1085,9 @@ ${spawnerSource.slice(spawnerSource.lastIndexOf('if (process.argv[1] && import.m
         const attempt=publishInternalProductionColdSpawnerBootstrapClaimV1();process.kill(process.pid,'SIGTERM');await assert.rejects(attempt);assert.equal(spawnerColdStartupPhaseV1,'stopping');throw Error('fixture stopped claim refused');`);
       if (fault === "claim-replay") compiledMain = compiledMain.replace('claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();', `
         claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();await assert.rejects(publishInternalProductionColdSpawnerBootstrapClaimV1());throw Error('fixture repeated claim refused');`);
-      compiledMain = compiledMain.replace('claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();', `claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();
+      compiledMain = compiledMain.replace('    closeReadiness();', `    closeReadiness();
+        ${fault === "claim-real-helper-parent-transition" ? "globalThis.__fixtureParentTransition=true;" : ""}
+        ${fault === "claim-helper-departure" ? "const departureDeadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<departureDeadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(process.ppid,1);" : ""}
         ${lateReplacement ? `
         const deadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(process.ppid,1);
         const target=${fault === "claim-late-pid" ? "PID_FILE" : "LOCK_FILE"},bytes=fs.readFileSync(target);fs.renameSync(target,target+'.original');fs.writeFileSync(target,bytes,{mode:0o600,flag:'wx'});
@@ -1077,21 +1101,51 @@ ${spawnerSource.slice(spawnerSource.lastIndexOf('if (process.argv[1] && import.m
         fs.writeFileSync(${JSON.stringify(path.join(runtime, "fixture-claim-ready"))},'ready',{mode:0o600,flag:'wx'});`);
       if (fault === "claim-runtime-replace") compiledMain = compiledMain.replace("spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE,", `fs.renameSync(${JSON.stringify(runtime)},${JSON.stringify(runtime + ".moved")});fs.mkdirSync(${JSON.stringify(runtime)},{mode:0o700});spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE,`);
       compiledMain = compiledMain.replace("  main().catch((err) => {", `  main().catch((err) => {fs.appendFileSync(${JSON.stringify(path.join(root, "fixture-claim-error"))},' main: '+String(err));`);
+      const wireFault = fault.slice("claim-real-helper-".length);
+      if (fault.startsWith("claim-real-helper-") && ["fragmented", "empty", "malformed", "extra-key", "oversize", "truncated", "duplicate", "noncanonical", "crossed-hash", "crossed-identity", "no-eof", "pipe-close"].includes(wireFault)) {
+        const setup = `
+import {spawnSync as fixtureSpawnSync} from 'node:child_process';
+const actualFixtureWriteSync=fs.writeSync,actualFixtureCloseSync=fs.closeSync;let fixturePipeCloseInterrupted=false;
+const fixtureWireFault=${JSON.stringify(wireFault)},fixtureCanonical=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(fixtureCanonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+fixtureCanonical(v[k])).join(',')+'}';
+fs.writeSync=(fd,bytes,...args)=>{
+ if(fd!==6)return actualFixtureWriteSync(fd,bytes,...args);
+ fs.writeFileSync(${JSON.stringify(path.join(root, "fixture-wire-fault-fired"))},fixtureWireFault);
+ let changed=bytes;
+ if(fixtureWireFault==='empty')return bytes.length;
+ if(fixtureWireFault==='malformed')changed=Buffer.from('not-json');
+ if(fixtureWireFault==='oversize')changed=Buffer.alloc(4097,120);
+ if(fixtureWireFault==='truncated')changed=bytes.subarray(0,bytes.length-2);
+ if(fixtureWireFault==='duplicate')changed=Buffer.concat([bytes,bytes]);
+ if(['extra-key','noncanonical','crossed-hash','crossed-identity'].includes(fixtureWireFault)){
+  const value=JSON.parse(bytes);if(fixtureWireFault==='extra-key')value.foreign=true;if(fixtureWireFault==='crossed-hash')value.claimHash='0'.repeat(64);if(fixtureWireFault==='crossed-identity')value.claimIdentity[1]=String(BigInt(value.claimIdentity[1])+1n);
+  changed=Buffer.from((fixtureWireFault==='noncanonical'?JSON.stringify(value,null,2):fixtureCanonical(value))+'\\n');
+ }
+ if(fixtureWireFault==='fragmented'){const half=Math.floor(bytes.length/2);actualFixtureWriteSync(fd,bytes.subarray(0,half));fixtureSpawnSync('/bin/sleep',['0.1']);actualFixtureWriteSync(fd,bytes.subarray(half));}
+ else actualFixtureWriteSync(fd,changed,...args);
+ return bytes.length;
+};
+fs.closeSync=fd=>{if(fd===6){if(fixtureWireFault==='no-eof')return;if(fixtureWireFault==='pipe-close'&&!fixturePipeCloseInterrupted){fixturePipeCloseInterrupted=true;throw Error('fixture readiness pre-close failure');}}return actualFixtureCloseSync(fd);};
+`;
+        compiledMain = compiledMain.replace("const PID_FILE=", setup + "\nconst PID_FILE=");
+      }
       writeFileSync(path.join(root, "dist/spawner.js"), typescript.transpileModule(compiledMain, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
       const claimPath = path.join(root, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1/claim.json");
       writeFileSync(path.join(internal, "baseline-service-restart-helper-v1.js"), `
-import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {readFileSync,writeFileSync,openSync,closeSync} from 'node:fs';
 import {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1,takeColdSpawnerChildLaunchDescriptorsV1} from './baseline-restart-authority-retirement-v1.js';
 import * as authority from './baseline-restart-authority-retirement-v1.js';import {createHash} from 'node:crypto';
-let context,child,accepted=false,stderr='';
+let context,child,readyFd,accepted=false,stderr='';
 try{
  context=await acquireColdSpawnerHelperContextV1();publishColdSpawnerHelperDispatchV1(context);const handles=takeColdSpawnerChildLaunchDescriptorsV1(context);
- child=spawn(process.execPath,[${JSON.stringify(path.join(root, "dist/spawner.js"))}],{cwd:${JSON.stringify(root)},detached:true,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',SETFARM_INTERNAL_PRODUCTION_COLD_CHILD:'1'},stdio:['ignore','ignore','pipe',handles.frameDescriptor,4,handles.dispatchDescriptor]});
+ if(${fault === "claim-regular-readiness"}){const file=${JSON.stringify(path.join(root, "fixture-readiness-file"))};writeFileSync(file,'untouched',{mode:0o600,flag:'wx'});readyFd=openSync(file,'r+');}
+ child=spawn(process.execPath,[${JSON.stringify(path.join(root, "dist/spawner.js"))}],{cwd:${JSON.stringify(root)},detached:true,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',SETFARM_INTERNAL_PRODUCTION_COLD_CHILD:'1'},stdio:['ignore','ignore','pipe',handles.frameDescriptor,4,handles.dispatchDescriptor,readyFd??'pipe']});
  child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-65536)});
  if(${refusalFault}){
+  child.stdio[6]?.on('data',()=>{});child.stdio[6]?.on('error',()=>{});
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('refusing child did not exit')),7000);child.once('close',()=>{clearTimeout(timer);resolve()});child.once('error',error=>{clearTimeout(timer);reject(error)})});
   assert.notEqual(child.exitCode,0);assert.equal(child.signalCode,null);process.stdout.write(JSON.stringify({accepted:false,childRefused:true,diagnostic:JSON.parse(readFileSync(${JSON.stringify(path.join(root, "fixture-claim-diagnostic.json"))},'utf8'))}));
  }else{
+ const ready=await new Promise((resolve,reject)=>{let bytes=Buffer.alloc(0);const timer=setTimeout(()=>reject(Error('fixture readiness timed out')),7000);const done=error=>{clearTimeout(timer);if(error)return reject(error);try{const value=JSON.parse(bytes);assert.equal(value.schema,'setfarm.internal-production-cold-spawner-readiness.v1');resolve(value)}catch(error){reject(error)}};child.stdio[6].on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);if(bytes.length>4096)done(Error('fixture readiness exceeded cap'))});child.stdio[6].once('error',done);child.stdio[6].once('end',()=>done());});
  let claim;const deadline=Date.now()+7000;
  while(Date.now()<deadline){
   if(child.exitCode!==null||child.signalCode!==null)throw Error('real cold main exited before claim: '+stderr);
@@ -1099,6 +1153,7 @@ try{
   await new Promise(resolve=>setTimeout(resolve,20));
  }
  assert.ok(claim,'real cold main did not publish a claim');assert.equal(claim.child.pid,child.pid);
+ assert.equal(ready.claimHash,claim.claimHash);assert.equal(ready.claimRef,claim.claimRef);
  if(${fault === "claim-parser"}){
   assert.equal(typeof authority.parseColdSpawnerBootstrapClaimV1,'function','strict claim parser is missing');
   const root=${JSON.stringify(path.dirname(claimPath))},intent=JSON.parse(readFileSync(root+'/intent.json','utf8')),dispatch=JSON.parse(readFileSync(root+'/dispatch.json','utf8'));
@@ -1117,7 +1172,7 @@ try{
    ...['singleton','pidFile'].flatMap(k=>[
     v=>v.startupFiles[k].path+='x',v=>v.startupFiles[k].uid+=1,v=>v.startupFiles[k].mode=0o644,
     v=>v.startupFiles[k].byteLength+=1,v=>v.startupFiles[k].bytesHash='0'.repeat(64),
-    v=>v.startupFiles[k].inoDecimal='00',v=>v.startupFiles[k].devDecimal='-1',v=>v.startupFiles[k].foreign=true])
+    v=>v.startupFiles[k].inoDecimal='00',v=>v.startupFiles[k].devDecimal='-1',v=>v.startupFiles[k].identityHash='x',v=>v.startupFiles[k].foreign=true])
   ];
   for(const mutate of mutations){const crossed=structuredClone(claim);mutate(crossed);delete crossed.claimHash;delete crossed.claimRef;
    crossed.claimHash=createHash('sha256').update(canonical(crossed)).digest('hex');crossed.claimRef='setfarm://internal-production/cold-spawner-bootstrap-claim/sha256/'+crossed.claimHash;
@@ -1126,9 +1181,10 @@ try{
  accepted=true;child.stderr.destroy();child.unref();process.stdout.write(JSON.stringify({accepted:true,childPid:child.pid,claim}));
  }
 }catch(error){process.stdout.write(JSON.stringify({accepted:false,message:error.message}));}
-finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null||child.signalCode!==null)return resolve();child.once('close',resolve);setTimeout(resolve,1000)});}context?.close();}
+finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null||child.signalCode!==null)return resolve();child.once('close',resolve);setTimeout(resolve,1000)});}if(readyFd!==undefined)closeSync(readyFd);context?.close();}
 `);
     }
+    if (fault.startsWith("claim-real-helper")) compile("internal-production/baseline-service-restart-helper-v1.ts");
     const entries: Array<{ locator: string; mode: number; byteLength: number; sha256: string }> = [];
     const visit = (directory: string) => {
       chmodSync(directory, 0o755);
@@ -1218,6 +1274,53 @@ test("real cold main publishes one owned claim and stays sealed after helper dep
   }
 });
 
+test("actual fixed cold helper launches one genuine sealed main and exits", async () => {
+  for (const suffix of ["journal-aba", "output-drift", "parent-transition", "", "claim-replace", "pid-restore", "lock-restore", "fragmented", "empty", "malformed", "extra-key", "oversize", "truncated", "duplicate", "noncanonical", "crossed-hash", "crossed-identity", "no-eof", "pipe-close", "spawn-error"]) {
+  const fault = suffix ? `claim-real-helper-${suffix}` : "claim-real-helper", expectedRefusal = !["", "fragmented", "parent-transition"].includes(suffix);
+  const fixture = await createAuthenticatedColdChildFixtureV1(fault);
+  let childPid: number | undefined;
+  const alive = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "ppid=,pgid=,command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
+  try {
+    const result = fixture.run({ realCold: true, coldMode: "1", expectedRefusal, label: fault });
+    assert.equal(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim().split("\n").length, 1, "the real transport invokes spawn exactly once");
+    if (expectedRefusal) {
+      assert.equal(result.accepted, false);
+      if (["claim-replace", "pid-restore", "lock-restore", "journal-aba", "output-drift"].includes(suffix)) assert.equal(readFileSync(path.join(fixture.fixture, "fixture-claim-replaced"), "utf8"), "fired");
+      else if (suffix !== "spawn-error") assert.equal(readFileSync(path.join(fixture.fixture, "fixture-wire-fault-fired"), "utf8"), suffix);
+      continue;
+    }
+    if (suffix === "fragmented") assert.ok(readFileSync(path.join(fixture.fixture, "fixture-ready-chunks"), "utf8").trim().split("\n").length >= 2, "the real reader receives multiple actual pipe chunks");
+    childPid = result.childPid;
+    assert.ok(Number.isSafeInteger(childPid) && childPid! > 0);
+    assert.match(alive(childPid!), new RegExp(`^1\\s+${childPid}\\s+`));
+    const runtime = path.join(fixture.fixture, ".openclaw/setfarm");
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !existsSync(path.join(runtime, "fixture-claim-ready")) && alive(childPid!)) await new Promise((resolve) => setTimeout(resolve, 20));
+    const errorPath = path.join(fixture.fixture, "fixture-claim-error");
+    assert.equal(existsSync(path.join(runtime, "fixture-claim-ready")), true, `${fault}: ${existsSync(errorPath) ? readFileSync(errorPath, "utf8") : "no authority error"}`);
+    if (suffix === "parent-transition") assert.equal(readFileSync(path.join(fixture.fixture, "fixture-parent-transition"), "utf8"), "fired");
+    assert.equal(readFileSync(path.join(runtime, "spawner.pid"), "utf8"), String(childPid));
+    assert.equal(readFileSync(path.join(runtime, "spawner.lock"), "utf8"), `${childPid}\n`);
+  } finally {
+    if (!childPid && existsSync(path.join(fixture.fixture, "fixture-spawn-pids"))) {
+      const observed = Number(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim());
+      if (Number.isSafeInteger(observed) && observed > 0) childPid = observed;
+    }
+    // Failed acknowledgement can still leave the exact authenticated child.
+    if (!childPid && existsSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/claim.json"))) {
+      try { childPid = JSON.parse(readFileSync(path.join(fixture.root, "cold-spawner-bootstrap-v1/claim.json"), "utf8")).child.pid; } catch { /* No parseable claimed child. */ }
+    }
+    if (childPid && alive(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) {
+      process.kill(childPid, "SIGTERM");
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && alive(childPid)) await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(alive(childPid), "", "actual helper fixture child must stop before removal");
+    }
+    fixture.close();
+  }
+  }
+});
+
 test("real cold claim rejects self-hashed crossed bodies", async () => {
   const fixture = await createAuthenticatedColdChildFixtureV1("claim-parser");
   let childPid: number | undefined;
@@ -1266,7 +1369,7 @@ test("real cold main refuses replacement of its originally authenticated runtime
 });
 
 test("real cold claim uncertainty retains its journal and closes owned resources", async () => {
-  for (const fault of ["claim-fault-collision", "claim-fault-short-write", "claim-fault-file-sync", "claim-fault-parent-sync", "claim-fault-replace", "claim-fault-extra-member", "claim-fault-writer-close", "claim-fault-persistent-close", "claim-concurrent", "claim-stop", "claim-replay"]) {
+  for (const fault of ["claim-fault-collision", "claim-fault-short-write", "claim-fault-file-sync", "claim-fault-parent-sync", "claim-fault-replace", "claim-fault-extra-member", "claim-fault-writer-close", "claim-fault-persistent-close", "claim-concurrent", "claim-stop", "claim-replay", "claim-regular-readiness"]) {
     const fixture = await createAuthenticatedColdChildFixtureV1(fault);
     try {
       const result = fixture.run();
@@ -1280,7 +1383,8 @@ test("real cold claim uncertainty retains its journal and closes owned resources
       assert.equal(existsSync(path.join(runtime, "spawner.lock")), false);
       assert.equal(existsSync(path.join(journal, "intent.json")), true);
       assert.equal(existsSync(path.join(journal, "dispatch.json")), true);
-      assert.equal(existsSync(path.join(journal, "claim.json")), !["claim-concurrent", "claim-stop"].includes(fault));
+      assert.equal(existsSync(path.join(journal, "claim.json")), !["claim-concurrent", "claim-stop", "claim-regular-readiness"].includes(fault));
+      if (fault === "claim-regular-readiness") assert.equal(readFileSync(path.join(fixture.fixture, "fixture-readiness-file"), "utf8"), "untouched");
       if (["claim-fault-collision", "claim-fault-replace"].includes(fault)) assert.equal(readFileSync(path.join(journal, "claim.json"), "utf8"), "foreign");
       if (fault === "claim-fault-short-write") assert.equal(readFileSync(path.join(journal, "claim.json")).length, 1);
       assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /COLD_BOOTSTRAP_UNSETTLED/);
@@ -2015,6 +2119,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "resolveInternalProductionServiceRestartAuthorityCutoverV1",
     "resolveInternalProductionServiceRestartStartupHooksReadyV1",
     "resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1",
+    "runInternalProductionColdSpawnerHelperV1",
   ]);
   assert.equal(module.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 0);
   assert.equal(module.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 1);

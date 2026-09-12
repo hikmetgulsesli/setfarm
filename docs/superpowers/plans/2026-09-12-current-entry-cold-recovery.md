@@ -604,6 +604,94 @@ Final gateway regression also passed 109/109 (3.247s), followed by a fresh
 TypeScript no-emit and clean diff check. Guarded clean-main build remains part
 of the reviewed combined rollout, never bypassed on this feature branch.
 
+### Fixed cold helper entry and actual one-shot transport
+
+**Files:** existing retirement/helper sources, retirement/helper tests and this
+plan; all are already File Map members. Continue after `0c9b8f71`. Root is the
+only writer; helper integration review/inventory stays read-only in parallel.
+
+- [x] Replace the synthetic helper program in the real FD/main fixture with
+  the actual compiled fixed helper entry. It must launch once, authenticate a
+  genuine child's claim, close owned descriptors and exit while that exact
+  detached sealed child survives. Preserve both legacy helper routes.
+- [x] The helper's nonsecret selector chooses mandatory cold authentication,
+  never grants authority. Invalid selector or capability cannot fall through
+  to launchctl. Retirement exposes one zero-argument runner; all context,
+  descriptor, executable, argv, cwd, environment and child-process handles are
+  private and derived from retained authenticated evidence.
+- [x] Enter `child-launch-handed-off` before the sole asynchronous spawn. Retain
+  the actual returned ChildProcess/PID; never adopt arbitrary PID text as spawn
+  evidence. No retry, broad signal, borrowed-FD close or transition-lease release.
+- [x] Use fixed inherited socket/FIFO FD6 for a canonical readiness envelope
+  capped at 4096 bytes plus EOF, emitted only
+  after the child finishes publication, enters sealed state and rechecks its
+  actual handlers/files. Independently reviewed necessity: readable claim bytes
+  alone precede the final publication checks. The initially proposed single
+  byte proved insufficient: a same-byte claim replacement before the helper's
+  first read was accepted in a real test. Bind the envelope to the child's
+  **original retained** claimRef/hash and ten-field physical metadata tuples
+  for both the claim and its private journal root,
+  never a fresh path observation. FD6 selects no path and grants no authority
+  outside the independently authenticated context/process/files. Pin its
+  endpoint identity, refuse regular-file/reused endpoints, and
+  retain interrupted close ownership. Bound helper wait by error/exit/timeout;
+  always authenticate the claim/process/files after the hint. The child runtime
+  snapshot carries a non-enumerable revoke-only close so pre-claim failures also
+  release its owned descriptors without granting another authentication.
+- [x] Add a private phase-checked claim observation that does not first require
+  the obsolete two-member prefix. Recheck every original pin and admit only the
+  exact third bounded/canonical claim with its actual spawned child UID/start/
+  command/parent/group and both startup-file identities/bytes. Retain its exact
+  inode and bytes; do not refresh earlier authority. File existence alone is
+  not acceptance; partial/publication-in-flight bytes remain unaccepted.
+- [x] Refuse spawn/error/early-exit/timeout/foreign-claim or root/file replacement
+  without dispatching again. Track timers, subprocess handles and resumable
+  descriptor cleanup. A successful helper closes its own handles and unrefs the
+  genuine child; response loss remains a controller observation/adoption case.
+- [x] Verify real helper positive/negative cases, historical helper regression,
+  retirement regression, exact manifests, TypeScript and independent review.
+  Controller settlement, stale-dead-PID consumption and rebind remain next work;
+  no ordinary cold census exception or live acceptance is introduced here.
+
+**Actual transport causal corrections:** three post-ready changes were accepted
+before the receiver used child-origin identities: same-byte claim replacement,
+and same-inode PID/lock writes followed by restoration of the original bytes.
+The real helper now binds the original claim tuple and each startup file's
+full-metadata identity hash. Two further real RED cases demonstrated private
+journal add/remove ABA and changed manifest-listed dependency bytes after the
+child's final validation. The readiness envelope carries the child's retained
+post-claim journal tuple; the helper compares the fixed root around reads and
+retains only matching metadata. The existing full output verifier runs around
+claim observation against the original authenticated profile, with its exact
+three-field root-identity projection. No fresh profile or shared-host metadata
+baseline is introduced.
+
+A real helper exit between the child's own process-row read and its parent
+check produced a false refusal. Only an already claimed original-helper to
+actual PID-one transition gets one fresh own-row observation; all original
+controller, helper-absence, UID and process-group checks remain mandatory.
+No generic retry or new-owner adoption is added. The regular-file FD6 case
+also proves pre-claim authentication cleanup without touching that file.
+
+The unchanged historical helper route initially failed one regression because
+its test created authority parents with default 0755 permissions. That single
+fixture now explicitly creates 0700 parents, as the existing guard requires;
+production permission checks are unchanged. Its focused case passed, followed
+by the full historical helper suite, 19/19 (28.726s). File Map counts remain
+145/64 and the final ordinary verifier remains exactly 33 pairs. This slice is
+local compiled-fixture evidence, not Task 6A or live production acceptance.
+
+Fresh combined verification: retirement 52/52 (143.678s), including all twenty
+actual-helper transport modes (29.431s), 45 self-hashed claim mutants and twelve
+claim/publication fault modes; historical helper 19/19 (28.726s); ordinary
+configuration/stale-PID/fatal/sealed-main 4/4 (39.449s); exact File Maps 17/17
+(6.239s); gateway 109/109 (2.486s). TypeScript no-emit and `git diff --check`
+passed. The full retirement run completed without early failure termination.
+Guarded build/full P3/live closure still wait for the connected controller and
+rebind work and reviewed clean main; no guard override is used.
+Independent final review found no remaining must-fix issue in this six-file
+absent-file transport slice and confirmed it is ready for a scoped commit.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

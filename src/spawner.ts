@@ -406,6 +406,7 @@ type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buff
 const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
 let spawnerColdStartupPhaseV1: "idle" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
 let spawnerColdStartupStopV1: (() => void) | null = null;
+const spawnerColdStartupReadinessCleanupV1 = new Set<() => void>();
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -563,18 +564,36 @@ export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
       || !same(fs.fstatSync(owned.descriptor, { bigint: true })) || !same(fs.lstatSync(physical, { bigint: true }))) throw Error("SPAWNER_COLD_STARTUP_FILE_CHANGED");
     assertSpawnerStartupFileParentsV1(owned.parents);
     return Object.freeze({ path: physical, devDecimal: String(original.dev), inoDecimal: String(original.ino), uid: Number(original.uid), mode: Number(original.mode & 0o7777n),
-      byteLength: expectedBytes.length, bytesHash: crypto.createHash("sha256").update(expectedBytes).digest("hex") });
+      byteLength: expectedBytes.length, bytesHash: crypto.createHash("sha256").update(expectedBytes).digest("hex"),
+      identityHash: crypto.createHash("sha256").update(JSON.stringify([original.dev, original.ino, original.uid, original.gid, original.mode, original.nlink, original.size, original.birthtimeNs, original.mtimeNs, original.ctimeNs].map(String))).digest("hex") });
   };
   return Object.freeze({ schema: "setfarm.internal-production-cold-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
     singleton: observe(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observe(PID_FILE, Buffer.from(String(process.pid)), false) });
 }
 
 async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
-  if (resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() === null) return false;
+  const authentication = resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1();
+  if (authentication === null) return false;
   if (spawnerColdStartupPhaseV1 !== "idle" || spawnerStartupFilesV1.length !== 0) throw Error("SPAWNER_COLD_STARTUP_ALREADY_ENTERED");
   let claim: Awaited<ReturnType<typeof publishInternalProductionColdSpawnerBootstrapClaimV1>> | null = null;
   let keepAlive: ReturnType<typeof setInterval> | undefined;
+  let closeReadiness: (() => void) | undefined;
   try {
+    for (const close of spawnerColdStartupReadinessCleanupV1) close();
+    const readiness = fs.fstatSync(6, { bigint: true });
+    if ((!readiness.isSocket() && !readiness.isFIFO()) || readiness.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_COLD_READINESS_ENDPOINT_INVALID");
+    let readinessClosed = false;
+    const assertReadiness = () => {
+      const current = fs.fstatSync(6, { bigint: true });
+      if (readinessClosed || (!current.isSocket() && !current.isFIFO())
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) throw Error("SPAWNER_COLD_READINESS_ENDPOINT_CHANGED");
+    };
+    closeReadiness = () => {
+      if (readinessClosed) return;
+      assertReadiness(); fs.closeSync(6); readinessClosed = true;
+      spawnerColdStartupReadinessCleanupV1.delete(closeReadiness!);
+    };
+    spawnerColdStartupReadinessCleanupV1.add(closeReadiness);
     // Cold startup never reclaims an unbound predecessor lock or PID residue.
     spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
     createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
@@ -587,6 +606,14 @@ async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
     spawnerColdStartupPhaseV1 = "claim-ready";
     claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();
     if (!["stopping"].includes(spawnerColdStartupPhaseV1)) spawnerColdStartupPhaseV1 = "sealed";
+    observeInternalProductionColdSpawnerStartupOwnershipV1();
+    if (!["sealed"].includes(spawnerColdStartupPhaseV1)) throw Error("SPAWNER_COLD_STOPPED_BEFORE_READINESS");
+    resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1();
+    const ready = Buffer.from(`${JSON.stringify({ claimHash: claim.claimHash, claimIdentity: claim.claimIdentity, claimRef: claim.claimRef, journalIdentity: claim.journalIdentity, schema: "setfarm.internal-production-cold-spawner-readiness.v1" })}\n`);
+    if (ready.length > 4096) throw Error("SPAWNER_COLD_READINESS_EXCEEDS_CAP");
+    assertReadiness();
+    if (fs.writeSync(6, ready) !== ready.length) throw Error("SPAWNER_COLD_READINESS_WRITE_INCOMPLETE");
+    closeReadiness();
     await stopped;
     return true;
   } finally {
@@ -594,7 +621,12 @@ async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
     if (keepAlive) clearInterval(keepAlive);
     if (spawnerColdStartupStopV1) { process.removeListener("SIGTERM", spawnerColdStartupStopV1); process.removeListener("SIGINT", spawnerColdStartupStopV1); }
     spawnerColdStartupStopV1 = null;
-    try { claim?.close(); } finally { releaseSpawnerSingletonLock(); }
+    try { authentication.close(); } finally {
+      try { releaseSpawnerSingletonLock(); } finally {
+        try { closeReadiness?.(); }
+        catch (error) { try { closeReadiness?.(); } catch { /* Exact unfinished endpoint stays retained. */ } throw error; }
+      }
+    }
   }
 }
 

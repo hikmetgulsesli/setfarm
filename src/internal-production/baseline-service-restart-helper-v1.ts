@@ -399,6 +399,12 @@ function executeBaselineRestart(frameValue: unknown): void {
 
 async function main(): Promise<void> {
   if (process.argv.length !== 2) fail("argv must be empty");
+  if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) {
+    if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== "1") fail("cold helper selector is invalid");
+    const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+    await retirement.runInternalProductionColdSpawnerHelperV1();
+    return;
+  }
   const frameBytes = readFileSync(3, { flag: "r" }); // code-owned inherited capability fd: 3
   if (frameBytes.length < 1 || frameBytes.length > MAX_FRAME_BYTES) fail("capability frame size is invalid");
   let value: unknown;
