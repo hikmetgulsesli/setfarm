@@ -15,6 +15,92 @@ import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
 import { validateLegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 
+test("cold launch output verification covers every dependency and rejects crossed physical trees", async () => {
+  const leaf = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  const original = await import(pathToFileURL(leaf).href);
+  assert.equal(typeof original.verifyInternalProductionSpawnerLaunchOutputCandidateV1, "function", "cold output verification is not implemented");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-output-")));
+  try {
+    const internal = path.join(fixture, "dist/internal-production");
+    mkdirSync(internal, { recursive: true, mode: 0o755 });
+    const modulePath = path.join(internal, "baseline-spawner-launch-environment-v1.js");
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(modulePath, transformSync(readFileSync(leaf, "utf8"), { loader: "ts", format: "esm" }).code, { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/spawner.js"), "// inert fixture spawner\n", { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/runtime-config.js"), "// inert fixture config\n", { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/dependency.js"), "// original dependency\n", { mode: 0o644 });
+    const files = ["dist/dependency.js", "dist/internal-production/baseline-spawner-launch-environment-v1.js", "dist/runtime-config.js", "dist/spawner.js"];
+    const sha = "a".repeat(40), treeHash = "b".repeat(40);
+    const hashBytes = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+    const body = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: sha, sourceTreeHash: treeHash,
+      entries: files.map((locator) => { const bytes = readFileSync(path.join(fixture, locator)); return { locator, mode: 0o644, byteLength: bytes.length, sha256: hashBytes(bytes) }; }) };
+    const output = Buffer.from(`${JSON.stringify({ ...body, outputTreeHash: hashCanonicalJson(body) })}\n`);
+    const info = Buffer.from('{"fixture":"build-info"}\n'), manifest = Buffer.from('{"fixture":"release-manifest"}\n');
+    for (const [name, bytes] of [["BUILD_INFO.json", info], ["PLATFORM_RELEASE_MANIFEST.json", manifest], ["PLATFORM_BUILD_OUTPUT_TREE.json", output]] as const) {
+      writeFileSync(path.join(fixture, "dist", name), bytes, { mode: 0o444 });
+    }
+    const rootStats = lstatSync(fixture, { bigint: true });
+    const expected = { rootIdentity: { devDecimal: String(rootStats.dev), inoDecimal: String(rootStats.ino), uid: Number(rootStats.uid) },
+      sourceSha: sha, sourceTreeHash: treeHash, buildInfoBytesHash: hashBytes(info), outputTreeBytesHash: hashBytes(output), releaseManifestBytesHash: hashBytes(manifest) };
+    const { verifyInternalProductionSpawnerLaunchOutputCandidateV1: verify } = await import(pathToFileURL(modulePath).href);
+    assert.doesNotThrow(() => verify(expected));
+    assert.throws(() => verify({ ...expected, rootIdentity: { ...expected.rootIdentity, inoDecimal: "1" } }), /LAUNCH_ENVIRONMENT_INVALID/);
+    assert.throws(() => verify({ ...expected, sourceSha: "c".repeat(40) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    assert.throws(() => verify({ ...expected, outputTreeBytesHash: "d".repeat(64) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    const dependency = path.join(fixture, "dist/dependency.js"), originalDependency = readFileSync(dependency);
+    writeFileSync(dependency, "// changed dependency\n");
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/, "checking entrypoint alone misses dependency drift");
+    writeFileSync(dependency, originalDependency);
+    chmodSync(dependency, 0o666);
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    chmodSync(dependency, 0o644);
+    unlinkSync(dependency); symlinkSync(path.join(fixture, "dist/spawner.js"), dependency);
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    unlinkSync(dependency); writeFileSync(dependency, originalDependency, { mode: 0o644 });
+    const extra = path.join(fixture, "dist/unlisted.js"); writeFileSync(extra, "// unlisted\n");
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    unlinkSync(extra);
+    assert.doesNotThrow(() => verify(expected));
+    const empty = path.join(fixture, "dist/unlisted-empty"); mkdirSync(empty, { mode: 0o755 });
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/, "empty directory additions must not evade exact output topology");
+    rmSync(empty, { recursive: true });
+    for (const mutate of [
+      (entries: typeof body.entries) => [...entries, entries[0]!],
+      (entries: typeof body.entries) => [{ ...entries[0]!, locator: "dist/../outside.js" }, ...entries.slice(1)],
+      (entries: typeof body.entries) => entries.filter((entry) => entry.locator !== "dist/runtime-config.js"),
+      (entries: typeof body.entries) => [...entries].reverse(),
+      (entries: typeof body.entries) => [{ ...entries[0]!, unexpected: true }, ...entries.slice(1)],
+      (entries: typeof body.entries) => [{ ...entries[0]!, mode: 0o755 }, ...entries.slice(1)],
+    ]) {
+      const crossedBody = { ...body, entries: mutate(body.entries) };
+      const crossedBytes = Buffer.from(`${JSON.stringify({ ...crossedBody, outputTreeHash: hashCanonicalJson(crossedBody) })}\n`);
+      const target = path.join(fixture, "dist/PLATFORM_BUILD_OUTPUT_TREE.json");
+      chmodSync(target, 0o644); writeFileSync(target, crossedBytes); chmodSync(target, 0o444);
+      assert.throws(() => verify({ ...expected, outputTreeBytesHash: hashBytes(crossedBytes) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    }
+    // Lower only the copied fixture's entry budget. Count actual filesystem
+    // enumeration, including eagerly returned readdir entries, not loop bodies.
+    const rawSource = readFileSync(leaf, "utf8"), budgetExpression = "++entryCount > 10_000";
+    assert.equal(rawSource.split(budgetExpression).length, 2);
+    const limitedModule = path.join(internal, "limited-enumeration.js");
+    writeFileSync(limitedModule, transformSync(rawSource.replace(budgetExpression, "++entryCount > 5"), { loader: "ts", format: "esm" }).code);
+    const script = `import fs from'node:fs';import{syncBuiltinESMExports}from'node:module';
+      let consumed=0,opened=0,closed=0;const list=fs.readdirSync,open=fs.opendirSync;
+      fs.readdirSync=(...args)=>{const entries=list(...args);consumed+=entries.length;return entries;};
+      fs.opendirSync=(...args)=>{const dir=open(...args);opened++;const read=dir.readSync.bind(dir),close=dir.closeSync.bind(dir);
+        dir.readSync=()=>{const entry=read();if(entry)consumed++;return entry;};dir.closeSync=()=>{closed++;return close();};return dir;};
+      syncBuiltinESMExports();const {verifyInternalProductionSpawnerLaunchOutputCandidateV1:verify}=await import(${JSON.stringify(pathToFileURL(limitedModule).href)});
+      let refused=false;try{verify(${JSON.stringify(expected)});}catch{refused=true;}
+      process.stdout.write(JSON.stringify({consumed,opened,closed,refused}));`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: { PATH: "/usr/bin:/bin" }, cwd: fixture, encoding: "utf8", timeout: 5_000 });
+    assert.equal(child.status, 0, child.stderr);
+    const enumeration = JSON.parse(child.stdout);
+    assert.equal(enumeration.refused, true);
+    assert.ok(enumeration.consumed <= 5, "entry budget must bound actual enumeration, not only subsequent iteration");
+    assert.equal(enumeration.closed, enumeration.opened, "failure must close every enumeration descriptor");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("cold inherited frame reads only bounded private unlinked regular descriptors", async () => {
   const modulePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
   const api = await import(pathToFileURL(modulePath).href);

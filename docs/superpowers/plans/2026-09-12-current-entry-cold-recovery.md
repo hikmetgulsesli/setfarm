@@ -320,6 +320,28 @@ without weakening executing-byte freshness. Helper remains alive until the
 actual child claim; controller settles only after helper exit and observed
 PPID1/PGID=PID. Missing claim after dispatch remains fenced, never redispatched.
 
+Real disposable PG verification at source `5fe0f2c1` passed the existing
+post-claim finalizer integration1/1 (71.305s test phase; setup separate), proving
+terminal reserved and pre-transfer starting ownership settles normally after
+the parser/provider changes. Its clone, primary and template databases were
+all dropped by the owning harness. No live schema or data was changed.
+
+The child-output candidate verifier now derives its own executing dist root,
+checks root identity/owner, exact metadata-file commitments, output-tree
+source/self-hash and every ordinary output's mode/size/content. Required
+spawner/config/leaf entries and exact file/directory topology are checked;
+physical metadata is compared after the observation. It grants no authority
+until integrated with the authenticated dispatch. An executing compiled-dist
+fixture covers changed dependencies, wrong roots/source/hash/modes, symlinks,
+extra files/empty directories and malformed/crossed entry lists. Empty-directory
+RED exposed a missing directory-set check. Review then found eager `readdirSync`
+allocation before the cap; a real-filesystem enumeration counter reproduced
+that RED, and streaming `opendirSync` with bufferSize1 plus finally-close fixes
+it. Focused environment/output/frame/sealed5/5 (8.382s), inert imports1/1
+(1.150s), source17/17 (6.698s), TypeScript and whitespace passed. Independent
+re-review found no remaining material issue. Actual cold loader/dispatch/claim
+integration remains unfinished; no live spawner was launched.
+
 Task 1: complete — scoped implementation and independent spec/quality review
 passed. Whole-branch delivery and live recovery remain pending.
 

@@ -1,5 +1,143 @@
 import { createHash } from "node:crypto";
-import { fstatSync, readSync, type BigIntStats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, type BigIntStats } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+type LaunchOutputCandidateV1 = Readonly<{
+  rootIdentity: Readonly<{ devDecimal: string; inoDecimal: string; uid: number }>;
+  sourceSha: string;
+  sourceTreeHash: string;
+  buildInfoBytesHash: string;
+  outputTreeBytesHash: string;
+  releaseManifestBytesHash: string;
+}>;
+
+function canonicalData(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalData).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalData(record[key])}`).join(",")}}`;
+}
+
+function metadata(stats: BigIntStats): string {
+  return [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid, stats.nlink,
+    stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].join(":");
+}
+
+// Checks current bytes against a supplied candidate; the caller must first
+// authenticate that candidate through the fixed dispatch/intent/lease chain.
+// Full Git/build provenance remains with the independently observing helper.
+export function verifyInternalProductionSpawnerLaunchOutputCandidateV1(expected: LaunchOutputCandidateV1): void {
+  const directories = new Map<string, BigIntStats>();
+  const observedFiles = new Map<string, BigIntStats>();
+  try {
+    const keys = (value: unknown, names: readonly string[]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)
+        || canonicalData(Object.keys(value).sort()) !== canonicalData([...names].sort())) fail();
+    };
+    keys(expected, ["rootIdentity", "sourceSha", "sourceTreeHash", "buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash"]);
+    keys(expected.rootIdentity, ["devDecimal", "inoDecimal", "uid"]);
+    for (const value of [expected.sourceSha, expected.sourceTreeHash]) if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) fail();
+    for (const value of [expected.buildInfoBytesHash, expected.outputTreeBytesHash, expected.releaseManifestBytesHash]) if (!/^[a-f0-9]{64}$/.test(value)) fail();
+    const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+    if (path.basename(moduleDirectory) !== "internal-production" || path.basename(path.dirname(moduleDirectory)) !== "dist") fail();
+    const root = path.dirname(path.dirname(moduleDirectory));
+    if (realpathSync(root) !== root) fail();
+    const rootStats = lstatSync(root, { bigint: true });
+    const uid = process.getuid?.();
+    if (uid === undefined || !rootStats.isDirectory() || rootStats.isSymbolicLink()
+      || rootStats.uid !== BigInt(uid) || expected.rootIdentity.uid !== uid
+      || expected.rootIdentity.devDecimal !== String(rootStats.dev) || expected.rootIdentity.inoDecimal !== String(rootStats.ino)
+      || (rootStats.mode & 0o022n) !== 0n) fail();
+    directories.set(root, rootStats);
+    let totalBytes = 0;
+    const read = (locator: string, mode: number): Buffer => {
+      const target = path.join(root, locator);
+      const before = lstatSync(target, { bigint: true });
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.uid !== BigInt(uid)
+        || before.dev !== rootStats.dev || (before.mode & 0o7777n) !== BigInt(mode)
+        || before.size < 0n || before.size > 33_554_432n) fail();
+      totalBytes += Number(before.size);
+      if (totalBytes > 536_870_912) fail();
+      const fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        if (metadata(before) !== metadata(fstatSync(fd, { bigint: true }))) fail();
+        const bytes = Buffer.alloc(Number(before.size));
+        let offset = 0;
+        while (offset < bytes.length) {
+          const count = readSync(fd, bytes, offset, Math.min(64 * 1024, bytes.length - offset), offset);
+          if (count < 1) fail();
+          offset += count;
+        }
+        if (readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0
+          || metadata(before) !== metadata(fstatSync(fd, { bigint: true }))
+          || metadata(before) !== metadata(lstatSync(target, { bigint: true }))) fail();
+        observedFiles.set(target, before);
+        return bytes;
+      } finally { closeSync(fd); }
+    };
+    const inventory: string[] = [];
+    let entryCount = 1;
+    const visit = (locator: string, depth: number): void => {
+      if (depth > 64) fail();
+      const target = path.join(root, locator), stats = lstatSync(target, { bigint: true });
+      if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== BigInt(uid)
+        || stats.dev !== rootStats.dev || (stats.mode & 0o7777n) !== 0o755n) fail();
+      directories.set(target, stats);
+      const directory = opendirSync(target, { bufferSize: 1 });
+      try { for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+        const name = entry.name;
+        const child = `${locator}/${name}`;
+        if (++entryCount > 10_000 || Buffer.byteLength(child, "utf8") > 1024
+          || /[\\\0-\x1f\x7f-\x9f]/.test(name)) fail();
+        const childStats = lstatSync(path.join(root, child), { bigint: true });
+        if (childStats.isSymbolicLink()) fail();
+        if (childStats.isDirectory()) visit(child, depth + 1);
+        else if (childStats.isFile()) inventory.push(child);
+        else fail();
+      } } finally { directory.closeSync(); }
+    };
+    visit("dist", 0);
+    const authorityFiles = ["dist/BUILD_INFO.json", "dist/PLATFORM_BUILD_OUTPUT_TREE.json", "dist/PLATFORM_RELEASE_MANIFEST.json"];
+    const [infoBytes, treeBytes, manifestBytes] = authorityFiles.map((locator) => read(locator, 0o444));
+    if (hash(infoBytes!) !== expected.buildInfoBytesHash || hash(treeBytes!) !== expected.outputTreeBytesHash
+      || hash(manifestBytes!) !== expected.releaseManifestBytesHash) fail();
+    const tree = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(treeBytes));
+    keys(tree, ["schema", "sourceSha", "sourceTreeHash", "entries", "outputTreeHash"]);
+    if (tree.schema !== "setfarm.platform-build-output-tree.v1" || tree.sourceSha !== expected.sourceSha
+      || tree.sourceTreeHash !== expected.sourceTreeHash || !Array.isArray(tree.entries)
+      || tree.entries.length < 3 || tree.entries.length > 10_000) fail();
+    if (hash(canonicalData({ schema: tree.schema, sourceSha: tree.sourceSha, sourceTreeHash: tree.sourceTreeHash, entries: tree.entries })) !== tree.outputTreeHash) fail();
+    const ordinary: string[] = [], folded = new Set<string>();
+    for (const entry of tree.entries) {
+      keys(entry, ["locator", "mode", "byteLength", "sha256"]);
+      const locator = entry.locator;
+      if (typeof locator !== "string" || !locator.startsWith("dist/") || Buffer.byteLength(locator, "utf8") > 1024
+        || /[\\\0-\x1f\x7f-\x9f]/.test(locator) || locator.split("/").some((part: string) => !part || part === "." || part === "..")
+        || entry.mode !== (locator === "dist/cli/cli.js" ? 0o755 : 0o644)
+        || !Number.isSafeInteger(entry.byteLength) || entry.byteLength < 0 || entry.byteLength > 33_554_432
+        || typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)) fail();
+      const normalized = locator.normalize("NFC").toLocaleLowerCase("en-US");
+      if (folded.has(normalized)) fail();
+      folded.add(normalized); ordinary.push(locator);
+      const bytes = read(locator, entry.mode);
+      if (bytes.length !== entry.byteLength || hash(bytes) !== entry.sha256) fail();
+    }
+    for (const required of ["dist/spawner.js", "dist/runtime-config.js", "dist/internal-production/baseline-spawner-launch-environment-v1.js"]) if (!ordinary.includes(required)) fail();
+    const sorted = (values: string[]) => [...values].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+    const expectedDirectories = new Set([root, path.join(root, "dist")]);
+    for (const locator of ordinary) {
+      let parent = path.dirname(path.join(root, locator));
+      while (parent !== root) { expectedDirectories.add(parent); parent = path.dirname(parent); }
+    }
+    if (canonicalData(ordinary) !== canonicalData(sorted(ordinary))
+      || canonicalData(sorted(inventory)) !== canonicalData(sorted([...ordinary, ...authorityFiles]))
+      || canonicalData(sorted([...directories.keys()])) !== canonicalData(sorted([...expectedDirectories]))) fail();
+    for (const [target, stats] of [...directories, ...observedFiles]) {
+      if (metadata(stats) !== metadata(lstatSync(target, { bigint: true }))) fail();
+    }
+  } catch { fail(); }
+}
 
 // Fixed inherited transport slot; returned bytes remain UNTRUSTED. This only
 // prevents unsafe reads. No environment installation or launch is authorized.
@@ -17,9 +155,7 @@ export function readInternalProductionSpawnerUntrustedInheritedFrameV1(): Buffer
       if (count <= 0) fail();
       offset += count;
     }
-    const identity = (stats: BigIntStats) => [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid,
-      stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].join(":");
-    if (identity(fstatSync(3, { bigint: true })) !== identity(before)) fail();
+    if (metadata(fstatSync(3, { bigint: true })) !== metadata(before)) fail();
     return bytes;
   } catch { fail(); }
 }
