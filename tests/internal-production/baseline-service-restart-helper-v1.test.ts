@@ -46,12 +46,13 @@ test("watcher start adopts a real detached daemon and cannot prove predecessor r
   const daemon = path.join(fixture, "fixture-daemon.mjs"), ready = path.join(fixture, "ready");
   const readProcess = () => spawnSync("/bin/ps", ["-p", String(pid), "-o", "uid=,pid=,ppid=,pgid=,lstart=,command="], { encoding: "utf8", timeout: 2_000 });
   try {
-    writeFileSync(daemon, `import{writeFileSync}from"node:fs";process.on("SIGTERM",()=>process.exit(0));writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);\n`, { mode: 0o600 });
+    writeFileSync(daemon, `import{writeFileSync,renameSync}from"node:fs";process.on("SIGTERM",()=>process.exit(0));const ready=${JSON.stringify(ready)},pending=ready+'.'+process.pid+'.pending';writeFileSync(pending,String(process.pid),{mode:0o600,flag:'wx'});renameSync(pending,ready);setInterval(()=>{},1000);\n`, { mode: 0o600 });
     const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from"node:child_process";const child=spawn(process.execPath,[${JSON.stringify(daemon)}],{detached:true,stdio:"ignore"});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3_000 });
     assert.equal(launcher.status, 0, launcher.stderr);
     assert.match(launcher.stdout, /^[1-9][0-9]*$/); pid = Number(launcher.stdout);
     for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(readFileSync(ready, "utf8"), String(pid));
+    assert.equal(existsSync(`${ready}.${pid}.pending`), false, "readiness appears only after the closed complete PID file is renamed");
     const before = readProcess();
     assert.equal(before.status, 0, before.stderr);
     assert.match(before.stdout, new RegExp(`^\\s*${process.getuid!()}\\s+${pid}\\s+1\\s+${pid}\\s+`));

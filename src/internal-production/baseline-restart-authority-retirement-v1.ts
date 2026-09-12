@@ -161,6 +161,17 @@ type ColdBootstrapIntentStateV1 = {
   rootIdentity: BigIntStats | null;
   rootGuard: PrivateDirectoryGuardV1;
   helperInvocation?: ColdControllerHelperInvocationV1;
+  settlement?: {
+    record: Readonly<Record<string, unknown>>;
+    bytes: Buffer;
+    attempted: boolean;
+    descriptor: number | null;
+    identity: BigIntStats | null;
+    linkAttempted: boolean;
+    linked: boolean;
+    unlinkAttempted: boolean;
+    committed: boolean;
+  };
 };
 type ColdControllerHelperInvocationV1 = {
   child: ChildProcess | null;
@@ -174,6 +185,7 @@ type ColdControllerHelperInvocationV1 = {
 let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
 let coldControllerHelperInvocationActiveV1 = false;
+let coldControllerSettlementActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
@@ -1578,6 +1590,150 @@ async function invokeColdSpawnerBootstrapHelperV1() {
   } finally { coldControllerHelperInvocationActiveV1 = false; }
 }
 
+function assertColdControllerServiceCensusV1(state: ColdBootstrapIntentStateV1, claim: Readonly<Record<string, unknown>>, value: unknown): void {
+  const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "settlement service census");
+  if (census.schema !== "setfarm.internal-production-service-census.v1") fail("cold settlement service census schema is crossed");
+  coldSelfHashV1(census, "censusHash");
+  const child = claim.child as Record<string, any>, source = claim.source as Record<string, unknown>;
+  const label = "com.setrox.setfarm-spawner";
+  const serviceIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-service-identity.v1", label, command: child.command }));
+  const loaded = { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash };
+  const expected = { pid: child.pid, processStartTimeEpochMs: child.processStartTimeEpochMs,
+    processIdentityHash: sha256(`${child.pid}\n${child.lstart}\n`), serviceIdentityHash,
+    generationHash: sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source: loaded })),
+    loadedSourceSha: loaded.sha, loadedTreeHash: loaded.treeHash, loadedBuildHash: loaded.buildHash, processOwnerCount: 1, listener: null };
+  if (canonical(census.spawner) !== canonical(expected)) fail("cold settlement ordinary spawner is not the retained child");
+  const original = (state.intent.coldObservation as Record<string, any>).remainingServices;
+  for (const key of ["dashboard", "missionControl", "openClaw"]) {
+    if (canonical(census[key]) !== canonical(original[key]) || original[key].pid === child.pid) fail("cold settlement remaining service changed");
+  }
+}
+
+async function settleColdSpawnerBootstrapV1(): Promise<Readonly<Record<string, unknown>>> {
+  if (coldControllerSettlementActiveV1) fail("cold controller settlement is already active");
+  coldControllerSettlementActiveV1 = true;
+  try {
+    for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+    if (retainedColdBootstrapIntentV1?.phase !== "settled") await invokeColdSpawnerBootstrapHelperV1();
+    const state = retainedColdBootstrapIntentV1!, invocation = state.helperInvocation!;
+    const completion = await invocation.completion!;
+    const claim = independentlyObserveColdControllerClaimV1(state, completion);
+    const target = path.join(rootPaths().root, "cold-spawner-bootstrap-controller-settlement-v1.json");
+    const pending = path.join(path.dirname(target), `.${path.basename(target)}.pending`);
+    const observer = await import("./baseline-post-handoff-receipt-v1.js");
+    const first = await observer.observeInternalProductionServiceCensusV1();
+    independentlyObserveColdControllerClaimV1(state, completion);
+    assertColdControllerServiceCensusV1(state, claim, first);
+    const second = await observer.observeInternalProductionServiceCensusV1();
+    independentlyObserveColdControllerClaimV1(state, completion);
+    assertColdControllerServiceCensusV1(state, claim, second);
+    if (canonical(first) !== canonical(second)) fail("cold settlement service census changed across observation");
+    if (state.settlement && canonical(first) !== canonical(state.settlement.record.serviceCensus)) fail("cold settlement retained service census changed");
+    if (!state.settlement) {
+      const epoch = invocation.pins.find(pin => pin.path === rootPaths().epoch)!;
+      const genesis = invocation.pins.find(pin => pin.path === coldGenesisReceiptPathV1(state.intent.genesisHash as string))!;
+      const body = { schema: "setfarm.internal-production-cold-spawner-controller-settlement.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
+        completion, epochEvidence: { record: JSON.parse(epoch.bytes.toString("utf8")), identity: coldFileIdentityTupleV1(epoch.stats) },
+        genesisIdentity: coldFileIdentityTupleV1(genesis.stats), serviceCensus: first };
+      const settlementHash = sha256(canonical(body));
+      const record = freezeColdDataV1({ ...body, settlementRef: `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${settlementHash}`, settlementHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("cold settlement exceeds its cap");
+      state.settlement = { record, bytes, attempted: false, descriptor: null, identity: null, linkAttempted: false, linked: false, unlinkAttempted: false, committed: false };
+    }
+    const settlement = state.settlement;
+    if (!settlement.attempted) {
+      settlement.attempted = true;
+      const descriptor = openSync(pending, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      settlement.descriptor = descriptor;
+      invocation.authorityDescriptors.push(descriptor);
+      const created = fstatSync(descriptor, { bigint: true }), atPath = lstatSync(pending, { bigint: true });
+      if (!created.isFile() || created.uid !== BigInt(process.getuid!()) || created.nlink !== 1n || created.size !== 0n
+        || (created.mode & 0o7777n) !== 0o600n || !sameColdFileMetadataV1(created, atPath)) fail("cold settlement new publication is crossed");
+      writeFileSync(descriptor, settlement.bytes);
+      settlement.identity = fstatSync(descriptor, { bigint: true });
+    }
+    // A failed/partial write cannot mint a new file or adopt a foreign path.
+    // Only a complete same-inode body may retry its remaining sync/close steps.
+    const acceptOwnedLinkTransition = (next: BigIntStats, links: bigint) => {
+      const previous = settlement.identity;
+      if (!previous || next.nlink !== links || ["dev", "ino", "uid", "gid", "mode", "size", "birthtimeNs", "mtimeNs"].some(key => previous[key as keyof BigIntStats] !== next[key as keyof BigIntStats])) fail("cold settlement link transition is crossed");
+      settlement.identity = next;
+    };
+    if (settlement.unlinkAttempted && !settlement.committed) {
+      let absent = false;
+      try { lstatSync(pending); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; absent = true; }
+      if (absent) { acceptOwnedLinkTransition(lstatSync(target, { bigint: true }), 1n); settlement.committed = true; }
+    }
+    if (settlement.linkAttempted && !settlement.linked) {
+      let final: BigIntStats | null = null;
+      try { final = lstatSync(target, { bigint: true }); } catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+      if (final) {
+        acceptOwnedLinkTransition(final, 2n);
+        if (!settlement.bytes.equals(readColdGenesisCandidateV1(pending, final, 2))) fail("cold settlement pending link is crossed");
+        settlement.linked = true;
+      }
+    }
+    const assertPublication = () => {
+      if (settlement.committed) {
+        try { lstatSync(pending); fail("cold settlement pending owner reappeared"); }
+        catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+      }
+      if (!settlement.identity) fail("cold settlement publication is uncertain");
+      if (!settlement.bytes.equals(readColdGenesisCandidateV1(settlement.committed ? target : pending, settlement.identity, settlement.linked && !settlement.committed ? 2 : 1))) fail("cold settlement publication is uncertain");
+      if (settlement.linked && !settlement.bytes.equals(readColdGenesisCandidateV1(target, settlement.identity, settlement.committed ? 1 : 2))) fail("cold settlement final link is crossed");
+    };
+    assertPublication();
+    if (settlement.descriptor !== null) {
+      if (!sameColdFileMetadataV1(settlement.identity!, fstatSync(settlement.descriptor, { bigint: true }))) fail("cold settlement retained publication changed");
+      fsyncSync(settlement.descriptor);
+      assertPublication();
+      if (!settlement.linked) {
+        settlement.linkAttempted = true;
+        linkSync(pending, target);
+        acceptOwnedLinkTransition(fstatSync(settlement.descriptor, { bigint: true }), 2n);
+        settlement.linked = true;
+      }
+      assertPublication();
+      independentlyObserveColdControllerClaimV1(state, completion);
+      closeSync(settlement.descriptor);
+      invocation.authorityDescriptors.splice(invocation.authorityDescriptors.indexOf(settlement.descriptor), 1);
+      settlement.descriptor = null;
+    }
+    // Interrupted link adoption may have no writer left. Its final link must
+    // still become durable before the filesystem-visible pending owner leaves.
+    fsyncParent(target);
+    independentlyObserveColdControllerClaimV1(state, completion);
+    assertPublication();
+    if (!settlement.committed) {
+      if (!settlement.linked || settlement.descriptor !== null) fail("cold settlement has not finished publication cleanup");
+      settlement.unlinkAttempted = true;
+      unlinkSync(pending);
+      acceptOwnedLinkTransition(lstatSync(target, { bigint: true }), 1n);
+      settlement.committed = true;
+    }
+    fsyncParent(target);
+    assertPublication();
+    state.phase = "settled";
+    return settlement.record;
+  } catch (error) {
+    const state = retainedColdBootstrapIntentV1, settlement = state?.settlement;
+    if (state && settlement?.descriptor !== null && settlement?.descriptor !== undefined) {
+      let resumable = false;
+      try { resumable = settlement.identity !== null && settlement.bytes.equals(readColdGenesisCandidateV1(path.join(rootPaths().root, ".cold-spawner-bootstrap-controller-settlement-v1.json.pending"), settlement.identity, settlement.linked ? 2 : 1))
+        && sameColdFileMetadataV1(settlement.identity, fstatSync(settlement.descriptor, { bigint: true })); } catch { /* Crossed or partial publication remains a fence, not a writable retry. */ }
+      if (!resumable) finishRetainedColdCleanupV1(() => {
+        if (settlement.descriptor === null) return;
+        closeSync(settlement.descriptor);
+        const owned = state.helperInvocation!.authorityDescriptors;
+        owned.splice(owned.indexOf(settlement.descriptor), 1);
+        settlement.descriptor = null;
+      });
+    }
+    throw error;
+  } finally { coldControllerSettlementActiveV1 = false; }
+}
+
 function parseColdSpawnerBootstrapIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
   if (bytes.length < 1 || bytes.length > COLD_GENESIS_MAX_BYTES_V1) fail("cold intent size is invalid");
   const intent = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "coldObservation", "launchProfile", "transitionLock", "lockIdentity", "epochRef", "epochHash", "genesisRef", "genesisHash", "nonceHash", "maximumDispatchCount", "intentRef", "intentHash"], "intent");
@@ -2253,9 +2409,10 @@ function authenticateColdSpawnerChildCapabilityV1() {
       const own = observeColdProcessParentGroupV1(process.pid);
       // Parent exit may occur after our own process row was read. Reobserve
       // only that one claimed helper -> pid-one transition, never a new owner.
-      const settledOwn = claim !== null && own.ppid === helper.pid && process.ppid === 1 ? observeColdProcessParentGroupV1(process.pid) : own;
-      originalParent = originalParent && process.ppid === helper.pid && settledOwn.ppid === helper.pid;
-      const departedParent = claim !== null && process.ppid === 1 && settledOwn.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
+      const parentPid = process.ppid;
+      const settledOwn = claim !== null && own.ppid === helper.pid && parentPid === 1 ? observeColdProcessParentGroupV1(process.pid) : own;
+      originalParent = originalParent && parentPid === helper.pid && settledOwn.ppid === helper.pid;
+      const departedParent = claim !== null && parentPid === 1 && settledOwn.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
       if ((!originalParent && !departedParent) || controller?.processIdentityHash !== lock.processIdentityHash
         || own.uid !== uid || own.pgid !== process.pid || settledOwn.uid !== uid || settledOwn.pgid !== process.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
       for (const guard of guards) guard.assertStable();

@@ -843,6 +843,121 @@ manifests 17/17 (7.051s), gateway 109/109 (2.965s), ordinary stale reclamation
 the retained local handoff, not durable settlement, release, rebind or live
 Task 6A/A–E acceptance. Guarded clean-main build remains a delivery gate.
 
+### Controller settlement and ordinary process bridge
+
+**Files:** existing retirement source/test and receipt source/test, plus this
+plan. Keep the fixed 145/64 File Maps and ordinary 33-pair final graph intact.
+This is the next causal step: the genuine sealed child must become an
+authenticated predecessor, without fabricating a four-service census member.
+
+- [x] Extend the actual-controller fixture with the production detached
+  spawner observer. Use actual global `ps`, executable `comm`, `lsof`, regular
+  file readers and plist parsing; project only the disposable home/root,
+  clean-source observation and launchctl job text. Create its launcher/plist
+  before finalizing launch authority. The other three service ports remain
+  isolated fixture observations, not claimed live evidence.
+- [x] Introduce private zero-argument `settleColdSpawnerBootstrapV1()` from
+  the retained invocation. Bracket two ordinary four-service observations with
+  original claim/authority checks. Bind the spawner PID/start/command to the
+  genuine child and keep the original remaining-three service projections.
+  The ordinary process hash is `sha256(pid + "\n" + lstart + "\n")`, not the
+  claim's transition-lock-domain hash; retain ordinary generation formulas.
+- [x] Retain one expected terminal body before its first publication. Include
+  original helper completion, original epoch-one bytes/identity and immutable
+  genesis identity, plus the actually observed ordinary service census.
+  Publish only the fixed sibling
+  `cold-spawner-bootstrap-controller-settlement-v1.json` beside the three-file
+  cold journal. Never mutate that journal or refresh its original full tuple.
+  The fixed owned temporary is
+  `.cold-spawner-bootstrap-controller-settlement-v1.json.pending` in the same
+  parent. Strict no-replace publication fsyncs its complete body, links the
+  final name, closes owned publication descriptors, fsyncs the final link,
+  rechecks the exact claim/files, removes only that pending link, then fsyncs
+  the parent again. Refuse temp-only and final-plus-temp states publicly.
+  Adopt only the same retained expected inode/prefix after response loss;
+  never dispatch a replacement or overwrite a foreign final. The mandatory
+  final-link fsync also runs when interrupted-link recovery has no writer FD.
+  Partial/throwing writes retain the pending file and lease, but close their
+  nonresumable writer via retained retryable cleanup. Every live durability
+  retry reobserves both ordinary service passes against the original record.
+- [ ] Authenticate the immutable terminal chain in the public cold census.
+  Both final paths absent is absence; an orphan terminal, reserved publication
+  temporary or any incomplete/crossed chain remains unsettled. Historical
+  validation reopens immutable intent/dispatch/claim/genesis and embedded
+  epoch-one evidence; it does not demand the old live lock, controller, child,
+  output or mutable epoch head forever. Current admission separately checks
+  the genuine process/startup files and current source.
+- [ ] Prove exact publication faults, crossed ordinary identity/source/service
+  projections, drift across await, same-controller response-loss adoption,
+  release only after authenticated terminal, and historical resolution after
+  the exact disposable child exits while live admission refuses it.
+- [ ] Bind the settlement through a strict versioned cold-predecessor variant
+  of existing `preMutationLoadedRuntimeServiceAuthority`, preserving historical
+  V1 resolution. Run unchanged phase/DB/physical gates after settlement; no
+  synthetic zero-owner assertion is part of the transport terminal itself.
+
+Core ordering:
+```ts
+const claim = await invokeColdSpawnerBootstrapHelperV1();
+const first = await observeInternalProductionServiceCensusV1();
+recheckRetainedClaimAndOriginalPins();
+const second = await observeInternalProductionServiceCensusV1();
+requireSameCensusAndExactClaimProcess(first, second, claim);
+retainExpectedSettlementBeforeWriting();
+publishOrAdoptOnlyRetainedExpectedSettlement();
+fsyncAndReopenExactTerminal();
+```
+
+Publisher evidence and causal corrections:
+
+- The connected ordinary-observer test first reached the real PID/start/hash
+  and no-listener assertions, then failed because the private settlement entry
+  was absent. It now observes the real child through production `ps`, `comm`,
+  `lsof`, plist parsing and strict file readers before publishing its terminal.
+  The fixture CLI retains the production-required 0755 mode; all other ordinary
+  output files remain 0644. No output-verifier exception was added.
+- A real post-readiness helper departure after `settledOwn` reproduced
+  `cold child live parent chain is crossed`. Three independent `process.ppid`
+  reads selected incompatible instants. Capture the parent PID once for both
+  allowed branches; retain the exact helper-to-PID-one reobservation rule.
+  The real late-departure case passes (2.999s), without sleeping in production.
+- Partial-write ownership first failed because its writer stayed open; retained
+  cleanup now closes only that owned descriptor, preserving file and lease.
+  A sync-fault retry with a changed remaining service first incorrectly passed;
+  every live retry now compares fresh census passes to the retained original.
+- Direct final-file publication left no distinguishable pending owner. The
+  pending-prefix regression first failed, then drove the owned two-link commit
+  protocol. A real link-then-throw followed by a **before-syscall** parent-fsync
+  fault demonstrated pending removal before final-link durability. The mandatory
+  parent fsync now also runs on replay with no writer descriptor. A foreign
+  pending file reappearing after commit also first passed incorrectly; committed
+  prefix validation now requires its continued absence and preserves foreigners.
+- Twenty actual publication/census modes pass (69.816s): pending reappearance,
+  pre/post link, pre/post unlink, final sync, partial write, service drift during
+  durability retry, caller response loss, file/parent sync, writer close,
+  pending-path replacement, same-byte write, foreign final, crossed process hash,
+  crossed generation, changed remaining service, second-pass drift and late
+  intent mutation. Connected positive passes (3.830s). Independent final review
+  reports no remaining must-fix in this publisher. Final full retirement passes
+  60/60 (285.194s), including all twenty new fault modes (63.174s). Ordinary
+  startup/cleanup passes 4/4 (39.874s); gateway passes 109/109 (2.621s).
+  Public census/release integration still refuses: this is the durable private
+  publisher milestone, not historical admission, rebind or live Task 6A.
+- Full historical-helper testing exposed an empty readiness PID in its watcher
+  fixture before production `startSpawner()` was called (18/19). Readiness now
+  renames a closed complete PID file atomically; the exact PID/adoption assertions
+  remain. Final historical helper passes 19/19 (30.922s), exact manifests 17/17
+  (7.250s), and TypeScript/diff checks pass. This is test-fixture publication
+  correctness, not a change to the production watcher or a relaxed assertion.
+
+Historical-census integration must preserve the authority split: authenticated
+settled history removes cold transport ownership but grants no spawner launch
+permission. Require `state === "absent"` explicitly at all four ordinary
+spawner preflight/reclamation calls and fresh cold-controller invocation.
+Receipt phase-zero may accept an authenticated stable settled census; ordinary
+startup may not. The future operation-bound replacement gets its independently
+authenticated branch rather than interpreting settlement as a launch token.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or
