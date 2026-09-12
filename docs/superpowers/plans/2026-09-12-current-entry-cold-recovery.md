@@ -268,6 +268,45 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ### Cold intent publication and retained controller lifetime
 
+The next private transport slice is `openColdSpawnerHelperFrameV1` in the same
+retirement module. It opens the exact intent read-only for FD5 and creates an
+empty private0600 scratch inode, separately opens it read-only, unlinks and
+fsyncs its parent, then writes snapshot/nonce through the retained writer.
+Only after data verification and writer/guard cleanup are RO frame/intent
+descriptors transferred; the original lease remains FD4 and stays retained.
+No secret byte is written while linked. This sender still has no helper spawn
+or public live entry point and does not change the intent-only phase.
+
+Its actual disposable child uses the real fixed-FD3 reader and proves0600,
+nlink0, RO write refusal, correct secret/nonce commitment and exact FD4/5
+identities. Real-filesystem hooks prove unlink plus parent fsync precede the
+first secret write. Faults cover reader open, parent/data fsync, partial write,
+writer/guard close and foreign scratch replacement. Review-driven REDs showed
+premature writer/return-descriptor ownership transfer and deletion of a replaced
+empty path. Handles now remain owned through successful cleanup, and exact
+writer/reader/path identity is rechecked after guard callbacks before unlink.
+
+Causally required File Map refinement: also modify the already-listed shared
+`src/internal-production/baseline-workspace-authority-path-v1.ts`, with regression
+coverage in the already-listed retirement test. Both its anchor guard and the
+retirement directory guard marked themselves closed before descriptor cleanup
+finished. Actual pre-close fault tests demonstrated5/7 retained descriptors.
+Both now enter a permanently non-authenticating closing phase and pop each
+descriptor only after successful close, so a retained guard can drain the
+remaining handles without re-closing completed entries. The locator preserves
+its prior idempotent fully-closed behavior. No path, owner, permission or runtime
+admission rule changed, and no File Map member was added.
+
+Final scoped verification: retirement38/38 (28.562s), both real startup workspace
+cases2/2 (1.056s), source manifest17/17 (7.020s), TypeScript and whitespace passed;
+independent frame/guard re-review found no remaining material issue. The prior
+retirement run had37/38 solely from another raw global FD count469 versus468 in
+the raw-lock test. Five isolated diagnostic trials and the latest full run
+passed; no failing FD identity was captured. Its strict count assertion now
+also emits live identity/bounded-lsof diagnostics. Keep the unexplained global
+measurement intermittency open; no filtering, settling, retry acceptance or
+production guard change was used to turn a failed assertion into success.
+
 The retirement module now contains private `prepareColdSpawnerBootstrapIntentV1`
 for the future fixed controller. It acquires real bound genesis/epoch-one and
 the physical lease, observes the launch profile and fresh cold prerequisites,

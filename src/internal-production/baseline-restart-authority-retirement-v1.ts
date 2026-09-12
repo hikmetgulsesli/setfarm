@@ -218,8 +218,21 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
+  let closing = false;
+  const close = (): void => {
+    if (closed) fail("authority directory guard is already closed");
+    closing = true;
+    // Advance ownership only after each successful close. A caller retaining
+    // this guard may finish an interrupted cleanup, but never authenticate it.
+    while (descriptors.length > 0) {
+      closeSync(descriptors[descriptors.length - 1]!);
+      descriptors.pop(); held.pop();
+    }
+    workspaceAnchor.close();
+    closed = true;
+  };
   const assertStable = (): void => {
-    if (closed) fail("authority directory guard is closed");
+    if (closed || closing) fail("authority directory guard is closed");
     workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const after = lstatSync(current, { bigint: true });
@@ -252,15 +265,10 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
     assertStable();
     return Object.freeze({
       assertStable,
-      close: () => {
-        if (closed) fail("authority directory guard is already closed");
-        closed = true;
-        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
-      },
+      close,
     });
   } catch (error) {
-    closed = true;
-    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
+    close();
     throw error;
   }
 }
@@ -1230,6 +1238,88 @@ async function prepareColdSpawnerBootstrapIntentV1() {
     assertColdIntentLeaseV1(state);
     return state.intent;
   } finally { coldBootstrapIntentInvocationActiveV1 = false; }
+}
+
+function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readonly<{ frameDescriptor: number; intentDescriptor: number }> {
+  if (state !== retainedColdBootstrapIntentV1 || state.phase !== "intent-only") fail("cold helper frame owner is invalid");
+  assertColdIntentLeaseV1(state);
+  assertColdIntentOnlyPrefixV1(state, true);
+  const root = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
+  const intentPath = path.join(root, "intent.json");
+  const scratch = path.join(root, `.cold-helper-capability.${randomBytes(16).toString("hex")}.tmp`);
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);
+  let intentDescriptor: number | undefined, writer: number | undefined, reader: number | undefined;
+  let linkedIdentity: BigIntStats | undefined;
+  let unlinked = false;
+  let guardClosed = false;
+  try {
+    state.rootGuard.assertStable(); guard.assertStable();
+    intentDescriptor = openSync(intentPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const intentStats = fstatSync(intentDescriptor, { bigint: true });
+    if (!sameColdFileMetadataV1(intentStats, lstatSync(intentPath, { bigint: true }))
+      || !readColdGenesisCandidateV1(intentPath, intentStats).equals(Buffer.from(`${canonical(state.intent)}\n`))) fail("cold helper frame intent is crossed");
+    const frame = { schema: "setfarm.internal-production-cold-spawner-bootstrap-helper-capability.v1", intentRef: state.intent.intentRef,
+      intentHash: state.intent.intentHash, lockIdentity: state.intent.lockIdentity, intentIdentity: descriptorIdentity(intentDescriptor), environment: state.environment, nonce: state.nonce };
+    const bytes = Buffer.from(`${canonical(frame)}\n`);
+    if (bytes.length < 1 || bytes.length > 1_048_576) fail("cold helper frame exceeds its cap");
+    state.rootGuard.assertStable(); guard.assertStable();
+    writer = openSync(scratch, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    linkedIdentity = fstatSync(writer, { bigint: true });
+    if (!linkedIdentity.isFile() || linkedIdentity.uid !== BigInt(process.getuid!()) || linkedIdentity.dev !== state.rootIdentity!.dev
+      || (linkedIdentity.mode & 0o7777n) !== 0o600n || linkedIdentity.nlink !== 1n || linkedIdentity.size !== 0n) fail("cold helper empty frame identity is invalid");
+    reader = openSync(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!sameColdFileMetadataV1(linkedIdentity, fstatSync(reader, { bigint: true }))
+      || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("cold helper empty frame was replaced");
+    state.rootGuard.assertStable(); guard.assertStable();
+    if (!sameColdFileMetadataV1(linkedIdentity, fstatSync(writer, { bigint: true }))
+      || !sameColdFileMetadataV1(linkedIdentity, fstatSync(reader, { bigint: true }))
+      || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("cold helper empty frame changed before unlink");
+    unlinkSync(scratch);
+    unlinked = true;
+    if (fstatSync(writer, { bigint: true }).nlink !== 0n || fstatSync(reader, { bigint: true }).nlink !== 0n) fail("cold helper frame is still linked");
+    fsyncParent(scratch);
+    state.rootGuard.assertStable(); guard.assertStable();
+    // No secret byte reaches a pathname: both handles refer to an already
+    // unlinked, durably unnamed inode before this first payload write.
+    writeFileSync(writer, bytes);
+    fsyncSync(writer);
+    const before = fstatSync(reader, { bigint: true });
+    if (before.nlink !== 0n || before.size !== BigInt(bytes.length) || before.ino !== linkedIdentity.ino || before.dev !== linkedIdentity.dev
+      || before.uid !== linkedIdentity.uid || before.mode !== linkedIdentity.mode || !sameColdFileMetadataV1(before, fstatSync(writer, { bigint: true }))) fail("cold helper frame write identity is crossed");
+    const verified = Buffer.alloc(bytes.length);
+    let offset = 0;
+    while (offset < verified.length) {
+      const count = readSync(reader, verified, offset, Math.min(65536, verified.length - offset), offset);
+      if (count < 1) fail("cold helper frame read is partial");
+      offset += count;
+    }
+    if (!verified.equals(bytes) || readSync(reader, Buffer.alloc(1), 0, 1, offset) !== 0
+      || !sameColdFileMetadataV1(before, fstatSync(reader, { bigint: true }))) fail("cold helper frame read changed");
+    closeSync(writer); writer = undefined;
+    assertColdIntentLeaseV1(state); assertColdIntentOnlyPrefixV1(state, true);
+    if (!sameColdFileMetadataV1(intentStats, fstatSync(intentDescriptor, { bigint: true }))
+      || !sameColdFileMetadataV1(intentStats, lstatSync(intentPath, { bigint: true }))) fail("cold helper frame intent changed");
+    state.rootGuard.assertStable(); guard.assertStable();
+    guard.close(); guardClosed = true;
+    const result = Object.freeze({ frameDescriptor: reader, intentDescriptor });
+    reader = undefined; intentDescriptor = undefined;
+    return result;
+  } catch {
+    // A pre-unlink failure can leave only the exact empty inode we created.
+    // A foreign replacement/link is retained as an unsettled prefix, never removed.
+    if (!unlinked && linkedIdentity !== undefined) {
+      try {
+        state.rootGuard.assertStable(); guard.assertStable();
+        const atPath = lstatSync(scratch, { bigint: true });
+        if (sameColdFileMetadataV1(linkedIdentity, atPath) && atPath.nlink === 1n && atPath.size === 0n) { unlinkSync(scratch); fsyncParent(scratch); }
+      } catch { /* Preserve ambiguous empty evidence and the original lease. */ }
+    }
+    return fail("cold helper frame preparation failed");
+  } finally {
+    try { if (writer !== undefined) closeSync(writer); }
+    finally { try { if (reader !== undefined) closeSync(reader); }
+      finally { try { if (intentDescriptor !== undefined) closeSync(intentDescriptor); } finally { if (!guardClosed) guard.close(); } } }
+  }
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

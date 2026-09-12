@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,6 +22,45 @@ function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): 
   source = source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`);
   writeFileSync(path.join(internal, path.basename(locatorPath)), source);
 }
+
+test("workspace anchor interrupted close resumes only its remaining descriptors", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-workspace-close-progress-"));
+  const internal = path.join(fixture, "src/internal-production");
+  mkdirSync(internal, { recursive: true, mode: 0o700 });
+  installWorkspaceLocatorFixtureV1(internal, fixture);
+  const modulePath = path.join(internal, "baseline-workspace-authority-path-v1.ts");
+  const source = readFileSync(modulePath, "utf8")
+    .replace("{ closeSync, constants, fstatSync, lstatSync, openSync }", "{ closeSync as realAnchorCloseSync, constants, fstatSync, lstatSync, openSync as realAnchorOpenSync }") + `
+function openSync(...args:any[]){const fd=realAnchorOpenSync(...args);globalThis.__anchorOpenedHook?.(fd);return fd;}
+function closeSync(fd:number){globalThis.__anchorBeforeCloseHook?.(fd);realAnchorCloseSync(fd);globalThis.__anchorClosedHook?.(fd);}
+`;
+  writeFileSync(modulePath, source);
+  const owned = new Set<number>();
+  let sentinel: number | undefined, closedCount = 0, attempts = 0;
+  const sentinelPath = path.join(fixture, "sentinel.txt");
+  writeFileSync(sentinelPath, "not-owned-by-guard", { mode: 0o600 });
+  let guard: { assertStable(): void; close(): void } | undefined;
+  try {
+    const isolated = await import(pathToFileURL(modulePath).href);
+    Reflect.set(globalThis, "__anchorOpenedHook", (fd: number) => { owned.add(fd); });
+    guard = isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1();
+    Reflect.set(globalThis, "__anchorBeforeCloseHook", () => { if (++attempts === 2) throw new Error("fixture ancestor close interrupted"); });
+    Reflect.set(globalThis, "__anchorClosedHook", (fd: number) => { owned.delete(fd); if (++closedCount === 1) sentinel = openSync(sentinelPath, "r"); });
+    assert.throws(() => guard!.close(), /interrupted/);
+    assert.throws(() => guard!.assertStable(), /IDENTITY_INVALID/);
+    assert.ok(owned.size > 0);
+    guard!.close();
+    assert.equal(owned.size, 0, "retry drains every remaining authority descriptor");
+    assert.throws(() => guard!.assertStable(), /IDENTITY_INVALID/);
+    assert.equal(fstatSync(sentinel!).ino, lstatSync(sentinelPath).ino, "a completed descriptor slot must not be closed again");
+    guard!.close(); // Preserve the locator's existing idempotent closed behavior.
+  } finally {
+    for (const key of ["__anchorOpenedHook", "__anchorBeforeCloseHook", "__anchorClosedHook"]) Reflect.deleteProperty(globalThis, key);
+    for (const fd of owned) { try { closeSync(fd); } catch { /* Test-only cleanup after demonstrated leak. */ } }
+    if (sentinel !== undefined) closeSync(sentinel);
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -318,7 +357,7 @@ function coldGenesisTreeSnapshotV1(root: string): unknown[] {
   return entries;
 }
 
-async function createColdIntentFixtureV1() {
+async function createColdIntentFixtureV1(transformSource?: (source: string) => string) {
   const original = readFileSync(sourcePath, "utf8");
   assert.ok(original.includes("async function prepareColdSpawnerBootstrapIntentV1()"), "cold intent producer is not implemented");
   const source = original.replace("    return created;\n", "    if (path.basename(file) === 'intent.json') globalThis.__coldIntentPublicationHook?.();\n    return created;\n")
@@ -329,7 +368,7 @@ export { prepareColdSpawnerBootstrapIntentV1 };
 export function inspectColdIntentFixtureV1(){const state=retainedColdBootstrapIntentV1;if(!state)return null;const held=heldLease(state.lease);return {phase:state.phase,descriptor:held.descriptor,lockBytesHash:sha256(held.lockBytes.toString()),intent:state.intent,nonceHash:sha256(state.nonce)};}
 export function closeColdIntentFixtureV1(){if(retainedColdBootstrapIntentV1){const lease=retainedColdBootstrapIntentV1.lease;retainedColdBootstrapIntentV1.rootGuard?.close();closeSync(heldLease(lease).descriptor);leases.delete(lease);retainedColdBootstrapIntentV1=null;}}
 `;
-  const fixture = await createColdEpochGenesisFixtureV1(source);
+  const fixture = await createColdEpochGenesisFixtureV1(transformSource ? transformSource(source) : source);
   const port = path.join(fixture.fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   writeFileSync(port, readFileSync(port, "utf8") + '\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){return globalThis.__coldIntentProfile;}\n');
   const observation = Reflect.get(globalThis, "__coldGenesisObservation");
@@ -339,6 +378,131 @@ export function closeColdIntentFixtureV1(){if(retainedColdBootstrapIntentV1){con
   Reflect.set(globalThis, "__coldIntentProfile", { profile: { ...profileBody, profileHash: sha256(canonical(profileBody)) }, environment: { FIXTURE_SECRET: "never-persist-cold-snapshot" } });
   return fixture;
 }
+
+async function createColdFrameFixtureV1() {
+  assert.ok(readFileSync(sourcePath, "utf8").includes("function openColdSpawnerHelperFrameV1("), "cold helper frame sender is not implemented");
+  return createColdIntentFixtureV1((source) => {
+    const start = source.indexOf("function openColdSpawnerHelperFrameV1(");
+    const end = source.indexOf("\nfunction assertEpochOneActive", start);
+    assert.ok(start >= 0 && end > start);
+    const frame = source.slice(start, end).replace(
+      "  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);",
+      "  const observedFrameGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);\n  globalThis.__coldFrameGuardReadyHook?.();\n  const guard={assertStable(){observedFrameGuard.assertStable();globalThis.__coldFrameGuardCheckHook?.();},close(){globalThis.__coldFrameGuardCloseHook?.();observedFrameGuard.close();}};",
+    );
+    return (source.slice(0, start) + frame + source.slice(end))
+    .replace("  writeFileSync,", "  writeFileSync as realColdFrameWriteFileSync,")
+    .replace("  unlinkSync,", "  unlinkSync as realColdFrameUnlinkSync,")
+    .replace("  openSync,", "  openSync as realColdFrameOpenSync,")
+    .replace("  closeSync,", "  closeSync as realColdFrameCloseSync,")
+    .replace("  fsyncSync,", "  fsyncSync as realColdFrameFsyncSync,") + `
+function writeFileSync(...args:any[]){globalThis.__coldFrameWriteHook?.(...args);return realColdFrameWriteFileSync(...args);}
+function unlinkSync(target:any){realColdFrameUnlinkSync(target);globalThis.__coldFrameUnlinkHook?.(String(target));}
+function fsyncSync(fd:number){realColdFrameFsyncSync(fd);globalThis.__coldFrameSyncHook?.(fd);}
+function openSync(...args:any[]){globalThis.__coldFrameBeforeOpenHook?.(...args);const fd=realColdFrameOpenSync(...args);globalThis.__coldFrameOpenedHook?.(fd,...args);return fd;}
+function closeSync(fd:number){globalThis.__coldFrameBeforeCloseHook?.(fd);realColdFrameCloseSync(fd);globalThis.__coldFrameClosedHook?.(fd);}
+export function openColdFrameFixtureV1(){return openColdSpawnerHelperFrameV1(retainedColdBootstrapIntentV1!);}
+`;
+  });
+}
+
+test("cold helper frame retains descriptor ownership through failed close and preserves a replaced empty path", async () => {
+  for (const fault of ["directory-close", "writer-close", "guard-close", "foreign-path", "reader-open", "parent-sync", "partial-write", "file-sync"] as const) {
+    const fixture = await createColdFrameFixtureV1();
+    const owned = new Set<number>();
+    let guardDescriptors = new Set<number>();
+    let injected = false, scratchPath = "", directoryCloses = 0;
+    try {
+      await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+      const retained = fixture.isolated.inspectColdIntentFixtureV1();
+      Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, target: string) => { owned.add(fd); if (typeof target === "string" && path.basename(target).startsWith(".cold-helper-capability.")) scratchPath = target; });
+      Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => { owned.delete(fd); });
+      Reflect.set(globalThis, "__coldFrameGuardReadyHook", () => { guardDescriptors = new Set(owned); });
+      Reflect.set(globalThis, "__coldFrameBeforeOpenHook", (target: string, flags: number) => {
+        if (fault === "reader-open" && !injected && typeof target === "string" && path.basename(target).startsWith(".cold-helper-capability.") && (flags & 3) === 0) { injected = true; throw new Error("fixture frame reader open interrupted"); }
+      });
+      Reflect.set(globalThis, "__coldFrameSyncHook", (fd: number) => {
+        if (injected) return;
+        const stats = fstatSync(fd);
+        if (fault === "file-sync" && stats.isFile() && stats.nlink === 0 || fault === "parent-sync" && stats.isDirectory() && scratchPath && !existsSync(scratchPath)) { injected = true; throw new Error("fixture frame sync interrupted"); }
+      });
+      Reflect.set(globalThis, "__coldFrameWriteHook", (fd: number, bytes: Buffer) => {
+        if (fault !== "partial-write" || injected || !Buffer.isBuffer(bytes) || !bytes.includes("never-persist-cold-snapshot")) return;
+        assert.equal(fstatSync(fd).nlink, 0); injected = true;
+        writeFileSync(fd, bytes.subarray(0, 64)); throw new Error("fixture frame partial write interrupted");
+      });
+      Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => {
+        const stats = fstatSync(fd);
+        if (fault === "directory-close" && !injected && guardDescriptors.has(fd) && stats.isDirectory() && ++directoryCloses === 2) { injected = true; throw new Error("fixture directory close interrupted"); }
+        if (fault === "writer-close" && !injected && stats.isFile() && stats.nlink === 0 && stats.size > 0) { injected = true; throw new Error("fixture writer close interrupted"); }
+      });
+      Reflect.set(globalThis, "__coldFrameGuardCloseHook", () => { if (fault === "guard-close" && !injected) { injected = true; throw new Error("fixture guard close interrupted"); } });
+      Reflect.set(globalThis, "__coldFrameGuardCheckHook", () => {
+        if (fault !== "foreign-path" || injected || !scratchPath || !existsSync(scratchPath)) return;
+        injected = true;
+        renameSync(scratchPath, path.join(fixture.fixture, "owned-empty-moved"));
+        writeFileSync(scratchPath, "foreign-must-survive", { mode: 0o600 });
+      });
+      assert.throws(() => fixture.isolated.openColdFrameFixtureV1(), /frame|interrupted|already closed/);
+      assert.equal(injected, true);
+      assert.equal(owned.size, 0, `${fault}: all newly owned descriptors close on failure`);
+      assert.equal(fstatSync(retained.descriptor).nlink, 1, "transport failure must not release the retained lease");
+      if (fault === "foreign-path") assert.equal(readFileSync(scratchPath, "utf8"), "foreign-must-survive");
+      else assert.deepEqual(readdirSync(path.join(fixture.root, "cold-spawner-bootstrap-v1")), ["intent.json"]);
+    } finally {
+      for (const key of ["__coldFrameOpenedHook", "__coldFrameClosedHook", "__coldFrameBeforeOpenHook", "__coldFrameBeforeCloseHook", "__coldFrameGuardReadyHook", "__coldFrameGuardCloseHook", "__coldFrameGuardCheckHook", "__coldFrameWriteHook", "__coldFrameSyncHook", "__coldIntentProfile"]) Reflect.deleteProperty(globalThis, key);
+      for (const fd of owned) { try { closeSync(fd); } catch { /* Test-only cleanup after a demonstrated leak. */ } }
+      fixture.isolated.closeColdIntentFixtureV1(); fixture.cleanup();
+    }
+  }
+});
+
+test("cold helper frame writes secrets only after unlink and passes a read-only inherited descriptor", async () => {
+  const fixture = await createColdFrameFixtureV1();
+  let handles: { frameDescriptor: number; intentDescriptor: number } | undefined;
+  let unlinked = false, parentSynced = false, secretWrites = 0;
+  const root = path.join(fixture.root, "cold-spawner-bootstrap-v1");
+  try {
+    const intent = await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+    Reflect.set(globalThis, "__coldFrameUnlinkHook", (target: string) => { if (path.basename(target).startsWith(".cold-helper-capability.")) { unlinked = true; parentSynced = false; } });
+    Reflect.set(globalThis, "__coldFrameSyncHook", (fd: number) => { const stats = fstatSync(fd); if (unlinked && stats.isDirectory() && stats.ino === lstatSync(root).ino) parentSynced = true; });
+    Reflect.set(globalThis, "__coldFrameWriteHook", (fd: number | string, bytes: Buffer) => {
+      if (!Buffer.isBuffer(bytes) || !bytes.includes("never-persist-cold-snapshot")) return;
+      secretWrites += 1;
+      assert.equal(typeof fd, "number");
+      assert.equal(fstatSync(fd as number).nlink, 0, "secret bytes must never be written to a linked inode");
+      assert.equal(unlinked && parentSynced, true, "unlink durability precedes the first secret write");
+    });
+    handles = fixture.isolated.openColdFrameFixtureV1();
+    assert.equal(secretWrites, 1);
+    assert.deepEqual(readdirSync(root), ["intent.json"]);
+    assert.ok(!readFileSync(path.join(root, "intent.json")).includes("never-persist-cold-snapshot"));
+    const state = fixture.isolated.inspectColdIntentFixtureV1();
+    const reader = pathToFileURL(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts")).href;
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", `
+import {fstatSync,writeSync} from 'node:fs'; import {createHash} from 'node:crypto';
+import {readInternalProductionSpawnerUntrustedInheritedFrameV1} from ${JSON.stringify(reader)};
+const frame=JSON.parse(readInternalProductionSpawnerUntrustedInheritedFrameV1().toString());
+let readOnly=false;try{writeSync(3,Buffer.from('x'));}catch(error){readOnly=error.code==='EBADF';}
+const identity=fd=>{const s=fstatSync(fd,{bigint:true});return {devDecimal:String(s.dev),inoDecimal:String(s.ino)}};
+process.stdout.write(JSON.stringify({schema:frame.schema,intentHash:frame.intentHash,secretMatches:frame.environment.FIXTURE_SECRET==='never-persist-cold-snapshot',nonceHash:createHash('sha256').update(frame.nonce).digest('hex'),nlink:fstatSync(3).nlink,mode:fstatSync(3).mode&4095,readOnly,lockIdentity:identity(4),intentIdentity:identity(5)}));
+`], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, stdio: ["ignore", "pipe", "pipe", handles.frameDescriptor, state.descriptor, handles.intentDescriptor], env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(child.status, 0, child.stderr);
+    const output = JSON.parse(child.stdout);
+    assert.equal(output.schema, "setfarm.internal-production-cold-spawner-bootstrap-helper-capability.v1");
+    assert.equal(output.intentHash, intent.intentHash);
+    assert.equal(output.nonceHash, state.nonceHash);
+    assert.equal(output.secretMatches, true);
+    assert.equal(output.nlink, 0); assert.equal(output.mode, 0o600); assert.equal(output.readOnly, true);
+    assert.deepEqual(output.lockIdentity, intent.lockIdentity);
+    const intentStats = lstatSync(path.join(root, "intent.json"), { bigint: true });
+    assert.deepEqual(output.intentIdentity, { devDecimal: String(intentStats.dev), inoDecimal: String(intentStats.ino) });
+    assert.equal(fixture.isolated.inspectColdIntentFixtureV1().phase, "intent-only", "opening transport descriptors does not dispatch");
+  } finally {
+    if (handles) { closeSync(handles.frameDescriptor); closeSync(handles.intentDescriptor); }
+    for (const key of ["__coldFrameWriteHook", "__coldFrameUnlinkHook", "__coldFrameSyncHook", "__coldIntentProfile"]) Reflect.deleteProperty(globalThis, key);
+    fixture.isolated.closeColdIntentFixtureV1(); fixture.cleanup();
+  }
+});
 
 test("cold intent refuses a fresh observation crossed from its bound genesis", async () => {
   for (const swapReceipt of [false, true]) {
@@ -881,6 +1045,8 @@ export async function observeInternalProductionColdBootstrapObservationV1(){
 test("cold raw physical lock is not ordinary authority and promotes only the same held descriptor", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-raw-lock-"));
   let descriptorsBefore = 0;
+  const identity = (name: string) => { try { const stats = fstatSync(Number(name), { bigint: true }); return `${stats.dev}:${stats.ino}:${stats.mode}:${stats.nlink}`; } catch { return null; } };
+  let identitiesBefore = new Map<string, string | null>();
   try {
     const source = readFileSync(sourcePath, "utf8") + `
 export const rawLockFixtureV1 = {
@@ -891,7 +1057,9 @@ export const rawLockFixtureV1 = {
 };\n`;
     const modulePath = installRetirementFixture(fixture, source);
     const isolated = await import(`${pathToFileURL(modulePath).href}?cold-raw=${Date.now()}`);
-    descriptorsBefore = readdirSync("/dev/fd").length;
+    const namesBefore = readdirSync("/dev/fd");
+    descriptorsBefore = namesBefore.length;
+    identitiesBefore = new Map(namesBefore.map((name) => [name, identity(name)]));
     const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
     const epoch = path.join(root, "epoch-head.json");
     const lock = path.join(root, "physical-service-restart-authority.transition.lock");
@@ -926,7 +1094,10 @@ export const rawLockFixtureV1 = {
     assert.equal(existsSync(lock), false);
     await assert.rejects(async () => isolated.rawLockFixtureV1.release(abandoned), /raw.*foreign|raw.*released/);
   } finally { rmSync(fixture, { recursive: true, force: true }); }
-  assert.equal(readdirSync("/dev/fd").length, descriptorsBefore, "raw promotion and release leak no descriptors");
+  const namesAfter = readdirSync("/dev/fd");
+  const added = namesAfter.map((name) => [name, identity(name)] as const).filter(([name, value]) => value !== null && identitiesBefore.get(name) !== value);
+  const diagnostic = namesAfter.length !== descriptorsBefore && added.length > 0 ? spawnSync("/usr/sbin/lsof", ["-nP", "-a", "-p", String(process.pid), "-d", added.map(([name]) => name).join(",")], { encoding: "utf8", timeout: 4000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } }).stdout : "";
+  assert.equal(namesAfter.length, descriptorsBefore, `raw promotion and release leak no descriptors: ${JSON.stringify(added)} ${diagnostic}`);
 });
 
 test("P4 restart transition lease authenticates epoch one", async () => {

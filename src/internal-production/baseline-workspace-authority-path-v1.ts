@@ -26,17 +26,22 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
   const paths = [root, ...segments.map((_, index) => path.join(root, ...segments.slice(0, index + 1)))];
   const held: Array<Readonly<{ path: string; descriptor: number; identity: BigIntStats }>> = [];
   let closed = false;
+  let closing = false;
   const fail = (): never => { throw new Error("INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID"); };
   const same = (left: BigIntStats, right: BigIntStats): boolean => left.isDirectory() && !left.isSymbolicLink()
     && right.isDirectory() && !right.isSymbolicLink() && left.dev === right.dev && left.ino === right.ino
     && left.mode === right.mode && left.uid === right.uid;
   const close = (): void => {
     if (closed) return;
+    closing = true;
+    while (held.length > 0) {
+      closeSync(held[held.length - 1]!.descriptor);
+      held.pop();
+    }
     closed = true;
-    for (const entry of held.reverse()) closeSync(entry.descriptor);
   };
   const assertStable = (): void => {
-    if (closed) fail();
+    if (closed || closing) fail();
     for (const entry of held) {
       if (!same(entry.identity, fstatSync(entry.descriptor, { bigint: true }))
         || !same(entry.identity, lstatSync(entry.path, { bigint: true }))) fail();
