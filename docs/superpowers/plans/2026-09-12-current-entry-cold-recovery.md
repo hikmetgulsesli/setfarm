@@ -476,3 +476,17 @@ passed. Whole-branch delivery and live recovery remain pending.
   all16 source-manifest checks passed. Global all-root daemon/launcher absence,
   stable singleton/PID residue, complete observation bracket and epoch genesis
   remain next; no public four-service ABI or verifier pair changed.
+- Added the private read-only cold-spawner absence leaf, still not admission.
+  It pins account-home/singleton ancestors, checks fixed launcher/build/plist/job,
+  performs bounded wide global process scans across roots, and preserves PID
+  residue. A canonical stale PID is accepted only after census absence and
+  explicit ESRCH; live/reused/ambiguous PID or any lock presence refuses without
+  deletion/reclamation. PID writers' historical0644 mode remains accepted.
+  Review found empty successful process output could falsely prove absence;
+  actual-parser RED reproduced it, then own-PID/UID/non-zombie witness checks
+  fixed it. Raw-byte harness also asserts exact ps argv. Focused ordinary/cold/
+  physical tests passed3/3 (14.419s), TypeScript and source manifests16/16 passed;
+  independent rereview found no remaining issue. Actual live paths are account-
+  owned directories (.openclaw0700, setfarm0755), both PID and lock absent.
+  Complete cold incident/source/three-service/zero-owner bracket, retirement
+  history absence, bound genesis and transport still remain; no launch occurred.

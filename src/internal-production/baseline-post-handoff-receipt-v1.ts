@@ -8197,6 +8197,104 @@ function observeDetachedSetfarmServiceV1(
   return recursivelyFreeze({ ...common, listenerOwnerCount: 1 as const, listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(listenersBefore.bytes) } });
 }
 
+// Read-only absence leaf, not launch authority. The cold controller must bind
+// this evidence to the incident/source/zero-owner bracket under its lease.
+function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: string; buildHash: string }>) {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("cold spawner UID is invalid");
+  const home = userInfo().homedir;
+  const singletonRoot = path.join(home, ".openclaw", "setfarm");
+  const pins: Array<{ target: string; descriptor: number; identity: BigIntStats }> = [];
+  const metadata = (stats: BigIntStats) => ({ dev: String(stats.dev), ino: String(stats.ino), uid: String(stats.uid),
+    mode: Number(stats.mode & 0o7777n), nlink: String(stats.nlink), size: String(stats.size), mtimeNs: String(stats.mtimeNs), ctimeNs: String(stats.ctimeNs) });
+  const assertPins = () => {
+    for (const pin of pins) {
+      const atPath = lstatSync(pin.target, { bigint: true });
+      if (!atPath.isDirectory() || atPath.isSymbolicLink() || realpathSync(pin.target) !== pin.target
+        || !sameRegularMetadata(pin.identity, atPath) || !sameRegularMetadata(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) currentEntryFail("cold singleton ancestor changed");
+    }
+  };
+  try {
+    for (const target of [home, path.join(home, ".openclaw"), singletonRoot]) {
+      if (realpathSync(target) !== target) currentEntryFail("cold singleton ancestor is not physical");
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      let identity: BigIntStats;
+      try { identity = fstatSync(descriptor, { bigint: true }); } catch (error) { closeSync(descriptor); throw error; }
+      pins.push({ target, descriptor, identity });
+      if (!identity.isDirectory() || identity.uid !== BigInt(uid!) || (identity.mode & 0o022n) !== 0n
+        || identity.dev !== pins[0]!.identity.dev) currentEntryFail("cold singleton ancestor ownership is invalid");
+      assertPins();
+    }
+    const profile = detachedSetfarmServiceProfileV1("com.setrox.setfarm-spawner");
+    const cli = profile.launchArguments[0]!;
+    const expectedCli = path.join(fixedRepositoryRoot(), "dist", "cli", "cli.js");
+    const cliBefore = lstatSync(cli, { bigint: true });
+    if (!cliBefore.isSymbolicLink() || cliBefore.nlink !== 1n || cliBefore.uid !== BigInt(uid!) || realpathSync(cli) !== expectedCli) currentEntryFail("cold spawner launcher link is invalid");
+    const entryDevice = lstatSync(path.dirname(profile.entrypoint), { bigint: true }).dev;
+    const entryBefore = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1);
+    const plistBefore = observeDetachedLaunchPlistV1(profile);
+    const launchBefore = observeDetachedLaunchProjectionV1(profile, uid!);
+    for (const [key, value] of Object.entries(plistBefore.environment)) if (launchBefore.environment[key] !== value) currentEntryFail("cold spawner launch environment is crossed");
+    const observeAbsentProcesses = () => {
+      const rows = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-ww", "-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+      const observer = rows.filter((row) => row.pid === process.pid);
+      if (observer.length !== 1 || observer[0]!.uid !== uid || observer[0]!.stat.includes("Z")) currentEntryFail("cold spawner global process observer is missing or crossed");
+      for (const row of rows) {
+        const tokens = row.command.split(/\s+/).map((token) => token.replace(/^["']|["']$/g, ""));
+        const daemon = tokens.some((token) => /(?:^|\/)spawner\.(?:js|ts|mjs|cjs)$/.test(token));
+        const launcher = tokens.includes("spawner") && tokens.some((token) => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token));
+        if (daemon || launcher) currentEntryFail("cold spawner global process family is present");
+      }
+      return rows;
+    };
+    const readPidResidue = (rows: readonly PhysicalProcessV1[]) => {
+      assertPins();
+      try {
+        lstatSync(path.join(singletonRoot, "spawner.lock"), { bigint: true });
+        currentEntryFail("cold spawner singleton lock is present");
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      }
+      const pidPath = path.join(singletonRoot, "spawner.pid");
+      let observed: StableRegular;
+      try { observed = readStableRegular(pidPath, 32, pins[0]!.identity.dev, 1); } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        assertPins();
+        return { state: "absent" as const };
+      }
+      const text = observed.bytes.toString("ascii");
+      if (!Buffer.from(text, "ascii").equals(observed.bytes) || !/^[1-9][0-9]*$/.test(text)
+        || observed.stats.uid !== BigInt(uid!) || (observed.stats.mode & 0o022n) !== 0n) currentEntryFail("cold spawner PID residue is invalid");
+      const pid = Number(text);
+      if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || rows.some((row) => row.pid === pid)) currentEntryFail("cold spawner PID is not absent");
+      let definitelyDead = false;
+      try { process.kill(pid, 0); } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ESRCH") definitelyDead = true;
+        else currentEntryFail("cold spawner PID liveness is ambiguous");
+      }
+      if (!definitelyDead) currentEntryFail("cold spawner PID is live or reused");
+      assertPins();
+      return { state: "stale-dead-pid" as const, pid, bytesSha256: sha256(observed.bytes), identity: metadata(observed.stats) };
+    };
+    const pidBefore = readPidResidue(observeAbsentProcesses());
+    const launchAfter = observeDetachedLaunchProjectionV1(profile, uid!);
+    const plistAfter = observeDetachedLaunchPlistV1(profile);
+    const entryAfter = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1);
+    const pidAfter = readPidResidue(observeAbsentProcesses());
+    const cliAfter = lstatSync(cli, { bigint: true });
+    assertPins();
+    if (canonicalComparable(pidBefore) !== canonicalComparable(pidAfter) || canonicalComparable(launchBefore) !== canonicalComparable(launchAfter)
+      || !sameStableRegularV1(plistBefore, plistAfter) || !sameStableRegularV1(entryBefore, entryAfter)
+      || !cliAfter.isSymbolicLink() || !sameRegularMetadata(cliBefore, cliAfter) || realpathSync(cli) !== expectedCli) currentEntryFail("cold spawner absence changed during observation");
+    const body = { schema: "setfarm.internal-production-cold-spawner-absence.v1" as const, source, uid,
+      globalSpawnerFamilyCount: 0 as const, singletonLockState: "absent" as const, pidFile: pidBefore,
+      ancestors: pins.map((pin) => ({ path: pin.target, ...metadata(pin.identity) })),
+      launcher: { path: cli, target: expectedCli, ...metadata(cliBefore) }, entrypoint: profile.entrypoint,
+      entrypointBytesSha256: sha256(entryBefore.bytes), plistBytesSha256: sha256(plistBefore.bytes), launchProjectionHash: hashCanonicalJson(launchBefore) };
+    return recursivelyFreeze({ ...body, absenceHash: hashCanonicalJson(body) });
+  } finally { for (const pin of pins.reverse()) closeSync(pin.descriptor); }
+}
+
 function observeServiceProcessV1(
   label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
   port: null | 3333 | 3080 | 18789,

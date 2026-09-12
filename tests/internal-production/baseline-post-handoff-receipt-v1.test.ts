@@ -15592,7 +15592,7 @@ function runFixtureExpressionAsync(root: string, expression: string): Promise<Re
   });
 }
 
-function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none"): ReturnType<typeof spawnSync> {
+function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" = "ordinary"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const start = source.indexOf("type DetachedSetfarmServiceLabelV1 =");
   const end = source.indexOf("\nfunction observeServiceProcessV1(", start);
@@ -15602,6 +15602,7 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
     "function observeDetachedSetfarmServiceV1(",
     "export function observeDetachedSetfarmServiceV1(",
   );
+  const processParser = topLevelFunctionRegionV1(source, "parsePhysicalProcessesV1").replace("function parsePhysicalProcessesV1(", "function parseColdPhysicalProcessesForHarnessV1(");
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-detached-census-")));
   const harnessPath = path.join(root, "harness.ts");
   const canonicalRoot = path.join(root, "workspace", "setfarm");
@@ -15631,17 +15632,29 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
   );
   writePlist("com.setrox.setfarm-spawner", [launcher, "spawner", "start"], "setfarm-spawner");
   writePlist("com.setrox.setfarm-dashboard", [launcher, "dashboard", "start", "--port", "3333"], "setfarm-dashboard");
+  const singletonRoot = path.join(fixtureHome, ".openclaw", "setfarm");
+  mkdirSync(singletonRoot, { recursive: true, mode: 0o700 });
+  if (["stale_pid", "pid_permission_denied", "pid_bad", "pid_writable", "live_pid"].includes(fault)) {
+    writeFileSync(path.join(singletonRoot, "spawner.pid"), fault === "pid_bad" ? "02147483647\n" : fault === "live_pid" ? String(process.pid) : "2147483647", { mode: fault === "pid_writable" ? 0o666 : 0o644 });
+    if (fault === "pid_writable") chmodSync(path.join(singletonRoot, "spawner.pid"), 0o666);
+  }
+  if (fault === "dead_lock") writeFileSync(path.join(singletonRoot, "spawner.lock"), "2147483647\n", { mode: 0o644 });
+  if (fault === "pid_symlink") { writeFileSync(path.join(fixtureHome, "other.pid"), "2147483647"); symlinkSync(path.join(fixtureHome, "other.pid"), path.join(singletonRoot, "spawner.pid")); }
   const harness = String.raw`
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync as realRealpathSync, symlinkSync, unlinkSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import path from "node:path";
-const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432;
+const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432, PHYSICAL_PROCESS_CAP_V1=4096;
 type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
 const fault=process.env.FAULT??"none";
+const mode=process.env.MODE??"ordinary";
+if(fault==="pid_permission_denied")process.kill=((pid,signal)=>{if(pid!==2147483647||signal!==0)throw new Error("unexpected process signal");throw Object.assign(new Error("denied"),{code:"EPERM"})}) as typeof process.kill;
 let activeLabel="", scan=0, launchScan=0;
+function realpathSync(target:string){if(mode==="cold"&&fault==="cli_drift"&&scan>0&&target.endsWith("/.local/bin/setfarm"))return fixedRepositoryRoot()+"/dist/spawner.js";return realRealpathSync(target)}
 function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const value=bytes.toString("utf8");if(!Buffer.from(value,"utf8").equals(bytes))currentEntryFail(label);return value}
 function fixedRepositoryRoot(){return process.env.CANONICAL_ROOT!}
 function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
 function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const d=Object.getOwnPropertyDescriptor(value as object,key);if(d&&"value" in d)recursivelyFreeze(d.value)}Object.freeze(value)}return value}
@@ -15658,22 +15671,40 @@ function plistText(label:string,args:readonly string[]){const home=userInfo().ho
 ...(label.endsWith("dashboard")?{SETFARM_OPERATIONAL_WRITE_TOKEN:"fixture-token"}:{})},StartInterval:60,ProgramArguments:actual,StandardErrorPath:home+"/.openclaw/logs/"+stem+".watch.err.log",RunAtLoad:true,Label:label})}
 function boundedChildText(executable:string,args:readonly string[],_label:string,input?:Buffer){if(executable==="/bin/launchctl"){activeLabel=args[1]!.split("/").at(-1)!;const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const result=launchText(activeLabel,profile.launchArguments);launchScan+=1;return result}if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_args")parsed.ProgramArguments.push("extra");return JSON.stringify(parsed)}if(executable==="/bin/ps")return (fault==="wrong_comm"?"/tmp/crossed":realpathSync(process.execPath))+"\n";throw new Error("unexpected command "+executable)}
 function processRows(){const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const pid=activeLabel.endsWith("spawner")?101:102;const node=realpathSync(process.execPath);const args=[node,profile.entrypoint,...profile.daemonArguments];if(fault==="wrong_args")args.push("extra");const row={uid:fault==="selected_nobody"?-2:fault==="wrong_uid"?process.getuid!()+1:process.getuid!(),pid,ppid:fault==="wrong_ppid"?2:1,pgid:fault==="wrong_pgid"?7:pid,stat:fault==="zombie"?"Z":fault==="stat_drift"&&scan>0?"R":"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:args.join(" "),cwd:null};const rows=fault==="zero"?[]:[Object.freeze(row)];if(fault==="multiple"||(fault==="multiple_after"&&scan>0))rows.push(Object.freeze({...row,pid:pid+20,pgid:pid+20,command:[node,profile.entrypoint,"crossed"].join(" ")}));if(fault==="drift"&&scan>0&&rows[0])rows[0]=Object.freeze({...row,lstart:"Sun Aug 16 15:42:29 2026"});if(fault==="cli_drift"&&scan>0){unlinkSync(profile.launchArguments[0]!);symlinkSync(profile.entrypoint,profile.launchArguments[0]!)}scan+=1;return Object.freeze(rows)}
-function runPhysicalCommandV1(executable:string,args:readonly string[]){if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
-function parsePhysicalProcessesV1(){return processRows()}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){if(mode==="cold"&&executable==="/bin/ps"){
+  if(JSON.stringify(args)!==JSON.stringify(["-ww","-axo","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]))throw new Error("cold global process argv is crossed");
+  const rows=coldProcessRows();return {status:0,stdout:Buffer.from(rows.map(row=>row.uid+" "+row.pid+" "+row.ppid+" "+row.pgid+" "+row.stat+" "+row.lstart+" "+row.command).join("\n")+"\n")};
+}if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
+function coldProcessRows(){
+  const pass=scan++;
+  if(fault==="empty_processes")return [];
+  const own={uid:process.getuid!()+(fault==="wrong_self_uid"?1:0),pid:fault==="omitted_self"?929292:process.pid,ppid:1,pgid:process.pid,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:"/usr/bin/node /fixture/controller.js",cwd:null};
+  if(fault==="foreign_spawner"||fault==="foreign_launcher"||fault==="cold_appears"&&pass>0){
+    const command=fault==="foreign_launcher"?"/usr/bin/node /unrelated/worktree/dist/cli/cli.js spawner start":"/usr/bin/node /unrelated/worktree/dist/spawner.js";
+    return [own,{uid:process.getuid!()+1,pid:919191,ppid:1,pgid:919191,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command,cwd:null}];
+  }
+  return [own];
+}
+${processParser}
+function parsePhysicalProcessesV1(bytes:Buffer){return mode==="cold"?parseColdPhysicalProcessesForHarnessV1(bytes):processRows()}
 function parseProcessListenersV1(_bytes:Buffer,pid:number){if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 function observeProcessListenersV1(pid:number){if(activeLabel.endsWith("spawner"))return Object.freeze([]);if(fault==="listener_missing")return Object.freeze([]);if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 ${slice}
 const label=process.env.LABEL as DetachedSetfarmServiceLabelV1;
-const result=observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)}));
+const source=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
+const result=mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);
 process.stdout.write(JSON.stringify(result)+"\n");
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
-    return spawnSync(process.execPath, ["--import", tsxLoader, harnessPath], {
+    const beforeRun = filesystemTreeSnapshot(root);
+    const result = spawnSync(process.execPath, ["--import", tsxLoader, harnessPath], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, LABEL: label, FAULT: fault, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
+      env: { ...process.env, LABEL: label, FAULT: fault, MODE: mode, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
     });
+    if (mode === "cold") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "cold absence leaf must not mutate PID/lock or any fixture files");
+    return result;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -17339,6 +17370,24 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const refused = runOpenClawServiceHarness(bytes);
       assert.notEqual(refused.status, 0);
       assert.equal(refused.stdout, "");
+    }
+  });
+
+  it("cold spawner absence authenticates all-root processes and read-only singleton residue", () => {
+    for (const fault of ["none", "stale_pid"]) {
+      const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "cold");
+      assert.equal(result.status, 0, result.stderr);
+      const value = JSON.parse(result.stdout);
+      assert.equal(value.schema, "setfarm.internal-production-cold-spawner-absence.v1");
+      assert.equal(value.globalSpawnerFamilyCount, 0);
+      assert.equal(value.singletonLockState, "absent");
+      assert.equal(value.pidFile.state, fault === "stale_pid" ? "stale-dead-pid" : "absent");
+      if (fault === "stale_pid") assert.equal(value.pidFile.pid, 2147483647);
+    }
+    for (const fault of ["empty_processes", "omitted_self", "wrong_self_uid", "foreign_spawner", "foreign_launcher", "cold_appears", "live_pid", "pid_bad", "pid_writable", "pid_symlink", "pid_permission_denied", "dead_lock", "launch_running", "active_count", "cli_drift", "launch_environment", "plist_args"]) {
+      const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "cold");
+      assert.notEqual(result.status, 0, `${fault} must not grant cold absence`);
+      assert.equal(result.stdout, "");
     }
   });
 
