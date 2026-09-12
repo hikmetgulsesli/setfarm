@@ -134,6 +134,15 @@ type LeaseStateV1 = {
 };
 
 const leases = new WeakMap<object, LeaseStateV1>();
+type RawPhysicalTransitionLockV1 = Readonly<{
+  schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
+}>;
+type RawPhysicalTransitionLockStateV1 = Readonly<{
+  descriptor: number;
+  lockBytes: Buffer;
+  rootGuard: PrivateDirectoryGuardV1;
+}>;
+const rawPhysicalTransitionLocksV1 = new WeakMap<object, RawPhysicalTransitionLockStateV1>();
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -760,11 +769,13 @@ function heldLease(lease: InternalProductionPhysicalServiceRestartAuthorityTrans
   return state;
 }
 
-async function acquireTransitionLeaseWithEpochAssertionV1(assertEpoch: () => Readonly<Record<string, unknown>>): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
-  assertEpoch();
+// Lock ownership alone is not restart or cold-genesis admission. A cold caller
+// must authenticate its incident/history before reclaim and publish a bound
+// genesis/head before promoting this same descriptor into ordinary authority.
+async function acquireRawPhysicalTransitionLockV1(): Promise<RawPhysicalTransitionLockV1> {
   const paths = rootPaths();
   const rootGuard = ensurePrivateAuthorityDirectoryV1(paths.root);
-  let rootGuardClosed = false;
+  let rootGuardTransferred = false;
   let opened: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
   try {
     rootGuard.assertStable();
@@ -782,14 +793,12 @@ async function acquireTransitionLeaseWithEpochAssertionV1(assertEpoch: () => Rea
       reclaimDeadLockOnce(paths.lock);
       opened = openNewLock(paths.lock);
     }
-    assertEpoch();
-    const lease = Object.freeze({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1" as const });
+    const raw = Object.freeze({ schema: "setfarm.internal-production-raw-physical-transition-lock.v1" as const });
     rootGuard.assertStable();
-    rootGuard.close();
-    rootGuardClosed = true;
-    leases.set(lease, { descriptor: opened.descriptor, lockBytes: opened.lockBytes, phase: "held", authorityOwner: "baseline-a" });
+    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard });
+    rootGuardTransferred = true;
     opened = null;
-    return lease;
+    return raw;
   } catch (error) {
     if (opened) {
       try {
@@ -804,8 +813,75 @@ async function acquireTransitionLeaseWithEpochAssertionV1(assertEpoch: () => Rea
     }
     throw error;
   } finally {
-    if (!rootGuardClosed) rootGuard.close();
+    if (!rootGuardTransferred) rootGuard.close();
   }
+}
+
+function heldRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): RawPhysicalTransitionLockStateV1 {
+  const state = rawPhysicalTransitionLocksV1.get(raw);
+  if (!state || Reflect.ownKeys(raw).length !== 1 || raw.schema !== "setfarm.internal-production-raw-physical-transition-lock.v1") {
+    fail("raw lock is foreign, cloned, released or promoted");
+  }
+  return state;
+}
+
+function assertRawPhysicalTransitionLockStableV1(state: RawPhysicalTransitionLockStateV1): void {
+  state.rootGuard.assertStable();
+  const held = descriptorIdentity(state.descriptor);
+  const atPath = lstatSync(rootPaths().lock, { bigint: true });
+  if (held.devDecimal !== String(atPath.dev) || held.inoDecimal !== String(atPath.ino)
+    || !readStableRetirementBytes(rootPaths().lock, "raw physical transition lock").equals(state.lockBytes)) {
+    fail("raw physical transition lock changed");
+  }
+  state.rootGuard.assertStable();
+}
+
+function promoteRawPhysicalTransitionLockV1(
+  raw: RawPhysicalTransitionLockV1,
+  assertEpoch: () => Readonly<Record<string, unknown>>,
+): InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1 {
+  const state = heldRawPhysicalTransitionLockV1(raw);
+  assertRawPhysicalTransitionLockStableV1(state);
+  assertEpoch();
+  const lease = Object.freeze({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1" as const });
+  assertRawPhysicalTransitionLockStableV1(state);
+  state.rootGuard.close();
+  leases.set(lease, { descriptor: state.descriptor, lockBytes: state.lockBytes, phase: "held", authorityOwner: "baseline-a" });
+  rawPhysicalTransitionLocksV1.delete(raw);
+  return lease;
+}
+
+function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
+  const state = heldRawPhysicalTransitionLockV1(raw);
+  assertRawPhysicalTransitionLockStableV1(state);
+  assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+  cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes);
+  try { state.rootGuard.assertStable(); }
+  finally {
+    try { state.rootGuard.close(); }
+    finally { closeSync(state.descriptor); rawPhysicalTransitionLocksV1.delete(raw); }
+  }
+}
+
+function abandonRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
+  const state = heldRawPhysicalTransitionLockV1(raw);
+  try {
+    try {
+      state.rootGuard.assertStable();
+      cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes);
+      closeSync(state.descriptor);
+    } catch {
+      if (abandonedAcquireV1) fail("multiple abandoned transition-lock acquisitions are not permitted");
+      abandonedAcquireV1 = { descriptor: state.descriptor, lockBytes: state.lockBytes };
+    }
+  } finally { rawPhysicalTransitionLocksV1.delete(raw); state.rootGuard.close(); }
+}
+
+async function acquireTransitionLeaseWithEpochAssertionV1(assertEpoch: () => Readonly<Record<string, unknown>>): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {
+  assertEpoch();
+  const raw = await acquireRawPhysicalTransitionLockV1();
+  try { return promoteRawPhysicalTransitionLockV1(raw, assertEpoch); }
+  catch (error) { abandonRawPhysicalTransitionLockV1(raw); throw error; }
 }
 
 export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(): Promise<InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1> {

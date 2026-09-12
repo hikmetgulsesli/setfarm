@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -236,6 +236,57 @@ export async function resolveInternalProductionBaselineRestartSequenceReceiptV1(
   writeFileSync(path.join(epochRoot, "epoch-head.json"), `${canonical({ ...epochBody, epochRef: `setfarm://internal-production/physical-service-restart-authority-epoch/sha256/${epochHash}`, epochHash })}\n`, { mode: 0o600 });
   return fixtureModulePath;
 }
+
+test("cold raw physical lock is not ordinary authority and promotes only the same held descriptor", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-raw-lock-"));
+  let descriptorsBefore = 0;
+  try {
+    const source = readFileSync(sourcePath, "utf8") + `
+export const rawLockFixtureV1 = {
+  acquire: typeof acquireRawPhysicalTransitionLockV1 === "function" ? acquireRawPhysicalTransitionLockV1 : undefined,
+  promote: (raw) => promoteRawPhysicalTransitionLockV1(raw, assertEpochOneActive),
+  release: (raw) => releaseRawPhysicalTransitionLockV1(raw),
+  descriptor: (value) => rawPhysicalTransitionLocksV1.get(value)?.descriptor ?? leases.get(value)?.descriptor,
+};\n`;
+    const modulePath = installRetirementFixture(fixture, source);
+    const isolated = await import(`${pathToFileURL(modulePath).href}?cold-raw=${Date.now()}`);
+    descriptorsBefore = readdirSync("/dev/fd").length;
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const epoch = path.join(root, "epoch-head.json");
+    const lock = path.join(root, "physical-service-restart-authority.transition.lock");
+    const historicalHead = readFileSync(epoch);
+    unlinkSync(epoch);
+    await assert.rejects(isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(), /ENOENT/);
+    assert.equal(existsSync(lock), false, "ordinary admission must not create a lock when epoch is absent");
+    const raw = await isolated.rawLockFixtureV1.acquire();
+    assert.equal(Object.isFrozen(raw), true);
+    assert.deepEqual(Reflect.ownKeys(raw), ["schema"]);
+    const descriptor = isolated.rawLockFixtureV1.descriptor(raw);
+    const inode = fstatSync(descriptor).ino;
+    const lockBytes = readFileSync(lock);
+    assert.equal(statSync(lock).ino, inode);
+    assert.equal(existsSync(epoch), false, "raw ownership creates no epoch or genesis");
+    await assert.rejects(isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(raw), /foreign, cloned, or released/);
+    await assert.rejects(async () => isolated.rawLockFixtureV1.release(structuredClone(raw)), /raw.*foreign|raw.*cloned/);
+    await assert.rejects(async () => isolated.rawLockFixtureV1.promote(raw), /ENOENT/);
+    assert.deepEqual(readFileSync(lock), lockBytes, "failed promotion retains the exact raw owner");
+    assert.equal(fstatSync(descriptor).ino, inode);
+    writeFileSync(epoch, historicalHead, { flag: "wx", mode: 0o600 });
+    const lease = await isolated.rawLockFixtureV1.promote(raw);
+    assert.equal(isolated.rawLockFixtureV1.descriptor(lease), descriptor);
+    assert.equal(statSync(lock).ino, inode);
+    assert.deepEqual(readFileSync(lock), lockBytes, "promotion never unlocks or creates a replacement lock");
+    await assert.rejects(isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(), /lease is unavailable/);
+    await assert.rejects(async () => isolated.rawLockFixtureV1.promote(raw), /raw.*foreign|raw.*released|raw.*promoted/);
+    await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    assert.equal(existsSync(lock), false);
+    const abandoned = await isolated.rawLockFixtureV1.acquire();
+    await isolated.rawLockFixtureV1.release(abandoned);
+    assert.equal(existsSync(lock), false);
+    await assert.rejects(async () => isolated.rawLockFixtureV1.release(abandoned), /raw.*foreign|raw.*released/);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+  assert.equal(readdirSync("/dev/fd").length, descriptorsBefore, "raw promotion and release leak no descriptors");
+});
 
 test("P4 restart transition lease authenticates epoch one", async () => {
   const module = await import(`../../src/internal-production/baseline-restart-authority-retirement-v1.js?p4-lease=${Date.now()}`);
@@ -688,7 +739,7 @@ test("P4 retirement adopts a later exact settlement without redispatch", async (
     const helperSettlementHash = sha256(canonical(settlementBody));
     const helperSettlementRef = `setfarm://internal-production/pre-schema-spawner-rebind-helper-settlement/sha256/${helperSettlementHash}`;
     const settlementDirectory = path.join(root, "pre-schema-helper-settlements/sha256", helperSettlementHash.slice(0, 2));
-    mkdirSync(settlementDirectory, { recursive: true });
+    mkdirSync(settlementDirectory, { recursive: true, mode: 0o700 });
     const settlementPath = path.join(settlementDirectory, `${helperSettlementHash}.json`);
     writeFileSync(settlementPath, `${canonical({ ...settlementBody, helperSettlementRef, helperSettlementHash })}\n`, { mode: 0o600 });
     const settlementTempOnly = path.join(settlementDirectory, `.${helperSettlementHash}.json.${"b".repeat(32)}.tmp`);
@@ -738,7 +789,7 @@ test("P4 retirement preserves a dead-owner lock while dispatch settlement is unk
     const helperSettlementHash = sha256(canonical(settlementBody));
     const helperSettlementRef = `setfarm://internal-production/pre-schema-spawner-rebind-helper-settlement/sha256/${helperSettlementHash}`;
     const settlementDirectory = path.join(root, "pre-schema-helper-settlements/sha256", helperSettlementHash.slice(0, 2));
-    mkdirSync(settlementDirectory, { recursive: true });
+    mkdirSync(settlementDirectory, { recursive: true, mode: 0o700 });
     const settlementPath = path.join(settlementDirectory, `${helperSettlementHash}.json`);
     const settlementTemporary = path.join(settlementDirectory, `.${helperSettlementHash}.json.${"5".repeat(32)}.tmp`);
     writeFileSync(settlementPath, `${canonical({ ...settlementBody, helperSettlementRef, helperSettlementHash })}\n`, { mode: 0o600 });
@@ -787,7 +838,7 @@ test("P4 retirement classifies every post-claim helper failure as settlement unk
     const helperSettlementHash = sha256(canonical(settlementBody));
     const helperSettlementRef = `setfarm://internal-production/pre-schema-spawner-rebind-helper-settlement/sha256/${helperSettlementHash}`;
     const settlementDirectory = path.join(root, "pre-schema-helper-settlements/sha256", helperSettlementHash.slice(0, 2));
-    mkdirSync(settlementDirectory, { recursive: true });
+    mkdirSync(settlementDirectory, { recursive: true, mode: 0o700 });
     const settlementTemporary = path.join(settlementDirectory, `.${helperSettlementHash}.json.${"e".repeat(32)}.tmp`);
     writeFileSync(settlementTemporary, `${canonical({ ...settlementBody, helperSettlementRef, helperSettlementHash })}\n`, { mode: 0o600 });
     await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
@@ -872,7 +923,7 @@ test("P4 retirement removes only its exact lock after acquire faults", async () 
     ["fsync", "    fsyncSync(descriptor);", "    fsyncSync(descriptor); throw new Error('P4_ACQUIRE_FSYNC_FAULT');"],
     ["parent-fsync", "    fsyncParent(lock);\n    const stats = fstatSync(descriptor, { bigint: true });", "    fsyncParent(lock); throw new Error('P4_ACQUIRE_PARENT_FSYNC_FAULT');\n    const stats = fstatSync(descriptor, { bigint: true });"],
     ["fstat", "    const stats = fstatSync(descriptor, { bigint: true });", "    throw new Error('P4_ACQUIRE_FSTAT_FAULT');\n    const stats = fstatSync(descriptor, { bigint: true });"],
-    ["second-epoch", "    assertEpoch();\n    const lease", "    throw new Error('P4_ACQUIRE_SECOND_EPOCH_FAULT');\n    const lease"],
+    ["second-epoch", "  assertEpoch();\n  const lease", "  throw new Error('P4_ACQUIRE_SECOND_EPOCH_FAULT');\n  const lease"],
   ] as const;
   for (const [name, needle, replacement] of injections) {
     assert.equal(original.includes(needle), true, `${name} injection target exists`);

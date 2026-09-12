@@ -519,3 +519,26 @@ passed. Whole-branch delivery and live recovery remain pending.
   disposable databases were dropped. The adapter now copies both actual
   transitive helpers and exercises exact-zero/malformed aggregate responses
   before allocating a DB, preventing this setup defect from wasting a PG run.
+- Corrected owning PG rerun at326860d2 passed16/16 (136.046s), including real
+  catalog-only journal, view, index, type, overloaded function and disabled
+  misattached trigger negatives with unchanged snapshots. All a25c672a4d3165b24be43b4c
+  disposable DBs were dropped. Live MC/API and dashboard remain HTTP200 and the
+  deployed main worktree is clean; no live migration or restart occurred.
+- Before changing epoch acquisition, baseline retirement suite exposed two
+  fixture-only failures (17/19): test-created settlement shards used default
+  0755 despite the shared workspace guard requiring0700. The two failing sites
+  and one latent equivalent site now explicitly request0700; production guards
+  remain unchanged. This restores the existing recovery cases needed to verify
+  the same-descriptor genesis lease work rather than hiding those failures.
+- After those fixture corrections, the unchanged retirement suite passed19/19
+  (8.148s). A new executing absent-head/raw-lock test then failed because the
+  separate raw acquisition did not exist. Factored the existing physical lock
+  into a private frozen WeakMap capability, with separate same-FD promotion and
+  release; ordinary admission keeps both epoch checks and unchanged exports.
+  Raw handles cannot serve as ordinary leases or be cloned/re-promoted.
+  The fixture FD baseline now starts after loader initialization, and the old
+  second-epoch fault hook follows its moved but unchanged semantic boundary.
+  Complete retirement suite passed20/20 (8.405s), source manifests16/16
+  (5.086s), TypeScript and independent review passed. No bound genesis/head or
+  cold dispatch exists yet. The abandonment path remains acquisition-only;
+  future published cold ownership needs explicit journal retention rules.
