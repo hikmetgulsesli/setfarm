@@ -196,7 +196,7 @@ it("legacy schema31 census authenticates terminal published findings without mut
 
 it("cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes", async () => {
   const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
-  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "currentEntryFail"].map((name) => {
+  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "canonicalComparable", "compareBytes", "currentEntryFail"].map((name) => {
     const match = new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, "m").exec(source);
     assert.ok(match, `${name} is the actual private implementation`);
     const tail = source.slice(match.index + match[0].length);
@@ -207,6 +207,11 @@ it("cold pre32 catalog rejects unjournaled relations and orphan routines or trig
   const compiled = transformSync(`${regions.join("\n")}\nexport {requireColdPre32CatalogAbsenceV1};`, { loader: "ts", format: "cjs", target: "node22" }).code;
   const module = { exports: {} as { requireColdPre32CatalogAbsenceV1: (sql: TestDatabase["sql"]) => Promise<void> } };
   new Function("module", "exports", compiled)(module, module.exports);
+  const absent = { laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" };
+  await module.exports.requireColdPre32CatalogAbsenceV1((async () => [absent]) as unknown as TestDatabase["sql"]);
+  for (const rows of [[], [absent, absent], [{ ...absent, typeCount: 0 }], [{ ...absent, triggerCount: "1" }], [{ ...absent, extra: "0" }]]) {
+    await assert.rejects(() => module.exports.requireColdPre32CatalogAbsenceV1((async () => rows) as unknown as TestDatabase["sql"]), /cold bootstrap migration32\/33 catalog or journal is not absent/);
+  }
   const database = await createIsolatedMigration31TestDatabase();
   const { sql } = database;
   try {

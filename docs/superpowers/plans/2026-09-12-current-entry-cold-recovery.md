@@ -513,3 +513,9 @@ passed. Whole-branch delivery and live recovery remain pending.
   rereview passed. The complete owning real-PG run remains pending.
   This is not genesis or launch admission: retirement/cutover history under the
   physical transition lock, bound epoch genesis and cold transport remain next.
+- First complete owning PG run at0f936e41 finished16 tests:15 passed, one new
+  test-adapter failure (`canonicalComparable` absent from its copied helper
+  closure), not a catalog acceptance failure. All f89f79065753b9ddb025b392
+  disposable databases were dropped. The adapter now copies both actual
+  transitive helpers and exercises exact-zero/malformed aggregate responses
+  before allocating a DB, preventing this setup defect from wasting a PG run.
