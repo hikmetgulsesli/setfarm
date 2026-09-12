@@ -40,10 +40,31 @@ function metadata(stats: BigIntStats): string {
 // Checks current bytes against a supplied candidate; the caller must first
 // authenticate that candidate through the fixed dispatch/intent/lease chain.
 // Full Git/build provenance remains with the independently observing helper.
+const pendingOutputCleanupV1 = new Set<() => void>();
+function closeOutputHandleV1(closeHandle: () => void): void {
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closeHandle();
+    closed = true;
+    pendingOutputCleanupV1.delete(close);
+  };
+  try { close(); }
+  catch (error) {
+    pendingOutputCleanupV1.add(close);
+    try { close(); } catch { /* Keep the unfinished handle reachable for later cleanup. */ }
+    throw error;
+  }
+}
+
 export function verifyInternalProductionSpawnerLaunchOutputCandidateV1(expected: LaunchOutputCandidateV1): void {
   const directories = new Map<string, BigIntStats>();
   const observedFiles = new Map<string, BigIntStats>();
   try {
+    if (pendingOutputCleanupV1.size > 0) {
+      for (const close of pendingOutputCleanupV1) { try { close(); } catch { /* Try every retained handle without accepting this observation. */ } }
+      fail();
+    }
     const keys = (value: unknown, names: readonly string[]) => {
       if (!value || typeof value !== "object" || Array.isArray(value)
         || canonicalData(Object.keys(value).sort()) !== canonicalData([...names].sort())) fail();
@@ -87,7 +108,7 @@ export function verifyInternalProductionSpawnerLaunchOutputCandidateV1(expected:
           || metadata(before) !== metadata(lstatSync(target, { bigint: true }))) fail();
         observedFiles.set(target, before);
         return bytes;
-      } finally { closeSync(fd); }
+      } finally { closeOutputHandleV1(() => closeSync(fd)); }
     };
     const inventory: string[] = [];
     let entryCount = 1;
@@ -108,7 +129,7 @@ export function verifyInternalProductionSpawnerLaunchOutputCandidateV1(expected:
         if (childStats.isDirectory()) visit(child, depth + 1);
         else if (childStats.isFile()) inventory.push(child);
         else fail();
-      } } finally { directory.closeSync(); }
+      } } finally { closeOutputHandleV1(() => directory.closeSync()); }
     };
     visit("dist", 0);
     const authorityFiles = ["dist/BUILD_INFO.json", "dist/PLATFORM_BUILD_OUTPUT_TREE.json", "dist/PLATFORM_RELEASE_MANIFEST.json"];

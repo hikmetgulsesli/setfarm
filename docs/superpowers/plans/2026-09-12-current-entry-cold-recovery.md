@@ -358,6 +358,86 @@ TypeScript no-emit and diff whitespace checks passed. Independent review found
 no material issue in this publication-only scope. Child spawn/claim/settlement
 remain unimplemented and no live cold-journal record was published.
 
+Next connected child-capability slice (same retirement/environment/runtime-config
+and owning test files): share strict intent/dispatch/history parsing; issue a
+distinct child-domain private unlinked FD3 and inherited lock FD4/dispatch FD5.
+Create/unlink the empty child frame within the still-uncertain publication
+transaction, before freezing the final dispatch-root metadata. Never refresh an
+already-owned root merely to allow a later scratch write. The child synchronously
+authenticates those fixed descriptors, original intent/history, exact live
+helper/controller identities, actual host/Node/argv/cwd, environment commitment
+and every compiled output dependency before runtime-config may consume it.
+Configuration evidence cannot grant claim or another dispatch; retain a private
+child context for the later singleton-protected claim. Use real compiled child
+fixtures and preserve ordinary startup. No live helper/spawner execution until
+the separate claim/sealed/settlement chain is complete and reviewed.
+
+Selection review: at the exact compiled spawner entry, a regular FD3 selects
+mandatory child authentication even if malformed; absent/nonregular FD3 alone
+does not change ordinary configuration. Runtime-config requires the distinct
+non-secret child selector together with an authenticated snapshot and rejects
+both selectors. Missing both remains ordinary configuration, not cold authority.
+The later startup integration must explicitly census the cold journal after
+singleton acquisition but before ordinary startup-admission resolution: the
+current code can reach admission claims/recovery before its later poison lookup.
+Test that missing-both transport with an incomplete journal cannot claim or run
+DB/provider/producer work; do not add a blanket ordinary pre-dotenv FS dependency.
+
+Child refusal coverage exposed a causally shared reader cleanup defect: an
+injected pre-close error in `readColdGenesisCandidateV1` lost its temporary FD,
+just as the newly added Node reader did (both real-child probes reported one
+open descriptor). Keep Node descriptors in the child cleanup owner and make the
+shared bounded reader retain/retry its exact failed close without admitting the
+failed read. This is an in-goal root fix in the existing retirement File Map,
+not a relaxation of descriptor-count tests. Repeated child integrity refusal
+also revokes cached authentication permanently; restored dependency bytes must
+not revive it. Revalidate the retained output commitments at each later use.
+
+Additional actual-child pre-close probes found the same lost-handle class in
+the cold journal directory reader and the launch-output leaf's file/directory
+readers (each reported one retained handle before its fix). Their idempotent
+close callbacks now retain unfinished ownership, retry only that close and
+still reject the original observation. This extends the same causal File Map
+fix to the existing launch-environment leaf, with no new export or authority.
+The compiled-child matrix now covers 24 transport/configuration/integrity and
+cleanup cases; helper frame replacement immediately before unlink is checked
+against the exact original empty inode, preserving a foreign replacement.
+
+The full retirement run captured an unrelated intermittent all-process FD
+count failure with actual `lsof` evidence: the added writable descriptor was
+the installed tsx 4.22.4 cache's unawaited `FileCache.set()` write, not an owned
+retirement handle. The abandoned-acquisition scenario now runs the same real
+five-module compiled source in a plain Node child, without inherited loaders.
+It retains the exact all-descriptor count and adds full identity equality; no
+descriptor filtering, sleeps, retries or disabled cache. A second execution
+withholds an actual owned-lock close and must fail that same census assertion.
+Both isolation and leak-detection variants passed together (1.563s).
+The cold-journal absence scenario exposed the same loader-sensitive measurement
+boundary on the next full run (600 versus 599); it now uses the same plain-child
+compiler and retains the exact count and all filesystem/inode/absence checks.
+No identity attribution is claimed for that second uncaptured descriptor.
+
+Grouped final review found three remaining newly reachable unreturned-cleanup
+owners: parent-directory fsync, failed private-chain construction and failed
+workspace-anchor construction. Real injected pre-close probes reproduced one,
+ten and one leaked descriptors respectively. The existing retirement and
+workspace-locator File Map members now retain and retry those exact cleanup
+closures while propagating the original refusal. The focused acquisition,
+existing interrupted-close and eleven dispatch-fault tests passed 3/3 (9.361s),
+with TypeScript no-emit and whitespace checks clean. No live acceptance follows
+from these fixture results; the claim/sealed/settlement chain is still pending.
+
+Child-capability slice final verification: retirement 47/47 (73.500s), including
+24 actual compiled-child cases and eleven dispatch publication faults;
+ordinary environment/output/import-inert plus real sealed spawner main 7/7
+(8.913s); exact source manifest 17/17 (6.168s); receipt cold/history/workspace
+and import-inert boundaries 6/6 (8.595s); TypeScript no-emit and diff checks
+passed. Independent review re-probed persistent cleanup failures and found no
+remaining material issue in this slice. Mission Control and dashboard returned
+HTTP 200. No live bootstrap, database change, guarded build, full P3 receipt,
+or Task 6A acceptance is claimed. Next: actual singleton/PID ownership, cold
+claim and sealed stop lifecycle, then helper/controller settlement integration.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

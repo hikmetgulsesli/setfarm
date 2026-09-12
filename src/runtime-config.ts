@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyRuntimeEnvFileV1, normalizeRuntimePathV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
-import { resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
+import { resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import {
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
   normalizeArtifactCapacityLimits,
@@ -16,7 +16,7 @@ import {
 } from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
-let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "cold-helper" = "unloaded";
+let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "cold-helper" | "cold-child" = "unloaded";
 let coldHelperEffectiveEnvironmentV1: Readonly<Record<string, string>> | null = null;
 
 function environmentIdentityV1(environment: Readonly<Record<string, string | undefined>>): string {
@@ -46,6 +46,24 @@ export function loadRuntimeEnv(): void {
   const refuse = (): never => { throw new Error("INTERNAL_PRODUCTION_COLD_HELPER_CONFIGURATION_INVALID"); };
   let snapshot: ReturnType<typeof resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1>;
   try { snapshot = resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1(); } catch { return refuse(); }
+  const childModeKey = "SETFARM_INTERNAL_PRODUCTION_COLD_CHILD";
+  let childSnapshot: ReturnType<typeof resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1>;
+  const refuseChild = (): never => { throw new Error("INTERNAL_PRODUCTION_COLD_CHILD_CONFIGURATION_INVALID"); };
+  try { childSnapshot = resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(); } catch { return refuseChild(); }
+  if (childSnapshot !== null || process.env[childModeKey] !== undefined || runtimeEnvironmentModeV1 === "cold-child") {
+    if (!childSnapshot || process.env[childModeKey] !== "1" || snapshot !== null || process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined
+      || runtimeEnvironmentModeV1 === "ordinary" || runtimeEnvironmentModeV1 === "cold-helper") refuseChild();
+    const environment = childSnapshot!.environment;
+    const effective = Object.freeze({ ...environment, PATH: normalizeRuntimePathV1(environment.PATH!, homedir(), process.execPath), [childModeKey]: "1" });
+    if (coldHelperEffectiveEnvironmentV1 === null) {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, effective);
+      coldHelperEffectiveEnvironmentV1 = effective;
+      runtimeEnvironmentModeV1 = "cold-child";
+    } else if (environmentIdentityV1(effective) !== environmentIdentityV1(coldHelperEffectiveEnvironmentV1)
+      || environmentIdentityV1(process.env) !== environmentIdentityV1(coldHelperEffectiveEnvironmentV1)) refuseChild();
+    return;
+  }
   const modeKey = "SETFARM_INTERNAL_PRODUCTION_COLD_HELPER";
   const selected = process.env[modeKey];
   if (snapshot !== null || selected !== undefined || runtimeEnvironmentModeV1 === "cold-helper") {

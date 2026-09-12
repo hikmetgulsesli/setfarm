@@ -5,6 +5,7 @@ import path from "node:path";
 
 const CODE_OWNER_HOME_V1 = userInfo().homedir;
 const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
+const pendingWorkspaceAcquisitionCleanupV1 = new Set<() => void>();
 
 // Source/build identity belongs to the executing checkout. Runtime authority
 // belongs to this single code-owned workspace, including from linked worktrees.
@@ -16,6 +17,10 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
   assertStable: () => void;
   close: () => void;
 }> {
+  if (pendingWorkspaceAcquisitionCleanupV1.size > 0) {
+    for (const close of pendingWorkspaceAcquisitionCleanupV1) { try { close(); } catch { /* Retain every unfinished acquisition. */ } }
+    throw new Error("INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID");
+  }
   // Darwin's system /var presentation is the same explicitly supported alias
   // as the existing receipt reader. No user-controlled symlink is canonicalized.
   const lexical = CODE_OWNED_WORKSPACE_ROOT_V1;
@@ -39,6 +44,7 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
       held.pop();
     }
     closed = true;
+    pendingWorkspaceAcquisitionCleanupV1.delete(close);
   };
   const assertStable = (): void => {
     if (closed || closing) fail();
@@ -60,7 +66,11 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
     assertStable();
     return Object.freeze({ assertStable, close });
   } catch (error) {
-    close();
+    try { close(); }
+    catch {
+      pendingWorkspaceAcquisitionCleanupV1.add(close);
+      try { close(); } catch { /* Failed acquisition never abandons its cleanup owner. */ }
+    }
     throw error;
   }
 }

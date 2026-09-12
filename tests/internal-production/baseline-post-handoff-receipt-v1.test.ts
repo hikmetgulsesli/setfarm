@@ -15134,6 +15134,10 @@ function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode
   if (locator === "src/internal-production/baseline-post-handoff-receipt-v1.ts") {
     ensureBaselinePostHandoffImportSupportV1(root);
   }
+  if (locator === "src/internal-production/baseline-restart-authority-retirement-v1.ts") {
+    const dependency = "src/internal-production/baseline-spawner-launch-environment-v1.ts";
+    if (!existsSync(path.join(root, dependency))) fixtureFile(root, dependency, readFileSync(path.join(sourceRoot, dependency)));
+  }
 }
 
 function ensureBaselinePostHandoffImportSupportV1(root: string): void {

@@ -23,6 +23,7 @@ import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProduc
 import { fileURLToPath } from "node:url";
 import type { BigIntStats } from "node:fs";
 import { validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import { readInternalProductionSpawnerUntrustedInheritedFrameV1, verifyInternalProductionSpawnerLaunchOutputCandidateV1 } from "./baseline-spawner-launch-environment-v1.js";
 
 export type InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1 = Readonly<{
   schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1";
@@ -164,12 +165,14 @@ let coldBootstrapIntentInvocationActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
-  phase: "refreshing" | "ready" | "dispatch-publication" | "dispatch-owned" | "closing";
+  phase: "refreshing" | "ready" | "dispatch-publication" | "dispatch-owned" | "child-launch-handed-off" | "closing";
   observationHash: string | null;
 };
 const coldHelperContextsV1 = new WeakMap<object, ColdHelperContextStateV1>();
 let coldHelperRuntimeContextV1: object | null = null;
 let coldHelperContextInvocationActiveV1 = false;
+let coldChildAuthenticationV1: ReturnType<typeof authenticateColdSpawnerChildCapabilityV1> | null = null;
+let coldChildAuthenticationFailedV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -277,7 +280,12 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
       close,
     });
   } catch (error) {
-    close();
+    const cleanup = () => { close(); pendingColdHelperAuthenticationCleanupV1.delete(cleanup); };
+    try { cleanup(); }
+    catch {
+      pendingColdHelperAuthenticationCleanupV1.add(cleanup);
+      try { cleanup(); } catch { /* The unreturned guard remains owned until close completes. */ }
+    }
     throw error;
   }
 }
@@ -461,7 +469,17 @@ function parseLockRecord(bytes: Buffer): Readonly<Record<string, unknown>> {
 
 function fsyncParent(file: string): void {
   const descriptor = openSync(path.dirname(file), constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+  let closed = false;
+  const close = () => { if (closed) return; closeSync(descriptor); closed = true; pendingColdHelperAuthenticationCleanupV1.delete(close); };
+  try { fsyncSync(descriptor); }
+  finally {
+    try { close(); }
+    catch (error) {
+      pendingColdHelperAuthenticationCleanupV1.add(close);
+      try { close(); } catch { /* Keep the original parent descriptor reachable. */ }
+      throw error;
+    }
+  }
 }
 
 function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: Buffer | null, onOwnedUnlink?: () => void): void {
@@ -953,6 +971,13 @@ function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maxim
     || (expected.mode & 0o7777n) !== 0o600n || expected.nlink < 1n || expected.nlink > BigInt(maximumLinks)
     || expected.size < 1n || expected.size > BigInt(COLD_GENESIS_MAX_BYTES_V1)) fail("cold publication candidate identity is invalid");
   const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let descriptorClosed = false;
+  const close = () => {
+    if (descriptorClosed) return;
+    closeSync(descriptor);
+    descriptorClosed = true;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
   try {
     if (!sameColdFileMetadataV1(expected, fstatSync(descriptor, { bigint: true }))) fail("cold publication candidate changed while opened");
     const bytes = Buffer.alloc(Number(expected.size));
@@ -966,7 +991,39 @@ function readColdGenesisCandidateV1(target: string, expected: BigIntStats, maxim
       || !sameColdFileMetadataV1(expected, fstatSync(descriptor, { bigint: true }))
       || !sameColdFileMetadataV1(expected, lstatSync(target, { bigint: true }))) fail("cold publication candidate changed while read");
     return bytes;
-  } finally { closeSync(descriptor); }
+  } finally {
+    try { close(); }
+    catch (error) {
+      pendingColdHelperAuthenticationCleanupV1.add(close);
+      try { close(); } catch { /* Keep the exact unfinished reader reachable. */ }
+      throw error;
+    }
+  }
+}
+
+function readColdDirectoryMembersV1(target: string, maximum: number): string[] {
+  const directory = opendirSync(target, { bufferSize: 1 }), members: string[] = [];
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    directory.closeSync();
+    closed = true;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
+  try {
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      if (members.length >= maximum) fail("cold journal prefix has extra members");
+      members.push(entry.name);
+    }
+    return members;
+  } finally {
+    try { close(); }
+    catch (error) {
+      pendingColdHelperAuthenticationCleanupV1.add(close);
+      try { close(); } catch { /* Retain the exact directory until cleanup can finish. */ }
+      throw error;
+    }
+  }
 }
 
 function assertColdEpochOneHeadV1(value: unknown, bytes: Buffer): Readonly<Record<string, unknown>> {
@@ -1331,6 +1388,56 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
   }
 }
 
+function parseColdSpawnerBootstrapIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
+  if (bytes.length < 1 || bytes.length > COLD_GENESIS_MAX_BYTES_V1) fail("cold intent size is invalid");
+  const intent = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "coldObservation", "launchProfile", "transitionLock", "lockIdentity", "epochRef", "epochHash", "genesisRef", "genesisHash", "nonceHash", "maximumDispatchCount", "intentRef", "intentHash"], "intent");
+  if (!bytes.equals(Buffer.from(`${canonical(intent)}\n`)) || intent.schema !== "setfarm.internal-production-cold-spawner-bootstrap-intent.v1"
+    || intent.purpose !== "exact-poison-sealed-cold-spawner-v1" || intent.maximumDispatchCount !== 1
+    || intent.intentRef !== `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${coldHashV1(intent.intentHash, "intent")}`) fail("cold intent binding is crossed");
+  coldSelfHashV1(intent, "intentHash", ["intentRef"]);
+  coldHashV1(intent.nonceHash, "intent nonce");
+  const identity = coldRecordV1(intent.lockIdentity, ["devDecimal", "inoDecimal"], "intent lock identity");
+  if (Object.values(identity).some((value) => typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value))) fail("cold intent lock identity is malformed");
+  parseLockRecord(Buffer.from(`${canonical(intent.transitionLock)}\n`));
+  const cold = validateColdBootstrapObservationV1(intent.coldObservation);
+  const profile = intent.launchProfile as Record<string, unknown>;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile) || profile.schema !== "setfarm.internal-production-spawner-launch-profile.v1"
+    || canonical(profile.source) !== canonical(cold.source)) fail("cold intent profile is crossed");
+  coldSelfHashV1(profile, "profileHash");
+  for (const [stem, prefix] of [["epoch", "physical-service-restart-authority-epoch"], ["genesis", "cold-epoch-genesis"]]) {
+    if (intent[`${stem}Ref`] !== `setfarm://internal-production/${prefix}/sha256/${coldHashV1(intent[`${stem}Hash`], stem!)}`) fail("cold intent history pair is crossed");
+  }
+  return freezeColdDataV1(intent);
+}
+
+function parseColdSpawnerBootstrapDispatchV1(bytes: Buffer, intent: Readonly<Record<string, unknown>>, intentIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>) {
+  if (bytes.length < 1 || bytes.length > 65_536) fail("cold dispatch size is invalid");
+  const dispatch = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "observationHash", "profileHash", "source", "operation", "epochRef", "epochHash", "genesisRef", "genesisHash", "lockIdentity", "intentIdentity", "nonceHash", "controller", "helper", "maximumDispatchCount", "action", "dispatchRef", "dispatchHash"], "dispatch");
+  if (!bytes.equals(Buffer.from(`${canonical(dispatch)}\n`)) || dispatch.schema !== "setfarm.internal-production-cold-spawner-bootstrap-dispatch.v1"
+    || dispatch.purpose !== "exact-poison-sealed-cold-spawner-v1" || dispatch.maximumDispatchCount !== 1
+    || dispatch.dispatchRef !== `setfarm://internal-production/cold-spawner-bootstrap-dispatch/sha256/${coldHashV1(dispatch.dispatchHash, "dispatch")}`) fail("cold dispatch binding is crossed");
+  coldSelfHashV1(dispatch, "dispatchHash", ["dispatchRef"]);
+  const cold = intent.coldObservation as Record<string, unknown>, profile = intent.launchProfile as Record<string, unknown>;
+  const lock = intent.transitionLock as Record<string, unknown>, executable = profile.executable as Record<string, unknown>;
+  for (const key of ["intentRef", "intentHash", "epochRef", "epochHash", "genesisRef", "genesisHash", "lockIdentity", "nonceHash"]) {
+    if (canonical(dispatch[key]) !== canonical(intent[key])) fail("cold dispatch intent pair is crossed");
+  }
+  if (dispatch.observationHash !== cold.observationHash || dispatch.profileHash !== profile.profileHash
+    || canonical(dispatch.source) !== canonical(cold.source) || canonical(dispatch.operation) !== canonical(cold.operation)
+    || canonical(dispatch.intentIdentity) !== canonical(intentIdentity)
+    || canonical(dispatch.controller) !== canonical({ pid: lock.pid, processStartTimeEpochMs: lock.processStartTimeEpochMs, processIdentityHash: lock.processIdentityHash })) fail("cold dispatch retained evidence is crossed");
+  const helper = coldRecordV1(dispatch.helper, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid"], "dispatch helper");
+  if (!Number.isSafeInteger(helper.pid) || (helper.pid as number) < 1 || helper.pid === lock.pid || helper.uid !== profile.uid || helper.ppid !== lock.pid
+    || !Number.isSafeInteger(helper.processStartTimeEpochMs) || (helper.processStartTimeEpochMs as number) < 1
+    || typeof helper.lstart !== "string" || helper.lstart.length !== 24 || Date.parse(helper.lstart) !== helper.processStartTimeEpochMs
+    || helper.command !== `${executable.path} ${path.join(profile.repository as string, "dist/internal-production/baseline-service-restart-helper-v1.js")}`
+    || helper.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: helper.pid,
+      processStartTimeEpochMs: helper.processStartTimeEpochMs, lstart: helper.lstart, command: helper.command }))) fail("cold dispatch helper identity is crossed");
+  if (canonical(dispatch.action) !== canonical({ transport: "direct-detached-node-v1", executable: executable.path,
+    arguments: [path.join(profile.repository as string, "dist/spawner.js")], cwd: profile.cwd, detached: true })) fail("cold dispatch action is crossed");
+  return freezeColdDataV1(dispatch);
+}
+
 // This is independent authentication of the inherited controller capability,
 // not a zero-owner census, dispatch permission or a public journal exception.
 // The fixed helper will retain this evidence across its subsequent live bracket.
@@ -1374,14 +1481,10 @@ async function authenticateColdSpawnerHelperIntentV1() {
     const lockFile = readInherited(4, paths.lock, 65_536);
     const intentFile = readInherited(5, intentPath, COLD_GENESIS_MAX_BYTES_V1);
     const lock = parseLockRecord(lockFile.bytes);
-    const intent = coldRecordV1(JSON.parse(intentFile.bytes.toString("utf8")), ["schema", "purpose", "coldObservation", "launchProfile", "transitionLock", "lockIdentity", "epochRef", "epochHash", "genesisRef", "genesisHash", "nonceHash", "maximumDispatchCount", "intentRef", "intentHash"], "helper intent");
-    if (!intentFile.bytes.equals(Buffer.from(`${canonical(intent)}\n`))
-      || intent.schema !== "setfarm.internal-production-cold-spawner-bootstrap-intent.v1" || intent.purpose !== "exact-poison-sealed-cold-spawner-v1"
-      || intent.maximumDispatchCount !== 1 || intent.intentRef !== `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${coldHashV1(intent.intentHash, "intent")}`
-      || intent.nonceHash !== sha256(frame.nonce) || intent.intentRef !== frame.intentRef || intent.intentHash !== frame.intentHash
+    const intent = parseColdSpawnerBootstrapIntentV1(intentFile.bytes);
+    if (intent.nonceHash !== sha256(frame.nonce) || intent.intentRef !== frame.intentRef || intent.intentHash !== frame.intentHash
       || canonical(lock) !== canonical(intent.transitionLock) || canonical(intent.lockIdentity) !== canonical(descriptorIdentity(4))
       || canonical(frame.lockIdentity) !== canonical(intent.lockIdentity) || canonical(frame.intentIdentity) !== canonical(descriptorIdentity(5))) fail("cold helper intent binding is crossed");
-    coldSelfHashV1(intent, "intentHash", ["intentRef"]);
     const cold = validateColdBootstrapObservationV1(intent.coldObservation);
     const genesisPath = coldGenesisReceiptPathV1(coldHashV1(intent.genesisHash, "helper genesis"));
     guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(genesisPath)));
@@ -1394,7 +1497,8 @@ async function authenticateColdSpawnerHelperIntentV1() {
     if (["epochRef", "epochHash", "genesisRef", "genesisHash"].some((key) => intent[key] !== epoch[key])
       || coldGenesisStableIdentityV1(cold) !== coldGenesisStableIdentityV1(genesis.coldObservation as Readonly<Record<string, unknown>>)) fail("cold helper genesis binding is crossed");
     let dispatchStarted = false;
-    let dispatch: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number }> | null = null;
+    let dispatch: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number; frameDescriptor: number }> | null = null;
+    let childScratch: Readonly<{ path: string; stats: BigIntStats }> | null = null;
     const assertOriginalStable = (): void => {
       if (closing || closed) fail("cold helper authentication is closed");
       for (const guard of guards) guard.assertStable();
@@ -1403,7 +1507,9 @@ async function authenticateColdSpawnerHelperIntentV1() {
       // APFS includes the newly created file in a directory's link count.
       // Permit only that single publication delta; exact members/full metadata
       // remain mandatory before intent use and after dispatch publication.
-      if (currentRoot.nlink !== rootStats.nlink && (!dispatchStarted || currentRoot.nlink !== rootStats.nlink + 1n)) fail("cold helper original root link count changed");
+      const ownNewEntries = dispatchStarted ? (childScratch === null ? 1n : 2n) : 0n;
+      if (currentRoot.nlink !== rootStats.nlink && currentRoot.nlink !== rootStats.nlink + ownNewEntries) fail("cold helper original root link count changed");
+      if (childScratch !== null && !sameColdFileMetadataV1(childScratch.stats, lstatSync(childScratch.path, { bigint: true }))) fail("cold child empty frame changed");
       for (const [fd, target, expected, maximum] of [[4, paths.lock, lockFile, 65_536], [5, intentPath, intentFile, COLD_GENESIS_MAX_BYTES_V1]] as const) {
         const current = readInherited(fd, target, maximum);
         if (!sameColdFileMetadataV1(expected.stats, current.stats) || !expected.bytes.equals(current.bytes)) fail("cold helper inherited authority drifted");
@@ -1423,14 +1529,7 @@ async function authenticateColdSpawnerHelperIntentV1() {
       if (dispatchStarted && dispatch === null) fail("cold helper dispatch publication is uncertain");
       const expectedRoot = dispatch?.rootStats ?? rootStats;
       if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
-      const directory = opendirSync(root, { bufferSize: 1 });
-      const entries: string[] = [];
-      try {
-        for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
-          if (entries.length >= (dispatch === null ? 1 : 2)) fail("cold helper journal prefix has extra members");
-          entries.push(entry.name);
-        }
-      } finally { directory.closeSync(); }
+      const entries = readColdDirectoryMembersV1(root, dispatch === null ? 1 : 2);
       if (canonical(entries.sort()) !== canonical(dispatch === null ? ["intent.json"] : ["dispatch.json", "intent.json"])) fail("cold helper journal prefix is crossed");
       if (dispatch !== null) {
         if (!sameColdFileMetadataV1(dispatch.stats, fstatSync(dispatch.descriptor, { bigint: true }))
@@ -1466,7 +1565,7 @@ async function authenticateColdSpawnerHelperIntentV1() {
       const dispatchHash = sha256(canonical(body));
       const record = freezeColdDataV1({ ...body, dispatchRef: `setfarm://internal-production/cold-spawner-bootstrap-dispatch/sha256/${dispatchHash}`, dispatchHash });
       const bytes = Buffer.from(`${canonical(record)}\n`);
-      if (bytes.length > 65_536) fail("cold helper dispatch exceeds its file cap");
+      parseColdSpawnerBootstrapDispatchV1(bytes, intent, descriptorIdentity(5));
       assertStable();
       dispatchStarted = true;
       const target = path.join(root, "dispatch.json");
@@ -1490,11 +1589,49 @@ async function authenticateColdSpawnerHelperIntentV1() {
       if (!sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("cold helper dispatch reopen changed");
       closeSync(writer);
       ownedDescriptors.splice(ownedDescriptors.indexOf(writer), 1);
-      dispatch = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader };
+      const childFrame = { schema: "setfarm.internal-production-cold-spawner-bootstrap-child-capability.v1", dispatchRef: record.dispatchRef, dispatchHash,
+        dispatchIdentity: descriptorIdentity(reader), lockIdentity: intent.lockIdentity, environment: observed.environment, nonce: frame.nonce };
+      const childBytes = Buffer.from(`${canonical(childFrame)}\n`);
+      if (childBytes.length < 1 || childBytes.length > 1_048_576) fail("cold child frame exceeds its cap");
+      assertOriginalStable();
+      const scratch = path.join(root, `.cold-child-capability.${randomBytes(16).toString("hex")}.tmp`);
+      const frameWriter = openSync(scratch, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      ownedDescriptors.push(frameWriter);
+      const empty = fstatSync(frameWriter, { bigint: true });
+      childScratch = { path: scratch, stats: empty };
+      if (!empty.isFile() || empty.uid !== uid || empty.dev !== rootStats.dev || empty.nlink !== 1n || empty.size !== 0n || (empty.mode & 0o7777n) !== 0o600n) fail("cold child empty frame identity is invalid");
+      const frameReader = openSync(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      ownedDescriptors.push(frameReader);
+      assertOriginalStable();
+      if (!sameColdFileMetadataV1(empty, fstatSync(frameWriter, { bigint: true })) || !sameColdFileMetadataV1(empty, fstatSync(frameReader, { bigint: true }))
+        || !sameColdFileMetadataV1(empty, lstatSync(scratch, { bigint: true }))) fail("cold child empty frame changed before unlink");
+      unlinkSync(scratch);
+      childScratch = null;
+      if (fstatSync(frameWriter).nlink !== 0 || fstatSync(frameReader).nlink !== 0) fail("cold child frame is still linked");
+      fsyncParent(scratch);
+      assertOriginalStable();
+      writeFileSync(frameWriter, childBytes);
+      fsyncSync(frameWriter);
+      const frameWritten = fstatSync(frameReader, { bigint: true });
+      if (frameWritten.dev !== empty.dev || frameWritten.ino !== empty.ino || frameWritten.uid !== empty.uid || frameWritten.mode !== empty.mode
+        || frameWritten.nlink !== 0n || frameWritten.size !== BigInt(childBytes.length) || !sameColdFileMetadataV1(frameWritten, fstatSync(frameWriter, { bigint: true }))) fail("cold child frame write changed");
+      const verified = Buffer.alloc(childBytes.length);
+      let offset = 0;
+      while (offset < verified.length) {
+        const count = readSync(frameReader, verified, offset, Math.min(65_536, verified.length - offset), offset);
+        if (count < 1) fail("cold child frame read is partial");
+        offset += count;
+      }
+      if (!verified.equals(childBytes) || readSync(frameReader, Buffer.alloc(1), 0, 1, offset) !== 0
+        || !sameColdFileMetadataV1(frameWritten, fstatSync(frameReader, { bigint: true }))) fail("cold child frame read changed");
+      closeSync(frameWriter);
+      ownedDescriptors.splice(ownedDescriptors.indexOf(frameWriter), 1);
+      dispatch = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader, frameDescriptor: frameReader };
       assertStable();
       return record;
     };
-    const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, close };
+    const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, close,
+      childDescriptors: () => { assertStable(); if (!dispatch) fail("cold child dispatch is absent"); return Object.freeze({ frameDescriptor: dispatch.frameDescriptor, dispatchDescriptor: dispatch.descriptor }); } };
     Object.defineProperty(authenticated, "environment", { value: freezeColdDataV1(observed.environment), enumerable: false });
     return Object.freeze(authenticated) as typeof authenticated & Readonly<{ environment: Readonly<Record<string, string>> }>;
   } catch {
@@ -1600,6 +1737,173 @@ function publishColdSpawnerHelperDispatchV1(context: unknown) {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Keep failed cleanup owned. */ } }
     return fail("cold helper dispatch publication is uncertain");
   }
+}
+
+function takeColdSpawnerChildLaunchDescriptorsV1(context: unknown) {
+  const state = heldColdHelperContextV1(context);
+  if (state.phase !== "dispatch-owned") fail("cold child launch descriptors were already consumed or are unavailable");
+  state.phase = "child-launch-handed-off";
+  return state.authentication.childDescriptors();
+}
+
+function observeColdProcessParentGroupV1(pid: number) {
+  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "uid=,ppid=,pgid="], {
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, shell: false, encoding: "utf8", timeout: 2_000, maxBuffer: 65_536,
+  });
+  const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\n$/.exec(result.stdout);
+  if (result.error || result.signal || result.status !== 0 || result.stderr !== "" || !match) fail("cold process ownership is ambiguous");
+  const [uid, ppid, pgid] = match.slice(1).map(Number);
+  if (![uid, ppid, pgid].every(Number.isSafeInteger)) fail("cold process ownership is malformed");
+  return { uid, ppid, pgid };
+}
+
+function authenticateColdSpawnerChildCapabilityV1() {
+  const guards: PrivateDirectoryGuardV1[] = [];
+  const descriptors: number[] = [];
+  let closed = false, closing = false;
+  const close = () => {
+    if (closed) return;
+    closing = true;
+    while (descriptors.length > 0) { closeSync(descriptors[descriptors.length - 1]!); descriptors.pop(); }
+    while (guards.length > 0) { guards[guards.length - 1]!.close(); guards.pop(); }
+    closed = true;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
+  try {
+    const frameBytes = readInternalProductionSpawnerUntrustedInheritedFrameV1(), frameStats = fstatSync(3, { bigint: true });
+    const frame = coldRecordV1(JSON.parse(frameBytes.toString("utf8")), ["schema", "dispatchRef", "dispatchHash", "dispatchIdentity", "lockIdentity", "environment", "nonce"], "child frame");
+    if (frame.schema !== "setfarm.internal-production-cold-spawner-bootstrap-child-capability.v1" || !frameBytes.equals(Buffer.from(`${canonical(frame)}\n`))) fail("cold child frame domain is crossed");
+    coldHashV1(frame.nonce, "child nonce");
+    const paths = rootPaths(), root = path.join(paths.root, "cold-spawner-bootstrap-v1");
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root));
+    const rootStats = lstatSync(root, { bigint: true });
+    const pinned = new Map<string, Readonly<{ stats: BigIntStats; bytes: Buffer }>>();
+    const read = (target: string, maximum: number, inherited?: number) => {
+      const stats = lstatSync(target, { bigint: true });
+      if (stats.size > BigInt(maximum) || (inherited !== undefined && !sameColdFileMetadataV1(stats, fstatSync(inherited, { bigint: true })))) fail("cold child inherited identity is crossed");
+      const bytes = readColdGenesisCandidateV1(target, stats);
+      if (inherited !== undefined && !sameColdFileMetadataV1(stats, fstatSync(inherited, { bigint: true }))) fail("cold child inherited identity changed");
+      pinned.set(target, { stats, bytes });
+      return { stats, bytes };
+    };
+    const lockFile = read(paths.lock, 65_536, 4), lock = parseLockRecord(lockFile.bytes);
+    const intentFile = read(path.join(root, "intent.json"), COLD_GENESIS_MAX_BYTES_V1), intent = parseColdSpawnerBootstrapIntentV1(intentFile.bytes);
+    const intentIdentity = { devDecimal: String(intentFile.stats.dev), inoDecimal: String(intentFile.stats.ino) };
+    const dispatchFile = read(path.join(root, "dispatch.json"), 65_536, 5), dispatch = parseColdSpawnerBootstrapDispatchV1(dispatchFile.bytes, intent, intentIdentity);
+    if (canonical(lock) !== canonical(intent.transitionLock) || canonical(descriptorIdentity(4)) !== canonical(intent.lockIdentity)
+      || canonical(frame.lockIdentity) !== canonical(intent.lockIdentity) || canonical(frame.dispatchIdentity) !== canonical(descriptorIdentity(5))
+      || frame.dispatchRef !== dispatch.dispatchRef || frame.dispatchHash !== dispatch.dispatchHash || sha256(frame.nonce as string) !== intent.nonceHash) fail("cold child descriptor chain is crossed");
+    const genesisPath = coldGenesisReceiptPathV1(intent.genesisHash as string);
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(genesisPath)));
+    const genesis = parseColdEpochGenesisReceiptV1(read(genesisPath, COLD_GENESIS_MAX_BYTES_V1).bytes);
+    const epochBytes = read(paths.epoch, COLD_GENESIS_MAX_BYTES_V1).bytes;
+    const epoch = validateColdEpochOneHeadV1(JSON.parse(epochBytes.toString("utf8")), epochBytes, genesis);
+    if (["epochRef", "epochHash", "genesisRef", "genesisHash"].some((key) => intent[key] !== epoch[key])
+      || coldGenesisStableIdentityV1(intent.coldObservation as Record<string, unknown>) !== coldGenesisStableIdentityV1(genesis.coldObservation as Record<string, unknown>)) fail("cold child history is crossed");
+    const profile = coldRecordV1(intent.launchProfile, ["schema", "source", "uid", "home", "workspace", "repository", "rootIdentity", "hostDirectories", "executable", "arguments", "cwd", "environmentDirectory", "buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash", "environmentFiles", "profileHash"], "child launch profile");
+    const uid = process.getuid!();
+    if (profile.uid !== uid || profile.workspace !== resolveInternalProductionBaselineWorkspaceRootV1() || profile.repository !== repositoryRoot() || profile.cwd !== process.cwd()
+      || canonical(profile.arguments) !== canonical([path.join(repositoryRoot(), "dist/spawner.js")])
+      || process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== path.join(repositoryRoot(), "dist/spawner.js")) fail("cold child runtime entry is crossed");
+    const environment = frame.environment as Record<string, unknown>;
+    if (!environment || typeof environment !== "object" || Array.isArray(environment) || Object.keys(environment).length > 1024
+      || Buffer.byteLength(canonical(environment)) > 524_288) fail("cold child environment shape is invalid");
+    for (const [key, value] of Object.entries(environment)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || typeof value !== "string" || value.includes("\0") || Buffer.byteLength(value) > 65_536
+        || /^(?:NODE_|DYLD_|LD_|SETFARM_TEST_|SETFARM_INTERNAL_PRODUCTION_)/.test(key) || ["SETFARM_SKIP_RUNTIME_GUARD", "SETFARM_ALLOW_DIRTY_BUILD"].includes(key)) fail("cold child environment is invalid");
+    }
+    for (const key of ["HOME", "LANG", "LC_ALL", "PATH", "SETFARM_ENV_DIR", "SETFARM_PG_URL", "SETFARM_REPO_DIR"]) if (!environment[key]) fail("cold child base environment is absent");
+    if (profile.environmentHash !== sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`)
+      || environment.HOME !== profile.home || environment.SETFARM_REPO_DIR !== profile.repository || environment.SETFARM_ENV_DIR !== profile.environmentDirectory
+      || environment.LANG !== "C" || environment.LC_ALL !== "C") fail("cold child environment commitment is crossed");
+    const identity = (stats: BigIntStats) => ({ devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) });
+    const executable = coldRecordV1(profile.executable, ["path", "devDecimal", "inoDecimal", "uid", "gid", "mode", "bytesHash"], "child executable");
+    if (executable.path !== process.execPath) fail("cold child Node path is crossed");
+    const directories = new Map<string, BigIntStats>();
+    if (!Array.isArray(profile.hostDirectories) || profile.hostDirectories.length < 1 || profile.hostDirectories.length > 128) fail("cold child host directories are invalid");
+    for (const candidate of profile.hostDirectories) {
+      const directory = coldRecordV1(candidate, ["path", "devDecimal", "inoDecimal", "uid", "gid", "mode"], "child host directory");
+      if (typeof directory.path !== "string" || !path.isAbsolute(directory.path) || directories.has(directory.path)) fail("cold child host directory path is invalid");
+      const stats = lstatSync(directory.path, { bigint: true });
+      const { path: target, ...expected } = directory;
+      if (!stats.isDirectory() || stats.isSymbolicLink() || canonical(expected) !== canonical(identity(stats))) fail("cold child host identity is crossed");
+      directories.set(target as string, stats);
+    }
+    for (const value of [profile.home, profile.workspace, profile.repository, profile.environmentDirectory, path.dirname(process.execPath)]) {
+      if (typeof value !== "string" || !path.isAbsolute(value)) fail("cold child host root is invalid");
+      for (let target = value; ; target = path.dirname(target)) { if (!directories.has(target)) fail("cold child host ancestry is incomplete"); if (path.dirname(target) === target) break; }
+    }
+    if (canonical(profile.rootIdentity) !== canonical(identity(directories.get(repositoryRoot())!))) fail("cold child repository identity is crossed");
+    const nodeStats = lstatSync(process.execPath, { bigint: true }), node = openSync(process.execPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    descriptors.push(node);
+    try {
+      const { path: nodePath, bytesHash, ...expected } = executable;
+      if (!nodeStats.isFile() || nodeStats.isSymbolicLink() || nodeStats.nlink !== 1n || nodeStats.size < 1n || nodeStats.size > 268_435_456n
+        || canonical(expected) !== canonical(identity(nodeStats)) || !sameColdFileMetadataV1(nodeStats, fstatSync(node, { bigint: true }))) fail("cold child Node identity is crossed");
+      const hash = createHash("sha256"), buffer = Buffer.alloc(65_536);
+      let offset = 0;
+      while (offset < Number(nodeStats.size)) { const count = readSync(node, buffer, 0, Math.min(buffer.length, Number(nodeStats.size) - offset), offset); if (count < 1) fail("cold child Node read is partial"); hash.update(buffer.subarray(0, count)); offset += count; }
+      if (hash.digest("hex") !== bytesHash || readSync(node, buffer, 0, 1, offset) !== 0 || !sameColdFileMetadataV1(nodeStats, fstatSync(node, { bigint: true }))) fail("cold child Node bytes changed");
+    } finally { closeSync(node); descriptors.splice(descriptors.indexOf(node), 1); }
+    const helper = dispatch.helper as Record<string, unknown>;
+    const assertStable = () => {
+      if (closed || closing) fail("cold child authentication is closed");
+      for (const guard of guards) guard.assertStable();
+      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
+      const members = readColdDirectoryMembersV1(root, 2);
+      if (canonical(members.sort()) !== canonical(["dispatch.json", "intent.json"])) fail("cold child journal prefix is crossed");
+      for (const [target, pin] of pinned) if (!pin.bytes.equals(readColdGenesisCandidateV1(target, pin.stats))) fail("cold child original authority changed");
+      if (!sameColdFileMetadataV1(lockFile.stats, fstatSync(4, { bigint: true })) || !sameColdFileMetadataV1(dispatchFile.stats, fstatSync(5, { bigint: true }))
+        || !sameColdFileMetadataV1(frameStats, fstatSync(3, { bigint: true })) || !frameBytes.equals(readInternalProductionSpawnerUntrustedInheritedFrameV1())) fail("cold child inherited descriptors changed");
+      for (const [target, stats] of directories) if (!sameColdFileMetadataV1(stats, lstatSync(target, { bigint: true }))) fail("cold child host ancestry changed");
+      if (!sameColdFileMetadataV1(nodeStats, lstatSync(process.execPath, { bigint: true }))) fail("cold child Node changed");
+      const parent = boundedPsProcessIdentity(helper.pid as number), controller = boundedPsProcessIdentity(lock.pid as number);
+      const own = observeColdProcessParentGroupV1(process.pid), parentOwnership = observeColdProcessParentGroupV1(helper.pid as number), controllerOwnership = observeColdProcessParentGroupV1(lock.pid as number);
+      if (process.ppid !== helper.pid || parent?.processIdentityHash !== helper.processIdentityHash || controller?.processIdentityHash !== lock.processIdentityHash
+        || own.uid !== uid || own.ppid !== helper.pid || own.pgid !== process.pid || parentOwnership.uid !== uid || parentOwnership.ppid !== lock.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
+      for (const guard of guards) guard.assertStable();
+      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
+    };
+    const source = profile.source as Record<string, string>, rootIdentity = profile.rootIdentity as { devDecimal: string; inoDecimal: string; uid: number };
+    const output = { rootIdentity: { devDecimal: rootIdentity.devDecimal, inoDecimal: rootIdentity.inoDecimal, uid: rootIdentity.uid },
+      sourceSha: source.sha!, sourceTreeHash: source.treeHash!, buildInfoBytesHash: profile.buildInfoBytesHash as string,
+      outputTreeBytesHash: profile.outputTreeBytesHash as string, releaseManifestBytesHash: profile.releaseManifestBytesHash as string };
+    const assertOutputStable = () => { assertStable(); verifyInternalProductionSpawnerLaunchOutputCandidateV1(output); assertStable(); };
+    assertOutputStable();
+    return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, close });
+  } catch {
+    try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain unfinished pins without authenticating again. */ } }
+    return fail("cold child authentication failed");
+  }
+}
+
+export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
+  if (coldChildAuthenticationFailedV1) {
+    for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
+    fail("cold child authentication is revoked");
+  }
+  if (coldChildAuthenticationV1 === null) {
+    if (process.argv[1] !== path.join(repositoryRoot(), "dist/spawner.js")) return null;
+    try { if (!fstatSync(3).isFile()) return null; }
+    catch (error) { if (error && typeof error === "object" && "code" in error && error.code === "EBADF") return null; throw error; }
+    try { coldChildAuthenticationV1 = authenticateColdSpawnerChildCapabilityV1(); }
+    catch { coldChildAuthenticationFailedV1 = true; return fail("cold child authentication failed"); }
+  }
+  try { coldChildAuthenticationV1.assertStable(); }
+  catch {
+    coldChildAuthenticationFailedV1 = true;
+    const authentication = coldChildAuthenticationV1;
+    const close = () => {
+      authentication.close();
+      if (coldChildAuthenticationV1 === authentication) coldChildAuthenticationV1 = null;
+      pendingColdHelperAuthenticationCleanupV1.delete(close);
+    };
+    try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain cleanup, never the grant. */ } }
+    return fail("cold child authentication is revoked");
+  }
+  const snapshot = { schema: "setfarm.internal-production-cold-child-runtime-snapshot.v1" };
+  Object.defineProperty(snapshot, "environment", { value: coldChildAuthenticationV1.environment, enumerable: false });
+  return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>> }>;
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {
