@@ -15809,6 +15809,7 @@ function runOpenClawPhysicalInventoryHarness(
   physicalBytes: Buffer,
   openClawBroadListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[],
   persistentMode: "ordinary" | "cold" | "ordinary-without-spawner" = "ordinary",
+  fault = "none",
 ): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const listenerStart = source.indexOf("type OpenClawListenerInventoryV1 =");
@@ -15821,6 +15822,8 @@ function runOpenClawPhysicalInventoryHarness(
     assert.notEqual(offset, -1, `OpenClaw physical production slice is missing ${label}`);
   }
   const fragments = [
+    topLevelFunctionRegionV1(source, "parsePhysicalProcessesV1"),
+    topLevelFunctionRegionV1(source, "assertPhysicalInventoryPassStableV1"),
     source.slice(listenerStart, listenerEnd),
     source.slice(predicateStart, predicateEnd),
     source.slice(physicalStart, physicalEnd).replace("function observePhysicalInventoryV1(", "export function observePhysicalInventoryV1("),
@@ -15828,6 +15831,7 @@ function runOpenClawPhysicalInventoryHarness(
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-openclaw-physical-integrated-")));
   const harness = String.raw`
 import { createHash } from "node:crypto";
+import {lstatSync,openSync,closeSync,fstatSync,constants,realpathSync,mkdirSync,renameSync} from "node:fs";
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,any>>;
 type InternalProductionServiceCensusV1=Readonly<Record<string,any>>;
 type PhysicalProcessV1=Readonly<{uid:number;pid:number;ppid:number;pgid:number;stat:string;lstart:string;command:string;cwd:string|null}>;
@@ -15843,26 +15847,44 @@ function compareBytes(left:string,right:string){return Buffer.compare(Buffer.fro
 function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
 const lstart="Sun Aug 16 15:42:28 2026";
 const persistentMode=process.env.PERSISTENT_MODE;
+const fault=process.env.PHYSICAL_FAULT;
+const PHYSICAL_PROCESS_CAP_V1=4096;
+let psPass=0,worktreePass=0,referencePass=0,lateDescendant=false,managedPass=0,projectPass=0,cwdCalls=0,listenerCalls=0,openClawCalls=0;
 const rows=(persistentMode==="ordinary"?[1,2,3,94886]:[2,3,94886]).map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
-function parsePhysicalProcessesV1(){return Object.freeze(rows)}
 function runPhysicalCommandV1(executable:string,args:readonly string[]){
-  if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789"))return Object.freeze({status:0,stdout:physicalBytes});
-  if(executable==="/bin/ps")return Object.freeze({status:0,stdout:Buffer.from("fixture\n")});
+  if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789")){openClawCalls++;return Object.freeze({status:0,stdout:physicalBytes})}
+  if(executable==="/bin/ps"){
+    psPass++;const sample=rows.map(row=>({...row}));
+    if(worktreePass===2&&fault==="persistent-command")sample[0]!.command="changed service";
+    if(worktreePass===2&&fault==="persistent-start")sample[0]!.lstart="Sun Aug 16 15:42:29 2026";
+    if(worktreePass===2&&fault==="persistent-zombie")sample[0]!.stat="Z";
+    if(fault==="scheduler-churn"&&worktreePass===2)sample[0]!.stat="R";
+    sample.push({uid:501,pid:97000+psPass,ppid:999,pgid:999,stat:"R",lstart,command:"/bin/ps -axo uid=,pid=,ppid=,pgid=,stat=,lstart=,command=",cwd:null});
+    sample.push({uid:501,pid:8888,ppid:999,pgid:8888,stat:psPass===1?"R":"S",lstart,command:"unrelated worker",cwd:null});
+    if((fault==="owned-appears"&&worktreePass===2)||(fault==="owned-disappears"&&worktreePass===1)||["new-descendant","stable-descendant","owned-cwd","owned-zombie"].includes(fault!)||lateDescendant)sample.push({uid:501,pid:601,ppid:2,pgid:601,stat:fault==="owned-zombie"&&worktreePass===2?"Z":"S",lstart,command:"owned child",cwd:null});
+    if(fault==="new-descendant"&&worktreePass===2)sample.push({uid:501,pid:602,ppid:601,pgid:601,stat:"S",lstart,command:"owned grandchild",cwd:null});
+    if(fault==="duplicate-row"&&worktreePass===2)sample.push(sample[0]!);
+    const text=sample.map(row=>[row.uid,row.pid,row.ppid,row.pgid,row.stat,row.lstart,row.command].join(" ")).join("\n")+"\n";
+    return Object.freeze({status:0,stdout:Buffer.from(fault==="truncated-row"&&worktreePass===2?text.slice(0,-1):text)});
+  }
   throw new Error("unexpected physical command "+executable+" "+args.join(" "));
 }
-function observeManagedWorktreesV1(){return Object.freeze([])}
-function physicalManagedBasesV1(){return Object.freeze([])}
-function physicalImmediateProjectsV1(){return Object.freeze([])}
-function lsofReferencedPidsV1(){return Object.freeze({pids:Object.freeze([]),deleted:Object.freeze([])})}
-function observeProcessCwdV1(){throw new Error("no owned process may request cwd")}
+const managedRoot=process.cwd()+"/managed",extraRoot=process.cwd()+"/extra";mkdirSync(managedRoot,{mode:0o700});mkdirSync(extraRoot,{mode:0o700});
+function observeManagedWorktreesV1(){worktreePass++;return (fault==="worktree-appears"&&worktreePass===2)||fault==="dirty-worktree"?Object.freeze([{root:managedRoot,dirty:fault==="dirty-worktree"&&worktreePass===2}]):Object.freeze([])}
+function physicalManagedBasesV1(){managedPass++;return Object.freeze(fault==="managed-root-appears"&&worktreePass===2?[managedRoot,extraRoot].sort(compareBytes):[managedRoot])}
+function physicalImmediateProjectsV1(){projectPass++;return Object.freeze(fault==="project-appears"&&worktreePass===2?[extraRoot]:[])}
+function lsofReferencedPidsV1(){referencePass++;if(fault==="root-replace"&&referencePass===2){renameSync(managedRoot,managedRoot+".old");mkdirSync(managedRoot,{mode:0o700})}return Object.freeze({pids:Object.freeze((fault==="late-reference"&&worktreePass===2)||["stable-reference","deleted-reference"].includes(fault!)?[8888]:[]),deleted:Object.freeze(fault==="deleted-reference"&&worktreePass===2?[8888]:[])})}
+function observeProcessCwdV1(pid:number){cwdCalls++;return ((fault==="persistent-cwd"&&pid===2)||(fault==="owned-cwd"&&pid===601))&&worktreePass===2?process.cwd()+"/changed":process.cwd()}
 function observeProcessListenersV1(pid:number){
+  listenerCalls++;
+  if(fault==="late-descendant"&&worktreePass===2)lateDescendant=true;
   if(pid===1)return Object.freeze([]);
-  if(pid===2)return Object.freeze([{pid:2,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);
+  if(pid===2)return Object.freeze([{pid:2,protocol:"TCP" as const,localAddress:"127.0.0.1",port:fault==="listener-drift"&&worktreePass===2?3334:3333}]);
   if(pid===3)return Object.freeze([{pid:3,protocol:"TCP" as const,localAddress:"*",port:3080}]);
   if(pid===94886)return Object.freeze(openClawBroad);
-  throw new Error("unexpected listener pid "+pid);
+  if([601,602,8888].includes(pid))return Object.freeze([]);throw new Error("unexpected listener pid "+pid);
 }
-function assertPhysicalInventoryPassStableV1(first:unknown,second:unknown){if(canonicalComparable(first)!==canonicalComparable(second))currentEntryFail("physical inventory changed across observation passes")}
+function requirePhysicalDirectoryV1(target:string){const value=lstatSync(target);if(!value.isDirectory()||value.isSymbolicLink()||realpathSync(target)!==target)currentEntryFail("physical directory invalid")}
 ${fragments}
 const common=(pid:number)=>({pid,processStartTimeEpochMs:Date.parse(lstart),processIdentityHash:sha256(pid+"\n"+lstart+"\n"),processOwnerCount:1});
 const services:any={
@@ -15871,7 +15893,10 @@ const services:any={
   missionControl:{...common(3),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3080,listenerIdentityHash:"b".repeat(64)}},
   openClaw:{...common(94886),loadedSourceSha:null,loadedTreeHash:null,loadedBuildHash:null,listenerOwnerCount:1,listener:{host:"127.0.0.1",port:18789,listenerIdentityHash:sha256(serviceBytes)}},
 };
-process.stdout.write(JSON.stringify(persistentMode==="cold"?observeColdPhysicalInventoryV1(services,0):observePhysicalInventoryV1(services,0))+"\n");
+const inventory=persistentMode==="cold"?observeColdPhysicalInventoryV1(services,0):observePhysicalInventoryV1(services,0);
+const expectedPerProcess=2*((persistentMode==="cold"?3:4)+Number(inventory.ownedProcessCount));
+if(psPass!==4||worktreePass!==2||managedPass!==2||projectPass!==2||referencePass!==2||openClawCalls!==2||cwdCalls!==expectedPerProcess||listenerCalls!==expectedPerProcess)throw Error("physical ports were not sampled through both complete bracketed passes");
+process.stdout.write(JSON.stringify(inventory)+"\n");
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
@@ -15884,6 +15909,7 @@ process.stdout.write(JSON.stringify(persistentMode==="cold"?observeColdPhysicalI
         PHYSICAL_BYTES: physicalBytes.toString("base64"),
         OPENCLAW_BROAD: JSON.stringify(openClawBroadListeners),
         PERSISTENT_MODE: persistentMode,
+        PHYSICAL_FAULT: fault,
       },
     });
   } finally {
@@ -17643,6 +17669,27 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const unownedPort = runOpenClawPhysicalInventoryHarness(bytes, bytes, [...listeners, extra], "cold");
     assert.equal(unownedPort.status, 0, unownedPort.stderr);
     assert.equal(JSON.parse(unownedPort.stdout).ownedListenerCount, 1, "cold collection retains nonzero owner evidence");
+  });
+
+  it("physical collection ignores unrelated probe churn but reobserves every ownership-bearing pass", () => {
+    const bytes = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const listeners = [{ pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18789 }];
+    for (const fault of ["none", "scheduler-churn"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.equal(result.status, 0, `${fault}: ${result.stderr}`);
+      assert.equal(JSON.parse(result.stdout).ownedProcessCount, 0);
+    }
+    for (const fault of ["stable-descendant", "stable-reference"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.equal(result.status, 0, `${fault}: ${result.stderr}`);
+      assert.equal(JSON.parse(result.stdout).ownedProcessCount, 1, "normalization must preserve nonzero ownership");
+    }
+    for (const fault of ["owned-appears", "owned-disappears", "new-descendant", "late-reference", "persistent-command", "persistent-start", "persistent-cwd", "persistent-zombie", "worktree-appears", "root-replace", "listener-drift", "duplicate-row", "truncated-row", "late-descendant", "owned-cwd", "owned-zombie", "managed-root-appears", "project-appears", "dirty-worktree", "deleted-reference"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.notEqual(result.status, 0, `${fault}: ownership drift must refuse`);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /physical|process|persistent/);
+    }
   });
 
   it("P4 physical census binds OpenClaw raw listener bytes before endpoint exemption", () => {

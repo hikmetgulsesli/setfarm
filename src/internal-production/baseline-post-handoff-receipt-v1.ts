@@ -7530,13 +7530,41 @@ function observePhysicalInventoryForPersistentServicesV1(
   persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
   activeRunCount: number,
 ): PhysicalInventoryV1 {
+  const first = collectPhysicalInventoryPassV1(services, persistent, activeRunCount);
+  const second = collectPhysicalInventoryPassV1(services, persistent, activeRunCount);
+  assertPhysicalInventoryPassStableV1(first.witness, second.witness);
+  return first.inventory;
+}
+
+function observePhysicalDirectoryIdentityV1(target: string) {
+  requirePhysicalDirectoryV1(target, "physical reference root");
+  const metadata = (stats: BigIntStats) => Object.fromEntries([
+    "dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs",
+  ].map((key) => [key, String(stats[key as keyof BigIntStats])]));
+  const before = lstatSync(target, { bigint: true });
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+  try {
+    const held = fstatSync(descriptor, { bigint: true });
+    const after = lstatSync(target, { bigint: true });
+    if (!held.isDirectory() || !after.isDirectory() || after.isSymbolicLink()
+      || canonicalComparable(metadata(before)) !== canonicalComparable(metadata(held))
+      || canonicalComparable(metadata(before)) !== canonicalComparable(metadata(after))) currentEntryFail("physical reference root changed while observed");
+    return recursivelyFreeze({ path: target, ...metadata(held) });
+  } finally { closeSync(descriptor); }
+}
+
+function collectPhysicalInventoryPassV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
+  activeRunCount: number,
+) {
   if (process.platform !== "darwin") currentEntryFail("physical census requires Darwin");
   const worktrees = observeManagedWorktreesV1();
   const processes = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
   for (const service of persistent) {
     const row = byPid.get(service.pid);
-    if (!row || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
+    if (!row || row.stat.includes("Z") || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
   }
   const observedOpenClawListeners = observeOpenClawListenerInventoryV1(services.openClaw.pid);
   const serviceBoundOpenClawListeners = requireServiceBoundOpenClawListenersV1(services.openClaw, observedOpenClawListeners);
@@ -7544,8 +7572,12 @@ function observePhysicalInventoryForPersistentServicesV1(
   const immediateProjects = physicalImmediateProjectsV1();
   const referencePids = new Set<number>();
   const deletedPids = new Set<number>();
-  for (const root of [...managedRoots, ...worktrees.map((entry) => entry.root), ...immediateProjects]) {
+  const referenceRoots = [...new Set([...managedRoots, ...worktrees.map((entry) => entry.root), ...immediateProjects])].sort(compareBytes);
+  const rootIdentities = referenceRoots.map(observePhysicalDirectoryIdentityV1);
+  const referenceWitness: Array<Readonly<{ root: string; pids: readonly number[]; deleted: readonly number[] }>> = [];
+  for (const root of referenceRoots) {
     const refs = lsofReferencedPidsV1(root);
+    referenceWitness.push(Object.freeze({ root, ...refs }));
     refs.pids.forEach((pid) => referencePids.add(pid));
     refs.deleted.forEach((pid) => deletedPids.add(pid));
   }
@@ -7597,9 +7629,7 @@ function observePhysicalInventoryForPersistentServicesV1(
     return complete;
   });
   const extraListeners = listeners.filter((listener) => !isExpectedPersistentListenerV1(listener, services, serviceBoundOpenClawListeners));
-  const processesAgain = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
-  assertPhysicalInventoryPassStableV1(processes, processesAgain);
-  return recursivelyFreeze({
+  const inventory: PhysicalInventoryV1 = recursivelyFreeze({
     worktrees,
     processes: owned.sort((left, right) => left.pid - right.pid),
     listeners: extraListeners.sort((left, right) => left.pid - right.pid || left.port - right.port),
@@ -7610,6 +7640,35 @@ function observePhysicalInventoryForPersistentServicesV1(
     dirtyWorktreeCount: worktrees.filter((entry) => entry.dirty).length,
     staleChildCount: stale.size,
   });
+  const processWitness = ({ stat, ...row }: PhysicalProcessV1) => ({ ...row, zombie: stat.includes("Z") });
+  const persistentProcesses = persistent.map((service) => {
+    const row = byPid.get(service.pid)!;
+    return processWitness({ ...row, cwd: observeProcessCwdV1(row.pid, row.ppid) });
+  }).sort((left, right) => left.pid - right.pid);
+  assertPhysicalInventoryPassStableV1(rootIdentities, referenceRoots.map(observePhysicalDirectoryIdentityV1));
+  const processFence = (rows: readonly PhysicalProcessV1[]) => {
+    const descendants = new Set(persistentPids);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const row of rows) if (!descendants.has(row.pid) && descendants.has(row.ppid)) { descendants.add(row.pid); changed = true; }
+    }
+    return rows.filter((row) => descendants.has(row.pid) || referencePids.has(row.pid)
+      || orphanPattern.test(row.command) || commandReferencesManagedStoryWorktree(row.command)).map(processWitness);
+  };
+  // Keep a closing process fence after lsof/cwd/listener observation. A new
+  // descendant or changed service here must not escape the final zero claim.
+  const closingProcesses = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  assertPhysicalInventoryPassStableV1(processFence(processes), processFence(closingProcesses));
+  // Repeat every discovery/reference/cwd/listener port in the second pass.
+  // Unrelated scheduler state and the observing ps child confer no ownership;
+  // their churn must not substitute for comparing the actual authority evidence.
+  return recursivelyFreeze({ inventory, witness: {
+    ...inventory, processes: inventory.processes.map(processWitness), persistentProcesses,
+    managedRoots, immediateProjects, rootIdentities, referenceWitness,
+    completeListeners: [...listeners].sort((left, right) => compareBytes(canonicalComparable(left), canonicalComparable(right))),
+    openClawListenerBytesHash: sha256(observedOpenClawListeners.bytes),
+  } });
 }
 
 function boundedChildBytes(executable: string, args: readonly string[], label: string, input?: Buffer): Buffer {

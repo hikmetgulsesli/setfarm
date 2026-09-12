@@ -310,15 +310,40 @@ Receipt import-inert1/1 (1.113s), exact source manifest17/17 (5.830s), and live
 Mission Control API3080/dashboard3333 HTTP200 checks also passed.
 No full P3 or live cold acceptance has run.
 
-Next causally required collector correction, same receipt/test File Map members:
+Completed causally required collector correction, same receipt/test File Map members:
 read-only real Darwin evidence showed the current physical collector compares
 the entire two ps arrays, including its own different probe PIDs and unrelated
 scheduler-state churn. Exact production parser/comparator refused two530-row
-snapshots solely on this unstable global evidence. Factor two complete bounded
-collection passes and compare all authority-bearing ownership, root/worktree,
-reference, persistent-process and listener evidence; do not add process-name/PID
-exemptions or weaken parsing, zero-owner or service identity checks. Require
-regressions for both harmless unrelated churn and newly appeared/changed owners.
+snapshots on this unstable global evidence. The collector now performs two
+complete bounded collection passes and compares all authority-bearing ownership,
+root/worktree, reference, persistent-process and listener evidence. Full parser
+validation is unchanged. There is no process-name/PID exemption, zero-owner
+shortcut or dropped service check. Private process witnesses normalize scheduler
+state but preserve zombie status and every identity/command/cwd field. Published
+inventory shape and its actual owner counts remain unchanged. Physical reference
+root metadata is authenticated before/after each pass and across the pair.
+
+Review found the first version could miss a descendant born during the second
+pass's listener sampling. A real collector regression returned success when it
+had to refuse. Each pass now also closes with a full parsed process snapshot,
+comparing normalized persistent/descendant/reference/orphan/story-path membership.
+This is four bounded ps probes total, two full port collections, no retries.
+The closing fence proves relevant process identity/membership stability, not
+atomicity of all OS files/listeners/cwds against arbitrary subsequent changes.
+
+The collector harness now uses the actual process parser, witness comparator,
+root filesystem identity observer and OpenClaw byte bindings; discovery/reference,
+cwd and broad-listener ports remain explicit controlled boundaries. Four stable
+cases include harmless probe/scheduler churn and retained nonzero descendant or
+reference ownership. Twenty drift cases include late descendant appearance,
+new/departing/grandchild owners, late/deleted references, owned cwd/zombie changes,
+persistent identity/cwd/zombie changes, worktree/root/project/dirty transitions,
+same-path root replacement, listener drift and malformed process records. Success
+asserts all four ps probes and both calls through each complete collector port.
+Focused parser, command-fence, OpenClaw, real-poison cold-bracket and collector
+tests passed7/7 (35.495s). TypeScript/whitespace, import-inert1/1 (1.616s) and
+exact source manifest17/17 (5.817s) passed; independent final re-review found no
+remaining material issue in this scoped collector correction.
 
 The next private transport slice is `openColdSpawnerHelperFrameV1` in the same
 retirement module. It opens the exact intent read-only for FD5 and creates an
