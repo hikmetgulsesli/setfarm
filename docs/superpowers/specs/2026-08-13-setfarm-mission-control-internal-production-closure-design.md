@@ -2713,3 +2713,25 @@ This extraction is causally required for Task 6A's authenticated legacy finding
 inventory. It shares exact canonical parent/child validation between publication
 and terminal resolution without changing terminal hashes, producer identities,
 issue statuses or SQL schemas. It grants no legacy admission exemption by itself.
+
+## Legacy finding inventory evidence amendment v1
+
+This additive amendment extends exact142 Task 0 / exact61 P3 with the pure,
+strict legacy publication inventory evidence contract required for Task 6A
+cold recovery. Prior source tuples and historical receipts remain unchanged.
+
+Task 0 insert `src/findings/legacy-finding-publication-inventory-v1.ts` after `src/findings/finding-publication-v1.ts`.
+P3 insert `src/findings/legacy-finding-publication-inventory-v1.ts` after `src/findings/finding-publication-v1.ts`.
+
+Current inventories become Task 0 exact143 and P3 exact62: 34 production/package
+paths and the unchanged 28 test/helper paths (25 database tests, 1 source-only
+test, 2 non-executable helpers). Existing finding and owner-admission tests own
+the inventory behavior; receipt tests own versioned observation integration.
+
+New legacy-zero observations use V2 and bind complete immutable publications
+from terminal runs in the existing observation hash. Historical V1 is readable
+but grants no finding membership. The 36-counter census and 33-pair final graph
+do not grow; SQL schemas, finding issue statuses and terminal hashes do not
+change. Post-migration exemption still requires the authenticated migration
+chain and an exact same-snapshot publication match; this pure module alone
+grants no admission authority.

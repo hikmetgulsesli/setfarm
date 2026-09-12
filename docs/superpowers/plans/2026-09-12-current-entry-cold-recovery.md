@@ -346,3 +346,43 @@ passed. Whole-branch delivery and live recovery remain pending.
   negative checks passed 15/15 (5.633s); `npx tsc --noEmit` and diff check exited
   zero. Real PostgreSQL owning suites are the next verification step. Legacy
   zero-owner inventory/provenance and epoch genesis remain unimplemented.
+- Checkpoint `2890f11c` real PostgreSQL verification completed: finding
+  repository 12/12 (101.048s), owner-admission 85/85 (1538.344s), zero failures.
+  Both isolated prefixes and their template/primary/clone databases were
+  removed by the harness. This proves the publication/storage checkpoint,
+  not the subsequently edited inventory or live Task 6A.
+- `npm run build` on the clean scoped branch refused before building because
+  HEAD does not equal origin/main. No runtime/build guard was bypassed and
+  no origin reference was rewritten. TypeScript and disposable tests remain
+  available; the full guarded build belongs after reviewed integration.
+- Legacy schema31 RED used a real disposable migrated database containing a
+  terminal failed run and complete immutable open-issue publication. It failed
+  exactly with `findingOwnerCount is nonzero`; all 12 existing repository
+  tests passed and snapshots proved no stored issue/run/publication mutation.
+- Added `src/findings/legacy-finding-publication-inventory-v1.ts` to this File
+  Map and the additive owning exact143/exact62 manifests. This pure evidence
+  schema is causally required by Task 1B; it grants no admission itself.
+  The schema31 read-only repeatable-read census authenticates complete bounded
+  parent/child publications and terminal run relations before reporting zero
+  publication owners. New observation V2 binds the inventory outside the
+  unchanged 36 counters; strict historical V1 grants no memberships.
+- V2 public/nested parsers, no-write quarantine builder, dynamic pre-dispatch
+  and post-termination checks, and migration/final-graph inventory continuity
+  are wired. Independent review found conflicting statuses for a shared run;
+  an executing RED demonstrated it and the validator now rejects that case.
+  Pure/parser/census focused checks passed 5/5 (20.253s); amended manifest
+  checks passed 16/16 (5.637s), TypeScript and diff check passed.
+- Remaining in this inventory slice: real PostgreSQL GREEN and extended
+  quarantine/history regression verification. Post32 authenticated provenance
+  lookup and complete-census classification remain unimplemented; do not grant
+  exemptions or claim live zero-owner from this checkpoint. Cold three-service
+  observation, epoch genesis, direct transport and live A acceptance remain
+  later coupled work; B–E and final delivery are still pending.
+- Extended quarantine/history checks completed 4/4 (249.571s), including the
+  real physical pre-schema causal history and generation/inventory negatives.
+  Review then found the stored prepared/consumed migration-32 resume path
+  needed its own exact post-termination inventory reobservation. Both modes
+  reached staging in the demonstrated RED; after the correction both refuse
+  before consumption publication, evidence minting or staging, while equal
+  inventory still reaches staging. Combined parser/apply behavior passed,
+  along with TypeScript and diff check. No migration was applied live.

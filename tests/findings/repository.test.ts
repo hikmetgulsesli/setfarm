@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
 
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
@@ -7,7 +12,7 @@ import { createFindingSetV1, type FindingSetV1 } from "../../src/findings/findin
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
+import { createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -132,6 +137,60 @@ function evidenceBundle(
     completedAt: "2026-07-13T00:00:01.000Z",
   });
 }
+
+it("legacy schema31 census authenticates terminal published findings without mutating issue status", async () => {
+  const database = await createIsolatedMigration31TestDatabase();
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-legacy-finding-census-"));
+  try {
+    const value = structuredFindingSet();
+    await database.sql`
+      INSERT INTO runs (id,workflow_id,task,status,protocol,compiler_release_sha,activation_preflight_hash)
+      VALUES (${value.runId},'feature-dev','legacy publication census','failed','shadow',${SHA_A},${HASH_A})
+    `;
+    await database.sql`
+      INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+        source_sha,source_tree_hash,finding_ids,payload)
+      VALUES (${value.findingSetHash},${value.findingSetId},${value.runId},${value.storyId},${value.packetHash},${value.sliceHash},
+        ${value.sourceRevision.sha},${value.sourceRevision.treeHash},
+        ${database.sql.json(value.findings.map((finding) => finding.findingId))},${database.sql.json(value)})
+    `;
+    for (const finding of value.findings) {
+      await database.sql`
+        INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${value.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},
+          ${finding.status},${hashCanonicalJson(finding.sourceLocators)},${database.sql.json(finding)})
+      `;
+    }
+    const snapshot = async () => ({
+      parents: [...await database.sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await database.sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      runs: [...await database.sql`SELECT * FROM runs ORDER BY id`],
+    });
+    const before = await snapshot();
+    cpSync(path.join(process.cwd(), "src"), path.join(fixture, "src"), { recursive: true });
+    symlinkSync(path.join(process.cwd(), "node_modules"), path.join(fixture, "node_modules"), "dir");
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
+    const locator = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+    const source = readFileSync(locator, "utf8");
+    const header = "async function observeLegacyDatabaseCensusV1()";
+    assert.equal(source.split(header).length, 2, "fixture exposes only the existing read-only database leaf");
+    writeFileSync(locator, source.replace(header, `export ${header}`));
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, SETFARM_PG_URL: database.url };
+    delete childEnv.NODE_OPTIONS;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+      `const m=await import(${JSON.stringify(pathToFileURL(locator).href)});try{const value=await m.observeLegacyDatabaseCensusV1();process.stdout.write(JSON.stringify({outcome:"returned",value}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}`,
+    ], { cwd: fixture, env: childEnv, encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 });
+    assert.equal(child.status, 0, child.stderr);
+    const observed = JSON.parse(child.stdout);
+    assert.deepEqual(await snapshot(), before, "read-only census must preserve every immutable finding and issue status");
+    assert.equal(observed.outcome, "returned", observed.message);
+    assert.equal(observed.value.findingOwnerCount, 0);
+    assert.deepEqual(observed.value.legacyFindingPublicationInventory.entries.map((entry: { findingSetHash: string }) => entry.findingSetHash), [value.findingSetHash]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+    await database.cleanup();
+  }
+});
 
 describe("finding, evidence, and recovery repository", () => {
   let database: TestDatabase;

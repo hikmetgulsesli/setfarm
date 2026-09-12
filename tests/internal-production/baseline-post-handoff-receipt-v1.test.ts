@@ -23,6 +23,7 @@ import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
+import { transformSync } from "esbuild";
 import {
   createInternalProductionGlobalOwnerAdmissionFenceV1,
   createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
@@ -980,7 +981,10 @@ function buildExactPoisonStrictChainFixtureV1(
   const successorOperationBytes = canonicalFixtureRecordV1(successorOperation);
 
   const successorLegacyZeroCore = Object.freeze({
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    schema: options === undefined
+      ? "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1"
+      : "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    ...(options === undefined ? {} : { legacyFindingPublicationInventory: emptyLegacyFindingInventoryFixtureV1() }),
     observationKind: "legacy-pre-manifest-existing-live-truth",
     authorityV3Migration31AuditRef: successorAuthorityV31.ref,
     authorityV3Migration31AuditHash: successorAuthorityV31.hash,
@@ -14753,6 +14757,11 @@ function buildExactPoisonPublisherAdmissionFixtureV1(
   return Object.freeze({ chain, value });
 }
 
+function emptyLegacyFindingInventoryFixtureV1(): Readonly<Record<string, unknown>> {
+  const body = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [] };
+  return Object.freeze({ ...body, inventoryHash: canonicalHash(body) });
+}
+
 function buildExactPoisonPublisherRawObservationsV1(
   original: ExactOriginalPoisonStoreFixtureV1,
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>,
@@ -14788,12 +14797,12 @@ function buildExactPoisonPublisherRawObservationsV1(
     assert.deepEqual(record.pair, { [refKey]: record.value[refKey], [hashKey]: record.value[hashKey] }, `${label} no-write pair`);
   }
   const completeZero = zeroOwnerCensusFixtureV1();
-  const database = Object.freeze(Object.fromEntries([
+  const database = Object.freeze({ ...Object.fromEntries([
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
     "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "artifactReservationCount",
     "publicationBatchCount", "artifactPublicationCount", "terminationOwnerCount", "findingOwnerCount",
     "recoveryOwnerCount", "operationalDeliveryCount",
-  ].map((key) => [key, completeZero[key]])));
+  ].map((key) => [key, completeZero[key]])), legacyFindingPublicationInventory: emptyLegacyFindingInventoryFixtureV1() });
   const phase = Object.freeze(Object.fromEntries([
     "ordinaryStartingCount", "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount",
     "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount", "docsSessionCount", "docsLeaseCount",
@@ -15125,6 +15134,11 @@ function ensureBaselinePostHandoffImportSupportV1(root: string): void {
     writeFileSync(target, bytes, { mode: 0o644 });
   };
   ensure("src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+  ensure("src/findings/legacy-finding-publication-inventory-v1.ts", readFileSync(path.join(sourceRoot, "src/findings/legacy-finding-publication-inventory-v1.ts")));
+  ensure("src/internal-production/baseline-workspace-authority-path-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8").replace(
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ));
   ensure("src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-repository-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-repository-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-run-authority-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts")));
@@ -15498,6 +15512,7 @@ function materializeOutputs(root: string): void {
     "dist/execution/recovery-source-bootstrap-repository-v1.js": "// compiled recovery repository fixture\n",
     "dist/execution/recovery-source-bootstrap-run-authority-v1.js": "// compiled recovery authority fixture\n",
     "dist/execution/v3-git-revision.js": "// compiled git fixture\n",
+    "dist/findings/legacy-finding-publication-inventory-v1.js": "// compiled legacy finding inventory fixture\n",
     "dist/installer/compat-rules.json": "{}\n",
     "dist/installer/prompts/prompt.md": "prompt\n",
     "dist/installer/run.js": "// compiled recovery installer fixture\n",
@@ -16228,6 +16243,10 @@ function legacyDatabaseCensusRow(overrides: Readonly<Record<string, unknown>> = 
 function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[]): string {
   const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
   let source = readFileSync(observerSource, "utf8");
+  // Execute the actual pure publication validator from its dependency-complete
+  // source tree; only the PostgreSQL transport below is a bounded test double.
+  source = source.replace('await import("../findings/finding-publication-v1.js")',
+    `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
   source = source.replace(
     "async function observeLegacyDatabaseCensusV1()",
     "export async function observeLegacyDatabaseCensusV1()",
@@ -16263,6 +16282,15 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
           "state IN ('authorized','leased','attempt_reserved','running')",
           "state IN ('pending','leased')",
         ]) if(!query.includes(literal)) throw new Error("MISSING_AGGREGATE_PREDICATE_"+literal);
+      }else if(queryCalls===4){
+        if(!query.includes("FROM public.finding_sets") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_PARENT_QUERY");
+        return [];
+      }else if(queryCalls===5){
+        if(!query.includes("FROM public.findings") || !query.includes("LIMIT 65537")) throw new Error("WRONG_FINDING_CHILD_QUERY");
+        return [];
+      }else if(queryCalls===6){
+        if(!query.includes("FROM public.runs") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_RUN_QUERY");
+        return [];
       }else throw new Error("EXTRA_DATABASE_QUERY");
       return fixtureRows;
     }, {
@@ -16270,7 +16298,7 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
         if(mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
         return callback(fixtureSql);
       },
-      end: async () => {if(queryCalls!==3) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
+      end: async () => {if(queryCalls!==3 && queryCalls!==6) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
     });
     const postgresModule={default:()=>fixtureSql};`,
   );
@@ -16824,6 +16852,93 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     ]) assert.ok(source.includes(producer), `missing phase-closed producer proof for ${producer}`);
   });
 
+  it("legacy zero parsers authenticate V2 inventory and preserve exact historical V1", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-legacy-zero-parser-"));
+    try {
+      fixtureFile(root, "package.json", '{"type":"module"}\n');
+      fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+        readFileSync(observerSource, "utf8") + "\nexport { parseLegacyZeroV1, parseCurrentEntryStoreLegacyZeroOwnerV1, buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1, requireLegacyZeroVersionedFieldsV1 };\n");
+      const source = { branch: "main", clean: true, sha: "a".repeat(40), treeHash: "b".repeat(40), buildHash: "c".repeat(64), originMainSha: "a".repeat(40) };
+      const auditHash = "d".repeat(64);
+      const auditPair = { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${auditHash}`, authorityV3Migration31AuditHash: auditHash };
+      const body = {
+        schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+        observationKind: "legacy-pre-manifest-existing-live-truth", ...auditPair,
+        cleanSetfarmSourceSha: source.sha, cleanSetfarmTreeHash: source.treeHash, cleanSetfarmBuildHash: source.buildHash,
+        observedSpawnerGenerationHash: "e".repeat(64), census: zeroOwnerCensusFixtureV1(), allThirtySixScalarCountsZero: true,
+        ownerReservationSidecarState: "absent-before-migration-32", ownerAdmissionHeadState: "absent-before-migration-32", manifestActivationState: "absent-before-initial-a-activation",
+      };
+      const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{ findingSetHash: "1".repeat(64), publicationHash: "2".repeat(64), runId: "terminal-run", terminalRunStatus: "failed" }] };
+      const inventory = { ...inventoryBody, inventoryHash: canonicalHash(inventoryBody) };
+      const wrap = (core: Record<string, unknown>) => {
+        const observationHash = canonicalHash(core);
+        return { ...core, observationHash, observationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${observationHash}` };
+      };
+      const v2 = { ...body, schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2", legacyFindingPublicationInventory: inventory };
+      const records = [wrap(body), wrap(v2), wrap({ ...v2, legacyFindingPublicationInventory: { ...inventory, inventoryHash: "f".repeat(64) } }), wrap({ ...body, legacyFindingPublicationInventory: inventory }), wrap({ ...v2, legacyFindingPublicationInventory: undefined }), wrap({ ...v2, extra: true })];
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      const observer = readFileSync(observerSource, "utf8");
+      const causalStart = observer.indexOf("const validateDynamicMaterialCausal = async");
+      const causalEnd = observer.indexOf("const dynamicMaterialContentKeys", causalStart);
+      assert.ok(causalStart >= 0 && causalEnd > causalStart);
+      const causalExecutable = transformSync(observer.slice(causalStart, causalEnd), { loader: "ts", target: "es2022" }).code;
+      const applyExecutable = transformSync(topLevelFunctionRegionV1(observer, "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1")
+        .replace('await import("../db/bootstrap-main-claim-handoff-v1-migration.js")', "ports")
+        .replace('await import("../db-pg.js")', "ports"), { loader: "ts", target: "es2022" }).code;
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `
+        const m=await import(${JSON.stringify(moduleUrl)}); const records=${JSON.stringify(records)};
+        const outcomes=[];
+        for(const value of records){
+          const pair={observationRef:value.observationRef,observationHash:value.observationHash};
+          const each=[];
+          try { const parsed=await m.parseLegacyZeroV1(value,pair,async()=>({controllerSource:${JSON.stringify(source)}})); each.push(JSON.stringify(parsed)===JSON.stringify(value)); } catch { each.push(false); }
+          try { m.parseCurrentEntryStoreLegacyZeroOwnerV1(value,${JSON.stringify(source)},${JSON.stringify({ ref: auditPair.authorityV3Migration31AuditRef, hash: auditHash })}); each.push(true); } catch { each.push(false); }
+          outcomes.push(each);
+        }
+        const built=m.buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(${JSON.stringify(source)},{pair:${JSON.stringify(auditPair)}},{spawner:{generationHash:${JSON.stringify(body.observedSpawnerGenerationHash)}}},{},${JSON.stringify(body.census)},${JSON.stringify(body.census)},${JSON.stringify(inventory)});
+        outcomes.push([built.schema==="setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",JSON.stringify(built.legacyFindingPublicationInventory)===${JSON.stringify(JSON.stringify(inventory))}]);
+        const operation={authorityV3Migration31Audit:${JSON.stringify(auditPair)}};
+        const source=${JSON.stringify(source)};
+        const bodies=Array.from({length:6},()=>({actualSpawnerGenerationHash:${JSON.stringify(body.observedSpawnerGenerationHash)}}));
+        const currentEntryFail=(reason)=>{throw new Error(reason)};
+        const requireLegacyZeroVersionedFieldsV1=m.requireLegacyZeroVersionedFieldsV1;
+        ${causalExecutable}
+        for(const value of records.slice(0,3)){
+          const each=[]; for(const index of [0,6]){try{await validateDynamicMaterialCausal(index,value);each.push(true)}catch{each.push(false)}} outcomes.push(each);
+        }
+        const {requireLegacyFindingPublicationInventoryContinuityV1}=await import(${JSON.stringify(pathToFileURL(path.join(root, "src/findings/legacy-finding-publication-inventory-v1.ts")).href)});
+        const isPlainRecord=(v)=>v!==null&&typeof v==="object"&&!Array.isArray(v);
+        let state="prepared",post=records[0],effects=[];
+        const fresh=records[1],input={authorizationRef:"authorization",authorizationHash:"authorization-hash"};
+        const applyOperation={operationRef:"operation",operationHash:"operation-hash"};
+        const authorization={currentEntryOperationRef:applyOperation.operationRef,currentEntryOperationHash:applyOperation.operationHash,freshLegacyZeroOwnerObservationRef:fresh.observationRef,freshLegacyZeroOwnerObservationHash:fresh.observationHash};
+        const resolveInternalProductionPreManifestMigration32AuthorizationV1=async()=>authorization;
+        const observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1=async()=>({state,authorization:input,consumption:{consumptionRef:"consumption",consumptionHash:"consumption-hash"}});
+        const observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1=async()=>fresh;
+        const resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1=async(_context,pair)=>{
+          if(pair.observationRef!==post.observationRef||pair.observationHash!==post.observationHash)throw new Error("CROSSED_POST_LOOKUP");return post;
+        };
+        const resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1=async()=>input;
+        const publishTask12HashedRecordV1=async()=>{effects.push("publish");return {consumptionRef:"consumption",consumptionHash:"consumption-hash"}};
+        const publishTask12MigrationStatusV1=async()=>{},operationPair=(v)=>v,TASK12_MIGRATION_PREFIXES_V1={consumption:"consumption"};
+        const ports={mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1:()=>{effects.push("mint");return {}},openInternalProductionCurrentEntryMigration32TransactionV1:async()=>({}),stageInternalProductionCurrentEntryMigration32InTransactionV1:async()=>{effects.push("stage");throw new Error("STAGE_REACHED")},commitInternalProductionCurrentEntryMigration32TransactionV1:async()=>{},abortInternalProductionCurrentEntryMigration32TransactionV1:async()=>{}};
+        ${applyExecutable}
+        for(state of ["prepared","consumed"]){
+          for(post of [records[0],fresh]){
+            effects=[];
+            authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef=post.observationRef;
+            authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash=post.observationHash;
+            let failure="";try{await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1({},applyOperation,input)}catch(error){failure=error.message}
+            outcomes.push(post===fresh?[failure==="STAGE_REACHED",effects.includes("stage")]:[failure==="LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT",effects.length===0]);
+          }
+        }
+        process.stdout.write(JSON.stringify(outcomes));
+      `], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, timeout: 30_000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), [[true, true], [true, true], [false, false], [false, false], [false, false], [false, false], [true, true], [true, true], [true, true], [false, false], [true, true], [true, true], [true, true], [true, true]]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("P4 legacy census rejects a nonzero open claim instead of synthesizing zero", () => {
     const rows = [legacyDatabaseCensusRow({ openClaimCount: "1" })];
     const root = createLegacyDatabaseCensusFixture(rows);
@@ -16875,7 +16990,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       for (const key of liveKeys) {
         const result = run(legacyDatabaseCensusRow({ [key]: "1" }));
         assert.notEqual(result.status, 0, `${key} must refuse`);
-        assert.match(result.stderr, new RegExp(key));
+        assert.match(result.stderr, key === "findingOwnerCount" ? /legacy finding publication aggregate is crossed/ : new RegExp(key));
       }
       for (const [key, value] of [
         ["openClaimCount", "-1"],

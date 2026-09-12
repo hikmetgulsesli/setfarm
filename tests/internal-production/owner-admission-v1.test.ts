@@ -12,7 +12,8 @@ import test from "node:test";
 import postgres from "postgres";
 import { transformSync } from "esbuild";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
-import { requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
+import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
+import { validateLegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import * as ownerAdmissionApi from "../../src/internal-production/owner-admission-v1.js";
@@ -8582,6 +8583,58 @@ test("finding terminal projection authenticates complete published content, not 
   assert.throws(() => requireFindingPublicationV1(parent, sparse), /FINDING_PUBLICATION_INVALID/);
   assert.throws(() => requireFindingPublicationV1({ ...parent, finding_ids: [...parent.finding_ids].reverse() }, children), /FINDING_PUBLICATION_INVALID/);
   assert.throws(() => requireFindingPublicationV1({ ...parent, payload: { ...value, findingSetHash: SHA_A } }, children), /FINDING_PUBLICATION_INVALID/);
+  const inventory = observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }]);
+  assert.deepEqual(inventory.entries, [{ findingSetHash: value.findingSetHash,
+    publicationHash: hashCanonicalJson({ schema: "setfarm.finding-publication.v1", findingSet: value }),
+    runId: value.runId, terminalRunStatus: "failed" }]);
+  assert.deepEqual(validateLegacyFindingPublicationInventoryV1(inventory), inventory);
+  const sharedRunEntries = [
+    { ...inventory.entries[0]!, findingSetHash: "1".repeat(64) },
+    { ...inventory.entries[0]!, findingSetHash: "2".repeat(64) },
+  ];
+  const sharedBody = { schema: inventory.schema, entries: sharedRunEntries };
+  assert.equal(validateLegacyFindingPublicationInventoryV1({ ...sharedBody, inventoryHash: hashCanonicalJson(sharedBody) }).entries.length, 2);
+  const conflictBody = { ...sharedBody, entries: [sharedRunEntries[0]!, { ...sharedRunEntries[1]!, terminalRunStatus: "completed" }] };
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...conflictBody, inventoryHash: hashCanonicalJson(conflictBody) }), /INVENTORY_INVALID/);
+  assert.deepEqual(observeLegacyFindingPublicationInventoryV1([], [], []).entries, []);
+  assert.deepEqual(observeLegacyFindingPublicationInventoryV1([parent], [...children].reverse(), [{ id: value.runId, status: "failed" }]), inventory);
+  for (const [parents, members, runs] of [
+    [Array(4097).fill(parent), [], []],
+    [[], Array(65537).fill(children[0]), []],
+    [[], [], Array(4097).fill({ id: value.runId, status: "failed" })],
+  ] as const) assert.throws(() => observeLegacyFindingPublicationInventoryV1(parents, members, runs), /INVENTORY_LIMIT/);
+  const maximalEntries = Array.from({ length: 4096 }, (_, index) => ({ ...inventory.entries[0]!, findingSetHash: index.toString(16).padStart(64, "0") }));
+  const maximalBody = { schema: inventory.schema, entries: maximalEntries };
+  assert.equal(validateLegacyFindingPublicationInventoryV1({ ...maximalBody, inventoryHash: hashCanonicalJson(maximalBody) }).entries.length, 4096);
+  const overLimitBody = { ...maximalBody, entries: [...maximalEntries, { ...inventory.entries[0]!, findingSetHash: "f".repeat(64) }] };
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...overLimitBody, inventoryHash: hashCanonicalJson(overLimitBody) }), /INVENTORY_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, []), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "running" }]), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }, { id: value.runId, status: "failed" }]), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([], children, []), /ORPHAN_CHILD/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent, parent], children, [{ id: value.runId, status: "failed" }]), /PARENT_DUPLICATE/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children.slice(1), [{ id: value.runId, status: "failed" }]), /FINDING_PUBLICATION_INVALID/);
+  for (const entries of [[...inventory.entries, ...inventory.entries], [{ ...inventory.entries[0], terminalRunStatus: ["failed"] }], [{ ...inventory.entries[0], extra: true }]]) {
+    const body = { schema: inventory.schema, entries };
+    assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...body, inventoryHash: hashCanonicalJson(body) }), /INVENTORY_INVALID/);
+  }
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...inventory, inventoryHash: SHA_A }), /INVENTORY_INVALID/);
+  assert.equal(Object.isFrozen(inventory.entries[0]), true);
+});
+
+test("legacy migration continuity cannot acquire nonempty membership from historical V1", async () => {
+  const module = await import("../../src/findings/legacy-finding-publication-inventory-v1.js");
+  const empty = module.createLegacyFindingPublicationInventoryValueV1([]);
+  const published = module.createLegacyFindingPublicationInventoryValueV1([{ findingSetHash: SHA_A, publicationHash: SHA_B, runId: "terminal-run", terminalRunStatus: "failed" }]);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(null, null);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(null, empty);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(empty, null);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(published, structuredClone(published));
+  for (const [before, after] of [[null, published], [published, null], [empty, published], [published, empty]] as const) {
+    assert.throws(() => module.requireLegacyFindingPublicationInventoryContinuityV1(before, after), /INVENTORY_DRIFT/);
+  }
+  const changed = module.createLegacyFindingPublicationInventoryValueV1([{ ...published.entries[0]!, publicationHash: "f".repeat(64) }]);
+  assert.throws(() => module.requireLegacyFindingPublicationInventoryContinuityV1(published, changed), /INVENTORY_DRIFT/);
 });
 
 test("freezes the exact 35-category registry and complete 36-counter census mapping", () => {

@@ -64,6 +64,7 @@ const P3_TRACKED_SCOPE = new Set([
   "src/execution/runtime-completion.ts",
   "src/execution/runtime-session-repository.ts",
   "src/findings/finding-publication-v1.ts",
+  "src/findings/legacy-finding-publication-inventory-v1.ts",
   "src/execution/v3-implementation-attempt.ts",
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",

@@ -25,6 +25,9 @@ import { userInfo } from "node:os";
 import path from "node:path";
 import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
 import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
+import type { LegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import { requireLegacyFindingPublicationInventoryContinuityV1, validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import type { FindingPublicationParentRowV1, FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
@@ -3305,12 +3308,8 @@ function parseCurrentEntryStoreLegacyZeroOwnerV1(
   successorSource: InternalProductionCleanSetfarmSourceBuildV1,
   successorAuditPair: CurrentEntryStoreRecordPairV1,
 ): void {
-  if (!isPlainRecord(value) || !hasExactKeys(value, [
-    "schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash",
-    "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash",
-    "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState",
-    "manifestActivationState", "observationRef", "observationHash",
-  ])) currentEntryFail("successor legacy zero-owner fields are invalid");
+  if (!isPlainRecord(value)) currentEntryFail("successor legacy zero-owner fields are invalid");
+  requireLegacyZeroVersionedFieldsV1(value);
   const core = { ...value };
   delete core.observationRef;
   delete core.observationHash;
@@ -3320,8 +3319,7 @@ function parseCurrentEntryStoreLegacyZeroOwnerV1(
   }
   const census = value.census;
   if (
-    value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1"
-    || value.observationKind !== "legacy-pre-manifest-existing-live-truth"
+    value.observationKind !== "legacy-pre-manifest-existing-live-truth"
     || value.allThirtySixScalarCountsZero !== true
     || value.ownerReservationSidecarState !== "absent-before-migration-32"
     || value.ownerAdmissionHeadState !== "absent-before-migration-32"
@@ -4854,6 +4852,7 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   database: Record<string, unknown>,
   phase: Record<string, unknown>,
   physical: PhysicalInventoryV1,
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1,
 ): Record<string, unknown> {
   const census = recursivelyFreeze({
     ...database,
@@ -4868,7 +4867,8 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
     currentEntryFail("exact-poison complete legacy census is not zero");
   }
   const body = {
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
     observationKind: "legacy-pre-manifest-existing-live-truth",
     authorityV3Migration31AuditRef: audit.pair.authorityV3Migration31AuditRef,
     authorityV3Migration31AuditHash: audit.pair.authorityV3Migration31AuditHash,
@@ -4911,7 +4911,9 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison phase-a");
   const serviceA = await observeInternalProductionServiceCensusV1();
   const physicalA = observePhysicalInventoryV1(serviceA, 0);
-  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+  const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
+  validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
+  const database = requireExactZeroCountsV1(databaseCounts, [
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
     "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
     "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
@@ -4963,6 +4965,7 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
     database,
     phaseA,
     physicalA,
+    legacyFindingPublicationInventory,
   );
   const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze([
     { observation: "controller-source-a", value: sourceA },
@@ -5606,11 +5609,13 @@ async function observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(
   database: Record<string, unknown>,
   phase: Record<string, unknown>,
   physical: PhysicalInventoryV1,
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1,
 ): Promise<Readonly<Record<string, unknown>>> {
   const exact = await observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1();
   const { task12: _task12, ...remaining } = exact;
   return recursivelyFreeze({
-    schema: "setfarm.internal-production-current-entry-pre-status-downstream-observation.v1",
+    schema: "setfarm.internal-production-current-entry-pre-status-downstream-observation.v2",
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
     remaining,
     database,
     phase,
@@ -5635,19 +5640,21 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "pre-status phase-a");
   const serviceA = await observeInternalProductionServiceCensusV1();
   const physicalA = observePhysicalInventoryV1(serviceA, 0);
-  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+  const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
+  validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
+  const database = requireExactZeroCountsV1(databaseCounts, [
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
     "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
     "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
   ], "pre-status database");
-  const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA);
+  const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA, legacyFindingPublicationInventory);
   const serviceB = await observeInternalProductionServiceCensusV1();
   const physicalB = observePhysicalInventoryV1(serviceB, 0);
   const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "pre-status phase-b");
   const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaB = await observeCurrentPba();
   const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
-  const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB);
+  const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB, legacyFindingPublicationInventory);
   const expectedOperation = context.successorOperation;
   assertExactPoisonRecoveryPrerequisitesEqualV1(prerequisitesB, prerequisitesA, "post-visible pre-status raw A/B prerequisites");
   if (
@@ -7038,7 +7045,7 @@ export type InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 = Read
   observationHash: Sha256V1;
 }>;
 
-export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly<{
+type HistoricalLegacyPreManifestZeroOwnerObservationV1 = Readonly<{
   schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1";
   observationKind: "legacy-pre-manifest-existing-live-truth";
   authorityV3Migration31AuditRef: CanonicalRefV1;
@@ -7055,6 +7062,25 @@ export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly
   observationRef: CanonicalRefV1;
   observationHash: Sha256V1;
 }>;
+
+export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 =
+  | HistoricalLegacyPreManifestZeroOwnerObservationV1
+  | Readonly<Omit<HistoricalLegacyPreManifestZeroOwnerObservationV1, "schema"> & {
+      schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2";
+      legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
+    }>;
+
+function requireLegacyZeroVersionedFieldsV1(value: Record<string, unknown>): LegacyFindingPublicationInventoryV1 | null {
+  const keys = ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"];
+  if (value.schema === "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1") {
+    if (!hasExactKeys(value, keys)) currentEntryFail("historical legacy zero-owner fields are invalid");
+    // Historical V1 proves zero owners, but grants no finding membership.
+    return null;
+  }
+  if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2"
+    || !hasExactKeys(value, [...keys, "legacyFindingPublicationInventory"])) currentEntryFail("legacy zero-owner fields are invalid");
+  return validateLegacyFindingPublicationInventoryV1(value.legacyFindingPublicationInventory);
+}
 
 const LEGACY_ZERO_STORE_V1 = "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1";
 const LEGACY_ZERO_PREFIX_V1 = "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/";
@@ -8255,8 +8281,10 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
   activeRuntimeSessionCount: number; activeCompletionOwnerCount: number; unsettledMandatoryEffectCount: number;
   artifactReservationCount: number; publicationBatchCount: number; artifactPublicationCount: number;
   terminationOwnerCount: number; findingOwnerCount: number; recoveryOwnerCount: number; operationalDeliveryCount: number;
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
 }>> {
   const postgresModule = await import("postgres");
+  const { observeLegacyFindingPublicationInventoryV1 } = await import("../findings/finding-publication-v1.js");
   const databaseUrl = process.env.SETFARM_PG_URL;
   if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
   const sql = postgresModule.default(databaseUrl, { max: 1, idle_timeout: 1, connect_timeout: 5 });
@@ -8268,6 +8296,7 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
       const rows = await connection<Array<Record<string, unknown>>>`
         WITH required_columns(table_name,column_name,type_name,required_not_null) AS (
           VALUES
+            ('runs','id','text',TRUE),
             ('runs','status','text',TRUE),
             ('claim_log','outcome','text',FALSE),
             ('execution_attempts','disposition','text',TRUE),
@@ -8291,6 +8320,23 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
             ('artifact_publication_batch_items','reservation_id','text',FALSE),
             ('run_termination_requests','state','text',TRUE),
             ('findings','status','text',TRUE),
+            ('finding_sets','finding_set_hash','text',TRUE),
+            ('finding_sets','finding_set_id','text',TRUE),
+            ('finding_sets','run_id','text',TRUE),
+            ('finding_sets','story_id','text',TRUE),
+            ('finding_sets','packet_hash','text',TRUE),
+            ('finding_sets','slice_hash','text',TRUE),
+            ('finding_sets','source_sha','text',TRUE),
+            ('finding_sets','source_tree_hash','text',TRUE),
+            ('finding_sets','finding_ids','jsonb',TRUE),
+            ('finding_sets','payload','jsonb',TRUE),
+            ('findings','finding_set_hash','text',TRUE),
+            ('findings','finding_id','text',TRUE),
+            ('findings','origin','text',TRUE),
+            ('findings','classification','text',TRUE),
+            ('findings','invariant_ref','text',TRUE),
+            ('findings','source_fingerprint','text',TRUE),
+            ('findings','payload','jsonb',TRUE),
             ('recovery_cases','status','text',TRUE),
             ('recovery_dispatch_deliveries','state','text',TRUE),
             ('operational_event_deliveries','state','text',TRUE)
@@ -8384,6 +8430,24 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
       for (const key of ["catalogViolationCount", "aprbChildViolationCount", "ordinaryBatchViolationCount", "activeHeaderViolationCount"]) {
         if (parseCount(key) !== 0) currentEntryFail(`${key} is nonzero`);
       }
+      const findingParents = await connection<FindingPublicationParentRowV1[]>`
+        SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+               source_sha,source_tree_hash,finding_ids,payload
+          FROM public.finding_sets ORDER BY finding_set_hash LIMIT 4097
+      `;
+      const findingChildren = await connection<FindingPublicationChildRowV1[]>`
+        SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+          FROM public.findings ORDER BY finding_set_hash,finding_id LIMIT 65537
+      `;
+      const findingRuns = await connection<Array<{ id: string; status: string }>>`
+        SELECT id,status FROM public.runs
+         WHERE id IN (SELECT run_id FROM public.finding_sets)
+         ORDER BY id LIMIT 4097
+      `;
+      const legacyFindingPublicationInventory = observeLegacyFindingPublicationInventoryV1(findingParents, findingChildren, findingRuns);
+      if (findingChildren.filter((finding) => finding.status === "open").length !== parseCount("findingOwnerCount")) {
+        currentEntryFail("legacy finding publication aggregate is crossed");
+      }
       const observed = Object.freeze({
         activeRunCount: parseCount("activeRunCount"),
         openClaimCount: parseCount("openClaimCount"),
@@ -8395,12 +8459,15 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
         publicationBatchCount: parseCount("publicationBatchCount"),
         artifactPublicationCount: parseCount("artifactPublicationCount"),
         terminationOwnerCount: parseCount("terminationOwnerCount"),
-        findingOwnerCount: parseCount("findingOwnerCount"),
+        // Every inventoried publication is complete and belongs to a terminal
+        // run. Orphans, partial publications and nonterminal relations refuse
+        // above; issue status itself does not retain publication ownership.
+        findingOwnerCount: 0,
         recoveryOwnerCount: parseCount("recoveryOwnerCount"),
         operationalDeliveryCount: parseCount("operationalDeliveryCount"),
       });
       for (const [key, count] of Object.entries(observed)) if (count !== 0) currentEntryFail(`${key} is nonzero`);
-      return recursivelyFreeze(observed);
+      return recursivelyFreeze({ ...observed, legacyFindingPublicationInventory });
     });
   } finally {
     await sql.end({ timeout: 1 });
@@ -10093,14 +10160,14 @@ async function parseLegacyZeroV1(
   pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1,
   resolveAudit: (pair: InternalProductionAuthorityV3Migration31AuditPairV1) => Promise<InternalProductionAuthorityV3Migration31AuditV1>,
 ): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
-  if (!hasExactKeys(value, ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"])) currentEntryFail("legacy zero-owner fields are invalid");
+  requireLegacyZeroVersionedFieldsV1(value);
   const projection = { ...value };
   delete projection.observationRef;
   delete projection.observationHash;
   const hash = requireSha256(value.observationHash, "legacy zero-owner hash");
   if (hashCanonicalJson(projection) !== hash || value.observationRef !== `${LEGACY_ZERO_PREFIX_V1}${hash}` || pair.observationRef !== value.observationRef || pair.observationHash !== hash) currentEntryFail("legacy zero-owner pair/hash is invalid");
   const census = value.census;
-  if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.observationKind !== "legacy-pre-manifest-existing-live-truth" || value.allThirtySixScalarCountsZero !== true || value.ownerReservationSidecarState !== "absent-before-migration-32" || value.ownerAdmissionHeadState !== "absent-before-migration-32" || value.manifestActivationState !== "absent-before-initial-a-activation" || !isPlainRecord(census) || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) currentEntryFail("legacy zero-owner body is invalid");
+  if (value.observationKind !== "legacy-pre-manifest-existing-live-truth" || value.allThirtySixScalarCountsZero !== true || value.ownerReservationSidecarState !== "absent-before-migration-32" || value.ownerAdmissionHeadState !== "absent-before-migration-32" || value.manifestActivationState !== "absent-before-initial-a-activation" || !isPlainRecord(census) || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) currentEntryFail("legacy zero-owner body is invalid");
   const auditPair = requirePair(
     { authorityV3Migration31AuditRef: value.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: value.authorityV3Migration31AuditHash },
     "authorityV3Migration31AuditRef",
@@ -10185,7 +10252,8 @@ async function observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1
   } satisfies InternalProductionCompleteZeroOwnerCensusV1);
   for (const key of COMPLETE_ZERO_CENSUS_KEYS_V1) if (census[key] !== 0) currentEntryFail(`${key} is nonzero`);
   const body = {
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" as const,
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2" as const,
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(database.legacyFindingPublicationInventory),
     observationKind: "legacy-pre-manifest-existing-live-truth" as const,
     authorityV3Migration31AuditRef: audit.authorityV3Migration31AuditRef,
     authorityV3Migration31AuditHash: audit.authorityV3Migration31AuditHash,
@@ -12676,7 +12744,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     const validateDynamicMaterialCausal = async (index: number, value: Readonly<Record<string, unknown>>, processIdentityCapabilityKey?: string): Promise<void> => {
       if (index === 0) {
-        if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication pre-dispatch legacy authority is crossed");
+        requireLegacyZeroVersionedFieldsV1(value);
+        if (value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication pre-dispatch legacy authority is crossed");
         return;
       }
       if (index === 1) {
@@ -12705,7 +12774,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         return;
       }
       if (index === 6) {
-        if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash || value.observedSpawnerGenerationHash !== bodies[5]!.actualSpawnerGenerationHash) currentEntryFail("pre-schema dynamic publication post-termination legacy authority/generation is crossed");
+        requireLegacyZeroVersionedFieldsV1(value);
+        if (value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash || value.observedSpawnerGenerationHash !== bodies[5]!.actualSpawnerGenerationHash) currentEntryFail("pre-schema dynamic publication post-termination legacy authority/generation is crossed");
         return;
       }
       if (index === 7) {
@@ -20250,6 +20320,7 @@ function requireTask12PredecessorGraphRelationsV1(
   if (!matches(postLegacy, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "authorityV3Migration31Audit") || !sourceMatches(postLegacy, "cleanSetfarm") || postLegacy.observedSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash) currentEntryFail("post-termination legacy zero-owner graph is crossed");
   const freshLegacy = node("freshLegacyZeroOwnerObservation");
   if (!matches(freshLegacy, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "authorityV3Migration31Audit") || !sourceMatches(freshLegacy, "cleanSetfarm") || freshLegacy.observedSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash || !exact(freshLegacy.census, postLegacy.census)) currentEntryFail("fresh legacy zero-owner graph is crossed");
+  requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postLegacy), requireLegacyZeroVersionedFieldsV1(freshLegacy));
   const sealed = node("preSchemaSpawnerSealedAdmission");
   if (!operationMatches(sealed) || !matches(sealed, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(sealed, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(sealed, "preSchemaSpawnerRestartAuthorityRef", "preSchemaSpawnerRestartAuthorityHash", "preSchemaSpawnerRestartAuthority", "restartAuthorityRef", "restartAuthorityHash") || !matches(sealed, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "predecessorTerminationObservation") || !matches(sealed, "replacementProcessObservationRef", "replacementProcessObservationHash", "replacementProcessObservation") || !matches(sealed, "postPredecessorTerminationLegacyZeroOwnerObservationRef", "postPredecessorTerminationLegacyZeroOwnerObservationHash", "postPredecessorTerminationLegacyZeroOwnerObservation", "observationRef", "observationHash") || sealed.currentSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash) currentEntryFail("pre-schema sealed-admission graph is crossed");
   const ready = node("task0SpawnerAdmissionReady");
@@ -20610,6 +20681,7 @@ async function prepareInternalProductionPreManifestMigration32AuthorizationForOp
   const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, postZeroPair);
   const freshZero = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
   if (canonicalComparable(postZero.census) !== canonicalComparable(freshZero.census) || postZero.observedSpawnerGenerationHash !== freshZero.observedSpawnerGenerationHash) currentEntryFail("legacy zero-owner reobservation drifted");
+  requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postZero), requireLegacyZeroVersionedFieldsV1(freshZero));
   const body = {
     schema: "setfarm.internal-production-pre-manifest-migration-32-authorization.v1",
     purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
@@ -20670,6 +20742,11 @@ async function applyInternalProductionBaselineBootstrapHandoffMigrationForOperat
   try {
     const fresh = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
     if (fresh.observationRef !== authorization.freshLegacyZeroOwnerObservationRef || fresh.observationHash !== authorization.freshLegacyZeroOwnerObservationHash) currentEntryFail("migration-32 final zero observation changed");
+    const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, {
+      observationRef: String(authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef),
+      observationHash: String(authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash),
+    });
+    requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postZero), requireLegacyZeroVersionedFieldsV1(fresh));
     if (observed.state === "consumed") {
       if (!isPlainRecord(observed.consumption)) currentEntryFail("migration-32 consumed prefix is incomplete");
       consumptionPair = { consumptionRef: String(observed.consumption.consumptionRef), consumptionHash: String(observed.consumption.consumptionHash) };
