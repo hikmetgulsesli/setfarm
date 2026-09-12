@@ -592,3 +592,44 @@ passed. Whole-branch delivery and live recovery remain pending.
   genesis always requires absence and cannot be blindly reacquired after a real
   child appears. New direct rebind effects require a separately versioned
   transport authority; historical V1 launchctl receipts remain read-only.
+- Next bounded transport prerequisite: add one zero-argument filesystem-only
+  cold-journal census in retirement and invoke it before every cleanup/reclaim
+  early return and both ends of phase-zero observation. For this initial slice
+  every present `restart-authority-retirement-v1/cold-spawner-bootstrap-v1`
+  prefix refuses; no complete-looking caller record grants a terminal exception.
+  Authenticate the nearest existing ancestor across absent-root reads. No
+  publisher or launch entrypoint is reachable until the real child/controller
+  settlement validator replaces this conservative refusal. File Map: existing
+  retirement/receipt modules and both owning tests. REDs: ordinary release and
+  dead-owner reclamation currently ignore that future family; phase-zero must
+  not report zeros when it exists.
+- Executing the whole phase-zero function exposed another causal prerequisite:
+  its own 1.59MB source was incorrectly read with the 1MiB authority-record cap.
+  Use the existing `MAX_BUILD_FILE_BYTES_V1` for this authenticated source/build
+  file, as the source/build and spawner entrypoint observers already do. Keep
+  `CURRENT_ENTRY_MAX_BYTES` and every record-size guard unchanged. The test
+  copies and executes the real full-sized source rather than shrinking it.
+- Cold journal refusal gates implemented with no launch/publisher. RED ordinary
+  release incorrectly removed its physical lock; it now preserves the exact
+  lock for every empty/intent/dispatch/claim/unbound-settlement/unknown prefix.
+  Dead-controller reclaim also refuses those prefixes. Ordinary release retains
+  its historical handle-revocation behavior; the physical fence remains, not a
+  reusable ordinary lease. Future cold coordination must retain its held lease
+  while settlement is unknown rather than invoking ordinary cleanup.
+- Executing phase-zero RED then demonstrated a present cold owner returning
+  literal zeros. The fixed filesystem-only census now brackets the whole phase.
+  Independent review additionally reproduced cross-call create/delete ABA;
+  a hashed nearest-ancestor/full-metadata witness and exact before/after equality
+  close it. Absence creates no directories; dangling links, same-call ABA and
+  transient phase-owner appearance refuse without synthesizing settlement.
+  Final retirement31/31 (23.419s), receipt focused5/5 (9.429s) plus final ABA
+  regression1/1 (0.623s), source16/16 (5.002s), inert imports1/1 (1.310s),
+  TypeScript and whitespace passed. Independent review has no remaining finding.
+- Added an existing-helper-test File Map diagnostic using an actual disposable
+  detached Node daemon and the production `spawnerctl.startSpawner` body with
+  only fixed fixture PID/log paths. Two watcher starts return the same PID,
+  start time, PPID1 and PGID=PID; no replacement dispatch occurs. Test passed1/1
+  (0.141s), then terminated only that exact disposable process with SIGTERM.
+  This proves the watcher mismatch; direct transport is still unimplemented.
+  Live Mission Control/API and Setfarm dashboard remain HTTP200; no live data,
+  service, schema or build-retention change was made.

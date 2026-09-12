@@ -8085,11 +8085,13 @@ async function observePhaseClosedZeroV1(
   const codeRoot = fixedRepositoryRoot();
   const before = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(expectedSource, before);
+  const coldJournal = await import("./baseline-restart-authority-retirement-v1.js");
+  const coldBefore = coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   for (const [locator, producer] of PHASE_CLOSED_FUTURE_PRODUCERS_V1) {
     requireAbsentPhasePathV1(path.join(codeRoot, locator), `${producer} module`);
   }
   const ownBytes = strictUtf8(
-    readStableRegular(fileURLToPath(import.meta.url), CURRENT_ENTRY_MAX_BYTES, lstatSync(fileURLToPath(import.meta.url), { bigint: true }).dev, 1).bytes,
+    readStableRegular(fileURLToPath(import.meta.url), MAX_BUILD_FILE_BYTES_V1, lstatSync(fileURLToPath(import.meta.url), { bigint: true }).dev, 1).bytes,
     "phase-closed receipt source",
   );
   const sourceRunProducer = ["reserveRecovery", "SourceRunOwnerV1"].join("");
@@ -8104,6 +8106,8 @@ async function observePhaseClosedZeroV1(
   }
   const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(before, after);
+  const coldAfter = coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("cold journal ancestry changed during phase-zero observation");
   return recursivelyFreeze({
     ordinaryStartingCount: 0, restartReservationCount: 0, serviceRestartOperationCount: 0,
     launchPreparationCount: 0, preparedLaunchCount: 0, stagedCaseCount: 0, fixtureAttemptCount: 0,

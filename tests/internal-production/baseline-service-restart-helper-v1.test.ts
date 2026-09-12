@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -39,6 +39,51 @@ function identity(fd: number) {
   const stats = fstatSync(fd, { bigint: true });
   return { devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10) };
 }
+
+test("watcher start adopts a real detached daemon and cannot prove predecessor replacement", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-detached-watcher-repro-")));
+  let pid: number | undefined;
+  const daemon = path.join(fixture, "fixture-daemon.mjs"), ready = path.join(fixture, "ready");
+  const readProcess = () => spawnSync("/bin/ps", ["-p", String(pid), "-o", "uid=,pid=,ppid=,pgid=,lstart=,command="], { encoding: "utf8", timeout: 2_000 });
+  try {
+    writeFileSync(daemon, `import{writeFileSync}from"node:fs";process.on("SIGTERM",()=>process.exit(0));writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);\n`, { mode: 0o600 });
+    const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from"node:child_process";const child=spawn(process.execPath,[${JSON.stringify(daemon)}],{detached:true,stdio:"ignore"});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3_000 });
+    assert.equal(launcher.status, 0, launcher.stderr);
+    assert.match(launcher.stdout, /^[1-9][0-9]*$/); pid = Number(launcher.stdout);
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(readFileSync(ready, "utf8"), String(pid));
+    const before = readProcess();
+    assert.equal(before.status, 0, before.stderr);
+    assert.match(before.stdout, new RegExp(`^\\s*${process.getuid!()}\\s+${pid}\\s+1\\s+${pid}\\s+`));
+    assert.ok(before.stdout.trimEnd().endsWith(daemon), "the process is exactly this fixture's daemon");
+    const controller = readFileSync(path.resolve(import.meta.dirname, "../../src/server/spawnerctl.ts"), "utf8");
+    const pidExpression = 'path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid")';
+    const logExpression = 'path.join(os.homedir(), ".openclaw", "setfarm", "spawner.log")';
+    assert.equal(controller.split(pidExpression).length, 2); assert.equal(controller.split(logExpression).length, 2);
+    mkdirSync(path.join(fixture, "src/server"), { recursive: true });
+    writeFileSync(path.join(fixture, "src/server/spawnerctl.ts"), controller.replace(pidExpression, JSON.stringify(path.join(fixture, "spawner.pid"))).replace(logExpression, JSON.stringify(path.join(fixture, "spawner.log"))));
+    writeFileSync(path.join(fixture, "src/runtime-config.ts"), 'export function loadRuntimeEnv(){throw new Error("WATCHER_MUST_ONLY_ADOPT_EXISTING");}\n');
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
+    writeFileSync(path.join(fixture, "spawner.pid"), String(pid));
+    const actual = await import(pathToFileURL(path.join(fixture, "src/server/spawnerctl.ts")).href);
+    for (let watcherStart = 0; watcherStart < 2; watcherStart++) {
+      const adopted = await actual.startSpawner();
+      assert.equal(adopted.pid, pid, "actual watcher start adopts the existing daemon");
+      assert.deepEqual(readProcess().stdout, before.stdout, "PID, start time and detached ownership are unchanged");
+    }
+    assert.equal(existsSync(path.join(fixture, "spawner.log")), false, "no replacement dispatch was attempted");
+  } finally {
+    if (pid !== undefined) {
+      const owned = readProcess();
+      if (owned.status === 0 && owned.stdout.trimEnd().endsWith(daemon)) {
+        process.kill(pid, "SIGTERM");
+        for (let attempt = 0; attempt < 100 && readProcess().status === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.notEqual(readProcess().status, 0, "the exact disposable daemon must terminate");
+      }
+    }
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test("restart helper closes ancestor guards when its inherited journal descriptor is invalid", async () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-helper-guard-release-")));

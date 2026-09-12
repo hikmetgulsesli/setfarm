@@ -17058,6 +17058,50 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
+  it("cold journal ownership prevents the executing phase-zero census from returning zeros", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-phase-zero-")));
+    const sourceIdentity = { branch: "main", clean: true, sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) };
+    let source = readFileSync(observerSource, "utf8");
+    const cleanObserver = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionCleanSetfarmSourceBuildV1");
+    source = source.replace(cleanObserver, `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){globalThis.__coldPhaseSourceHook?.();return Object.freeze(${JSON.stringify(sourceIdentity)});}\n`)
+      .replace("async function observePhaseClosedZeroV1(", "export async function observePhaseClosedZeroV1(");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
+    const locator = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
+    const locatorRoot = 'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
+    assert.equal(locator.split(locatorRoot).length, 2);
+    fixtureFile(root, "src/internal-production/baseline-workspace-authority-path-v1.ts", locator.replace(locatorRoot, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(root)};`));
+    fixtureFile(root, "src/runtime-config.ts", `export const runtimeConfig={setfarmDir:${JSON.stringify(path.join(root, "runtime"))}};\n`);
+    fixtureFile(root, "package.json", '{"type":"module"}\n');
+    const cold = path.join(root, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1");
+    try {
+      const module = await import(pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href);
+      const absent = await module.observePhaseClosedZeroV1(sourceIdentity);
+      assert.ok(Object.values(absent).every((value) => value === 0));
+      mkdirSync(cold, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(cold, "intent.json"), '{"disposition":"completed","schema":"unbound"}\n', { mode: 0o600 });
+      const bytes = readFileSync(path.join(cold, "intent.json"));
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /COLD_BOOTSTRAP_UNSETTLED/);
+      assert.deepEqual(readFileSync(path.join(cold, "intent.json")), bytes);
+      assert.deepEqual(readdirSync(cold), ["intent.json"], "phase census never settles or rewrites an unbound cold prefix");
+      rmSync(cold, { recursive: true });
+      let sourceCalls = 0;
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) mkdirSync(cold, { mode: 0o700 });
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /COLD_BOOTSTRAP_UNSETTLED/, "late cold-owner appearance is checked again before zero return");
+      assert.equal(sourceCalls, 2);
+      rmSync(cold, { recursive: true });
+      sourceCalls = 0;
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) { mkdirSync(cold, { mode: 0o700 }); rmSync(cold, { recursive: true }); }
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /cold journal ancestry changed/, "transient owner appearance cannot hide between the two absence reads");
+      assert.match(source, /const CURRENT_ENTRY_MAX_BYTES = 1_048_576;/, "authority-record cap is unchanged");
+      assert.ok(Buffer.byteLength(source) > 1_048_576, "the executing source exceeds the separate record cap");
+    } finally { Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook"); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("P4 phase-closed census refuses every present or symlinked future authority path", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-phase-closed-"));
     let source = readFileSync(observerSource, "utf8");

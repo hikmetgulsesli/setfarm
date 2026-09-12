@@ -318,6 +318,73 @@ function coldGenesisTreeSnapshotV1(root: string): unknown[] {
   return entries;
 }
 
+test("cold journal absence is read-only and pins the nearest physical ancestor", async () => {
+  const original = readFileSync(sourcePath, "utf8");
+  const needle = '    try { lstatSync(target); fail("COLD_BOOTSTRAP_UNSETTLED:';
+  assert.equal(original.split(needle).length, 2);
+  const source = original.replace(needle, '    globalThis.__coldJournalAncestorHook?.();\n' + needle);
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-journal-absence-"));
+  try {
+    const isolated = await import(pathToFileURL(installRetirementFixture(fixture, source)).href);
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const cold = path.join(root, "cold-spawner-bootstrap-v1");
+    const before = coldGenesisTreeSnapshotV1(path.join(fixture, "data"));
+    const descriptorsBefore = readdirSync("/dev/fd").length;
+    const absent = isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    assert.equal(absent.state, "absent"); assert.equal(absent.incompleteOwnerCount, 0);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(path.join(fixture, "data")), before);
+    Reflect.set(globalThis, "__coldJournalAncestorHook", () => { mkdirSync(cold, { mode: 0o700 }); rmSync(cold, { recursive: true }); });
+    assert.throws(() => isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /ancestor changed/);
+    Reflect.deleteProperty(globalThis, "__coldJournalAncestorHook");
+    symlinkSync(path.join(fixture, "missing"), cold);
+    assert.throws(() => isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /COLD_BOOTSTRAP_UNSETTLED/);
+    unlinkSync(cold);
+    rmSync(path.join(fixture, "data"), { recursive: true });
+    const missingBefore = coldGenesisTreeSnapshotV1(fixture);
+    const absentHierarchy = isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    assert.equal(absentHierarchy.state, "absent"); assert.equal(absentHierarchy.incompleteOwnerCount, 0);
+    assert.notEqual(absentHierarchy.absenceIdentityHash, absent.absenceIdentityHash, "different absence anchors never share one identity witness");
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture), missingBefore, "absent hierarchy creates no directories");
+    assert.equal(readdirSync("/dev/fd").length, descriptorsBefore);
+  } finally { Reflect.deleteProperty(globalThis, "__coldJournalAncestorHook"); rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("cold journal prefixes fence ordinary release and dead-owner reclamation before any cleanup", async () => {
+  for (const prefix of ["empty", "intent.json", "dispatch.json", "claim.json", "settlement.json", "foreign.json"] as const) {
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-cold-journal-fence-"));
+    let lease: unknown;
+    let isolated: Record<string, any> | undefined;
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const cold = path.join(root, "cold-spawner-bootstrap-v1"), lock = path.join(root, "physical-service-restart-authority.transition.lock");
+    try {
+      isolated = await import(pathToFileURL(installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"))).href);
+      lease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+      mkdirSync(cold, { mode: 0o700 });
+      if (prefix !== "empty") writeFileSync(path.join(cold, prefix), `${canonical({ schema: "unbound-cold-prefix", disposition: "completed" })}\n`, { mode: 0o600 });
+      const before = coldGenesisTreeSnapshotV1(root);
+      await assert.rejects(isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /COLD_BOOTSTRAP_UNSETTLED/, prefix);
+      assert.deepEqual(coldGenesisTreeSnapshotV1(root), before, "ordinary release retains exact lock and cold evidence");
+      assert.throws(() => isolated!.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /COLD_BOOTSTRAP_UNSETTLED/);
+      lease = undefined; // Ordinary release revokes its handle but preserves the physical fence.
+      rmSync(cold, { recursive: true });
+      unlinkSync(lock); // Reset only this disposable test fixture for dead-owner coverage.
+      const exited = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+      assert.equal(exited.status, 0);
+      const dead = { schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: Number(exited.stdout), processStartTimeEpochMs: 1, processIdentityHash: "0".repeat(64), leaseNonce: "1".repeat(64) };
+      writeFileSync(lock, `${canonical(dead)}\n`, { mode: 0o600 });
+      mkdirSync(cold, { mode: 0o700 });
+      if (prefix !== "empty") writeFileSync(path.join(cold, prefix), "unbound\n", { mode: 0o600 });
+      const deadBefore = coldGenesisTreeSnapshotV1(root);
+      await assert.rejects(isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(), /COLD_BOOTSTRAP_UNSETTLED/, prefix);
+      assert.deepEqual(coldGenesisTreeSnapshotV1(root), deadBefore, "dead-owner reclaim retains exact lock and cold evidence");
+    } finally {
+      if (existsSync(cold)) rmSync(cold, { recursive: true });
+      if (lease && isolated) { try { await isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease); } catch { /* already released by pre-fix RED */ } }
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  }
+});
+
 test("cold genesis rejects crossed evidence and conflicting history before any publication or reclamation", async () => {
   for (const fault of ["foreign-incident", "source-dirty", "nonzero-owner", "missing-counter", "service-pid-cross", "service-generation-cross", "spawner-family", "live-stale-pid", "inventory-cross", "synthetic-cross", "historical-head", "old-helper-history", "old-cutover-history", "unknown-file", "empty-shard", "sibling-pre-schema", "sibling-normal", "sibling-sequence", "sibling-bootstrap"] as const) {
     const fixture = await createColdEpochGenesisFixtureV1();
@@ -704,6 +771,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "invokeInternalProductionBaselineServiceRestartHelperUnderTransitionLeaseV1",
     "invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1",
     "observeInternalProductionBaselineServiceRestartHelperJournalCensusV1",
+    "observeInternalProductionColdSpawnerBootstrapJournalCensusV1",
     "observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1",
     "prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1",
     "releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",

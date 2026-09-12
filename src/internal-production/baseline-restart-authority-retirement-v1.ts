@@ -556,10 +556,42 @@ function openNewLock(lock: string): Readonly<{ descriptor: number; lockBytes: Bu
   }
 }
 
+export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(): Readonly<{
+  schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1";
+  state: "absent"; incompleteOwnerCount: 0; absenceIdentityHash: string; censusHash: string;
+}> {
+  const workspace = resolveInternalProductionBaselineWorkspaceRootV1();
+  const target = path.join(rootPaths().root, "cold-spawner-bootstrap-v1");
+  let nearest = path.dirname(target);
+  let before: BigIntStats;
+  for (;;) {
+    try { before = lstatSync(nearest, { bigint: true }); break; }
+    catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT" || nearest === workspace) throw error;
+      nearest = path.dirname(nearest);
+      if (nearest !== workspace && !nearest.startsWith(`${workspace}${path.sep}`)) fail("cold journal ancestry escaped the workspace");
+    }
+  }
+  const guard = authenticatePrivateDirectoryChainV1(workspace, nearest);
+  try {
+    guard.assertStable();
+    if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("cold journal absence ancestor changed");
+    try { lstatSync(target); fail("COLD_BOOTSTRAP_UNSETTLED: cold history has no authenticated controller settlement"); }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    guard.assertStable();
+    if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("cold journal absence ancestor changed");
+    const absenceIdentityHash = sha256(canonical({ ancestor: nearest,
+      metadata: [before.dev, before.ino, before.mode, before.uid, before.gid, before.nlink, before.size, before.mtimeNs, before.ctimeNs].map(String) }));
+    const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1" as const, state: "absent" as const, incompleteOwnerCount: 0 as const, absenceIdentityHash };
+    return Object.freeze({ ...body, censusHash: sha256(canonical(body)) });
+  } finally { guard.close(); }
+}
+
 function assertHelperJournalAllowsLockCleanup(
   transitionLock: Readonly<Record<string, unknown>>,
   currentLockIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>,
 ): void {
+  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const paths = rootPaths();
   let bytes: Buffer;
   try { bytes = readStableRetirementBytes(paths.journal, "helper journal"); }
