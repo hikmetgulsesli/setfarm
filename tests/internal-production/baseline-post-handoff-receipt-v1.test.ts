@@ -4902,12 +4902,14 @@ function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
 function instrumentPhase5cPreStatusFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
-  const copiedWorkspaceLiteral = "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());";
-  assert.equal(source.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
-  source = source.replace(
+  const locatorPath = path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const locatorSource = readFileSync(locatorPath, "utf8");
+  const copiedWorkspaceLiteral = 'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
+  assert.equal(locatorSource.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
+  writeFileSync(locatorPath, locatorSource.replace(
     copiedWorkspaceLiteral,
     `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`,
-  );
+  ));
   const selectedServiceCall = "await observeInternalProductionServiceCensusV1()";
   const serviceProbeCall = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown}).next("service") as InternalProductionServiceCensusV1';
   const ensureStart = source.indexOf("async function ensureTask12PreparedCurrentEntryStatusV1(");
@@ -7905,7 +7907,12 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     ? `export function p5cSPrewarmFixedRepositoryRootFixtureV1(): string { return fixedRepositoryRoot(); }
 
 export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;mutation:"none"|"absent-child-appearance"|"absent-parent-aba"|"status-member-aba"|"content-member-aba"|"content-parent-aba"|"content-drift"|"material-locator-aba"|"operation-directory-aba";mutationTarget:string;observeExternal?:boolean;externalOrdinal?:number;internalCloseFaultAt?:number|null;internalCloseFaultTarget?:string|null;authorityFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
-  const descriptorBefore=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
+  // Let the tsx loader finish its compilation-cache writes before measuring
+  // authority resources; never settle or exclude descriptors after the action.
+  await new Promise((resolve)=>setTimeout(resolve,100));
+  const descriptorSnapshot=()=>readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).flatMap((name)=>{try{const s=fstatSync(Number(name));return [{fd:Number(name),dev:s.dev,ino:s.ino,mode:s.mode}];}catch{return [];}});
+  const descriptorsBefore=descriptorSnapshot();
+  const descriptorBefore=descriptorsBefore.length;
   const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
   let authorityStableCalls=0;const authorityEvents:string[]=[];
   const context=Object.freeze({successorRoot:input.successorRoot,successorOperation:operation,assertStable():void{authorityStableCalls+=1;authorityEvents.push("authority-stable:"+authorityStableCalls);if(input.authorityFaultAt===authorityStableCalls)currentEntryFail("P5C_S_PRE_SCHEMA_AUTHORITY_STABLE_FAULT:"+authorityStableCalls);}}) as unknown as ExactPoisonRecoveryPinnedCommitChainV1;
@@ -7948,7 +7955,9 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
       if(mutationApplied&&input.mutation==="content-drift"&&driftOriginal!==null)writeFileSync(input.mutationTarget,driftOriginal,{mode:0o600});
     }
   }
-  const descriptorAfter=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
+  const descriptorsAfter=descriptorSnapshot();
+  const descriptorAfter=descriptorsAfter.length;
+  if(descriptorAfter!==descriptorBefore)process.stderr.write(JSON.stringify({descriptorsBefore,descriptorsAfter})+"\\n");
   return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:Buffer.isBuffer(endpoint.expectedBytes)?endpoint.expectedBytes.toString("base64"):null,publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null})))}),closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events]),descriptorDelta:descriptorAfter-descriptorBefore});
 }
 
@@ -12734,7 +12743,6 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   terminalOrdinal: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6,
   blocked = false,
   selectedOperation?: Readonly<Record<string, unknown>>,
-  mirrorContentIntoWorkspaceAuthority = false,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
 ): Readonly<{
   operation: Readonly<{ operationRef: string; operationHash: string }>;
@@ -12748,7 +12756,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
 }> {
   const operation = selectedOperation ?? phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1();
   const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/current-entry-poison-successor-v1");
-  const operationDirectory = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash));
+  const operationDirectory = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash));
   mkdirSync(successorRoot, { recursive: true, mode: 0o700 });
   const authorityV3Migration31Audit = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
   const authorityV3Migration31AuditHash = String(authorityV3Migration31Audit.authorityV3Migration31AuditHash);
@@ -12770,10 +12778,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   const materials = chains[0]!.materials;
   let current = chains.at(-1)!.next;
   assert.deepEqual(current.currentEntryOperation, Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }), "physical pre-schema status binds the authentic self-hashed operation pair");
-  const contentRoot = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
-  const contentRoots = mirrorContentIntoWorkspaceAuthority
-    ? Object.freeze([contentRoot, path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records")])
-    : Object.freeze([contentRoot]);
+  const contentRoot = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
   const writeCanonical = (target: string, value: Readonly<Record<string, unknown>>): void => {
     phase5cEnsurePublicationParentV1(target);
     writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
@@ -12781,7 +12786,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   const pair = (value: Readonly<Record<string, unknown>>, refKey: string, hashKey: string): Readonly<Record<string, unknown>> => Object.freeze({ [refKey]: value[refKey], [hashKey]: value[hashKey] });
   const record = (kind: string, value: Readonly<Record<string, unknown>>, hashKey: string): void => {
     const hash = String(value[hashKey]);
-    for (const targetRoot of contentRoots) writeCanonical(path.join(targetRoot, kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
+    writeCanonical(path.join(contentRoot, kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
   };
   const locatorRows = Object.freeze([
     Object.freeze({ ordinal: 0, name: "00-pre-dispatch-legacy-zero.pair.json", material: "pre-dispatch-legacy-zero-content", refKey: "observationRef", hashKey: "observationHash" }),
@@ -12828,7 +12833,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
     if (row.ordinal > terminalOrdinal) continue;
     const value = materials[row.material]!;
     const hash = row.hashKey === null ? canonicalHash(value) : String(value[row.hashKey]);
-    for (const targetRoot of contentRoots) writeCanonical(path.join(targetRoot, row.kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
+    writeCanonical(path.join(contentRoot, row.kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
   }
   for (const material of ["pre-dispatch-legacy-zero-content", ...(terminalOrdinal >= 5 ? ["post-termination-legacy-zero-content"] : [])]) {
     const value = materials[material]!;
@@ -12880,9 +12885,9 @@ function phase5cSExternalRawPublicationFixtureV1(
   const next = chain.next;
   const prior = chain.prior;
   const fixedRoot = arrow.family === "pre-schema"
-    ? path.join(fixtureRoot, "data/internal-production-baseline/pre-schema-spawner-rebind-v1")
+    ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/pre-schema-spawner-rebind-v1")
     : arrow.family === "migration-32" || arrow.family === "current-audit"
-      ? path.join(fixtureRoot, "data/internal-production-baseline/pre-manifest-migration32-v1")
+      ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/pre-manifest-migration32-v1")
       : arrow.family === "recovery-source" ? path.join(fixtureRoot, "p5c-s-real-raw/recovery-source-bootstrap-v1") : path.join(fixtureRoot, "p5c-s-real-raw");
   const identity = (inode: number, links = 1, mode = "0600"): Readonly<Record<string, string>> => Object.freeze({ deviceDecimal: "1", inodeDecimal: String(inode), modeOctal: mode, uidDecimal: "501", linkCountDecimal: String(links), sizeDecimal: "128", mtimeNanosecondsDecimal: "1700000000000000000", ctimeNanosecondsDecimal: "1700000000000000000" });
   const publication = (target: string, bytes: Buffer, physicalState: "F-1" | "F0" | "F1" | "F2" | "F2u" | "F3" | "F4", seed: number, corrupt: boolean, independentF2 = false): Readonly<Record<string, unknown>> => {
@@ -13092,7 +13097,7 @@ function phase5cSExternalRawPublicationFixtureV1(
     }
     if (material.kind !== null) {
       const contentHash = processIdentity ? canonicalHash(value) : String(value[projection!.hashKey]);
-      const contentRoot = "root" in material && material.root === "legacy-zero" ? path.join(fixtureRoot, "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1") : fixedRoot;
+      const contentRoot = "root" in material && material.root === "legacy-zero" ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1") : fixedRoot;
       const contentTarget = path.join(contentRoot, "records", material.kind, "sha256", contentHash.slice(0, 2), `${contentHash}.json`);
       endpoints.push(Object.freeze({ material: material.name, role: "content", policy: arrow.policy === "mixed-receipt-q-db" ? "task12-receipt" : arrow.policy, target: contentTarget, expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), alternateBytesBase64: canonicalFixtureRecordV1(alternateValue).toString("base64") }));
     }
@@ -13318,7 +13323,7 @@ function phase5cSSeedRetainedReaderFixturesV1(
     && typeof selectedOperation.authorityV3Migration31Audit === "object" && selectedOperation.authorityV3Migration31Audit !== null;
   const preSchemaBodies = usePhysicalAtRoot
     ? (() => {
-        const physical = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 5, false, selectedOperation, true);
+        const physical = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 5, false, selectedOperation);
         assert.deepEqual(
           { operationRef: physical.operation.operationRef, operationHash: physical.operation.operationHash },
           operationPair,
@@ -13364,9 +13369,6 @@ function phase5cSSeedRetainedReaderFixturesV1(
     const content = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", record.pair.statusHash.slice(0, 2), `${record.pair.statusHash}.json`);
     phase5cEnsurePublicationParentV1(content);
     writeFileSync(content, record.bytes, { mode: 0o600 });
-    const controllerContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", record.pair.statusHash.slice(0, 2), `${record.pair.statusHash}.json`);
-    phase5cEnsurePublicationParentV1(controllerContent);
-    writeFileSync(controllerContent, record.bytes, { mode: 0o600 });
     return Object.freeze({ ordinal: ordinal as 0 | 1 | 2 | 3 | 4 | 5, pair: record.pair, body: record.body });
   });
 
@@ -15230,20 +15232,22 @@ ${mutationMarker}`);
     assert.ok(publisherStart >= 0, "concurrent content fixture locates its bounded publisher region");
     fixtureObserver = fixtureObserver.slice(0, publisherStart) + instrumentedPublisher + fixtureObserver.slice(publisherStart + publisher.length);
   }
+  let fixtureWorkspaceLocator = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
   if (!options.preserveCodeOwnedWorkspaceRoot) {
     const workspaceRootSource =
       'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
     const fixtureWorkspaceRoot =
-      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
-    if (fixtureObserver.includes(workspaceRootSource)) {
-      assert.equal(fixtureObserver.split(workspaceRootSource).length, 2,
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
+    if (fixtureWorkspaceLocator.includes(workspaceRootSource)) {
+      assert.equal(fixtureWorkspaceLocator.split(workspaceRootSource).length, 2,
         "fixture replaces exactly one code-owned workspace root");
-      fixtureObserver = fixtureObserver.replace(workspaceRootSource, fixtureWorkspaceRoot);
+      fixtureWorkspaceLocator = fixtureWorkspaceLocator.replace(workspaceRootSource, fixtureWorkspaceRoot);
     } else {
-      assert.equal(fixtureObserver.split(fixtureWorkspaceRoot).length, 2,
+      assert.equal(fixtureWorkspaceLocator.split(fixtureWorkspaceRoot).length, 2,
         "an authenticated P3 projection may pre-bind exactly one fixture workspace root");
     }
   }
+  fixtureFile(root, "src/internal-production/baseline-workspace-authority-path-v1.ts", fixtureWorkspaceLocator);
   if (options.preparedAccessorReobservationDrift) {
     const driftedBasename = {
       authorityV3Migration31Audit: "authority-v3-migration31-audit.json",
@@ -15499,6 +15503,7 @@ function materializeOutputs(root: string): void {
     "dist/installer/run.js": "// compiled recovery installer fixture\n",
     "dist/installer/steps/nested/step.md": "step\n",
     "dist/internal-production/baseline-post-handoff-receipt-v1.js": "// compiled observer fixture\n",
+    "dist/internal-production/baseline-workspace-authority-path-v1.js": "// compiled workspace locator fixture\n",
     "dist/internal-production/owner-admission-v1.js": "// compiled owner admission fixture\n",
     "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js": "// compiled PBA fixture\n",
     "dist/product-compiler/canonical-json.js": "// compiled canonical fixture\n",
@@ -30464,18 +30469,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const firstPreSchemaStatus = phase5cSExternalRawCausalChainFixtureV1(firstPreSchemaArrow, "B").next;
         const priorStatusLocatorTarget = path.join(seeded.operationDirectory, PHASE5C_S_PRE_SCHEMA_PHYSICAL_STATUS_BASENAMES_V1[0]);
         const priorStatusHash = String(firstPreSchemaStatus.statusHash);
-        const priorStatusContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", priorStatusHash.slice(0, 2), `${priorStatusHash}.json`);
+        const priorStatusContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", priorStatusHash.slice(0, 2), `${priorStatusHash}.json`);
         const preLegacyValue = phase5cSExternalRawCausalChainFixtureV1(firstPreSchemaArrow, "B").materials["pre-dispatch-legacy-zero-content"]!;
         const preLegacyHash = String(preLegacyValue.observationHash);
         const preLegacyContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256", preLegacyHash.slice(0, 2), `${preLegacyHash}.json`);
         const startupArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 1)!;
         const predecessorIdentity = phase5cSExternalRawCausalChainFixtureV1(startupArrow, "B").materials["predecessor-process-identity"]!;
         const predecessorIdentityHash = canonicalHash(predecessorIdentity);
-        const predecessorIdentityContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorIdentityHash.slice(0, 2), `${predecessorIdentityHash}.json`);
+        const predecessorIdentityContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorIdentityHash.slice(0, 2), `${predecessorIdentityHash}.json`);
         const readyArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 6)!;
         const admissionReadyValue = phase5cSExternalRawCausalChainFixtureV1(readyArrow, "B").materials["admission-ready"]!;
         const admissionReadyHash = String(admissionReadyValue.admissionReadyHash);
-        const admissionReadyContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
+        const admissionReadyContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
         const sealedArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 5)!;
         const postLegacyValue = phase5cSExternalRawCausalChainFixtureV1(sealedArrow, "B").materials["post-termination-legacy-zero-content"]!;
         const postLegacyHash = String(postLegacyValue.observationHash);
@@ -30483,8 +30488,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const replacementArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 4)!;
         const replacementIdentity = phase5cSExternalRawCausalChainFixtureV1(replacementArrow, "B").materials["replacement-process-identity"]!;
         const replacementIdentityHash = canonicalHash(replacementIdentity);
-        const replacementIdentityContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
-        const physicalContentRoot = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+        const replacementIdentityContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
+        const physicalContentRoot = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
         const physicalLegacyRoot = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256");
         const writePhysical = (target: string, value: Readonly<Record<string, unknown>>): void => {
           phase5cEnsurePublicationParentV1(target);
@@ -30621,8 +30626,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const authorization = rehash(chain.materials.authorization!, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/", Object.freeze({ currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${crossedOperationHash}`, currentEntryOperationHash: crossedOperationHash }));
           const crossedStatus = rehash(chain.next, "statusRef", "statusHash", "setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/", Object.freeze({ authorization: Object.freeze({ authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }) }));
           const write = (target: string, value: Readonly<Record<string, unknown>>): void => { phase5cEnsurePublicationParentV1(target); writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 }); };
-          write(path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", String(authorization.authorizationHash).slice(0, 2), `${String(authorization.authorizationHash)}.json`), authorization);
-          write(path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", String(crossedStatus.statusHash).slice(0, 2), `${String(crossedStatus.statusHash)}.json`), crossedStatus);
+          write(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", String(authorization.authorizationHash).slice(0, 2), `${String(authorization.authorizationHash)}.json`), authorization);
+          write(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", String(crossedStatus.statusHash).slice(0, 2), `${String(crossedStatus.statusHash)}.json`), crossedStatus);
           write(path.join(seeded.operationDirectory, "01-authorization.pair.json"), Object.freeze({ authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }));
           write(seeded.currentStatusTarget, Object.freeze({ statusRef: crossedStatus.statusRef, statusHash: crossedStatus.statusHash }));
         } else if (["valid-response-loss", "fixed-next-f2u", "linked-next-f2", "independent-next-f2", "next-status-f1", "duplicate-producer", "writer-temp8", "writer-temp9", "writer-a2-linked", "producer-f1-nlink2", "writer-a0-nlink2", "writer-a2-extra-nlink2", "producer-wrong-pair", "dynamic-startup-crossed-authorization", "dynamic-status-crossed-startup", "writer-wrong-body", "later-producer", "blocked-later-producer"].includes(String(entry.inventoryFault))) {
@@ -30645,7 +30650,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
               const alternateStartupHash = canonicalHash(startupBody);
               const alternateStartup = Object.freeze({ ...startupBody, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${alternateStartupHash}`, startupTokenHash: alternateStartupHash });
               producerPair = Object.freeze({ startupTokenRef: alternateStartup.startupTokenRef, startupTokenHash: alternateStartup.startupTokenHash });
-              const alternateStartupContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", alternateStartupHash.slice(0, 2), `${alternateStartupHash}.json`);
+              const alternateStartupContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", alternateStartupHash.slice(0, 2), `${alternateStartupHash}.json`);
               phase5cEnsurePublicationParentV1(alternateStartupContent);
               writeFileSync(alternateStartupContent, canonicalFixtureRecordV1(alternateStartup), { mode: 0o600 });
             }
@@ -30684,7 +30689,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const nonce = "50000000-0000-4000-8000-000000000005";
             writeFileSync(path.join(seeded.operationDirectory, `.${path.basename(nextStatusTarget)}.${nonce}.tmp`), canonicalFixtureRecordV1(Object.freeze({ statusRef: nextStatus.statusRef, statusHash: nextStatus.statusHash })), { mode: 0o600 });
             const nextStatusHash = String(nextStatus.statusHash);
-            const nextStatusContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", nextStatusHash.slice(0, 2), `${nextStatusHash}.json`);
+            const nextStatusContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", nextStatusHash.slice(0, 2), `${nextStatusHash}.json`);
             phase5cEnsurePublicationParentV1(nextStatusContent);
             writeFileSync(nextStatusContent, canonicalFixtureRecordV1(nextStatus), { mode: 0o600 });
           }
@@ -30764,17 +30769,17 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const nonce = "40000000-0000-4000-8000-000000000004";
             writeFileSync(path.join(seeded.operationDirectory, `.${laterName}.${nonce}.tmp`), canonicalFixtureRecordV1(laterPair), { mode: 0o600 });
             const laterHash = String(laterValue[laterHashKey]);
-            const laterContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", laterKind, "sha256", laterHash.slice(0, 2), `${laterHash}.json`);
+            const laterContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", laterKind, "sha256", laterHash.slice(0, 2), `${laterHash}.json`);
             phase5cEnsurePublicationParentV1(laterContent);
             writeFileSync(laterContent, canonicalFixtureRecordV1(laterValue), { mode: 0o600 });
           }
           const startupHash = String(startup.startupTokenHash);
-          const startupContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`);
+          const startupContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`);
           phase5cEnsurePublicationParentV1(startupContent);
           writeFileSync(startupContent, canonicalFixtureRecordV1(startup), { mode: 0o600 });
           const predecessorIdentity = nextChain.materials["predecessor-process-identity"]!;
           const predecessorHash = canonicalHash(predecessorIdentity);
-          const predecessorContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), `${predecessorHash}.json`);
+          const predecessorContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), `${predecessorHash}.json`);
           phase5cEnsurePublicationParentV1(predecessorContent);
           writeFileSync(predecessorContent, canonicalFixtureRecordV1(predecessorIdentity), { mode: 0o600 });
         } else if (entry.inventoryFault === "restart-crossed-uid") {
@@ -30821,14 +30826,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete alternateSealedBody.sealedAdmissionRef; delete alternateSealedBody.sealedAdmissionHash;
           const alternateSealedHash = canonicalHash(alternateSealedBody);
           const alternateSealed = Object.freeze({ ...alternateSealedBody, sealedAdmissionRef: `setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/${alternateSealedHash}`, sealedAdmissionHash: alternateSealedHash });
-          const alternateSealedTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", alternateSealedHash.slice(0, 2), `${alternateSealedHash}.json`);
+          const alternateSealedTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", alternateSealedHash.slice(0, 2), `${alternateSealedHash}.json`);
           phase5cEnsurePublicationParentV1(alternateSealedTarget);
           writeFileSync(alternateSealedTarget, canonicalFixtureRecordV1(alternateSealed), { mode: 0o600 });
           const admissionBody = { ...admissionReadyValue, sealedAdmissionRef: alternateSealed.sealedAdmissionRef, sealedAdmissionHash: alternateSealed.sealedAdmissionHash };
           delete admissionBody.admissionReadyRef; delete admissionBody.admissionReadyHash;
           const alternateAdmissionHash = canonicalHash(admissionBody);
           const alternateAdmission = Object.freeze({ ...admissionBody, admissionReadyRef: `setfarm://internal-production/task0-spawner-admission-ready/sha256/${alternateAdmissionHash}`, admissionReadyHash: alternateAdmissionHash });
-          const alternateAdmissionTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", alternateAdmissionHash.slice(0, 2), `${alternateAdmissionHash}.json`);
+          const alternateAdmissionTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", alternateAdmissionHash.slice(0, 2), `${alternateAdmissionHash}.json`);
           phase5cEnsurePublicationParentV1(alternateAdmissionTarget);
           writeFileSync(alternateAdmissionTarget, canonicalFixtureRecordV1(alternateAdmission), { mode: 0o600 });
           writeFileSync(path.join(seeded.operationDirectory, "08-admission-ready.pair.json"), canonicalFixtureRecordV1(Object.freeze({ admissionReadyRef: alternateAdmission.admissionReadyRef, admissionReadyHash: alternateAdmission.admissionReadyHash })), { mode: 0o600 });
@@ -30836,7 +30841,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete statusBody.statusRef; delete statusBody.statusHash;
           const alternateStatusHash = canonicalHash(statusBody);
           const alternateStatus = Object.freeze({ ...statusBody, statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${alternateStatusHash}`, statusHash: alternateStatusHash });
-          const alternateStatusTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateStatusHash.slice(0, 2), `${alternateStatusHash}.json`);
+          const alternateStatusTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateStatusHash.slice(0, 2), `${alternateStatusHash}.json`);
           phase5cEnsurePublicationParentV1(alternateStatusTarget);
           writeFileSync(alternateStatusTarget, canonicalFixtureRecordV1(alternateStatus), { mode: 0o600 });
           writeFileSync(seeded.currentStatusTarget, canonicalFixtureRecordV1(Object.freeze({ statusRef: alternateStatus.statusRef, statusHash: alternateStatus.statusHash })), { mode: 0o600 });
@@ -30847,14 +30852,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete alternateAuthorizationBody.authorizationRef; delete alternateAuthorizationBody.authorizationHash;
           const alternateAuthorizationHash = canonicalHash(alternateAuthorizationBody);
           const alternateAuthorization = Object.freeze({ ...alternateAuthorizationBody, authorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${alternateAuthorizationHash}`, authorizationHash: alternateAuthorizationHash });
-          const alternateAuthorizationTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", alternateAuthorizationHash.slice(0, 2), `${alternateAuthorizationHash}.json`);
+          const alternateAuthorizationTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", alternateAuthorizationHash.slice(0, 2), `${alternateAuthorizationHash}.json`);
           phase5cEnsurePublicationParentV1(alternateAuthorizationTarget);
           writeFileSync(alternateAuthorizationTarget, canonicalFixtureRecordV1(alternateAuthorization), { mode: 0o600 });
           const body = { ...firstPreSchemaStatus, authorization: Object.freeze({ authorizationRef: alternateAuthorization.authorizationRef, authorizationHash: alternateAuthorization.authorizationHash }) };
           delete body.statusRef; delete body.statusHash;
           const alternateHash = canonicalHash(body);
           const alternateStatus = Object.freeze({ ...body, statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${alternateHash}`, statusHash: alternateHash });
-          const alternateTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateHash.slice(0, 2), `${alternateHash}.json`);
+          const alternateTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateHash.slice(0, 2), `${alternateHash}.json`);
           phase5cEnsurePublicationParentV1(alternateTarget);
           writeFileSync(alternateTarget, canonicalFixtureRecordV1(alternateStatus), { mode: 0o600 });
           writeFileSync(priorStatusLocatorTarget, canonicalFixtureRecordV1(Object.freeze({ statusRef: alternateStatus.statusRef, statusHash: alternateStatus.statusHash })), { mode: 0o600 });
@@ -30952,7 +30957,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         ["status", "content", "pre-schema-no-replace", null, null, null, null],
         ["status", "locator", "pre-schema-no-replace", path.join(seeded.operationDirectory, "status-00-prepared.pair.json"), "", "F0", "A0"],
       ]);
-      assert.equal(observed.descriptorDelta, 0, "the absent frontier releases every retained directory descriptor");
+      assert.equal(observed.descriptorDelta, 0, `the absent frontier releases every retained directory descriptor: ${result.stderr}`);
     } finally {
       removeFixture(root);
     }
@@ -31523,7 +31528,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[ordinal]!)
         : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/operations/sha256", operationHash.slice(0, 2), operationHash, `status-0${ordinal}.pair.json`);
       const contentTargetFor = (family: "pre-schema" | "migration-32", statusHash: string): string => family === "pre-schema"
-        ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`)
+        ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`)
         : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", statusHash.slice(0, 2), `${statusHash}.json`);
       const inputs = Object.freeze([
         ...representatives.map(({ descriptor, family, entry }) => Object.freeze({ label: `${descriptor.row}:${family}:${entry.ordinal}:stable`, status: phase5cSCanonicalProgressStatusFixtureV1(descriptor.row), successorRoot: path.join(root, "p5c-s-completed-retained"), family, ordinal: entry.ordinal, pairTarget: targetFor(family, entry.ordinal), contentTarget: contentTargetFor(family, entry.pair.statusHash), mutation: "none" as const, expected: entry })),
@@ -31600,7 +31605,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const preSchema = fault.startsWith("pre-schema");
         const entry = preSchema ? retained.preSchema[1]! : retained.migration[0]!;
         const content = preSchema
-          ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`)
+          ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`)
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`);
         const pairPath = preSchema
           ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[entry.ordinal]!)
@@ -31687,7 +31692,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[0])
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/operations/sha256", operation.operationHash.slice(0, 2), operation.operationHash, "status-01.pair.json");
         const contentPath = retainedKind === "pre-schema"
-          ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`)
+          ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`)
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`);
         phase5cEnsurePublicationParentV1(contentPath);
         writeFileSync(contentPath, alternate.bytes, { mode: 0o600 });
@@ -38240,16 +38245,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     assert.equal(
       [...source.matchAll(/fixedWorkspaceAuthorityPathV1\(/g)].length,
-      20,
-      "one helper definition plus all nineteen fixed authority-store call sites must remain bound",
+      30,
+      "one helper definition plus all twenty-nine fixed authority-store call sites must remain bound",
     );
     assert.match(source, /const CODE_OWNER_HOME_V1 = userInfo\(\)\.homedir;/);
-    const workspaceRootDefinitions = source.match(/const CODE_OWNED_WORKSPACE_ROOT_V1 = [^\n]+;/g) ?? [];
+    assert.match(source, /const CODE_OWNED_WORKSPACE_ROOT_V1 = resolveInternalProductionBaselineWorkspaceRootV1\(\);/);
+    const locatorSource = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
+    const workspaceRootDefinitions = locatorSource.match(/const CODE_OWNED_WORKSPACE_ROOT_V1 = [^\n]+;/g) ?? [];
     assert.equal(workspaceRootDefinitions.length, 1, "one code-owned workspace root definition is frozen");
     assert.equal(
       new Set([
         'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
-        "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());",
+        'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
       ]).has(workspaceRootDefinitions[0]!),
       true,
       "the source uses either the canonical account workspace or the authenticated P3 projection root",
@@ -38302,15 +38309,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.notEqual(exposed, source);
       writeFileSync(modulePath, exposed);
       const moduleUrl = pathToFileURL(modulePath).href;
-      const program = `import(${JSON.stringify(moduleUrl)}).then((m) => { const target=m.fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1", "probe.json"); process.stdout.write(JSON.stringify({target,anchor:m.task12ReceiptStoreAnchorV1(target)})); })`;
+      const program = `import(${JSON.stringify(moduleUrl)}).then((m) => { const target=m.fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1", "probe.json"); let alternateRejected=false; try{m.task12ReceiptStoreAnchorV1(${JSON.stringify(path.join(root, "data/internal-production-baseline/current-entry-v1"))})}catch{alternateRejected=true} process.stdout.write(JSON.stringify({target,anchor:m.task12ReceiptStoreAnchorV1(target),alternateRejected})); })`;
       const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
         cwd: root,
         encoding: "utf8",
         env: { ...process.env, HOME: path.join(path.dirname(root), "crossed-home") },
       });
       assert.equal(result.status, 0, result.stderr);
-      const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string }>;
-      const projectedWorkspace = source.includes("const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());");
+      const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string; alternateRejected: boolean }>;
+      assert.equal(observed.alternateRejected, true, "the executing checkout is not an alternate runtime authority anchor");
+      const projectedWorkspace = readFileSync(path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8").includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");');
       const expectedWorkspace = projectedWorkspace
         ? realpathSync(path.dirname(root))
         : path.join(userInfo().homedir, "ai", "setrox");
@@ -40091,16 +40099,16 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
     const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
     const observedSpawner = serviceBody.spawner as Readonly<Record<string, unknown>>;
-    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, true, Object.freeze({
+    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
       serviceIdentityHash: String(observedSpawner.serviceIdentityHash),
       generationHash: String(observedSpawner.generationHash),
     }));
     const preSchemaReplacementPair = (preSchema.current as Readonly<Record<string, unknown>>).dispatchPrefix as Readonly<Record<string, unknown>>;
     const replacementPair = preSchemaReplacementPair.replacementProcessObservation as Readonly<Record<string, string>>;
-    const replacementTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/replacement-process/sha256", replacementPair.replacementProcessObservationHash!.slice(0, 2), `${replacementPair.replacementProcessObservationHash}.json`);
+    const replacementTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/replacement-process/sha256", replacementPair.replacementProcessObservationHash!.slice(0, 2), `${replacementPair.replacementProcessObservationHash}.json`);
     const replacement = JSON.parse(readFileSync(replacementTarget, "utf8")) as Readonly<Record<string, unknown>>;
     const replacementIdentityHash = String(replacement.replacementSpawnerProcessIdentityHash);
-    const replacementIdentityTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
+    const replacementIdentityTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
     const replacementIdentity = JSON.parse(readFileSync(replacementIdentityTarget, "utf8")) as Readonly<Record<string, unknown>>;
     Object.assign(serviceBody.spawner as Record<string, unknown>, {
       pid: replacementIdentity.pid,
@@ -40299,7 +40307,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const migrationPhase = Object.freeze({ phase: "current_audited", authorization: Object.freeze({ authorizationRef: migrationAuthorization.authorizationRef, authorizationHash: migrationAuthorization.authorizationHash }), consumption: Object.freeze({ consumptionRef: migrationConsumption.consumptionRef, consumptionHash: migrationConsumption.consumptionHash }), migrationReceipt: Object.freeze({ migrationReceiptRef: migrationReceipt.migrationReceiptRef, migrationReceiptHash: migrationReceipt.migrationReceiptHash }), currentAudit: auditPair });
     const freshLegacyPair = postLegacy;
     const originalAdmissionReady = originalPreSchemaCurrent.admissionReady as Readonly<Record<string, string>>;
-    const originalAdmissionReadyTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", originalAdmissionReady.admissionReadyHash!.slice(0, 2), `${originalAdmissionReady.admissionReadyHash}.json`);
+    const originalAdmissionReadyTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", originalAdmissionReady.admissionReadyHash!.slice(0, 2), `${originalAdmissionReady.admissionReadyHash}.json`);
     const admissionReadyBody = JSON.parse(readFileSync(originalAdmissionReadyTarget, "utf8")) as Record<string, unknown>;
     delete admissionReadyBody.admissionReadyRef;
     delete admissionReadyBody.admissionReadyHash;
@@ -40315,7 +40323,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
     const admissionReadyHash = canonicalHash(admissionReadyBody);
     const admissionReadyPair = Object.freeze({ admissionReadyRef: `setfarm://internal-production/task0-spawner-admission-ready/sha256/${admissionReadyHash}`, admissionReadyHash });
-    const admissionReadyTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
+    const admissionReadyTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
     phase5cEnsurePublicationParentV1(admissionReadyTarget);
     writeFileSync(admissionReadyTarget, canonicalFixtureRecordV1(Object.freeze({ ...admissionReadyBody, ...admissionReadyPair })), { mode: 0o600 });
     const preSchemaCurrentBody = structuredClone(originalPreSchemaCurrent) as Record<string, unknown>;
@@ -40324,7 +40332,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     preSchemaCurrentBody.admissionReady = admissionReadyPair;
     const preSchemaCurrentHash = canonicalHash(preSchemaCurrentBody);
     const preSchemaCurrentPair = Object.freeze({ statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${preSchemaCurrentHash}`, statusHash: preSchemaCurrentHash });
-    const preSchemaCurrentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", preSchemaCurrentHash.slice(0, 2), `${preSchemaCurrentHash}.json`);
+    const preSchemaCurrentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", preSchemaCurrentHash.slice(0, 2), `${preSchemaCurrentHash}.json`);
     phase5cEnsurePublicationParentV1(preSchemaCurrentTarget);
     const preSchemaCurrent = Object.freeze({ ...preSchemaCurrentBody, ...preSchemaCurrentPair });
     writeFileSync(preSchemaCurrentTarget, canonicalFixtureRecordV1(preSchemaCurrent), { mode: 0o600 });
@@ -41711,7 +41719,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         writeFileSync(target, rehashed.bytes, { mode: 0o600 });
         return rehashed.value;
       };
-      const preSchemaRecordsRoot = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+      const preSchemaRecordsRoot = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
       const migrationRecordsRoot = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-manifest-migration32-v1/records");
       const currentUid = process.getuid?.();
       assert.equal(Number.isSafeInteger(currentUid) && Number(currentUid) >= 0, true, "current host exposes a canonical uid for current-entry verification");
@@ -41848,14 +41856,14 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       }, /pre-schema restart-authority current uid is crossed/);
 
       const rebindAuthorizationPair = fixture.authority.preSchemaSpawnerRebindAuthorization as Readonly<Record<string, string>>;
-      const rebindAuthorizationTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", rebindAuthorizationPair.authorizationHash!.slice(0, 2), `${rebindAuthorizationPair.authorizationHash}.json`);
+      const rebindAuthorizationTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", rebindAuthorizationPair.authorizationHash!.slice(0, 2), `${rebindAuthorizationPair.authorizationHash}.json`);
       const crossedRebindAuthorizationBody = JSON.parse(readFileSync(rebindAuthorizationTarget, "utf8")) as Record<string, unknown>;
       delete crossedRebindAuthorizationBody.authorizationRef;
       delete crossedRebindAuthorizationBody.authorizationHash;
       Object.assign(crossedRebindAuthorizationBody, { currentEntryOperationRef: edgeOperationBPair.operationRef, currentEntryOperationHash: edgeOperationBPair.operationHash });
       const crossedRebindAuthorizationHash = canonicalHash(crossedRebindAuthorizationBody);
       const crossedRebindAuthorizationPair = Object.freeze({ authorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${crossedRebindAuthorizationHash}`, authorizationHash: crossedRebindAuthorizationHash });
-      const crossedRebindAuthorizationTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", crossedRebindAuthorizationHash.slice(0, 2), `${crossedRebindAuthorizationHash}.json`);
+      const crossedRebindAuthorizationTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", crossedRebindAuthorizationHash.slice(0, 2), `${crossedRebindAuthorizationHash}.json`);
       phase5cEnsurePublicationParentV1(crossedRebindAuthorizationTarget);
       writeFileSync(crossedRebindAuthorizationTarget, canonicalFixtureRecordV1(Object.freeze({ ...crossedRebindAuthorizationBody, ...crossedRebindAuthorizationPair })), { mode: 0o600 });
 
@@ -41866,7 +41874,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       rebindBody.authorization = crossedRebindAuthorizationPair;
       const crossedRebindHash = canonicalHash(rebindBody);
       const crossedRebindPair = Object.freeze({ statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${crossedRebindHash}`, statusHash: crossedRebindHash });
-      const crossedRebindTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", crossedRebindHash.slice(0, 2), `${crossedRebindHash}.json`);
+      const crossedRebindTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", crossedRebindHash.slice(0, 2), `${crossedRebindHash}.json`);
       phase5cEnsurePublicationParentV1(crossedRebindTarget);
       writeFileSync(crossedRebindTarget, canonicalFixtureRecordV1(Object.freeze({ ...rebindBody, ...crossedRebindPair })), { mode: 0o600 });
       assert.notDeepEqual(crossedRebindPair, rebindPair);

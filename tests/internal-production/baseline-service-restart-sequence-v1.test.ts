@@ -1,13 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-service-restart-sequence-v1.ts");
+
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  let source = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "fixture authenticates exactly one workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  source = source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`);
+  writeFileSync(path.join(internal, path.basename(locatorPath)), source);
+}
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -19,6 +33,24 @@ function canonical(value: unknown): string {
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+
+test("restart sequence rejects an ancestor redirect before its first directory mutation", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-sequence-anchor-")));
+  try {
+    const physical = path.join(fixture, "physical", "workspace");
+    mkdirSync(physical, { recursive: true, mode: 0o700 });
+    symlinkSync(path.dirname(physical), path.join(fixture, "alias"), "dir");
+    const workspace = path.join(fixture, "alias", "workspace");
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(internal, { recursive: true, mode: 0o700 });
+    installWorkspaceLocatorFixtureV1(internal, workspace);
+    const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
+    writeFileSync(modulePath, `${readFileSync(sourcePath, "utf8")}\nexport { ensureDirectory };\n`);
+    const module = await import(pathToFileURL(modulePath).href);
+    assert.throws(() => module.ensureDirectory(path.join(workspace, "data/internal-production-baseline/baseline-service-restart-sequence-v1")), /WORKSPACE_ANCESTOR_IDENTITY_INVALID/);
+    assert.equal(existsSync(path.join(physical, "data")), false, "even the first data directory must remain absent under an ancestor redirect");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
 
 test("restart sequence exposes the fixed public surface", async () => {
   const module = await import("../../src/internal-production/baseline-service-restart-sequence-v1.js");
@@ -42,6 +74,7 @@ test("restart sequence exposes the fixed public surface", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
     writeFileSync(modulePath, readFileSync(sourcePath, "utf8"));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `throw new Error("receipt module imported eagerly");\nexport function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){throw new Error("absent status must not observe source")}\n`);
@@ -69,6 +102,7 @@ test("P4 restart sequence requires the exact terminal migration receipt before m
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
     writeFileSync(modulePath, readFileSync(sourcePath, "utf8"));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `
@@ -115,7 +149,7 @@ test("P4 one-service completion bootstrap persists before replacement and consum
     assert.equal((value as Function).length, arity, name);
   }
   assert.doesNotMatch(source, /const BOOTSTRAP_ROOT_V1 = path\.resolve\(process\.cwd\(\)/, "bootstrap authority root must derive from the authenticated module repository");
-  assert.match(source, /const BOOTSTRAP_ROOT_V1 = path\.join\(repositoryRoot\(\)/, "bootstrap authority root derives from repositoryRoot");
+  assert.match(source, /const BOOTSTRAP_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1\(/, "bootstrap authority root uses the common workspace locator");
   assert.doesNotMatch(source, /startupAdmissionRef,startupAdmissionHash,recoveredOwnerGenerationHash,targetOwnerReleaseReceiptHash/, "bootstrap startup-admission locator remains exact-two");
   assert.match(source, /function resolveBootstrapRecordV1[\s\S]*const exact = pair\(pairValue, refKey, hashKey, prefix\)/, "public resolver inputs retain their ref-then-hash ABI");
   assert.match(source, /function bootstrapHasExactStoredKeysV1\(/, "canonical records validate the sorted wire key set");
@@ -151,6 +185,7 @@ test("P4 restart sequence resumes every durable prefix", async () => {
     try {
       const internal = path.join(fixture, "src/internal-production");
       mkdirSync(internal, { recursive: true });
+      installWorkspaceLocatorFixtureV1(internal, fixture);
       const modulePath = path.join(internal, "baseline-service-restart-sequence-v1.ts");
       writeFileSync(modulePath, instrumentedSource);
       const v31Hash = "1".repeat(64);

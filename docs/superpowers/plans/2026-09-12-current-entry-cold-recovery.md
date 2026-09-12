@@ -283,3 +283,40 @@ passed. Whole-branch delivery and live recovery remain pending.
   shared locator and matching directory anchor. Startup suite: 10 passed,
   0 failed (4.784s) at this initial slice. Remaining consumer/fixture/P3
   convergence is in progress; no combined gate or completion claim yet.
+- Task 1B storage review found and reproduced ancestor redirection before the
+  first sequence directory mutation and a helper error-path descriptor leak.
+  The shared lazy physical-ancestor guard now pins `/` through the workspace;
+  all seven consumer guards retain it, the first sequence mkdir authenticates
+  before mutation, and helper descriptor failures release all acquired guards.
+  Both dedicated regressions demonstrated RED, then passed. Independent scoped
+  source re-review reports no remaining findings; combined delivery is pending.
+- Storage regression command (`umask 077`; `node --import tsx --test` over
+  startup-admission, restart-sequence, restart-helper, restart-retirement and
+  task-0-source-manifest): 66 passed, 0 failed (32.133s). Real sealed spawner
+  gate/main focused tests: 2 passed, 0 failed (9.903s). `npx tsc --noEmit` and
+  `git diff --check` exited zero before the final receipt fixture cleanup.
+- Receipt physical pre-schema fixtures now seed the same workspace authority
+  as production; obsolete repository/workspace mirror writes are removed.
+  Retained pre-schema/migration reader passed. Remaining physical-history
+  regressions are still running. One raw descriptor-count mismatch is under
+  investigation; do not treat this slice as fully verified yet.
+- Epoch-genesis dependency audit: public complete-zero requires A activation,
+  public legacy-zero requires prepared current entry, and quarantine admission
+  requires four services. Therefore extract the spec's private raw cold
+  three-service/zero observer before genesis; do not bypass these public guards
+  or use fabricated prepared/activated authority to satisfy prerequisites.
+- The physical pre-schema history/inventory/ABA group and absent/sealed/ready
+  endpoints passed: 4 passed, 0 failed (234.926s). The descriptor mismatch was
+  independently traced by inode/device to a pending `tsx` compilation-cache
+  write, with no unclosed synchronous authority descriptors. The fixture now
+  settles the loader before its baseline, counts only live descriptors, and
+  retains immediate strict zero-delta checking plus identity diagnostics.
+  This is test measurement isolation, not a production guard relaxation.
+- Post-measurement-fix absent/sealed/ready/retained reader rerun: 4 passed,
+  0 failed (13.142s); final `npx tsc --noEmit` and `git diff --check` exited
+  zero. Next gate is the disposable P3 template/projection plus manifest test,
+  not a new full 45-file receipt or a live rollout.
+- Final checkpoint review caught a Darwin fixture-only `/var` versus
+  `/private/var` workspace alias. An executing copied locator reproduced the
+  mismatch; projecting the fixture's authenticated `realpathSync` root fixed
+  it. That regression and both sealed spawner tests passed (3/3, 9.093s).

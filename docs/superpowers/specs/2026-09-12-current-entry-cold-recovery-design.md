@@ -157,6 +157,10 @@ worktree remains the source/build authority, not a second runtime-data root.
 No environment root, symlink, search fallback, or automatic store migration is
 introduced. Update every producer, reader and helper descriptor-path check
 together and reproduce the linked-worktree mismatch in disposable fixtures.
+Authenticate the physical ancestors lazily, before the first directory
+mutation, and retain their identities until the owning directory guard closes.
+No import-time filesystem mutation or arbitrary symlink canonicalization is
+allowed. Fixture projections use one disposable workspace for every consumer.
 
 Epoch absence is not epoch one. Introduce a distinct cold-recovery genesis
 branch that holds the same physical transition lock without pretending a head

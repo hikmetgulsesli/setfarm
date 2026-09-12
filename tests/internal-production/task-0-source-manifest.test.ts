@@ -71,6 +71,7 @@ const TASK_0_EXACT_SOURCE_PATHS_V1 = [
   "src/internal-production/baseline-service-restart-helper-v1.ts",
   "src/internal-production/baseline-service-restart-sequence-v1.ts",
   "src/internal-production/baseline-spawner-startup-admission-v1.ts",
+  "src/internal-production/baseline-workspace-authority-path-v1.ts",
   "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts",
@@ -176,6 +177,7 @@ const P3_EXACT_SOURCE_PATHS_V1 = [
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",
   "src/installer/step-ops.ts",
+  "src/internal-production/baseline-workspace-authority-path-v1.ts",
   "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/medic/checks.ts",
@@ -259,19 +261,19 @@ function assertExactTask0SourcePathsV1(actual: readonly string[]): void {
 }
 
 function assertExactP3SourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 59, "P3 source path cardinality differs");
+  assert.equal(actual.length, 60, "P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "P3 source paths contain a duplicate");
   assert.deepEqual(actual, P3_EXACT_SOURCE_PATHS_V1, "P3 source paths differ");
   const frozenOrdinals = actual.map((relativePath) => TASK_0_EXACT_SOURCE_PATHS_V1.indexOf(
     relativePath as (typeof TASK_0_EXACT_SOURCE_PATHS_V1)[number],
   ));
-  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen140");
+  assert.equal(frozenOrdinals.every((ordinal) => ordinal >= 0), true, "P3 path is absent from frozen141");
   assert.deepEqual(frozenOrdinals, [...frozenOrdinals].sort((left, right) => left - right),
-    "P3 source paths do not preserve frozen140 order");
+    "P3 source paths do not preserve frozen141 order");
 }
 
 function assertExactP3MarkdownSourcePathsV1(actual: readonly string[]): void {
-  assert.equal(actual.length, 59, "Markdown P3 source path cardinality differs");
+  assert.equal(actual.length, 60, "Markdown P3 source path cardinality differs");
   assert.equal(new Set(actual).size, actual.length, "Markdown P3 source paths contain a duplicate");
   assert.deepEqual([...actual].sort(), [...P3_EXACT_SOURCE_PATHS_V1].sort(),
     "Markdown P3 source path membership differs");
@@ -298,6 +300,18 @@ function assertExactP3ExecutableInventoryV1(input: Readonly<{
   }
   assert.deepEqual([...executable, ...input.helperOnly].sort(),
     P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/")).sort());
+}
+
+function workspaceStorageAmendmentV1(plan: string): Readonly<{ path: string; task0After: string; p3After: string }> {
+  const heading = "## Workspace authority storage convergence amendment v1";
+  assert.equal(plan.split(heading).length, 2, "workspace storage amendment cardinality differs");
+  const section = plan.slice(plan.indexOf(heading) + heading.length).split("\n## ")[0]!;
+  const rows = [...section.matchAll(/^(Task 0|P3) insert `([^`]+)` after `([^`]+)`\.$/gm)];
+  assert.deepEqual(rows.map((row) => row.slice(1)), [
+    ["Task 0", "src/internal-production/baseline-workspace-authority-path-v1.ts", "src/internal-production/baseline-spawner-startup-admission-v1.ts"],
+    ["P3", "src/internal-production/baseline-workspace-authority-path-v1.ts", "src/installer/step-ops.ts"],
+  ], "workspace storage amendment insertion paths or order differ");
+  return { path: rows[0]![2]!, task0After: rows[0]![3]!, p3After: rows[1]![3]! };
 }
 
 function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
@@ -422,6 +436,9 @@ function extractApprovedTask0SourcePathsV1(plan: string): readonly string[] {
   insertAfter(base, "tests/execution-attempts/operational-outbox-repository.test.ts", [
     "tests/execution-attempts/plan-context-authority.test.ts",
   ]);
+  const storage = workspaceStorageAmendmentV1(plan);
+  assert.equal(base.length, 140, "workspace storage amendment Task 0 predecessor differs");
+  insertAfter(base, storage.task0After, [storage.path]);
   return base;
 }
 
@@ -457,6 +474,9 @@ function extractApprovedP3SourcePathsV1(plan: string): readonly string[] {
   insertAfter("src/installer/step-ops.ts", [
     "src/internal-production/owner-admission-head-v1.ts",
   ]);
+  const storage = workspaceStorageAmendmentV1(plan);
+  assert.equal(base.length, 59, "workspace storage amendment P3 predecessor differs");
+  insertAfter(storage.p3After, [storage.path]);
   return base;
 }
 
@@ -630,7 +650,7 @@ function p3ExecutableSqlLiteralOccurrences(
 function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
   const productionPaths = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
   assert.deepEqual(Object.keys(sources).sort(), [...productionPaths].sort(),
-    "Task 8 must parse all exact31 production/package paths");
+    "Task 8 must parse all exact32 production/package paths");
 
   const ownerCore = sources["src/internal-production/owner-admission-v1.ts"]!;
   assert.equal(countMatches(ownerCore, /BigInt\(value\) > 9_007_199_254_740_991n/g), 1,
@@ -988,15 +1008,15 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
 }
 
 describe("Task 0 exact source manifest", () => {
-  it("freezes P3 as an ordered exact59 subset of frozen140", () => {
-    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 59);
+  it("freezes P3 as an ordered exact60 subset of frozen141", () => {
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 60);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));
 
     const production = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !relativePath.startsWith("tests/"));
     const tests = P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => relativePath.startsWith("tests/"));
-    assert.equal(production.length, 31);
+    assert.equal(production.length, 32);
     assert.equal(tests.length, 28);
-    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 59);
+    assert.equal(new Set(P3_EXACT_SOURCE_PATHS_V1).size, 60);
     assert.deepEqual(P3_EXACT_SOURCE_PATHS_V1.filter((relativePath) => !existsSync(
       `${REPOSITORY_ROOT}${relativePath}`,
     )), []);
@@ -1031,7 +1051,7 @@ describe("Task 0 exact source manifest", () => {
     assert.throws(() => assertExactP3SourcePathsV1(exact), /differ|order/);
     const countOnly = [...P3_EXACT_SOURCE_PATHS_V1];
     countOnly[0] = "src/spawner.ts" as (typeof countOnly)[number];
-    assert.equal(countOnly.length, 59);
+    assert.equal(countOnly.length, 60);
     assert.throws(() => assertExactP3SourcePathsV1(countOnly), /differ|absent/);
   });
 
@@ -1174,8 +1194,28 @@ describe("Task 0 exact source manifest", () => {
     )), /P4 ABI escaped its db-pg region/);
   });
 
-  it("accepts the literal 140-path tuple byte-for-byte and in order", () => {
-    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 140);
+  it("includes the shared runtime authority locator in both authenticated source inventories", () => {
+    const locator = "src/internal-production/baseline-workspace-authority-path-v1.ts";
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.includes(locator as never), true);
+    assert.equal(P3_EXACT_SOURCE_PATHS_V1.includes(locator as never), true);
+  });
+
+  it("rejects missing or crossed workspace-storage inventory amendments", () => {
+    const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
+    const heading = "## Workspace authority storage convergence amendment v1";
+    for (const crossed of [
+      plan.replace(heading, "## Unrecognized workspace amendment"),
+      `${plan}\n${heading}\n`,
+      plan.replace("Task 0 insert `src/internal-production/baseline-workspace-authority-path-v1.ts`", "Task 0 insert `src/internal-production/crossed.ts`"),
+      plan.replace("P3 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/installer/step-ops.ts`.", "P3 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/installer/step-fail.ts`."),
+    ]) {
+      assert.throws(() => extractApprovedTask0SourcePathsV1(crossed), /workspace.*amendment/i);
+      assert.throws(() => extractApprovedP3SourcePathsV1(crossed), /workspace.*amendment/i);
+    }
+  });
+
+  it("accepts the literal 141-path tuple byte-for-byte and in order", () => {
+    assert.equal(TASK_0_EXACT_SOURCE_PATHS_V1.length, 141);
     assert.doesNotThrow(() => assertExactTask0SourcePathsV1(TASK_0_EXACT_SOURCE_PATHS_V1));
   });
 
@@ -1188,7 +1228,7 @@ describe("Task 0 exact source manifest", () => {
     assert.equal(readFileSync(configPath, "utf8"), "{}\n");
   });
 
-  it("matches frozen140 while preserving every approved P3 exact59 member", () => {
+  it("matches frozen141 while preserving every approved P3 exact60 member", () => {
     const plan = readFileSync(APPROVED_PLAN_PATH, "utf8");
     const approved = extractApprovedTask0SourcePathsV1(plan);
     assertExactInventory(approved, TASK_0_EXACT_SOURCE_PATHS_V1, "approved Task 0 source paths");

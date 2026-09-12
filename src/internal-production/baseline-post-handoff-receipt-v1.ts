@@ -23,6 +23,8 @@ import {
 import type { BigIntStats } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
@@ -93,7 +95,7 @@ const GIT_PREFIX = Object.freeze([
   "-c", "core.fsmonitor=false",
 ]);
 const CODE_OWNER_HOME_V1 = userInfo().homedir;
-const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
+const CODE_OWNED_WORKSPACE_ROOT_V1 = resolveInternalProductionBaselineWorkspaceRootV1();
 const EXACT_SCRIPTS = Object.freeze({
   prebuild: "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
   build: "umask 077 && tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
@@ -485,7 +487,7 @@ function fixedWorkspaceAuthorityPathV1(...segments: string[]): string {
   ) fail("workspace authority locator is not code-owned");
   const repository = fixedRepositoryRoot();
   const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
-  const target = path.resolve(workspace, ...segments);
+  const target = resolveInternalProductionBaselineAuthorityPathV1(...segments);
   const workspaceRelative = path.relative(workspace, target);
   const repositoryRelative = path.relative(repository, target);
   if (
@@ -8430,15 +8432,11 @@ function task12ReceiptPresentedPathV1(candidate: string): string {
 }
 
 function task12ReceiptStoreAnchorV1(target: string): string {
-  const repository = task12ReceiptPresentedPathV1(fixedRepositoryRoot());
   const workspace = task12ReceiptPresentedPathV1(CODE_OWNED_WORKSPACE_ROOT_V1);
   const resolved = task12ReceiptPresentedPathV1(target);
-  const within = (anchor: string): boolean => {
-    const relative = path.relative(anchor, resolved);
-    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-  };
-  if (within(repository)) return repository;
-  if (within(workspace)) return workspace;
+  const relative = path.relative(workspace, resolved);
+  if (relative === "" || relative === "data" || relative === "data/internal-production-baseline"
+    || relative.startsWith("data/internal-production-baseline/")) return workspace;
   currentEntryFail("Task12 receipt store escaped the workspace");
 }
 
@@ -8449,17 +8447,20 @@ function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12Receip
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) currentEntryFail("Task12 receipt store escaped the repository");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const identities: BigIntStats[] = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) currentEntryFail("Task12 receipt directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, member] of paths.entries()) {
       const atPath = lstatSync(member, { bigint: true });
       const atDescriptor = fstatSync(descriptors[index]!, { bigint: true });
       const expected = identities[index]!;
       if (!atPath.isDirectory() || atPath.isSymbolicLink() || !atDescriptor.isDirectory() || atPath.dev !== expected.dev || atPath.ino !== expected.ino || atPath.mode !== expected.mode || atDescriptor.dev !== expected.dev || atDescriptor.ino !== expected.ino || atDescriptor.mode !== expected.mode) currentEntryFail("Task12 receipt directory chain changed");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, member] of paths.entries()) {
@@ -8476,12 +8477,12 @@ function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12Receip
       close: () => {
         if (closed) currentEntryFail("Task12 receipt directory guard closed twice");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
@@ -12380,7 +12381,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
 ): Promise<ExactPoisonPostVisibleProgressPreSchemaObservationV1> {
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("pre-schema raw operation is crossed");
-  const operationDirectory = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash);
+  const operationDirectory = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash);
   const materialLocators = Object.freeze([
     "00-pre-dispatch-legacy-zero.pair.json", "01-authorization.pair.json", "02-startup-token.pair.json",
     "03-restart-authority.pair.json", "04-predecessor-termination.pair.json", "05-replacement-process.pair.json",
@@ -12515,7 +12516,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       if (typeof hash !== "string" || !SHA256.test(hash)) currentEntryFail(`pre-schema ${kind} hash is invalid`);
       const contentTarget = legacy
         ? fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1", "records", "sha256", hash.slice(0, 2), `${hash}.json`)
-        : path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+        : fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
       const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
@@ -12591,7 +12592,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     const openProcessIdentity = async (ref: unknown, hash: unknown, label: string, capabilityKey?: string): Promise<Readonly<Record<string, unknown>>> => {
       if (typeof hash !== "string" || !SHA256.test(hash) || ref !== `setfarm://internal-production/spawner-process-identity/sha256/${hash}`) currentEntryFail(`pre-schema ${label} pair is crossed`);
-      const contentTarget = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
+      const contentTarget = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
       const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
@@ -12949,7 +12950,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
           : Object.freeze({ prior: "pre_manifest_bootstrap_sealed", next: "normal_task0_admission_ready", ordinal: 6 });
       if (inventory.ordinal === "blocked") {
         const statusHash = String(value.statusHash);
-        addContentEndpoint("blocked-status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("blocked-status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("blocked-status:locator", blockedLocator);
       } else if (inventory.ordinal === 5) {
         const legacyHash = String(bodies[6]!.observationHash);
@@ -12957,16 +12958,16 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         const statusHash = String(value.statusHash);
         addContentEndpoint("post-termination-legacy-zero-content:content", bodies[6]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1", "records", "sha256", legacyHash.slice(0, 2), `${legacyHash}.json`));
         addLocatorEndpoint("post-termination-legacy-zero:locator", materialLocators[6]);
-        addContentEndpoint("sealed-admission:content", bodies[7]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", sealedHash.slice(0, 2), `${sealedHash}.json`));
+        addContentEndpoint("sealed-admission:content", bodies[7]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", sealedHash.slice(0, 2), `${sealedHash}.json`));
         addLocatorEndpoint("sealed-admission:locator", materialLocators[7]);
-        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("status:locator", statusLocators[5]);
       } else {
         const admissionReadyHash = String(bodies[8]!.admissionReadyHash);
         const statusHash = String(value.statusHash);
-        addContentEndpoint("admission-ready:content", bodies[8]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`));
+        addContentEndpoint("admission-ready:content", bodies[8]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`));
         addLocatorEndpoint("admission-ready:locator", materialLocators[8]);
-        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("status:locator", statusLocators[6]);
       }
       const capability = Object.freeze({
@@ -13213,8 +13214,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
       ) as Readonly<{ statusRef: string; statusHash: string }>;
       exactPoisonPostVisibleProgressFaultV1(readFaults.afterLocator);
       const contentTarget = family === "pre-schema"
-        ? path.join(
-          fixedRepositoryRoot(),
+        ? fixedWorkspaceAuthorityPathV1(
           "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256",
           pair.statusHash.slice(0, 2),
           `${pair.statusHash}.json`,
@@ -20156,7 +20156,7 @@ function resolveTask12SpawnerProcessIdentityV1(
 ): Readonly<Record<string, unknown>> {
   const hash = requireSha256(hashValue, `${label} content hash`);
   if (ref !== `setfarm://internal-production/spawner-process-identity/sha256/${hash}`) currentEntryFail(`${label} pair is crossed`);
-  const target = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
+  const target = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
   const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), label);
   if (
     !hasExactKeys(value, ["schema", "pid", "processStartTimeEpochMs", "processIdentityHash"])

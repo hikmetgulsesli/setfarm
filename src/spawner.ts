@@ -9,6 +9,8 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -9925,12 +9927,10 @@ export type InternalProductionBaselineSpawnerStartupClaimV1 = Readonly<{
   startupClaimHash: string;
 }>;
 
-const TASK12_STARTUP_ADMISSION_ROOT_V1 = path.join(
-  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+const TASK12_STARTUP_ADMISSION_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1(
   "data/internal-production-baseline/baseline-spawner-startup-admission-v1",
 );
-const TASK12_BOOTSTRAP_RESTART_ROOT_V1 = path.join(
-  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+const TASK12_BOOTSTRAP_RESTART_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1(
   "data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1",
 );
 const TASK12_STARTUP_ADMISSION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-startup-admission/sha256/";
@@ -9973,23 +9973,26 @@ function task12ExactInputV1(value: unknown, keys: readonly string[], code: strin
 type Task12PrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
 
 function authenticateTask12PrivateDirectoryChainV1(target: string): Task12PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const resolvedTarget = path.resolve(target);
   const relative = path.relative(anchor, resolvedTarget);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fs.fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const atPath = fs.lstatSync(current, { bigint: true });
       const atDescriptor = fs.fstatSync(descriptors[index]!, { bigint: true });
       const expected = held[index]!;
       if (!atPath.isDirectory() || atPath.isSymbolicLink() || !atDescriptor.isDirectory() || atPath.dev !== expected.dev || atPath.ino !== expected.ino || atPath.mode !== expected.mode || atDescriptor.dev !== expected.dev || atDescriptor.ino !== expected.ino || atDescriptor.mode !== expected.mode) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_CHANGED");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -10001,16 +10004,16 @@ function authenticateTask12PrivateDirectoryChainV1(target: string): Task12Privat
       held.push(observed);
     }
     assertStable();
-    return Object.freeze({ assertStable, close: () => { if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED"); closed = true; for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } });
+    return Object.freeze({ assertStable, close: () => { if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED"); closed = true; try { for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } finally { workspaceAnchor.close(); } } });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensureTask12PrivateDirectoryV1(directory: string): Task12PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
@@ -10648,7 +10651,7 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const admissionReadyHash = task12HashV1(body);
   const admissionReadyRef = `setfarm://internal-production/task0-spawner-admission-ready/sha256/${admissionReadyHash}`;
   const ready = { ...body, admissionReadyRef, admissionReadyHash };
-  const root = path.resolve(process.cwd(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+  const root = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1");
   task12WriteNoReplaceV1(path.join(root, "records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`), ready);
   const operationDirectory = path.join(root, "operations/sha256", status.currentEntryOperation.operationHash);
   task12WriteNoReplaceV1(path.join(operationDirectory, "08-admission-ready.pair.json"), { admissionReadyRef, admissionReadyHash });

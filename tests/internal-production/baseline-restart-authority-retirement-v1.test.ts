@@ -9,6 +9,20 @@ import { test } from "node:test";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-restart-authority-retirement-v1.ts");
 
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  let source = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "fixture authenticates exactly one workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  source = source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`);
+  writeFileSync(path.join(internal, path.basename(locatorPath)), source);
+}
+
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -138,6 +152,7 @@ function seedCompletedSequenceHistory(fixture: string, intentKind: "live-rebind"
 function installRetirementFixture(fixture: string, source: string): string {
   const internal = path.join(fixture, "src/internal-production");
   mkdirSync(internal, { recursive: true });
+  installWorkspaceLocatorFixtureV1(internal, fixture);
   const fixtureModulePath = path.join(internal, "baseline-restart-authority-retirement-v1.ts");
   const censusReturn = "return orderedFrozenV1({ ...body, censusHash: sha256(canonical(body)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1;";
   const instrumentedSource = source

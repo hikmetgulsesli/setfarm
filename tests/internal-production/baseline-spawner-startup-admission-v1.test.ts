@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,86 @@ import ts from "typescript";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-startup-admission-v1.ts");
+
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const locator = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => locator.includes(candidate));
+  assert.equal(matches.length, 1);
+  const marker = matches[0]!;
+  assert.equal(locator.split(marker).length, 2, "project exactly one code-owned workspace into the disposable fixture");
+  writeFileSync(path.join(internal, path.basename(locatorPath)), locator.replace(marker, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`));
+}
+
+for (const ancestorSymlink of [false, true]) test(ancestorSymlink
+  ? "cold recovery startup authority rejects a symlink above the workspace"
+  : "cold recovery startup authority round trips outside the executing linked worktree", async () => {
+  // Regression: repository-local publication cannot be read by workspace-bound
+  // receipt consumers, and a path-only fix still fails the directory guards.
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-workspace-")));
+  try {
+    const physicalWorkspace = path.join(fixture, "physical", "workspace");
+    mkdirSync(physicalWorkspace, { recursive: true, mode: 0o700 });
+    if (ancestorSymlink) symlinkSync(path.dirname(physicalWorkspace), path.join(fixture, "alias"), "dir");
+    const workspace = ancestorSymlink ? path.join(fixture, "alias", "workspace") : physicalWorkspace;
+    const checkout = path.join(workspace, ".worktrees", "setfarm");
+    const internal = path.join(checkout, "src/internal-production");
+    const compiler = path.join(checkout, "src/product-compiler");
+    mkdirSync(internal, { recursive: true, mode: 0o700 });
+    mkdirSync(compiler, { recursive: true, mode: 0o700 });
+    const production = readFileSync(sourcePath, "utf8");
+    writeFileSync(path.join(internal, path.basename(sourcePath)), `${production}\nexport { root, recordPath, writeNoReplace, readRecord };\n`);
+    writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
+    installWorkspaceLocatorFixtureV1(internal, workspace);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), [
+      "observePreparedInternalProductionCurrentEntryOperationV1",
+      "resolveInternalProductionCurrentEntryOperationV1",
+      "observeInternalProductionServiceCensusV1",
+      "observeInternalProductionLegacyPreManifestZeroOwnerV1",
+      "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1",
+    ].map((name) => `export async function ${name}(){throw new Error("unexpected authority call")}`).join("\n"));
+    writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), [
+      "acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
+      "releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
+      "invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1",
+    ].map((name) => `export async function ${name}(){throw new Error("unexpected transport call")}`).join("\n"));
+    const module = await import(pathToFileURL(path.join(internal, path.basename(sourcePath))).href);
+    const expected = path.join(workspace, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+    assert.equal(module.root(), expected);
+    const hash = "a".repeat(64);
+    const target = module.recordPath("process-identity", hash);
+    assert.equal(target, path.join(expected, "records/process-identity/sha256/aa", `${hash}.json`));
+    const value = { schema: "fixture.process-identity.v1", identityHash: hash };
+    if (ancestorSymlink) {
+      assert.throws(() => module.writeNoReplace(target, value), /workspace.*(?:ancestor|anchor|identity)/i);
+      assert.equal(existsSync(path.join(workspace, "data")), false, "reject redirect before creating authority state");
+      return;
+    }
+    module.writeNoReplace(target, value);
+    assert.deepEqual(module.readRecord(target), value);
+    assert.equal(existsSync(path.join(checkout, "data")), false, "publication must not create a second worktree-local authority store");
+    const locator = await import(pathToFileURL(path.join(internal, "baseline-workspace-authority-path-v1.ts")).href);
+    for (const invalid of ["../escape", "/absolute", "data/internal-production-baseline/../escape", "data/internal-production-baseline//crossed", "data/internal-production-baseline/with\\separator"]) {
+      assert.throws(() => locator.resolveInternalProductionBaselineAuthorityPathV1(invalid), /LOCATOR_INVALID/);
+    }
+    const anchorGuard = locator.authenticateInternalProductionBaselineWorkspaceAnchorV1();
+    try {
+      const physicalParent = path.dirname(physicalWorkspace);
+      const retiredParent = path.join(fixture, "retired-parent");
+      renameSync(physicalParent, retiredParent);
+      mkdirSync(physicalParent, { mode: 0o700 });
+      renameSync(path.join(retiredParent, "workspace"), physicalWorkspace);
+      assert.throws(() => anchorGuard.assertStable(), /WORKSPACE_ANCESTOR_IDENTITY_INVALID/,
+        "replacing an ancestor refuses even when the workspace inode itself survives");
+    } finally { anchorGuard.close(); }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test("P4 startup module exact11 seals generation", async () => {
   const module = await import(`../../src/internal-production/baseline-spawner-startup-admission-v1.js?p4-real=${Date.now()}`);
@@ -133,6 +213,9 @@ test("P4 startup fixed locators serialize CAS and normalize only authenticated s
   try {
     const sourceDirectory = path.join(fixture, "src");
     mkdirSync(sourceDirectory, { recursive: true });
+    const internal = path.join(sourceDirectory, "internal-production");
+    mkdirSync(internal, { mode: 0o700 });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const harnessPath = path.join(sourceDirectory, "locator-harness.ts");
     writeFileSync(harnessPath, `
 import crypto from "node:crypto";
@@ -140,6 +223,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1, resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
 type InternalProductionBaselineSpawnerStartupAdmissionPairV1 = Readonly<{ startupAdmissionRef: string; startupAdmissionHash: string }>;
 ${locatorKernel}
 ${publicActiveSlice}
@@ -373,6 +457,7 @@ test("P4 startup resolvers reject impossible status and fixed-prefix gaps", asyn
     const compiler = path.join(fixture, "src/product-compiler");
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readFileSync(sourcePath));
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     const operationHash = "a".repeat(64);
@@ -473,6 +558,7 @@ test("P4 startup recovery reopens the durable helper-blocked prefix before live 
     const compiler = path.join(fixture, "src/product-compiler");
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readFileSync(sourcePath));
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     const operationHash = "1".repeat(64);
@@ -530,6 +616,7 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
     const source = readFileSync(sourcePath, "utf8").replace("function writeNoReplace(file: string, value: unknown): void", "export function writeNoReplace(file: string, value: unknown): void");
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), source);
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), "export async function observePreparedInternalProductionCurrentEntryOperationV1(){return null}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionServiceCensusV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionLegacyPreManifestZeroOwnerV1(){throw new Error('UNUSED')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){throw new Error('UNUSED')}\n");
@@ -658,6 +745,7 @@ test("P4 startup authenticates every historical status against the material pref
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
     const source = readFileSync(sourcePath, "utf8").replace("function authenticateObservedStatusHistoryV1(", "export function authenticateObservedStatusHistoryV1(");
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), source);
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), "export async function observePreparedInternalProductionCurrentEntryOperationV1(){return null}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionServiceCensusV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionLegacyPreManifestZeroOwnerV1(){throw new Error('UNUSED')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){throw new Error('UNUSED')}\n");

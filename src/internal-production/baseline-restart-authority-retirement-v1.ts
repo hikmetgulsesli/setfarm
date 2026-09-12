@@ -17,6 +17,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
 
 export type InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1 = Readonly<{
@@ -185,11 +187,13 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) fail("authority directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const after = lstatSync(current, { bigint: true });
       const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
@@ -201,6 +205,7 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
         || descriptorAfter.mode !== observed.mode
       ) fail("authority directory changed while authenticated");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -223,18 +228,18 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
       close: () => {
         if (closed) fail("authority directory guard is already closed");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(repositoryRoot());
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
@@ -259,7 +264,7 @@ function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryG
 }
 
 function rootPaths() {
-  const root = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1");
+  const root = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1");
   return Object.freeze({
     root,
     lock: path.join(root, "physical-service-restart-authority.transition.lock"),
@@ -304,7 +309,7 @@ function exactCanonicalRecord(value: unknown, keys: readonly string[], label: st
 }
 
 function readStableRetirementBytes(file: string, label: string): Buffer {
-  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(file));
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(file));
   try {
     guard.assertStable();
     const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -812,7 +817,7 @@ export async function releaseInternalProductionPhysicalServiceRestartAuthorityTr
 ): Promise<void> {
   const state = heldLease(lease);
   const paths = rootPaths();
-  const rootGuard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), paths.root);
+  const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), paths.root);
   state.phase = "released";
   try {
     rootGuard.assertStable();
@@ -838,7 +843,7 @@ function readSettlement(hash: string): Readonly<Record<string, unknown>> {
 }
 
 function startupPrefixAlreadyPassedHelperV1(operationHash: string): boolean {
-  const directory = path.join(repositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operationHash);
+  const directory = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operationHash);
   for (const basename of [
     "04-predecessor-termination.pair.json", "05-replacement-process.pair.json",
     "06-post-termination-legacy-zero.pair.json", "07-sealed-admission.pair.json",
@@ -1753,7 +1758,7 @@ async function observeEmptyBaselineNormalAuthoritySetV1(): Promise<Readonly<{
   liveBaselineHelperCount: 0;
   retainedHistoricalAuthoritySetHash: string;
 }>> {
-  const sequenceRoot = path.join(repositoryRoot(), "data/internal-production-baseline/baseline-service-restart-sequence-v1");
+  const sequenceRoot = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/baseline-service-restart-sequence-v1");
   const retained: Array<Readonly<{ intentKind: string; sequenceRef: string; sequenceHash: string; sequenceReceiptSemanticHash: string }>> = [];
   let pendingBaselineRestartCount = 0;
   let liveBaselineRestartCount = 0;
@@ -1849,7 +1854,7 @@ function readCutoverPairV1(name: string, refKey: string, hashKey: string, prefix
 
 function readSharedGuardConsumptionPairV1(zeroOwnerGuardHash: string): Readonly<Record<string, string>> | null {
   if (!SHA256.test(zeroOwnerGuardHash)) fail("shared guard consumption index hash is invalid");
-  const file = path.join(repositoryRoot(), "data/internal-production-baseline/zero-owner-mutation-guard-v1/consumed-guards/sha256", zeroOwnerGuardHash.slice(0, 2), `${zeroOwnerGuardHash}.json`);
+  const file = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/zero-owner-mutation-guard-v1/consumed-guards/sha256", zeroOwnerGuardHash.slice(0, 2), `${zeroOwnerGuardHash}.json`);
   const bytes = optionalRetirementBytesV1(file, "shared guard consumption index");
   if (!bytes) return null;
   let value: unknown;

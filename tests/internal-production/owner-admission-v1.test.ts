@@ -2008,11 +2008,11 @@ function p3TestGitBytes(root: string, args: readonly string[]): Buffer {
   return result.stdout;
 }
 
-const P3_RECEIPT_SOURCE_LOCATOR_V1 = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+const P3_RECEIPT_SOURCE_LOCATOR_V1 = "src/internal-production/baseline-workspace-authority-path-v1.ts";
 const P3_RECEIPT_WORKSPACE_SOURCE_V1 =
   'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
 const P3_RECEIPT_WORKSPACE_PROJECTION_V1 =
-  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
 
 function restoreP3NestedRunnerReceiptSourceV1(root: string): void {
   const projectionRoot = realpathSync(process.cwd());
@@ -2063,6 +2063,7 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
   assert.equal(cloned.status, 0, cloned.stderr);
   const currentByteLocators = [
     "scripts/run-isolated-postgres-tests.ts",
+    "src/internal-production/baseline-workspace-authority-path-v1.ts",
     "src/db-pg.ts",
     "src/internal-production/owner-admission-v1.ts",
     "src/installer/step-fail.ts",
@@ -2384,7 +2385,7 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   );
   assert.match(
     helperSource,
-    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.dirname\(fixedRepositoryRoot\(\)\);/,
+    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.resolve\(import\.meta\.dirname, "\.\.\/\.\.\/\.\."\);/,
   );
   const runnerSource = readFileSync(
     path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
@@ -2394,7 +2395,7 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   const projectionEnd = runnerSource.indexOf("\n\nfunction readStableIndexedMemberV1", projectionStart);
   assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
   const projectionAuthority = runnerSource.slice(projectionStart, projectionEnd);
-  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-post-handoff-receipt-v1\.ts"/);
+  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-workspace-authority-path-v1\.ts"/);
   assert.match(projectionAuthority, /sourceParts\.length !== 2/);
   assert.match(projectionAuthority, /P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1/);
   assert.doesNotMatch(projectionAuthority, /process\.env|callback|options|caller|HOME/);
@@ -2888,11 +2889,43 @@ process.stdout.write("MALFORMED_REFUSED");
   ]) assert.ok(fixtureSource.includes(literal), `missing fixed P3 shadow boundary ${literal}`);
 });
 
+function projectCopiedWorkspaceLocatorV1(root: string, workspace: string): void {
+  const target = path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const source = readFileSync(target, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "copied source must expose exactly one authenticated workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  writeFileSync(target, source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(workspace))};`));
+}
+
+test("copied startup workspace projection preserves the authenticated physical root", () => {
+  const container = mkdtempSync(path.join(tmpdir(), "setfarm-workspace-projection-"));
+  const root = path.join(container, "repository");
+  const locator = "src/internal-production/baseline-workspace-authority-path-v1.ts";
+  try {
+    mkdirSync(path.dirname(path.join(root, locator)), { recursive: true });
+    cpSync(path.join(process.cwd(), locator), path.join(root, locator));
+    projectCopiedWorkspaceLocatorV1(root, container);
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+      `const m=await import(${JSON.stringify(pathToFileURL(path.join(root, locator)).href)});process.stdout.write(m.resolveInternalProductionBaselineWorkspaceRootV1());`,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, realpathSync(container));
+  } finally {
+    rmSync(container, { recursive: true, force: true });
+  }
+});
+
 test("P4 sealed spawner gate authenticates replacement and exits before normal startup", async () => {
   const productionSpawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
   assert.doesNotMatch(productionSpawnerSource, /^export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1/m);
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-private-spawner-gate-"));
   cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
+  projectCopiedWorkspaceLocatorV1(fixture, fixture);
   symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
   const fixtureSpawner = path.join(fixture, "src/spawner.ts");
   writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
@@ -2962,6 +2995,7 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
   const lockFile = path.join(fixture, "state/spawner.lock");
   const normalMarker = path.join(fixture, "normal-startup-called");
   cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
+  projectCopiedWorkspaceLocatorV1(fixture, fixture);
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
   const operationHash = "a".repeat(64);
   const tokenHash = "b".repeat(64);
@@ -3794,6 +3828,7 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   const root = path.join(container, "setfarm");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   cpSync(path.join(activationFixtureSourceRoot, "src"), path.join(root, "src"), { recursive: true });
+  projectCopiedWorkspaceLocatorV1(root, container);
   rmSync(path.join(
     root,
     "src/internal-production/baseline-spawner-startup-admission-v1.ts",

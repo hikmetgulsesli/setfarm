@@ -10,6 +10,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const tsxLoader = import.meta.resolve("tsx");
 const helperSourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-service-restart-helper-v1.ts");
 
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  let source = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "fixture authenticates exactly one workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  source = source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`);
+  writeFileSync(path.join(internal, path.basename(locatorPath)), source);
+}
+
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -25,6 +39,23 @@ function identity(fd: number) {
   const stats = fstatSync(fd, { bigint: true });
   return { devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10) };
 }
+
+test("restart helper closes ancestor guards when its inherited journal descriptor is invalid", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-helper-guard-release-")));
+  try {
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(internal, { recursive: true, mode: 0o700 });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
+    const modulePath = path.join(internal, "baseline-service-restart-helper-v1.ts");
+    writeFileSync(modulePath, `${readFileSync(helperSourcePath, "utf8")}\nexport { authenticateCanonicalJournalCapability };\n`);
+    const module = await import(pathToFileURL(modulePath).href);
+    const journal = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
+    mkdirSync(path.dirname(journal), { recursive: true, mode: 0o700 });
+    const before = readdirSync("/dev/fd").length;
+    assert.throws(() => module.authenticateCanonicalJournalCapability(-1, journal), /fd|descriptor|range/i);
+    assert.equal(readdirSync("/dev/fd").length, before, "failed inherited-descriptor validation must release every workspace/private ancestor pin");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
 
 test("P4 helper binds fixed pre-schema action", async () => {
   const module = await import(`../../src/internal-production/baseline-service-restart-helper-v1.js?p4-helper=${Date.now()}`);
@@ -43,6 +74,7 @@ test("P4 helper binds fixed pre-schema action", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const counter = path.join(fixture, "dispatch-count.txt");
     const fakeLaunchctl = path.join(fixture, "fake-launchctl.mjs");
     writeFileSync(fakeLaunchctl, `#!/bin/sh
@@ -311,6 +343,7 @@ test("P4 restart helper dispatches at most once", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const counter = path.join(fixture, "dispatch-count.txt");
     const fakeLaunchctl = path.join(fixture, "fake-launchctl.sh");
     writeFileSync(fakeLaunchctl, `#!/bin/sh
@@ -391,6 +424,7 @@ test("P4 helper rejects insecure settlement-store ancestors", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const source = readFileSync(helperSourcePath, "utf8").replace(
       "function publishSettlement(settlementPath: string, value: unknown): void",
       "export function publishSettlement(settlementPath: string, value: unknown): void",
@@ -454,6 +488,7 @@ function runStartupFamilyImportProbe({
 }: Readonly<{ injectedImportUrl?: string | null; retainedRequestPath?: string | null }> = {}) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const instrumentedModuleUrls = [
+    "baseline-workspace-authority-path-v1.ts",
     "baseline-post-handoff-receipt-v1.ts",
     "baseline-spawner-startup-admission-v1.ts",
     "baseline-restart-authority-retirement-v1.ts",

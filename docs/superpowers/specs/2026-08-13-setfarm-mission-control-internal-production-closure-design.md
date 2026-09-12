@@ -2672,3 +2672,25 @@ Take read-only snapshots by default. Any restart or fault injection is an explic
 ## Follow-On Program
 
 After internal completion, create a separate external-distribution design covering Developer ID identities, public trust configuration, notarization credentials, signed native catalog, PKG composition, installer receipt and helper authority, AMFI join, upgrade/rollback/uninstall, clean-host acceptance, and public release operations. The current production-admission preflight provides the entry census for that future program.
+
+## Workspace authority storage convergence amendment v1
+
+This additive amendment supersedes the current exact140 Task 0 / exact59 P3
+inventories only for the shared runtime authority locator. Historical receipts,
+base tuples and prior amendments remain historical evidence.
+
+Task 0 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/internal-production/baseline-spawner-startup-admission-v1.ts`.
+P3 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/installer/step-ops.ts`.
+
+The resulting current inventories are Task 0 exact141 and P3 exact60:
+32 production/package paths plus the unchanged 28 test/helper paths. The
+executable partition remains 25 database tests, 1 source-only test and 2
+non-executable helpers. No additional executable or runtime activation is
+authorized by this amendment.
+
+The helper is causally required by Task 6A cold recovery: linked-worktree
+writers, receipt readers and helper descriptor checks must share the fixed
+account workspace while Git/build identity remains bound to the executing
+checkout. Include the helper in the isolated runner's tracked scope and move
+its existing bounded workspace projection to this module. Unknown alternate
+runtime stores do not authorize fallback or automatic migration.

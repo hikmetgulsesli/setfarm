@@ -10340,3 +10340,25 @@ Subproject A passes only when all of the following are simultaneously true:
 - Both repositories are clean and equal to `origin/main`.
 - The baseline packet contains no secret, dump, runtime payload, log, or screenshot.
 - Production admission remains honestly blocked for the deferred external-distribution authorities.
+
+## Workspace authority storage convergence amendment v1
+
+This additive amendment supersedes the current exact140 Task 0 / exact59 P3
+inventories only for the shared runtime authority locator. Historical receipts,
+base tuples and prior amendments remain historical evidence.
+
+Task 0 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/internal-production/baseline-spawner-startup-admission-v1.ts`.
+P3 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/installer/step-ops.ts`.
+
+The resulting current inventories are Task 0 exact141 and P3 exact60:
+32 production/package paths plus the unchanged 28 test/helper paths. The
+executable partition remains 25 database tests, 1 source-only test and 2
+non-executable helpers. No additional executable or runtime activation is
+authorized by this amendment.
+
+The helper is causally required by Task 6A cold recovery: linked-worktree
+writers, receipt readers and helper descriptor checks must share the fixed
+account workspace while Git/build identity remains bound to the executing
+checkout. Include the helper in the isolated runner's tracked scope and move
+its existing bounded workspace projection to this module. Unknown alternate
+runtime stores do not authorize fallback or automatic migration.

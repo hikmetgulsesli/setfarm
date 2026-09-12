@@ -15,9 +15,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  resolveInternalProductionBaselineAuthorityPathV1,
+  resolveInternalProductionBaselineWorkspaceRootV1,
+} from "./baseline-workspace-authority-path-v1.js";
 import {
   type InternalProductionCurrentEntryOperationPairV1,
   observePreparedInternalProductionCurrentEntryOperationV1,
@@ -240,7 +245,7 @@ function repositoryRoot(): string {
 }
 
 function root(): string {
-  return path.join(repositoryRoot(), STORE);
+  return resolveInternalProductionBaselineAuthorityPathV1(STORE);
 }
 
 type PrivateDirectoryGuardV1 = Readonly<{
@@ -253,11 +258,13 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) fail("authority directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const after = lstatSync(current, { bigint: true });
       const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
@@ -269,6 +276,7 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
         || descriptorAfter.mode !== observed.mode
       ) fail("authority directory changed while authenticated");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -291,18 +299,18 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
       close: () => {
         if (closed) fail("authority directory guard is already closed");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(repositoryRoot());
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");

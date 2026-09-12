@@ -762,16 +762,17 @@ function completeP3PbaObservationV1(vendorProducerCommit: string) {
   };
 }
 
-function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
+function p3FixtureReceiptWithOperationPublisherV1(source: string, root: string): string {
+  const locatorSource = readFileSync(path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
   const fixtureWorkspaceAuthority =
-    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
   assert.equal(
-    source.split(fixtureWorkspaceAuthority).length,
+    locatorSource.split(fixtureWorkspaceAuthority).length,
     2,
     "P3 activation fixture must inherit exactly one projected workspace authority",
   );
   assert.equal(
-    source.includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");'),
+    locatorSource.includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");'),
     false,
     "P3 activation fixture must not inherit the production workspace authority",
   );
@@ -839,7 +840,7 @@ function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorC
   writeP3FixtureFileV1(
     root,
     receiptLocator,
-    p3FixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8")),
+    p3FixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8"), root),
   );
   p3FixtureGitV1(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", receiptLocator]);
   p3FixtureGitV1(root, ["commit", "-qm", "P3 fixture controller source"]);

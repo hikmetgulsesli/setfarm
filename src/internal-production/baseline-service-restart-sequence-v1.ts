@@ -16,6 +16,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
 
 type Sha256V1 = string;
@@ -141,7 +143,7 @@ function repositoryRoot(): string {
 }
 
 function rootPath(): string {
-  return path.join(repositoryRoot(), "data/internal-production-baseline/baseline-service-restart-sequence-v1");
+  return resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/baseline-service-restart-sequence-v1");
 }
 
 function exactInput(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
@@ -176,22 +178,25 @@ function storedPair(value: unknown, refKey: string, hashKey: string, prefix: str
 type DirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
 
 function authenticateDirectoryChain(directory: string): DirectoryGuardV1 {
-  const root = path.resolve(repositoryRoot());
+  const root = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(root, target);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("store escaped repository");
   const paths = [root, ...relative.split(path.sep).map((_, index, members) => path.join(root, ...members.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const identities: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) fail("store directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const held = identities[index]!;
       const descriptorStats = fstatSync(descriptors[index]!, { bigint: true });
       const atPath = lstatSync(current, { bigint: true });
       if (!descriptorStats.isDirectory() || atPath.isSymbolicLink() || descriptorStats.dev !== held.dev || descriptorStats.ino !== held.ino || descriptorStats.mode !== held.mode || atPath.dev !== held.dev || atPath.ino !== held.ino || atPath.mode !== held.mode) fail("store directory changed while authenticated");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -208,31 +213,31 @@ function authenticateDirectoryChain(directory: string): DirectoryGuardV1 {
       close: () => {
         if (closed) fail("store directory guard is already closed");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensureDirectory(directory: string): DirectoryGuardV1 {
-  const root = path.resolve(repositoryRoot());
+  const root = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(root, target);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("store escaped repository");
   let current = root;
   for (const segment of relative.split(path.sep)) {
-    const parent = current === root ? null : authenticateDirectoryChain(current);
+    const parent = current === root ? authenticateInternalProductionBaselineWorkspaceAnchorV1() : authenticateDirectoryChain(current);
     current = path.join(current, segment);
     try {
-      parent?.assertStable();
+      parent.assertStable();
       try { mkdirSync(current, { mode: 0o700 }); }
       catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error; }
-      parent?.assertStable();
-    } finally { parent?.close(); }
+      parent.assertStable();
+    } finally { parent.close(); }
     const created = authenticateDirectoryChain(current);
     created.close();
   }
@@ -1038,7 +1043,7 @@ export type InternalProductionBaselineSpawnerBootstrapRestartSequenceReceiptV1 =
   sequenceHash: string;
 }>;
 
-const BOOTSTRAP_ROOT_V1 = path.join(repositoryRoot(), "data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1");
+const BOOTSTRAP_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1");
 const BOOTSTRAP_OPERATION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/";
 const BOOTSTRAP_CONTINUATION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-continuation-grant/sha256/";
 const BOOTSTRAP_SEQUENCE_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-bootstrap-restart-sequence/sha256/";
