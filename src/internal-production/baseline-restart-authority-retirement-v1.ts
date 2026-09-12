@@ -164,7 +164,7 @@ let coldBootstrapIntentInvocationActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
-  phase: "refreshing" | "ready" | "closing";
+  phase: "refreshing" | "ready" | "dispatch-publication" | "dispatch-owned" | "closing";
   observationHash: string | null;
 };
 const coldHelperContextsV1 = new WeakMap<object, ColdHelperContextStateV1>();
@@ -1336,10 +1336,12 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
 // The fixed helper will retain this evidence across its subsequent live bracket.
 async function authenticateColdSpawnerHelperIntentV1() {
   const guards: PrivateDirectoryGuardV1[] = [];
+  const ownedDescriptors: number[] = [];
   let closing = false, closed = false;
   const close = (): void => {
     if (closed) return;
     closing = true;
+    while (ownedDescriptors.length > 0) { closeSync(ownedDescriptors[ownedDescriptors.length - 1]!); ownedDescriptors.pop(); }
     while (guards.length > 0) { guards[guards.length - 1]!.close(); guards.pop(); }
     closed = true;
     pendingColdHelperAuthenticationCleanupV1.delete(close);
@@ -1391,14 +1393,17 @@ async function authenticateColdSpawnerHelperIntentV1() {
     const epoch = validateColdEpochOneHeadV1(JSON.parse(epochBytes.toString("utf8")), epochBytes, genesis);
     if (["epochRef", "epochHash", "genesisRef", "genesisHash"].some((key) => intent[key] !== epoch[key])
       || coldGenesisStableIdentityV1(cold) !== coldGenesisStableIdentityV1(genesis.coldObservation as Readonly<Record<string, unknown>>)) fail("cold helper genesis binding is crossed");
-    const assertStable = (): void => {
+    let dispatchStarted = false;
+    let dispatch: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number }> | null = null;
+    const assertOriginalStable = (): void => {
       if (closing || closed) fail("cold helper authentication is closed");
       for (const guard of guards) guard.assertStable();
-      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
-      const directory = opendirSync(root, { bufferSize: 1 });
-      try {
-        if (directory.readSync()?.name !== "intent.json" || directory.readSync() !== null) fail("cold helper prefix is not intent-only");
-      } finally { directory.closeSync(); }
+      const currentRoot = lstatSync(root, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => currentRoot[key as keyof BigIntStats] !== rootStats[key as keyof BigIntStats])) fail("cold helper original root identity changed");
+      // APFS includes the newly created file in a directory's link count.
+      // Permit only that single publication delta; exact members/full metadata
+      // remain mandatory before intent use and after dispatch publication.
+      if (currentRoot.nlink !== rootStats.nlink && (!dispatchStarted || currentRoot.nlink !== rootStats.nlink + 1n)) fail("cold helper original root link count changed");
       for (const [fd, target, expected, maximum] of [[4, paths.lock, lockFile, 65_536], [5, intentPath, intentFile, COLD_GENESIS_MAX_BYTES_V1]] as const) {
         const current = readInherited(fd, target, maximum);
         if (!sameColdFileMetadataV1(expected.stats, current.stats) || !expected.bytes.equals(current.bytes)) fail("cold helper inherited authority drifted");
@@ -1411,8 +1416,28 @@ async function authenticateColdSpawnerHelperIntentV1() {
       const parent = boundedPsProcessIdentity(lock.pid as number);
       if (process.ppid !== lock.pid || !parent || parent.processStartTimeEpochMs !== lock.processStartTimeEpochMs
         || parent.processIdentityHash !== lock.processIdentityHash) fail("cold helper controller parent is crossed");
-      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
       for (const guard of guards) guard.assertStable();
+    };
+    const assertStable = (): void => {
+      assertOriginalStable();
+      if (dispatchStarted && dispatch === null) fail("cold helper dispatch publication is uncertain");
+      const expectedRoot = dispatch?.rootStats ?? rootStats;
+      if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
+      const directory = opendirSync(root, { bufferSize: 1 });
+      const entries: string[] = [];
+      try {
+        for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+          if (entries.length >= (dispatch === null ? 1 : 2)) fail("cold helper journal prefix has extra members");
+          entries.push(entry.name);
+        }
+      } finally { directory.closeSync(); }
+      if (canonical(entries.sort()) !== canonical(dispatch === null ? ["intent.json"] : ["dispatch.json", "intent.json"])) fail("cold helper journal prefix is crossed");
+      if (dispatch !== null) {
+        if (!sameColdFileMetadataV1(dispatch.stats, fstatSync(dispatch.descriptor, { bigint: true }))
+          || !dispatch.bytes.equals(readColdGenesisCandidateV1(path.join(root, "dispatch.json"), dispatch.stats))) fail("cold helper dispatch authority changed");
+      }
+      assertOriginalStable();
+      if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold helper intent prefix changed");
     };
     assertStable();
     const observer = await import("./baseline-post-handoff-receipt-v1.js");
@@ -1424,7 +1449,52 @@ async function authenticateColdSpawnerHelperIntentV1() {
       || process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== path.join(profile.repository, "dist/internal-production/baseline-service-restart-helper-v1.js")
       || fileURLToPath(import.meta.url) !== path.join(profile.repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js")) fail("cold helper launch profile or snapshot is crossed");
     assertStable();
-    const authenticated = { intent: freezeColdDataV1(intent), assertStable, close };
+    const publishDispatch = () => {
+      assertStable();
+      if (dispatchStarted) fail("cold helper dispatch was already attempted");
+      const helper = boundedPsProcessIdentity(process.pid);
+      if (!helper) fail("cold helper process identity is absent");
+      const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-dispatch.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, observationHash: cold.observationHash,
+        profileHash: profile.profileHash, source: cold.source, operation: cold.operation,
+        epochRef: intent.epochRef, epochHash: intent.epochHash, genesisRef: intent.genesisRef, genesisHash: intent.genesisHash,
+        lockIdentity: intent.lockIdentity, intentIdentity: descriptorIdentity(5), nonceHash: intent.nonceHash,
+        controller: { pid: lock.pid, processStartTimeEpochMs: lock.processStartTimeEpochMs, processIdentityHash: lock.processIdentityHash },
+        helper: { ...helper, uid: Number(uid), ppid: process.ppid }, maximumDispatchCount: 1,
+        action: { transport: "direct-detached-node-v1", executable: profile.executable.path,
+          arguments: [path.join(profile.repository, "dist/spawner.js")], cwd: profile.cwd, detached: true } };
+      const dispatchHash = sha256(canonical(body));
+      const record = freezeColdDataV1({ ...body, dispatchRef: `setfarm://internal-production/cold-spawner-bootstrap-dispatch/sha256/${dispatchHash}`, dispatchHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("cold helper dispatch exceeds its file cap");
+      assertStable();
+      dispatchStarted = true;
+      const target = path.join(root, "dispatch.json");
+      // A partial final file is deliberately an unsettled owner. Never recover,
+      // overwrite or adopt it as a fresh launch opportunity after response loss.
+      const writer = openSync(target, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+      ownedDescriptors.push(writer);
+      const created = fstatSync(writer, { bigint: true });
+      if (!created.isFile() || created.nlink !== 1n || created.uid !== uid || created.size !== 0n || (created.mode & 0o7777n) !== 0o600n
+        || !sameColdFileMetadataV1(created, lstatSync(target, { bigint: true }))) fail("cold helper dispatch creation identity is crossed");
+      writeFileSync(writer, bytes);
+      fsyncSync(writer);
+      fsyncParent(target);
+      assertOriginalStable();
+      const written = fstatSync(writer, { bigint: true });
+      if (written.dev !== created.dev || written.ino !== created.ino || written.uid !== created.uid || written.gid !== created.gid
+        || written.mode !== created.mode || written.birthtimeNs !== created.birthtimeNs || written.size !== BigInt(bytes.length)
+        || !bytes.equals(readColdGenesisCandidateV1(target, written))) fail("cold helper dispatch publication changed");
+      const reader = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      ownedDescriptors.push(reader);
+      if (!sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("cold helper dispatch reopen changed");
+      closeSync(writer);
+      ownedDescriptors.splice(ownedDescriptors.indexOf(writer), 1);
+      dispatch = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader };
+      assertStable();
+      return record;
+    };
+    const authenticated = { intent: freezeColdDataV1(intent), assertStable, publishDispatch, close };
     Object.defineProperty(authenticated, "environment", { value: freezeColdDataV1(observed.environment), enumerable: false });
     return Object.freeze(authenticated) as typeof authenticated & Readonly<{ environment: Readonly<Record<string, string>> }>;
   } catch {
@@ -1511,6 +1581,25 @@ async function acquireColdSpawnerHelperContextV1() {
     }
     return fail("cold helper context refresh failed");
   } finally { coldHelperContextInvocationActiveV1 = false; }
+}
+
+function publishColdSpawnerHelperDispatchV1(context: unknown) {
+  const state = heldColdHelperContextV1(context);
+  if (state.phase !== "ready" || state.observationHash !== (state.authentication.intent.coldObservation as Record<string, unknown>).observationHash) fail("cold helper dispatch requires one ready context");
+  state.phase = "dispatch-publication";
+  try {
+    const dispatch = state.authentication.publishDispatch();
+    state.phase = "dispatch-owned";
+    return dispatch;
+  } catch {
+    state.phase = "closing";
+    const close = () => {
+      (context as { close(): void }).close();
+      pendingColdHelperAuthenticationCleanupV1.delete(close);
+    };
+    try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Keep failed cleanup owned. */ } }
+    return fail("cold helper dispatch publication is uncertain");
+  }
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

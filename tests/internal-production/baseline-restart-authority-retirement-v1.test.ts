@@ -714,6 +714,132 @@ try{
   } finally { fixture.close(); }
 });
 
+test("cold helper publishes one exclusive dispatch and never converts replay into launch permission", async () => {
+  assert.ok(readFileSync(sourcePath, "utf8").includes("function publishColdSpawnerHelperDispatchV1("), "exclusive cold dispatch is not implemented");
+  const fixture = await createColdHelperAuthenticationFixtureV1((source) => source.replace('  } catch {\n    state.phase = "closing";', '  } catch (error) {\n    globalThis.__dispatchFailure=error.message;\n    state.phase = "closing";').replace('fail("cold helper original root identity changed")', 'fail("cold helper original root identity changed:"+["dev","ino","uid","gid","mode","nlink","birthtimeNs"].filter(key=>currentRoot[key]!==rootStats[key]).join(","))') + "\nexport { acquireColdSpawnerHelperContextV1, publishColdSpawnerHelperDispatchV1 };\n");
+  try {
+    const receipt = path.join(path.dirname(fixture.runner), "baseline-post-handoff-receipt-v1.js");
+    writeFileSync(receipt, readFileSync(receipt, "utf8") + `
+import {observeInternalProductionColdSpawnerHelperIntentPhaseV1} from './baseline-restart-authority-retirement-v1.js';
+export async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context){
+  observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);return ${JSON.stringify(fixture.intent.coldObservation)};
+}
+`);
+    const dispatchPath = path.join(fixture.root, "cold-spawner-bootstrap-v1/dispatch.json");
+    writeFileSync(fixture.runner, `
+import assert from 'node:assert/strict';import {readFileSync,lstatSync,fstatSync,readdirSync} from 'node:fs';
+import {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1,observeInternalProductionColdSpawnerHelperIntentPhaseV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1} from './baseline-restart-authority-retirement-v1.js';
+let context;
+try{
+  context=await acquireColdSpawnerHelperContextV1();
+  assert.throws(()=>publishColdSpawnerHelperDispatchV1({...context}));
+  const dispatch=publishColdSpawnerHelperDispatchV1(context);
+  assert.equal(dispatch.schema,'setfarm.internal-production-cold-spawner-bootstrap-dispatch.v1');
+  assert.equal(dispatch.intentHash,${JSON.stringify(fixture.intent.intentHash)});
+  assert.equal(dispatch.observationHash,${JSON.stringify(fixture.intent.coldObservation.observationHash)});
+  assert.equal(dispatch.helper.pid,process.pid);assert.equal(dispatch.controller.pid,process.ppid);
+  assert.equal(dispatch.maximumDispatchCount,1);
+  const bytes=readFileSync(${JSON.stringify(dispatchPath)}),stats=lstatSync(${JSON.stringify(dispatchPath)},{bigint:true});
+  assert.equal(stats.nlink,1n);assert.equal(stats.mode&0o7777n,0o600n);
+  assert.deepEqual(JSON.parse(bytes),dispatch);
+  assert.deepEqual(readdirSync(${JSON.stringify(path.dirname(dispatchPath))}).sort(),['dispatch.json','intent.json']);
+  assert.throws(()=>publishColdSpawnerHelperDispatchV1(context),/dispatch/);
+  assert.ok(readFileSync(${JSON.stringify(dispatchPath)}).equals(bytes));
+  assert.equal(lstatSync(${JSON.stringify(dispatchPath)},{bigint:true}).ino,stats.ino);
+  assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1(context));
+  assert.throws(()=>observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),/COLD_BOOTSTRAP_UNSETTLED/);
+  assert.ok(resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1());
+  context.close();assert.throws(()=>publishColdSpawnerHelperDispatchV1(context));
+  assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);
+  process.stdout.write(JSON.stringify({accepted:true,dispatch}));
+}catch(error){process.stdout.write(JSON.stringify({accepted:false,message:error.message,failure:globalThis.__dispatchFailure}));}finally{context?.close();}
+`);
+    const before = coldGenesisTreeSnapshotV1(fixture.root).filter((entry: any) => entry.relative !== "cold-spawner-bootstrap-v1");
+    const result = fixture.run();
+    assert.equal(result.accepted, true, JSON.stringify(result));
+    const { dispatchRef, dispatchHash, ...body } = result.dispatch;
+    assert.equal(dispatchHash, sha256(canonical(body)));
+    assert.equal(dispatchRef, `setfarm://internal-production/cold-spawner-bootstrap-dispatch/sha256/${dispatchHash}`);
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root).filter((entry: any) => !["cold-spawner-bootstrap-v1", "cold-spawner-bootstrap-v1/dispatch.json"].includes(entry.relative)), before);
+    const retained = readFileSync(dispatchPath);
+    const replay = fixture.run();
+    assert.equal(replay.accepted, false, "a fresh helper must not adopt an existing dispatch as launch permission");
+    assert.ok(readFileSync(dispatchPath).equals(retained));
+  } finally { fixture.close(); }
+});
+
+test("cold dispatch publication faults preserve the fence and revoke every retry", async () => {
+  for (const fault of ["collision", "short-write", "file-sync", "directory-sync", "extra-member", "replace-dispatch", "root-swap", "writer-close", "persistent-close"]) {
+    const fixture = await createColdHelperAuthenticationFixtureV1((source) => source
+      .replace("  openSync,", "  openSync as actualOpenSync,").replace("  closeSync,", "  closeSync as actualCloseSync,")
+      .replace("  writeFileSync,", "  writeFileSync as actualWriteFileSync,").replace("  fsyncSync,", "  fsyncSync as actualFsyncSync,") + `
+export {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1};
+const owned=new Set<number>();let writer:number|undefined,fired=false,closeFault=false;
+function openSync(target:any,...args:any[]){
+  if(target===globalThis.__dispatchTarget&&(args[0]&constants.O_EXCL)!==0){
+    if(globalThis.__dispatchFault==='collision'){fired=true;actualWriteFileSync(target,'foreign',{mode:0o600,flag:'wx'});}
+    const fd=actualOpenSync(target,...args);owned.add(fd);writer=fd;return fd;
+  }
+  const fd=actualOpenSync(target,...args);owned.add(fd);return fd;
+}
+function writeFileSync(target:any,bytes:any,...args:any[]){
+  if(target===writer&&globalThis.__dispatchFault==='short-write'){fired=true;return actualWriteFileSync(target,bytes.subarray(0,Math.floor(bytes.length/2)),...args);}
+  return actualWriteFileSync(target,bytes,...args);
+}
+function closeSync(fd:number){
+  if(fd===writer&&(!closeFault||globalThis.__dispatchFault==='persistent-close')&&['writer-close','persistent-close'].includes(globalThis.__dispatchFault)){fired=true;closeFault=true;throw Error('fixture dispatch writer close interrupted');}
+  actualCloseSync(fd);owned.delete(fd);
+}
+function fsyncSync(fd:number){
+  if(writer!==undefined&&!fired){
+    const fault=globalThis.__dispatchFault,target=globalThis.__dispatchTarget;
+    if((fault==='file-sync'&&fd===writer)||(fault==='directory-sync'&&fstatSync(fd).isDirectory())){fired=true;throw Error('fixture dispatch sync interrupted');}
+    if(fd===writer&&['extra-member','replace-dispatch','root-swap'].includes(fault)){
+      fired=true;
+      if(fault==='extra-member')actualWriteFileSync(path.join(path.dirname(target),'foreign'),'x',{mode:0o600});
+      if(fault==='replace-dispatch'){const bytes=readFileSync(target);unlinkSync(target);actualWriteFileSync(target,bytes,{mode:0o600,flag:'wx'});}
+      if(fault==='root-swap'){const root=path.dirname(target);renameSync(root,root+'.moved');mkdirSync(root,{mode:0o700});for(const name of readdirSync(root+'.moved'))actualWriteFileSync(path.join(root,name),readFileSync(path.join(root+'.moved',name)),{mode:0o600});}
+    }
+  }
+  actualFsyncSync(fd);
+}
+globalThis.__dispatchDiagnostic=()=>{
+  const retained=pendingColdHelperAuthenticationCleanupV1.size;globalThis.__dispatchFault='disabled';
+  for(const close of pendingColdHelperAuthenticationCleanupV1)close();
+  return {fired,owned:owned.size,retained,pending:pendingColdHelperAuthenticationCleanupV1.size};
+};
+`);
+    try {
+      const receipt = path.join(path.dirname(fixture.runner), "baseline-post-handoff-receipt-v1.js");
+      writeFileSync(receipt, readFileSync(receipt, "utf8") + `\nexport async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(){return ${JSON.stringify(fixture.intent.coldObservation)}}\n`);
+      const target = path.join(fixture.root, "cold-spawner-bootstrap-v1/dispatch.json");
+      writeFileSync(fixture.runner, `
+import assert from 'node:assert/strict';import {readFileSync,fstatSync} from 'node:fs';
+import {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1} from './baseline-restart-authority-retirement-v1.js';
+const context=await acquireColdSpawnerHelperContextV1();
+globalThis.__dispatchTarget=${JSON.stringify(target)};globalThis.__dispatchFault=${JSON.stringify(fault)};
+assert.throws(()=>publishColdSpawnerHelperDispatchV1(context),/dispatch publication is uncertain/);
+const bytes=readFileSync(${JSON.stringify(target)});
+assert.throws(()=>publishColdSpawnerHelperDispatchV1(context));
+assert.throws(()=>resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1());
+assert.throws(()=>observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),/COLD_BOOTSTRAP_UNSETTLED/);
+const diagnostic=globalThis.__dispatchDiagnostic();context.close();
+assert.ok(readFileSync(${JSON.stringify(target)}).equals(bytes));
+assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);
+process.stdout.write(JSON.stringify({accepted:false,diagnostic}));
+`);
+      const lock = readFileSync(fixture.lock), epoch = readFileSync(fixture.epoch);
+      const result = fixture.run();
+      assert.equal(result.diagnostic.fired, true, fault);
+      assert.equal(result.diagnostic.pending, 0, `${fault}: a drained cleanup must leave no retained closure`);
+      assert.equal(result.diagnostic.owned, 0, `${fault}: all helper-owned descriptors must be closed`);
+      assert.equal(result.diagnostic.retained, fault === "persistent-close" ? 1 : 0, fault);
+      assert.ok(readFileSync(fixture.lock).equals(lock));
+      assert.ok(readFileSync(fixture.epoch).equals(epoch));
+    } finally { fixture.close(); }
+  }
+});
+
 test("cold helper refuses crossed inherited identities, snapshots and awaited authority changes", async () => {
   for (const fault of ["foreign-intent", "foreign-lock", "linked-frame", "nonce", "environment", "profile", "wrong-entry", "wrong-parent", "intent-replace", "prefix-aba", "root-replace", "extra-dispatch", "epoch-replace", "oversized-intent", "secret-exception"] as const) {
     const fixture = await createColdHelperAuthenticationFixtureV1();

@@ -333,6 +333,31 @@ lost publication acknowledgement can never authorize redispatch. The child must
 authenticate synchronously before spawner's static runtime-config consumption;
 the helper's in-process WeakMap cannot authorize a different process.
 
+Dispatch publication refinement: use one bounded 0600 O_EXCL final-file writer,
+retaining its original descriptor through file/parent fsync and same-inode reopen.
+Unlike recoverable evidence publishers, a dispatch must never repair a partial
+write or adopt an EEXIST collision as permission. Mark publication uncertain
+before opening; any failure preserves all journal evidence and revokes helper
+authority while closing only owned descriptors/guards. No deletion, ordinary
+lease release, retry, child spawn or public admission is introduced in this slice.
+The new runtime path remains private; existing File Map members suffice.
+
+Dispatch-only verification: the missing one-shot publisher first failed the new
+test; the implemented publisher now preserves the original authority pins across
+its explicit ready/publication/owned states and rejects a second call or a fresh
+helper seeing the record. Actual APFS execution showed that creating a file also
+changes the directory link count; the immutable root tuple remains fixed while
+only the original or original-plus-one count is allowed during this publication,
+with exact two-member inventory and full post-publication metadata required.
+Nine real filesystem faults cover collision, partial write, file/parent sync,
+extra member, same-byte dispatch replacement, root replacement and transient or
+persistent writer-close failure. Persistent cleanup first left one completed
+callback retained (RED); the self-removing cleanup closure fixes that without
+restoring eligibility. Focused 2/2 (6.961s), full retirement 45/45 (51.329s),
+TypeScript no-emit and diff whitespace checks passed. Independent review found
+no material issue in this publication-only scope. Child spawn/claim/settlement
+remain unimplemented and no live cold-journal record was published.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or
