@@ -7,6 +7,7 @@ import postgres from "postgres";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeConfig } from "./runtime-config.js";
+import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
 import {
   applyBootstrapMainClaimHandoffGuardedMigration32V1,
   applyContractSpineMigrationsIfNeeded,
@@ -2872,21 +2873,24 @@ P3TerminalResolverConfigV1<"finding"> = Object.freeze({
   ),
   lockProjection: async (sql, input) => {
     const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(input as never);
-    const sets = await sql<Array<{ finding_set_hash: string; finding_ids: unknown }>>`
-      SELECT finding_set_hash,finding_ids FROM finding_sets
+    const sets = await sql<FindingPublicationParentRowV1[]>`
+      SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+             source_sha,source_tree_hash,finding_ids,payload FROM finding_sets
        WHERE finding_set_hash=${identity.ownerKey} FOR UPDATE
     `;
-    const children = await sql<Array<{ finding_id: string }>>`
-      SELECT finding_id FROM findings
+    const children = await sql<FindingPublicationChildRowV1[]>`
+      SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,
+             source_fingerprint,payload FROM findings
        WHERE finding_set_hash=${identity.ownerKey} ORDER BY finding_id FOR UPDATE
     `;
     const set = sets[0];
-    const childIds = children.map(({ finding_id }) => finding_id).sort();
-    const rawFindingIds = set?.finding_ids;
-    const expectedIds = Array.isArray(rawFindingIds)
-      ? [...rawFindingIds].map(String).sort()
-      : null;
-    if (sets.length !== 1 || !set || expectedIds === null || !sameJsonValueV1(childIds, expectedIds)) {
+    if (sets.length !== 1 || !set) {
+      throw new Error("INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE");
+    }
+    try {
+      const publication = requireFindingPublicationV1(set, children);
+      if (publication.findingSetHash !== identity.ownerKey) throw new Error("FINDING_PUBLICATION_INVALID");
+    } catch {
       throw new Error("INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE");
     }
     const status = "published" as const;

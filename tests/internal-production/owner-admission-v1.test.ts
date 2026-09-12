@@ -10,6 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import test from "node:test";
 import postgres from "postgres";
+import { transformSync } from "esbuild";
+import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import * as ownerAdmissionApi from "../../src/internal-production/owner-admission-v1.js";
@@ -7918,22 +7921,23 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
   ] as const;
   const findingInputs: Array<Readonly<{ findingSetHash: string }>> = [];
   for (const implementationId of findingImplementations) {
-    const findingSetHash = hashCanonicalJson({ implementationId, sequence: ++sequence });
-    const findingSetId = `FSET_${findingSetHash}`;
-    const findingId = `FIND_${hashCanonicalJson({ findingSetHash })}`;
-    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(
-      Object.freeze({ findingSetHash }),
-    );
-    const payload = {
-      schema: "setfarm.finding-set.v1",
-      findingSetHash,
-      findingSetId,
+    const payload = createFindingSetV1({
       runId: parent.run_id,
-      storyId: `task2-story-${sequence}`,
+      storyId: `TASK2-STORY-${++sequence}`,
       packetHash: SHA_A,
       sliceHash: SHA_B,
       sourceRevision: { sha: GIT_A, treeHash: GIT_B },
-    };
+      findings: [{ origin: "test", classification: "structured", invariantRef: "INV_TASK2",
+        sourceLocators: [{ path: `src/task2-${sequence}.ts`, contentHash: SHA_C }],
+        observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_TASK2", status: "satisfied",
+        resolutionEvidenceRefs: [SHA_B] }],
+    });
+    const { findingSetHash, findingSetId } = payload;
+    const findingPayload = payload.findings[0]!;
+    const { findingId } = findingPayload;
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(
+      Object.freeze({ findingSetHash }),
+    );
     const bound = await bindTerminalOwner(implementationId, identity, async (transaction) => {
       await transaction`
         INSERT INTO finding_sets (
@@ -7944,20 +7948,13 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
           ${GIT_A},${GIT_B},${transaction.json([findingId])},${transaction.json(payload)}
         )
       `;
-      const findingPayload = {
-        findingId,
-        origin: "test",
-        classification: "structured",
-        invariantRef: "INV_TASK2",
-        status: "satisfied",
-      };
       await transaction`
         INSERT INTO findings (
           finding_set_hash,finding_id,origin,classification,invariant_ref,status,
           source_fingerprint,payload
         ) VALUES (
           ${findingSetHash},${findingId},'test','structured','INV_TASK2','satisfied',
-          ${SHA_C},${transaction.json(findingPayload)}
+          ${hashCanonicalJson(findingPayload.sourceLocators)},${transaction.json(findingPayload)}
         )
       `;
     });
@@ -8119,7 +8116,16 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
     /EXECUTION_ATTEMPT_OWNER_UNAVAILABLE/,
   );
 
-  const partialFindingSetHash = hashCanonicalJson({ partial: ++sequence });
+  const partialPayload = createFindingSetV1({
+    runId: parent.run_id, storyId: `TASK2-PARTIAL-STORY-${++sequence}`,
+    packetHash: SHA_A, sliceHash: SHA_B, sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+    findings: [0, 1].map((index) => ({ origin: "test" as const, classification: "structured" as const,
+      invariantRef: "INV_TASK2_PARTIAL",
+      sourceLocators: [{ path: `src/partial-${sequence}-${index}.ts`, contentHash: SHA_C }],
+      observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_TASK2_PARTIAL",
+      status: "satisfied" as const, resolutionEvidenceRefs: [SHA_B] })),
+  });
+  const partialFindingSetHash = partialPayload.findingSetHash;
   const partialFindingIdentity = createInternalProductionFindingCanonicalOwnerIdentityV1(
     Object.freeze({ findingSetHash: partialFindingSetHash }),
   );
@@ -8129,19 +8135,11 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
         producerImplementationId: "a-finding-recovery-repository-v1",
         ownerKey: partialFindingSetHash,
       });
-      const firstFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 0 })}`;
-      const missingFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 1 })}`;
-      const findingSetId = `FSET_${partialFindingSetHash}`;
-      const payload = {
-        schema: "setfarm.finding-set.v1",
-        findingSetHash: partialFindingSetHash,
-        findingSetId,
-        runId: parent.run_id,
-        storyId: `task2-partial-story-${sequence}`,
-        packetHash: SHA_A,
-        sliceHash: SHA_B,
-        sourceRevision: { sha: GIT_A, treeHash: GIT_B },
-      };
+      const payload = partialPayload;
+      const { findingSetId } = payload;
+      const findingPayload = payload.findings[0]!;
+      const firstFindingId = findingPayload.findingId;
+      const missingFindingId = payload.findings[1]!.findingId;
       await transaction`
         INSERT INTO finding_sets (
           finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
@@ -8152,20 +8150,13 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
           ${transaction.json([firstFindingId, missingFindingId])},${transaction.json(payload)}
         )
       `;
-      const findingPayload = {
-        findingId: firstFindingId,
-        origin: "test",
-        classification: "structured",
-        invariantRef: "INV_TASK2_PARTIAL",
-        status: "satisfied",
-      };
       await transaction`
         INSERT INTO findings (
           finding_set_hash,finding_id,origin,classification,invariant_ref,status,
           source_fingerprint,payload
         ) VALUES (
           ${partialFindingSetHash},${firstFindingId},'test','structured','INV_TASK2_PARTIAL',
-          'satisfied',${SHA_C},${transaction.json(findingPayload)}
+          'satisfied',${hashCanonicalJson(findingPayload.sourceLocators)},${transaction.json(findingPayload)}
         )
       `;
       await db.bindInternalProductionOwnerReservationV1(transaction, {
@@ -8524,6 +8515,74 @@ const EXPECTED_A_TUPLES = [
   ["src/db-pg.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
   ["src/db-pg.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
 ] as const;
+
+test("finding terminal projection authenticates complete published content, not only member IDs", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("const FINDING_TERMINAL_RESOLVER_CONFIG_V1:");
+  const end = source.indexOf("const OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1:", start);
+  assert.ok(start >= 0 && end > start);
+  const config = source.slice(start, end);
+  const header = "  lockProjection: ";
+  assert.equal(config.split(header).length, 2);
+  const arrow = config.slice(config.indexOf(header) + header.length, config.lastIndexOf("\n  },") + 4);
+  const executable = transformSync(`const project = ${arrow};`, { loader: "ts", target: "es2022" }).code;
+  const project = Function("createInternalProductionFindingCanonicalOwnerIdentityV1", "hashCanonicalJson", "requireFindingPublicationV1", `${executable}\nreturn project;`)(
+    createInternalProductionFindingCanonicalOwnerIdentityV1,
+    hashCanonicalJson,
+    requireFindingPublicationV1,
+  ) as (sql: unknown, input: Readonly<{ findingSetHash: string }>) => Promise<Readonly<{ status: string; terminalOwnerHash: string }>>;
+  const value = createFindingSetV1({
+    runId: "finding-publication-terminal-fixture", storyId: "US-001", packetHash: SHA_A, sliceHash: SHA_B,
+    sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+    findings: [{ origin: "test", classification: "structured", invariantRef: "INV_PUBLICATION",
+      sourceLocators: [{ path: "src/example.ts", contentHash: SHA_C }], observedEvidenceRefs: [SHA_A],
+      expectedPredicateRef: "EVID_PUBLICATION", status: "open" },
+      { origin: "runtime", classification: "structured", invariantRef: "INV_SECOND_PUBLICATION",
+        sourceLocators: [{ path: "src/second.ts", contentHash: SHA_B }], observedEvidenceRefs: [SHA_C],
+        expectedPredicateRef: "EVID_SECOND_PUBLICATION", status: "open" }],
+  });
+  const parent = { finding_set_hash: value.findingSetHash, finding_set_id: value.findingSetId,
+    run_id: value.runId, story_id: value.storyId, packet_hash: value.packetHash, slice_hash: value.sliceHash,
+    source_sha: value.sourceRevision.sha, source_tree_hash: value.sourceRevision.treeHash,
+    finding_ids: value.findings.map((finding) => finding.findingId), payload: value };
+  const children = value.findings.map((finding) => ({ finding_set_hash: value.findingSetHash,
+    finding_id: finding.findingId, origin: finding.origin, classification: finding.classification,
+    invariant_ref: finding.invariantRef, status: finding.status,
+    source_fingerprint: hashCanonicalJson(finding.sourceLocators), payload: finding }));
+  const observe = (selectedParent: unknown, selectedChildren: readonly unknown[]) => project(
+    async (query: TemplateStringsArray, ...params: unknown[]) => {
+      assert.equal(params[0], value.findingSetHash);
+      const text = query.join("?");
+      assert.match(text, /FOR UPDATE/);
+      if (/FROM finding_sets\b/.test(text)) return [selectedParent];
+      assert.match(text, /FROM findings\b/);
+      return selectedChildren;
+    }, { findingSetHash: value.findingSetHash },
+  );
+  const published = await observe(parent, children);
+  assert.equal(published.status, "published", "open issue status does not keep publication ownership active");
+  assert.equal(published.terminalOwnerHash, hashCanonicalJson({
+    schema: "setfarm.internal-production-finding-terminal-owner.v1", findingSetHash: value.findingSetHash, status: "published",
+  }));
+  await assert.rejects(observe(parent, [{ ...children[0], source_fingerprint: SHA_B }, ...children.slice(1)]), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  await assert.rejects(observe(parent, [{ ...children[0], payload: { ...children[0]!.payload, status: "invalid" } }, ...children.slice(1)]), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  await assert.rejects(observe({ ...parent, source_sha: GIT_B }, children), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  assert.deepEqual(requireFindingPublicationV1(parent, [...children].reverse()), value, "row order is not publication identity");
+  for (const field of ["finding_set_hash", "finding_set_id", "run_id", "story_id", "packet_hash", "slice_hash", "source_sha", "source_tree_hash"] as const) {
+    assert.throws(() => requireFindingPublicationV1({ ...parent, [field]: "crossed" }, children), /FINDING_PUBLICATION_INVALID/, field);
+  }
+  for (const field of ["finding_set_hash", "finding_id", "origin", "classification", "invariant_ref", "status", "source_fingerprint"] as const) {
+    assert.throws(() => requireFindingPublicationV1(parent, [{ ...children[0]!, [field]: "crossed" }, ...children.slice(1)]), /FINDING_PUBLICATION_INVALID/, field);
+  }
+  for (const selected of [children.slice(1), [...children, children[0]!], [children[0]!, children[0]!]]) {
+    assert.throws(() => requireFindingPublicationV1(parent, selected), /FINDING_PUBLICATION_INVALID/, "missing, extra or duplicated member");
+  }
+  const sparse = new Array<typeof children[number]>(children.length);
+  sparse[0] = children[0]!;
+  assert.throws(() => requireFindingPublicationV1(parent, sparse), /FINDING_PUBLICATION_INVALID/);
+  assert.throws(() => requireFindingPublicationV1({ ...parent, finding_ids: [...parent.finding_ids].reverse() }, children), /FINDING_PUBLICATION_INVALID/);
+  assert.throws(() => requireFindingPublicationV1({ ...parent, payload: { ...value, findingSetHash: SHA_A } }, children), /FINDING_PUBLICATION_INVALID/);
+});
 
 test("freezes the exact 35-category registry and complete 36-counter census mapping", () => {
   assert.deepEqual(INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1, EXPECTED_CATEGORIES);

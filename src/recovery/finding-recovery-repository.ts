@@ -3,6 +3,11 @@ import { z } from "zod";
 
 import { computeEvidenceBundleHash, EvidenceBundleV2Schema, type EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
+import {
+  requireFindingPublicationV1,
+  type FindingPublicationParentRowV1 as ExactFindingSetRow,
+  type FindingPublicationChildRowV1 as ExactFindingRow,
+} from "../findings/finding-publication-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { SourceRevisionV1Schema } from "../execution/schemas/execution-attempt-v1.js";
@@ -38,29 +43,6 @@ type FindingSetRow = {
   finding_set_hash: string;
   payload: unknown;
 };
-
-type ExactFindingSetRow = Readonly<{
-  finding_set_hash: string;
-  finding_set_id: string;
-  run_id: string;
-  story_id: string;
-  packet_hash: string;
-  slice_hash: string;
-  source_sha: string;
-  source_tree_hash: string;
-  finding_ids: unknown;
-  payload: unknown;
-}>;
-
-type ExactFindingRow = Readonly<{
-  finding_id: string;
-  origin: string;
-  classification: string;
-  invariant_ref: string;
-  status: string;
-  source_fingerprint: string;
-  payload: unknown;
-}>;
 
 type EvidenceBundleRow = {
   evidence_bundle_hash: string;
@@ -272,34 +254,16 @@ function canonicalEqual(left: unknown, right: unknown): boolean {
   return hashCanonicalJson(left) === hashCanonicalJson(right);
 }
 
-function exactFindingSetRowMatches(row: ExactFindingSetRow, value: FindingSetV1): boolean {
-  return row.finding_set_hash === value.findingSetHash
-    && row.finding_set_id === value.findingSetId
-    && row.run_id === value.runId
-    && row.story_id === value.storyId
-    && row.packet_hash === value.packetHash
-    && row.slice_hash === value.sliceHash
-    && row.source_sha === value.sourceRevision.sha
-    && row.source_tree_hash === value.sourceRevision.treeHash
-    && canonicalJsonStringify(row.finding_ids)
-      === canonicalJsonStringify(value.findings.map((finding) => finding.findingId))
-    && canonicalJsonStringify(FindingSetV1Schema.parse(row.payload))
-      === canonicalJsonStringify(value);
-}
-
-function exactFindingRowsMatch(rows: readonly ExactFindingRow[], value: FindingSetV1): boolean {
-  return rows.length === value.findings.length
-    && rows.every((row, index) => {
-      const finding = value.findings[index];
-      return finding !== undefined
-        && row.finding_id === finding.findingId
-        && row.origin === finding.origin
-        && row.classification === finding.classification
-        && row.invariant_ref === finding.invariantRef
-        && row.status === finding.status
-        && row.source_fingerprint === hashCanonicalJson(finding.sourceLocators)
-        && canonicalJsonStringify(row.payload) === canonicalJsonStringify(finding);
-    });
+function exactFindingPublicationMatches(
+  parent: ExactFindingSetRow,
+  children: readonly ExactFindingRow[],
+  value: FindingSetV1,
+): boolean {
+  try {
+    return canonicalJsonStringify(requireFindingPublicationV1(parent, children)) === canonicalJsonStringify(value);
+  } catch {
+    return false;
+  }
 }
 
 async function publishFindingSetWithOwnerInTransactionV1(
@@ -318,7 +282,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
   );
   const expectedIds = findingSet.findings.map((finding) => finding.findingId);
   const beforeChildren = await transaction.unsafe<ExactFindingRow[]>(
-    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+    `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
        FROM findings
       WHERE finding_set_hash=$1
       ORDER BY array_position($2::text[],finding_id),finding_id
@@ -343,8 +307,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
   if (adopting && (
     beforeParents.length !== 1
     || !beforeParents[0]
-    || !exactFindingSetRowMatches(beforeParents[0], findingSet)
-    || !exactFindingRowsMatch(beforeChildren, findingSet)
+    || !exactFindingPublicationMatches(beforeParents[0], beforeChildren, findingSet)
     || beforeOwners.length !== 1
     || !allowedProducer
     || !["bound", "closed"].includes(beforeOwners[0]?.state ?? "")
@@ -416,7 +379,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
     [findingSet.findingSetHash],
   );
   const children = await transaction.unsafe<ExactFindingRow[]>(
-    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+    `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
        FROM findings
       WHERE finding_set_hash=$1
       ORDER BY array_position($2::text[],finding_id),finding_id
@@ -426,8 +389,7 @@ async function publishFindingSetWithOwnerInTransactionV1(
   if (
     parents.length !== 1
     || !parents[0]
-    || !exactFindingSetRowMatches(parents[0], findingSet)
-    || !exactFindingRowsMatch(children, findingSet)
+    || !exactFindingPublicationMatches(parents[0], children, findingSet)
   ) throw new Error("FINDING_OWNER_REREAD_INVALID");
   const bound = await bindInternalProductionOwnerReservationV1(
     transaction as PgTransactionSql,

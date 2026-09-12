@@ -151,6 +151,13 @@ source lists, `tests/internal-production/task-0-source-manifest.test.ts`, main
 baseline plan and closure design.
 
 For finding provenance, use the existing legacy-zero `observationRef/hash`.
+First extract `src/findings/finding-publication-v1.ts` from the recovery
+repository's exact parent/child checks. Its only dependencies are the finding
+schema and canonical JSON. Reuse it in the existing finding terminal resolver
+without changing its terminal hash; add focused behavior coverage to the
+already-owned owner-admission test. Add the source to the literal manifests
+and runner scope before the next checkpoint. Terminal-run eligibility belongs
+only to the legacy inventory classifier, not ordinary publication validation.
 Emit strict V2 bodies with `legacyFindingPublicationInventory` from both
 quarantine and ordinary pre-32 observations. Compare fresh/post-termination
 inventories before migration authorization. The migration-32 application in
@@ -320,3 +327,22 @@ passed. Whole-branch delivery and live recovery remain pending.
   `/private/var` workspace alias. An executing copied locator reproduced the
   mismatch; projecting the fixture's authenticated `realpathSync` root fixed
   it. That regression and both sealed spawner tests passed (3/3, 9.093s).
+- Storage checkpoint `a8027782` passed disposable P3 template setup, primary
+  readiness authentication and all 13 manifest tests (6.444s test phase).
+  Both generated test databases were dropped by the harness. No live rollout.
+- Finding terminal validation RED: executing the current private SQL projection
+  with canonical parent/children returned `published` after a child fingerprint
+  was crossed while member IDs stayed equal. The new regression fails with
+  `Missing expected rejection`; valid open-issue publication and its unchanged
+  terminal hash pass. This establishes the extraction/consumer correction.
+- Pure finding extraction is integrated into repository publication and terminal
+  resolution. Complete parent/child content, fingerprints and cross-parent
+  membership are checked; ordinary publication does not require terminal runs.
+  The existing terminal hash is unchanged. Independent review found no source
+  defect; its partial-publication fixture finding was repaired with a canonical
+  two-member parent and exactly one authentic child.
+- Pure projection/mutation regression passed; existing finding contracts passed
+  8/8. Current exact142/61 source inventories, additive amendments and their
+  negative checks passed 15/15 (5.633s); `npx tsc --noEmit` and diff check exited
+  zero. Real PostgreSQL owning suites are the next verification step. Legacy
+  zero-owner inventory/provenance and epoch genesis remain unimplemented.

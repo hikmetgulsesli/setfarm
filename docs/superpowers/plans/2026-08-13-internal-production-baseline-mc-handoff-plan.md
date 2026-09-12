@@ -10362,3 +10362,22 @@ account workspace while Git/build identity remains bound to the executing
 checkout. Include the helper in the isolated runner's tracked scope and move
 its existing bounded workspace projection to this module. Unknown alternate
 runtime stores do not authorize fallback or automatic migration.
+
+## Finding publication validation amendment v1
+
+This additive amendment extends the current exact141 Task 0 / exact60 P3
+inventories with one pure shared publication validator. Prior tuples and
+historical receipts retain their original meaning.
+
+Task 0 insert `src/findings/finding-publication-v1.ts` after `src/execution/runtime-session-repository.ts`.
+P3 insert `src/findings/finding-publication-v1.ts` after `src/execution/runtime-session-repository.ts`.
+
+Current inventories become Task 0 exact142 and P3 exact61: 33 production/package
+paths and the unchanged 28 test/helper paths. The executable partition remains
+25 database tests, 1 source-only test and 2 non-executable helpers. Existing
+owner-admission tests cover the pure validator and production terminal reader.
+
+This extraction is causally required for Task 6A's authenticated legacy finding
+inventory. It shares exact canonical parent/child validation between publication
+and terminal resolution without changing terminal hashes, producer identities,
+issue statuses or SQL schemas. It grants no legacy admission exemption by itself.
