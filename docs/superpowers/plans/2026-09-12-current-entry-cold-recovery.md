@@ -386,3 +386,17 @@ passed. Whole-branch delivery and live recovery remain pending.
   before consumption publication, evidence minting or staging, while equal
   inventory still reaches staging. Combined parser/apply behavior passed,
   along with TypeScript and diff check. No migration was applied live.
+- Inventory checkpoint `ef0a542a` first isolated verification stopped before
+  tests: P3 template's copied private data directory had mode0755, not0700.
+  Disposable Node26.4.0 microprobe and the executing actual helper-copy block
+  reproduced source0700 to destination0755 under umask0022. The filtered copy
+  preserves source directory modes, file0600 and bytes without relaxing the
+  production guard, overwrite policy or source authentication. The regression
+  passed after RED; TypeScript and independent two-file review passed.
+  Owning files already in the File Map are `tests/execution-attempts/test-database.ts`
+  and `tests/internal-production/owner-admission-v1.test.ts`. The failed prefix
+  was confirmed absent from pg_database. Prior success's umask is unknown.
+- With that fixture correction, isolated setup passed and the real schema31
+  immutable-publication regression passed (5.103s). A newly added modern post32
+  closed-publication census regression is running with the remaining owning
+  repository suite; classify its exact failure before implementing post32.

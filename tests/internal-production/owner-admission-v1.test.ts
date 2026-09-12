@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -8620,6 +8620,32 @@ test("finding terminal projection authenticates complete published content, not 
   }
   assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...inventory, inventoryHash: SHA_A }), /INVENTORY_INVALID/);
   assert.equal(Object.isFrozen(inventory.entries[0]), true);
+});
+
+test("P3 authority transfer preserves private directory modes under host umask", () => {
+  const temporary = mkdtempSync(path.join(tmpdir(), "setfarm-p3-copy-mode-"));
+  const previousUmask = process.umask(0o022);
+  try {
+    const fixture = { root: path.join(temporary, "fixture/setfarm") };
+    const projectionRoot = path.join(temporary, "projection/setfarm");
+    mkdirSync(fixture.root, { recursive: true, mode: 0o700 });
+    mkdirSync(projectionRoot, { recursive: true, mode: 0o700 });
+    const data = path.join(path.dirname(fixture.root), "data");
+    mkdirSync(path.join(data, "internal-production-baseline/current-entry-v1"), { recursive: true, mode: 0o700 });
+    const record = "internal-production-baseline/current-entry-v1/record.json";
+    writeFileSync(path.join(data, record), "authority bytes\n", { mode: 0o600 });
+    const source = readFileSync(path.join(process.cwd(), "tests/execution-attempts/test-database.ts"), "utf8");
+    const start = source.indexOf('cpSync(path.join(path.dirname(fixture.root), "data"),');
+    const end = source.indexOf("\n    });", start);
+    assert.ok(start >= 0 && end > start);
+    Function("cpSync", "path", "fixture", "projectionRoot", source.slice(start, end + 8))(cpSync, path, fixture, projectionRoot);
+    const copied = path.join(path.dirname(projectionRoot), "data");
+    for (const directory of ["", "internal-production-baseline", "internal-production-baseline/current-entry-v1"]) {
+      assert.equal(lstatSync(path.join(copied, directory)).mode & 0o777, 0o700, directory || "data");
+    }
+    assert.equal(lstatSync(path.join(copied, record)).mode & 0o777, 0o600);
+    assert.equal(readFileSync(path.join(copied, record), "utf8"), "authority bytes\n");
+  } finally { process.umask(previousUmask); rmSync(temporary, { recursive: true, force: true }); }
 });
 
 test("legacy migration continuity cannot acquire nonempty membership from historical V1", async () => {

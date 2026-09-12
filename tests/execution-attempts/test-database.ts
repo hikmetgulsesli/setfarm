@@ -917,6 +917,10 @@ async function activateP3TemplateAndWriteReadinessV1(
       recursive: true,
       errorOnExist: true,
       force: false,
+      // The filtered copy path preserves source directory modes. Node 26's
+      // native unfiltered path creates 0755 directories under umask 0022,
+      // invalidating these already-authenticated private 0700 authorities.
+      filter: () => true,
     });
     const fact = (name: string) => hashCanonicalJson({
       schema: "setfarm.p3-template-activation-fact.v1",
