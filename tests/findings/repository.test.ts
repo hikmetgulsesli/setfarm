@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { transformSync } from "esbuild";
 
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
@@ -173,7 +174,7 @@ it("legacy schema31 census authenticates terminal published findings without mut
     writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
     const locator = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
     const source = readFileSync(locator, "utf8");
-    const header = "async function observeLegacyDatabaseCensusV1()";
+    const header = "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)";
     assert.equal(source.split(header).length, 2, "fixture exposes only the existing read-only database leaf");
     writeFileSync(locator, source.replace(header, `export ${header}`));
     const childEnv: NodeJS.ProcessEnv = { ...process.env, SETFARM_PG_URL: database.url };
@@ -191,6 +192,95 @@ it("legacy schema31 census authenticates terminal published findings without mut
     rmSync(fixture, { recursive: true, force: true });
     await database.cleanup();
   }
+});
+
+it("cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "currentEntryFail"].map((name) => {
+    const match = new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, "m").exec(source);
+    assert.ok(match, `${name} is the actual private implementation`);
+    const tail = source.slice(match.index + match[0].length);
+    const end = /\n(?=(?:export\s+)?(?:async\s+)?function\s+|(?:const|type|interface)\s+[A-Za-z0-9_]+)/.exec(tail);
+    assert.ok(end, `${name} has a bounded source region`);
+    return source.slice(match.index, match.index + match[0].length + end.index);
+  });
+  const compiled = transformSync(`${regions.join("\n")}\nexport {requireColdPre32CatalogAbsenceV1};`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: {} as { requireColdPre32CatalogAbsenceV1: (sql: TestDatabase["sql"]) => Promise<void> } };
+  new Function("module", "exports", compiled)(module, module.exports);
+  const database = await createIsolatedMigration31TestDatabase();
+  const { sql } = database;
+  try {
+    const observe = () => sql.begin("isolation level repeatable read read only", async (tx) => {
+      await tx`SET LOCAL statement_timeout = '5s'`;
+      await tx`SET LOCAL lock_timeout = '1s'`;
+      await module.exports.requireColdPre32CatalogAbsenceV1(tx as unknown as TestDatabase["sql"]);
+    });
+    const snapshot = async () => ({
+      journal: [...await sql`SELECT * FROM setfarm_schema_migrations ORDER BY version`],
+      relations: [...await sql`SELECT oid,relname,relkind FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY oid`],
+      routines: [...await sql`SELECT oid,proname,proargtypes::text FROM pg_proc WHERE pronamespace='public'::regnamespace ORDER BY oid`],
+      types: [...await sql`SELECT oid,typname,typtype FROM pg_type WHERE typnamespace='public'::regnamespace ORDER BY oid`],
+      triggers: [...await sql`SELECT oid,tgname,tgrelid,tgenabled FROM pg_trigger WHERE NOT tgisinternal ORDER BY oid`],
+    });
+    const clean = await snapshot();
+    await observe();
+    assert.deepEqual(await snapshot(), clean);
+    const cases = [
+      {
+        name: "journal32 without any migration objects",
+        create: () => sql`INSERT INTO setfarm_schema_migrations (version,name,checksum,state,release_sha)
+          VALUES (32,'contract-spine-bootstrap-main-claim-handoff-v1',${HASH_A},'applied',${SHA_A})`,
+        remove: () => sql`DELETE FROM setfarm_schema_migrations WHERE version=32`,
+      },
+      {
+        name: "explicit migration32 index on an unrelated table",
+        create: () => sql`CREATE INDEX ip_op_sba_v1_plan_manifest_idx ON runs(id)`,
+        remove: () => sql`DROP INDEX ip_op_sba_v1_plan_manifest_idx`,
+      },
+      {
+        name: "migration33 backing-index name on an unrelated table",
+        create: () => sql`CREATE INDEX ip_v3_recovery_publications_pkey ON runs(id)`,
+        remove: () => sql`DROP INDEX ip_v3_recovery_publications_pkey`,
+      },
+      {
+        name: "standalone type colliding with migration33 row type",
+        create: () => sql`CREATE TYPE internal_production_v3_recovery_claim_publications_v1 AS ENUM ('fixture')`,
+        remove: () => sql`DROP TYPE internal_production_v3_recovery_claim_publications_v1`,
+      },
+      {
+        name: "unjournaled migration33 view",
+        create: () => sql`CREATE VIEW internal_production_v3_recovery_claim_publications_v1 AS SELECT 1 AS value`,
+        remove: () => sql`DROP VIEW internal_production_v3_recovery_claim_publications_v1`,
+      },
+      {
+        name: "orphan migration32 truncated-name routine",
+        create: () => sql`CREATE FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation() RETURNS integer LANGUAGE SQL AS 'SELECT 1'`,
+        remove: () => sql`DROP FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation()`,
+      },
+      {
+        name: "orphan migration33 overload",
+        create: () => sql`CREATE FUNCTION ip_v3_recovery_publication_immutable_v1(integer) RETURNS integer LANGUAGE SQL AS 'SELECT $1'`,
+        remove: () => sql`DROP FUNCTION ip_v3_recovery_publication_immutable_v1(integer)`,
+      },
+    ];
+    for (const fault of cases) {
+      await fault.create();
+      const before = await snapshot();
+      await assert.rejects(observe, /cold bootstrap migration32\/33 catalog or journal is not absent/, fault.name);
+      assert.deepEqual(await snapshot(), before, fault.name);
+      await fault.remove();
+      await observe();
+    }
+    await sql`CREATE TABLE cold_catalog_probe_v1 (value integer)`;
+    await sql`CREATE FUNCTION cold_catalog_probe_trigger_v1() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'`;
+    await sql`CREATE TRIGGER ip_v3_recovery_publication_row_immutable_v1 BEFORE INSERT ON cold_catalog_probe_v1 FOR EACH ROW EXECUTE FUNCTION cold_catalog_probe_trigger_v1()`;
+    await sql`ALTER TABLE cold_catalog_probe_v1 DISABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1`;
+    const beforeTrigger = await snapshot();
+    await assert.rejects(observe, /cold bootstrap migration32\/33 catalog or journal is not absent/, "disabled misattached trigger is still residue");
+    assert.deepEqual(await snapshot(), beforeTrigger);
+    await sql`DROP TRIGGER ip_v3_recovery_publication_row_immutable_v1 ON cold_catalog_probe_v1`;
+    await observe();
+  } finally { await database.cleanup(); }
 });
 
 it("post32 legacy census accepts only the complete inventory frozen before real guarded migration", async () => {

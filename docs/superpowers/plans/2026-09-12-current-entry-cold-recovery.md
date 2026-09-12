@@ -490,3 +490,26 @@ passed. Whole-branch delivery and live recovery remain pending.
   owned directories (.openclaw0700, setfarm0755), both PID and lock absent.
   Complete cold incident/source/three-service/zero-owner bracket, retirement
   history absence, bound genesis and transport still remain; no launch occurred.
+- Added a private evidence-only cold bootstrap bracket in the existing receipt
+  File Map entry. The real fixed-poison fixture first failed because this port
+  was absent; the implementation now binds exact incident bytes/fingerprint,
+  source, no-write31/pending32 prerequisite records, actual three services,
+  global absence, physical/phase/database zeros and retained legacy inventory.
+  Both complete passes must agree; no synthetic spawner or legacy-zero record
+  is manufactured. Fixed successor-edge absence and operation identity are
+  rechecked, with held directory descriptors across the bracket.
+- Parallel review identified catalog gaps causally necessary for this same cold
+  admission objective: pending32 alone does not inspect unjournaled33 or orphan
+  objects. Cold DB mode now independently checks journal>=32, all39 declared
+  table/index names, nine row-type names, four routine names across overloads,
+  and nine trigger names in the same read-only repeatable-read census. Identifier
+  matching respects PostgreSQL63-byte truncation. Ordinary mode is unchanged.
+  Review also strengthened successor-parent pins to full path/FD metadata so
+  transient create/delete cannot disappear between passes; writer guards were
+  not changed. Added source-executing drift/race negatives and real-PG cases in
+  the existing findings repository test File Map entry. Focused checks passed4/4
+  (7.529s); the expanded bracket including unknown-incident rejection passed
+  (1.360s). Typecheck, source manifests16/16 (5.463s), diff check and independent
+  rereview passed. The complete owning real-PG run remains pending.
+  This is not genesis or launch admission: retirement/cutover history under the
+  physical transition lock, bound epoch genesis and cold transport remain next.

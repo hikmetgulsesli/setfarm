@@ -16282,8 +16282,8 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
   source = source.replace('await import("../findings/finding-publication-v1.js")',
     `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
   source = source.replace(
-    "async function observeLegacyDatabaseCensusV1()",
-    "export async function observeLegacyDatabaseCensusV1()",
+    "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
+    "export async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
   );
   source = source.replace(
     'const postgresModule = await import("postgres");',
@@ -17371,6 +17371,136 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.notEqual(refused.status, 0);
       assert.equal(refused.stdout, "");
     }
+  });
+
+  it("cold bootstrap bracket binds the real poison incident and two complete read-only observations", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const target = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      let source = readFileSync(target, "utf8");
+      const ports = [
+        "observeCurrentInternalProductionCleanSetfarmSourceBuildV1", "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
+        "observeExactPoisonSyntheticGitObjectAbsenceV1", "observeServiceProcessV1", "observeMissionControlLoadedBuildServiceV1",
+        "observeColdSpawnerAbsenceV1", "observeColdPhysicalInventoryV1", "observePhaseClosedZeroV1", "observeLegacyDatabaseCensusV1",
+      ];
+      for (const name of ports) {
+        const region = topLevelFunctionRegionV1(source, name);
+        source = source.replace(region, `${region.startsWith("export ") ? "export " : ""}function ${name}(...args: unknown[]) { return Reflect.get(globalThis, "__coldBracketProbeV1").port(${JSON.stringify(name)}, args); }\n`);
+      }
+      source += '\nexport const coldBracketForTestV1 = typeof observeExactPoisonColdBootstrapBracketNoWriteV1 === "function" ? observeExactPoisonColdBootstrapBracketNoWriteV1 : undefined;\n';
+      fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+      const authority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8"));
+      const pending = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8"));
+      const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{
+        findingSetHash: "a".repeat(64), publicationHash: "b".repeat(64), runId: "legacy-terminal", terminalRunStatus: "failed",
+      }] };
+      const inventory = { ...inventoryBody, inventoryHash: canonicalHash(inventoryBody) };
+      const before = filesystemTreeSnapshot(path.dirname(root));
+      const result = runFixtureExpression(root, `(async()=>{
+        const assert=(await import("node:assert/strict")).default;
+        const {createHash}=await import("node:crypto");
+        const fs=await import("node:fs"),path=(await import("node:path")).default;
+        const store=${JSON.stringify(original.store)},operationFile=path.join(store,"current-entry-operation.json");
+        const edge=path.join(store,"records/current-entry-store-successor-edges/by-predecessor-operation/sha256/90/"+${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)}+".json");
+        let undo=()=>{};
+        const addEdge=()=>{
+          const created=[];let current=path.dirname(edge);
+          while(!fs.existsSync(current)){created.push(current);current=path.dirname(current);}
+          for(const directory of [...created].reverse())fs.mkdirSync(directory,{mode:0o700});
+          fs.writeFileSync(edge,"{}\\n",{mode:0o600,flag:"wx"});
+          undo=()=>{fs.unlinkSync(edge);for(const directory of created)fs.rmdirSync(directory);};
+        };
+        const authority=${JSON.stringify(authority)},pending=${JSON.stringify(pending)},inventory=${JSON.stringify(inventory)};
+        const services=${JSON.stringify(exactZeroEffectServiceCensusV1())},zeros=${JSON.stringify(zeroOwnerCensusFixtureV1())};
+        const physical=${JSON.stringify(exactZeroEffectPhysicalInventoryV1())};
+        const dbKeys=["activeRunCount","openClaimCount","executionAttemptCount","activeRuntimeSessionCount","activeCompletionOwnerCount","unsettledMandatoryEffectCount","artifactReservationCount","publicationBatchCount","artifactPublicationCount","terminationOwnerCount","findingOwnerCount","recoveryOwnerCount","operationalDeliveryCount"];
+        const phaseKeys=Object.keys(zeros).filter(k=>!dbKeys.includes(k)&&!Object.hasOwn(physical,k));
+        const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+        const record=(value,stem)=>({value,bytes:Buffer.from(JSON.stringify(canonical(value))+"\\n"),pair:{[stem+"Ref"]:value[stem+"Ref"],[stem+"Hash"]:value[stem+"Hash"]}});
+        const prerequisites={authorityV3Migration31Audit:record(authority,"authorityV3Migration31Audit"),pendingBootstrapHandoffMigration:record(pending,"pendingBootstrapHandoffMigration")};
+        for(const fault of ["none","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
+          const calls={};
+          undo=()=>{};
+          if(fault==="edge-present")addEdge();
+          Reflect.set(globalThis,"__coldBracketProbeV1",{port:(name,args)=>{
+            const n=calls[name]=(calls[name]??0)+1;
+            if(name==="observeCurrentInternalProductionCleanSetfarmSourceBuildV1")return {...authority.controllerSource,...(fault==="source-drift"&&n>1?{buildHash:"e".repeat(64)}:{})};
+            if(name==="observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1"){
+              const p=structuredClone(prerequisites); for(const k of Object.keys(p))p[k].bytes=Buffer.from(prerequisites[k].bytes);
+              if((fault==="prerequisite-drift"&&n>1)||fault==="crossed-source"){
+                p.pendingBootstrapHandoffMigration.value.controllerSource.buildHash="f".repeat(64);
+                p.pendingBootstrapHandoffMigration=record(p.pendingBootstrapHandoffMigration.value,"pendingBootstrapHandoffMigration");
+              }return p;
+            }
+            if(name==="observeExactPoisonSyntheticGitObjectAbsenceV1")return [
+              {repository:"setfarm",objectSha:"4fc67f20df0e935c703c4658a29dbbaa9aa0a956",objectType:"commit",state:"absent",networkAccess:"forbidden"},
+              {repository:"mission-control",objectSha:"4ec5fc99a076453a87381c0c75e508d25dd8882d",objectType:"commit",state:"absent",networkAccess:"forbidden"}
+            ];
+            if(name==="observeServiceProcessV1"){
+              assert.notEqual(args[0],"com.setrox.setfarm-spawner","never manufacture a fourth service");
+              const value=structuredClone(args[0]==="com.setrox.setfarm-dashboard"?services.dashboard:services.openClaw);
+              if(args[0]==="com.setrox.setfarm-dashboard")Object.assign(value,{loadedSourceSha:args[2].sha,loadedTreeHash:args[2].treeHash,loadedBuildHash:args[2].buildHash});
+              if(fault==="service-drift"&&n>2)value.pid+=1;
+              return value;
+            }
+            if(name==="observeMissionControlLoadedBuildServiceV1")return services.missionControl;
+            if(name==="observeColdSpawnerAbsenceV1")return {schema:"setfarm.internal-production-cold-spawner-absence.v1",absenceHash:fault==="absence-drift"&&n>1?"d".repeat(64):"c".repeat(64)};
+            if(name==="observeColdPhysicalInventoryV1"){
+              assert.equal(Object.hasOwn(args[0],"spawner"),false);return {...physical,...(fault==="physical-drift"&&n>1?{ownedProcessCount:1}:{})};
+            }
+            if(name==="observePhaseClosedZeroV1")return {...Object.fromEntries(phaseKeys.map(k=>[k,0])),...(fault==="phase-nonzero"?{restartReservationCount:1}:{})};
+            if(name==="observeLegacyDatabaseCensusV1"){
+              assert.equal(args[0],true,"cold catalog checks remain inside the real read-only DB transaction");
+              if(n===2&&fault==="edge-appears")addEdge();
+              if(n===2&&fault==="edge-transient"){addEdge();undo();undo=()=>{};}
+              if(n===2&&fault==="operation-replaced"){
+                const old=operationFile+".test-original",bytes=fs.readFileSync(operationFile);
+                fs.renameSync(operationFile,old);fs.writeFileSync(operationFile,bytes,{mode:0o600,flag:"wx"});
+                undo=()=>{fs.unlinkSync(operationFile);fs.renameSync(old,operationFile);};
+              }
+              if(n===2&&fault==="directory-replaced"){
+                const records=path.join(store,"records"),old=records+".test-original";
+                fs.renameSync(records,old);fs.mkdirSync(records,{mode:0o700});
+                undo=()=>{fs.rmdirSync(records);fs.renameSync(old,records);};
+              }
+              if(fault==="database-refusal")throw new Error("DB_CATALOG_OR_MIGRATION_REFUSAL");
+              const value=structuredClone(inventory);
+              if(fault==="inventory-drift"&&n>1){value.entries=[];value.inventoryHash=createHash("sha256").update(JSON.stringify(canonical({schema:value.schema,entries:[]}))).digest("hex");}
+              if(fault==="inventory-invalid")value.inventoryHash="0".repeat(64);
+              return {...Object.fromEntries(dbKeys.map(k=>[k,0])),...(fault==="database-nonzero"?{activeRunCount:1}:{}),legacyFindingPublicationInventory:value};
+            }
+            throw new Error("unexpected port:"+name);
+          }});
+          if(fault==="none"){
+            const value=await m.coldBracketForTestV1();
+            assert.equal(value.schema,"setfarm.internal-production-cold-bootstrap-observation.v1");
+            assert.equal(value.operation.operationHash,${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)});
+            assert.equal(value.contaminationFingerprintHash,${JSON.stringify(EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1)});
+            assert.deepEqual(value.census,zeros);assert.deepEqual(value.legacyFindingPublicationInventory,inventory);
+            assert.equal(Object.hasOwn(value.remainingServices,"spawner"),false);
+            const {observationHash,...body}=value;
+            assert.equal(observationHash,(await import("node:crypto")).createHash("sha256").update(JSON.stringify(canonical(body))).digest("hex"));
+            for(const name of ["observeLegacyDatabaseCensusV1","observeColdSpawnerAbsenceV1","observeColdPhysicalInventoryV1","observePhaseClosedZeroV1","observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1"])assert.equal(calls[name],2,name);
+          }else await assert.rejects(()=>m.coldBracketForTestV1(),
+            fault.startsWith("edge-")?/successor (edge|parent)/:
+            fault==="operation-replaced"?/cold bootstrap poison operation/:
+            fault==="directory-replaced"?/directory chain changed/:undefined,fault);
+          undo();
+        }
+        const retained=operationFile+".test-original";
+        fs.renameSync(operationFile,retained);
+        try{
+          fs.writeFileSync(operationFile,Buffer.from(${JSON.stringify(strictNonpoisonOperationFixtureBytesV1().toString("base64"))},"base64"),{mode:0o600,flag:"wx"});
+          await assert.rejects(()=>m.coldBracketForTestV1(),/cold bootstrap operation is not the recognized incident/);
+        }finally{fs.unlinkSync(operationFile);fs.renameSync(retained,operationFile);}
+        console.log("cold bracket verified");
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /cold bracket verified/);
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "complete cold bracket must write no files, records, locks or inode changes");
+      assert.deepEqual(filesystemTreeSnapshot(original.store), original.originalSnapshot);
+    } finally { rmSync(path.dirname(root), { recursive: true, force: true }); }
   });
 
   it("cold spawner absence authenticates all-root processes and read-only singleton residue", () => {

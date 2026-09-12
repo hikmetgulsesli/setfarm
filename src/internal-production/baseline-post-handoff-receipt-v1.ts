@@ -4886,6 +4886,107 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   return recursivelyFreeze({ ...body, observationRef: `${LEGACY_ZERO_PREFIX_V1}${observationHash}`, observationHash });
 }
 
+// Evidence only: genesis must repeat this under its physical transition lease,
+// and separately authenticate retirement/cutover history before any mutation.
+async function observeExactPoisonColdBootstrapBracketNoWriteV1() {
+  const operation = requireExactPoisonRecoverySnapshotV1(
+    path.join(fixedLegacyCurrentEntryRootV1(), "current-entry-operation.json"), "cold bootstrap poison operation",
+  );
+  let edgeParent = path.dirname(fixedLegacyExactPoisonSuccessorEdgePathV1());
+  for (;;) {
+    try { lstatSync(edgeParent); break; }
+    catch (error) { if (!isEnoent(error)) throw error; edgeParent = path.dirname(edgeParent); }
+  }
+  const directoryGuard = authenticateTask12ReceiptDirectoryChainV1(edgeParent);
+  let edgeParentDescriptor: number | null = null;
+  try {
+    const edgeParentMetadata = lstatSync(edgeParent, { bigint: true });
+    edgeParentDescriptor = openSync(edgeParent, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    if (!sameRegularMetadata(edgeParentMetadata, fstatSync(edgeParentDescriptor, { bigint: true }))) {
+      currentEntryFail("cold bootstrap successor parent changed while pinned");
+    }
+    const pair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+    if (canonicalComparable(pair) !== canonicalComparable(exactPoisonOperationPairV1())) {
+      currentEntryFail("cold bootstrap operation is not the recognized incident");
+    }
+    const contamination = exactPoisonContaminationFingerprintV1(operation);
+    const assertEdgeParentStable = (): void => {
+      directoryGuard.assertStable();
+      if (!sameRegularMetadata(edgeParentMetadata, lstatSync(edgeParent, { bigint: true }))
+        || !sameRegularMetadata(edgeParentMetadata, fstatSync(edgeParentDescriptor!, { bigint: true }))) {
+        currentEntryFail("cold bootstrap successor parent absence topology changed");
+      }
+    };
+    const requireNoSuccessor = (): void => {
+      assertEdgeParentStable();
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyExactPoisonSuccessorEdgePathV1(), "cold bootstrap successor edge",
+      ) !== null) currentEntryFail("cold bootstrap successor edge is already present");
+      assertEdgeParentStable();
+    };
+    requireNoSuccessor();
+    const source = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+    const observePass = async () => {
+      requireNoSuccessor();
+      const prerequisites = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+      for (const record of [prerequisites.authorityV3Migration31Audit, prerequisites.pendingBootstrapHandoffMigration]) {
+        if (canonicalComparable(record.value.controllerSource) !== canonicalComparable(source)) {
+          currentEntryFail("cold bootstrap prerequisites are crossed with source");
+        }
+      }
+      const syntheticGitAbsence = observeExactPoisonSyntheticGitObjectAbsenceV1();
+      if (canonicalComparable(syntheticGitAbsence) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)) {
+        currentEntryFail("cold bootstrap synthetic Git absence is crossed");
+      }
+      const remainingServices = await observeColdRemainingServicesV1(source);
+      const spawnerAbsence = observeColdSpawnerAbsenceV1(source);
+      const physical = observeColdPhysicalInventoryV1(remainingServices, 0);
+      const phase = requireExactZeroCountsV1(await observePhaseClosedZeroV1(source), EXACT_POISON_PHASE_ZERO_KEYS_V1, "cold bootstrap phase");
+      const { legacyFindingPublicationInventory, ...database } = await observeLegacyDatabaseCensusV1(true);
+      requireExactZeroCountsV1(database, [
+        "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
+        "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+        "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+      ], "cold bootstrap database");
+      const census = requireExactZeroCountsV1({
+        ...database, ...phase,
+        ownedProcessCount: physical.ownedProcessCount, ownedListenerCount: physical.ownedListenerCount,
+        ownedWorktreeCount: physical.ownedWorktreeCount, dirtyWorktreeCount: physical.dirtyWorktreeCount,
+        staleChildCount: physical.staleChildCount,
+      }, COMPLETE_ZERO_CENSUS_KEYS_V1, "cold bootstrap complete census");
+      if (canonicalComparable(source) !== canonicalComparable(requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1()))) {
+        currentEntryFail("cold bootstrap source drifted");
+      }
+      requireNoSuccessor();
+      return {
+        prerequisites,
+        value: recursivelyFreeze({
+          remainingServices, spawnerAbsence, physical, census, syntheticGitAbsence,
+          legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
+        }),
+      };
+    };
+    const first = await observePass();
+    const second = await observePass();
+    assertExactPoisonRecoveryPrerequisitesEqualV1(second.prerequisites, first.prerequisites, "cold bootstrap A/B");
+    if (canonicalComparable(first.value) !== canonicalComparable(second.value)) currentEntryFail("cold bootstrap A/B observations drifted");
+    assertExactPoisonRecoverySnapshotStableV1(operation, "cold bootstrap poison operation");
+    requireNoSuccessor();
+    const body = recursivelyFreeze({
+      schema: "setfarm.internal-production-cold-bootstrap-observation.v1",
+      operation: pair, operationBytesSha256: sha256(operation.observed.bytes),
+      contaminationFingerprintHash: contamination.fingerprintHash, source,
+      authorityV3Migration31Audit: first.prerequisites.authorityV3Migration31Audit.pair,
+      pendingBootstrapHandoffMigration: first.prerequisites.pendingBootstrapHandoffMigration.pair,
+      ...first.value,
+    });
+    return recursivelyFreeze({ ...body, observationHash: hashCanonicalJson(body) });
+  } finally {
+    try { if (edgeParentDescriptor !== null) closeSync(edgeParentDescriptor); }
+    finally { directoryGuard.close(); }
+  }
+}
+
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   operation: FileSnapshot,
   inventory: ExactPoisonRecoveryInventoryEvidenceV1,
@@ -8377,6 +8478,15 @@ function observeServiceProcessV1(
   });
 }
 
+async function observeColdRemainingServicesV1(source: InternalProductionCleanSetfarmSourceBuildV1) {
+  const loaded = Object.freeze({ sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash });
+  return recursivelyFreeze({
+    dashboard: observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, loaded) as InternalProductionListeningServiceCensusV1,
+    missionControl: await observeMissionControlLoadedBuildServiceV1(),
+    openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
+  });
+}
+
 export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {
   const setfarm = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const source = Object.freeze({ sha: setfarm.sha, treeHash: setfarm.treeHash, buildHash: setfarm.buildHash });
@@ -8390,7 +8500,58 @@ export async function observeInternalProductionServiceCensusV1(): Promise<Intern
   return recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
 }
 
-async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
+async function requireColdPre32CatalogAbsenceV1(connection: import("postgres").Sql): Promise<void> {
+  const rows = await connection<Array<Record<string, unknown>>>`
+    WITH expected_tables(name) AS (VALUES
+      ('internal_production_bootstrap_main_claim_handoff_operations_v1'), ('internal_production_owner_reservations_v1'),
+      ('internal_production_owner_admission_authorities_v1'), ('internal_production_owner_admission_head_v1'),
+      ('internal_production_owner_producer_source_build_authorities_v1'), ('internal_production_owner_producer_manifest_set_activations_v1'),
+      ('internal_production_owner_producer_manifest_activation_heads_v1'), ('internal_production_owner_producer_manifest_set_current_v1'),
+      ('internal_production_v3_recovery_claim_publications_v1')
+    ), expected_indexes(name) AS (VALUES
+      ('ip_op_sba_v1_plan_manifest_idx'), ('ip_op_msa_v1_phase_manifest_idx'),
+      ('ip_op_msa_v1_pred_activation_idx'), ('ip_op_msa_v1_pred_head_idx'),
+      ('ip_op_mah_v1_phase_activation_idx'), ('ip_op_mah_v1_pred_head_idx'),
+      ('internal_production_bootstrap_handoff_operation_pkey'),
+      ('internal_production_bootstrap_handoff_continuation_grant_unique'), ('internal_production_bootstrap_handoff_claim_unique'),
+      ('internal_production_owner_reservation_pkey'), ('internal_production_owner_reservation_hash_unique'),
+      ('internal_production_owner_reservation_key_unique'), ('internal_production_owner_admission_authority_pkey'),
+      ('internal_production_owner_admission_authority_hash_unique'), ('internal_production_owner_admission_authority_phase_unique'),
+      ('internal_production_owner_admission_head_pkey'),
+      ('ip_op_sba_v1_pkey'), ('ip_op_sba_v1_hash_uq'), ('ip_op_sba_v1_pair_uq'),
+      ('ip_op_msa_v1_pkey'), ('ip_op_msa_v1_hash_uq'), ('ip_op_msa_v1_pair_uq'),
+      ('ip_op_mah_v1_pkey'), ('ip_op_mah_v1_hash_uq'), ('ip_op_mah_v1_pair_uq'), ('ip_op_mah_v1_activation_pair_uq'),
+      ('ip_op_msc_v1_pkey'), ('ip_v3_recovery_publications_pkey'),
+      ('ip_v3_recovery_publications_runtime_key'), ('ip_v3_recovery_publications_dispatch_key')
+    ), expected_relations(name) AS (
+      SELECT name FROM expected_tables UNION ALL SELECT name FROM expected_indexes
+    ), expected_functions(name) AS (VALUES
+      ('setfarm_forbid_internal_production_owner_admission_authority_mutation'),
+      ('ip_op_reject_immutable_v1'), ('ip_op_enforce_current_update_v1'), ('ip_v3_recovery_publication_immutable_v1')
+    ), expected_triggers(name) AS (VALUES
+      ('trg_internal_production_owner_admission_authority_immutable'),
+      ('trg_internal_production_owner_admission_authority_truncate_forbidden'),
+      ('ip_op_sba_v1_immutable_trg'), ('ip_op_msa_v1_immutable_trg'), ('ip_op_mah_v1_immutable_trg'),
+      ('ip_op_msc_v1_delete_truncate_trg'), ('ip_op_msc_v1_update_trg'),
+      ('ip_v3_recovery_publication_row_immutable_v1'), ('ip_v3_recovery_publication_truncate_forbidden_v1')
+    )
+    SELECT
+      (SELECT COUNT(*) FROM public.setfarm_schema_migrations WHERE version >= 32)::text AS "laterJournalCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_class actual JOIN expected_relations expected
+        ON actual.relname = left(expected.name, 63) AND actual.relnamespace = 'public'::regnamespace)::text AS "relationCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_proc actual JOIN expected_functions expected
+        ON actual.proname = left(expected.name, 63) AND actual.pronamespace = 'public'::regnamespace)::text AS "functionCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_type actual JOIN expected_tables expected
+        ON actual.typname = left(expected.name, 63) AND actual.typnamespace = 'public'::regnamespace)::text AS "typeCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_trigger actual JOIN expected_triggers expected
+        ON actual.tgname = left(expected.name, 63))::text AS "triggerCount"
+  `;
+  const keys = ["laterJournalCount", "relationCount", "functionCount", "typeCount", "triggerCount"];
+  if (rows.length !== 1 || !isPlainRecord(rows[0]) || !hasExactKeys(rows[0], keys)
+    || keys.some((key) => rows[0]![key] !== "0")) currentEntryFail("cold bootstrap migration32/33 catalog or journal is not absent");
+}
+
+async function observeLegacyDatabaseCensusV1(coldBootstrap = false): Promise<Readonly<{
   activeRunCount: number; openClaimCount: number; executionAttemptCount: number;
   activeRuntimeSessionCount: number; activeCompletionOwnerCount: number; unsettledMandatoryEffectCount: number;
   artifactReservationCount: number; publicationBatchCount: number; artifactPublicationCount: number;
@@ -8407,6 +8568,7 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
       const connection = tx as unknown as typeof sql;
       await connection`SET LOCAL statement_timeout = '5s'`;
       await connection`SET LOCAL lock_timeout = '1s'`;
+      if (coldBootstrap) await requireColdPre32CatalogAbsenceV1(connection);
       const rows = await connection<Array<Record<string, unknown>>>`
         WITH required_columns(table_name,column_name,type_name,required_not_null) AS (
           VALUES
