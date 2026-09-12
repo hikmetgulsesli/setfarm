@@ -8641,6 +8641,81 @@ test("post32 finding census refuses closed sidecars without publications before 
   assert.equal(calls, 3);
 });
 
+test("post32 census compares the entire migration inventory even when every legacy row is missing", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("async function observePostManifestFindingPublicationOwnersV1(");
+  const end = source.indexOf("export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1(", start);
+  assert.ok(start >= 0 && end > start);
+  const executable = transformSync(source.slice(start, end).replace('await import("./internal-production/baseline-post-handoff-receipt-v1.js")', "provenancePort"), { loader: "ts", target: "es2022" }).code;
+  const value = createFindingSetV1({ runId: "legacy-census-run", storyId: "US-001", packetHash: SHA_A, sliceHash: SHA_B,
+    sourceRevision: { sha: GIT_A, treeHash: GIT_B }, findings: [{ origin: "test", classification: "structured",
+      invariantRef: "INV_LEGACY_CENSUS", sourceLocators: [{ path: "src/example.ts", contentHash: SHA_C }],
+      observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_LEGACY_CENSUS", status: "open" }] });
+  const parent = { finding_set_hash: value.findingSetHash, finding_set_id: value.findingSetId, run_id: value.runId,
+    story_id: value.storyId, packet_hash: value.packetHash, slice_hash: value.sliceHash, source_sha: GIT_A,
+    source_tree_hash: GIT_B, finding_ids: value.findings.map((f) => f.findingId), payload: value };
+  const children = value.findings.map((f) => ({ finding_set_hash: value.findingSetHash, finding_id: f.findingId,
+    origin: f.origin, classification: f.classification, invariant_ref: f.invariantRef, status: f.status,
+    source_fingerprint: hashCanonicalJson(f.sourceLocators), payload: f }));
+  const retained = observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }]);
+  const empty = observeLegacyFindingPublicationInventoryV1([], [], []);
+  const application = { evidenceHash: SHA_C };
+  const journal = { version: 32, name: "contract-spine-bootstrap-main-claim-handoff-v1", checksum: SHA_B, state: "applied", release_sha: GIT_A };
+  const observe = async (present: boolean, inventory = retained, runStatus = "failed", journalOverride = {}, unavailable = false, modern = false, journalCopies = 1) => {
+    let provenanceReads = 0;
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({ findingSetHash: value.findingSetHash });
+    const row = { state: "closed", owner_key: value.findingSetHash, producer_implementation_id: "a-finding-recovery-repository-v1",
+      reservation_ref: "reserved", reservation_hash: SHA_B, close_ref: "closed", close_hash: SHA_C, head_version: 1,
+      close_head_predecessor_hash: SHA_B, close_head_successor_hash: SHA_A };
+    const dependencies = {
+      LEGACY_FINDING_PUBLICATION_MAX_SETS_V1: 4096, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1: 65536,
+      FINDING_OWNER_IMPLEMENTATION_IDS_V1: ["a-finding-recovery-repository-v1"], requireFindingPublicationV1, observeLegacyFindingPublicationInventoryV1,
+      sameJsonValueV1: (a: unknown, b: unknown) => canonicalJsonStringify(a) === canonicalJsonStringify(b),
+      validateCurrentInternalProductionOwnerAdmissionHeadV1: async (sql: unknown) => { assert.equal(sql, querySql); return { hash: SHA_A, version: 1, migrationApplication: application }; },
+      validateOwnerAdmissionAncestryToGenesisV1: async (sql: unknown) => { assert.equal(sql, querySql); return modern ? [{ version: 1, authority: { authority_kind: "close", authority_ref: row.close_ref, authority_hash: row.close_hash, predecessor_head_hash: SHA_B, successor_head_hash: SHA_A } }] : []; },
+      resolveOwnerReservationInTransactionV1: async (sql: unknown, _pair: unknown, lock: boolean) => { assert.equal(sql, querySql); assert.equal(lock, false); return { category: "finding", ownerKey: value.findingSetHash }; },
+      validateInternalProductionBoundOwnerReservationV1: () => ({ canonicalOwnerIdentity: identity }),
+      validateInternalProductionOwnerReservationCloseV1: () => ({ terminalOwnerRef: `${identity.ownerRef}/terminal/published`, terminalOwnerHash: hashCanonicalJson({ schema: "setfarm.internal-production-finding-terminal-owner.v1", findingSetHash: value.findingSetHash, status: "published" }) }),
+      createInternalProductionFindingCanonicalOwnerIdentityV1, hashCanonicalJson,
+      isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1: (row: unknown) => canonicalJsonStringify(row) === canonicalJsonStringify(journal),
+      provenancePort: { resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1: async (input: unknown) => {
+        provenanceReads += 1;
+        assert.deepEqual(input, { migrationApplication: application, migrationSourceSha: GIT_A });
+        if (unavailable) throw new Error("EXACT_MIGRATION_PROVENANCE_MISSING");
+        return inventory;
+      } },
+    };
+    const census = Function(...Object.keys(dependencies), `${executable}\nreturn observePostManifestFindingPublicationOwnersV1;`)(...Object.values(dependencies));
+    const querySql = async (query: TemplateStringsArray) => {
+      const text = query.join("?");
+      assert.doesNotMatch(text, /FOR UPDATE|INSERT|DELETE|UPDATE/);
+      if (/FROM finding_sets\b/.test(text)) return present ? [parent] : [];
+      if (/FROM findings\b/.test(text)) return present ? children : [];
+      if (/FROM internal_production_owner_reservations_v1\b/.test(text)) return modern ? [row] : [];
+      if (/FROM internal_production_owner_admission_head_v1\b/.test(text)) return [{ head_version: 1, head_hash: SHA_A }];
+      if (/FROM (?:public\.)?setfarm_schema_migrations\b/.test(text)) return Array.from({ length: journalCopies }, () => ({ ...journal, ...journalOverride }));
+      if (/FROM (?:public\.)?runs\b/.test(text)) return present && !modern ? [{ id: value.runId, status: runStatus }] : [];
+      assert.fail(`unexpected census query: ${text}`);
+    };
+    const result = await census(querySql, present ? 1 : 0);
+    assert.equal(provenanceReads, 1, "even empty census must authenticate historical membership");
+    return result;
+  };
+  await assert.rejects(observe(false), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "all retained legacy rows missing must refuse");
+  assert.equal(await observe(true), 0);
+  assert.equal(await observe(false, empty), 0);
+  await assert.rejects(observe(true, empty), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "new unreserved publication is not legacy");
+  await assert.rejects(observe(true, retained, "completed"), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/);
+  await assert.rejects(observe(true, retained, "running"), /TERMINAL_RUN_INVALID/);
+  await assert.rejects(observe(false, empty, "failed", {}, true), /EXACT_MIGRATION_PROVENANCE_MISSING/);
+  assert.equal(await observe(true, empty, "failed", {}, false, true), 0);
+  await assert.rejects(observe(true, retained, "failed", {}, false, true), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "modern sidecar cannot hide retained legacy membership");
+  for (const count of [0, 2]) await assert.rejects(observe(false, empty, "failed", {}, false, false, count), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  for (const override of [{ state: "pending" }, { checksum: SHA_C }, { name: "wrong" }, { version: 31 }]) {
+    await assert.rejects(observe(false, empty, "failed", override), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  }
+});
+
 test("P3 authority transfer preserves private directory modes under host umask", () => {
   const temporary = mkdtempSync(path.join(tmpdir(), "setfarm-p3-copy-mode-"));
   const previousUmask = process.umask(0o022);

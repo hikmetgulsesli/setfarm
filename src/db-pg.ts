@@ -7,7 +7,7 @@ import postgres from "postgres";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeConfig } from "./runtime-config.js";
-import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
+import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
 import { LEGACY_FINDING_PUBLICATION_MAX_SETS_V1, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1 } from "./findings/legacy-finding-publication-inventory-v1.js";
 import {
   applyBootstrapMainClaimHandoffGuardedMigration32V1,
@@ -624,7 +624,6 @@ async function observePostManifestFindingPublicationOwnersV1(
     if (!group || row.state !== "closed" || !FINDING_OWNER_IMPLEMENTATION_IDS_V1.some((id) => id === row.producer_implementation_id)) return fail();
     group.push(row);
   }
-  if (parents.length === 0) return 0;
   const headRows = await sql<OwnerAdmissionHeadRowV1[]>`
     SELECT head_version,head_hash,active_fence_ref,active_fence_hash,active_target_family_hash,
            migration_application_evidence_hash,head_payload
@@ -633,12 +632,23 @@ async function observePostManifestFindingPublicationOwnersV1(
   if (headRows.length !== 1 || !headRows[0]) fail();
   const head = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, headRows[0]!);
   const ancestry = await validateOwnerAdmissionAncestryToGenesisV1(sql, head.hash, head.version, head.migrationApplication);
+  const migrationRows = await sql<Array<{ version: number; name: string; checksum: string; state: string; release_sha: string }>>`
+    SELECT version,name,checksum,state,release_sha FROM public.setfarm_schema_migrations WHERE version=32 LIMIT 2
+  `;
+  if (migrationRows.length !== 1 || !isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1(migrationRows[0])) fail();
+  const { resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1 } = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const retainedInventory = await resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1({
+    migrationApplication: head.migrationApplication, migrationSourceSha: migrationRows[0]!.release_sha,
+  });
+  const legacyParents: FindingPublicationParentRowV1[] = [];
+  const legacyChildren: FindingPublicationChildRowV1[] = [];
   for (const parent of parents) {
     const publication = requireFindingPublicationV1(parent, members.get(parent.finding_set_hash)!);
     const matching = owners.get(publication.findingSetHash)!;
     if (matching.length === 0) {
-      // Missing modern ownership is not proof of legacy provenance.
-      throw new Error("INTERNAL_PRODUCTION_LEGACY_FINDING_PROVENANCE_UNAVAILABLE");
+      legacyParents.push(parent);
+      legacyChildren.push(...members.get(parent.finding_set_hash)!);
+      continue;
     }
     if (matching.length !== 1) fail();
     const row = matching[0]!;
@@ -660,6 +670,12 @@ async function observePostManifestFindingPublicationOwnersV1(
         && authority.predecessor_head_hash === row.close_head_predecessor_hash
         && authority.successor_head_hash === row.close_head_successor_hash).length !== 1) fail();
   }
+  const runIds = [...new Set(legacyParents.map((parent) => parent.run_id))];
+  const legacyRuns = await sql<Array<{ id: string; status: string }>>`
+    SELECT id,status FROM runs WHERE id=ANY(${runIds}::text[]) ORDER BY id LIMIT 4097
+  `;
+  const currentInventory = observeLegacyFindingPublicationInventoryV1(legacyParents, legacyChildren, legacyRuns);
+  if (!sameJsonValueV1(retainedInventory, currentInventory)) throw new Error("LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT");
   return 0;
 }
 

@@ -432,3 +432,22 @@ passed. Whole-branch delivery and live recovery remain pending.
   the entire retained inventory even when all legacy rows are missing or owned
   by modern sidecars. The existing empty P3 template must gain authentic fixed
   migration evidence before application, not a fallback or head rewrite.
+- The DB census now authenticates the exact applied journal32 and current-head
+  application in the existing read-only snapshot, resolves historical inventory,
+  and compares it against the entire freshly validated unreserved subset plus
+  terminal runs. The executing RED exposed the old empty shortcut; focused
+  GREEN includes all missing, all modern, added unreserved, terminal drift,
+  missing/duplicate/crossed journal and missing provenance cases. Both head
+  validation ports and modern reservation resolution retain the same SQL handle.
+- First real-PG integration completed 14 tests, 13 passed; the empty template
+  failed the new fixed-record resolver because its old authorization reference
+  was synthetic. All disposable databases were dropped. The test-only fixture
+  now publishes and authenticates historical V1-empty legacy/auth/consumption
+  files before copying the private data and applying32. Empty P3 fixtures reuse
+  these exact template-bound pairs behind the existing capability check.
+  No applied head is rewritten and production has no empty fallback. Independent
+  DB and fixture reviews found no actionable issues; TypeScript, focused checks
+  and all 16 source-manifest tests passed. Real-PG rerun passed 14/14 (129.446s),
+  including the public modern census through authentic V1-empty migration
+  provenance. All disposable databases were dropped. A genuine pre32-to-post32
+  nonempty legacy integration test remains next.
