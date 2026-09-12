@@ -517,6 +517,93 @@ diff checks passed. Independent review accepted the final ancestor checks and
 cleanup ownership. The ordinary startup compatibility fix does not yet grant
 genuine cold-child startup, publish a claim, or enable helper/controller settling.
 
+### Connected cold child claim and sealed main
+
+**Files:** existing retirement, spawner, their owning internal-production tests
+and this plan. The helper main/controller settlement remain separately connected
+work; no new File Map member or ordinary final-verifier pair is introduced.
+
+**Interfaces:** a zero-argument spawner ownership observer reads only private
+main lifecycle state and the two retained created-file objects. It grants no
+authority from PID text alone, caller arguments or an environment marker.
+The zero-argument retirement claim entry uses its already-authenticated child
+context and dynamically imports that observer only after runtime configuration.
+Spawner invokes async main without a top-level await, so this deferred query
+does not create an ESM initialization deadlock.
+
+- [x] Compile the actual main/startup ownership functions into the existing real
+  FD child fixture. Ordinary admission/provider/DB ports must throw if reached.
+  Require a durable claim while both actual startup files remain owned, a live
+  sealed child after its helper exits, and exact-own cleanup on SIGTERM.
+- [x] Select cold startup solely from authenticated child state before the
+  ordinary refusal-only preflight. Acquire the actual singleton/PID exclusively;
+  install named SIGTERM/SIGINT handlers before entering claim publication. A
+  private main state makes the ownership observer refuse before handlers, after
+  stop begins, after replacement of either file, and after cleanup.
+- [x] Add private child phases `authenticated -> claiming -> claimed`; enter
+  claiming synchronously before the first await. Repeated/concurrent calls and
+  every uncertain publication revoke eligibility permanently. Split original
+  immutable pins from explicit phase-specific journal-root/membership checks.
+  Never refresh the original intent/dispatch/history/frame/host commitments.
+- [x] Publish one bounded exclusive `claim.json` binding intent/dispatch/epoch/
+  genesis/source/profile/controller-lock identities, actual child process and
+  both held startup files. Retain the created FD, fsync file/parent, reopen the
+  exact inode and bytes; retain only the exact owned third journal member and
+  its post-publication root metadata. Partial/existing/foreign records remain
+  fenced; no adoption can authorize another spawn.
+- [x] After claim, allow only the original live helper parent or authenticated
+  helper departure with actual ppid one/pgid pid; pre-claim still requires the
+  live original helper/controller. Keep the child sealed and stoppable without
+  depending on incidental imported-module event-loop handles. Test signal
+  during the awaited observer import, replay, crossed startup-file ownership,
+  publication faults and real detached lifetime.
+- [ ] Preserve the admitted stale-dead-PID compatibility case: its eventual
+  consumption must bind the exact retained cold absence evidence under the
+  actual singleton. An absent-only first connected fixture is not full cold
+  case coverage and cannot remove that remaining requirement from acceptance.
+- [x] Run focused real child/main/retirement gates, exact manifests, TypeScript
+  and independent review before this slice is committed. No helper-main launch,
+  controller settlement, ordinary census exemption or live acceptance is implied.
+
+**Connected-slice causal corrections and evidence:** the first real main test
+refused with `COLD_BOOTSTRAP_UNSETTLED`, proving the missing cold branch. Its
+initial claim then serialized `source: undefined`; the strict producer/parser
+now binds the authenticated launch-profile source. An actual renamed/replaced
+runtime directory was accepted before the original absence-ancestor FD pins
+were connected; it now refuses, retaining the original identity rather than
+rebaselining the new directory. A helper exiting at the durable claim boundary
+exposed both the pre-owned-claim parent check and a death between two `ps`
+probes. Departure is now eligible only after exact owned bytes/fsync/reopen/
+writer-close; a crossed probe can select only fresh exact helper absence plus
+the genuine child's ppid-one/pgid-pid transition. No generic process retry or
+claimStarted-only departure grant is added.
+
+Post-claim same-byte PID/lock replacement originally escaped repeated runtime
+configuration validation. The cached claim now retains and invokes the real
+main ownership observer. A separate demonstrated false refusal came from
+unrelated entries changing in the shared OS temporary ancestor: the launch
+profile commits physical directory identities, not lifetime ownership of every
+sibling entry. Independent review confirmed the minimal correction: retain
+direct-directory/no-symlink and dev/ino/UID/GID/mode/birthtime checks for host
+ancestors. Keep the issuer's bounded full-metadata observation bracket, exact
+journal-root metadata/membership, all regular-file pins and hashes, Node
+identity, and full output-tree verification unchanged. A deterministic
+unrelated sibling write reproduces the old refusal; replacement inode,
+symlink and mode changes must still refuse. No File Map or final pair-graph
+expansion is needed: these are lifetime fixes in the same mapped claim owners.
+
+Focused connected gate: 4/4 (30.964s), including eight real main lifecycle/
+identity modes, 43 self-hashed crossed claim bodies, original runtime-parent
+replacement, and eleven publication/lifecycle faults. Existing ordinary/stale/
+fatal/real sealed-main gate: 4/4 (34.943s); exact source inventory 17/17 (5.771s);
+TypeScript no-emit passed. Final review found no remaining must-fix issue in
+this absent-file slice. Full retirement passed 51/51 (100.425s), including the
+strengthened actual-SIGTERM-at-await, malformed-frame and fresh-helper retry
+checks. No failures were hidden or stopped early. This is not live acceptance.
+Final gateway regression also passed 109/109 (3.247s), followed by a fresh
+TypeScript no-emit and clean diff check. Guarded clean-main build remains part
+of the reviewed combined rollout, never bypassed on this feature branch.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

@@ -1438,6 +1438,40 @@ function parseColdSpawnerBootstrapDispatchV1(bytes: Buffer, intent: Readonly<Rec
   return freezeColdDataV1(dispatch);
 }
 
+function parseColdSpawnerBootstrapClaimV1(bytes: Buffer, intent: Readonly<Record<string, unknown>>, dispatch: Readonly<Record<string, unknown>>) {
+  if (bytes.length < 1 || bytes.length > 65_536) fail("cold claim size is invalid");
+  const claim = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "dispatchRef", "dispatchHash", "epochRef", "epochHash", "genesisRef", "genesisHash", "source", "profileHash", "lockIdentity", "child", "startupFiles", "maximumClaimCount", "claimRef", "claimHash"], "claim");
+  if (!bytes.equals(Buffer.from(`${canonical(claim)}\n`)) || claim.schema !== "setfarm.internal-production-cold-spawner-bootstrap-claim.v1"
+    || claim.purpose !== "exact-poison-sealed-cold-spawner-v1" || claim.maximumClaimCount !== 1
+    || claim.claimRef !== `setfarm://internal-production/cold-spawner-bootstrap-claim/sha256/${coldHashV1(claim.claimHash, "claim")}`) fail("cold claim binding is crossed");
+  coldSelfHashV1(claim, "claimHash", ["claimRef"]);
+  for (const key of ["intentRef", "intentHash", "epochRef", "epochHash", "genesisRef", "genesisHash", "lockIdentity"]) {
+    if (canonical(claim[key]) !== canonical(intent[key])) fail("cold claim intent pair is crossed");
+  }
+  const profile = intent.launchProfile as Record<string, unknown>, helper = dispatch.helper as Record<string, unknown>;
+  const executable = profile.executable as Record<string, unknown>, lock = intent.transitionLock as Record<string, unknown>;
+  if (claim.dispatchRef !== dispatch.dispatchRef || claim.dispatchHash !== dispatch.dispatchHash
+    || claim.profileHash !== profile.profileHash || canonical(claim.source) !== canonical(profile.source)) fail("cold claim dispatch evidence is crossed");
+  const child = coldRecordV1(claim.child, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid", "pgid"], "claim child");
+  if (!Number.isSafeInteger(child.pid) || (child.pid as number) < 1 || (child.pid as number) > 2_147_483_647 || child.pid === helper.pid || child.pid === lock.pid
+    || child.uid !== profile.uid || child.ppid !== helper.pid || child.pgid !== child.pid
+    || !Number.isSafeInteger(child.processStartTimeEpochMs) || (child.processStartTimeEpochMs as number) < 1
+    || typeof child.lstart !== "string" || child.lstart.length !== 24 || Date.parse(child.lstart) !== child.processStartTimeEpochMs
+    || child.command !== `${executable.path} ${path.join(profile.repository as string, "dist/spawner.js")}`
+    || child.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: child.pid,
+      processStartTimeEpochMs: child.processStartTimeEpochMs, lstart: child.lstart, command: child.command }))) fail("cold claim child identity is crossed");
+  const ownership = coldRecordV1(claim.startupFiles, ["schema", "pid", "uid", "singleton", "pidFile"], "claim startup ownership");
+  if (ownership.schema !== "setfarm.internal-production-cold-spawner-startup-ownership.v1" || ownership.pid !== child.pid || ownership.uid !== child.uid) fail("cold claim startup owner is crossed");
+  const runtime = (intent.coldObservation as Record<string, any>).spawnerAbsence.ancestors.at(-1).path as string;
+  for (const [key, name, expected] of [["singleton", "spawner.lock", `${child.pid}\n`], ["pidFile", "spawner.pid", String(child.pid)]]) {
+    const file = coldRecordV1(ownership[key!], ["path", "devDecimal", "inoDecimal", "uid", "mode", "byteLength", "bytesHash"], "claim startup file");
+    if (file.path !== path.join(runtime, name!) || file.uid !== child.uid || file.mode !== 0o600 || file.byteLength !== Buffer.byteLength(expected!) || file.bytesHash !== sha256(expected!)
+      || typeof file.devDecimal !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(file.devDecimal)
+      || typeof file.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(file.inoDecimal)) fail("cold claim startup file is crossed");
+  }
+  return freezeColdDataV1(claim);
+}
+
 // This is independent authentication of the inherited controller capability,
 // not a zero-owner census, dispatch permission or a public journal exception.
 // The fixed helper will retain this evidence across its subsequent live bracket.
@@ -1834,6 +1868,15 @@ function authenticateColdSpawnerChildCapabilityV1() {
       for (let target = value; ; target = path.dirname(target)) { if (!directories.has(target)) fail("cold child host ancestry is incomplete"); if (path.dirname(target) === target) break; }
     }
     if (canonical(profile.rootIdentity) !== canonical(identity(directories.get(repositoryRoot())!))) fail("cold child repository identity is crossed");
+    const runtimeAncestors = ((intent.coldObservation as Record<string, any>).spawnerAbsence.ancestors as Array<Record<string, unknown>>).map((ancestor) => {
+      const target = ancestor.path as string, stats = lstatSync(target, { bigint: true });
+      if (!stats.isDirectory() || stats.isSymbolicLink() || String(stats.dev) !== ancestor.dev || String(stats.ino) !== ancestor.ino
+        || String(stats.uid) !== ancestor.uid || Number(stats.mode & 0o7777n) !== ancestor.mode) fail("cold child original runtime ancestry is crossed");
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      descriptors.push(descriptor);
+      if (!sameColdFileMetadataV1(stats, fstatSync(descriptor, { bigint: true })) || !sameColdFileMetadataV1(stats, lstatSync(target, { bigint: true }))) fail("cold child runtime ancestor acquisition changed");
+      return { target, stats, descriptor };
+    });
     const nodeStats = lstatSync(process.execPath, { bigint: true }), node = openSync(process.execPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     descriptors.push(node);
     try {
@@ -1846,23 +1889,62 @@ function authenticateColdSpawnerChildCapabilityV1() {
       if (hash.digest("hex") !== bytesHash || readSync(node, buffer, 0, 1, offset) !== 0 || !sameColdFileMetadataV1(nodeStats, fstatSync(node, { bigint: true }))) fail("cold child Node bytes changed");
     } finally { closeSync(node); descriptors.splice(descriptors.indexOf(node), 1); }
     const helper = dispatch.helper as Record<string, unknown>;
-    const assertStable = () => {
+    let claimStarted = false;
+    let claim: Readonly<{ record: Readonly<Record<string, unknown>>; rootStats: BigIntStats; stats: BigIntStats; bytes: Buffer; descriptor: number; observeStartupOwnership: () => unknown }> | null = null;
+    const assertOriginalStable = () => {
       if (closed || closing) fail("cold child authentication is closed");
       for (const guard of guards) guard.assertStable();
-      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
-      const members = readColdDirectoryMembersV1(root, 2);
-      if (canonical(members.sort()) !== canonical(["dispatch.json", "intent.json"])) fail("cold child journal prefix is crossed");
+      const currentRoot = lstatSync(root, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => currentRoot[key as keyof BigIntStats] !== rootStats[key as keyof BigIntStats])
+        || (currentRoot.nlink !== rootStats.nlink && (!claimStarted || currentRoot.nlink !== rootStats.nlink + 1n))) fail("cold child original root changed");
       for (const [target, pin] of pinned) if (!pin.bytes.equals(readColdGenesisCandidateV1(target, pin.stats))) fail("cold child original authority changed");
       if (!sameColdFileMetadataV1(lockFile.stats, fstatSync(4, { bigint: true })) || !sameColdFileMetadataV1(dispatchFile.stats, fstatSync(5, { bigint: true }))
         || !sameColdFileMetadataV1(frameStats, fstatSync(3, { bigint: true })) || !frameBytes.equals(readInternalProductionSpawnerUntrustedInheritedFrameV1())) fail("cold child inherited descriptors changed");
-      for (const [target, stats] of directories) if (!sameColdFileMetadataV1(stats, lstatSync(target, { bigint: true }))) fail("cold child host ancestry changed");
+      // The launch profile commits physical host identities, not ownership of
+      // every sibling entry in shared host ancestors for this process lifetime.
+      for (const [target, stats] of directories) {
+        const current = lstatSync(target, { bigint: true });
+        if (!current.isDirectory() || current.isSymbolicLink()
+          || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => current[key as keyof BigIntStats] !== stats[key as keyof BigIntStats])) fail("cold child host ancestry changed");
+      }
+      // The original absence observation owns this directory chain. Own lock/PID
+      // publication may change directory counters, never these physical identities.
+      for (const pin of runtimeAncestors) for (const current of [lstatSync(pin.target, { bigint: true }), fstatSync(pin.descriptor, { bigint: true })]) {
+        if (!current.isDirectory() || current.isSymbolicLink()
+          || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => current[key as keyof BigIntStats] !== pin.stats[key as keyof BigIntStats])) fail("cold child original runtime ancestry changed");
+      }
       if (!sameColdFileMetadataV1(nodeStats, lstatSync(process.execPath, { bigint: true }))) fail("cold child Node changed");
-      const parent = boundedPsProcessIdentity(helper.pid as number), controller = boundedPsProcessIdentity(lock.pid as number);
-      const own = observeColdProcessParentGroupV1(process.pid), parentOwnership = observeColdProcessParentGroupV1(helper.pid as number), controllerOwnership = observeColdProcessParentGroupV1(lock.pid as number);
-      if (process.ppid !== helper.pid || parent?.processIdentityHash !== helper.processIdentityHash || controller?.processIdentityHash !== lock.processIdentityHash
-        || own.uid !== uid || own.ppid !== helper.pid || own.pgid !== process.pid || parentOwnership.uid !== uid || parentOwnership.ppid !== lock.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
+      const controller = boundedPsProcessIdentity(lock.pid as number), controllerOwnership = observeColdProcessParentGroupV1(lock.pid as number);
+      let originalParent = false;
+      try {
+        const parent = boundedPsProcessIdentity(helper.pid as number);
+        const parentOwnership = parent === null ? null : observeColdProcessParentGroupV1(helper.pid as number);
+        originalParent = parent?.processIdentityHash === helper.processIdentityHash && parentOwnership?.uid === uid && parentOwnership.ppid === lock.pid;
+      } catch (error) {
+        // A helper can disappear between the two read-only process probes.
+        // Only an owned claim and fresh proof of that exact PID's absence may
+        // select the one allowed parent transition; other probe errors refuse.
+        if (claim === null || boundedPsProcessIdentity(helper.pid as number) !== null) throw error;
+      }
+      const own = observeColdProcessParentGroupV1(process.pid);
+      originalParent = originalParent && process.ppid === helper.pid && own.ppid === helper.pid;
+      const departedParent = claim !== null && process.ppid === 1 && own.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
+      if ((!originalParent && !departedParent) || controller?.processIdentityHash !== lock.processIdentityHash
+        || own.uid !== uid || own.pgid !== process.pid || controllerOwnership.uid !== uid) fail("cold child live parent chain is crossed");
       for (const guard of guards) guard.assertStable();
-      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
+    };
+    const assertStable = () => {
+      assertOriginalStable();
+      if (claimStarted && claim === null) fail("cold child claim publication is uncertain");
+      const expectedRoot = claim?.rootStats ?? rootStats;
+      if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
+      const members = readColdDirectoryMembersV1(root, claim === null ? 2 : 3);
+      if (canonical(members.sort()) !== canonical(claim === null ? ["dispatch.json", "intent.json"] : ["claim.json", "dispatch.json", "intent.json"])) fail("cold child journal prefix is crossed");
+      if (claim !== null && (!sameColdFileMetadataV1(claim.stats, fstatSync(claim.descriptor, { bigint: true }))
+        || !claim.bytes.equals(readColdGenesisCandidateV1(path.join(root, "claim.json"), claim.stats)))) fail("cold child claim changed");
+      if (claim !== null && canonical(claim.observeStartupOwnership()) !== canonical(claim.record.startupFiles)) fail("cold child claimed startup ownership changed");
+      assertOriginalStable();
+      if (!sameColdFileMetadataV1(expectedRoot, lstatSync(root, { bigint: true }))) fail("cold child journal changed");
     };
     const source = profile.source as Record<string, string>, rootIdentity = profile.rootIdentity as { devDecimal: string; inoDecimal: string; uid: number };
     const output = { rootIdentity: { devDecimal: rootIdentity.devDecimal, inoDecimal: rootIdentity.inoDecimal, uid: rootIdentity.uid },
@@ -1870,11 +1952,80 @@ function authenticateColdSpawnerChildCapabilityV1() {
       outputTreeBytesHash: profile.outputTreeBytesHash as string, releaseManifestBytesHash: profile.releaseManifestBytesHash as string };
     const assertOutputStable = () => { assertStable(); verifyInternalProductionSpawnerLaunchOutputCandidateV1(output); assertStable(); };
     assertOutputStable();
-    return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, close });
+    const publishClaim = async () => {
+      assertOutputStable();
+      if (claimStarted) fail("cold child claim was already attempted");
+      claimStarted = true;
+      const main = await import("../spawner.js");
+      assertOriginalStable();
+      const ownership = main.observeInternalProductionColdSpawnerStartupOwnershipV1();
+      const runtime = (intent.coldObservation as Record<string, any>).spawnerAbsence.ancestors.at(-1).path as string;
+      if (ownership.pid !== process.pid || ownership.uid !== uid || ownership.singleton.path !== path.join(runtime, "spawner.lock")
+        || ownership.pidFile.path !== path.join(runtime, "spawner.pid") || ownership.singleton.uid !== uid || ownership.pidFile.uid !== uid
+        || ownership.singleton.mode !== 0o600 || ownership.pidFile.mode !== 0o600
+        || ownership.singleton.bytesHash !== sha256(`${process.pid}\n`) || ownership.pidFile.bytesHash !== sha256(String(process.pid))) fail("cold child startup ownership is crossed");
+      verifyInternalProductionSpawnerLaunchOutputCandidateV1(output);
+      assertOriginalStable();
+      if (!sameColdFileMetadataV1(rootStats, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, 2).sort()) !== canonical(["dispatch.json", "intent.json"])) fail("cold child pre-claim prefix changed");
+      const observedChild = boundedPsProcessIdentity(process.pid), processGroup = observeColdProcessParentGroupV1(process.pid);
+      if (!observedChild || processGroup.uid !== uid || processGroup.ppid !== helper.pid || processGroup.pgid !== process.pid) fail("cold child claim process is crossed");
+      const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-claim.v1", purpose: "exact-poison-sealed-cold-spawner-v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash,
+        epochRef: intent.epochRef, epochHash: intent.epochHash, genesisRef: intent.genesisRef, genesisHash: intent.genesisHash,
+        source: profile.source, profileHash: profile.profileHash, lockIdentity: intent.lockIdentity,
+        child: { ...observedChild, ...processGroup }, startupFiles: ownership, maximumClaimCount: 1 };
+      const claimHash = sha256(canonical(body));
+      const record = freezeColdDataV1({ ...body, claimRef: `setfarm://internal-production/cold-spawner-bootstrap-claim/sha256/${claimHash}`, claimHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("cold child claim exceeds its cap");
+      parseColdSpawnerBootstrapClaimV1(bytes, intent, dispatch);
+      if (canonical(main.observeInternalProductionColdSpawnerStartupOwnershipV1()) !== canonical(ownership)) fail("cold child startup ownership changed");
+      assertOriginalStable();
+      const target = path.join(root, "claim.json"), writer = openSync(target, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+      descriptors.push(writer);
+      const created = fstatSync(writer, { bigint: true });
+      if (!created.isFile() || created.nlink !== 1n || created.uid !== BigInt(uid) || created.size !== 0n || (created.mode & 0o7777n) !== 0o600n
+        || !sameColdFileMetadataV1(created, lstatSync(target, { bigint: true }))) fail("cold child claim creation changed");
+      writeFileSync(writer, bytes); fsyncSync(writer); fsyncParent(target);
+      const written = fstatSync(writer, { bigint: true });
+      if (written.dev !== created.dev || written.ino !== created.ino || written.uid !== created.uid || written.gid !== created.gid
+        || written.mode !== created.mode || written.birthtimeNs !== created.birthtimeNs || written.size !== BigInt(bytes.length)
+        || !bytes.equals(readColdGenesisCandidateV1(target, written))) fail("cold child claim publication changed");
+      const reader = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      descriptors.push(reader);
+      if (!sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("cold child claim reopen changed");
+      closeSync(writer); descriptors.splice(descriptors.indexOf(writer), 1);
+      if (canonical(main.observeInternalProductionColdSpawnerStartupOwnershipV1()) !== canonical(ownership)) fail("cold child startup ownership changed");
+      claim = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader, observeStartupOwnership: main.observeInternalProductionColdSpawnerStartupOwnershipV1 };
+      assertOutputStable();
+      return record;
+    };
+    return Object.freeze({ intent, dispatch, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable: assertOutputStable, publishClaim, close });
   } catch {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain unfinished pins without authenticating again. */ } }
     return fail("cold child authentication failed");
   }
+}
+
+function revokeColdSpawnerChildRuntimeV1(): void {
+  coldChildAuthenticationFailedV1 = true;
+  const authentication = coldChildAuthenticationV1;
+  if (!authentication) return;
+  const close = () => {
+    authentication.close();
+    if (coldChildAuthenticationV1 === authentication) coldChildAuthenticationV1 = null;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
+  try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain cleanup, never the grant. */ } }
+}
+
+export async function publishInternalProductionColdSpawnerBootstrapClaimV1() {
+  if (coldChildAuthenticationFailedV1 || coldChildAuthenticationV1 === null) fail("cold child claim authentication is unavailable");
+  try {
+    const record = await coldChildAuthenticationV1.publishClaim();
+    return Object.freeze({ claimRef: record.claimRef as string, claimHash: record.claimHash as string, close: revokeColdSpawnerChildRuntimeV1 });
+  } catch { revokeColdSpawnerChildRuntimeV1(); return fail("cold child claim publication is uncertain"); }
 }
 
 export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
@@ -1891,14 +2042,7 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
   }
   try { coldChildAuthenticationV1.assertStable(); }
   catch {
-    coldChildAuthenticationFailedV1 = true;
-    const authentication = coldChildAuthenticationV1;
-    const close = () => {
-      authentication.close();
-      if (coldChildAuthenticationV1 === authentication) coldChildAuthenticationV1 = null;
-      pendingColdHelperAuthenticationCleanupV1.delete(close);
-    };
-    try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); try { close(); } catch { /* Retain cleanup, never the grant. */ } }
+    revokeColdSpawnerChildRuntimeV1();
     return fail("cold child authentication is revoked");
   }
   const snapshot = { schema: "setfarm.internal-production-cold-child-runtime-snapshot.v1" };

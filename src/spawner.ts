@@ -4,7 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
-import { observeInternalProductionColdSpawnerBootstrapJournalCensusV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
+import { observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -404,6 +404,8 @@ let spawnerLockFd: number | null = null;
 type SpawnerStartupParentV1 = Readonly<{ path: string; identity: fs.BigIntStats }>;
 type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[] };
 const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
+let spawnerColdStartupPhaseV1: "idle" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
+let spawnerColdStartupStopV1: (() => void) | null = null;
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -539,6 +541,61 @@ function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void 
   fs.closeSync(owned.descriptor);
   spawnerStartupFilesV1.splice(spawnerStartupFilesV1.indexOf(owned), 1);
   if (spawnerLockFd === owned.descriptor) spawnerLockFd = null;
+}
+
+export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
+  if (!["claim-ready", "sealed"].includes(spawnerColdStartupPhaseV1) || !spawnerColdStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
+    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_COLD_STARTUP_OWNERSHIP_UNAVAILABLE");
+  const observe = (file: string, expectedBytes: Buffer, lock: boolean) => {
+    const physical = observeSpawnerStartupFileParentsV1(file).file;
+    const owned = spawnerStartupFilesV1.find((value) => value.file === physical);
+    if (!owned || !owned.identity || owned.unlinked || (lock && owned.descriptor !== spawnerLockFd) || !owned.bytes.equals(expectedBytes)) throw Error("SPAWNER_COLD_STARTUP_FILE_NOT_OWNED");
+    assertSpawnerStartupFileParentsV1(owned.parents);
+    const original = owned.identity;
+    const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+      && value.dev === original.dev && value.ino === original.ino && value.uid === original.uid && value.gid === original.gid
+      && value.mode === original.mode && value.size === original.size && value.birthtimeNs === original.birthtimeNs
+      && value.mtimeNs === original.mtimeNs && value.ctimeNs === original.ctimeNs;
+    const bytes = Buffer.alloc(expectedBytes.length + 1);
+    if (!same(fs.fstatSync(owned.descriptor, { bigint: true })) || !same(fs.lstatSync(physical, { bigint: true }))
+      || fs.readSync(owned.descriptor, bytes, 0, bytes.length, 0) !== expectedBytes.length || !bytes.subarray(0, expectedBytes.length).equals(expectedBytes)
+      || !same(fs.fstatSync(owned.descriptor, { bigint: true })) || !same(fs.lstatSync(physical, { bigint: true }))) throw Error("SPAWNER_COLD_STARTUP_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(owned.parents);
+    return Object.freeze({ path: physical, devDecimal: String(original.dev), inoDecimal: String(original.ino), uid: Number(original.uid), mode: Number(original.mode & 0o7777n),
+      byteLength: expectedBytes.length, bytesHash: crypto.createHash("sha256").update(expectedBytes).digest("hex") });
+  };
+  return Object.freeze({ schema: "setfarm.internal-production-cold-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
+    singleton: observe(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observe(PID_FILE, Buffer.from(String(process.pid)), false) });
+}
+
+async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
+  if (resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() === null) return false;
+  if (spawnerColdStartupPhaseV1 !== "idle" || spawnerStartupFilesV1.length !== 0) throw Error("SPAWNER_COLD_STARTUP_ALREADY_ENTERED");
+  let claim: Awaited<ReturnType<typeof publishInternalProductionColdSpawnerBootstrapClaimV1>> | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
+  try {
+    // Cold startup never reclaims an unbound predecessor lock or PID residue.
+    spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+    const stopped = new Promise<void>((resolve) => {
+      spawnerColdStartupStopV1 = () => { spawnerColdStartupPhaseV1 = "stopping"; resolve(); };
+      process.once("SIGTERM", spawnerColdStartupStopV1);
+      process.once("SIGINT", spawnerColdStartupStopV1);
+    });
+    keepAlive = setInterval(() => {}, 60_000);
+    spawnerColdStartupPhaseV1 = "claim-ready";
+    claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();
+    if (!["stopping"].includes(spawnerColdStartupPhaseV1)) spawnerColdStartupPhaseV1 = "sealed";
+    await stopped;
+    return true;
+  } finally {
+    spawnerColdStartupPhaseV1 = "closed";
+    if (keepAlive) clearInterval(keepAlive);
+    if (spawnerColdStartupStopV1) { process.removeListener("SIGTERM", spawnerColdStartupStopV1); process.removeListener("SIGINT", spawnerColdStartupStopV1); }
+    spawnerColdStartupStopV1 = null;
+    try { claim?.close(); } finally { releaseSpawnerSingletonLock(); }
+  }
 }
 
 function publishSpawnerPidFileV1(): void {
@@ -10801,6 +10858,7 @@ async function main() {
   });
 
   // Refusal-only preflight preserves any already-visible unsettled evidence.
+  if (await runInternalProductionColdSpawnerStartupV1()) return;
   observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
