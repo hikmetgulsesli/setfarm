@@ -8213,6 +8213,10 @@ function observeDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1):
   const plistPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${profile.label}.plist`);
   const parent = lstatSync(path.dirname(plistPath), { bigint: true });
   const observed = readStableRegular(plistPath, CURRENT_ENTRY_MAX_BYTES, parent.dev, 1);
+  return parseDetachedLaunchPlistV1(profile, observed);
+}
+
+function parseDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1, observed: Readonly<{ bytes: Buffer; stats: BigIntStats }>): Readonly<{ bytes: Buffer; stats: BigIntStats; environment: Readonly<Record<string, string>> }> {
   if ((Number(observed.stats.mode & 0o7777n) & 0o022) !== 0 || observed.stats.uid !== BigInt(process.getuid?.() ?? -1)) currentEntryFail(`${profile.label} plist ownership is invalid`);
   const converted = boundedChildText("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], `${profile.label} plist`, observed.bytes);
   let parsed: unknown;
@@ -8403,6 +8407,127 @@ function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: s
       entrypointBytesSha256: sha256(entryBefore.bytes), plistBytesSha256: sha256(plistBefore.bytes), launchProjectionHash: hashCanonicalJson(launchBefore) };
     return recursivelyFreeze({ ...body, absenceHash: hashCanonicalJson(body) });
   } finally { for (const pin of pins.reverse()) closeSync(pin.descriptor); }
+}
+
+// A read-only candidate, never launch authority. Only the authenticated cold
+// intent/dispatch protocol may authorize use of its runtime-only environment.
+export async function observeInternalProductionSpawnerLaunchProfileCandidateV1() {
+  const { projectInternalProductionSpawnerLaunchEnvironmentCandidateV1 } = await import("./baseline-spawner-launch-environment-v1.js");
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("launch profile UID is invalid");
+  const source = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const home = userInfo().homedir;
+  const repository = fixedRepositoryRoot();
+  const workspace = resolveInternalProductionBaselineWorkspaceRootV1();
+  const environmentDirectory = path.join(home, "ai", "setrox", "setfarm", "scripts");
+  const nodeExecutable = realpathSync(process.execPath);
+  const service = detachedSetfarmServiceProfileV1("com.setrox.setfarm-spawner");
+  const pins = new Map<string, { descriptor: number; stats: BigIntStats }>();
+  const identity = (stats: BigIntStats) => ({ devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) });
+  const metadata = (stats: BigIntStats) => [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].join(":");
+  const assertPins = () => {
+    for (const [target, pin] of pins) {
+      if (realpathSync(target) !== target || metadata(lstatSync(target, { bigint: true })) !== metadata(pin.stats)
+        || metadata(fstatSync(pin.descriptor, { bigint: true })) !== metadata(pin.stats)) currentEntryFail("launch profile ancestor changed");
+    }
+  };
+  const pinDirectory = (target: string, nodeAncestry = false) => {
+    if (pins.has(target)) return;
+    if (path.dirname(target) !== target) pinDirectory(path.dirname(target), nodeAncestry);
+    if (realpathSync(target) !== target) currentEntryFail("launch profile ancestor is not physical");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    let stats: BigIntStats;
+    try { stats = fstatSync(descriptor, { bigint: true }); } catch (error) { closeSync(descriptor); throw error; }
+    pins.set(target, { descriptor, stats });
+    // The actual Darwin Homebrew Cellar is admin-group writable. Record that
+    // existing host dependency; do not relax private/source/env root guards.
+    // A consumer must match this exact identity/mode/gid, never rebaseline it.
+    const trustedNodeAdminGroup = nodeAncestry && process.platform === "darwin" && stats.gid === 80n;
+    if (!stats.isDirectory() || (stats.uid !== 0n && stats.uid !== BigInt(uid!))
+      || (stats.mode & (trustedNodeAdminGroup ? 0o002n : 0o022n)) !== 0n) currentEntryFail("launch profile ancestor ownership is invalid");
+    assertPins();
+  };
+  // Fixed-size positional reads bound allocation even if the same inode grows.
+  const read = (target: string, cap: number, requiredMode?: number) => {
+    const before = lstatSync(target, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || before.uid !== BigInt(uid!) || before.nlink !== 1n
+      || before.size < 0n || before.size > BigInt(cap) || (before.mode & 0o022n) !== 0n
+      || (requiredMode !== undefined && (before.mode & 0o7777n) !== BigInt(requiredMode))) currentEntryFail("launch profile file is invalid");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      if (metadata(fstatSync(descriptor, { bigint: true })) !== metadata(before)) currentEntryFail("launch profile file changed before read");
+      const bytes = Buffer.alloc(Number(before.size));
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(descriptor, bytes, offset, Math.min(64 * 1024, bytes.length - offset), offset);
+        if (count < 1) currentEntryFail("launch profile file read is partial");
+        offset += count;
+      }
+      if (readSync(descriptor, Buffer.alloc(1), 0, 1, offset) !== 0 || metadata(fstatSync(descriptor, { bigint: true })) !== metadata(before)
+        || metadata(lstatSync(target, { bigint: true })) !== metadata(before)) currentEntryFail("launch profile file changed during read");
+      return { bytes, stats: before };
+    } finally { closeSync(descriptor); }
+  };
+  const environmentPaths = [path.join(environmentDirectory, ".env"), path.join(environmentDirectory, ".env.local")] as const;
+  const observeFiles = () => environmentPaths.map((target) => {
+    try { lstatSync(target, { bigint: true }); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    return read(target, 256 * 1024);
+  });
+  const artifactPaths = ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"] as const;
+  try {
+    for (const target of [home, workspace, repository, environmentDirectory, path.join(repository, "dist"), path.join(home, "Library", "LaunchAgents")]) pinDirectory(target);
+    pinDirectory(path.dirname(nodeExecutable), true);
+    for (const target of [home, workspace, repository, environmentDirectory]) if (pins.get(target)!.stats.uid !== BigInt(uid!)) currentEntryFail("launch profile root ownership is invalid");
+    const node = read(nodeExecutable, 256 * 1024 * 1024);
+    if ((node.stats.mode & 0o111n) === 0n) currentEntryFail("launch profile Node is not executable");
+    const plistPath = path.join(home, "Library", "LaunchAgents", `${service.label}.plist`);
+    const plist = parseDetachedLaunchPlistV1(service, read(plistPath, CURRENT_ENTRY_MAX_BYTES));
+    const launch = observeDetachedLaunchProjectionV1(service, uid!);
+    for (const [key, value] of Object.entries(plist.environment)) if (launch.environment[key] !== value) currentEntryFail("launch profile loaded environment is crossed");
+    const artifacts = artifactPaths.map((name) => read(path.join(repository, "dist", name), MAX_BUILD_FILE_BYTES_V1, 0o444));
+    const files = observeFiles();
+    const candidate = projectInternalProductionSpawnerLaunchEnvironmentCandidateV1({
+      HOME: home, LANG: "C", LC_ALL: "C", PATH: plist.environment.PATH!, SETFARM_ENV_DIR: environmentDirectory,
+      SETFARM_PG_URL: plist.environment.SETFARM_PG_URL!, SETFARM_REPO_DIR: repository,
+    }, [files[0]?.bytes ?? null, files[1]?.bytes ?? null]);
+    const sourceAfter = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+    const filesAfter = observeFiles();
+    const artifactsAfter = artifactPaths.map((name) => read(path.join(repository, "dist", name), MAX_BUILD_FILE_BYTES_V1, 0o444));
+    const nodeAfter = read(nodeExecutable, 256 * 1024 * 1024);
+    const plistAfter = parseDetachedLaunchPlistV1(service, read(plistPath, CURRENT_ENTRY_MAX_BYTES));
+    const launchAfter = observeDetachedLaunchProjectionV1(service, uid!);
+    if (canonicalComparable(sourceAfter) !== canonicalComparable(source) || realpathSync(process.execPath) !== nodeExecutable
+      || !sameStableRegularV1(node, nodeAfter) || !sameStableRegularV1(plist, plistAfter)
+      || canonicalComparable(launch) !== canonicalComparable(launchAfter)
+      || artifacts.some((entry, index) => !sameStableRegularV1(entry, artifactsAfter[index]!))
+      || files.some((entry, index) => entry === null ? filesAfter[index] !== null : filesAfter[index] === null || !sameStableRegularV1(entry, filesAfter[index]!))) currentEntryFail("launch profile inputs changed");
+    assertPins();
+    const body = {
+      schema: "setfarm.internal-production-spawner-launch-profile.v1" as const,
+      source, uid, home, workspace, repository, rootIdentity: identity(pins.get(repository)!.stats),
+      hostDirectories: [...pins].map(([target, pin]) => ({ path: target, ...identity(pin.stats) })),
+      executable: { path: nodeExecutable, ...identity(node.stats), bytesHash: sha256(node.bytes) },
+      arguments: [service.entrypoint], cwd: repository, environmentDirectory,
+      buildInfoBytesHash: sha256(artifacts[0]!.bytes), outputTreeBytesHash: sha256(artifacts[1]!.bytes), releaseManifestBytesHash: sha256(artifacts[2]!.bytes),
+      plistBytesHash: sha256(plist.bytes), loadedLaunchProjectionHash: hashCanonicalJson(launch),
+      environmentHash: candidate.environmentHash,
+      environmentFiles: files.map((entry, index) => entry === null ? { path: environmentPaths[index]!, state: "absent" as const }
+        : { path: environmentPaths[index]!, state: "present" as const, ...identity(entry.stats), bytesHash: sha256(entry.bytes) }),
+    };
+    const profile = recursivelyFreeze({ ...body, profileHash: hashCanonicalJson(body) });
+    // JSON/spread of the observation must never persist credentials. Plaintext
+    // is available only to the private inherited-descriptor transport.
+    const result = { profile } as { readonly profile: typeof profile; readonly environment: typeof candidate.environment };
+    Object.defineProperty(result, "environment", { value: candidate.environment, enumerable: false, writable: false, configurable: false });
+    return Object.freeze(result);
+  } catch {
+    currentEntryFail("launch profile observation failed");
+  } finally {
+    for (const pin of [...pins.values()].reverse()) closeSync(pin.descriptor);
+  }
 }
 
 function observeServiceProcessV1(

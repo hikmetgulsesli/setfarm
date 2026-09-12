@@ -46,8 +46,8 @@ const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-test
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
 function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
-  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1"];
-  assert.equal(names.length, 55, "cold recovery adds exactly the two fixed read-only ports");
+  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1"];
+  assert.equal(names.length, 56, "cold recovery adds exactly the three fixed read-only ports");
   assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
   const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
   assert.equal(historical.length, 53);
@@ -15602,8 +15602,9 @@ function runFixtureExpressionAsync(root: string, expression: string): Promise<Re
   });
 }
 
-function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" = "ordinary"): ReturnType<typeof spawnSync> {
+function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" | "launch-profile" = "ordinary"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
+  if (mode === "launch-profile") assert.ok(source.includes("export async function observeInternalProductionSpawnerLaunchProfileCandidateV1()"), "real launch profile candidate is not implemented");
   const start = source.indexOf("type DetachedSetfarmServiceLabelV1 =");
   const end = source.indexOf("\nfunction observeServiceProcessV1(", start);
   assert.notEqual(start, -1, "detached service production slice must exist");
@@ -15650,9 +15651,17 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
   }
   if (fault === "dead_lock") writeFileSync(path.join(singletonRoot, "spawner.lock"), "2147483647\n", { mode: 0o644 });
   if (fault === "pid_symlink") { writeFileSync(path.join(fixtureHome, "other.pid"), "2147483647"); symlinkSync(path.join(fixtureHome, "other.pid"), path.join(singletonRoot, "spawner.pid")); }
+  if (mode === "launch-profile") {
+    const scripts = path.join(fixtureHome, "ai/setrox/setfarm/scripts");
+    mkdirSync(scripts, { recursive: true, mode: 0o700 });
+    fixtureFile(scripts, ".env", fault === "profile_injection" ? "NODE_OPTIONS=fixture-sensitive-value\n" : "TEST_FLAG=fixture-sensitive-value\n", 0o600);
+    if (fault === "profile_env_symlink") { unlinkSync(path.join(scripts, ".env")); symlinkSync(path.join(canonicalRoot, "dist/spawner.js"), path.join(scripts, ".env")); }
+    for (const name of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"]) fixtureFile(canonicalRoot, `dist/${name}`, `{"fixture":"${name}"}\n`, 0o444);
+    fixtureFile(root, "baseline-spawner-launch-environment-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-spawner-launch-environment-v1.ts")));
+  }
   const harness = String.raw`
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync as realRealpathSync, symlinkSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync as realReadFileSync, readSync as realReadSync, realpathSync as realRealpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import path from "node:path";
 const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432, PHYSICAL_PROCESS_CAP_V1=4096;
@@ -15660,6 +15669,11 @@ type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
 const fault=process.env.FAULT??"none";
 const mode=process.env.MODE??"ordinary";
+let profileReadBytes=0, profileGrew=false;
+function isProfilePlistRead(target:string|number){if(fault!=="profile_plist_growth")return false;const file=path.join(userInfo().homedir,"Library/LaunchAgents/com.setrox.setfarm-spawner.plist");if(typeof target==="string")return target===file;return fstatSync(target,{bigint:true}).ino===lstatSync(file,{bigint:true}).ino}
+function growProfilePlist(target:string|number){const match=isProfilePlistRead(target);if(match&&!profileGrew){profileGrew=true;writeFileSync(path.join(userInfo().homedir,"Library/LaunchAgents/com.setrox.setfarm-spawner.plist"),Buffer.alloc(1048577,32))}return match}
+function readFileSync(target:string|number){const match=growProfilePlist(target);const bytes=realReadFileSync(target);if(match)profileReadBytes+=bytes.length;return bytes}
+function readSync(fd:number,buffer:Buffer,offset:number,length:number,position:number){const match=growProfilePlist(fd);const count=realReadSync(fd,buffer,offset,length,position);if(match)profileReadBytes+=count;return count}
 if(fault==="pid_permission_denied")process.kill=((pid,signal)=>{if(pid!==2147483647||signal!==0)throw new Error("unexpected process signal");throw Object.assign(new Error("denied"),{code:"EPERM"})}) as typeof process.kill;
 let activeLabel="", scan=0, launchScan=0;
 function realpathSync(target:string){if(mode==="cold"&&fault==="cli_drift"&&scan>0&&target.endsWith("/.local/bin/setfarm"))return fixedRepositoryRoot()+"/dist/spawner.js";return realRealpathSync(target)}
@@ -15667,6 +15681,16 @@ function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUC
 function strictUtf8(bytes:Buffer,label:string){const value=bytes.toString("utf8");if(!Buffer.from(value,"utf8").equals(bytes))currentEntryFail(label);return value}
 function fixedRepositoryRoot(){return process.env.CANONICAL_ROOT!}
 function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
+function resolveInternalProductionBaselineWorkspaceRootV1(){return path.join(userInfo().homedir,"ai/setrox")}
+let sourceScans=0;
+function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){
+  if(sourceScans++===1){const file=path.join(userInfo().homedir,"ai/setrox/setfarm/scripts/.env.local");
+    if(fault==="profile_env_appears"||fault==="profile_env_aba")writeFileSync(file,"LOCAL=fixture-sensitive-value\n",{mode:0o600});
+    if(fault==="profile_env_aba")unlinkSync(file);
+    if(fault==="profile_env_write")writeFileSync(path.join(path.dirname(file),".env"),"TEST_FLAG=changed-sensitive-value\n");
+  }
+  return {branch:"main",clean:true,sha:fault==="profile_source_drift"&&sourceScans>1?"d".repeat(40):"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64),originMainSha:"a".repeat(40)};
+}
 function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const d=Object.getOwnPropertyDescriptor(value as object,key);if(d&&"value" in d)recursivelyFreeze(d.value)}Object.freeze(value)}return value}
 function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const r=value as Record<string,unknown>;return "{"+Object.keys(r).sort().map(k=>JSON.stringify(k)+":"+canonicalComparable(r[k])).join(",")+"}"}
 function compareBytes(a:string,b:string){return Buffer.compare(Buffer.from(a),Buffer.from(b))}
@@ -15702,8 +15726,11 @@ function observeProcessListenersV1(pid:number){if(activeLabel.endsWith("spawner"
 ${slice}
 const label=process.env.LABEL as DetachedSetfarmServiceLabelV1;
 const source=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
-const result=mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);
-process.stdout.write(JSON.stringify(result)+"\n");
+if(mode==="launch-profile"){
+  observeInternalProductionSpawnerLaunchProfileCandidateV1().then(result=>process.stdout.write(JSON.stringify({...result,
+    environmentInstalled:result.environment.TEST_FLAG==="fixture-sensitive-value",
+    plaintextLeaked:JSON.stringify(result).includes("fixture-sensitive-value")||JSON.stringify(result).includes("postgresql://fixture/setfarm")})+"\n")).catch(error=>{process.stderr.write(error.message+(fault==="profile_plist_growth"?"\nprofile-read-bytes:"+profileReadBytes:""));process.exitCode=7});
+}else{const result=mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);process.stdout.write(JSON.stringify(result)+"\n");}
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
@@ -15714,6 +15741,7 @@ process.stdout.write(JSON.stringify(result)+"\n");
       env: { ...process.env, LABEL: label, FAULT: fault, MODE: mode, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
     });
     if (mode === "cold") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "cold absence leaf must not mutate PID/lock or any fixture files");
+    if (mode === "launch-profile" && fault === "none") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "launch profile candidate must remain read-only");
     return result;
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -17555,6 +17583,29 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "complete cold bracket must write no files, records, locks or inode changes");
       assert.deepEqual(filesystemTreeSnapshot(original.store), original.originalSnapshot);
     } finally { rmSync(path.dirname(root), { recursive: true, force: true }); }
+  });
+
+  it("real launch profile brackets source and secret inputs without serializing plaintext", () => {
+    const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", "none", "launch-profile");
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.profile.schema, "setfarm.internal-production-spawner-launch-profile.v1");
+    assert.equal(value.environmentInstalled, true);
+    assert.equal(value.plaintextLeaked, false);
+    assert.equal(value.profile.environmentFiles[1].state, "absent");
+    assert.equal(value.profile.source.sha, "a".repeat(40));
+    assert.match(value.profile.profileHash, /^[a-f0-9]{64}$/);
+    const growing = runDetachedServiceHarness("com.setrox.setfarm-spawner", "profile_plist_growth", "launch-profile");
+    assert.notEqual(growing.status, 0);
+    const readBytes = /profile-read-bytes:(\d+)/.exec(String(growing.stderr));
+    assert.ok(readBytes, growing.stderr);
+    assert.ok(Number(readBytes[1]) > 0 && Number(readBytes[1]) <= 1048576, "a growing plist must not be read beyond the explicit cap");
+    for (const fault of ["profile_source_drift", "profile_env_appears", "profile_env_aba", "profile_env_write", "profile_env_symlink", "profile_injection", "launch_environment", "plist_args"]) {
+      const refused = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "launch-profile");
+      assert.notEqual(refused.status, 0, fault);
+      assert.equal(refused.stdout, "");
+      assert.ok(!String(refused.stderr).includes("fixture-sensitive-value"), "secret input must not enter diagnostics");
+    }
   });
 
   it("cold spawner absence authenticates all-root processes and read-only singleton residue", () => {
@@ -39949,7 +40000,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)]
       .map((match) => match[1]);
-    assert.deepEqual(runtimeExports, [
+    assert.deepEqual(assertColdRecoveryRuntimeExportContractV1(runtimeExports), [
       "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
       "resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1",
       "observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1",
@@ -40012,6 +40063,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(source, /spawnSync\("\/usr\/bin\/git"/);
     const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
     assert.deepEqual(imports.filter((specifier) => specifier.startsWith(".")), [
+      "./baseline-workspace-authority-path-v1.js",
+      "./baseline-workspace-authority-path-v1.js",
+      "../findings/legacy-finding-publication-inventory-v1.js",
+      "../findings/legacy-finding-publication-inventory-v1.js",
+      "../findings/finding-publication-v1.js",
       "../product-compiler/canonical-json.js",
       "../db/contract-spine-migration-digests.generated.js",
       "../db/contract-spine-migration-source-integrity.js",

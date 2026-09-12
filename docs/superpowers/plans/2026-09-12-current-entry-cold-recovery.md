@@ -268,6 +268,38 @@ ownership. The added private evidence must remain transitively authenticated.
 
 ### Detached launch environment refinement
 
+The real zero-argument launch-profile candidate now brackets the existing full
+six-field clean-source observer, fixed plist/loaded job, Node executable, three
+build authority files and the two fixed scripts environment files. All paths
+are physically directory-FD pinned; full within-observation metadata catches
+absent-file create/delete ABA. Positional file reads bound allocation (256KiB
+per env file, 1MiB plist, existing32MiB build authority cap, separate256MiB Node
+cap). Publishable data contains commitments only; the immutable plaintext
+environment is a non-enumerable runtime-only property. This observation neither
+publishes authority nor launches a process. Its third read-only export expands
+the current surface to56 while the ordered historical53/type26 hashes remain
+unchanged. The previously stale active-source boundary fixture now uses that
+same additive contract instead of directly requiring53.
+
+Actual host evidence: Node is UID501/GID80 mode0555, while its Homebrew Cellar
+ancestor is UID501/GID80 mode0775. No permissions were changed. The evidence-only
+Node ancestry policy trusts Darwin's administrative group80, rejecting world
+write and foreign directory ownership; all private/source/env ancestors retain
+no022. Every ancestor and executable commitment includes dev/ino/uid/gid/mode.
+Helper/child must match the original commitment, not rebaseline drift. This is
+an explicit administrative-host trust dependency, not protection against a
+malicious administrator racing pathname execution or an authority-root exception.
+
+The missing producer first failed its new behavior test. Profile negatives
+cover source drift, environment appearance/create-delete ABA/same-inode writes,
+symlinks, forbidden loader variables and crossed loaded/plist configuration;
+JSON/spread does not expose fixture secrets. Independent review found that the
+existing plist reader could read beyond its cap after same-inode growth. The
+real-filesystem regression reproduced1048577 bytes read against a1MiB cap;
+the profile now supplies bounded positional bytes to the unchanged plist parser.
+Focused profile/ordinary service/cold absence/import/source-boundary6/6 passed
+(22.505s), TypeScript passed. No live service or database mutation occurred.
+
 Static imports consume runtime configuration before `spawner.main`, so the
 authenticated detached transport needs a cycle-free environment leaf, not a
 late replacement of `process.env`. Add
