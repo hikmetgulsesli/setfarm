@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeConfig } from "./runtime-config.js";
 import { requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
+import { LEGACY_FINDING_PUBLICATION_MAX_SETS_V1, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1 } from "./findings/legacy-finding-publication-inventory-v1.js";
 import {
   applyBootstrapMainClaimHandoffGuardedMigration32V1,
   applyContractSpineMigrationsIfNeeded,
@@ -584,6 +585,84 @@ export type InternalProductionPostManifestOwnerCensusSnapshotV1 = Readonly<{
  * listener and worktree counts remain receipt-owned so both physical passes
  * can bracket this one repeatable-read snapshot.
  */
+async function observePostManifestFindingPublicationOwnersV1(
+  sql: InternalProductionPgTransactionSql,
+  openIssueCount: number,
+): Promise<number> {
+  const parents = await sql<FindingPublicationParentRowV1[]>`
+    SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+           source_sha,source_tree_hash,finding_ids,payload
+      FROM finding_sets ORDER BY finding_set_hash LIMIT 4097
+  `;
+  const children = await sql<FindingPublicationChildRowV1[]>`
+    SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+      FROM findings ORDER BY finding_set_hash,finding_id LIMIT 65537
+  `;
+  const sidecars = await sql<OwnerReservationRowV1[]>`
+    SELECT * FROM internal_production_owner_reservations_v1
+     WHERE category='finding' ORDER BY owner_key,reservation_ref LIMIT 4097
+  `;
+  const fail = (): never => { throw new Error("INTERNAL_PRODUCTION_COMPLETE_FINDING_PUBLICATION_CORRUPTION"); };
+  if (parents.length > LEGACY_FINDING_PUBLICATION_MAX_SETS_V1
+    || children.length > LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1
+    || sidecars.length > LEGACY_FINDING_PUBLICATION_MAX_SETS_V1
+    || children.filter((child) => child.status === "open").length !== openIssueCount) fail();
+  const members = new Map<string, FindingPublicationChildRowV1[]>();
+  const owners = new Map<string, OwnerReservationRowV1[]>();
+  for (const parent of parents) {
+    if (members.has(parent.finding_set_hash)) fail();
+    members.set(parent.finding_set_hash, []);
+    owners.set(parent.finding_set_hash, []);
+  }
+  for (const child of children) {
+    const group = members.get(child.finding_set_hash);
+    if (!group) return fail();
+    group.push(child);
+  }
+  for (const row of sidecars) {
+    const group = owners.get(row.owner_key);
+    if (!group || row.state !== "closed" || !FINDING_OWNER_IMPLEMENTATION_IDS_V1.some((id) => id === row.producer_implementation_id)) return fail();
+    group.push(row);
+  }
+  if (parents.length === 0) return 0;
+  const headRows = await sql<OwnerAdmissionHeadRowV1[]>`
+    SELECT head_version,head_hash,active_fence_ref,active_fence_hash,active_target_family_hash,
+           migration_application_evidence_hash,head_payload
+      FROM internal_production_owner_admission_head_v1 WHERE singleton=TRUE
+  `;
+  if (headRows.length !== 1 || !headRows[0]) fail();
+  const head = await validateCurrentInternalProductionOwnerAdmissionHeadV1(sql, headRows[0]!);
+  const ancestry = await validateOwnerAdmissionAncestryToGenesisV1(sql, head.hash, head.version, head.migrationApplication);
+  for (const parent of parents) {
+    const publication = requireFindingPublicationV1(parent, members.get(parent.finding_set_hash)!);
+    const matching = owners.get(publication.findingSetHash)!;
+    if (matching.length === 0) {
+      // Missing modern ownership is not proof of legacy provenance.
+      throw new Error("INTERNAL_PRODUCTION_LEGACY_FINDING_PROVENANCE_UNAVAILABLE");
+    }
+    if (matching.length !== 1) fail();
+    const row = matching[0]!;
+    const reservation = await resolveOwnerReservationInTransactionV1(sql, {
+      reservationRef: row.reservation_ref, reservationHash: row.reservation_hash,
+    }, false);
+    const bound = validateInternalProductionBoundOwnerReservationV1(row.binding_payload);
+    const close = validateInternalProductionOwnerReservationCloseV1(row.close_payload);
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({ findingSetHash: publication.findingSetHash });
+    const terminalOwnerHash = hashCanonicalJson({ schema: "setfarm.internal-production-finding-terminal-owner.v1",
+      findingSetHash: publication.findingSetHash, status: "published" });
+    if (reservation.category !== "finding" || reservation.ownerKey !== publication.findingSetHash
+      || !sameJsonValueV1(bound.canonicalOwnerIdentity, identity)
+      || close.terminalOwnerRef !== `${identity.ownerRef}/terminal/published`
+      || close.terminalOwnerHash !== terminalOwnerHash
+      || ancestry.filter(({ version, authority }) => version === Number(row.head_version)
+        && authority.authority_kind === "close" && authority.authority_ref === row.close_ref
+        && authority.authority_hash === row.close_hash
+        && authority.predecessor_head_hash === row.close_head_predecessor_hash
+        && authority.successor_head_hash === row.close_head_successor_hash).length !== 1) fail();
+  }
+  return 0;
+}
+
 export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1(
 ): Promise<InternalProductionPostManifestOwnerCensusSnapshotV1> {
   return getSql().begin("isolation level repeatable read read only", async (rawSql) => {
@@ -719,6 +798,7 @@ export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1
     if (openRows.length !== 0 || reservationIdentities.length !== 0 || ownerIdentities.length !== 0 || [...categoryCounts.values()].some((count) => count !== 0)) {
       throw new Error("INTERNAL_PRODUCTION_COMPLETE_OWNER_SIDECAR_NONZERO");
     }
+    const findingOwnerCount = await observePostManifestFindingPublicationOwnersV1(sql, parseCount("findingOwnerCount"));
     const sidecarCensus = Object.fromEntries(
       INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1.flatMap((category) => (
         INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1[category].map((key) => [key, categoryCounts.get(category) ?? 0])
@@ -736,7 +816,7 @@ export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1
       publicationBatchCount: parseCount("publicationBatchCount"),
       artifactPublicationCount: parseCount("artifactPublicationCount"),
       terminationOwnerCount: parseCount("terminationOwnerCount"),
-      findingOwnerCount: parseCount("findingOwnerCount"),
+      findingOwnerCount,
       recoveryOwnerCount: parseCount("recoveryOwnerCount"),
       operationalDeliveryCount: parseCount("operationalDeliveryCount"),
     });

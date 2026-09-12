@@ -8622,6 +8622,25 @@ test("finding terminal projection authenticates complete published content, not 
   assert.equal(Object.isFrozen(inventory.entries[0]), true);
 });
 
+test("post32 finding census refuses closed sidecars without publications before authority lookup", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("async function observePostManifestFindingPublicationOwnersV1(");
+  const end = source.indexOf("export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1(", start);
+  assert.ok(start >= 0 && end > start);
+  const executable = transformSync(source.slice(start, end), { loader: "ts", target: "es2022" }).code;
+  const observe = Function("LEGACY_FINDING_PUBLICATION_MAX_SETS_V1", "LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1", "FINDING_OWNER_IMPLEMENTATION_IDS_V1", `${executable}\nreturn observePostManifestFindingPublicationOwnersV1;`)(4096, 65536, ["a-finding-recovery-repository-v1"]);
+  const rows = [{ state: "closed", owner_key: SHA_A, producer_implementation_id: "a-finding-recovery-repository-v1" }];
+  let calls = 0;
+  await assert.rejects(observe(async (query: TemplateStringsArray) => {
+    calls += 1;
+    assert.doesNotMatch(query.join("?"), /FOR UPDATE|INSERT|DELETE|UPDATE/);
+    if (query.join("?").includes("FROM finding_sets") || query.join("?").includes("FROM findings")) return [];
+    assert.match(query.join("?"), /FROM internal_production_owner_reservations_v1/);
+    return rows;
+  }, 0), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  assert.equal(calls, 3);
+});
+
 test("P3 authority transfer preserves private directory modes under host umask", () => {
   const temporary = mkdtempSync(path.join(tmpdir(), "setfarm-p3-copy-mode-"));
   const previousUmask = process.umask(0o022);

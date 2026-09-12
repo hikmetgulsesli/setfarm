@@ -400,3 +400,22 @@ passed. Whole-branch delivery and live recovery remain pending.
   immutable-publication regression passed (5.103s). A newly added modern post32
   closed-publication census regression is running with the remaining owning
   repository suite; classify its exact failure before implementing post32.
+- Modern post32 RED completed: 14 tests, 13 pass, exact closed-publication
+  census assertion failed `1 !== 0`; schema31 regression and all 12 existing
+  repository tests passed. All disposable databases were dropped.
+- `src/db-pg.ts` now authenticates bounded complete finding publications and
+  bidirectional modern sidecars within the existing read-only snapshot. It
+  validates reservation/binding/close history without lock-taking terminal
+  resolvers, compares the unchanged published terminal-owner pair, and requires
+  the close edge in authenticated current-head ancestry. Global pending/bound
+  refusal remains. Unreserved publication still fails closed until the separate
+  legacy migration-provenance reader is implemented.
+- The additional negative fixture initially attempted an immutable update and
+  was correctly refused by `ARTIFACT_IDENTITY_IMMUTABLE`; no guard was disabled.
+  It now seeds a distinct malformed publication at birth. A valid older head
+  also fails census adoption of the later close, then restores exact bytes.
+  Final real PostgreSQL suite passed 14/14 (122.512s), including unchanged
+  issue/publication/sidecar/head snapshots; all test DBs were dropped.
+  Actual private-function orphan-sidecar and pure boundary checks passed 4/4;
+  source manifest passed 16/16 (5.980s), TypeScript passed, diff check passed.
+  This modern-classification slice does not yet grant legacy post32 exemptions.

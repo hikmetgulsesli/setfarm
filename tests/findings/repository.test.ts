@@ -10,6 +10,7 @@ import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidenc
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { createFindingSetV1, type FindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { validateCurrentInternalProductionOwnerAdmissionHeadV1 } from "../../src/internal-production/owner-admission-head-v1.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
@@ -190,6 +191,80 @@ it("legacy schema31 census authenticates terminal published findings without mut
     rmSync(fixture, { recursive: true, force: true });
     await database.cleanup();
   }
+});
+
+it("post32 census excludes authenticated closed modern finding publication without mutating issues", async () => {
+  const database = await createIsolatedTestDatabase();
+  try {
+    const { db, sql } = database;
+    const initial = await db.observeInternalProductionPostManifestOwnerCensusSnapshotV1();
+    assert.ok(Object.values(initial.census).every((count) => count === 0));
+    const value = structuredFindingSet();
+    await sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: "a-runtime-run-v1", ownerKey: value.runId,
+      });
+      await transaction`INSERT INTO runs (id,workflow_id,task,status) VALUES (${value.runId},'feature-dev','closed publication census','completed')`;
+      await db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef, reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(value.runId),
+      });
+      const { runOwnerReservationRef, runOwnerReservationHash, ...terminal } = await db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(transaction, { runId: value.runId });
+      await db.closeInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: runOwnerReservationRef, reservationHash: runOwnerReservationHash, ...terminal,
+      });
+    });
+    const beforePublicationHead = (await sql`SELECT * FROM internal_production_owner_admission_head_v1`)[0]!;
+    assert.equal((await createFindingRecoveryRepository(sql).putFindingSet(value)).status, "inserted");
+    const owners = await sql<Array<{ state: string; producer_implementation_id: string; close_ref: string; close_hash: string }>>`
+      SELECT state,producer_implementation_id,close_ref,close_hash FROM internal_production_owner_reservations_v1
+       WHERE category='finding' AND owner_key=${value.findingSetHash}
+    `;
+    assert.equal(owners.length, 1);
+    assert.equal(owners[0]!.state, "closed");
+    assert.equal(owners[0]!.producer_implementation_id, "a-finding-recovery-repository-v1");
+    await sql.begin(async (transaction) => {
+      await db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(transaction, { findingSetHash: value.findingSetHash });
+      await db.resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction, { closeRef: owners[0]!.close_ref, closeHash: owners[0]!.close_hash });
+    });
+    const snapshot = async () => ({
+      parents: [...await sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      owners: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`],
+      head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1`],
+    });
+    const before = await snapshot();
+    assert.equal(before.children[0]!.status, "open");
+    const census = await db.observeInternalProductionPostManifestOwnerCensusSnapshotV1();
+    assert.deepEqual(await snapshot(), before);
+    assert.equal(census.census.findingOwnerCount, 0);
+    assert.ok(Object.values(census.census).every((count) => count === 0));
+    // A self-consistent older head cannot adopt a close from another branch.
+    await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${beforePublicationHead.head_version},head_hash=${beforePublicationHead.head_hash},head_payload=${sql.json(beforePublicationHead.head_payload)} WHERE singleton=TRUE`;
+    await sql.begin(async (transaction) => {
+      const head = (await transaction`SELECT * FROM internal_production_owner_admission_head_v1`)[0]!;
+      await validateCurrentInternalProductionOwnerAdmissionHeadV1(transaction, head as Parameters<typeof validateCurrentInternalProductionOwnerAdmissionHeadV1>[1]);
+    });
+    await assert.rejects(db.observeInternalProductionPostManifestOwnerCensusSnapshotV1(), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+    const currentHead = before.head[0]!;
+    await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${currentHead.head_version},head_hash=${currentHead.head_hash},head_payload=${sql.json(currentHead.head_payload)} WHERE singleton=TRUE`;
+    assert.deepEqual(await snapshot(), before);
+    // Existing publications are immutable. Seed a different malformed birth in
+    // this disposable database; never disable the immutable update/delete guard.
+    const malformed = structuredFindingSet(HASH_C, "US-CENSUS-CORRUPT");
+    await sql`
+      INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload)
+      VALUES (${malformed.findingSetHash},${malformed.findingSetId},${malformed.runId},${malformed.storyId},${malformed.packetHash},${malformed.sliceHash},
+        ${malformed.sourceRevision.sha},${malformed.sourceRevision.treeHash},${sql.json(malformed.findings.map((finding) => finding.findingId))},${sql.json(malformed)})
+    `;
+    for (const finding of malformed.findings) {
+      await sql`
+        INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${malformed.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},${finding.status},${HASH_F},${sql.json(finding)})
+      `;
+    }
+    await assert.rejects(db.observeInternalProductionPostManifestOwnerCensusSnapshotV1(), /FINDING_PUBLICATION_INVALID/);
+  } finally { await database.cleanup(); }
 });
 
 describe("finding, evidence, and recovery repository", () => {
