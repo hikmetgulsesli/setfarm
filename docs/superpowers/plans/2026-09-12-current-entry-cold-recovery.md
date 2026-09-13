@@ -52,13 +52,13 @@ quarantine admission/publication fences, and post-visible pinned replay.
 V2 disposition, and refusal of new public prerequisite publication in the
 unrecovered exact-poison store. Ordinary selection still returns current pairs.
 
-- [ ] Add a disposable two-generation fixture using the existing original-store
+- [x] Add a disposable two-generation fixture using the existing original-store
   and overlay helpers: settle the two admitted historical records, advance the
   fixture source, derive a different current pair, and invoke real admission.
   The behavioral assertion is `assert.equal(result.outcome, "returned")` plus
   independent assertions that successor pairs are the new current pair and
   original bytes/identities remain unchanged.
-- [ ] Run the narrow test before implementation:
+- [x] Run the narrow test before implementation:
 
   ```bash
   node --import tsx --test --test-name-pattern='historical prerequisite cold recovery' tests/internal-production/baseline-post-handoff-receipt-v1.test.ts
@@ -66,23 +66,23 @@ unrecovered exact-poison store. Ordinary selection still returns current pairs.
 
   Expected initial failure: foreign/unexpected historical shard, not a harness
   setup or Git error. Capture the failure in the local progress ledger.
-- [ ] Read only the two spec-authorized exact historical locators. Authenticate
+- [x] Read only the two spec-authorized exact historical locators. Authenticate
   using existing canonical/schema/Git/migration parsers and strict stable
   content-path reads. Keep current descriptor count exactly two. Merge only the
   validated physical inventory for topology checks; never merge selection.
-- [ ] Bind positive historical records and parent/file identities in a separate
+- [x] Bind positive historical records and parent/file identities in a separate
   hashed inventory in strict V2 disposition. Keep V1 zero-history resolver
   behavior. Direct-pin that inventory on cold replay and include it in every
   held-admission/publication stability fence.
-- [ ] Refuse public prerequisite publication into the unrecovered known-poison
+- [x] Refuse public prerequisite publication into the unrecovered known-poison
   store before any prerequisite directory/file creation. Private no-write
   builders and selected successor publishers remain available.
-- [ ] Add genuine behavior negatives: valid but unallowlisted history, changed
+- [x] Add genuine behavior negatives: valid but unallowlisted history, changed
   bytes/hash, missing file, file/parent replacement, symlink/hardlink/mode/device
   violation, crossed current/history equality and response-loss replay.
-- [ ] Run the focused history, existing overlay and committed replay groups;
+- [x] Run the focused history, existing overlay and committed replay groups;
   report exact command/results. Run `npx tsc --noEmit` and `git diff --check`.
-- [ ] Root reviews the two-file diff and obtains independent scoped review before
+- [x] Root reviews the two-file diff and obtains independent scoped review before
   treating this slice as complete. Do not claim live recovery from this slice.
 
 ## Task 1B: Repair bootstrap authority prerequisites
@@ -121,8 +121,9 @@ locator/publication module must enter the owning literal File Maps and source
   membership. Test modern missing-sidecar refusal, crossed/missing members,
   pending/bound ownership and proper closed modern publication. Do not use
   timestamps or modify/backfill live finding/reservation rows.
-- [ ] Obtain scoped review of each stable slice; capture focused RED/GREEN
-  evidence and type checks before combined transport integration.
+- [x] Obtain scoped review of the storage, finding-inventory and epoch-genesis
+  prerequisite slices; focused RED/GREEN and type-check evidence is recorded
+  below. Combined transport/full-P3 acceptance remains Task 4.
 
 ### Task 1B implementation map
 
@@ -577,6 +578,64 @@ whole-file claim. Manifest17/17 (7.148s), ordinary/refused/inert imports3/3
 (2.828s), TypeScript no-emit and whitespace checks also passed. No live mutation,
 DB action, direct child launch, full receipt/P3 acceptance or Task6A completion.
 
+Next direct-child boundary (same retirement/test File Map,27 exports): keep
+synchronous inherited configuration authentication separate from asynchronous
+startup admission. FD3 binds the original spawn dispatch; FD4 is the controller
+lease and FD5 its original read-only spawn dispatch. Pin fixed intent, termination
+records, epoch, host/Node/output and actual helper/controller/child parent chain.
+Split structural termination parsing from independent P3 binding; never synthesize
+a P3 observation for the synchronous path. After configuration, resolve original
+immutable P3/startup/source evidence under those original pins before any singleton,
+PID, claim, readiness, DB or provider effect. A changed selected latest token must
+not substitute for the original intent's content-addressed token. Keep the actual
+spawner startup/claim implementation as the next coupled step; its eventual
+zero-argument asynchronous context factory supplies the necessary admission seam,
+not another configuration-only grant or cold authority exception.
+
+The real launch-environment leaf exposed a causal input bug: its frozen
+null-prototype dictionary was rejected by the direct evidence consumer's
+Object.prototype-only check. Reproduce with the actual leaf (not structuredClone
+of its result), accept only null/Object.prototype, and retain the arbitrary
+prototype negative. RED reproduced `direct rebind environment is crossed`;
+shared-kernel and genuine helper focused checks then passed2/2 (16.227s).
+Same retirement/test File Map; no new file, public export or runtime override.
+
+The private direct-child configuration/admission slice now retains original
+FD3/4/5, exact three-member dispatch prefix, original intent/termination/epoch
+readers, physical host/Node/output and the live parent chain. Async admission
+resolves independent original P3 and token evidence before any startup effect.
+The genuine three-process fixture begins without secret/PG environment values;
+FD-only configuration and original admission passed1/1 (5.936s). An early refused
+admission regression then proved a missing ordinary-fallback fence (RED: missing
+expected exception); permanently failed direct-child state now refuses at the
+shared configuration dispatcher before any ordinary selection. Negative gates
+are in progress; do not count this as actual spawner-main/claim or full P3 proof.
+
+Direct-child configuration/admission checkpoint: the full retirement file ran
+to completion,83/84 passed (607.006s). Its sole failure expected the old disabled
+direct-child branch's error text; the actual new authenticator correctly refused
+the unauthenticated frame. Update only that expectation. The failed test plus
+the three direct-child groups then passed4/4 (36.726s), including crossed P3/token,
+same-byte intent replacement, concurrent admission, revocation during await,
+early ordinary fallback refusal and borrowed FD4/5 survival. This is not a new
+84/84 whole-file run. Manifest17/17 (5.609s), ordinary/refused/inert imports3/3
+(2.601s), TypeScript no-emit and whitespace checks passed. Independent final
+scoped review found no remaining must-fix. Runtime exports remain27.
+
+Epoch authority here binds original content through its exact epoch pair, then
+pins the child-observed inode. It does not claim the child inherited the
+controller's epoch inode. Subsequent effect wiring must retain the parent's
+original epoch checks through dispatch and completion. The next coupled slice
+connects actual spawner startup/claim; helper execution, controller settlement,
+downstream V2 production and complete release remain pending. No live mutation,
+DB/schema action, full receipt/P3, clean-main rollout or Task6A acceptance occurred.
+
+Ledger reconciliation at this checkpoint marks only previously proven scoped
+work complete: Task1 (`cf34ae9a`), prerequisite reviews, startup ownership
+(`fe137081`), exact cold PID residue (`fff4af81`), cold release/settlement and
+V1/V2 predecessor binding (`49eaaccb`). Split mixed cold/direct requirements so
+the unfinished direct lifecycle and every Task4 live/combined gate remain open.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
@@ -614,6 +673,13 @@ integrity authority.
 **Produces:** A truthful versioned transport chain shared by cold bootstrap and
 pre-schema rebind, with no caller-controlled PID/executable/argv.
 
+Cold chain implementation is complete at its scoped checkpoints. Direct intent,
+termination, helper authentication and spawn dispatch are implemented; the direct
+child configuration/admission checkpoint is under verification. Actual direct
+startup/claim, fixed-helper launch, controller settlement, downstream evidence
+and terminal release remain required. Broad boxes below intentionally stay open
+until both lifecycle variants satisfy the complete requirement.
+
 - [ ] In a disposable real-child fixture reproduce that a watcher restart leaves
   the detached predecessor alive. Assert a replacement requires the old identity
   to be terminal and the new identity to be different; the old helper must fail
@@ -630,8 +696,10 @@ pre-schema rebind, with no caller-controlled PID/executable/argv.
   duplicate intent/claim, process appearance, ignoring termination, and every
   pre/post-effect response-loss boundary. Lost spawn acknowledgement adopts only
   a real matching claim, otherwise retains a blocked fence without redispatch.
-- [ ] Extend physical-lease release/dead-owner reclamation to the separate cold
+- [x] Extend physical-lease release/dead-owner reclamation to the separate cold
   journal. Prove incomplete dispatch cannot become an unfenced zero-owner state.
+- [ ] Complete the distinct direct-rebind terminal release/dead-owner relation;
+  a partial direct dispatch must retain its original fence without redispatch.
 - [ ] Independently review the kernel before integrating live authority producers.
 
 ## Task 3: Integrate real cold spawner and controlled rebind
@@ -642,18 +710,20 @@ sealed cold process, followed by genuine ordinary operation-bound rebind.
 
 - [ ] Add a fixture with no spawner and prove old preparation fails at the
   four-service census. Keep the public four-service observer unchanged.
-- [ ] Add private three-service absence/physical/phase/read-only DB observation,
+- [x] Add private three-service absence/physical/phase/read-only DB observation,
   including all-root daemon-family and launcher/singleton checks. Repeat
   decisive observations under the shared physical lease before dispatch.
-- [ ] Handle inherited cold capability after singleton acquisition but before
-  any ordinary admission/poison lookup. Register stop handlers before claiming
+- [x] Authenticate inherited cold configuration, then acquire the singleton and
+  enter cold startup before any ordinary admission/poison lookup. Register stop handlers before claiming
   readiness. Prove no migration, initialization, listener, reconciliation or
   producer runs in that branch.
-- [ ] Publish controller-observed cold settlement only after a real process
+- [x] Publish controller-observed cold settlement only after a real process
   claim and independent identity observation. Phase-zero must count incomplete
   cold work and authenticate settled work as the actual persistent spawner.
-- [ ] Integrate cold recovery before ordinary prepare; use the new truthful
-  detached rebind transport for the genuine prepared predecessor. A cold token
+- [x] Route exact-poison prepare/resume preselection through authenticated cold
+  recovery before ordinary preparation (`6c37dc4a`).
+- [ ] Connect the complete direct-detached rebind for the genuine prepared
+  predecessor after recovery. A cold token
   cannot authorize ordinary replacement or a second process.
 - [ ] Update Task 6A order to prepare/recover before public current-prerequisite
   publication. Update owning File Maps and all impacted source projections.
@@ -702,6 +772,10 @@ do not convert absence into authority or immutable issue status into active
 ownership. The added private evidence must remain transitively authenticated.
 
 ## Progress ledger — 2026-09-12
+
+Historical checkpoint notes follow. Later entries supersede contemporaneous
+"pending" or "unfinished" statements; scoped historical passes do not prove
+combined P3, clean-main rollout or live Task 6A acceptance.
 
 ### Cold intent publication and retained controller lifetime
 
@@ -888,30 +962,30 @@ Separate creation/stale-reclamation authority from exact-own cleanup before
 connecting the cold claim. Retain the existing byte formats: lock `pid + "\n"`,
 PID `String(pid)`, and the real fixed `.openclaw/setfarm` paths.
 
-- [ ] Add a real copied-main failure test with an incomplete cold journal and
+- [x] Add a real copied-main failure test with an incomplete cold journal and
   forbidden ordinary-admission/provider/DB sentinels. Assert no journal or
   foreign startup-file change. Add exact-owned cleanup tests with same-byte
   replacement inodes, symlinks, foreign dead PIDs, partial writes and repeated
   cleanup. The real created descriptor count must return to zero.
-- [ ] Introduce a private `OwnedSpawnerStartupFileV1` carrying the created FD,
+- [x] Introduce a private `OwnedSpawnerStartupFileV1` carrying the created FD,
   fixed path, original inode/owner/mode and exact bytes, plus unlink/close phase.
   `createOwnedSpawnerStartupFileV1` uses exclusive no-follow creation and retains
   the FD immediately. `closeOwnedSpawnerStartupFileV1` may unlink only the exact
   owned inode/bytes, records unlink before close, and retains failed closes.
   Foreign replacements are preserved; cleanup never invokes stale reclamation.
-- [ ] Ordinary acquisition may reclaim only a bounded no-follow regular
+- [x] Ordinary acquisition may reclaim only a bounded no-follow regular
   single-link owner file containing a canonical nonself PID, with fresh explicit
   `ESRCH` and original inode/bytes rechecked immediately before unlink. `EPERM`,
   ambiguous liveness, malformed bytes and replaced paths refuse. Cold lock
   acquisition will never reclaim a predecessor lock.
-- [ ] Route sealed, normal, error and fatal cleanup through exact-own state.
+- [x] Route sealed, normal, error and fatal cleanup through exact-own state.
   Perform the mandatory strict cold-journal census after actual singleton/PID
   publication and before `resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1`.
   A refusal-only preflight before ordinary file mutation must also preserve an
   already known unsettled journal's startup evidence; it grants no admission and
   cannot replace the post-protection census. The later authenticated cold branch
   is separate and cannot be selected by an environment marker alone.
-- [ ] Run the actual-main and ownership negatives, gateway recovery tests,
+- [x] Run the actual-main and ownership negatives, gateway recovery tests,
   TypeScript no-emit, exact source inventory and whitespace checks; obtain
   independent review before committing. No live launch follows from this slice.
 
@@ -994,7 +1068,7 @@ does not create an ESM initialization deadlock.
   depending on incidental imported-module event-loop handles. Test signal
   during the awaited observer import, replay, crossed startup-file ownership,
   publication faults and real detached lifetime.
-- [ ] Preserve the admitted stale-dead-PID compatibility case: its eventual
+- [x] Preserve the admitted stale-dead-PID compatibility case: its eventual
   consumption must bind the exact retained cold absence evidence under the
   actual singleton. An absent-only first connected fixture is not full cold
   case coverage and cannot remove that remaining requirement from acceptance.
@@ -1329,9 +1403,11 @@ authenticated predecessor, without fabricating a four-service census member.
   projections, drift across await, same-controller response-loss adoption,
   release only after authenticated terminal, and historical resolution after
   the exact disposable child exits while live admission refuses it.
-- [ ] Bind the settlement through a strict versioned cold-predecessor variant
+- [x] Bind the settlement through a strict versioned cold-predecessor variant
   of existing `preMutationLoadedRuntimeServiceAuthority`, preserving historical
-  V1 resolution. Run unchanged phase/DB/physical gates after settlement; no
+  V1 resolution (`49eaaccb`, final predecessor-integration ledger below).
+- [ ] Run unchanged phase/DB/physical gates after settlement in the combined
+  cold-to-direct-rebind acceptance; no
   synthetic zero-owner assertion is part of the transport terminal itself.
 
 Core ordering:

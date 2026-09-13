@@ -248,6 +248,9 @@ let coldChildAuthenticationFailedV1 = false;
 let directHelperAuthenticationV1: Awaited<ReturnType<typeof authenticateDirectSpawnerHelperIntentV1>> | null = null;
 let directHelperAuthenticationFailedV1 = false;
 let directHelperAuthenticationActiveV1 = false;
+let directChildAuthenticationV1: ReturnType<typeof authenticateDirectSpawnerChildCapabilityV1> | null = null;
+let directChildAuthenticationFailedV1 = false;
+let directChildAdmissionAttemptedV1 = false;
 let abandonedAcquireV1: Readonly<{ descriptor: number; lockBytes: Buffer }> | null = null;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PAIR_REF = /^setfarm:\/\/internal-production\/[a-z0-9-]+\/sha256\/[a-f0-9]{64}$/;
@@ -880,8 +883,8 @@ function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string
 
 // Resolves evidence only. The caller still needs a retained, one-shot dispatch
 // owner; neither this data nor an existing durable intent permits an effect.
-function parseDirectSpawnerTerminationChainV1(
-  dispatchBytes: Buffer, receiptBytes: Buffer, originalIntent: Readonly<Record<string, unknown>>, preMutation: Readonly<Record<string, unknown>>,
+function parseDirectSpawnerTerminationRecordsV1(
+  dispatchBytes: Buffer, receiptBytes: Buffer, originalIntent: Readonly<Record<string, unknown>>,
 ) {
   const intent = parseDirectSpawnerRebindIntentV1(Buffer.from(`${canonical(originalIntent)}\n`));
   const parse = (bytes: Buffer, keys: readonly string[], stem: string, domain: string) => {
@@ -906,16 +909,11 @@ function parseDirectSpawnerTerminationChainV1(
     || identity[5] !== "1" || identity[6] !== String(Buffer.byteLength(`${canonical(intent)}\n`))) fail("direct termination intent identity is invalid");
   coldHashV1(dispatch.serviceCensusHash, "direct termination service census");
   const target = coldRecordV1(dispatch.target, ["uid", "pid", "ppid", "pgid", "stat", "lstart", "command", "processStartTimeEpochMs", "processIdentityHash"], "direct termination target");
-  const predecessor = preMutation.spawner as Record<string, unknown>;
-  if (!predecessor || typeof predecessor !== "object" || Array.isArray(predecessor)
-    || ["Ref", "Hash"].some(suffix => preMutation[`preMutationLoadedRuntimeServiceAuthority${suffix}`] !== (intent.preMutationLoadedRuntimeServiceAuthority as Record<string, unknown>)[`preMutationLoadedRuntimeServiceAuthority${suffix}`])) fail("direct termination original P3 is crossed");
   if (!Number.isSafeInteger(target.pid) || (target.pid as number) < 1 || target.pid === controller.pid || target.uid !== profile.uid
     || target.ppid !== 1 || target.pgid !== target.pid || typeof target.lstart !== "string" || target.lstart.length !== 24
     || !Number.isSafeInteger(target.processStartTimeEpochMs) || (target.processStartTimeEpochMs as number) < 1 || Date.parse(target.lstart) !== target.processStartTimeEpochMs
     || target.processIdentityHash !== sha256(`${target.pid}\n${target.lstart}\n`) || typeof target.stat !== "string" || !/^[A-Za-z+<>]{1,16}$/.test(target.stat) || /[ZE]/.test(target.stat)
-    || target.command !== `${profile.executable.path} ${profile.arguments[0]}`
-    || ["pid", "processStartTimeEpochMs", "processIdentityHash"].some(key => target[key] !== predecessor[key])
-    || predecessor.processOwnerCount !== 1 || predecessor.listener !== null) fail("direct termination historical target is crossed");
+    || target.command !== `${profile.executable.path} ${profile.arguments[0]}`) fail("direct termination historical target is crossed");
   const predecessorHash = sha256(canonical({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: target.pid, processStartTimeEpochMs: target.processStartTimeEpochMs, processIdentityHash: target.processIdentityHash }));
   if (canonical(intent.predecessorSpawnerProcessIdentity) !== canonical({ predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`, predecessorSpawnerProcessIdentityHash: predecessorHash })
     || canonical(receipt.predecessorSpawnerProcessIdentity) !== canonical(intent.predecessorSpawnerProcessIdentity)
@@ -926,6 +924,18 @@ function parseDirectSpawnerTerminationChainV1(
   // Bytes prove historical relations only. Consumers must pin original files,
   // authenticate their issuer and freshly observe absence before any new grant.
   return freezeColdDataV1({ dispatch, receipt });
+}
+
+function parseDirectSpawnerTerminationChainV1(
+  dispatchBytes: Buffer, receiptBytes: Buffer, originalIntent: Readonly<Record<string, unknown>>, preMutation: Readonly<Record<string, unknown>>,
+) {
+  const history = parseDirectSpawnerTerminationRecordsV1(dispatchBytes, receiptBytes, originalIntent);
+  const predecessor = preMutation.spawner as Record<string, unknown>, target = history.dispatch.target as Record<string, unknown>;
+  if (!predecessor || typeof predecessor !== "object" || Array.isArray(predecessor)
+    || ["Ref", "Hash"].some(suffix => preMutation[`preMutationLoadedRuntimeServiceAuthority${suffix}`] !== (originalIntent.preMutationLoadedRuntimeServiceAuthority as Record<string, unknown>)[`preMutationLoadedRuntimeServiceAuthority${suffix}`])
+    || ["pid", "processStartTimeEpochMs", "processIdentityHash"].some(key => target[key] !== predecessor[key])
+    || predecessor.processOwnerCount !== 1 || predecessor.listener !== null) fail("direct termination original P3 is crossed");
+  return history;
 }
 
 async function resolveDirectSpawnerRebindInputsUnderLeaseV1(
@@ -1014,7 +1024,7 @@ async function resolveDirectSpawnerRebindEvidenceV1(
       || startup.task0SpawnerSourceSha !== source.sha || startup.task0SpawnerTreeHash !== source.treeHash || startup.task0SpawnerBuildHash !== source.buildHash
       || authorization.cleanSetfarmSourceSha !== source.sha || authorization.cleanSetfarmTreeHash !== source.treeHash || authorization.cleanSetfarmBuildHash !== source.buildHash) fail("direct rebind source relation is crossed");
     const environment = candidate.environment;
-    if (!environment || typeof environment !== "object" || Array.isArray(environment) || Object.getPrototypeOf(environment) !== Object.prototype
+    if (!environment || typeof environment !== "object" || Array.isArray(environment) || (Object.getPrototypeOf(environment) !== null && Object.getPrototypeOf(environment) !== Object.prototype)
       || Reflect.ownKeys(environment).some(key => typeof key !== "string") || Object.values(environment).some(value => typeof value !== "string")
       || profile.environmentHash !== sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`)) fail("direct rebind environment is crossed");
     const finalPreMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1({ operationRef: operation.operationRef, operationHash: operation.operationHash }); assertStable();
@@ -3773,6 +3783,194 @@ function resolveDirectSpawnerHelperRuntimeSnapshotV1() {
   return Object.freeze({ environment: directHelperAuthenticationV1.environment });
 }
 
+// Configuration authentication is synchronous: importing runtime-config must
+// never invent an independent P3 observation or enter the startup lifecycle.
+function authenticateDirectSpawnerChildCapabilityV1() {
+  const guards: PrivateDirectoryGuardV1[] = [];
+  type Pin = PrivateFrameDescriptorV1 & { target: string; bytes: Buffer | null };
+  const pins: Pin[] = [];
+  let closing = false;
+  const close = () => {
+    closing = true;
+    let failure: unknown = null;
+    for (const pin of pins) try { closePrivateFrameDescriptorV1(pin); } catch (error) { failure ??= error; }
+    for (let index = guards.length - 1; index >= 0; index--) {
+      try { guards[index]!.close(); guards.splice(index, 1); } catch (error) { failure ??= error; }
+    }
+    if (failure !== null) throw failure;
+    pendingColdHelperAuthenticationCleanupV1.delete(close);
+  };
+  try {
+    const repository = repositoryRoot(), entry = path.join(repository, "dist/spawner.js");
+    if (process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== entry || process.cwd() !== repository
+      || fileURLToPath(import.meta.url) !== path.join(repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js")) fail("direct child compiled entry is crossed");
+    const frameIdentity = fstatSync(3, { bigint: true }), frameBytes = readInternalProductionSpawnerUntrustedInheritedFrameV1();
+    const frame = coldRecordV1(JSON.parse(frameBytes.toString("utf8")), ["schema", "dispatchRef", "dispatchHash", "dispatchIdentity", "lockIdentity", "environment", "nonce"], "direct child frame");
+    if (frame.schema !== "setfarm.internal-production-pre-schema-spawner-direct-rebind-child-capability.v1"
+      || !frameBytes.equals(Buffer.from(`${canonical(frame)}\n`)) || !sameColdFileMetadataV1(frameIdentity, fstatSync(3, { bigint: true }))) fail("direct child frame is crossed");
+    coldHashV1(frame.nonce, "direct child nonce");
+    const paths = rootPaths(), root = path.join(paths.root, "direct-spawner-rebind-v1");
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root));
+    const rootIdentity = lstatSync(root, { bigint: true });
+    const inherited = (descriptor: number, target: string, maximum: number) => {
+      const identity = fstatSync(descriptor, { bigint: true });
+      if (identity.size > BigInt(maximum) || !sameColdFileMetadataV1(identity, lstatSync(target, { bigint: true }))) fail("direct child inherited identity is crossed");
+      const bytes = readColdGenesisCandidateV1(target, identity);
+      if (!sameColdFileMetadataV1(identity, fstatSync(descriptor, { bigint: true }))) fail("direct child inherited identity changed");
+      return { identity, bytes };
+    };
+    const lockFile = inherited(4, paths.lock, 65_536), dispatchFile = inherited(5, path.join(root, "spawn-dispatch.json"), 65_536);
+    const lock = parseLockRecord(lockFile.bytes);
+    const dispatch = coldRecordV1(JSON.parse(dispatchFile.bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "intentIdentity", "terminationReceiptRef", "terminationReceiptHash", "terminationReceiptIdentity", "terminationDispatchIdentity", "controller", "helper", "lockIdentity", "action", "maximumSpawnDispatchCount", "dispatchRef", "dispatchHash"], "direct child spawn dispatch");
+    if (!dispatchFile.bytes.equals(Buffer.from(`${canonical(dispatch)}\n`)) || dispatch.schema !== "setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1"
+      || dispatch.purpose !== "operation-bound-pre-schema-spawner-rebind-v1" || dispatch.maximumSpawnDispatchCount !== 1
+      || dispatch.dispatchRef !== `setfarm://internal-production/pre-schema-spawner-direct-spawn-dispatch/sha256/${coldHashV1(dispatch.dispatchHash, "direct child dispatch")}`
+      || frame.dispatchRef !== dispatch.dispatchRef || frame.dispatchHash !== dispatch.dispatchHash
+      || canonical(frame.dispatchIdentity) !== canonical(coldFileIdentityTupleV1(dispatchFile.identity))) fail("direct child dispatch binding is crossed");
+    coldSelfHashV1(dispatch, "dispatchHash", ["dispatchRef"]);
+    const readPinned = (target: string, expected: unknown, maximum: number) => {
+      const pin: Pin = { descriptor: openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null, target, bytes: null, closeEntered: false };
+      pins.push(pin); pin.identity = fstatSync(pin.descriptor!, { bigint: true });
+      if (pin.identity.size > BigInt(maximum) || (expected !== undefined && canonical(coldFileIdentityTupleV1(pin.identity)) !== canonical(expected))) fail("direct child original publication identity is crossed");
+      pin.bytes = readColdGenesisCandidateV1(target, pin.identity);
+      if (!sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor!, { bigint: true }))) fail("direct child original reader changed");
+      return pin.bytes;
+    };
+    const intentBytes = readPinned(paths.journal, dispatch.intentIdentity, 1_048_576), intent = parseDirectSpawnerRebindIntentV1(intentBytes);
+    const terminationDispatchBytes = readPinned(path.join(root, "termination-dispatch.json"), dispatch.terminationDispatchIdentity, 65_536);
+    const terminationReceiptBytes = readPinned(path.join(root, "termination-receipt.json"), dispatch.terminationReceiptIdentity, 65_536);
+    const history = parseDirectSpawnerTerminationRecordsV1(terminationDispatchBytes, terminationReceiptBytes, intent);
+    const epochBytes = readPinned(paths.epoch, undefined, 65_536), epoch = assertEpochOneActive();
+    const profile = intent.launchProfile as Record<string, any>;
+    if (!epochBytes.equals(Buffer.from(`${canonical(epoch)}\n`)) || (intent.epoch as Record<string, unknown>).epochRef !== epoch.epochRef
+      || (intent.epoch as Record<string, unknown>).epochHash !== epoch.epochHash || canonical(lock) !== canonical(intent.transitionLock)
+      || canonical(intent.lockIdentity) !== canonical(descriptorIdentity(4)) || canonical(frame.lockIdentity) !== canonical(intent.lockIdentity)
+      || canonical(dispatch.lockIdentity) !== canonical(intent.lockIdentity) || sha256(frame.nonce as string) !== intent.nonceHash
+      || dispatch.intentRef !== intent.intentRef || dispatch.intentHash !== intent.intentHash
+      || canonical(history.dispatch.intentIdentity) !== canonical(dispatch.intentIdentity) || canonical(dispatch.controller) !== canonical(history.dispatch.controller)
+      || dispatch.terminationReceiptRef !== history.receipt.terminationReceiptRef || dispatch.terminationReceiptHash !== history.receipt.terminationReceiptHash
+      || profile.repository !== repository || profile.cwd !== process.cwd() || profile.executable.path !== process.execPath
+      || canonical(dispatch.action) !== canonical({ transport: "direct-detached-node-v1", executable: process.execPath, arguments: [entry], cwd: repository, detached: true })) fail("direct child original authority chain is crossed");
+    const helper = coldRecordV1(dispatch.helper, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid"], "direct child helper");
+    if (!Number.isSafeInteger(helper.pid) || (helper.pid as number) < 1 || helper.pid === lock.pid || helper.pid === process.pid
+      || helper.uid !== profile.uid || helper.ppid !== lock.pid || typeof helper.lstart !== "string" || helper.lstart.length !== 24
+      || !Number.isSafeInteger(helper.processStartTimeEpochMs) || (helper.processStartTimeEpochMs as number) < 1 || Date.parse(helper.lstart) !== helper.processStartTimeEpochMs
+      || helper.command !== `${process.execPath} ${path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js")}`
+      || helper.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: helper.pid, processStartTimeEpochMs: helper.processStartTimeEpochMs, lstart: helper.lstart, command: helper.command }))) fail("direct child helper identity is crossed");
+    const environment = frame.environment as Record<string, unknown>;
+    if (!environment || typeof environment !== "object" || Array.isArray(environment) || Object.keys(environment).length > 1024
+      || Buffer.byteLength(canonical(environment)) > 524_288) fail("direct child environment shape is invalid");
+    for (const [key, value] of Object.entries(environment)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || typeof value !== "string" || value.includes("\0") || Buffer.byteLength(value) > 65_536
+        || /^(?:NODE_|DYLD_|LD_|SETFARM_TEST_|SETFARM_INTERNAL_PRODUCTION_)/.test(key) || ["SETFARM_SKIP_RUNTIME_GUARD", "SETFARM_ALLOW_DIRTY_BUILD"].includes(key)) fail("direct child environment is invalid");
+    }
+    for (const key of ["HOME", "LANG", "LC_ALL", "PATH", "SETFARM_ENV_DIR", "SETFARM_PG_URL", "SETFARM_REPO_DIR"]) if (!environment[key]) fail("direct child base environment is absent");
+    if (profile.environmentHash !== sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`)
+      || environment.HOME !== profile.home || environment.SETFARM_REPO_DIR !== repository || environment.SETFARM_ENV_DIR !== profile.environmentDirectory
+      || environment.LANG !== "C" || environment.LC_ALL !== "C") fail("direct child environment commitment is crossed");
+    const metadata = (stats: BigIntStats) => ({ devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) });
+    const directories = new Map<string, BigIntStats>();
+    for (const directory of profile.hostDirectories as Array<Record<string, any>>) {
+      const stats = lstatSync(directory.path, { bigint: true }), { path: target, ...expected } = directory;
+      if (!stats.isDirectory() || stats.isSymbolicLink() || canonical(metadata(stats)) !== canonical(expected)) fail("direct child physical host identity is crossed");
+      directories.set(target, stats);
+    }
+    const nodePin: Pin = { descriptor: openSync(process.execPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null, target: process.execPath, bytes: null, closeEntered: false };
+    pins.push(nodePin); nodePin.identity = fstatSync(nodePin.descriptor!, { bigint: true });
+    const { path: nodePath, bytesHash, ...nodeExpected } = profile.executable, nodeStats = nodePin.identity;
+    if (nodePath !== process.execPath || !nodeStats.isFile() || nodeStats.isSymbolicLink() || nodeStats.nlink !== 1n || nodeStats.size < 1n || nodeStats.size > 268_435_456n
+      || canonical(metadata(nodeStats)) !== canonical(nodeExpected) || !sameColdFileMetadataV1(nodeStats, lstatSync(process.execPath, { bigint: true }))) fail("direct child physical Node identity is crossed");
+    const hash = createHash("sha256"), buffer = Buffer.alloc(65_536);
+    let offset = 0;
+    while (offset < Number(nodeStats.size)) {
+      const count = readSync(nodePin.descriptor!, buffer, 0, Math.min(buffer.length, Number(nodeStats.size) - offset), offset);
+      if (count < 1) fail("direct child Node read is partial");
+      hash.update(buffer.subarray(0, count)); offset += count;
+    }
+    if (hash.digest("hex") !== bytesHash || readSync(nodePin.descriptor!, buffer, 0, 1, offset) !== 0) fail("direct child Node bytes are crossed");
+    const ownIdentity = boundedPsProcessIdentity(process.pid);
+    if (!ownIdentity) fail("direct child own process identity is absent");
+    const assertOriginalStable = () => {
+      if (closing) fail("direct child authentication is closed");
+      for (const guard of guards) guard.assertStable();
+      if (process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== entry || process.cwd() !== repository
+        || !sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child entry or journal changed");
+      for (const [descriptor, target, original] of [[4, paths.lock, lockFile], [5, path.join(root, "spawn-dispatch.json"), dispatchFile]] as const) {
+        const current = inherited(descriptor, target, 65_536);
+        if (!sameColdFileMetadataV1(original.identity, current.identity) || !original.bytes.equals(current.bytes)) fail("direct child inherited authority changed");
+      }
+      for (const pin of pins) if (pin.descriptor === null || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+        || (pin === nodePin ? !sameColdFileMetadataV1(pin.identity, lstatSync(pin.target, { bigint: true })) : !pin.bytes!.equals(readColdGenesisCandidateV1(pin.target, pin.identity)))) fail("direct child original publication changed");
+      if (!sameColdFileMetadataV1(frameIdentity, fstatSync(3, { bigint: true })) || !frameBytes.equals(readInternalProductionSpawnerUntrustedInheritedFrameV1())) fail("direct child original private frame changed");
+      for (const [target, original] of directories) {
+        const current = lstatSync(target, { bigint: true });
+        if (!current.isDirectory() || current.isSymbolicLink() || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])) fail("direct child physical host identity changed");
+      }
+      const controller = boundedPsProcessIdentity(lock.pid as number), parent = boundedPsProcessIdentity(helper.pid as number);
+      const controllerOwner = observeColdProcessParentGroupV1(lock.pid as number), parentOwner = observeColdProcessParentGroupV1(helper.pid as number), ownOwner = observeColdProcessParentGroupV1(process.pid);
+      if (!controller || controller.processStartTimeEpochMs !== lock.processStartTimeEpochMs || controller.processIdentityHash !== lock.processIdentityHash
+        || controllerOwner.uid !== profile.uid || !parent || canonical({ ...parent, uid: parentOwner.uid, ppid: parentOwner.ppid }) !== canonical(helper)
+        || parentOwner.uid !== profile.uid || parentOwner.ppid !== lock.pid || process.ppid !== helper.pid || ownOwner.ppid !== helper.pid
+        || ownOwner.uid !== profile.uid || ownOwner.pgid !== process.pid || canonical(boundedPsProcessIdentity(process.pid)) !== canonical(ownIdentity)) fail("direct child live parent chain is crossed");
+      for (const guard of guards) guard.assertStable();
+      if (!sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))) fail("direct child journal changed across validation");
+    };
+    const assertStable = () => {
+      assertOriginalStable();
+      verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.uid },
+        sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
+        outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
+      assertOriginalStable();
+    };
+    assertStable();
+    if (observeDirectSpawnerTerminationTargetV1((history.dispatch.target as Record<string, any>).pid) !== null) fail("direct child predecessor is present");
+    assertStable();
+    return Object.freeze({ intent, epoch, terminationDispatchBytes, terminationReceiptBytes, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable, close });
+  } catch {
+    try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
+    return fail("direct child authentication failed");
+  }
+}
+
+function revokeDirectSpawnerChildRuntimeV1(): void {
+  directChildAuthenticationFailedV1 = true;
+  const authentication = directChildAuthenticationV1;
+  if (authentication === null) return;
+  const close = () => { authentication.close(); if (directChildAuthenticationV1 === authentication) directChildAuthenticationV1 = null; pendingColdHelperAuthenticationCleanupV1.delete(close); };
+  try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
+}
+
+function resolveDirectSpawnerChildRuntimeSnapshotV1() {
+  if (directChildAuthenticationFailedV1) fail("direct child authentication is revoked");
+  try {
+    directChildAuthenticationV1 ??= authenticateDirectSpawnerChildCapabilityV1();
+    directChildAuthenticationV1.assertStable();
+    return Object.freeze({ environment: directChildAuthenticationV1.environment });
+  } catch { revokeDirectSpawnerChildRuntimeV1(); return fail("direct child runtime authentication failed"); }
+}
+
+async function acquireDirectSpawnerChildStartupContextV1() {
+  try {
+    if (directChildAdmissionAttemptedV1 || directChildAuthenticationFailedV1 || directChildAuthenticationV1 === null || spawnerInheritedRuntimeRefusedV1) fail("direct child startup admission is unavailable");
+    directChildAdmissionAttemptedV1 = true;
+    const authentication = directChildAuthenticationV1, intent = authentication.intent;
+    const assertStable = () => {
+      if (directChildAuthenticationV1 !== authentication || directChildAuthenticationFailedV1 || spawnerInheritedRuntimeRefusedV1) fail("direct child startup admission is revoked");
+      authentication.assertStable();
+    };
+    assertStable();
+    const evidence = await resolveDirectSpawnerRebindEvidenceV1({ currentEntryOperation: intent.currentEntryOperation, restartAuthority: intent.restartAuthority } as Parameters<typeof resolveDirectSpawnerRebindEvidenceV1>[0], authentication.epoch, assertStable);
+    assertStable();
+    parseDirectSpawnerTerminationChainV1(authentication.terminationDispatchBytes, authentication.terminationReceiptBytes, intent, evidence.preMutation);
+    if (canonical(evidence.profile) !== canonical(intent.launchProfile) || canonical(evidence.environment) !== canonical(authentication.environment)
+      || canonical(intent.startupToken) !== canonical({ startupTokenRef: evidence.startup.startupTokenRef, startupTokenHash: evidence.startup.startupTokenHash })) fail("direct child original startup evidence is crossed");
+    if (observeDirectSpawnerTerminationTargetV1((evidence.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct child original predecessor returned");
+    assertStable();
+    return Object.freeze({ schema: "setfarm.internal-production-direct-child-startup-context.v1", close: revokeDirectSpawnerChildRuntimeV1 });
+  } catch { revokeDirectSpawnerChildRuntimeV1(); return fail("direct child startup admission failed"); }
+}
+
 type SpawnerInheritedRuntimeRoleV1 = "cold-helper" | "cold-child" | "direct-helper" | "direct-child";
 let spawnerInheritedRuntimeSelectionV1: { role: SpawnerInheritedRuntimeRoleV1; entry: string; identity: BigIntStats; bytes: Buffer } | null = null;
 let spawnerInheritedRuntimeRefusedV1 = false;
@@ -3784,7 +3982,7 @@ export function resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(): Re
   role: SpawnerInheritedRuntimeRoleV1;
   environment: Readonly<Record<string, string>>;
 }> | null {
-  if (spawnerInheritedRuntimeRefusedV1) {
+  if (spawnerInheritedRuntimeRefusedV1 || directChildAuthenticationFailedV1) {
     for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
     fail("inherited spawner runtime authentication is revoked");
   }
@@ -3822,7 +4020,7 @@ export function resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(): Re
     const authenticated = role === "cold-helper" ? resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1()
       : role === "cold-child" ? resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1()
       : role === "direct-helper" ? resolveDirectSpawnerHelperRuntimeSnapshotV1()
-      : fail("direct inherited runtime capability is not authenticated");
+      : resolveDirectSpawnerChildRuntimeSnapshotV1();
     if (authenticated === null || process.argv[1] !== entry || !sameColdFileMetadataV1(identity, fstatSync(3, { bigint: true }))
       || !readInternalProductionSpawnerUntrustedInheritedFrameV1().equals(bytes)) fail("inherited spawner configuration authentication changed");
     const snapshot = { schema: "setfarm.internal-production-spawner-inherited-runtime-snapshot.v1" as const, role };
@@ -3830,6 +4028,7 @@ export function resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(): Re
     return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>> }>;
   } catch (error) {
     spawnerInheritedRuntimeRefusedV1 = true;
+    if (directChildAuthenticationV1 !== null || spawnerInheritedRuntimeSelectionV1?.role === "direct-child") revokeDirectSpawnerChildRuntimeV1();
     if (directHelperAuthenticationV1 !== null || directHelperAuthenticationActiveV1 || spawnerInheritedRuntimeSelectionV1?.role === "direct-helper") revokeDirectSpawnerHelperRuntimeV1();
     if (coldChildAuthenticationV1 !== null || spawnerInheritedRuntimeSelectionV1?.role === "cold-child") revokeColdSpawnerChildRuntimeV1();
     const helperContext = coldHelperRuntimeContextV1;
