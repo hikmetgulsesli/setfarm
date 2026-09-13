@@ -248,6 +248,7 @@ let coldChildAuthenticationFailedV1 = false;
 let directHelperAuthenticationV1: Awaited<ReturnType<typeof authenticateDirectSpawnerHelperIntentV1>> | null = null;
 let directHelperAuthenticationFailedV1 = false;
 let directHelperAuthenticationActiveV1 = false;
+let directHelperTransportAttemptedV1 = false;
 let directChildAuthenticationV1: ReturnType<typeof authenticateDirectSpawnerChildCapabilityV1> | null = null;
 let directChildAuthenticationFailedV1 = false;
 let directChildAdmissionAttemptedV1 = false;
@@ -3495,6 +3496,40 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
   return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>>; close: () => void }>;
 }
 
+function parseDirectSpawnerClaimV1(bytes: Buffer, intent: Readonly<Record<string, unknown>>, dispatch: Readonly<Record<string, unknown>>) {
+  if (bytes.length < 1 || bytes.length > 65_536) fail("direct claim size is invalid");
+  const claim = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "dispatchRef", "dispatchHash", "currentEntryOperation", "startupToken", "epoch", "source", "profileHash", "lockIdentity", "child", "startupFiles", "maximumClaimCount", "claimRef", "claimHash"], "direct claim");
+  if (!bytes.equals(Buffer.from(`${canonical(claim)}\n`)) || claim.schema !== "setfarm.internal-production-pre-schema-spawner-direct-claim.v1"
+    || claim.purpose !== "operation-bound-pre-schema-spawner-rebind-v1" || claim.maximumClaimCount !== 1
+    || claim.claimRef !== `setfarm://internal-production/pre-schema-spawner-direct-claim/sha256/${coldHashV1(claim.claimHash, "direct claim")}`) fail("direct claim binding is crossed");
+  coldSelfHashV1(claim, "claimHash", ["claimRef"]);
+  for (const key of ["intentRef", "intentHash", "currentEntryOperation", "startupToken", "epoch", "lockIdentity"]) {
+    if (canonical(claim[key]) !== canonical(intent[key])) fail("direct claim original intent is crossed");
+  }
+  const profile = intent.launchProfile as Record<string, any>, helper = dispatch.helper as Record<string, unknown>, lock = intent.transitionLock as Record<string, unknown>;
+  if (claim.dispatchRef !== dispatch.dispatchRef || claim.dispatchHash !== dispatch.dispatchHash
+    || claim.profileHash !== profile.profileHash || canonical(claim.source) !== canonical(profile.source)) fail("direct claim original dispatch is crossed");
+  const child = coldRecordV1(claim.child, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid", "pgid"], "direct claim child");
+  if (!Number.isSafeInteger(child.pid) || (child.pid as number) < 1 || (child.pid as number) > 2_147_483_647 || child.pid === helper.pid || child.pid === lock.pid
+    || child.uid !== profile.uid || child.ppid !== helper.pid || child.pgid !== child.pid
+    || !Number.isSafeInteger(child.processStartTimeEpochMs) || (child.processStartTimeEpochMs as number) < 1
+    || typeof child.lstart !== "string" || child.lstart.length !== 24 || Date.parse(child.lstart) !== child.processStartTimeEpochMs
+    || child.command !== `${profile.executable.path} ${path.join(profile.repository, "dist/spawner.js")}`
+    || child.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: child.pid,
+      processStartTimeEpochMs: child.processStartTimeEpochMs, lstart: child.lstart, command: child.command }))) fail("direct claim child identity is crossed");
+  const ownership = coldRecordV1(claim.startupFiles, ["schema", "pid", "uid", "singleton", "pidFile"], "direct claim startup ownership");
+  if (ownership.schema !== "setfarm.internal-production-direct-spawner-startup-ownership.v1" || ownership.pid !== child.pid || ownership.uid !== child.uid) fail("direct claim startup owner is crossed");
+  const runtime = path.join(profile.home, ".openclaw/setfarm");
+  for (const [key, name, expected] of [["singleton", "spawner.lock", `${child.pid}\n`], ["pidFile", "spawner.pid", String(child.pid)]]) {
+    const file = coldRecordV1(ownership[key!], ["path", "devDecimal", "inoDecimal", "uid", "mode", "byteLength", "bytesHash", "identityHash"], "direct claim startup file");
+    coldHashV1(file.identityHash, "direct claim startup identity");
+    if (file.path !== path.join(runtime, name!) || file.uid !== child.uid || file.mode !== 0o600 || file.byteLength !== Buffer.byteLength(expected!) || file.bytesHash !== sha256(expected!)
+      || typeof file.devDecimal !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(file.devDecimal)
+      || typeof file.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(file.inoDecimal)) fail("direct claim startup file is crossed");
+  }
+  return freezeColdDataV1(claim);
+}
+
 async function authenticateDirectSpawnerHelperIntentV1() {
   const guards: PrivateDirectoryGuardV1[] = [];
   const pins: Array<{ descriptor: number | null; identity: BigIntStats | null; target: string; bytes: Buffer | null; closeEntered: boolean }> = [];
@@ -3560,10 +3595,17 @@ async function authenticateDirectSpawnerHelperIntentV1() {
     const epochBytes = readPinned(paths.epoch, undefined, 65_536), epoch = assertEpochOneActive();
     if (!epochBytes.equals(Buffer.from(`${canonical(epoch)}\n`)) || (intent.epoch as Record<string, unknown>).epochRef !== epoch.epochRef
       || (intent.epoch as Record<string, unknown>).epochHash !== epoch.epochHash) fail("direct helper original epoch is crossed");
-    let dispatchStarted = false, childHandedOff = false;
+    let dispatchStarted = false, childHandedOff = false, claimObservationStarted = false;
     let spawnDispatch: { record: Readonly<Record<string, any>>; rootIdentity: BigIntStats; reader: typeof pins[number]; frameReader: typeof pins[number] } | null = null;
+    let childClaim: { record: Readonly<Record<string, any>>; rootIdentity: BigIntStats; reader: typeof pins[number]; assertLive: () => void } | null = null;
+    const startupDirectories = new Map<string, BigIntStats>();
     const assertOriginalStable = () => {
       if (closing) fail("direct helper authentication is closed");
+      for (const [target, original] of startupDirectories) {
+        const current = lstatSync(target, { bigint: true });
+        if (!current.isDirectory() || current.isSymbolicLink()
+          || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])) fail("direct helper original startup directory changed");
+      }
       for (const guard of guards) guard.assertStable();
       if (process.argv.length !== 2 || process.execArgv.length !== 0 || process.argv[1] !== entry || process.cwd() !== repository
         || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => rootIdentity[key as keyof BigIntStats] !== lstatSync(root, { bigint: true })[key as keyof BigIntStats])) fail("direct helper entry or root identity changed");
@@ -3590,18 +3632,28 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       if (!bytes.equals(pin.bytes) || readSync(pin.descriptor, Buffer.alloc(1), 0, 1, bytes.length) !== 0
         || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct child original frame bytes changed");
     };
-    const assertStable = () => {
-      assertOriginalStable();
-      if (dispatchStarted && spawnDispatch === null) fail("direct helper spawn publication is uncertain");
-      const expected = spawnDispatch?.rootIdentity ?? rootIdentity;
-      if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))
-        || canonical(readColdDirectoryMembersV1(root, spawnDispatch ? 3 : 2).sort()) !== canonical(spawnDispatch
-          ? ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"] : ["termination-dispatch.json", "termination-receipt.json"])) fail("direct helper journal prefix changed");
+    const assertDispatchStable = () => {
       if (spawnDispatch) {
         const pin = spawnDispatch.reader;
         if (pin.descriptor === null || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
           || !pin.bytes!.equals(readColdGenesisCandidateV1(pin.target, pin.identity))) fail("direct helper original spawn dispatch changed");
         assertFrame(spawnDispatch.frameReader);
+      }
+    };
+    const assertStable = () => {
+      assertOriginalStable();
+      if (dispatchStarted && spawnDispatch === null) fail("direct helper spawn publication is uncertain");
+      if (claimObservationStarted && childClaim === null) fail("direct helper claim observation is uncertain");
+      const expected = childClaim?.rootIdentity ?? spawnDispatch?.rootIdentity ?? rootIdentity;
+      if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, childClaim ? 4 : spawnDispatch ? 3 : 2).sort()) !== canonical([
+          ...(childClaim ? ["claim.json"] : []), ...(spawnDispatch ? ["spawn-dispatch.json"] : []), "termination-dispatch.json", "termination-receipt.json"])) fail("direct helper journal prefix changed");
+      assertDispatchStable();
+      if (childClaim) {
+        const pin = childClaim.reader;
+        if (pin.descriptor === null || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+          || !pin.bytes!.equals(readColdGenesisCandidateV1(pin.target, pin.identity))) fail("direct helper original child claim changed");
+        childClaim.assertLive();
       }
       assertOriginalStable();
       if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))) fail("direct helper journal changed across validation");
@@ -3737,7 +3789,57 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       // Permission is consumed here; cleanup ownership stays with this helper.
       return Object.freeze({ frameDescriptor: spawnDispatch.frameReader.descriptor!, dispatchDescriptor: spawnDispatch.reader.descriptor! });
     };
-    return Object.freeze({ intent, history, environment: evidence.environment, assertStable: assertRuntimeStable, publishDispatch, childDescriptors, close });
+    const prepareChildStartup = () => {
+      assertRuntimeStable();
+      if (dispatchStarted || startupDirectories.size !== 0) fail("direct helper startup directory pin was already attempted");
+      for (const target of [path.join(profile.home, ".openclaw"), path.join(profile.home, ".openclaw/setfarm")]) {
+        const stats = lstatSync(target, { bigint: true });
+        if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== BigInt(profile.uid)) fail("direct helper startup directory is invalid");
+        startupDirectories.set(target, stats);
+      }
+      assertRuntimeStable();
+    };
+    const observeChildClaim = (child: ChildProcess, readiness: Readonly<Record<string, unknown>>) => {
+      if (!childHandedOff || !spawnDispatch || startupDirectories.size !== 2 || claimObservationStarted || !Number.isSafeInteger(child.pid)
+        || child.exitCode !== null || child.signalCode !== null) fail("direct helper claim phase is unavailable");
+      claimObservationStarted = true;
+      const assertOriginal = () => { assertOriginalStable(); assertDispatchStable(); assertPhysicalRuntimeStable(); assertOriginalStable(); assertDispatchStable(); };
+      const assertJournal = () => {
+        assertOriginal();
+        const current = lstatSync(root, { bigint: true });
+        if (canonical(readiness.journalIdentity) !== canonical(coldFileIdentityTupleV1(current))
+          || canonical(readColdDirectoryMembersV1(root, 4).sort()) !== canonical(["claim.json", "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct helper claim journal differs from readiness");
+        return current;
+      };
+      const rootStats = assertJournal(), target = path.join(root, "claim.json");
+      const bytes = readPinned(target, readiness.claimIdentity, 65_536), reader = pins.at(-1)!;
+      const record = parseDirectSpawnerClaimV1(bytes, intent, spawnDispatch.record);
+      if (readiness.claimRef !== record.claimRef || readiness.claimHash !== record.claimHash) fail("direct helper claim pair differs from readiness");
+      const claimedChild = record.child as Record<string, unknown>;
+      if (claimedChild.pid !== child.pid) fail("direct helper claim belongs to another child");
+      const assertChild = () => {
+        if (child.exitCode !== null || child.signalCode !== null) fail("direct helper spawned child exited");
+        const actual = boundedPsProcessIdentity(child.pid!), ownership = observeColdProcessParentGroupV1(child.pid!);
+        if (!actual || canonical({ ...actual, ...ownership }) !== canonical(claimedChild) || ownership.ppid !== process.pid) fail("direct helper spawned child identity changed");
+      };
+      const assertStartup = () => {
+        const files = record.startupFiles as Record<string, any>;
+        for (const key of ["singleton", "pidFile"]) {
+          const file = files[key], stats = lstatSync(file.path, { bigint: true });
+          if (stats.size > 32n || String(stats.dev) !== file.devDecimal || String(stats.ino) !== file.inoDecimal || Number(stats.uid) !== file.uid || Number(stats.mode & 0o7777n) !== file.mode
+            || file.identityHash !== sha256(canonical(coldFileIdentityTupleV1(stats))) || Number(stats.size) !== file.byteLength
+            || sha256(readColdGenesisCandidateV1(file.path, stats)) !== file.bytesHash) fail("direct helper claimed startup file changed");
+        }
+      };
+      assertChild(); assertStartup(); assertJournal(); assertChild(); assertStartup(); assertJournal();
+      childClaim = { record, rootIdentity: rootStats, reader, assertLive: () => { assertChild(); assertStartup(); } };
+      assertRuntimeStable(); assertChild(); assertStartup(); assertRuntimeStable();
+      return freezeColdDataV1({ schema: "setfarm.internal-production-direct-spawner-helper-completion.v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, intentIdentity: coldFileIdentityTupleV1(intentFile.identity),
+        dispatchRef: spawnDispatch.record.dispatchRef, dispatchHash: spawnDispatch.record.dispatchHash, dispatchIdentity: coldFileIdentityTupleV1(spawnDispatch.reader.identity!),
+        claimRef: record.claimRef, claimHash: record.claimHash, claimIdentity: coldFileIdentityTupleV1(reader.identity!), journalIdentity: coldFileIdentityTupleV1(rootStats) });
+    };
+    return Object.freeze({ intent, history, environment: evidence.environment, assertStable: assertRuntimeStable, prepareChildStartup, publishDispatch, childDescriptors, observeChildClaim, close });
   } catch {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
     return fail("direct helper authentication failed");
@@ -3781,6 +3883,77 @@ function resolveDirectSpawnerHelperRuntimeSnapshotV1() {
   try { directHelperAuthenticationV1.assertStable(); }
   catch { revokeDirectSpawnerHelperRuntimeV1(); return fail("direct helper authentication is revoked"); }
   return Object.freeze({ environment: directHelperAuthenticationV1.environment });
+}
+
+export async function runInternalProductionDirectSpawnerHelperV1(): Promise<Readonly<Record<string, unknown>>> {
+  if (directHelperTransportAttemptedV1) fail("direct helper transport was already attempted");
+  directHelperTransportAttemptedV1 = true;
+  let context: Awaited<ReturnType<typeof acquireDirectSpawnerHelperContextV1>> | undefined;
+  let child: ChildProcess | undefined, readiness: Readable | undefined;
+  let completion: Readonly<Record<string, unknown>> | null = null;
+  let accepted = false, effectEntered = false, cleanupFailed = false;
+  try {
+    context = await acquireDirectSpawnerHelperContextV1();
+    if (resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1()?.role !== "direct-helper") fail("direct helper runtime role is crossed");
+    const authentication = directHelperAuthenticationV1!;
+    const profile = authentication.intent.launchProfile as Record<string, any>;
+    authentication.prepareChildStartup();
+    publishDirectSpawnerHelperSpawnDispatchV1();
+    const handles = takeDirectSpawnerChildLaunchDescriptorsV1();
+    authentication.assertStable();
+    effectEntered = true;
+    child = spawn(profile.executable.path, [path.join(profile.repository, "dist/spawner.js")], {
+      cwd: profile.cwd, detached: true, shell: false,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD: "1" },
+      stdio: ["ignore", "ignore", "ignore", handles.frameDescriptor, 4, handles.dispatchDescriptor, "pipe"],
+    });
+    readiness = (child.stdio as readonly unknown[])[6] as Readable | undefined;
+    if (!readiness || typeof readiness.on !== "function") fail("direct child readiness pipe is unavailable");
+    const spawned = child, pipe = readiness;
+    const envelope = await new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+      let settled = false, count = 0;
+      const chunks: Buffer[] = [];
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        pipe.removeListener("data", onData); pipe.removeListener("end", onEnd); pipe.removeListener("error", onError);
+        spawned.removeListener("error", onError); spawned.removeListener("exit", onExit);
+        if (error) { reject(error); return; }
+        try {
+          const bytes = Buffer.concat(chunks, count);
+          const value = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "claimRef", "claimHash", "claimIdentity", "journalIdentity"], "direct child readiness");
+          if (value.schema !== "setfarm.internal-production-direct-spawner-readiness.v1" || !bytes.equals(Buffer.from(`${canonical(value)}\n`))) fail("direct child readiness is crossed");
+          resolve(freezeColdDataV1(value));
+        } catch { reject(Error("direct child readiness is malformed")); }
+      };
+      const onError = () => finish(Error("direct child readiness failed"));
+      const onExit = () => finish(Error("direct child exited before readiness"));
+      const onData = (bytes: Buffer) => {
+        if (bytes.length < 1 || count + bytes.length > 4096) return finish(Error("direct child readiness exceeds its cap"));
+        chunks.push(Buffer.from(bytes)); count += bytes.length;
+      };
+      const onEnd = () => finish(count > 0 ? undefined : Error("direct child readiness is absent"));
+      const timer = setTimeout(() => finish(Error("direct child readiness timed out")), 30_000);
+      pipe.on("data", onData); pipe.once("end", onEnd); pipe.once("error", onError);
+      spawned.once("error", onError); spawned.once("exit", onExit);
+    });
+    // Only this retained one-shot ChildProcess may authenticate member four.
+    // The regular context still rejects an unowned claim prefix.
+    if (directHelperAuthenticationV1 !== authentication || directHelperAuthenticationFailedV1 || spawnerInheritedRuntimeRefusedV1) fail("direct helper claim authority was revoked");
+    completion = authentication.observeChildClaim(child, envelope);
+    authentication.assertStable(); accepted = true;
+  } catch { /* Never retry an entered spawn or erase its durable dispatch. */ }
+  finally {
+    if (readiness) { readiness.on("error", () => {}); readiness.destroy(); }
+    if (child) { child.on("error", () => {}); child.unref(); }
+    if (context) context.close();
+    for (const close of pendingColdHelperAuthenticationCleanupV1) {
+      cleanupFailed = true;
+      try { close(); } catch { /* Preserve exact unresolved cleanup ownership. */ }
+    }
+  }
+  if (!effectEntered || !accepted || cleanupFailed || completion === null || Buffer.byteLength(`${canonical(completion)}\n`) > 4096) fail("direct helper transport is uncertain");
+  return completion;
 }
 
 // Configuration authentication is synchronous: importing runtime-config must

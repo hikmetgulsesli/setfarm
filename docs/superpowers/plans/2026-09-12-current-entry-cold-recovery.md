@@ -708,6 +708,127 @@ semantics. Unknown/mixed selectors, response loss, replaced records and a second
 attempt refuse without redispatch. Controller settlement and downstream V2
 emission remain disabled until their own original-history integration passes.
 
+The actual fixed direct-helper fixture first reproduced the missing route:
+its valid direct capability reached historical V1 and failed frame shape. The
+new direct route and one-shot runner now authenticate configuration, publish
+the original dispatch, hand off only fixed FDs3/4/5 with readiness FD6, retain
+the actual ChildProcess, and validate the strict direct claim before completion.
+The private parser rejects rehashed crossed top-level/process/startup-file
+members and noncanonical bytes. Runtime exports become29; helper exports stay
+zero. No new File Map path or frozen hash changes. The older cold wire fixture
+now scopes its completion-write instrumentation to the cold branch explicitly.
+
+Review/REDs exposed two missing original-ownership checks: startup directory
+replacement with a symlink to the original files, and same-byte PID inode
+replacement during a final output verification. Retain the fixed runtime parent
+identities before any dispatch and retain child/startup assertions with the
+owned claim. A third executing RED placed the directory swap during the final
+runner verification; directory checks now live in the original-pin bracket,
+not only before output validation. Normal helper and all three regressions
+passed4/4 (23.413s). The helper owns no cold residue permission and accepts the
+fourth member only through its own retained child plus canonical readiness.
+
+The 18-case actual-helper matrix passed1/1 (93.696s), covering fragmented/empty/
+truncated/oversized/duplicate/extra/noncanonical/cold-crossed/hash-crossed wire,
+journal ABA, same-byte claim/PID replacement, wrong child PID, spawn failure,
+second invocation and mixed/invalid/missing selectors. Each actual effect entry
+records its fixed executable/argv/cwd/environment/FD projection; second calls
+never add an entry and selector refusal adds none. Separate no-EOF timeout,
+child exit before EOF and interrupted cleanup passed1/1 (21.288s). The no-EOF
+fixture shortens only its copied timer and proves that the timer actually fired;
+cleanup uncertainty never yields success. Fresh coupled regression gates and
+final independent review are still required before this helper checkpoint.
+
+Final coupled gate completed10/12 (195.465s): all direct groups, original direct
+authentication/handoff/admission and exact exports passed. Both failures were
+old cold fixture transforms broadened by the added direct branch: a spawn-error
+marker now matched twice, and the cold completion preamble was inserted into
+the direct branch. Scope the transforms to the cold runner/branch with exact
+single-target checks. A new direct-output assertion separately reproduced
+noncanonical completion JSON; the fixed helper now writes the existing canonical
+serialization plus one newline, leaving historical cold output unchanged.
+
+The targeted rerun passed direct canonical completion and cold controller-wire
+recovery2/3 (77.007s), but the old cold no-EOF test sometimes expired before its
+fault even executed. Named sequential cold cases then passed20/20 (within a
+26/26 diagnostic gate,42.604s). Do not dismiss the intermittent failure: an
+isolated no-EOF test now deliberately delays the real child write1.5s. RED
+reproduced the premature1s fixture timeout; a copied5s timer permits the write
+and requires separate actual-wire and timer-fired witnesses. GREEN1/1 (7.368s).
+The production30s timeout is unchanged. The table retains the other19 cases;
+its new names make individual failures visible and allow later cases to run.
+
+Source manifests17/17 (5.936s), historical helper/ordinary/refused/inert gates4/4
+(10.458s), final TypeScript no-emit and whitespace checks passed. Independent
+production review found no remaining material issue. Final timing refinement
+records the helper's retained byte count at timeout in both direct and cold
+fixtures and requires a safe integer in1..4096: a pre-write marker alone cannot
+prove the no-EOF boundary. Both final timeout/exit/cleanup groups passed2/2
+(29.307s), TypeScript no-emit and whitespace checks passed, and independent
+test review found no remaining blocker. This is not a fresh12/12 aggregate
+claim or a whole-file run. The subsequent final coupled rerun passed32/32
+(224.180s): all direct helper groups, original direct authentication/handoff/
+admission,19 named cold helper cases, delayed cold EOF, cold controller wire
+faults and exact retirement exports. This completes the scoped helper checkpoint.
+Controller invocation/settlement, downstream V2 emission and terminal physical
+release still remain before full receipt/P3 or live Task6A acceptance.
+
+Next coupled controller/downstream work (approved design, serialized root
+writer; read-only inventory/review may run in parallel): keep the existing
+two-argument public helper invocation and returned helper-settlement pair.
+Discriminate restart authority internally: persisted V1 remains unchanged;
+only fresh startup emits V2 after all direct lifecycle consumers pass.
+
+File Map for this next slice is exactly the existing retirement, startup
+admission and receipt modules, their three owning tests, and this plan. Keep
+retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
+33-pair final graph. Helper/spawner/runtime-config need no planned new edit.
+
+- [ ] Add private direct controller completion capture. Test a disposable real
+  ChildProcess.stdout, not a manufactured stream: canonical direct11-key output succeeds only
+  after EOF and clean actual helper exit; fragmented output succeeds; empty,
+  oversized, duplicate, noncanonical, crossed-schema, nonzero exit and missing
+  EOF refuse. Bound capture and retire pipe/timer listeners on every outcome.
+  The fixed35s timeout lives inside capture and uses its idempotent finish;
+  account for both EOF/exit orders and already-observed clean/failed exit.
+  Late events cannot alter a settled outcome. Capture closes no authority FD.
+  This parser is transport evidence, never claim or dispatch authority.
+- [ ] Extend retained direct intent with monotonic intent-only,
+  helper-may-have-run, claim-observed, settled and releasing phases. Retain
+  original frame/intent descriptors immediately, borrow only the held lease
+  descriptor, and mark possible effect before the single fixed helper spawn.
+  Retry awaits that same ChildProcess/completion; no replacement invocation.
+- [ ] Independently authenticate the exact four-member direct journal and
+  original top-level intent, termination records, spawn dispatch and claim.
+  Bind completion inode tuples and the retained helper PID; require helper
+  clean exit/absence and the exact claimed child at PPID1. Recheck original
+  startup files, directories, P3, profile/output and physical lease around reads.
+- [ ] Publish a direct controller settlement in the existing content-addressed
+  pre-schema-helper-settlements directory with the existing
+  pre-schema-spawner-rebind-helper-settlement reference domain, outside the child's immutable journal.
+  Bind the original history and two equal ordinary four-service observations;
+  their spawner is the retained claim and other services equal original P3.
+  Preserve no-replace publication/fsync/close progress across response loss.
+- [ ] Release only the same committed terminal owner. Retain per-resource close
+  progress, authenticate original descriptors, then exact lock unlink/fsync and
+  original lease close. Preserve history. Complete authenticated historical
+  terminals may authorize dead-owner cleanup without claiming child liveness;
+  partial/ambiguous history must preserve the fence and cannot redispatch.
+- [ ] Route strict V2 through the existing public invocation. Fresh-process
+  partial direct history returns HELPER_DISPATCH_SETTLEMENT_UNKNOWN. Complete
+  terminal history returns the same pair without process effects. Keep V1
+  byte/behavior identity and cover both with existing adoption/reclaim tests.
+- [ ] Emit fresh startup V2 from original operation P3 and authenticated launch
+  profile; persisted V1 calls no new direct port. Persisted V2 reauthenticates
+  exact original pairs, constants/source/startup/predecessor without downgrade.
+- [ ] Bracket phase-zero with stable helper census: absent or fully authenticated
+  terminal only; partial, appearance/disappearance and ABA refuse. Require
+  terminal explicitly at all cutover/zero-owner guard consumers. Preserve the
+  exact ten census keys and existing final pair graph.
+- [ ] Run focused controller/history/release and startup/receipt regressions,
+  manifest/no-emit, independent review, then complete receipt and P3 gates.
+  Clean-main build/rollout and live A acceptance remain later required outcomes.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing

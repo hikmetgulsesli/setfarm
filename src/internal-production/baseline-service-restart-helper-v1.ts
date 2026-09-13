@@ -399,6 +399,15 @@ function executeBaselineRestart(frameValue: unknown): void {
 
 async function main(): Promise<void> {
   if (process.argv.length !== 2) fail("argv must be empty");
+  if (process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER !== undefined) {
+    if (process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER !== "1" || process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) fail("direct helper selector is invalid or mixed");
+    const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+    const completion = await retirement.runInternalProductionDirectSpawnerHelperV1();
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${canonical(completion)}\n`, (error) => error ? reject(error) : resolve());
+    });
+    return;
+  }
   if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) {
     if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== "1") fail("cold helper selector is invalid");
     const retirement = await import("./baseline-restart-authority-retirement-v1.js");
