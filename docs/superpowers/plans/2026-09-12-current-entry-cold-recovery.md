@@ -1026,6 +1026,47 @@ Map prerequisite, not full P3 or live acceptance.
 Final direct release/history positive regression passed2/2 (15.037s), source
 manifest17/17 (5.747s). No public export or arity changed, no live mutation.
 
+Direct terminal adoption checkpoint in progress: original/later ordinary cleanup
+RED failed at unconditional direct-unsettled refusal (8.066s); independent
+historical acceptance made that positive pass1/1 (7.993s). Review then exposed
+post-resolver claim replacement and a new settlement temporary bypassing a
+top-intent-only check (two explicit missing-rejection REDs,14.844s). The private
+synchronous revalidator retains actual readers, binds all six full file tuples
+and canonical graph bytes, the exact four-member directory tuple/inventory and
+both publication-temp families. The first expanded gate passed10/10 (72.504s).
+
+The actual cleanup caller has one further await: an end-to-end later ordinary
+release RED replaced the claim immediately after helper validation returned and
+still unlinked its lock (7.964s). Carry a private zero-argument witness assertion
+to ordinary/raw/dead cleanup; execute it synchronously after the final await.
+The direct witness brackets mandatory normal-journal closure with cold/direct
+history checks. It captures frozen data, never live FDs or new process authority.
+The previous V1 synchronous body runs exactly once in that caller continuation,
+so a newly appeared journal is checked without duplicate settlement publication.
+An additional late-V1-journal regression and crossed normal-registry case verify
+that a valid old direct terminal cannot waive a later owner's requirements.
+Public exports/arguments remain unchanged. Actual dead-original-controller
+end-to-end recovery, public V2/startup/census and full gates are still pending.
+
+Independent review found that the returned assertion can itself terminalize a
+normal helper registration. The actual cleanup caller must authenticate physical
+ownership before that assertion, not only before unlink. A real lock-bound
+registration/journal/completed-settlement fixture proved three valid controls
+and four RED refusals that incorrectly wrote terminals (5.281s): dead PID
+reappearance and ordinary/raw/dead parent replacement. Original parent, full FD
+identity, raw owner/phase and fresh dead-PID absence now bracket the callback.
+The expanded 12-case await matrix passed (7.971s), including reused FD ownership,
+late V1 journal and valid terminal publication; TypeScript no-emit passed.
+The same existing source/test/plan File Map applies; no production test seam,
+public API change, live effect or runtime guard exception was introduced.
+Final direct-adoption/await/V1/genesis/lease ABI gate passed38/38 (101.511s),
+source manifest17/17 (6.100s). A further leaf-only replacement hypothesis,
+without numeric FD reuse, passed all three ordinary/raw/dead cases (2.230s)
+without another production change: existing full physical witnesses reject it
+before terminal publication. Retain those regressions. Independent review found
+no further demonstrated material defect in this scoped acceptance checkpoint.
+This is not a full P3, PR-delivery or live-goal completion claim.
+
 Private direct terminal-history RED first failed at the missing reader (8.159s).
 The new resolver retains original file descriptors/metadata/bytes across both
 historical-P3 reads, requires the original P3-bound termination chain, and derives

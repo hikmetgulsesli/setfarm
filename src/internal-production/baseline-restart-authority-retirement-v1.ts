@@ -1522,7 +1522,50 @@ function openDirectSpawnerHelperFrameV1(state: DirectSpawnerRebindIntentStateV1)
 async function assertHelperJournalAllowsLockCleanup(
   transitionLock: Readonly<Record<string, unknown>>,
   currentLockIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>,
-): Promise<void> {
+): Promise<() => void> {
+  observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  const paths = rootPaths();
+  let bytes: Buffer;
+  try { bytes = readStableRetirementBytes(paths.journal, "helper journal"); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return () => assertLegacyHelperJournalAllowsLockCleanupV1(transitionLock, currentLockIdentity);
+    }
+    throw error;
+  }
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString("utf8")); } catch { return fail("helper journal is not JSON during lock cleanup"); }
+  if ((value as Record<string, unknown> | null)?.schema === "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1") {
+    let history: Awaited<ReturnType<typeof observeDirectSpawnerControllerSettlementHistoryV1>>;
+    try {
+      const intent = parseDirectSpawnerRebindIntentV1(bytes), original = lstatSync(paths.journal, { bigint: true });
+      history = await observeDirectSpawnerControllerSettlementHistoryV1();
+      if (history.preSchemaHelperJournalHash !== intent.intentHash
+        || canonical(history.settlement.transitionLock) !== canonical(intent.transitionLock)
+        || canonical(history.settlement.lockIdentity) !== canonical(intent.lockIdentity)
+        || !sameColdFileMetadataV1(original, lstatSync(paths.journal, { bigint: true }))
+        || !bytes.equals(readStableRetirementBytes(paths.journal, "direct cleanup original intent"))) fail("direct cleanup original history changed");
+      assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+    } catch { fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"); }
+    return () => {
+      const assertHistory = () => {
+        try { observeInternalProductionColdSpawnerBootstrapJournalCensusV1(); assertDirectSpawnerControllerSettlementHistoryStableV1(history); }
+        catch { fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"); }
+      };
+      assertHistory();
+      closeNormalHelperJournalsBeforeLockCleanupV1(transitionLock, currentLockIdentity);
+      assertHistory();
+    };
+  }
+  return () => assertLegacyHelperJournalAllowsLockCleanupV1(transitionLock, currentLockIdentity);
+}
+
+// The legacy body runs once, synchronously in the actual cleanup caller after
+// its last await. A newly appeared direct prefix requires a fresh async proof.
+function assertLegacyHelperJournalAllowsLockCleanupV1(
+  transitionLock: Readonly<Record<string, unknown>>,
+  currentLockIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>,
+): void {
   observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const paths = rootPaths();
   let bytes: Buffer;
@@ -1536,10 +1579,7 @@ async function assertHelperJournalAllowsLockCleanup(
   }
   let value: unknown;
   try { value = JSON.parse(bytes.toString("utf8")); } catch { return fail("helper journal is not JSON during lock cleanup"); }
-  if ((value as Record<string, unknown> | null)?.schema === "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1") {
-    parseDirectSpawnerRebindIntentV1(bytes);
-    fail("DIRECT_REBIND_UNSETTLED: direct intent has no authenticated terminal");
-  }
+  if ((value as Record<string, unknown> | null)?.schema === "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1") fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
   const journal = exactCanonicalRecord(value, ["schema", "family", "operationSchema", "operationPurpose", "action", "currentEntryOperation", "restartAuthority", "transitionLock", "lockIdentity", "maximumDispatchCount", "journalHash"], "helper journal lock cleanup");
   const journalTransitionLock = parseLockRecord(Buffer.from(`${canonical(journal.transitionLock)}\n`, "utf8"));
   const journalLockIdentity = exactCanonicalRecord(journal.lockIdentity, ["devDecimal", "inoDecimal"], "helper journal lock identity");
@@ -1604,7 +1644,11 @@ async function reclaimDeadLockOnce(lock: string, assertParent: () => void): Prom
       if (observed.processStartTimeEpochMs !== record.processStartTimeEpochMs || observed.processIdentityHash !== record.processIdentityHash) fail("transition lock PID was reused or replaced");
       fail("restart transition lease is unavailable");
     }
-    await assertHelperJournalAllowsLockCleanup(record, descriptorIdentity(descriptor));
+    const assertHelper = await assertHelperJournalAllowsLockCleanup(record, descriptorIdentity(descriptor));
+    assertParent();
+    if (boundedPsProcessIdentity(record.pid as number)) fail("transition lock owner reappeared before dead-owner cleanup");
+    if (!sameColdFileMetadataV1(first, fstatSync(descriptor, { bigint: true }))) fail("transition lock original descriptor changed during history validation");
+    assertHelper();
     assertParent();
     if (boundedPsProcessIdentity(record.pid as number)) fail("transition lock owner reappeared before dead-owner cleanup");
     if (!sameColdFileMetadataV1(first, fstatSync(descriptor, { bigint: true }))) fail("transition lock original descriptor changed during history validation");
@@ -2686,6 +2730,56 @@ async function observeDirectSpawnerControllerSettlementHistoryV1() {
     for (const pin of pins.reverse()) try { finishRetainedColdCleanupV1(() => closePrivateFrameDescriptorV1(pin)); } catch (error) { cleanupError ??= error; }
     for (const guard of guards.reverse()) try { finishRetainedColdCleanupV1(() => guard.close()); } catch (error) { cleanupError ??= error; }
     if (cleanupError !== null) throw cleanupError;
+  }
+}
+
+// Rebind physical history after the asynchronous P3 resolver returns. This
+// synchronously validates its exact witness; it grants no new P3/process authority.
+function assertDirectSpawnerControllerSettlementHistoryStableV1(history: Awaited<ReturnType<typeof observeDirectSpawnerControllerSettlementHistoryV1>>): void {
+  const paths = rootPaths(), root = path.join(paths.root, "direct-spawner-rebind-v1"), settlement = history.settlement;
+  const completion = settlement.completion as Record<string, unknown>;
+  const terminalPath = path.join(paths.settlements, history.preSchemaHelperSettlementHash.slice(0, 2), `${history.preSchemaHelperSettlementHash}.json`);
+  const guards: PrivateDirectoryGuardV1[] = [], pins: Array<PrivateFrameDescriptorV1 & { target: string; bytes: Buffer | null }> = [];
+  const assertStable = () => {
+    for (const guard of guards) guard.assertStable();
+    if (canonical(coldFileIdentityTupleV1(lstatSync(root, { bigint: true }))) !== canonical(completion.journalIdentity)
+      || canonical(readColdDirectoryMembersV1(root, 4).sort()) !== canonical(["claim.json", "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct cleanup journal witness changed");
+    for (const final of [paths.journal, terminalPath]) {
+      if (readColdDirectoryMembersV1(path.dirname(final), 4096).some(name => name.startsWith(`.${path.basename(final)}.`))) fail("direct cleanup publication is unfinished");
+    }
+    for (const pin of pins) {
+      if (pin.descriptor === null || pin.identity === null || pin.bytes === null || pin.closeEntered
+        || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+        || !pin.bytes.equals(readColdGenesisCandidateV1(pin.target, pin.identity))
+        || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct cleanup original reader changed");
+    }
+    for (const guard of guards) guard.assertStable();
+  };
+  const read = (target: string, identity: unknown): Buffer => {
+    assertStable();
+    const pin = { target, descriptor: openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null as BigIntStats | null, bytes: null as Buffer | null, closeEntered: false };
+    pins.push(pin); pin.identity = fstatSync(pin.descriptor, { bigint: true });
+    if (pin.identity.size > 65_536n || canonical(coldFileIdentityTupleV1(pin.identity)) !== canonical(identity)) fail("direct cleanup original publication identity changed");
+    pin.bytes = readColdGenesisCandidateV1(target, pin.identity); assertStable(); return pin.bytes;
+  };
+  try {
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root));
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(terminalPath)));
+    const intent = parseDirectSpawnerRebindIntentV1(read(paths.journal, completion.intentIdentity));
+    const dispatchBytes = read(path.join(root, "termination-dispatch.json"), (settlement.terminationDispatch as Record<string, unknown>).identity);
+    const receiptBytes = read(path.join(root, "termination-receipt.json"), (settlement.terminationReceipt as Record<string, unknown>).identity);
+    parseDirectSpawnerTerminationRecordsV1(dispatchBytes, receiptBytes, intent);
+    const dispatch = parseDirectSpawnerSpawnDispatchV1(read(path.join(root, "spawn-dispatch.json"), completion.dispatchIdentity), intent, dispatchBytes, receiptBytes);
+    const claim = parseDirectSpawnerClaimV1(read(path.join(root, "claim.json"), completion.claimIdentity), intent, dispatch);
+    if (intent.intentHash !== history.preSchemaHelperJournalHash || intent.intentHash !== completion.intentHash
+      || canonical(claim) !== canonical(history.claim)
+      || !read(terminalPath, history.settlementIdentity).equals(Buffer.from(`${canonical(settlement)}\n`))) fail("direct cleanup original history graph changed");
+    assertStable();
+  } finally {
+    let failure: unknown = null;
+    for (const pin of pins.reverse()) try { finishRetainedColdCleanupV1(() => closePrivateFrameDescriptorV1(pin)); } catch (error) { failure ??= error; }
+    for (const guard of guards.reverse()) try { finishRetainedColdCleanupV1(() => { guard.assertStable(); guard.close(); }); } catch (error) { failure ??= error; }
+    if (failure !== null) throw failure;
   }
 }
 
@@ -5037,7 +5131,11 @@ async function releaseRawPhysicalTransitionLockOwnedV1(raw: RawPhysicalTransitio
     assertRawPhysicalTransitionLockStableV1(state);
     cleanup.identity ??= fstatSync(state.descriptor, { bigint: true });
     if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw held lock changed during cleanup");
-    await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    const assertHelper = await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    if (heldRawPhysicalTransitionLockV1(raw) !== state || !cleanup.active) fail("raw physical cleanup owner changed");
+    assertRawPhysicalTransitionLockStableV1(state);
+    if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw original lock changed during history validation");
+    assertHelper();
     if (heldRawPhysicalTransitionLockV1(raw) !== state || !cleanup.active) fail("raw physical cleanup owner changed");
     assertRawPhysicalTransitionLockStableV1(state);
     if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw original lock changed during history validation");
@@ -5111,7 +5209,10 @@ export async function releaseInternalProductionPhysicalServiceRestartAuthorityTr
   try {
     rootGuard.assertStable();
     pin.identity = fstatSync(state.descriptor, { bigint: true });
-    await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    const assertHelper = await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    rootGuard.assertStable();
+    if (leases.get(lease) !== state || state.phase !== "released" || !sameColdFileMetadataV1(pin.identity, fstatSync(state.descriptor, { bigint: true }))) fail("ordinary release original lock changed during history validation");
+    assertHelper();
     rootGuard.assertStable();
     if (leases.get(lease) !== state || state.phase !== "released" || !sameColdFileMetadataV1(pin.identity, fstatSync(state.descriptor, { bigint: true }))) fail("ordinary release original lock changed during history validation");
     cleanupExactOwnedLock(paths.lock, state.descriptor, state.lockBytes);

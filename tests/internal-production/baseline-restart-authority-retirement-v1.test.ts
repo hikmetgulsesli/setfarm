@@ -807,6 +807,12 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const pinnedReturn = "return Object.freeze({ bytes, assertStable, assertOwnedDescriptor, close:";
     assert.equal(runtimeSource.split(pinnedReturn).length - 1, 1);
     runtimeSource = runtimeSource.replace(pinnedReturn, "globalThis.__directPinnedDescriptorsV1?.set(label, descriptor); " + pinnedReturn);
+    const cleanupReturned = "      history = await observeDirectSpawnerControllerSettlementHistoryV1();\n      if (history.preSchemaHelperJournalHash";
+    assert.equal(runtimeSource.split(cleanupReturned).length - 1, 1);
+    runtimeSource = runtimeSource.replace(cleanupReturned, "      history = await observeDirectSpawnerControllerSettlementHistoryV1();globalThis.__directCleanupReturnedV1?.();\n      if (history.preSchemaHelperJournalHash");
+    const cleanupOuter = "    const assertHelper = await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));";
+    assert.equal(runtimeSource.split(cleanupOuter).length - 1, 2);
+    runtimeSource = runtimeSource.replaceAll(cleanupOuter, cleanupOuter + "globalThis.__directCleanupOuterReturnedV1?.();");
     const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
@@ -845,6 +851,7 @@ export async function invokeDirectControllerFixtureV1(lease,input,loseResponse=f
 export async function observeDirectControllerFixtureV1(lease,input){return observeDirectSpawnerRebindControllerClaimV1(lease,input)}
 export async function settleDirectControllerFixtureV1(lease,input){return settleDirectSpawnerRebindControllerV1(lease,input)}
 export async function readDirectSettlementHistoryFixtureV1(){return observeDirectSpawnerControllerSettlementHistoryV1()}
+export async function assertDirectCleanupFixtureV1(unrelated=false){const intent=retainedDirectSpawnerRebindIntentV1.intent;const assertHistory=await assertHelperJournalAllowsLockCleanup(unrelated?{...intent.transitionLock,leaseNonce:'e'.repeat(64)}:intent.transitionLock,unrelated?{devDecimal:'0',inoDecimal:'0'}:intent.lockIdentity);assertHistory()}
 export function validateDirectSettlementCensusFixtureV1(claim,census){return assertDirectControllerServiceCensusV1(retainedDirectSpawnerRebindIntentV1,claim,census)}
 export function inspectDirectControllerFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,child=state.helperInvocation?.child;return {phase:state.phase,pid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode}}
 export function hasDirectControllerOwnerFixtureV1(){return retainedDirectSpawnerRebindIntentV1!==null}
@@ -1411,7 +1418,11 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
             const before = coldGenesisTreeSnapshotV1(privateRoot);
             const historyRequested = directControllerFault.startsWith("settle-history");
             const releaseRequested = directControllerFault.startsWith("settle-release");
-            const fault = historyRequested || releaseRequested ? "" : directControllerFault.slice("settle".length).replace(/^-/, "");
+            const cleanupRequested = directControllerFault.startsWith("settle-cleanup");
+            const fault = historyRequested || releaseRequested || cleanupRequested ? "" : directControllerFault.slice("settle".length).replace(/^-/, "");
+            if (cleanupRequested) {
+              for (const unrelated of [false, true]) await assert.rejects(runtime.assertDirectCleanupFixtureV1(unrelated), /DIRECT_REBIND_UNSETTLED|HELPER_DISPATCH_SETTLEMENT_UNKNOWN/, "incomplete direct history fences every lock relation");
+            }
             const probe = { fault, fired: false, calls: [] as string[], foreign: undefined as number | undefined, foreignIdentity: undefined as ReturnType<typeof fstatSync> | undefined };
             Reflect.set(globalThis, "__directSettlementPublicationV1", probe);
             const originalCensus = structuredClone(inputs.records.census);
@@ -1491,6 +1502,60 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               for (const crossed of [{ ...originalCensus, extra: 1 }, { ...originalCensus, censusHash: "f".repeat(64) }]) assert.throws(() => runtime.validateDirectSettlementCensusFixtureV1(claim, crossed));
             }
             assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+            if (cleanupRequested) {
+              const cleanupFault = directControllerFault.slice("settle-cleanup".length).replace(/^-/, "");
+              if (cleanupFault === "outer-claim") {
+                await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+                const laterLease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+                const lock = path.join(path.dirname(privateRoot), "physical-service-restart-authority.transition.lock"), originalLock = lstatSync(lock), lockBytes = readFileSync(lock);
+                let fired = false;
+                Reflect.set(globalThis, "__directCleanupOuterReturnedV1", () => {
+                  if (fired) return; fired = true;
+                  const file = path.join(privateRoot, "claim.json"), saved = readFileSync(file);
+                  renameSync(file, path.join(fixture, "outer-original-claim")); writeFileSync(file, saved, { mode: 0o600, flag: "wx" });
+                });
+                await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(laterLease), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+                assert.equal(fired, true); assert.equal(lstatSync(lock).ino, originalLock.ino); assert.deepEqual(readFileSync(lock), lockBytes);
+                assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+                return;
+              }
+              if (cleanupFault) {
+                let fired = false;
+                const lock = path.join(path.dirname(privateRoot), "physical-service-restart-authority.transition.lock"), originalLock = lstatSync(lock), lockBytes = readFileSync(lock);
+                Reflect.set(globalThis, "__directCleanupReturnedV1", () => {
+                  if (fired) return; fired = true;
+                  if (cleanupFault === "intent-temp" || cleanupFault === "settlement-temp") {
+                    const final = cleanupFault === "intent-temp" ? path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json") : target;
+                    writeFileSync(path.join(path.dirname(final), `.${path.basename(final)}.fixture.tmp`), "pending", { mode: 0o600, flag: "wx" });
+                  } else if (cleanupFault === "directory") {
+                    const moved = path.join(fixture, "cleanup-original-directory"); renameSync(privateRoot, moved); mkdirSync(privateRoot, { mode: 0o700 });
+                    for (const member of readdirSync(moved)) writeFileSync(path.join(privateRoot, member), readFileSync(path.join(moved, member)), { mode: 0o600, flag: "wx" });
+                  } else {
+                    const replaced = cleanupFault === "intent" ? path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json") : cleanupFault === "settlement" ? target : path.join(privateRoot, `${cleanupFault}.json`);
+                    const saved = readFileSync(replaced); renameSync(replaced, path.join(fixture, "cleanup-original-record")); writeFileSync(replaced, saved, { mode: 0o600, flag: "wx" });
+                  }
+                });
+                await assert.rejects(runtime.assertDirectCleanupFixtureV1(true), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/, "post-await history changes must preserve even an unrelated physical lock");
+                assert.equal(fired, true); assert.equal(lstatSync(lock).ino, originalLock.ino); assert.deepEqual(readFileSync(lock), lockBytes);
+                assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+                return;
+              }
+              await runtime.assertDirectCleanupFixtureV1(); await runtime.assertDirectCleanupFixtureV1(true);
+              const registry = path.join(path.dirname(privateRoot), "baseline-helper-registry-v1"), locator = path.join(registry, "current-head.pair.json");
+              mkdirSync(registry, { mode: 0o700 }); writeFileSync(locator, "crossed-registry\n", { mode: 0o600, flag: "wx" });
+              try { await assert.rejects(runtime.assertDirectCleanupFixtureV1(true), /registry/, "valid old direct history cannot bypass the current lock's normal journal checks"); }
+              finally { unlinkSync(locator); }
+              const intentPath = path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), intentBytes = readFileSync(intentPath), terminalBytes = readFileSync(target);
+              const members = coldGenesisTreeSnapshotV1(privateRoot);
+              await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+              const laterLease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+              await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(laterLease);
+              assert.equal(existsSync(path.join(path.dirname(privateRoot), "physical-service-restart-authority.transition.lock")), false);
+              assert.deepEqual(readFileSync(intentPath), intentBytes); assert.deepEqual(readFileSync(target), terminalBytes);
+              assert.deepEqual(coldGenesisTreeSnapshotV1(privateRoot), members);
+              assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+              return;
+            }
             if (releaseRequested) {
               const physicalLock = path.join(path.dirname(privateRoot), "physical-service-restart-authority.transition.lock"), descriptor = runtime.directBorrowedLeaseDescriptorFixtureV1();
               const historyPaths = [path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), ...readdirSync(privateRoot).map(name => path.join(privateRoot, name)), target];
@@ -1983,6 +2048,8 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       Reflect.deleteProperty(globalThis, "__directControllerProfileGateV1");
       Reflect.deleteProperty(globalThis, "__directControllerCensusGateV1");
       Reflect.deleteProperty(globalThis, "__directControllerHistoryGateV1");
+      Reflect.deleteProperty(globalThis, "__directCleanupReturnedV1");
+      Reflect.deleteProperty(globalThis, "__directCleanupOuterReturnedV1");
       const settlementProbe = Reflect.get(globalThis, "__directSettlementPublicationV1");
       if (settlementProbe?.foreign !== undefined) {
         try { const current = fstatSync(settlementProbe.foreign, { bigint: true }); if (current.dev === settlementProbe.foreignIdentity.dev && current.ino === settlementProbe.foreignIdentity.ino) closeSync(settlementProbe.foreign); }
@@ -2141,6 +2208,11 @@ test("actual fixed direct helper authenticates one real sealed child claim and e
 test("actual direct controller retains one fixed helper through concurrent calls and response loss", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller"));
 test("actual direct controller independently binds the original detached child claim", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-observe"));
 test("actual direct controller durably settles the original claim and two service observations", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle"));
+test("complete direct terminal history permits original and later ordinary lock cleanup without effects", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup"));
+test("ordinary lock release refuses direct history replaced after the outer helper await", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup-outer-claim"));
+for (const member of ["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim", "settlement", "directory", "intent-temp", "settlement-temp"]) {
+  test(`direct cleanup refuses post-await ${member} history replacement`, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-cleanup-${member}`));
+}
 test("direct controller terminal release removes only its owned physical lock and preserves history", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release"));
 test("direct controller terminal release reconciles an unlinked original after stat response loss without touching a later owner", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release-unlink-stat"));
 test("direct controller terminal release refuses an epoch descriptor reused during historical resolution", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release-epoch-reuse"));
@@ -4750,13 +4822,14 @@ export async function observeInternalProductionColdBootstrapObservationV1(){
   }
 });
 
-for (const scenario of ["ordinary", "dead", "raw", "genesis", "ordinary-reused", "raw-reused", "dead-reappeared", "ordinary-parent", "raw-parent", "dead-parent", "ordinary-guard"] as const) test(`physical ${scenario} cleanup awaits historical helper validation before changing ownership`, async () => {
+for (const scenario of ["ordinary", "dead", "raw", "genesis", "ordinary-reused", "raw-reused", "dead-reappeared", "ordinary-parent", "raw-parent", "dead-parent", "ordinary-guard", "ordinary-late-journal", "ordinary-leaf", "raw-leaf", "dead-leaf"] as const) test(`physical ${scenario} cleanup awaits historical helper validation before changing ownership`, async () => {
   const mode = scenario.split("-")[0];
   const original = readFileSync(sourcePath, "utf8"), marker = "function assertHelperJournalAllowsLockCleanup(";
   assert.equal(original.split(marker).length - 1, 1);
   const guardReturn = "    assertStable();\n    return Object.freeze({\n      assertStable,\n      close,\n    });";
   assert.equal(original.split(guardReturn).length - 1, 1);
   const source = original.replace(marker, "function actualAwaitedHelperCleanupFixtureV1(")
+    .replaceAll("    const assertHelper = await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));", "    const assertHelper = await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));globalThis.__helperCleanupOuterMutationV1?.();")
     .replace(guardReturn, "    globalThis.__helperCleanupGuardCaptureV1?.({descriptors,held,close});\n" + guardReturn)
     .replace("function boundedPsProcessIdentity(pid: number)", "function actualAwaitedOwnerObservationFixtureV1(pid: number)")
     .replace("    writeNoReplace(rootPaths().epoch, head);", "    if(globalThis.__helperCleanupPublicationFaultV1)throw Error('FIXTURE_GENESIS_PUBLICATION');\n    writeNoReplace(rootPaths().epoch, head);") + `
@@ -4765,12 +4838,31 @@ function boundedPsProcessIdentity(pid){if(pid===99999&&globalThis.__helperCleanu
 export const awaitedRawCleanupFixtureV1={acquire:acquireRawPhysicalTransitionLockV1,release:releaseRawPhysicalTransitionLockV1,promote:raw=>promoteRawPhysicalTransitionLockV1(raw,assertEpochOneActive),descriptor:value=>rawPhysicalTransitionLocksV1.get(value)?.descriptor??leases.get(value)?.descriptor,dispose:raw=>{const state=rawPhysicalTransitionLocksV1.get(raw);if(state){state.rootGuard.close();rawPhysicalTransitionLocksV1.delete(raw)}}};
 export function drainAwaitedCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close()}
 export function discardDrainedGuardFixtureV1(){pendingColdHelperAuthenticationCleanupV1.clear()}
+export function seedClosableNormalHelperFixtureV1(operation,outbox,transitionLock,lockIdentity){
+  appendOrAdoptRegistrationV1(operation,outbox);
+  const restartOperation={operationRef:operation.operationRef,operationHash:operation.operationHash};
+  const core={schema:'setfarm.internal-production-service-restart-helper-journal.v1',family:'baseline-service-restart',operationSchema:operation.schema,action:operation.actionId,restartOperation,transitionLock,lockIdentity,maximumDispatchCount:1};
+  const journal={...core,journalHash:sha256(canonical(core))};
+  writeNoReplace(baselineJournalPathV1(operation.operationHash),journal);
+  const settlement=baselineSettlementV1(operation,restartOperation,journal);
+  writeNoReplace(settlement.path,settlement.value);
+}
+export function normalHelperCleanupStateFixtureV1(){const walk=walkRegistryV1();return {registrations:walk.registrations.length,outcomes:walk.terminals.map(terminal=>terminal.outcome)}}
 `;
   const fixture = await createColdEpochGenesisFixtureV1(source);
   let resume!: () => void, operation: Promise<{ value?: any; error?: unknown }> | undefined;
   let resource: any, ownedFd: number | undefined, ownedIdentity: ReturnType<typeof fstatSync> | undefined;
   let foreignFd: number | undefined, foreignIdentity: ReturnType<typeof fstatSync> | undefined;
   const descriptorReservations: number[] = [];
+  const reopenExactSlot = (target: string, expected: number): number => {
+    for (let count = 0; count < 256; count++) {
+      const fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+      if (fd === expected) return fd;
+      descriptorReservations.push(fd);
+      assert.ok(fd < expected, "original fixture FD slot remains available for controlled reuse");
+    }
+    throw Error("fixture descriptor reservation bound exceeded");
+  };
   let movedRoot: string | undefined;
   let guardProbe: { descriptors: number[]; held: unknown[]; close: () => void } | undefined;
   try {
@@ -4780,6 +4872,18 @@ export function discardDrainedGuardFixtureV1(){pendingColdHelperAuthenticationCl
     if (mode === "raw") resource = await fixture.isolated.awaitedRawCleanupFixtureV1.acquire();
     if (resource) { ownedFd = fixture.isolated.awaitedRawCleanupFixtureV1.descriptor(resource); ownedIdentity = fstatSync(ownedFd!); }
     if (mode === "dead") writeFileSync(fixture.lock, `${canonical({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: 99_999, processStartTimeEpochMs: 1, processIdentityHash: "0".repeat(64), leaseNonce: "1".repeat(64) })}\n`, { mode: 0o600, flag: "wx" });
+    const registryRoot = path.join(fixture.root, "baseline-helper-registry-v1");
+    if (mode !== "genesis") {
+      const authorizationHash = "4".repeat(64), authorizationRef = `setfarm://internal-production/baseline-service-restart-authorization/sha256/${authorizationHash}`;
+      const operationBody = { schema: "setfarm.internal-production-baseline-service-restart-operation.v1", service: "setfarm-spawner", actionId: "a-restart-service-setfarm-spawner-v1", authorizationRef, authorizationHash };
+      const operationHash = sha256(canonical(operationBody)), operationRef = `setfarm://internal-production/baseline-service-restart-operation/sha256/${operationHash}`;
+      const normalOperation = recursivelyFreeze({ ...operationBody, operationRef, operationHash });
+      const outboxBody = { schema: "setfarm.internal-production-baseline-service-restart-launch-outbox.v1", service: normalOperation.service, actionId: normalOperation.actionId, authorizationRef, authorizationHash, operationRef, operationHash, maximumDispatchCount: 1 };
+      const outboxHash = sha256(canonical(outboxBody)), outboxRef = `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${outboxHash}`;
+      const lockStats = lstatSync(fixture.lock, { bigint: true });
+      fixture.isolated.seedClosableNormalHelperFixtureV1(normalOperation, recursivelyFreeze({ ...outboxBody, outboxRef, outboxHash }), JSON.parse(readFileSync(fixture.lock, "utf8")), { devDecimal: String(lockStats.dev), inoDecimal: String(lockStats.ino) });
+      assert.deepEqual(fixture.isolated.normalHelperCleanupStateFixtureV1(), { registrations: 1, outcomes: [] });
+    }
     if (mode === "genesis") Reflect.set(globalThis, "__helperCleanupPublicationFaultV1", true);
     let entered!: () => void, completed = false;
     const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { resume = resolve; });
@@ -4800,34 +4904,46 @@ export function discardDrainedGuardFixtureV1(){pendingColdHelperAuthenticationCl
       assert.throws(() => fixture.isolated.awaitedRawCleanupFixtureV1.promote(resource), /already active/);
     }
     let replacementBytes: Buffer | undefined;
+    let replacementLeafIdentity: ReturnType<typeof lstatSync> | undefined;
+    if (scenario.endsWith("-leaf")) {
+      renameSync(fixture.lock, path.join(fixture.fixture, "original-awaited-lock"));
+      writeFileSync(fixture.lock, fencedBytes, { mode: 0o600, flag: "wx" });
+      replacementLeafIdentity = lstatSync(fixture.lock);
+    }
     if (scenario.endsWith("-reused")) {
       replacementBytes = readFileSync(fixture.lock); renameSync(fixture.lock, path.join(fixture.fixture, "original-awaited-lock"));
-      for (let count = 0; count < 256; count++) { const fd = openSync("/dev/null", constants.O_RDONLY); descriptorReservations.push(fd); if (fd > ownedFd!) break; }
       closeSync(ownedFd!); writeFileSync(fixture.lock, replacementBytes, { mode: 0o600, flag: "wx" });
-      foreignFd = openSync(fixture.lock, constants.O_RDONLY | constants.O_NOFOLLOW); assert.equal(foreignFd, ownedFd); foreignIdentity = fstatSync(foreignFd);
+      foreignFd = reopenExactSlot(fixture.lock, ownedFd!); foreignIdentity = fstatSync(foreignFd);
     }
     if (scenario === "dead-reappeared") Reflect.set(globalThis, "__helperCleanupOwnerReappearedV1", true);
+    if (scenario === "ordinary-late-journal") Reflect.set(globalThis, "__helperCleanupOuterMutationV1", () => {
+      writeFileSync(path.join(fixture.root, "pre-schema-helper-journal.json"), "new-unsettled-journal", { mode: 0o600, flag: "wx" });
+    });
     if (scenario === "ordinary-guard") {
       const fd = guardProbe!.descriptors.at(-1)!;
-      for (let count = 0; count < 256; count++) { const reserved = openSync("/dev/null", constants.O_RDONLY); descriptorReservations.push(reserved); if (reserved > fd) break; }
-      closeSync(fd); foreignFd = openSync("/dev/null", constants.O_RDONLY); assert.equal(foreignFd, fd); foreignIdentity = fstatSync(foreignFd);
+      closeSync(fd); foreignFd = reopenExactSlot("/dev/null", fd); foreignIdentity = fstatSync(foreignFd);
       replacementBytes = fencedBytes;
     }
     if (scenario.endsWith("-parent")) {
       movedRoot = path.join(fixture.fixture, "original-awaited-parent"); renameSync(fixture.root, movedRoot); mkdirSync(fixture.root, { mode: 0o700 });
       for (const member of readdirSync(movedRoot)) renameSync(path.join(movedRoot, member), path.join(fixture.root, member));
     }
+    const registryBeforeResume = mode !== "genesis" ? coldGenesisTreeSnapshotV1(registryRoot) : undefined;
     resume(); const result = await operation;
     if (scenario.includes("-")) {
       assert.ok(result.error, "crossed ownership after the await must refuse cleanup");
+      assert.deepEqual(coldGenesisTreeSnapshotV1(registryRoot), registryBeforeResume, "crossed cleanup ownership must refuse before normal registry terminal publication");
       assert.equal(existsSync(fixture.lock), true);
-      if (foreignFd === undefined) { assert.equal(lstatSync(fixture.lock).ino, fencedIdentity.ino); assert.deepEqual(readFileSync(fixture.lock), fencedBytes); }
+      if (foreignFd === undefined) { assert.equal(lstatSync(fixture.lock).ino, (replacementLeafIdentity ?? fencedIdentity).ino); assert.deepEqual(readFileSync(fixture.lock), fencedBytes); }
       if (foreignFd !== undefined) {
         assert.equal(fstatSync(foreignFd).ino, foreignIdentity!.ino, "refused cleanup must not close a foreign reused FD");
         assert.deepEqual(readFileSync(fixture.lock), replacementBytes);
       }
     } else if (mode === "genesis") assert.match(String(result.error), /FIXTURE_GENESIS_PUBLICATION/);
-    else assert.equal(result.error, undefined);
+    else {
+      assert.equal(result.error, undefined);
+      assert.deepEqual(fixture.isolated.normalHelperCleanupStateFixtureV1(), { registrations: 1, outcomes: ["completed"] }, "valid ownership closes the real pending normal helper registration");
+    }
   } finally {
     resume?.(); Reflect.deleteProperty(globalThis, "__helperCleanupPublicationFaultV1");
     const result = await operation;
@@ -4851,6 +4967,7 @@ export function discardDrainedGuardFixtureV1(){pendingColdHelperAuthenticationCl
     for (const fd of descriptorReservations) closeSync(fd);
     Reflect.deleteProperty(globalThis, "__helperCleanupOwnerReappearedV1");
     Reflect.deleteProperty(globalThis, "__helperCleanupGuardCaptureV1");
+    Reflect.deleteProperty(globalThis, "__helperCleanupOuterMutationV1");
     Reflect.deleteProperty(globalThis, "__helperCleanupAwaitGateV1"); fixture.cleanup();
   }
 });
