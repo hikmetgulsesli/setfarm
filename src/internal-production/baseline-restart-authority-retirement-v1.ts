@@ -176,6 +176,21 @@ type DirectSpawnerRebindIntentStateV1 = {
   };
   termination: DirectSpawnerTerminationStateV1 | null;
   helperInvocation?: DirectControllerHelperInvocationV1;
+  settlement?: DirectControllerSettlementV1;
+};
+type DirectControllerSettlementV1 = {
+  record: Readonly<Record<string, unknown>>;
+  bytes: Buffer;
+  target: string;
+  temporary: string;
+  guard: PrivateDirectoryGuardV1 | null;
+  writer: PrivateFrameDescriptorV1;
+  reader: PrivateFrameDescriptorV1 | null;
+  readerAccepted: boolean;
+  openAttempted: boolean;
+  linkAttempted: boolean;
+  unlinkAttempted: boolean;
+  committed: boolean;
 };
 type DirectControllerHelperInvocationV1 = {
   child: ChildProcess | null;
@@ -192,6 +207,7 @@ let directSpawnerRebindPreparationActiveV1 = false;
 let directSpawnerTerminationActiveV1 = false;
 let directControllerHelperInvocationActiveV1 = false;
 let directControllerClaimObservationActiveV1 = false;
+let directControllerSettlementActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -2518,7 +2534,7 @@ async function observeDirectSpawnerRebindControllerClaimV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
   input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
 ) {
-  if (directControllerClaimObservationActiveV1) fail("direct controller claim observation is already active");
+  if (directControllerClaimObservationActiveV1 || directControllerSettlementActiveV1) fail("direct controller claim observation is already active");
   directControllerClaimObservationActiveV1 = true;
   try {
     const completion = await invokeDirectSpawnerRebindHelperV1(lease, input), state = retainedDirectSpawnerRebindIntentV1!;
@@ -2529,6 +2545,158 @@ async function observeDirectSpawnerRebindControllerClaimV1(
     state.phase = "claim-observed";
     return claim;
   } finally { directControllerClaimObservationActiveV1 = false; }
+}
+
+function assertDirectControllerServiceCensusV1(state: DirectSpawnerRebindIntentStateV1, claim: Readonly<Record<string, unknown>>, value: unknown): void {
+  const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "direct settlement service census");
+  if (census.schema !== "setfarm.internal-production-service-census.v1") fail("direct settlement census schema is crossed");
+  coldSelfHashV1(census, "censusHash");
+  const child = claim.child as Record<string, any>, source = claim.source as Record<string, any>;
+  const label = "com.setrox.setfarm-spawner", serviceIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-service-identity.v1", label, command: child.command }));
+  const loaded = { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash };
+  const expected = { pid: child.pid, processStartTimeEpochMs: child.processStartTimeEpochMs, processIdentityHash: sha256(`${child.pid}\n${child.lstart}\n`), serviceIdentityHash,
+    generationHash: sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source: loaded })),
+    loadedSourceSha: loaded.sha, loadedTreeHash: loaded.treeHash, loadedBuildHash: loaded.buildHash, processOwnerCount: 1, listener: null };
+  if (canonical(census.spawner) !== canonical(expected)) fail("direct settlement ordinary spawner is not the retained child");
+  const original = state.inputs.preMutation as Record<string, any>;
+  for (const key of ["dashboard", "missionControl", "openClaw"]) {
+    if (!original[key] || canonical(census[key]) !== canonical(original[key]) || original[key].pid === child.pid) fail("direct settlement original service changed");
+  }
+}
+
+function publishDirectControllerSettlementV1(state: DirectSpawnerRebindIntentStateV1): void {
+  const publication = state.settlement!;
+  publication.guard ??= ensurePrivateAuthorityDirectoryV1(path.dirname(publication.target));
+  const at = (target: string): BigIntStats | null => {
+    try { return lstatSync(target, { bigint: true }); }
+    catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return null; throw error; }
+  };
+  const currentPin = () => publication.reader ?? publication.writer;
+  const assertInventory = () => {
+    publication.guard!.assertStable();
+    const candidates = readdirSync(path.dirname(publication.target)).filter(name => name.startsWith(`.${path.basename(publication.target)}.`));
+    if (candidates.some(name => name !== path.basename(publication.temporary)) || candidates.length > 1) fail("direct settlement publication inventory is crossed");
+    publication.guard!.assertStable();
+  };
+  const assertOriginal = () => {
+    assertDirectControllerAuthorityV1(state); assertInventory();
+    const pin = currentPin();
+    if (publication.reader !== null && !publication.readerAccepted || pin.descriptor === null || pin.identity === null || pin.closeEntered
+      || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct settlement original publication reader is unavailable");
+    return pin.identity;
+  };
+  const assertPath = (target: string) => {
+    const original = assertOriginal();
+    if (!publication.bytes.equals(readColdGenesisCandidateV1(target, original, 2))) fail("direct settlement original publication bytes changed");
+    assertOriginal();
+  };
+  const refreshLink = () => {
+    const pin = currentPin(), before = pin.identity!, after = fstatSync(pin.descriptor!, { bigint: true });
+    if (!sameColdFileMetadataV1({ ...before, nlink: after.nlink, ctimeNs: after.ctimeNs } as BigIntStats, after)
+      || after.nlink < 1n || after.nlink > 2n) fail("direct settlement owned link transition changed data");
+    pin.identity = after;
+    if (publication.writer.descriptor !== null) publication.writer.identity = after;
+  };
+  assertInventory();
+  if (!publication.openAttempted) {
+    if (at(publication.target) !== null || at(publication.temporary) !== null) fail("direct settlement cannot adopt an unowned publication");
+    publication.openAttempted = true;
+    publication.writer.descriptor = openSync(publication.temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    publication.writer.identity = fstatSync(publication.writer.descriptor, { bigint: true });
+    const created = publication.writer.identity;
+    if (!created.isFile() || created.uid !== BigInt(process.getuid!()) || (created.mode & 0o7777n) !== 0o600n || created.nlink !== 1n || created.size !== 0n
+      || !sameColdFileMetadataV1(created, lstatSync(publication.temporary, { bigint: true }))) fail("direct settlement new publication is crossed");
+    try { writeFileSync(publication.writer.descriptor, publication.bytes); }
+    finally {
+      const written = fstatSync(publication.writer.descriptor, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "nlink", "birthtimeNs"].some(key => written[key as keyof BigIntStats] !== created[key as keyof BigIntStats])) fail("direct settlement original writer changed during write");
+      publication.writer.identity = written;
+    }
+  }
+  if (publication.committed) {
+    assertPath(publication.target);
+    if (publication.writer.descriptor !== null || at(publication.temporary) !== null) fail("direct settlement committed cleanup is crossed");
+    return;
+  }
+  if (at(publication.target) === null) {
+    if (publication.unlinkAttempted || publication.reader !== null) fail("direct settlement original final publication disappeared");
+    assertPath(publication.temporary);
+    if (assertOriginal().nlink !== 1n) fail("direct settlement temporary has an unknown link");
+    fsyncSync(publication.writer.descriptor!); assertPath(publication.temporary);
+    publication.linkAttempted = true;
+    try { linkSync(publication.temporary, publication.target); } finally { refreshLink(); }
+  } else if (!publication.linkAttempted) fail("direct settlement final publication is unowned");
+  assertPath(publication.target);
+  if (publication.reader === null) {
+    publication.reader = { descriptor: openSync(publication.target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null, closeEntered: false };
+    publication.reader.identity = fstatSync(publication.reader.descriptor!, { bigint: true });
+    if (!sameColdFileMetadataV1(publication.writer.identity!, publication.reader.identity)) fail("direct settlement opened reader is not the original publication");
+    publication.readerAccepted = true;
+    assertPath(publication.target);
+  }
+  if (publication.writer.descriptor !== null) {
+    if (!publication.writer.closeEntered) {
+      if (!sameColdFileMetadataV1(publication.writer.identity!, fstatSync(publication.writer.descriptor, { bigint: true }))) fail("direct settlement original writer changed");
+      fsyncSync(publication.writer.descriptor);
+    }
+    closePrivateFrameDescriptorV1(publication.writer);
+  }
+  fsyncParent(publication.target); assertPath(publication.target);
+  if (at(publication.temporary) !== null) {
+    assertPath(publication.temporary);
+    if (assertOriginal().nlink !== 2n) fail("direct settlement final publication links are crossed");
+    publication.unlinkAttempted = true;
+    try { unlinkSync(publication.temporary); } finally { refreshLink(); }
+  } else if (!publication.unlinkAttempted) fail("direct settlement temporary disappeared before owned cleanup");
+  if (assertOriginal().nlink !== 1n) fail("direct settlement final publication has an unknown link");
+  fsyncParent(publication.target); assertPath(publication.target);
+  if (at(publication.temporary) !== null) fail("direct settlement temporary reappeared after cleanup");
+  publication.committed = true;
+}
+
+async function settleDirectSpawnerRebindControllerV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
+): Promise<Readonly<Record<string, unknown>>> {
+  if (directControllerSettlementActiveV1 || directControllerClaimObservationActiveV1 || directControllerHelperInvocationActiveV1) fail("direct controller settlement is already active");
+  directControllerSettlementActiveV1 = true;
+  try {
+    if (retainedDirectSpawnerRebindIntentV1?.phase !== "settled") await invokeDirectSpawnerRebindHelperV1(lease, input);
+    const state = retainedDirectSpawnerRebindIntentV1!;
+    heldLease(lease);
+    if (state.lease !== lease || canonical(input) !== canonical({ currentEntryOperation: state.intent.currentEntryOperation, restartAuthority: state.intent.restartAuthority })) fail("direct settlement original input is crossed");
+    const completion = await state.helperInvocation!.completion!;
+    await assertDirectControllerLaunchProfileV1(state);
+    const claim = independentlyObserveDirectControllerClaimV1(state, completion);
+    const receipt = await import("./baseline-post-handoff-receipt-v1.js");
+    independentlyObserveDirectControllerClaimV1(state, completion);
+    const first = await receipt.observeInternalProductionServiceCensusV1();
+    independentlyObserveDirectControllerClaimV1(state, completion); assertDirectControllerServiceCensusV1(state, claim, first);
+    await assertDirectControllerLaunchProfileV1(state); independentlyObserveDirectControllerClaimV1(state, completion);
+    const second = await receipt.observeInternalProductionServiceCensusV1();
+    independentlyObserveDirectControllerClaimV1(state, completion); assertDirectControllerServiceCensusV1(state, claim, second);
+    if (canonical(first) !== canonical(second) || state.settlement && canonical(first) !== canonical(state.settlement.record.serviceCensus)) fail("direct settlement service census changed across observations");
+    await assertDirectControllerLaunchProfileV1(state); independentlyObserveDirectControllerClaimV1(state, completion);
+    if (!state.settlement) {
+      const termination = state.termination!;
+      const body = { schema: "setfarm.internal-production-direct-spawner-controller-settlement.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1",
+        currentEntryOperation: state.intent.currentEntryOperation, restartAuthority: state.intent.restartAuthority, completion,
+        terminationDispatch: { dispatchRef: termination.dispatch!.record.dispatchRef, dispatchHash: termination.dispatch!.record.dispatchHash, identity: coldFileIdentityTupleV1(termination.dispatch!.identity!) },
+        terminationReceipt: { receiptRef: termination.receipt!.record.terminationReceiptRef, receiptHash: termination.receipt!.record.terminationReceiptHash, identity: coldFileIdentityTupleV1(termination.receipt!.identity!) },
+        transitionLock: state.intent.transitionLock, lockIdentity: state.intent.lockIdentity, terminationDispatchCount: 1, spawnDispatchCount: 1, serviceObservationCount: 2, serviceCensus: first, disposition: "completed" };
+      const helperSettlementHash = sha256(canonical(body)), record = freezeColdDataV1({ ...body, helperSettlementRef: `${HELPER_PREFIX}${helperSettlementHash}`, helperSettlementHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("direct settlement exceeds its cap");
+      const target = path.join(rootPaths().settlements, helperSettlementHash.slice(0, 2), `${helperSettlementHash}.json`);
+      state.settlement = { record, bytes, target, temporary: path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(16).toString("hex")}.tmp`), guard: null,
+        writer: { descriptor: null, identity: null, closeEntered: false }, reader: null, readerAccepted: false, openAttempted: false, linkAttempted: false, unlinkAttempted: false, committed: false };
+    }
+    if (state.phase !== "settled") state.phase = "claim-observed";
+    publishDirectControllerSettlementV1(state);
+    independentlyObserveDirectControllerClaimV1(state, completion);
+    state.phase = "settled";
+    return state.settlement.record;
+  } finally { directControllerSettlementActiveV1 = false; }
 }
 
 function captureColdControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {

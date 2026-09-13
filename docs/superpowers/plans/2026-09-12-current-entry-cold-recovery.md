@@ -810,7 +810,7 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   Bind completion inode tuples and the retained helper PID; require helper
   clean exit/absence and the exact claimed child at PPID1. Recheck original
   startup files, directories, P3, profile/output and physical lease around reads.
-- [ ] Publish a direct controller settlement in the existing content-addressed
+- [x] Publish a direct controller settlement in the existing content-addressed
   pre-schema-helper-settlements directory with the existing
   pre-schema-spawner-rebind-helper-settlement reference domain, outside the child's immutable journal.
   Bind the original history and two equal ordinary four-service observations;
@@ -923,6 +923,67 @@ the separate exact retirement export/lease check passed1/1 (0.818s), and
 manifest17/17 (5.980s). Live API/dashboard remain HTTP200/200. This checkpoint
 completes independent claim observation only; settlement and release remain
 unchecked and no live recovery or full-P3 acceptance is claimed.
+
+Next settlement implementation retains a distinct private record/publication
+owner before any write. `settleDirectSpawnerRebindControllerV1(lease, input)`
+consumes the same two existing pairs, independently observes the original claim,
+then brackets two ordinary service censuses with original profile/history/child
+checks. The actual spawner projection must match claim PID/start/source in the
+ordinary service-hash domain; other services must equal original operation P3.
+Its direct-controller schema binds completion, original termination pairs/full
+identities, transition lock, action, one termination/one spawn and the equal
+census. Publish only to the existing content-addressed settlement domain, never
+inside the four-member child journal. Keep the original writer and later reader
+as close-progress pins; same-inode link1/2/1, file/parent sync, writer close and
+temporary unlink must finish before phase=settled. A partial write cannot rewrite;
+response loss resumes only the original retained inode. Tests use real helper/
+child effects and publication syscalls with disposable failure boundaries. No
+public V2 routing or physical release is enabled by this private slice.
+
+Direct controller settlement evidence: first real-process RED found the missing
+private settlement function (7.181s). The initial happy path exposed an inadequate
+test expectation during review: both producer and test used the wrong receipt
+field name. Parsing the actual durable bytes reproduced invalid JSON (7.497s).
+The record now binds the real terminationReceipt pair; tests require valid JSON,
+canonical roundtrip, nonempty exact pair, self-hash/ref and literal effect counts.
+
+Review-driven same-byte temp/FD replacement and late foreign temporary appearance
+both reproduced erroneous acceptance (20.557s). The publisher now preserves its
+original creation tuple across write, only updates permitted write metadata, and
+rechecks its reserved sibling inventory at every publication assertion. The
+reader-open boundary additionally reproduced loss of cleanup ownership (20.819s):
+record the actually opened FD identity separately from acceptance, and never
+allow a failed acquisition to become replay authority. Owned cleanup closes that
+actual reader; a foreign reused writer is not closed by the publisher.
+
+Final focused settlement gates passed21/21 (133.961s), including two equal ordinary
+service observations, census-gated concurrent calls, exact ordinary spawner hash
+domain and field mutations, writer/reader replacement, late sibling appearance,
+partial/absent/completed write response loss, file/parent sync, link/unlink before
+and after effects, conservative writer-close ambiguity, and first/second census
+drift. An earlier15-case syscall run correctly refused an empty write-before
+publication but one test expected only the direct error prefix; its assertion
+now recognizes the existing shared cold-publication validator's exact refusal.
+No production guard was weakened. TypeScript no-emit/whitespace passed, manifest
+17/17 (6.076s), and final independent scoped review found no remaining material
+issue. Generic physical release still refuses this retained owner; terminal
+history and public V2 routing remain separately pending.
+Final capture/helper/invocation/claim/settlement-positive/lease coupled gate
+passed43/43 (120.449s), including the amended canonical record and exact receipt
+reference/count assertions. This is a scoped private settlement checkpoint, not
+full receipt/P3, clean-main rollout, or live A acceptance.
+
+Next historical adoption uses only the existing historical-P3 receipt port, not
+live service census or zero-owner prepare/consume. Its dependency is helper census
+to direct terminal to original P3 to cold history; there is no helper-census
+back-edge. Pin the top intent and exact four-member journal, parse the original
+P3-bound termination chain, dispatch and claim, reconstruct completion/full
+identities and the same expected CAS settlement before reading it. History may
+authenticate after child departure, but cannot grant a new process effect or
+replace retained lease ownership. The async historical-P3 port requires awaited
+propagation through helper cleanup, dead-lock reclaim and raw-lock release before
+those consumers can accept direct terminal history. Preserve V1 behavior and
+test every existing raw/genesis/ordinary caller; do not fire-and-forget cleanup.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
