@@ -3442,25 +3442,25 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
 async function authenticateDirectSpawnerHelperIntentV1() {
   const guards: PrivateDirectoryGuardV1[] = [];
   const pins: Array<{ descriptor: number | null; identity: BigIntStats | null; target: string; bytes: Buffer | null; closeEntered: boolean }> = [];
+  const publicationPins: typeof pins = [];
   let nodePin: typeof pins[number] | null = null;
   let closing = false;
+  const closePin = (pin: typeof pins[number]) => {
+    if (pin.descriptor === null) return;
+    let current: BigIntStats;
+    try { current = fstatSync(pin.descriptor, { bigint: true }); }
+    catch (error) { if (error instanceof Error && "code" in error && error.code === "EBADF") { pin.descriptor = null; return; } throw error; }
+    if (pin.identity === null) fail("direct helper reader identity is unavailable");
+    if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== pin.identity![key as keyof BigIntStats])) {
+      pin.descriptor = null; fail("direct helper reader descriptor was reused");
+    }
+    if (pin.closeEntered) fail("direct helper reader close outcome is ambiguous");
+    pin.closeEntered = true; closeSync(pin.descriptor); pin.descriptor = null;
+  };
   const close = () => {
     closing = true;
     let failure: unknown = null;
-    for (const pin of pins) {
-      if (pin.descriptor === null) continue;
-      try {
-        let current: BigIntStats;
-        try { current = fstatSync(pin.descriptor, { bigint: true }); }
-        catch (error) { if (error instanceof Error && "code" in error && error.code === "EBADF") { pin.descriptor = null; continue; } throw error; }
-        if (pin.identity === null) fail("direct helper reader identity is unavailable");
-        if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== pin.identity![key as keyof BigIntStats])) {
-          pin.descriptor = null; fail("direct helper reader descriptor was reused");
-        }
-        if (pin.closeEntered) fail("direct helper reader close outcome is ambiguous");
-        pin.closeEntered = true; closeSync(pin.descriptor); pin.descriptor = null;
-      } catch (error) { failure ??= error; }
-    }
+    for (const pin of [...publicationPins, ...pins]) try { closePin(pin); } catch (error) { failure ??= error; }
     for (let index = guards.length - 1; index >= 0; index--) {
       try { guards[index]!.close(); guards.splice(index, 1); } catch (error) { failure ??= error; }
     }
@@ -3504,12 +3504,13 @@ async function authenticateDirectSpawnerHelperIntentV1() {
     const epochBytes = readPinned(paths.epoch, undefined, 65_536), epoch = assertEpochOneActive();
     if (!epochBytes.equals(Buffer.from(`${canonical(epoch)}\n`)) || (intent.epoch as Record<string, unknown>).epochRef !== epoch.epochRef
       || (intent.epoch as Record<string, unknown>).epochHash !== epoch.epochHash) fail("direct helper original epoch is crossed");
-    const assertStable = () => {
+    let dispatchStarted = false, childHandedOff = false;
+    let spawnDispatch: { record: Readonly<Record<string, any>>; rootIdentity: BigIntStats; reader: typeof pins[number]; frameReader: typeof pins[number] } | null = null;
+    const assertOriginalStable = () => {
       if (closing) fail("direct helper authentication is closed");
       for (const guard of guards) guard.assertStable();
       if (process.argv.length !== 2 || process.execArgv.length !== 0 || process.argv[1] !== entry || process.cwd() !== repository
-        || !sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))
-        || canonical(readColdDirectoryMembersV1(root, 2).sort()) !== canonical(["termination-dispatch.json", "termination-receipt.json"])) fail("direct helper entry or prefix changed");
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => rootIdentity[key as keyof BigIntStats] !== lstatSync(root, { bigint: true })[key as keyof BigIntStats])) fail("direct helper entry or root identity changed");
       for (const [descriptor, target, original, maximum] of [[4, paths.lock, lockFile, 65_536], [5, paths.journal, intentFile, 1_048_576]] as const) {
         const current = inherited(descriptor, target, maximum);
         if (!sameColdFileMetadataV1(original.identity, current.identity) || !original.bytes.equals(current.bytes)) fail("direct helper original inherited authority changed");
@@ -3521,6 +3522,33 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       const parentOwner = observeColdProcessParentGroupV1(lock.pid as number);
       if (process.ppid !== lock.pid || !parent || parentOwner.uid !== process.getuid!() || parent.processStartTimeEpochMs !== lock.processStartTimeEpochMs || parent.processIdentityHash !== lock.processIdentityHash) fail("direct helper controller parent is crossed");
       for (const guard of guards) guard.assertStable();
+    };
+    const assertFrame = (pin: typeof pins[number]) => {
+      if (pin.descriptor === null || pin.identity === null || pin.bytes === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct child original frame identity changed");
+      const bytes = Buffer.alloc(pin.bytes.length);
+      for (let offset = 0; offset < bytes.length;) {
+        const count = readSync(pin.descriptor, bytes, offset, Math.min(65_536, bytes.length - offset), offset);
+        if (count < 1) fail("direct child frame read is partial");
+        offset += count;
+      }
+      if (!bytes.equals(pin.bytes) || readSync(pin.descriptor, Buffer.alloc(1), 0, 1, bytes.length) !== 0
+        || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct child original frame bytes changed");
+    };
+    const assertStable = () => {
+      assertOriginalStable();
+      if (dispatchStarted && spawnDispatch === null) fail("direct helper spawn publication is uncertain");
+      const expected = spawnDispatch?.rootIdentity ?? rootIdentity;
+      if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, spawnDispatch ? 3 : 2).sort()) !== canonical(spawnDispatch
+          ? ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"] : ["termination-dispatch.json", "termination-receipt.json"])) fail("direct helper journal prefix changed");
+      if (spawnDispatch) {
+        const pin = spawnDispatch.reader;
+        if (pin.descriptor === null || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+          || !pin.bytes!.equals(readColdGenesisCandidateV1(pin.target, pin.identity))) fail("direct helper original spawn dispatch changed");
+        assertFrame(spawnDispatch.frameReader);
+      }
+      assertOriginalStable();
+      if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))) fail("direct helper journal changed across validation");
     };
     assertStable();
     const evidence = await resolveDirectSpawnerRebindEvidenceV1({ currentEntryOperation: intent.currentEntryOperation, restartAuthority: intent.restartAuthority } as Parameters<typeof resolveDirectSpawnerRebindEvidenceV1>[0], epoch, assertStable);
@@ -3555,8 +3583,8 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       nodeHash.update(buffer.subarray(0, count)); offset += count;
     }
     if (nodeHash.digest("hex") !== bytesHash || readSync(nodePin.descriptor!, buffer, 0, 1, offset) !== 0) fail("direct helper Node bytes are crossed");
-    const assertRuntimeStable = () => {
-      assertStable();
+    const assertPhysicalRuntimeStable = () => {
+      assertOriginalStable();
       for (const [target, original] of hostDirectories) {
         const current = lstatSync(target, { bigint: true });
         if (!current.isDirectory() || current.isSymbolicLink() || canonical(metadata(current)) !== canonical(metadata(original))) fail("direct helper physical host identity changed");
@@ -3564,10 +3592,100 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.uid },
         sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
         outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
-      assertStable();
+      assertOriginalStable();
     };
+    const assertRuntimeStable = () => { assertStable(); assertPhysicalRuntimeStable(); assertStable(); };
     assertRuntimeStable();
-    return Object.freeze({ intent, history, environment: evidence.environment, assertStable: assertRuntimeStable, close });
+    const publishDispatch = () => {
+      assertRuntimeStable();
+      if (dispatchStarted) fail("direct helper spawn dispatch was already attempted");
+      const helper = boundedPsProcessIdentity(process.pid), helperOwner = observeColdProcessParentGroupV1(process.pid);
+      if (!helper || helperOwner.uid !== profile.uid || helperOwner.ppid !== lock.pid) fail("direct helper original process identity is crossed");
+      if (observeDirectSpawnerTerminationTargetV1((evidence.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct helper predecessor returned before dispatch");
+      const body = { schema: "setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, intentIdentity: frame.intentIdentity,
+        terminationReceiptRef: history.receipt.terminationReceiptRef, terminationReceiptHash: history.receipt.terminationReceiptHash,
+        terminationReceiptIdentity: frame.terminationReceiptIdentity, terminationDispatchIdentity: frame.terminationDispatchIdentity,
+        controller: history.dispatch.controller, helper: { ...helper, uid: helperOwner.uid, ppid: helperOwner.ppid }, lockIdentity: intent.lockIdentity,
+        action: { transport: "direct-detached-node-v1", executable: profile.executable.path, arguments: [path.join(repository, "dist/spawner.js")], cwd: profile.cwd, detached: true }, maximumSpawnDispatchCount: 1 };
+      const dispatchHash = sha256(canonical(body));
+      const record = freezeColdDataV1({ ...body, dispatchRef: `setfarm://internal-production/pre-schema-spawner-direct-spawn-dispatch/sha256/${dispatchHash}`, dispatchHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("direct helper spawn dispatch exceeds its cap");
+      const target = path.join(root, "spawn-dispatch.json");
+      const openOwned = (target: string, flags: number) => {
+        const pin = { descriptor: openSync(target, flags, 0o600) as number | null, identity: null as BigIntStats | null, target, bytes: null as Buffer | null, closeEntered: false };
+        publicationPins.push(pin); pin.identity = fstatSync(pin.descriptor!, { bigint: true });
+        return pin;
+      };
+      const assertMembers = (scratch?: string) => {
+        assertOriginalStable();
+        const names = ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json", ...(scratch ? [path.basename(scratch)] : [])].sort();
+        if (canonical(readColdDirectoryMembersV1(root, names.length).sort()) !== canonical(names)) fail("direct helper publishing prefix is crossed");
+      };
+      assertRuntimeStable();
+      // This durable attempt can never be adopted by another helper or retried
+      // after any partial write, fsync, reopen or ambiguous close outcome.
+      dispatchStarted = true;
+      const writer = openOwned(target, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW);
+      const created = writer.identity!;
+      if (!created.isFile() || created.uid !== rootIdentity.uid || created.dev !== rootIdentity.dev || created.nlink !== 1n || created.size !== 0n
+        || (created.mode & 0o7777n) !== 0o600n || !sameColdFileMetadataV1(created, lstatSync(target, { bigint: true }))) fail("direct helper spawn creation identity is crossed");
+      assertMembers();
+      // Direct spawn publication has its own fault boundary; never alias cold.
+      writeFileSync(writer.descriptor!, bytes); fsyncSync(writer.descriptor!); fsyncParent(target);
+      const written = fstatSync(writer.descriptor!, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => created[key as keyof BigIntStats] !== written[key as keyof BigIntStats])
+        || written.size !== BigInt(bytes.length) || !bytes.equals(readColdGenesisCandidateV1(target, written))) fail("direct helper spawn publication changed");
+      const reader = openOwned(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      reader.bytes = bytes;
+      if (!sameColdFileMetadataV1(written, reader.identity!)) fail("direct helper original dispatch reopen changed");
+      closePin(writer); assertMembers(); assertPhysicalRuntimeStable();
+      const childFrame = { schema: "setfarm.internal-production-pre-schema-spawner-direct-rebind-child-capability.v1", dispatchRef: record.dispatchRef, dispatchHash,
+        dispatchIdentity: coldFileIdentityTupleV1(written), lockIdentity: intent.lockIdentity, environment: evidence.environment, nonce: frame.nonce };
+      const childBytes = Buffer.from(`${canonical(childFrame)}\n`);
+      if (childBytes.length < 1 || childBytes.length > 1_048_576) fail("direct child frame exceeds its cap");
+      const scratch = path.join(root, `.direct-child-capability.${randomBytes(16).toString("hex")}.tmp`);
+      const frameWriter = openOwned(scratch, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW), empty = frameWriter.identity!;
+      if (!empty.isFile() || empty.uid !== rootIdentity.uid || empty.dev !== rootIdentity.dev || empty.nlink !== 1n || empty.size !== 0n || (empty.mode & 0o7777n) !== 0o600n) fail("direct child empty frame identity is crossed");
+      const frameReader = openOwned(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      assertMembers(scratch);
+      if (!sameColdFileMetadataV1(empty, frameReader.identity!) || !sameColdFileMetadataV1(empty, fstatSync(frameWriter.descriptor!, { bigint: true }))
+        || !sameColdFileMetadataV1(empty, lstatSync(scratch, { bigint: true }))) fail("direct child empty frame changed before unlink");
+      unlinkSync(scratch);
+      const unlinked = fstatSync(frameWriter.descriptor!, { bigint: true });
+      if (unlinked.nlink !== 0n || unlinked.size !== 0n
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => empty[key as keyof BigIntStats] !== unlinked[key as keyof BigIntStats])
+        || !sameColdFileMetadataV1(unlinked, fstatSync(frameReader.descriptor!, { bigint: true }))) fail("direct child frame unlink identity changed");
+      // No later operation owns a directory mutation. Retain this one snapshot
+      // before parent fsync, original-authority reads and final output checking.
+      const finalRootIdentity = lstatSync(root, { bigint: true });
+      fsyncParent(scratch); assertMembers();
+      if (!sameColdFileMetadataV1(finalRootIdentity, lstatSync(root, { bigint: true }))
+        || !sameColdFileMetadataV1(unlinked, fstatSync(frameWriter.descriptor!, { bigint: true }))
+        || !sameColdFileMetadataV1(unlinked, fstatSync(frameReader.descriptor!, { bigint: true }))) fail("direct child original empty transport changed before secret write");
+      // Child secrets are first written after their empty pathname is removed.
+      writeFileSync(frameWriter.descriptor!, childBytes); fsyncSync(frameWriter.descriptor!);
+      const frameWritten = fstatSync(frameReader.descriptor!, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => empty[key as keyof BigIntStats] !== frameWritten[key as keyof BigIntStats])
+        || frameWritten.nlink !== 0n || frameWritten.size !== BigInt(childBytes.length)
+        || !sameColdFileMetadataV1(frameWritten, fstatSync(frameWriter.descriptor!, { bigint: true }))) fail("direct child frame write identity changed");
+      frameReader.identity = frameWritten; frameReader.bytes = childBytes;
+      assertFrame(frameReader); closePin(frameWriter);
+      assertMembers(); assertPhysicalRuntimeStable(); assertMembers(); assertFrame(frameReader);
+      if (!sameColdFileMetadataV1(finalRootIdentity, lstatSync(root, { bigint: true }))) fail("direct helper final journal identity changed");
+      spawnDispatch = { record, rootIdentity: finalRootIdentity, reader, frameReader };
+      assertRuntimeStable();
+      return record;
+    };
+    const childDescriptors = () => {
+      assertRuntimeStable();
+      if (!spawnDispatch || childHandedOff) fail("direct child dispatch is absent or consumed");
+      childHandedOff = true;
+      // Permission is consumed here; cleanup ownership stays with this helper.
+      return Object.freeze({ frameDescriptor: spawnDispatch.frameReader.descriptor!, dispatchDescriptor: spawnDispatch.reader.descriptor! });
+    };
+    return Object.freeze({ intent, history, environment: evidence.environment, assertStable: assertRuntimeStable, publishDispatch, childDescriptors, close });
   } catch {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
     return fail("direct helper authentication failed");
@@ -3580,6 +3698,18 @@ function revokeDirectSpawnerHelperRuntimeV1(): void {
   if (authentication === null) return;
   const close = () => { authentication.close(); if (directHelperAuthenticationV1 === authentication) directHelperAuthenticationV1 = null; pendingColdHelperAuthenticationCleanupV1.delete(close); };
   try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
+}
+
+function publishDirectSpawnerHelperSpawnDispatchV1() {
+  if (directHelperAuthenticationFailedV1 || directHelperAuthenticationV1 === null || spawnerInheritedRuntimeRefusedV1) fail("direct helper spawn authority is unavailable");
+  try { return directHelperAuthenticationV1.publishDispatch(); }
+  catch { revokeDirectSpawnerHelperRuntimeV1(); return fail("direct helper spawn publication is revoked"); }
+}
+
+function takeDirectSpawnerChildLaunchDescriptorsV1() {
+  if (directHelperAuthenticationFailedV1 || directHelperAuthenticationV1 === null || spawnerInheritedRuntimeRefusedV1) fail("direct child handoff authority is unavailable");
+  try { return directHelperAuthenticationV1.childDescriptors(); }
+  catch { revokeDirectSpawnerHelperRuntimeV1(); return fail("direct child handoff is revoked"); }
 }
 
 async function acquireDirectSpawnerHelperContextV1() {

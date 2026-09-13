@@ -637,7 +637,7 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
   }
 });
 
-async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper") {
+async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper", spawnFault?: string) {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
   let targetPid: number | undefined, targetIdentity: ReturnType<typeof parseColdFixtureExitRowV1> | undefined;
   try {
@@ -723,7 +723,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const directIntentOpen = "    intentDescriptor = openSync(paths.journal, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);";
     assert.equal(runtimeSource.split(directIntentOpen).length - 1, 1);
     runtimeSource = runtimeSource.replace(directIntentOpen, `${directIntentOpen}\n    if(globalThis.__directFrameProbeV1)globalThis.__directFrameProbeV1.intent=intentDescriptor;`);
-    const runtimePath = installRetirementFixture(fixture, runtimeSource.replaceAll("process.kill(", "directSignalFixtureV1(") + `
+    const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
 function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')&&(args[1]&constants.O_CREAT)!==0)probe.writer=fd;if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}return fd;}
@@ -755,8 +755,13 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
     }
     rehash(directProfile);
     const entry = directProfile.arguments[0], ready = path.join(fixture, "direct-target-ready"), signals = path.join(fixture, "direct-target-signals");
+    // APFS directory nlink changes when a new signal/stop file appears. Keep
+    // disposable control channels present before the original authority pin,
+    // so a response-loss retry observes process exit, not fixture-root churn.
+    writeFileSync(signals, "", { mode: 0o600, flag: "wx" });
+    writeFileSync(path.join(fixture, "direct-owned-stop"), "", { mode: 0o600, flag: "wx" });
     mkdirSync(path.dirname(entry), { recursive: true, mode: 0o700 });
-    writeFileSync(entry, `import{writeFileSync,appendFileSync,renameSync,existsSync}from'node:fs';process.on('SIGTERM',()=>{appendFileSync(${JSON.stringify(signals)},'SIGTERM\\n',{mode:0o600});if(${JSON.stringify(mode)}!=='ignored')process.exit(0)});const ready=${JSON.stringify(ready)};writeFileSync(ready+'.pending',String(process.pid),{mode:0o600,flag:'wx'});renameSync(ready+'.pending',ready);setInterval(()=>{if(existsSync(${JSON.stringify(path.join(fixture, "direct-owned-stop"))}))process.exit(0)},50);\n`, { mode: 0o600 });
+    writeFileSync(entry, `import{writeFileSync,appendFileSync,renameSync,readFileSync}from'node:fs';process.on('SIGTERM',()=>{appendFileSync(${JSON.stringify(signals)},'SIGTERM\\n',{mode:0o600});if(${JSON.stringify(mode)}!=='ignored')process.exit(0)});const ready=${JSON.stringify(ready)};writeFileSync(ready+'.pending',String(process.pid),{mode:0o600,flag:'wx'});renameSync(ready+'.pending',ready);setInterval(()=>{if(readFileSync(${JSON.stringify(path.join(fixture, "direct-owned-stop"))},'utf8').length>0)process.exit(0)},50);\n`, { mode: 0o600 });
     directProfile.outputTreeBytesHash = sha256(readFileSync(entry, "utf8")); rehash(directProfile);
     const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from'node:child_process';const child=spawn(process.execPath,[${JSON.stringify(entry)}],{cwd:${JSON.stringify(repository)},detached:true,stdio:'ignore'});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3000 });
     assert.equal(launcher.status, 0, launcher.stderr); assert.match(launcher.stdout, /^[1-9][0-9]*$/);
@@ -913,7 +918,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
         const retry = runtime.terminateDirectFixtureV1(lease, input);
         await new Promise(resolve => setTimeout(resolve, 150));
         assert.equal(signalProbe.calls.length, 1, "retry while the ignored target is alive cannot signal twice");
-        writeFileSync(path.join(fixture, "direct-owned-stop"), "owned test teardown", { mode: 0o600, flag: "wx" });
+        writeFileSync(path.join(fixture, "direct-owned-stop"), "owned test teardown", { mode: 0o600 });
         terminal = await retry;
       } else terminal = await runtime.terminateDirectFixtureV1(lease, input);
       assert.equal(terminal.schema, "setfarm.internal-production-pre-schema-spawner-direct-termination-receipt.v1");
@@ -922,7 +927,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
       assert.equal(terminal.signalDispatchCount, 1);
       assert.equal(terminal.controller.pid, process.pid);
       assert.deepEqual(signalProbe.calls, [{ pid: targetPid, signal: "SIGTERM" }]);
-      if (mode === "signal-before") assert.equal(existsSync(signals), false, "a failed pre-effect signal response cannot be retried as another syscall");
+      if (mode === "signal-before") assert.equal(readFileSync(signals, "utf8"), "", "a failed pre-effect signal response cannot be retried as another syscall");
       else assert.equal(readFileSync(signals, "utf8"), "SIGTERM\n");
       assert.equal(observeColdFixtureExitV1(targetPid), null);
       assert.deepEqual(await runtime.terminateDirectFixtureV1(lease, input), terminal);
@@ -952,7 +957,24 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
         compile("internal-production/baseline-workspace-authority-path-v1.ts", readFileSync(path.join(internal, "baseline-workspace-authority-path-v1.ts"), "utf8"));
         const parentUidReturn = "  return { uid, ppid, pgid };";
         assert.equal(source.split(parentUidReturn).length - 1, 1);
-        compile("internal-production/baseline-restart-authority-retirement-v1.ts", source.replace(parentUidReturn, "  return { uid:globalThis.__directHelperParentUidFault?uid+1:uid, ppid, pgid };") + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\n");
+        let helperSource = source.replace(parentUidReturn, "  return { uid:globalThis.__directHelperParentUidFault?uid+1:uid, ppid, pgid };");
+        if (spawnFault !== undefined) {
+          for (const name of ["openSync", "closeSync", "writeFileSync", "fsyncSync"]) {
+            const marker = `  ${name},\n`; assert.equal(helperSource.split(marker).length - 1, 1);
+            helperSource = helperSource.replace(marker, `  ${name} as actualSpawn_${name},\n`);
+          }
+          for (const [marker, replacement] of [
+            ["      fsyncParent(scratch); assertMembers();", "      fsyncParent(scratch);globalThis.__directSpawnProbeV1?.boundary('unlinked',frameWriter.descriptor);assertMembers();"],
+            ["      assertMembers(); assertPhysicalRuntimeStable(); assertMembers(); assertFrame(frameReader);", "      assertMembers();globalThis.__directSpawnProbeV1?.boundary('final');assertPhysicalRuntimeStable();assertMembers();assertFrame(frameReader);"],
+          ]) { assert.equal(helperSource.split(marker!).length - 1, 1); helperSource = helperSource.replace(marker!, replacement!); }
+          helperSource += `
+function openSync(...args){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&p.fault==='collision'&&String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT)){p.fired=true;actualSpawn_writeFileSync(args[0],'foreign',{mode:0o600,flag:'wx'});}const fd=actualSpawn_openSync(...args);if(p){p.owned.add(fd);if(String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT))p.writer=fd;if(String(args[0]).includes('.direct-child-capability.')&&(args[1]&constants.O_CREAT))p.frameWriter=fd;}return fd;}
+function closeSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&fd===p.frameWriter&&!p.fired&&p.fault==='late-frame'){p.fired=true;actualSpawn_writeFileSync(fd,'crossed-after-read');}if(p&&fd===p.writer&&!p.fired&&['writer-close','close-response','close-reuse','same-inode-close'].includes(p.fault)){p.fired=true;if(p.fault!=='writer-close'){actualSpawn_closeSync(fd);p.owned.delete(fd);if(p.fault==='close-reuse'||p.fault==='same-inode-close'){p.foreign=actualSpawn_openSync(p.fault==='same-inode-close'?path.join(rootPaths().root,'direct-spawner-rebind-v1/spawn-dispatch.json'):'/dev/null',constants.O_RDONLY);if(p.foreign!==fd)throw Error('fixture FD was not reused');}}throw Error('DIRECT_SPAWN_CLOSE_FAULT');}actualSpawn_closeSync(fd);p?.owned.delete(fd);}
+function writeFileSync(fd,bytes,...rest){const p=globalThis.__directSpawnProbeV1;if(p&&fd===p.writer&&!p.fired&&p.fault==='short-write'){p.fired=true;return actualSpawn_writeFileSync(fd,bytes.subarray(0,1),...rest)}return actualSpawn_writeFileSync(fd,bytes,...rest);}
+function fsyncSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&(fd===p.writer&&p.fault==='file-sync'||p.writer!==undefined&&fstatSync(fd).isDirectory()&&p.fault==='parent-sync')){p.fired=true;throw Error('DIRECT_SPAWN_SYNC_FAULT')}return actualSpawn_fsyncSync(fd);}
+`;
+        }
+        compile("internal-production/baseline-restart-authority-retirement-v1.ts", helperSource + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\nexport function publishDirectSpawnFixtureV1(){return publishDirectSpawnerHelperSpawnDispatchV1()}\nexport function takeDirectChildFixtureV1(){return takeDirectSpawnerChildLaunchDescriptorsV1()}\nexport function drainDirectSpawnFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}\n");
         for (const relative of ["internal-production/baseline-spawner-launch-environment-v1.ts", "findings/legacy-finding-publication-inventory-v1.ts", "runtime-config.ts"]) compileStatic(relative);
         for (const relative of ["baseline-post-handoff-receipt-v1.ts", "baseline-spawner-startup-admission-v1.ts"]) {
           let source = readFileSync(path.join(internal, relative), "utf8");
@@ -967,8 +989,8 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
         const recordPath = path.join(fixture, "direct-helper-fixture-records.json");
         writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
         const runner = path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js");
-        writeFileSync(runner, `import assert from'node:assert/strict';import{readFileSync,writeFileSync,renameSync,chmodSync,lstatSync,fstatSync,openSync,closeSync}from'node:fs';
-import{acquireDirectHelperFixtureV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1}from'./baseline-restart-authority-retirement-v1.js';
+        writeFileSync(runner, `import assert from'node:assert/strict';import{readFileSync,writeFileSync,renameSync,chmodSync,lstatSync,fstatSync,openSync,closeSync,unlinkSync}from'node:fs';
+import{acquireDirectHelperFixtureV1,publishDirectSpawnFixtureV1,takeDirectChildFixtureV1,drainDirectSpawnFixtureV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1}from'./baseline-restart-authority-retirement-v1.js';
 const fault=process.env.FIXTURE_DIRECT_HELPER_FAULT??'none';let context;
 globalThis.__directRebindInputFixtureV1={records:JSON.parse(readFileSync(${JSON.stringify(recordPath)},'utf8')),calls:[]};
 try{
@@ -985,7 +1007,27 @@ if(fault==='late-host'){const target=${JSON.stringify(environmentDirectory)},mod
 if(fault==='late-entry'){const entry=process.argv[1];process.argv[1]=entry+'.foreign';assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());process.argv[1]=entry;assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
 if(fault==='late-frame'){const original=openSync('/dev/fd/3','r');closeSync(3);assert.equal(openSync('/dev/null','r'),3);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());closeSync(3);assert.equal(openSync('/dev/fd/'+original,'r'),3);closeSync(original);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
 const{loadRuntimeEnv}=await import('../runtime-config.js');loadRuntimeEnv();assert.equal(process.env.PRIVATE_VALUE,'direct-fixture-secret');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER,'1');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER,undefined);
+if(${JSON.stringify(spawnFault !== undefined)}){
+ const sf=${JSON.stringify(spawnFault)},root=${JSON.stringify(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1"))},foreign=${JSON.stringify(path.join(fixture, "foreign-empty"))};
+ const probe=globalThis.__directSpawnProbeV1={fault:sf,owned:new Set(),fired:false,boundary(stage,fd){if(stage==='unlinked'&&sf==='secret-fd-reuse'){this.fired=true;closeSync(fd);this.owned.delete(fd);this.foreign=openSync(foreign,'wx',0o600);assert.equal(this.foreign,fd);}if(stage==='final'&&['root-churn','foreign-scratch'].includes(sf)){this.fired=true;writeFileSync(root+'/foreign.tmp','foreign',{mode:0o600,flag:'wx'});if(sf==='root-churn')unlinkSync(root+'/foreign.tmp');}}};
+ if(!['none','second-publish','dispatch-swap','termination-swap','late-output'].includes(sf)){
+  assert.throws(()=>publishDirectSpawnFixtureV1(),undefined,sf+' publication must refuse');assert.equal(probe.fired,true,sf+' boundary must execute');assert.throws(()=>takeDirectChildFixtureV1());assert.throws(()=>publishDirectSpawnFixtureV1());assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());
+  if(probe.foreign!==undefined){if(sf==='secret-fd-reuse'){assert.equal(readFileSync(foreign).length,0,'no secret may reach a reused linked file');assert.equal(fstatSync(probe.foreign).nlink,1);}else assert.doesNotThrow(()=>fstatSync(probe.foreign),'foreign reopened descriptor must survive');if(sf==='same-inode-close')assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.foreign);}
+  if(sf==='writer-close'){assert.equal(probe.owned.size,1);assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.writer);probe.owned.delete(probe.writer);}assert.equal(drainDirectSpawnFixtureV1(),0);assert.equal(probe.owned.size,0,'owned publication and guard handles must be closed');context.close();assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);process.stdout.write('dispatch-refused');
+ }else{
+ const record=publishDirectSpawnFixtureV1();assert.equal(record.schema,'setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1');assert.equal(record.maximumSpawnDispatchCount,1);assert.equal(record.helper.pid,process.pid);assert.equal(record.helper.ppid,process.ppid);assert.equal(record.controller.pid,process.ppid);assert.deepEqual(record.action,{transport:'direct-detached-node-v1',executable:process.execPath,arguments:[${JSON.stringify(entry)}],cwd:process.cwd(),detached:true});
+ if(sf!=='none'){
+  if(sf==='second-publish')assert.throws(()=>publishDirectSpawnFixtureV1());
+  if(sf==='dispatch-swap'||sf==='termination-swap'){const target=root+'/'+(sf==='dispatch-swap'?'spawn-dispatch.json':'termination-receipt.json'),bytes=readFileSync(target);renameSync(target,${JSON.stringify(path.join(fixture, "original-spawn-authority"))});writeFileSync(target,bytes,{mode:0o600,flag:'wx'});}
+  if(sf==='late-output')writeFileSync(${JSON.stringify(entry)},readFileSync(${JSON.stringify(entry)},'utf8')+'// crossed output');
+  assert.throws(()=>takeDirectChildFixtureV1());assert.throws(()=>publishDirectSpawnFixtureV1());assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());assert.equal(probe.owned.size,0);context.close();process.stdout.write('dispatch-refused');
+ }else{
+ const handles=takeDirectChildFixtureV1(),childFrame=JSON.parse(readFileSync(handles.frameDescriptor,'utf8'));assert.equal(fstatSync(handles.frameDescriptor).nlink,0);assert.equal(fstatSync(handles.dispatchDescriptor).nlink,1);assert.deepEqual(JSON.parse(readFileSync(handles.dispatchDescriptor,'utf8')),record);assert.equal(childFrame.schema,'setfarm.internal-production-pre-schema-spawner-direct-rebind-child-capability.v1');assert.equal(childFrame.dispatchRef,record.dispatchRef);assert.equal(childFrame.dispatchHash,record.dispatchHash);assert.equal(childFrame.environment.PRIVATE_VALUE,'direct-fixture-secret');assert.throws(()=>writeFileSync(handles.frameDescriptor,'x'),/EBADF/);assert.throws(()=>writeFileSync(handles.dispatchDescriptor,'x'),/EBADF/);assert.equal(resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1().role,'direct-helper');assert.throws(()=>takeDirectChildFixtureV1());assert.throws(()=>publishDirectSpawnFixtureV1());assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());context.close();assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);process.stdout.write('dispatch-owned');
+ }
+ }
+}else{
 context.close();assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);assert.equal(fault,'none');process.stdout.write('authenticated');
+}
 }catch(error){if(fault==='none'||error.code==='ERR_ASSERTION')throw error;assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);await assert.rejects(acquireDirectHelperFixtureV1());process.stdout.write('refused');}finally{context?.close()}
 `, { mode: 0o600 });
         mkdirSync(path.join(home, "Library/LaunchAgents"), { recursive: true, mode: 0o700 });
@@ -1029,18 +1071,28 @@ context.close();assert.throws(()=>resolveInternalProductionSpawnerInheritedRunti
         const intermediary = path.join(fixture, "direct-helper-parent.mjs");
         writeFileSync(intermediary, `import{spawnSync}from'node:child_process';const child=spawnSync(process.execPath,[${JSON.stringify(runner)}],{cwd:${JSON.stringify(repository)},env:process.env,stdio:['ignore','inherit','inherit',3,4,5],timeout:12000});process.exitCode=child.status??1;\n`, { mode: 0o600 });
         writeFileSync(path.join(fixture, ".env"), "PENDING_DOTENV=escaped\n", { mode: 0o600 });
-        for (const [fault, mutate] of [["none", null], ["pending-ordinary", null], ["pending-spawner", null], ["parent-uid", null], ["wrong-parent", null], ["wrong-cwd", null], ["extra-argv", null], ["crossed-frame", null], ["crossed-lock", null], ["crossed-intent", null], ["missing-marker", null], ["revoked-during-evidence", null], ["late-output", null], ["late-host", null], ["early-configuration", null], ["entry-before-selection", null], ["late-entry", null], ["late-frame", null], ["mixed-marker", null], ...crosses, ["late-dispatch-swap", null]] as const) {
+        for (const [fault, mutate] of (spawnFault === undefined ? [["none", null], ["pending-ordinary", null], ["pending-spawner", null], ["parent-uid", null], ["wrong-parent", null], ["wrong-cwd", null], ["extra-argv", null], ["crossed-frame", null], ["crossed-lock", null], ["crossed-intent", null], ["missing-marker", null], ["revoked-during-evidence", null], ["late-output", null], ["late-host", null], ["early-configuration", null], ["entry-before-selection", null], ["late-entry", null], ["late-frame", null], ["mixed-marker", null], ...crosses, ["late-dispatch-swap", null]] : [["none", null]]) as Array<[string, ((value: any) => void) | null]>) {
           const observed = structuredClone(records); mutate?.(observed); writeFileSync(recordPath, JSON.stringify(observed), { mode: 0o600 });
           const handles = runtime.openDirectHelperFrameFixtureV1(), before = coldGenesisTreeSnapshotV1(privateRoot);
           try {
             const lockDescriptor = runtime.directBorrowedLeaseDescriptorFixtureV1();
             const child = spawnSync(process.execPath, [fault === "wrong-parent" ? intermediary : runner, ...(fault === "extra-argv" ? ["--foreign"] : [])], { cwd: fault === "wrong-cwd" ? fixture : repository, env: { PATH: "/usr/bin:/bin", ...(fault === "missing-marker" ? {} : { SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER: "1" }), FIXTURE_DIRECT_HELPER_FAULT: fault, ...(fault === "mixed-marker" ? { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: "1" } : {}) }, stdio: ["ignore", "pipe", "pipe", fault === "crossed-frame" ? handles.intentDescriptor : handles.frameDescriptor, fault === "crossed-lock" ? handles.intentDescriptor : lockDescriptor, fault === "crossed-intent" ? lockDescriptor : handles.intentDescriptor], encoding: "utf8", timeout: 15000, maxBuffer: 65536 });
-            assert.equal(child.status, 0, `${fault}: ${child.stderr}`); assert.equal(child.stdout, fault === "none" ? "authenticated" : "refused", fault); assert.equal(child.stderr, "");
+            assert.equal(child.status, 0, `${spawnFault ?? fault}: ${child.stderr}`); assert.equal(child.stdout, spawnFault !== undefined ? spawnFault === "none" ? "dispatch-owned" : "dispatch-refused" : fault === "none" ? "authenticated" : "refused", fault); assert.equal(child.stderr, "");
             const after = coldGenesisTreeSnapshotV1(privateRoot);
             if (fault === "late-dispatch-swap") {
               const original = before.find(entry => entry.relative === "termination-dispatch.json")!, replacement = after.find(entry => entry.relative === "termination-dispatch.json")!;
               assert.notEqual(replacement.ino, original.ino); assert.equal(replacement.bytesHash, original.bytesHash);
               assert.deepEqual(readdirSync(privateRoot).sort(), ["termination-dispatch.json", "termination-receipt.json"]);
+            } else if (spawnFault !== undefined) {
+              assert.deepEqual(readdirSync(privateRoot).sort(), ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json", ...(spawnFault === "foreign-scratch" ? ["foreign.tmp"] : [])].sort());
+              assert.deepEqual(after.filter(entry => entry.relative !== "" && entry.relative !== "spawn-dispatch.json" && entry.relative !== "foreign.tmp" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")), before.filter(entry => entry.relative !== "" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")));
+              if (spawnFault === "collision") assert.equal(readFileSync(path.join(privateRoot, "spawn-dispatch.json"), "utf8"), "foreign");
+              if (spawnFault === "foreign-scratch") assert.equal(readFileSync(path.join(privateRoot, "foreign.tmp"), "utf8"), "foreign");
+              if (spawnFault === "none") {
+                writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
+                const replay = spawnSync(process.execPath, [runner], { cwd: repository, env: { PATH: "/usr/bin:/bin", SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER: "1", FIXTURE_DIRECT_HELPER_FAULT: "existing-dispatch" }, stdio: ["ignore", "pipe", "pipe", handles.frameDescriptor, lockDescriptor, handles.intentDescriptor], encoding: "utf8", timeout: 15000 });
+                assert.equal(replay.status, 0, replay.stderr); assert.equal(replay.stdout, "refused", "a fresh helper cannot adopt the first dispatch"); assert.deepEqual(coldGenesisTreeSnapshotV1(privateRoot), after);
+              }
             } else assert.deepEqual(after, before);
             assert.equal(signalProbe.calls.length, 1, "helper authentication emits no process action");
             await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
@@ -1193,6 +1245,12 @@ test("direct helper frame refuses same-byte replacement of every original author
   for (const mode of ["frame-intent-replace", "frame-dispatch-replace", "frame-receipt-replace"]) await exerciseDirectRebindFixtureV1(mode);
 });
 test("real direct helper authenticates original termination before configuration without cold permission", () => exerciseDirectRebindFixtureV1("direct-helper"));
+test("real direct helper publishes one original spawn dispatch and consumes one child handoff", () => exerciseDirectRebindFixtureV1("direct-helper", "none"));
+test("direct child transport refuses original descriptor reuse before secret write", () => exerciseDirectRebindFixtureV1("direct-helper", "secret-fd-reuse"));
+test("direct helper dispatch refuses transient root churn before its final pin", () => exerciseDirectRebindFixtureV1("direct-helper", "root-churn"));
+test("direct helper spawn publication and handoff retain uncertain ownership without retry", async () => {
+  for (const fault of ["collision", "short-write", "file-sync", "parent-sync", "writer-close", "close-response", "close-reuse", "same-inode-close", "late-frame", "foreign-scratch", "second-publish", "dispatch-swap", "termination-swap", "late-output"]) await exerciseDirectRebindFixtureV1("direct-helper", fault);
+});
 test("direct termination retains its fence when the actual predecessor ignores SIGTERM", () => exerciseDirectRebindFixtureV1("ignored"));
 test("direct termination refuses uncertain dispatch and receipt publications without redispatch", async () => {
   await exerciseDirectRebindFixtureV1("dispatch-write");

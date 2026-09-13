@@ -499,6 +499,51 @@ no remaining must-fix in this authentication delta. It does not approve the
 still-unimplemented direct child or dispatch/settlement path and is not a full
 receipt/P3 gate claim.
 
+Next direct dispatch slice (same retirement source/test File Map,27 exports):
+the authenticated helper exclusively publishes `spawn-dispatch.json` binding
+original intent and termination receipt pairs and full physical tuples, actual
+controller/helper identities and exact Node action. It creates a private unlinked
+child frame; FD4 remains borrowed and FD5 now names the read-only spawn dispatch.
+Use monotonic authenticated→publishing→dispatch-owned→handed-off phases; uncertain
+publication/close permanently revokes, existing files never confer new ownership,
+and handoff is consumed before returning. Authentication retains cleanup ownership
+of newly created descriptors. Split original evidence pins from the one explicit
+directory metadata transition, then retain the final three-file root snapshot.
+Fault tests use genuine helper processes/disposable authority and must prove no
+actual spawn, no ordinary/cold fallback, no second publication or handoff, and
+preserved controller lease. Direct child authentication/claim and real process
+dispatch remain the next coupled integration, not acceptance of Task6A.
+
+Private dispatch/handoff is implemented. The real compiled helper publishes a
+controller/termination/intent-bound dispatch with its actual identity, owns both
+read-only child descriptors, and consumes the handoff before returning. No actual
+replacement process is started. A fresh helper presented the original inherited
+frame cannot adopt the existing dispatch. Eighteen scenarios cover success,
+one-use handoff, exclusive collision, partial write, file/parent fsync, unknown
+writer-close response, different-file/same-inode FD reuse, second publication,
+same-byte dispatch/termination swaps, output drift, foreign scratch and frame
+mutation at writer close. Cleanup retains uncertain same-inode close outcomes;
+the fixture owner, never production, explicitly closes known injected handles.
+
+Review reproduced a confidentiality failure: parent-fsync-boundary writer reuse
+sent695 frame bytes into a foreign linked file before post-write rejection.
+Both original empty unlinked FDs are now rechecked immediately before the first
+secret write. A second RED showed final output checking could add/remove an
+unrelated root member and have the changed metadata adopted. Capture the final
+root tuple immediately after the last owned unlink, before fsync/observers, and
+require it through publication and handoff. Both focused regressions are GREEN.
+The same pre-write gap exists in three older cold/direct transport issuers;
+address those as the next causal root fix in these same File Map members.
+
+The expanded actual-process fixture also caught an APFS directory race: the
+original fixture root had nlink10 at lstat and11 at fstat while the SIGTERM handler
+created its signal file. Pre-create disposable signal/stop channels before
+authority capture; subsequent writes change bytes, not directory membership.
+Keep every production directory check unchanged. The final coupled focused gate
+passed16/16 (178.193s), manifest17/17 (6.016s), ordinary/refused/inert imports3/3
+(2.737s), no-emit and whitespace checks. Independent new-dispatch review reports
+no remaining must-fix; this is not full receipt/P3 or Task6A live acceptance.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
