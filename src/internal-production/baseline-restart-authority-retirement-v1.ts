@@ -2285,6 +2285,56 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
   }
 }
 
+// Decodes only the original helper's bounded transport. The controller must
+// independently authenticate every returned pair and physical identity.
+function captureDirectControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    const pipe = child.stdout;
+    let ended = false, exited = false, settled = false, count = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const chunks: Buffer[] = [];
+    const ignoreLateError = () => {};
+    const finish = (error?: Error) => {
+      if (settled || (!error && (!ended || !exited))) return;
+      settled = true; clearTimeout(timer);
+      pipe?.removeListener("data", onData); pipe?.removeListener("end", onEnd); pipe?.removeListener("error", onError);
+      child.removeListener("error", onError); child.removeListener("exit", onExit);
+      // Keep only short-lived error ownership until the actual handles close.
+      // Never close any inherited capability or lease descriptor here.
+      if (pipe && !pipe.closed) {
+        pipe.on("error", ignoreLateError);
+        pipe.once("close", () => pipe.removeListener("error", ignoreLateError));
+        pipe.destroy();
+      }
+      if (child.exitCode === null && child.signalCode === null) {
+        child.on("error", ignoreLateError);
+        child.once("close", () => child.removeListener("error", ignoreLateError));
+      }
+      child.unref();
+      if (error) { reject(error); return; }
+      try {
+        const bytes = Buffer.concat(chunks, count);
+        const value = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "intentRef", "intentHash", "intentIdentity", "dispatchRef", "dispatchHash", "dispatchIdentity", "claimRef", "claimHash", "claimIdentity", "journalIdentity"], "direct helper completion");
+        if (value.schema !== "setfarm.internal-production-direct-spawner-helper-completion.v1" || !bytes.equals(Buffer.from(`${canonical(value)}\n`))) fail("direct helper completion is crossed");
+        resolve(freezeColdDataV1(value));
+      } catch { reject(Error("direct helper completion is malformed")); }
+    };
+    const onData = (bytes: Buffer) => {
+      if (bytes.length < 1 || count + bytes.length > 4096) { finish(Error("direct helper completion exceeds its cap")); return; }
+      chunks.push(Buffer.from(bytes)); count += bytes.length;
+    };
+    const onError = () => finish(Error("direct helper completion failed"));
+    const onEnd = () => { ended = true; finish(count < 1 ? Error("direct helper completion is absent") : undefined); };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => { exited = true; finish(code !== 0 || signal !== null ? Error("direct helper exit is uncertain") : undefined); };
+    if (!pipe) { finish(Error("direct helper completion pipe is absent")); return; }
+    timer = setTimeout(() => finish(Error("direct helper completion timed out")), 35_000);
+    pipe.on("data", onData); pipe.once("end", onEnd); pipe.once("error", onError);
+    child.once("error", onError); child.once("exit", onExit);
+    if (child.exitCode !== null || child.signalCode !== null) onExit(child.exitCode, child.signalCode);
+    if (!settled && pipe.readableEnded) onEnd();
+  });
+}
+
 function captureColdControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {
   return new Promise((resolve, reject) => {
     const pipe = child.stdout;

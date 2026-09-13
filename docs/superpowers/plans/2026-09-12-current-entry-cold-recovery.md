@@ -784,7 +784,7 @@ admission and receipt modules, their three owning tests, and this plan. Keep
 retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
 33-pair final graph. Helper/spawner/runtime-config need no planned new edit.
 
-- [ ] Add private direct controller completion capture. Test a disposable real
+- [x] Add private direct controller completion capture. Test a disposable real
   ChildProcess.stdout, not a manufactured stream: canonical direct11-key output succeeds only
   after EOF and clean actual helper exit; fragmented output succeeds; empty,
   oversized, duplicate, noncanonical, crossed-schema, nonzero exit and missing
@@ -828,6 +828,22 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
 - [ ] Run focused controller/history/release and startup/receipt regressions,
   manifest/no-emit, independent review, then complete receipt and P3 gates.
   Clean-main build/rollout and live A acceptance remain later required outcomes.
+
+Controller completion boundary evidence: the actual-declaration fixture first
+failed because capture was missing. The decoder then passed real pipe behavior,
+while its first cleanup assertion incorrectly counted Node's pre-existing end
+listener; tests now require removal of only newly owned listeners. Independent
+review reproduced a genuine already-closed-child leak with a RED real-process
+case. Install the temporary child error sink only while exit/signal remain
+unobserved, retaining it until actual close. GREEN19/19 (3.797s) covers both
+EOF/exit orders, closed child,17 transport cases and parent accounting. Five
+separate natural-exit consumers use the original35s timer and a5s watchdog to
+prove timer cancellation after success, nonzero exit, oversize, empty and
+malformed output. Manifest17/17 (5.836s), TypeScript no-emit and whitespace
+checks passed. Final independent scoped review has no remaining finding.
+The final capture/actual-helper/exact-export coupled gate passed21/21 (10.014s).
+Invocation/claim/settlement/release are still unchecked above; this private
+decoder adds no export and cannot authorize any process or physical lease effect.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result

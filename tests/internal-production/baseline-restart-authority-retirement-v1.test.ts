@@ -1511,6 +1511,93 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
   }
 }
 
+test("direct controller completion requires bounded canonical bytes EOF and actual clean helper exit", async (context) => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-direct-controller-wire-"));
+  try {
+    const typescript = await import("typescript"), source = readFileSync(sourcePath, "utf8");
+    const tree = typescript.createSourceFile(sourcePath, source, typescript.ScriptTarget.Latest, true);
+    const names = ["captureDirectControllerHelperCompletionV1", "coldRecordV1", "freezeColdDataV1", "canonical", "fail"];
+    const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
+    assert.equal(declarations.length, names.length, "actual direct controller completion capture must exist");
+    let harness = declarations.map(statement => statement.getText(tree)).join("\n");
+    const originalHarness = harness;
+    const timer = 'setTimeout(() => finish(Error("direct helper completion timed out")), 35_000)';
+    assert.equal(harness.split(timer).length - 1, 1, "shorten only the copied direct capture timeout");
+    harness = harness.replace(timer, 'setTimeout(() => finish(Error("direct helper completion timed out")), 1_000)');
+    const modulePath = path.join(fixture, "capture.mjs");
+    writeFileSync(modulePath, typescript.transpileModule(`${harness}\nexport {captureDirectControllerHelperCompletionV1};`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const isolated = await import(pathToFileURL(modulePath).href);
+    const completion = { schema: "setfarm.internal-production-direct-spawner-helper-completion.v1", intentRef: "intent", intentHash: "a".repeat(64), intentIdentity: ["1"], dispatchRef: "dispatch", dispatchHash: "b".repeat(64), dispatchIdentity: ["2"], claimRef: "claim", claimHash: "c".repeat(64), claimIdentity: ["3"], journalIdentity: ["4"] };
+    // This boundary decodes transport only. The independent original-history
+    // observer must authenticate all content pairs and inode tuples later.
+    const wire = `${canonical(completion)}\n`;
+    await context.test("successful and refused capture release their production timeout", () => {
+      const originalPath = path.join(fixture, "capture-original.mjs");
+      writeFileSync(originalPath, typescript.transpileModule(`${originalHarness}\nexport {captureDirectControllerHelperCompletionV1};`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+      for (const [text, code, expected] of [[wire, 0, "settled"], [wire, 7, "refused"], ["x".repeat(4097), 0, "refused"], ["", 0, "refused"], ["{}\n", 0, "refused"]] as const) {
+        const consumer = `import{spawn}from'node:child_process';import{captureDirectControllerHelperCompletionV1 as capture}from ${JSON.stringify(pathToFileURL(originalPath).href)};
+const child=spawn(process.execPath,['-e',${JSON.stringify(`process.stdout.on('error',()=>{});process.stdout.end(${JSON.stringify(text)});process.exitCode=${code};`)}],{stdio:['ignore','pipe','ignore']});try{await capture(child);process.stdout.write('settled')}catch{process.stdout.write('refused')}`;
+        const result = spawnSync(process.execPath, ["--input-type=module", "-e", consumer], { encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
+        assert.equal(result.error, undefined, "the settled consumer must exit without the 35-second capture timer");
+        assert.equal(result.status, 0); assert.equal(result.signal, null); assert.equal(result.stdout, expected); assert.equal(result.stderr, "");
+      }
+    });
+    for (const mode of ["normal", "fragmented", "eof-before-exit", "exit-before-eof", "already-closed", "empty", "truncated", "duplicate", "oversize", "extra-key", "noncanonical", "cold-schema", "invalid-utf8", "nonzero", "signal", "no-eof", "spawn-error"]) await context.test(mode, async () => {
+      let text = wire;
+      if (mode === "empty") text = "";
+      if (mode === "truncated") text = wire.slice(0, -1);
+      if (mode === "duplicate") text += wire;
+      if (mode === "oversize") text = "x".repeat(4097);
+      if (mode === "extra-key") text = `${canonical({ ...completion, extra: true })}\n`;
+      if (mode === "noncanonical") text = ` ${wire}`;
+      if (mode === "cold-schema") text = `${canonical({ ...completion, schema: "setfarm.internal-production-cold-spawner-helper-completion.v1" })}\n`;
+      const bytes = mode === "invalid-utf8" ? Buffer.concat([Buffer.from(wire), Buffer.from([255])]) : Buffer.from(text);
+      const script = `const bytes=Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64');
+process.stdout.on('error',()=>{});
+${mode === "fragmented" ? "process.stdout.write(bytes.subarray(0,13));setTimeout(()=>process.stdout.end(bytes.subarray(13)),20);" : mode === "no-eof" ? "process.stdout.write(bytes);setTimeout(()=>process.stdout.end(),1400);" : "process.stdout.end(bytes);"}
+${mode === "eof-before-exit" ? "process.stdin.resume();process.stdin.on('end',()=>process.exit(0));" : mode === "nonzero" ? "process.exitCode=7;" : mode === "signal" ? "process.kill(process.pid,'SIGTERM');" : ""}`;
+      const child = spawn(mode === "spawn-error" ? path.join(fixture, "absent-node") : process.execPath, ["--input-type=module", "-e", script], { stdio: ["pipe", "pipe", "ignore"] });
+      const originalPipeListeners = new Map(["data", "end", "error"].map(event => [event, child.stdout.listeners(event)]));
+      const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+      const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+      if (mode === "exit-before-eof") child.stdout.pause();
+      let observedBytes = 0, outcomes = 0;
+      const observe = (bytes: Buffer) => { observedBytes += bytes.length; };
+      child.stdout.on("data", observe);
+      if (mode === "already-closed") await closed;
+      const pending = isolated.captureDirectControllerHelperCompletionV1(child);
+      void pending.then(() => { outcomes++; }, () => { outcomes++; });
+      try {
+        if (mode === "eof-before-exit") {
+          await new Promise<void>(resolve => child.stdout.once("end", resolve));
+          await new Promise<void>(resolve => setImmediate(resolve));
+          assert.equal(outcomes, 0, "EOF cannot stand in for actual helper exit");
+          child.stdin.end();
+        }
+        if (mode === "exit-before-eof") {
+          await exited;
+          assert.equal(outcomes, 0, "clean exit cannot stand in for completion EOF");
+          child.stdout.resume();
+        }
+        if (["normal", "fragmented", "eof-before-exit", "exit-before-eof"].includes(mode)) {
+          assert.deepEqual(await pending, completion);
+          assert.equal(child.exitCode, 0); assert.equal(child.signalCode, null);
+        } else await assert.rejects(pending, mode === "no-eof" ? /timed out/ : /direct helper completion|direct helper exit/);
+        if (mode === "no-eof") assert.ok(observedBytes > 0 && observedBytes <= 4096, "timeout follows received bytes, not a slow child start");
+        await closed;
+        assert.equal(outcomes, 1, "late real EOF/exit cannot replace the settled outcome");
+        child.stdout.removeListener("data", observe);
+        for (const event of ["data", "end", "error"]) assert.deepEqual(child.stdout.listeners(event).filter(listener => !originalPipeListeners.get(event)!.includes(listener)), [], `completion pipe ${event} adds no retained listener`);
+        assert.equal(child.listenerCount("error"), 0, "completion child error cleanup");
+      } finally {
+        if (child.pid && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+        child.stdin.destroy(); child.stdout.destroy();
+        await closed;
+      }
+    });
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("shared historical launch profile and direct intent do not import cold permission", () => exerciseDirectRebindFixtureV1("response-loss"));
 test("direct termination refuses output drift after its dispatch publication", () => exerciseDirectRebindFixtureV1("profile-drift"));
 test("direct helper frame refuses same-byte replacement of every original authority file", async () => {
