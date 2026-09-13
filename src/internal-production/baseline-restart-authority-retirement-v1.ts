@@ -1397,9 +1397,10 @@ function openDirectSpawnerHelperFrameV1(state: DirectSpawnerRebindIntentStateV1)
       || !sameColdFileMetadataV1(linkedIdentity, fstatSync(reader, { bigint: true }))
       || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("direct helper empty frame changed before unlink");
     unlinkSync(scratch); unlinked = true;
-    if (fstatSync(writer, { bigint: true }).nlink !== 0n || fstatSync(reader, { bigint: true }).nlink !== 0n) fail("direct helper frame is still linked");
+    const originalEmptyFrame = assertOriginalEmptyUnlinkedFrameV1(writer, reader, linkedIdentity);
     fsyncParent(scratch);
     assertAuthority(); assertInventory();
+    assertOriginalEmptyUnlinkedFrameV1(writer, reader, originalEmptyFrame);
     // No nonce or environment value is written while a pathname names the file.
     writeFileSync(writer, bytes); fsyncSync(writer);
     const written = fstatSync(reader, { bigint: true });
@@ -1784,6 +1785,32 @@ function sameColdFileMetadataV1(before: BigIntStats, after: BigIntStats): boolea
     && before.nlink === after.nlink && before.size === after.size && before.birthtimeNs === after.birthtimeNs && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 }
 
+type PrivateFrameDescriptorV1 = { descriptor: number | null; identity: BigIntStats | null; closeEntered: boolean };
+
+function closePrivateFrameDescriptorV1(pin: PrivateFrameDescriptorV1): void {
+  if (pin.descriptor === null) return;
+  let current: BigIntStats;
+  try { current = fstatSync(pin.descriptor, { bigint: true }); }
+  catch (error) { if (error instanceof Error && "code" in error && error.code === "EBADF") { pin.descriptor = null; return; } throw error; }
+  if (pin.identity === null) fail("private frame original descriptor identity is unavailable");
+  if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== pin.identity![key as keyof BigIntStats])) {
+    pin.descriptor = null; fail("private frame descriptor was reused");
+  }
+  // Inode equality is not open-file-description ownership after a lost close
+  // response. Only absence or a different identity can resolve this fence.
+  if (pin.closeEntered) fail("private frame close outcome is ambiguous");
+  pin.closeEntered = true; closeSync(pin.descriptor); pin.descriptor = null;
+}
+
+function assertOriginalEmptyUnlinkedFrameV1(writer: number, reader: number, original: BigIntStats): BigIntStats {
+  const current = fstatSync(writer, { bigint: true });
+  if (!current.isFile() || current.uid !== BigInt(process.getuid!()) || (current.mode & 0o7777n) !== 0o600n || current.nlink !== 0n || current.size !== 0n
+    || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs", "mtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])
+    || (original.nlink === 0n && !sameColdFileMetadataV1(original, current))
+    || !sameColdFileMetadataV1(current, fstatSync(reader, { bigint: true }))) fail("original empty private frame changed before secret write");
+  return current;
+}
+
 function coldFileIdentityTupleV1(stats: BigIntStats): readonly string[] {
   return Object.freeze([stats.dev, stats.ino, stats.uid, stats.gid, stats.mode, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].map(String));
 }
@@ -2163,6 +2190,7 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
   const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);
   let intentDescriptor: number | undefined, writer: number | undefined, reader: number | undefined;
   let linkedIdentity: BigIntStats | undefined;
+  let writerPin: PrivateFrameDescriptorV1 | undefined, readerPin: PrivateFrameDescriptorV1 | undefined;
   let unlinked = false;
   let guardClosed = false;
   try {
@@ -2177,11 +2205,14 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
     if (bytes.length < 1 || bytes.length > 1_048_576) fail("cold helper frame exceeds its cap");
     state.rootGuard.assertStable(); guard.assertStable();
     writer = openSync(scratch, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    linkedIdentity = fstatSync(writer, { bigint: true });
+    writerPin = { descriptor: writer, identity: null, closeEntered: false };
+    linkedIdentity = writerPin.identity = fstatSync(writer, { bigint: true });
     if (!linkedIdentity.isFile() || linkedIdentity.uid !== BigInt(process.getuid!()) || linkedIdentity.dev !== state.rootIdentity!.dev
       || (linkedIdentity.mode & 0o7777n) !== 0o600n || linkedIdentity.nlink !== 1n || linkedIdentity.size !== 0n) fail("cold helper empty frame identity is invalid");
     reader = openSync(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    if (!sameColdFileMetadataV1(linkedIdentity, fstatSync(reader, { bigint: true }))
+    readerPin = { descriptor: reader, identity: null, closeEntered: false };
+    readerPin.identity = fstatSync(reader, { bigint: true });
+    if (!sameColdFileMetadataV1(linkedIdentity, readerPin.identity)
       || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("cold helper empty frame was replaced");
     state.rootGuard.assertStable(); guard.assertStable();
     if (!sameColdFileMetadataV1(linkedIdentity, fstatSync(writer, { bigint: true }))
@@ -2189,11 +2220,12 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
       || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("cold helper empty frame changed before unlink");
     unlinkSync(scratch);
     unlinked = true;
-    if (fstatSync(writer, { bigint: true }).nlink !== 0n || fstatSync(reader, { bigint: true }).nlink !== 0n) fail("cold helper frame is still linked");
+    const originalEmptyFrame = assertOriginalEmptyUnlinkedFrameV1(writer, reader, linkedIdentity);
     fsyncParent(scratch);
     state.rootGuard.assertStable(); guard.assertStable();
     // No secret byte reaches a pathname: both handles refer to an already
     // unlinked, durably unnamed inode before this first payload write.
+    assertOriginalEmptyUnlinkedFrameV1(writer, reader, originalEmptyFrame);
     writeFileSync(writer, bytes);
     fsyncSync(writer);
     const before = fstatSync(reader, { bigint: true });
@@ -2208,7 +2240,7 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
     }
     if (!verified.equals(bytes) || readSync(reader, Buffer.alloc(1), 0, 1, offset) !== 0
       || !sameColdFileMetadataV1(before, fstatSync(reader, { bigint: true }))) fail("cold helper frame read changed");
-    closeSync(writer); writer = undefined;
+    closePrivateFrameDescriptorV1(writerPin); writer = undefined;
     assertColdIntentLeaseV1(state); assertColdIntentOnlyPrefixV1(state, true);
     if (!sameColdFileMetadataV1(intentStats, fstatSync(intentDescriptor, { bigint: true }))
       || !sameColdFileMetadataV1(intentStats, lstatSync(intentPath, { bigint: true }))) fail("cold helper frame intent changed");
@@ -2231,8 +2263,10 @@ function openColdSpawnerHelperFrameV1(state: ColdBootstrapIntentStateV1): Readon
   } finally {
     finishRetainedColdCleanupV1(() => {
       let primary: unknown = null;
-      try { if (writer !== undefined) { closeSync(writer); writer = undefined; } } catch (error) { primary ??= error; }
-      try { if (reader !== undefined) { closeSync(reader); reader = undefined; } } catch (error) { primary ??= error; }
+      try { if (writer !== undefined) closePrivateFrameDescriptorV1(writerPin!); } catch (error) { primary ??= error; }
+      finally { if (writerPin?.descriptor === null) writer = undefined; }
+      try { if (reader !== undefined) closePrivateFrameDescriptorV1(readerPin!); } catch (error) { primary ??= error; }
+      finally { if (readerPin?.descriptor === null) reader = undefined; }
       try { if (intentDescriptor !== undefined) { closeSync(intentDescriptor); intentDescriptor = undefined; } } catch (error) { primary ??= error; }
       try { if (!guardClosed) { guard.close(); guardClosed = true; } } catch (error) { primary ??= error; }
       if (primary !== null) throw primary;
@@ -2668,11 +2702,18 @@ function parseColdSpawnerBootstrapClaimV1(bytes: Buffer, intent: Readonly<Record
 async function authenticateColdSpawnerHelperIntentV1() {
   const guards: PrivateDirectoryGuardV1[] = [];
   const ownedDescriptors: number[] = [];
+  const frameDescriptors = new Map<number, PrivateFrameDescriptorV1>();
   let closing = false, closed = false;
   const close = (): void => {
     if (closed) return;
     closing = true;
-    while (ownedDescriptors.length > 0) { closeSync(ownedDescriptors[ownedDescriptors.length - 1]!); ownedDescriptors.pop(); }
+    while (ownedDescriptors.length > 0) {
+      const descriptor = ownedDescriptors[ownedDescriptors.length - 1]!, frame = frameDescriptors.get(descriptor);
+      if (frame) {
+        try { closePrivateFrameDescriptorV1(frame); }
+        finally { if (frame.descriptor === null) { frameDescriptors.delete(descriptor); ownedDescriptors.pop(); } }
+      } else { closeSync(descriptor); ownedDescriptors.pop(); }
+    }
     while (guards.length > 0) { guards[guards.length - 1]!.close(); guards.pop(); }
     closed = true;
     pendingColdHelperAuthenticationCleanupV1.delete(close);
@@ -2826,19 +2867,24 @@ async function authenticateColdSpawnerHelperIntentV1() {
       const scratch = path.join(root, `.cold-child-capability.${randomBytes(16).toString("hex")}.tmp`);
       const frameWriter = openSync(scratch, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
       ownedDescriptors.push(frameWriter);
-      const empty = fstatSync(frameWriter, { bigint: true });
+      const writerPin: PrivateFrameDescriptorV1 = { descriptor: frameWriter, identity: null, closeEntered: false };
+      frameDescriptors.set(frameWriter, writerPin);
+      const empty = writerPin.identity = fstatSync(frameWriter, { bigint: true });
       childScratch = { path: scratch, stats: empty };
       if (!empty.isFile() || empty.uid !== uid || empty.dev !== rootStats.dev || empty.nlink !== 1n || empty.size !== 0n || (empty.mode & 0o7777n) !== 0o600n) fail("cold child empty frame identity is invalid");
       const frameReader = openSync(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       ownedDescriptors.push(frameReader);
+      const readerPin: PrivateFrameDescriptorV1 = { descriptor: frameReader, identity: null, closeEntered: false };
+      frameDescriptors.set(frameReader, readerPin); readerPin.identity = fstatSync(frameReader, { bigint: true });
       assertOriginalStable();
       if (!sameColdFileMetadataV1(empty, fstatSync(frameWriter, { bigint: true })) || !sameColdFileMetadataV1(empty, fstatSync(frameReader, { bigint: true }))
         || !sameColdFileMetadataV1(empty, lstatSync(scratch, { bigint: true }))) fail("cold child empty frame changed before unlink");
       unlinkSync(scratch);
       childScratch = null;
-      if (fstatSync(frameWriter).nlink !== 0 || fstatSync(frameReader).nlink !== 0) fail("cold child frame is still linked");
+      const originalEmptyFrame = assertOriginalEmptyUnlinkedFrameV1(frameWriter, frameReader, empty);
       fsyncParent(scratch);
       assertOriginalStable();
+      assertOriginalEmptyUnlinkedFrameV1(frameWriter, frameReader, originalEmptyFrame);
       writeFileSync(frameWriter, childBytes);
       fsyncSync(frameWriter);
       const frameWritten = fstatSync(frameReader, { bigint: true });
@@ -2853,7 +2899,7 @@ async function authenticateColdSpawnerHelperIntentV1() {
       }
       if (!verified.equals(childBytes) || readSync(frameReader, Buffer.alloc(1), 0, 1, offset) !== 0
         || !sameColdFileMetadataV1(frameWritten, fstatSync(frameReader, { bigint: true }))) fail("cold child frame read changed");
-      closeSync(frameWriter);
+      closePrivateFrameDescriptorV1(writerPin); frameDescriptors.delete(frameWriter);
       ownedDescriptors.splice(ownedDescriptors.indexOf(frameWriter), 1);
       dispatch = { record, rootStats: lstatSync(root, { bigint: true }), stats: written, bytes, descriptor: reader, frameDescriptor: frameReader };
       assertStable();
@@ -3653,17 +3699,13 @@ async function authenticateDirectSpawnerHelperIntentV1() {
       if (!sameColdFileMetadataV1(empty, frameReader.identity!) || !sameColdFileMetadataV1(empty, fstatSync(frameWriter.descriptor!, { bigint: true }))
         || !sameColdFileMetadataV1(empty, lstatSync(scratch, { bigint: true }))) fail("direct child empty frame changed before unlink");
       unlinkSync(scratch);
-      const unlinked = fstatSync(frameWriter.descriptor!, { bigint: true });
-      if (unlinked.nlink !== 0n || unlinked.size !== 0n
-        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => empty[key as keyof BigIntStats] !== unlinked[key as keyof BigIntStats])
-        || !sameColdFileMetadataV1(unlinked, fstatSync(frameReader.descriptor!, { bigint: true }))) fail("direct child frame unlink identity changed");
+      const unlinked = assertOriginalEmptyUnlinkedFrameV1(frameWriter.descriptor!, frameReader.descriptor!, empty);
       // No later operation owns a directory mutation. Retain this one snapshot
       // before parent fsync, original-authority reads and final output checking.
       const finalRootIdentity = lstatSync(root, { bigint: true });
       fsyncParent(scratch); assertMembers();
-      if (!sameColdFileMetadataV1(finalRootIdentity, lstatSync(root, { bigint: true }))
-        || !sameColdFileMetadataV1(unlinked, fstatSync(frameWriter.descriptor!, { bigint: true }))
-        || !sameColdFileMetadataV1(unlinked, fstatSync(frameReader.descriptor!, { bigint: true }))) fail("direct child original empty transport changed before secret write");
+      if (!sameColdFileMetadataV1(finalRootIdentity, lstatSync(root, { bigint: true }))) fail("direct child original journal changed before secret write");
+      assertOriginalEmptyUnlinkedFrameV1(frameWriter.descriptor!, frameReader.descriptor!, unlinked);
       // Child secrets are first written after their empty pathname is removed.
       writeFileSync(frameWriter.descriptor!, childBytes); fsyncSync(frameWriter.descriptor!);
       const frameWritten = fstatSync(frameReader.descriptor!, { bigint: true });

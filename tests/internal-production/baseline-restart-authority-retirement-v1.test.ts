@@ -492,6 +492,7 @@ function openSync(...args:any[]){globalThis.__coldFrameBeforeOpenHook?.(...args)
 function closeSync(fd:number){globalThis.__coldFrameBeforeCloseHook?.(fd);realColdFrameCloseSync(fd);globalThis.__coldFrameClosedHook?.(fd);}
 function verifyInternalProductionSpawnerLaunchOutputCandidateV1(value:any){return (globalThis.__coldControllerCompiledOutputVerifier??initialColdControllerOutputVerifier)(value);}
 export function openColdFrameFixtureV1(){return openColdSpawnerHelperFrameV1(retainedColdBootstrapIntentV1!);}
+export function drainColdFrameFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size;}
 export async function invokeColdControllerFixtureV1(){const result=await invokeColdSpawnerBootstrapHelperV1();globalThis.__coldControllerAfterObservationHook?.();return result;}
 export async function settleColdControllerFixtureV1(){const result=await settleColdSpawnerBootstrapV1();globalThis.__coldControllerAfterSettlementHook?.();return result;}
 export async function releaseColdControllerFixtureV1(){if(!retainedColdBootstrapIntentV1)throw Error('fixture cold controller absent');return releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(retainedColdBootstrapIntentV1.lease);}
@@ -540,6 +541,11 @@ test("cold helper frame retains descriptor ownership through failed close and pr
       });
       assert.throws(() => fixture.isolated.openColdFrameFixtureV1(), /frame|interrupted|already closed/);
       assert.equal(injected, true);
+      if (fault === "writer-close") {
+        assert.equal(owned.size, 1); assert.throws(() => fixture.isolated.drainColdFrameFixtureV1(), /ambiguous/);
+        const descriptor = [...owned][0]!; closeSync(descriptor); owned.delete(descriptor); // Fixture knows its injected close failed before the syscall.
+        assert.equal(fixture.isolated.drainColdFrameFixtureV1(), 0);
+      }
       assert.equal(owned.size, 0, `${fault}: all newly owned descriptors close on failure`);
       assert.equal(fstatSync(retained.descriptor).nlink, 1, "transport failure must not release the retained lease");
       if (fault === "foreign-path") assert.equal(readFileSync(scratchPath, "utf8"), "foreign-must-survive");
@@ -600,6 +606,61 @@ process.stdout.write(JSON.stringify({schema:frame.schema,intentHash:frame.intent
   }
 });
 
+test("cold helper transport refuses writer and reader reuse before its first secret write", async () => {
+  for (const kind of ["writer", "reader"]) {
+    const fixture = await createColdFrameFixtureV1(), owned = new Set<number>();
+    let writer: number | undefined, reader: number | undefined, foreign: number | undefined, fired = false;
+    const target = path.join(fixture.fixture, "foreign-empty");
+    try {
+      await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+      writeFileSync(target, "", { mode: 0o600, flag: "wx" });
+      Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, target: string, flags: number) => { owned.add(fd); if (String(target).includes(".cold-helper-capability.")) { if ((flags & 3) === 1) writer = fd; else reader = fd; } });
+      Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => owned.delete(fd));
+      Reflect.set(globalThis, "__coldFrameSyncHook", (fd: number) => {
+        if (fired || writer === undefined || reader === undefined || !fstatSync(fd).isDirectory() || fstatSync(writer).nlink !== 0) return;
+        fired = true; const original = kind === "writer" ? writer : reader;
+        closeSync(original); owned.delete(original); foreign = openSync(target, kind === "writer" ? "w" : "r"); assert.equal(foreign, original);
+      });
+      assert.throws(() => fixture.isolated.openColdFrameFixtureV1()); assert.equal(fired, true);
+      assert.equal(readFileSync(target).length, 0, `${kind}: no secret reaches a foreign linked file`);
+      assert.equal(fstatSync(foreign!).nlink, 1, `${kind}: refusal cleanup preserves the foreign FD`);
+      assert.equal(owned.size, 0);
+      assert.equal(fstatSync(fixture.isolated.inspectColdIntentFixtureV1().descriptor).nlink, 1);
+    } finally {
+      for (const key of ["__coldFrameOpenedHook", "__coldFrameClosedHook", "__coldFrameSyncHook"]) Reflect.deleteProperty(globalThis, key);
+      if (foreign !== undefined) try { closeSync(foreign); } catch { /* Test cleanup after demonstrated foreign close. */ }
+      for (const fd of owned) try { closeSync(fd); } catch { /* Test cleanup after failed assertion. */ }
+      fixture.isolated.closeColdIntentFixtureV1(); fixture.cleanup();
+    }
+  }
+});
+
+test("cold helper frame preserves a same-inode reopen after a lost writer-close response", async () => {
+  const fixture = await createColdFrameFixtureV1(), owned = new Set<number>();
+  let writer: number | undefined, reader: number | undefined, foreign: number | undefined, fired = false;
+  try {
+    await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
+    Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, target: string, flags: number) => { owned.add(fd); if (String(target).includes(".cold-helper-capability.")) { if ((flags & 3) === 1) writer = fd; else reader = fd; } });
+    Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => owned.delete(fd));
+    Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => {
+      if (fired || fd !== writer || reader === undefined || fstatSync(fd).size === 0) return;
+      fired = true; closeSync(fd); owned.delete(fd); foreign = openSync(`/dev/fd/${reader}`, "r"); assert.equal(foreign, fd);
+      throw Error("fixture close response lost after same-inode reopen");
+    });
+    assert.throws(() => fixture.isolated.openColdFrameFixtureV1()); assert.equal(fired, true);
+    assert.equal(fstatSync(foreign!).nlink, 0); assert.equal(owned.size, 0);
+    assert.throws(() => fixture.isolated.drainColdFrameFixtureV1(), /ambiguous/);
+    assert.throws(() => fixture.isolated.openColdFrameFixtureV1(), /ambiguous/);
+    assert.equal(fstatSync(foreign!).size > 0, true);
+    closeSync(foreign!); foreign = undefined; assert.equal(fixture.isolated.drainColdFrameFixtureV1(), 0);
+  } finally {
+    for (const key of ["__coldFrameOpenedHook", "__coldFrameClosedHook", "__coldFrameBeforeCloseHook"]) Reflect.deleteProperty(globalThis, key);
+    if (foreign !== undefined) try { closeSync(foreign); } catch { /* Failed assertion cleanup only. */ }
+    for (const fd of owned) try { closeSync(fd); } catch { /* Failed assertion cleanup only. */ }
+    fixture.isolated.closeColdIntentFixtureV1(); fixture.cleanup();
+  }
+});
+
 test("cold helper frame retains failed-acquisition cleanup before any new frame", async () => {
   for (const kind of ["reader", "writer", "intent", "guard"]) {
   for (const persistent of [false, true]) {
@@ -616,13 +677,18 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
       Reflect.set(globalThis, "__coldFrameGuardCloseHook", () => { if (kind === "guard") closeInterrupted(); });
       assert.throws(() => fixture.isolated.openColdFrameFixtureV1());
       assert.equal(failed, true);
-      if (persistent) {
+      if (persistent || kind === "reader" || kind === "writer") {
         assert.ok(owned.size > 0, `${kind}: interrupted ownership remains retained`);
         if (kind !== "guard") assert.equal(owned.size, 1);
         const before = opened;
         assert.throws(() => fixture.isolated.openColdFrameFixtureV1());
         assert.equal(opened, before, "pending cleanup fences all new acquisition");
         closeFault = false;
+        if (kind === "reader" || kind === "writer") {
+          assert.throws(() => fixture.isolated.drainColdFrameFixtureV1(), /ambiguous/);
+          closeSync(reader!); owned.delete(reader!); // Test-only owner knows the injected failure was pre-effect.
+          assert.equal(fixture.isolated.drainColdFrameFixtureV1(), 0);
+        }
         const recovered = fixture.isolated.openColdFrameFixtureV1();
         closeSync(recovered.frameDescriptor); owned.delete(recovered.frameDescriptor);
         closeSync(recovered.intentDescriptor); owned.delete(recovered.intentDescriptor);
@@ -726,13 +792,13 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
-function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')&&(args[1]&constants.O_CREAT)!==0)probe.writer=fd;if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}return fd;}
+function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')){if((args[1]&constants.O_CREAT)!==0)probe.writer=fd;else probe.reader=fd;}if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}return fd;}
 function closeSync(fd){const probe=globalThis.__directFrameProbeV1;if(probe&&fd===probe.intent&&probe.mode==='intent-same-inode-reuse'&&probe.writes>0&&!probe.fired){probe.fired=true;actualDirect_closeSync(fd);probe.owned.delete(fd);probe.foreign=actualDirect_openSync(rootPaths().journal,constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture same-inode FD was not reused');throw Error('DIRECT_FRAME_CLOSE_FAULT')}if(probe&&fd===probe.writer&&!probe.fired&&['late-mutation','close-response','close-reuse'].includes(probe.mode)){probe.fired=true;if(probe.mode==='late-mutation')actualDirect_writeFileSync(fd,'crossed-after-last-reader-check');else{actualDirect_closeSync(fd);probe.owned.delete(fd);if(probe.mode==='close-reuse'){probe.foreign=actualDirect_openSync('/dev/null',constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture did not reuse original FD')}throw Error('DIRECT_FRAME_CLOSE_FAULT')}}if(probe&&fd===probe.writer&&(probe.mode==='persistent-close'||probe.mode==='writer-close'&&!probe.fired)){probe.fired=true;throw Error('DIRECT_FRAME_CLOSE_FAULT')}actualDirect_closeSync(fd);probe?.owned.delete(fd);}
 function publishDirectSpawnerRebindIntentV1(state){const probe=globalThis.__directIntentPublicationFixtureV1;if(!probe)return actualDirectIntentPublisherFixtureV1(state);probe.attempts++;probe.intent=state.intent;if(probe.fault==='before'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BEFORE')}const result=actualDirectIntentPublisherFixtureV1(state);if(probe.fault==='after'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_AFTER')}return result}
 function fsyncParent(file:string){const probe=globalThis.__directIntentPublicationFixtureV1;if(path.basename(file)!=='pre-schema-helper-journal.json'||!probe)return actualDirectFsyncParentFixtureV1(file);if(probe.fault==='parent'&&!existsSync(retainedDirectSpawnerRebindIntentV1.publication.temporary)){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_PARENT')}actualDirectFsyncParentFixtureV1(file);probe.parentSyncs++}
 function directPublicationProbeFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,probe=globalThis.__directIntentPublicationFixtureV1;return state&&probe?{state,probe}:null}
 function directPublicationFaultFixtureV1(probe){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BOUNDARY')}
-function fsyncSync(fd){const current=directPublicationProbeFixtureV1();if(current&&fd===current.state.publication.descriptor){const{state,probe}=current;if(probe.fault==='temporary-sync'&&!existsSync(rootPaths().journal))directPublicationFaultFixtureV1(probe);if(probe.fault==='linked-sync'&&existsSync(rootPaths().journal)&&existsSync(state.publication.temporary))directPublicationFaultFixtureV1(probe)}return actualDirect_fsyncSync(fd)}
+function fsyncSync(fd){const current=directPublicationProbeFixtureV1();if(current&&fd===current.state.publication.descriptor){const{state,probe}=current;if(probe.fault==='temporary-sync'&&!existsSync(rootPaths().journal))directPublicationFaultFixtureV1(probe);if(probe.fault==='linked-sync'&&existsSync(rootPaths().journal)&&existsSync(state.publication.temporary))directPublicationFaultFixtureV1(probe)}actualDirect_fsyncSync(fd);const p=globalThis.__directFrameProbeV1;if(p&&!p.fired&&['secret-writer-reuse','secret-reader-reuse'].includes(p.mode)&&p.writer!==undefined&&p.reader!==undefined&&fstatSync(fd).isDirectory()&&fstatSync(p.writer).nlink===0){p.fired=true;const original=p.mode==='secret-writer-reuse'?p.writer:p.reader;actualDirect_closeSync(original);p.owned.delete(original);p.foreign=actualDirect_openSync(p.foreignPath,p.mode==='secret-writer-reuse'?constants.O_WRONLY:constants.O_RDONLY);if(p.foreign!==original)throw Error('fixture FD was not reused');}}
 function linkSync(from,to){const current=directPublicationProbeFixtureV1();if(!current||from!==current.state.publication.temporary)return actualDirect_linkSync(from,to);const{probe}=current;probe.links++;if(probe.fault==='link-before')directPublicationFaultFixtureV1(probe);actualDirect_linkSync(from,to);if(probe.fault==='link-after')directPublicationFaultFixtureV1(probe)}
 function unlinkSync(file){const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.temporary)return actualDirect_unlinkSync(file);const{probe}=current;probe.unlinks++;if(probe.fault==='unlink-before')directPublicationFaultFixtureV1(probe);actualDirect_unlinkSync(file);if(probe.fault==='unlink-after')directPublicationFaultFixtureV1(probe)}
 function writeFileSync(file,bytes,...args){if(file===retainedDirectSpawnerRebindIntentV1?.termination?.dispatch?.descriptor||file===retainedDirectSpawnerRebindIntentV1?.termination?.receipt?.descriptor){actualDirect_writeFileSync(file,bytes,...args);globalThis.__directTerminationPublicationHook?.(file===retainedDirectSpawnerRebindIntentV1.termination.dispatch.descriptor?'dispatch':'receipt');return}const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.descriptor)return actualDirect_writeFileSync(file,bytes,...args);const{probe}=current;probe.writes++;if(probe.fault==='partial-write'){actualDirect_writeFileSync(file,bytes.subarray(0,17),...args);directPublicationFaultFixtureV1(probe)}actualDirect_writeFileSync(file,bytes,...args);if(probe.fault==='write-after')directPublicationFaultFixtureV1(probe)}
@@ -968,7 +1034,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
             ["      assertMembers(); assertPhysicalRuntimeStable(); assertMembers(); assertFrame(frameReader);", "      assertMembers();globalThis.__directSpawnProbeV1?.boundary('final');assertPhysicalRuntimeStable();assertMembers();assertFrame(frameReader);"],
           ]) { assert.equal(helperSource.split(marker!).length - 1, 1); helperSource = helperSource.replace(marker!, replacement!); }
           helperSource += `
-function openSync(...args){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&p.fault==='collision'&&String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT)){p.fired=true;actualSpawn_writeFileSync(args[0],'foreign',{mode:0o600,flag:'wx'});}const fd=actualSpawn_openSync(...args);if(p){p.owned.add(fd);if(String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT))p.writer=fd;if(String(args[0]).includes('.direct-child-capability.')&&(args[1]&constants.O_CREAT))p.frameWriter=fd;}return fd;}
+function openSync(...args){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&p.fault==='collision'&&String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT)){p.fired=true;actualSpawn_writeFileSync(args[0],'foreign',{mode:0o600,flag:'wx'});}const fd=actualSpawn_openSync(...args);if(p){p.owned.add(fd);if(String(args[0]).endsWith('/spawn-dispatch.json')&&(args[1]&constants.O_CREAT))p.writer=fd;if(String(args[0]).includes('.direct-child-capability.')){if(args[1]&constants.O_CREAT)p.frameWriter=fd;else p.frameReader=fd;}}return fd;}
 function closeSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&fd===p.frameWriter&&!p.fired&&p.fault==='late-frame'){p.fired=true;actualSpawn_writeFileSync(fd,'crossed-after-read');}if(p&&fd===p.writer&&!p.fired&&['writer-close','close-response','close-reuse','same-inode-close'].includes(p.fault)){p.fired=true;if(p.fault!=='writer-close'){actualSpawn_closeSync(fd);p.owned.delete(fd);if(p.fault==='close-reuse'||p.fault==='same-inode-close'){p.foreign=actualSpawn_openSync(p.fault==='same-inode-close'?path.join(rootPaths().root,'direct-spawner-rebind-v1/spawn-dispatch.json'):'/dev/null',constants.O_RDONLY);if(p.foreign!==fd)throw Error('fixture FD was not reused');}}throw Error('DIRECT_SPAWN_CLOSE_FAULT');}actualSpawn_closeSync(fd);p?.owned.delete(fd);}
 function writeFileSync(fd,bytes,...rest){const p=globalThis.__directSpawnProbeV1;if(p&&fd===p.writer&&!p.fired&&p.fault==='short-write'){p.fired=true;return actualSpawn_writeFileSync(fd,bytes.subarray(0,1),...rest)}return actualSpawn_writeFileSync(fd,bytes,...rest);}
 function fsyncSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&(fd===p.writer&&p.fault==='file-sync'||p.writer!==undefined&&fstatSync(fd).isDirectory()&&p.fault==='parent-sync')){p.fired=true;throw Error('DIRECT_SPAWN_SYNC_FAULT')}return actualSpawn_fsyncSync(fd);}
@@ -1009,10 +1075,10 @@ if(fault==='late-frame'){const original=openSync('/dev/fd/3','r');closeSync(3);a
 const{loadRuntimeEnv}=await import('../runtime-config.js');loadRuntimeEnv();assert.equal(process.env.PRIVATE_VALUE,'direct-fixture-secret');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER,'1');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER,undefined);
 if(${JSON.stringify(spawnFault !== undefined)}){
  const sf=${JSON.stringify(spawnFault)},root=${JSON.stringify(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1"))},foreign=${JSON.stringify(path.join(fixture, "foreign-empty"))};
- const probe=globalThis.__directSpawnProbeV1={fault:sf,owned:new Set(),fired:false,boundary(stage,fd){if(stage==='unlinked'&&sf==='secret-fd-reuse'){this.fired=true;closeSync(fd);this.owned.delete(fd);this.foreign=openSync(foreign,'wx',0o600);assert.equal(this.foreign,fd);}if(stage==='final'&&['root-churn','foreign-scratch'].includes(sf)){this.fired=true;writeFileSync(root+'/foreign.tmp','foreign',{mode:0o600,flag:'wx'});if(sf==='root-churn')unlinkSync(root+'/foreign.tmp');}}};
+ const probe=globalThis.__directSpawnProbeV1={fault:sf,owned:new Set(),fired:false,boundary(stage,fd){if(stage==='unlinked'&&['secret-fd-reuse','secret-reader-reuse'].includes(sf)){this.fired=true;const original=sf==='secret-reader-reuse'?this.frameReader:fd;closeSync(original);this.owned.delete(original);writeFileSync(foreign,'',{mode:0o600,flag:'wx'});this.foreign=openSync(foreign,sf==='secret-reader-reuse'?'r':'w');assert.equal(this.foreign,original);}if(stage==='final'&&['root-churn','foreign-scratch'].includes(sf)){this.fired=true;writeFileSync(root+'/foreign.tmp','foreign',{mode:0o600,flag:'wx'});if(sf==='root-churn')unlinkSync(root+'/foreign.tmp');}}};
  if(!['none','second-publish','dispatch-swap','termination-swap','late-output'].includes(sf)){
   assert.throws(()=>publishDirectSpawnFixtureV1(),undefined,sf+' publication must refuse');assert.equal(probe.fired,true,sf+' boundary must execute');assert.throws(()=>takeDirectChildFixtureV1());assert.throws(()=>publishDirectSpawnFixtureV1());assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());
-  if(probe.foreign!==undefined){if(sf==='secret-fd-reuse'){assert.equal(readFileSync(foreign).length,0,'no secret may reach a reused linked file');assert.equal(fstatSync(probe.foreign).nlink,1);}else assert.doesNotThrow(()=>fstatSync(probe.foreign),'foreign reopened descriptor must survive');if(sf==='same-inode-close')assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.foreign);}
+  if(probe.foreign!==undefined){if(sf==='secret-fd-reuse'||sf==='secret-reader-reuse'){assert.equal(readFileSync(foreign).length,0,'no secret may reach a reused linked file');assert.equal(fstatSync(probe.foreign).nlink,1);}else assert.doesNotThrow(()=>fstatSync(probe.foreign),'foreign reopened descriptor must survive');if(sf==='same-inode-close')assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.foreign);}
   if(sf==='writer-close'){assert.equal(probe.owned.size,1);assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.writer);probe.owned.delete(probe.writer);}assert.equal(drainDirectSpawnFixtureV1(),0);assert.equal(probe.owned.size,0,'owned publication and guard handles must be closed');context.close();assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);process.stdout.write('dispatch-refused');
  }else{
  const record=publishDirectSpawnFixtureV1();assert.equal(record.schema,'setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1');assert.equal(record.maximumSpawnDispatchCount,1);assert.equal(record.helper.pid,process.pid);assert.equal(record.helper.ppid,process.ppid);assert.equal(record.controller.pid,process.ppid);assert.deepEqual(record.action,{transport:'direct-detached-node-v1',executable:process.execPath,arguments:[${JSON.stringify(entry)}],cwd:process.cwd(),detached:true});
@@ -1177,16 +1243,18 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
           assert.deepEqual(afterRoot, beforeRoot, "only parent timestamps may reflect the owned empty scratch create/unlink");
           assert.equal(signalProbe.calls.length, 1, "frame issuance has no process effect");
         } finally { closeSync(handles.frameDescriptor); closeSync(handles.intentDescriptor); }
-        for (const mode of ["intent-same-inode-reuse", "late-mutation", "close-response", "close-reuse", "write-before", "short-write", "writer-close", "persistent-close"]) {
-          const probe = { mode, owned: new Set<number>(), writer: undefined as number | undefined, foreign: undefined as number | undefined, fired: false, writes: 0, beforeWrite(fd: number, scratch: string) {
-            assert.equal(fstatSync(fd).nlink, 0, "every first secret write happens only after unlink");
+        for (const mode of ["secret-writer-reuse", "secret-reader-reuse", "intent-same-inode-reuse", "late-mutation", "close-response", "close-reuse", "write-before", "short-write", "writer-close", "persistent-close"]) {
+          const foreignPath = path.join(fixture, `foreign-empty-${mode}`); writeFileSync(foreignPath, "", { mode: 0o600, flag: "wx" });
+          const probe = { mode, foreignPath, owned: new Set<number>(), writer: undefined as number | undefined, foreign: undefined as number | undefined, fired: false, writes: 0, beforeWrite(fd: number, scratch: string) {
+            if (!this.mode.startsWith("secret-")) assert.equal(fstatSync(fd).nlink, 0, "every first secret write happens only after unlink");
             assert.equal(existsSync(scratch), false); this.writes++;
             if (this.mode === "write-before" || this.mode === "intent-same-inode-reuse") { if (this.mode === "write-before") this.fired = true; throw Error("DIRECT_FRAME_WRITE_FAULT"); }
           } };
           Reflect.set(globalThis, "__directFrameProbeV1", probe);
           try {
             assert.throws(() => runtime.openDirectHelperFrameFixtureV1(), /frame preparation failed|DIRECT_FRAME_CLOSE_FAULT|descriptor was reused|close outcome is ambiguous/, mode);
-            assert.equal(probe.writes, 1, mode);
+            assert.equal(probe.writes, mode.startsWith("secret-") ? 0 : 1, mode);
+            if (mode.startsWith("secret-")) { assert.equal(probe.fired, true); assert.equal(readFileSync(foreignPath).length, 0); assert.equal(fstatSync(probe.foreign!).nlink, 1); }
             if (mode === "close-reuse") assert.equal(fstatSync(probe.foreign!).isCharacterDevice(), true, "an ambiguous writer close cannot close a foreign reused FD");
             if (mode === "intent-same-inode-reuse") {
               assert.equal(fstatSync(probe.foreign!).ino, lstatSync(path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json")).ino, "same-inode reopen is a foreign handle too");
@@ -1246,7 +1314,9 @@ test("direct helper frame refuses same-byte replacement of every original author
 });
 test("real direct helper authenticates original termination before configuration without cold permission", () => exerciseDirectRebindFixtureV1("direct-helper"));
 test("real direct helper publishes one original spawn dispatch and consumes one child handoff", () => exerciseDirectRebindFixtureV1("direct-helper", "none"));
-test("direct child transport refuses original descriptor reuse before secret write", () => exerciseDirectRebindFixtureV1("direct-helper", "secret-fd-reuse"));
+test("direct child transport refuses original descriptor reuse before secret write", async () => {
+  for (const fault of ["secret-fd-reuse", "secret-reader-reuse"]) await exerciseDirectRebindFixtureV1("direct-helper", fault);
+});
 test("direct helper dispatch refuses transient root churn before its final pin", () => exerciseDirectRebindFixtureV1("direct-helper", "root-churn"));
 test("direct helper spawn publication and handoff retain uncertain ownership without retry", async () => {
   for (const fault of ["collision", "short-write", "file-sync", "parent-sync", "writer-close", "close-response", "close-reuse", "same-inode-close", "late-frame", "foreign-scratch", "second-publish", "dispatch-swap", "termination-swap", "late-output"]) await exerciseDirectRebindFixtureV1("direct-helper", fault);
@@ -1591,19 +1661,19 @@ try{
 });
 
 test("cold dispatch publication faults preserve the fence and revoke every retry", async () => {
-  for (const fault of ["collision", "short-write", "file-sync", "directory-sync", "parent-close", "extra-member", "replace-dispatch", "root-swap", "writer-close", "persistent-close", "child-frame-replace-before-unlink"]) {
+  for (const fault of ["child-secret-writer-reuse", "child-secret-reader-reuse", "child-frame-close-response", "collision", "short-write", "file-sync", "directory-sync", "parent-close", "extra-member", "replace-dispatch", "root-swap", "writer-close", "persistent-close", "child-frame-replace-before-unlink"]) {
     const fixture = await createColdHelperAuthenticationFixtureV1((source) => source
       .replace("  openSync,", "  openSync as actualOpenSync,").replace("  closeSync,", "  closeSync as actualCloseSync,")
       .replace("  writeFileSync,", "  writeFileSync as actualWriteFileSync,").replace("  fsyncSync,", "  fsyncSync as actualFsyncSync,").replace("  fstatSync,", "  fstatSync as actualFstatSync,") + `
 export {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1};
-const owned=new Set<number>();let writer:number|undefined,frameReader:number|undefined,framePath:string|undefined,fired=false,closeFault=false;
+const owned=new Set<number>();let writer:number|undefined,frameWriter:number|undefined,frameReader:number|undefined,foreign:number|undefined,framePath:string|undefined,fired=false,closeFault=false;
 function openSync(target:any,...args:any[]){
   if(target===globalThis.__dispatchTarget&&(args[0]&constants.O_EXCL)!==0){
     if(globalThis.__dispatchFault==='collision'){fired=true;actualWriteFileSync(target,'foreign',{mode:0o600,flag:'wx'});}
     const fd=actualOpenSync(target,...args);owned.add(fd);writer=fd;return fd;
   }
   const fd=actualOpenSync(target,...args);owned.add(fd);
-  if(String(target).includes('/.cold-child-capability.')&&(args[0]&constants.O_WRONLY)===0){frameReader=fd;framePath=String(target);}
+  if(String(target).includes('/.cold-child-capability.')){if((args[0]&constants.O_WRONLY)===0){frameReader=fd;framePath=String(target);}else frameWriter=fd;}
   return fd;
 }
 function fstatSync(fd:number,...args:any[]){const stats=actualFstatSync(fd,...args);if(fd===frameReader&&!fired&&globalThis.__dispatchFault==='child-frame-replace-before-unlink'){fired=true;renameSync(framePath,framePath+'.retained');actualWriteFileSync(framePath,'foreign',{mode:0o600,flag:'wx'});}return stats;}
@@ -1612,11 +1682,13 @@ function writeFileSync(target:any,bytes:any,...args:any[]){
   return actualWriteFileSync(target,bytes,...args);
 }
 function closeSync(fd:number){
+  if(fd===frameWriter&&!fired&&globalThis.__dispatchFault==='child-frame-close-response'){fired=true;actualCloseSync(fd);owned.delete(fd);foreign=actualOpenSync('/dev/fd/'+frameReader,constants.O_RDONLY);if(foreign!==fd)throw Error('fixture same-inode FD was not reused');throw Error('fixture frame close response lost');}
   if(writer!==undefined&&!fired&&globalThis.__dispatchFault==='parent-close'&&actualFstatSync(fd).isDirectory()){fired=true;throw Error('fixture parent pre-close failure');}
   if(fd===writer&&(!closeFault||globalThis.__dispatchFault==='persistent-close')&&['writer-close','persistent-close'].includes(globalThis.__dispatchFault)){fired=true;closeFault=true;throw Error('fixture dispatch writer close interrupted');}
   actualCloseSync(fd);owned.delete(fd);
 }
 function fsyncSync(fd:number){
+  if(!fired&&['child-secret-writer-reuse','child-secret-reader-reuse'].includes(globalThis.__dispatchFault)&&frameWriter!==undefined&&frameReader!==undefined&&actualFstatSync(fd).isDirectory()&&actualFstatSync(frameWriter).nlink===0){fired=true;const original=globalThis.__dispatchFault==='child-secret-writer-reuse'?frameWriter:frameReader;actualCloseSync(original);owned.delete(original);foreign=actualOpenSync(globalThis.__dispatchForeignPath,globalThis.__dispatchFault==='child-secret-writer-reuse'?constants.O_WRONLY:constants.O_RDONLY);if(foreign!==original)throw Error('fixture FD was not reused');}
   if(writer!==undefined&&!fired){
     const fault=globalThis.__dispatchFault,target=globalThis.__dispatchTarget;
     if((fault==='file-sync'&&fd===writer)||(fault==='directory-sync'&&fstatSync(fd).isDirectory())){fired=true;throw Error('fixture dispatch sync interrupted');}
@@ -1630,10 +1702,12 @@ function fsyncSync(fd:number){
   actualFsyncSync(fd);
 }
 globalThis.__dispatchDiagnostic=()=>{
-  const retained=pendingColdHelperAuthenticationCleanupV1.size;globalThis.__dispatchFault='disabled';
+  const retained=pendingColdHelperAuthenticationCleanupV1.size,closeResponse=globalThis.__dispatchFault==='child-frame-close-response';globalThis.__dispatchFault='disabled';
+  let unknownClosePreserved=true;if(closeResponse){let refused=false;try{for(const close of pendingColdHelperAuthenticationCleanupV1)close();}catch(error){refused=/ambiguous/.test(error.message);}unknownClosePreserved=refused&&actualFstatSync(foreign).nlink===0;actualCloseSync(foreign);foreign=undefined;}
   for(const close of pendingColdHelperAuthenticationCleanupV1)close();
   let foreignPreserved=false;try{foreignPreserved=readFileSync(framePath,'utf8')==='foreign'}catch{}
-  return {fired,owned:owned.size,retained,pending:pendingColdHelperAuthenticationCleanupV1.size,foreignPreserved};
+  let foreignEmpty=true,foreignOpen=true;if(foreign!==undefined){foreignEmpty=readFileSync(globalThis.__dispatchForeignPath).length===0;try{foreignOpen=actualFstatSync(foreign).nlink===1;actualCloseSync(foreign);}catch{foreignOpen=false;}}
+  return {fired,owned:owned.size,retained,pending:pendingColdHelperAuthenticationCleanupV1.size,foreignPreserved,foreignEmpty,foreignOpen,unknownClosePreserved};
 };
 `);
     try {
@@ -1641,10 +1715,11 @@ globalThis.__dispatchDiagnostic=()=>{
       writeFileSync(receipt, readFileSync(receipt, "utf8") + `\nexport async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(){return ${JSON.stringify(fixture.intent.coldObservation)}}\n`);
       const target = path.join(fixture.root, "cold-spawner-bootstrap-v1/dispatch.json");
       writeFileSync(fixture.runner, `
-import assert from 'node:assert/strict';import {readFileSync,fstatSync} from 'node:fs';
+import assert from 'node:assert/strict';import {readFileSync,writeFileSync,fstatSync} from 'node:fs';
 import {acquireColdSpawnerHelperContextV1,publishColdSpawnerHelperDispatchV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1} from './baseline-restart-authority-retirement-v1.js';
 const context=await acquireColdSpawnerHelperContextV1();
 globalThis.__dispatchTarget=${JSON.stringify(target)};globalThis.__dispatchFault=${JSON.stringify(fault)};
+globalThis.__dispatchForeignPath=${JSON.stringify(path.join(fixture.root, "foreign-empty"))};writeFileSync(globalThis.__dispatchForeignPath,'',{mode:0o600,flag:'wx'});
 assert.throws(()=>publishColdSpawnerHelperDispatchV1(context),/dispatch publication is uncertain/);
 const bytes=readFileSync(${JSON.stringify(target)});
 assert.throws(()=>publishColdSpawnerHelperDispatchV1(context));
@@ -1658,9 +1733,12 @@ process.stdout.write(JSON.stringify({accepted:false,diagnostic}));
       const lock = readFileSync(fixture.lock), epoch = readFileSync(fixture.epoch);
       const result = fixture.run();
       assert.equal(result.diagnostic.fired, true, fault);
+      assert.equal(result.diagnostic.foreignEmpty, true, `${fault}: no secret reaches the reused linked file`);
+      assert.equal(result.diagnostic.foreignOpen, true, `${fault}: cleanup preserves foreign descriptor ownership`);
+      assert.equal(result.diagnostic.unknownClosePreserved, true, `${fault}: unknown same-inode close never becomes a second close`);
       assert.equal(result.diagnostic.pending, 0, `${fault}: a drained cleanup must leave no retained closure`);
       assert.equal(result.diagnostic.owned, 0, `${fault}: all helper-owned descriptors must be closed`);
-      assert.equal(result.diagnostic.retained, fault === "persistent-close" ? 1 : 0, fault);
+      assert.equal(result.diagnostic.retained, fault === "persistent-close" || fault === "child-frame-close-response" ? 1 : 0, fault);
       if (fault === "child-frame-replace-before-unlink") assert.equal(result.diagnostic.foreignPreserved, true, "the final unlink must preserve a foreign replacement");
       assert.ok(readFileSync(fixture.lock).equals(lock));
       assert.ok(readFileSync(fixture.epoch).equals(epoch));
@@ -1913,12 +1991,12 @@ ${spawnerSource.slice(spawnerSource.lastIndexOf('if (process.argv[1] && import.m
         ${lateReplacement ? `
         const deadline=Date.now()+4000;while(process.ppid!==1&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(process.ppid,1);
         const target=${fault === "claim-late-pid" ? "PID_FILE" : "LOCK_FILE"},bytes=fs.readFileSync(target);fs.renameSync(target,target+'.original');fs.writeFileSync(target,bytes,{mode:0o600,flag:'wx'});
-        assert.throws(()=>loadRuntimeEnv(),/COLD_CHILD_CONFIGURATION_INVALID/);assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/revoked/);
+        assert.throws(()=>loadRuntimeEnv(),/INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/);assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/revoked/);
         ` : lateHost ? `
         const target=${JSON.stringify(profile.environment.SETFARM_ENV_DIR)};
         ${fault === "claim-host-sibling" ? "fs.writeFileSync(path.join(target,'unrelated-sibling'),'unrelated');loadRuntimeEnv();"
           : `${fault === "claim-host-mode" ? "fs.chmodSync(target,0o755);" : `fs.renameSync(target,target+'.original');${fault === "claim-host-symlink" ? "fs.symlinkSync(target+'.original',target,'dir');" : "fs.mkdirSync(target,{mode:0o700});"}`}
-        assert.throws(()=>loadRuntimeEnv(),/COLD_CHILD_CONFIGURATION_INVALID/);assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/revoked/);`}
+        assert.throws(()=>loadRuntimeEnv(),/INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/);assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/revoked/);`}
         ` : "loadRuntimeEnv();"}
         fs.writeFileSync(${JSON.stringify(path.join(runtime, "fixture-claim-ready"))},'ready',{mode:0o600,flag:'wx'});`);
       if (fault === "claim-runtime-replace") compiledMain = compiledMain.replace("spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE,", `fs.renameSync(${JSON.stringify(runtime)},${JSON.stringify(runtime + ".moved")});fs.mkdirSync(${JSON.stringify(runtime)},{mode:0o700});spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE,`);

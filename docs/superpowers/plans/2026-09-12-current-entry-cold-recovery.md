@@ -544,6 +544,39 @@ passed16/16 (178.193s), manifest17/17 (6.016s), ordinary/refused/inert imports3/
 (2.737s), no-emit and whitespace checks. Independent new-dispatch review reports
 no remaining must-fix; this is not full receipt/P3 or Task6A live acceptance.
 
+Shared-issuer causal refinement (same retirement/test File Map, no export change):
+the new direct-child fault exposed the same unchecked first-secret-write window
+in `openDirectSpawnerHelperFrameV1`, `openColdSpawnerHelperFrameV1`, and the cold
+helper's child-frame publisher. Add one private original-empty-unlinked-FD
+assertion after parent fsync/authority checks, immediately before each write.
+Cold frame-only cleanup must retain original identities and mark close entry;
+disown reused foreign FDs, fence uncertain same-inode closes, and never pass
+these frame handles to blind generic cleanup. Leave unrelated descriptor cleanup
+semantics unchanged. Regression scope includes both writer/reader reuse, empty
+foreign-file preservation, original lease fencing and response-loss cleanup.
+
+All four issuers now use the shared private empty-transport assertion. Before
+fixing, cold-controller writer reuse put583 bytes in a linked foreign file, cold
+child writer reuse likewise disclosed its frame, and direct-controller reuse
+reached the first secret write. Writer/reader reuse now refuses before that write;
+foreign descriptors remain open. Cold frame-only tracking registers unknown
+identity before fstat and uses one conservative close function for normal and
+cleanup paths. Same-inode reopen after a lost close response remains fenced until
+the fixture owner closes its foreign handle. Other resource cleanup is unchanged.
+The updated earlier pre-effect fault tests explicitly dispose their known original
+handle before observing EBADF; production never assumes the close did not happen.
+
+Focused transport/cleanup checks passed7/7 (22.241s); independent review found no
+remaining must-fix. The full retirement file ran to completion:80/81 passed
+(571.075s). Its one failure was an obsolete `COLD_CHILD_CONFIGURATION_INVALID`
+test expectation left by the earlier shared runtime-code amendment, not accepted
+startup drift. Correct both remaining expectations to the exact shared
+`INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID`; the failing test
+then passed all eight actual-child cases1/1 (15.682s). This is NOT a fresh81/81
+whole-file claim. Manifest17/17 (7.148s), ordinary/refused/inert imports3/3
+(2.828s), TypeScript no-emit and whitespace checks also passed. No live mutation,
+DB action, direct child launch, full receipt/P3 acceptance or Task6A completion.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
