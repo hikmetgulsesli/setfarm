@@ -637,7 +637,7 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
   }
 });
 
-async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before") {
+async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper") {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
   let targetPid: number | undefined, targetIdentity: ReturnType<typeof parseColdFixtureExitRowV1> | undefined;
   try {
@@ -740,6 +740,7 @@ export function disturbDirectPublicationDescriptorFixtureV1(){const state=retain
 export async function terminateDirectFixtureV1(lease,input){return await terminateDirectSpawnerRebindPredecessorV1(lease,input)}
 export function parseDirectTerminationFixtureV1(dispatch,receipt){const state=retainedDirectSpawnerRebindIntentV1;return parseDirectSpawnerTerminationChainV1(dispatch,receipt,state.intent,state.inputs.preMutation)}
 export function openDirectHelperFrameFixtureV1(clone=false){const state=retainedDirectSpawnerRebindIntentV1;return openDirectSpawnerHelperFrameV1(clone?{...state}:state)}
+export function directBorrowedLeaseDescriptorFixtureV1(){return heldLease(retainedDirectSpawnerRebindIntentV1.lease).descriptor}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
 function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
 export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
@@ -781,7 +782,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
       spawner: { ...preMutation.spawner, loadedSourceSha: directProfile.source.sha, loadedTreeHash: directProfile.source.treeHash, loadedBuildHash: directProfile.source.buildHash } };
     const records = { operation, restart, startup, authorization, legacy, preMutation, profile: directProfile, environment, census: { ...censusBody, censusHash: sha256(canonical(censusBody)) } };
     const readPort = `const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.calls.push(key);state.hook?.(key);return structuredClone(state.records[key])};\n`;
-    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `import{readFileSync}from'node:fs';import{createHash}from'node:crypto';${canonical.toString()}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionServiceCensusV1(){return read('census')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const profile=read('profile');profile.outputTreeBytesHash=createHash('sha256').update(readFileSync(${JSON.stringify(entry)})).digest('hex');delete profile.profileHash;profile.profileHash=createHash('sha256').update(canonical(profile)).digest('hex');const result={profile};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `import{readFileSync}from'node:fs';import{createHash}from'node:crypto';${canonical.toString()}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionServiceCensusV1(){return read('census')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const profile=read('profile');profile.outputTreeBytesHash=createHash('sha256').update(readFileSync(${JSON.stringify(mode === "direct-helper" ? path.join(repository, "dist/PLATFORM_BUILD_OUTPUT_TREE.json") : entry)})).digest('hex');delete profile.profileHash;profile.profileHash=createHash('sha256').update(canonical(profile)).digest('hex');const result={profile};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readPort + `export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(){return read('restart')}\nexport async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return read('startup')}\nexport async function resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1(){return read('authorization')}\n`);
     const processRecord = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), predecessorHash + ".json");
     mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
@@ -789,6 +790,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
     const runtime = await import(pathToFileURL(runtimePath).href);
     let lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
     try {
+      const helperCompiled = mode === "direct-helper" ? installDirectHelperCompiledFixtureV1() : null;
       const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
       const run = async (mutate?: (value: any) => void, hook?: (key: string) => void) => {
         const observed = structuredClone(records); mutate?.(observed);
@@ -870,7 +872,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
         lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
       }
       await run();
-      const signalProbe = { calls: [] as Array<{ pid: number; signal: string }>, responseLoss: mode === "response-loss" || mode.startsWith("frame-"), before: mode === "signal-before" };
+      const signalProbe = { calls: [] as Array<{ pid: number; signal: string }>, responseLoss: mode === "response-loss" || mode.startsWith("frame-") || mode === "direct-helper", before: mode === "signal-before" };
       Reflect.set(globalThis, "__directSignalFixtureV1", signalProbe);
       if (mode === "response-loss") {
         for (const field of ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listener"]) {
@@ -928,6 +930,123 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
       await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
       const privateRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1");
       assert.deepEqual(readdirSync(privateRoot).sort(), ["termination-dispatch.json", "termination-receipt.json"]);
+      function installDirectHelperCompiledFixtureV1() {
+        const compiled = new Set<string>();
+        const compile = (relative: string, source: string) => {
+          compiled.add(relative); const target = path.join(repository, "dist", relative.replace(/\.ts$/, ".js"));
+          mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+          writeFileSync(target, typescript.transpileModule(source, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText, { mode: 0o600 });
+        };
+        const compileStatic = (relative: string) => {
+          if (compiled.has(relative)) return;
+          assert.ok(compiled.size < 128);
+          const source = readFileSync(path.resolve(import.meta.dirname, "../../src", relative), "utf8"); compile(relative, source);
+          const tree = typescript.createSourceFile(relative, source, typescript.ScriptTarget.Latest, true);
+          for (const statement of tree.statements) {
+            if (!typescript.isImportDeclaration(statement) || statement.importClause?.isTypeOnly || !typescript.isStringLiteral(statement.moduleSpecifier)) continue;
+            const bindings = statement.importClause?.namedBindings;
+            if (!statement.importClause?.name && bindings && typescript.isNamedImports(bindings) && bindings.elements.every(element => element.isTypeOnly)) continue;
+            if (statement.moduleSpecifier.text.startsWith(".")) compileStatic(path.normalize(path.join(path.dirname(relative), statement.moduleSpecifier.text.replace(/\.js$/, ".ts"))));
+          }
+        };
+        compile("internal-production/baseline-workspace-authority-path-v1.ts", readFileSync(path.join(internal, "baseline-workspace-authority-path-v1.ts"), "utf8"));
+        const parentUidReturn = "  return { uid, ppid, pgid };";
+        assert.equal(source.split(parentUidReturn).length - 1, 1);
+        compile("internal-production/baseline-restart-authority-retirement-v1.ts", source.replace(parentUidReturn, "  return { uid:globalThis.__directHelperParentUidFault?uid+1:uid, ppid, pgid };") + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\n");
+        for (const relative of ["internal-production/baseline-spawner-launch-environment-v1.ts", "findings/legacy-finding-publication-inventory-v1.ts", "runtime-config.ts"]) compileStatic(relative);
+        for (const relative of ["baseline-post-handoff-receipt-v1.ts", "baseline-spawner-startup-admission-v1.ts"]) {
+          let source = readFileSync(path.join(internal, relative), "utf8");
+          if (relative === "baseline-post-handoff-receipt-v1.ts") {
+            const marker = "export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){";
+            assert.equal(source.split(marker).length - 1, 1);
+            source = source.replace(marker, `${marker}await globalThis.__directHelperPendingEvidenceHook?.();`);
+          }
+          compile(`internal-production/${relative}`, source);
+        }
+        symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(repository, "node_modules"), "dir");
+        const recordPath = path.join(fixture, "direct-helper-fixture-records.json");
+        writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
+        const runner = path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js");
+        writeFileSync(runner, `import assert from'node:assert/strict';import{readFileSync,writeFileSync,renameSync,chmodSync,lstatSync,fstatSync,openSync,closeSync}from'node:fs';
+import{acquireDirectHelperFixtureV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1}from'./baseline-restart-authority-retirement-v1.js';
+const fault=process.env.FIXTURE_DIRECT_HELPER_FAULT??'none';let context;
+globalThis.__directRebindInputFixtureV1={records:JSON.parse(readFileSync(${JSON.stringify(recordPath)},'utf8')),calls:[]};
+try{
+if(fault==='early-configuration')assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());
+if(fault==='parent-uid'){globalThis.__directHelperParentUidFault=true;await assert.rejects(acquireDirectHelperFixtureV1(),undefined,'actual parent UID must match the authenticated controller');throw Error('expected fixture refusal');}
+if(fault==='pending-ordinary'||fault==='pending-spawner'){let refused=false;globalThis.__directHelperPendingEvidenceHook=async()=>{process.argv[1]=fault==='pending-spawner'?${JSON.stringify(path.join(repository, "dist/spawner.js"))}:'ordinary-during-direct-auth.mjs';closeSync(3);delete process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER;process.env.SETFARM_ENV_DIR=${JSON.stringify(fixture)};await assert.rejects(import('../runtime-config.js'),/CONFIGURATION_INVALID/);assert.equal(process.env.PENDING_DOTENV,undefined);refused=true;};await assert.rejects(acquireDirectHelperFixtureV1());assert.equal(refused,true,'active direct acquisition must forbid ordinary configuration before its context exists');throw Error('expected fixture refusal');}
+if(fault==='revoked-during-evidence'){let fired=false;globalThis.__directRebindInputFixtureV1.hook=key=>{if(key==='profile'&&!fired){fired=true;assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());}};await assert.rejects(acquireDirectHelperFixtureV1(),undefined,'an in-flight acquisition must not succeed after permanent revocation');assert.equal(fired,true);throw Error('expected fixture refusal');}
+if(fault==='late-dispatch-swap'){let fired=false;globalThis.__directRebindInputFixtureV1.hook=key=>{if(key==='profile'&&!fired){fired=true;const target=${JSON.stringify(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1/termination-dispatch.json"))},bytes=readFileSync(target);renameSync(target,${JSON.stringify(path.join(fixture, "original-direct-helper-dispatch"))});writeFileSync(target,bytes,{mode:0o600,flag:'wx'});}};await assert.rejects(acquireDirectHelperFixtureV1(),undefined,'awaited evidence cannot replace the original dispatch inode');assert.equal(fired,true);throw Error('expected fixture refusal');}
+context=await acquireDirectHelperFixtureV1();
+if(fault==='entry-before-selection'){const entry=process.argv[1];process.argv[1]=${JSON.stringify(path.join(repository, "dist/spawner.js"))};closeSync(3);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());process.argv[1]=entry;throw Error('expected fixture refusal');}
+const snapshot=resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();assert.equal(snapshot.role,'direct-helper');assert.deepEqual(Object.keys(snapshot),['schema','role']);assert.equal(snapshot.environment.PRIVATE_VALUE,'direct-fixture-secret');assert.throws(()=>resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1());
+if(fault==='late-output'){const target=${JSON.stringify(entry)},bytes=readFileSync(target);try{writeFileSync(target,Buffer.concat([bytes,Buffer.from('// late mutation')]));assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),undefined,'late actual output mutation must revoke cached helper auth');}finally{writeFileSync(target,bytes)}assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
+if(fault==='late-host'){const target=${JSON.stringify(environmentDirectory)},mode=lstatSync(target).mode&0o7777;try{chmodSync(target,mode^0o010);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),undefined,'late physical host identity change must revoke cached helper auth');}finally{chmodSync(target,mode)}assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
+if(fault==='late-entry'){const entry=process.argv[1];process.argv[1]=entry+'.foreign';assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());process.argv[1]=entry;assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
+if(fault==='late-frame'){const original=openSync('/dev/fd/3','r');closeSync(3);assert.equal(openSync('/dev/null','r'),3);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());closeSync(3);assert.equal(openSync('/dev/fd/'+original,'r'),3);closeSync(original);assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());throw Error('expected fixture refusal');}
+const{loadRuntimeEnv}=await import('../runtime-config.js');loadRuntimeEnv();assert.equal(process.env.PRIVATE_VALUE,'direct-fixture-secret');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER,'1');assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER,undefined);
+context.close();assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);assert.equal(fault,'none');process.stdout.write('authenticated');
+}catch(error){if(fault==='none'||error.code==='ERR_ASSERTION')throw error;assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);await assert.rejects(acquireDirectHelperFixtureV1());process.stdout.write('refused');}finally{context?.close()}
+`, { mode: 0o600 });
+        mkdirSync(path.join(home, "Library/LaunchAgents"), { recursive: true, mode: 0o700 });
+        mkdirSync(environmentDirectory, { recursive: true, mode: 0o700 });
+        const entries: Array<{ locator: string; mode: number; byteLength: number; sha256: string }> = [];
+        const visit = (directory: string) => {
+          chmodSync(directory, 0o755);
+          for (const name of readdirSync(directory).sort()) {
+            const target = path.join(directory, name);
+            if (lstatSync(target).isDirectory()) visit(target);
+            else { const locator = path.relative(repository, target), mode = locator === "dist/cli/cli.js" ? 0o755 : 0o644; chmodSync(target, mode); const bytes = readFileSync(target); entries.push({ locator, mode, byteLength: bytes.length, sha256: sha256(bytes) }); }
+          }
+        };
+        visit(path.join(repository, "dist")); entries.sort((a, b) => Buffer.compare(Buffer.from(a.locator), Buffer.from(b.locator)));
+        const body = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: directProfile.source.sha, sourceTreeHash: directProfile.source.treeHash, entries };
+        const artifacts = [Buffer.from('{"fixture":"build-info"}\n'), Buffer.from(`${JSON.stringify({ ...body, outputTreeHash: sha256(canonical(body)) })}\n`), Buffer.from('{"fixture":"release-manifest"}\n')];
+        for (const [index, name] of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"].entries()) writeFileSync(path.join(repository, "dist", name), artifacts[index]!, { mode: 0o444 });
+        const identity = (target: string) => { const stats = lstatSync(target, { bigint: true }); return { devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) }; };
+        const directories = new Set<string>();
+        for (const initial of [home, fixture, repository, environmentDirectory, path.join(repository, "dist"), path.join(home, "Library/LaunchAgents"), path.dirname(process.execPath)]) {
+          for (let target = initial; ; target = path.dirname(target)) { directories.add(target); if (path.dirname(target) === target) break; }
+        }
+        Object.assign(directProfile, { rootIdentity: identity(repository), hostDirectories: [...directories].map(target => ({ path: target, ...identity(target) })),
+          executable: { path: process.execPath, ...identity(process.execPath), bytesHash: sha256(readFileSync(process.execPath)) },
+          buildInfoBytesHash: sha256(artifacts[0]!), outputTreeBytesHash: sha256(artifacts[1]!), releaseManifestBytesHash: sha256(artifacts[2]!) });
+        rehash(directProfile); restart.launchProfileHash = directProfile.profileHash;
+        return { runner, recordPath };
+      }
+      if (mode === "direct-helper") {
+        const { runner, recordPath } = helperCompiled!;
+        const crosses: Array<[string, (value: any) => void]> = [
+          ["crossed-operation", value => { value.operation.purpose = "crossed"; }],
+          ["crossed-restart", value => { value.restart.maximumSpawnDispatchCount = 2; }],
+          ["crossed-startup", value => { value.startup.startupTokenHash = "f".repeat(64); }],
+          ["crossed-authorization", value => { value.authorization.authorityV3Migration31AuditHash = "f".repeat(64); }],
+          ["crossed-legacy", value => { value.legacy.observedSpawnerGenerationHash = "f".repeat(64); }],
+          ["crossed-p3", value => { value.preMutation.spawner.pid++; }],
+          ["crossed-profile", value => { value.profile.environmentHash = "f".repeat(64); }],
+          ["crossed-environment", value => { value.environment.PRIVATE_VALUE = "crossed"; }],
+        ];
+        const intermediary = path.join(fixture, "direct-helper-parent.mjs");
+        writeFileSync(intermediary, `import{spawnSync}from'node:child_process';const child=spawnSync(process.execPath,[${JSON.stringify(runner)}],{cwd:${JSON.stringify(repository)},env:process.env,stdio:['ignore','inherit','inherit',3,4,5],timeout:12000});process.exitCode=child.status??1;\n`, { mode: 0o600 });
+        writeFileSync(path.join(fixture, ".env"), "PENDING_DOTENV=escaped\n", { mode: 0o600 });
+        for (const [fault, mutate] of [["none", null], ["pending-ordinary", null], ["pending-spawner", null], ["parent-uid", null], ["wrong-parent", null], ["wrong-cwd", null], ["extra-argv", null], ["crossed-frame", null], ["crossed-lock", null], ["crossed-intent", null], ["missing-marker", null], ["revoked-during-evidence", null], ["late-output", null], ["late-host", null], ["early-configuration", null], ["entry-before-selection", null], ["late-entry", null], ["late-frame", null], ["mixed-marker", null], ...crosses, ["late-dispatch-swap", null]] as const) {
+          const observed = structuredClone(records); mutate?.(observed); writeFileSync(recordPath, JSON.stringify(observed), { mode: 0o600 });
+          const handles = runtime.openDirectHelperFrameFixtureV1(), before = coldGenesisTreeSnapshotV1(privateRoot);
+          try {
+            const lockDescriptor = runtime.directBorrowedLeaseDescriptorFixtureV1();
+            const child = spawnSync(process.execPath, [fault === "wrong-parent" ? intermediary : runner, ...(fault === "extra-argv" ? ["--foreign"] : [])], { cwd: fault === "wrong-cwd" ? fixture : repository, env: { PATH: "/usr/bin:/bin", ...(fault === "missing-marker" ? {} : { SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER: "1" }), FIXTURE_DIRECT_HELPER_FAULT: fault, ...(fault === "mixed-marker" ? { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: "1" } : {}) }, stdio: ["ignore", "pipe", "pipe", fault === "crossed-frame" ? handles.intentDescriptor : handles.frameDescriptor, fault === "crossed-lock" ? handles.intentDescriptor : lockDescriptor, fault === "crossed-intent" ? lockDescriptor : handles.intentDescriptor], encoding: "utf8", timeout: 15000, maxBuffer: 65536 });
+            assert.equal(child.status, 0, `${fault}: ${child.stderr}`); assert.equal(child.stdout, fault === "none" ? "authenticated" : "refused", fault); assert.equal(child.stderr, "");
+            const after = coldGenesisTreeSnapshotV1(privateRoot);
+            if (fault === "late-dispatch-swap") {
+              const original = before.find(entry => entry.relative === "termination-dispatch.json")!, replacement = after.find(entry => entry.relative === "termination-dispatch.json")!;
+              assert.notEqual(replacement.ino, original.ino); assert.equal(replacement.bytesHash, original.bytesHash);
+              assert.deepEqual(readdirSync(privateRoot).sort(), ["termination-dispatch.json", "termination-receipt.json"]);
+            } else assert.deepEqual(after, before);
+            assert.equal(signalProbe.calls.length, 1, "helper authentication emits no process action");
+            await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+          } finally { closeSync(handles.frameDescriptor); closeSync(handles.intentDescriptor); }
+        }
+      }
       if (mode.startsWith("frame-")) {
         const target = mode === "frame-intent-replace" ? path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json")
           : path.join(privateRoot, mode === "frame-dispatch-replace" ? "termination-dispatch.json" : "termination-receipt.json");
@@ -1073,6 +1192,7 @@ test("direct termination refuses output drift after its dispatch publication", (
 test("direct helper frame refuses same-byte replacement of every original authority file", async () => {
   for (const mode of ["frame-intent-replace", "frame-dispatch-replace", "frame-receipt-replace"]) await exerciseDirectRebindFixtureV1(mode);
 });
+test("real direct helper authenticates original termination before configuration without cold permission", () => exerciseDirectRebindFixtureV1("direct-helper"));
 test("direct termination retains its fence when the actual predecessor ignores SIGTERM", () => exerciseDirectRebindFixtureV1("ignored"));
 test("direct termination refuses uncertain dispatch and receipt publications without redispatch", async () => {
   await exerciseDirectRebindFixtureV1("dispatch-write");

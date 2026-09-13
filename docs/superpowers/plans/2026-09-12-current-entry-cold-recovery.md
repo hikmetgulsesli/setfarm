@@ -447,6 +447,58 @@ Final scoped kernel/transport/lease/role checks7/7 passed (32.614s), exact manif
 whitespace checks passed. Independent final review reports no remaining must-fix
 in this issuer, including the explicit ambiguous-close availability tradeoff.
 
+Direct-helper authentication refinement (same source/test/runtime-config File
+Map and27-export boundary): factor the existing immutable evidence body into a
+private resolver accepting only input pairs, expected epoch and a code-owned
+original-authority assertion. Controller wrapper retains its real held lease
+and own-PID check; helper wrapper supplies inherited FD3/4/5, exact compiled entry,
+controller-parent and original termination pins instead. Do not register helper
+objects in the controller lease map. Keep all await brackets, stored process
+pin, final P3 reread, hidden environment and local-reader cleanup. Only after
+direct authentication succeeds may the existing shared configuration port return
+the direct-helper role. Direct-child and process dispatch remain unavailable.
+
+Direct-helper authentication now runs in a genuine compiled child of the retained
+controller with original inherited FD3/4/5. It separately pins termination files
+and epoch, resolves the original operation/startup/restart/legacy/P3/profile
+chain, checks controller PID/start/UID and actual parent relation, and freshly
+observes predecessor absence. No helper lease object is manufactured. Shared
+evidence owns only its own fixed-root/process/epoch readers; its callback retains
+the distinct controller or helper authority across every await.
+
+Review-driven RED→GREEN corrections: after-acquire actual output mutation was
+accepted by cached helper authentication; retain actual host identity tuples and
+original Node descriptor/metadata/bounded initial byte hash, and verify the
+complete real output manifest on subsequent snapshots. A late acquisition could
+return after permanent revocation; recheck refusal flags after await and close
+the late result. Both held and still-active authentication could fall through an
+ordinary-entry/absent-FD3 path; include active/held/refused state in every ordinary
+null predicate and revoke on rejection. The actual pending test removes its
+mode marker, changes entry/FD3 and attempts a real runtime-config import with a
+dotenv sentinel: ordinary configuration must not load. Parent UID mismatch also
+reproduced a missing rejection before the fresh ownership check was added.
+
+The helper fixture now compiles its static graph before intent preparation and
+builds real BUILD_INFO/output-tree/release-manifest files and host/Node identity
+tuples. Output verification is the real production leaf, not a mocked hash
+acceptance. Independent immutable receipt ports remain controlled. Its28 cases
+cover positive config, early/pending/revoked configuration, actual intermediary
+parent, UID, argv/cwd/FD crossing, missing/mixed markers, immutable relation
+crosses, late entry/frame restoration, actual output/host mutation, and same-byte
+dispatch inode replacement during awaited profile observation. Borrowed lease
+and intent descriptors survive; no signal/spawn/publication is emitted by helper
+authentication. Context disposal and snapshot refusal remain permanent. The
+eight earlier transport-close fault cases preserve their explicit conservative
+unknown-close fence; helper-owned file readers use the same no-second-close
+rule. Direct child and spawn/claim/settlement integration are still pending.
+Final scoped combined retirement gate12/12 passed (112.568s), including the
+genuine fixed cold helper→sealed main and original cold descriptor-chain cases.
+Manifest17/17 (6.031s), ordinary/untrusted-mode/inert-import checks3/3 (2.670s),
+fresh TypeScript and whitespace checks passed. Independent final review found
+no remaining must-fix in this authentication delta. It does not approve the
+still-unimplemented direct child or dispatch/settlement path and is not a full
+receipt/P3 gate claim.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
