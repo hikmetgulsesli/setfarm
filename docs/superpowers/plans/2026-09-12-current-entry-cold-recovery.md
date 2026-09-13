@@ -1188,6 +1188,54 @@ test; no new File Map path):
   only this facade/ownership milestone and its plan; the receipt predecessor
   integration remains separate unfinished work. No live acceptance is claimed.
 
+Predecessor integration in progress (existing receipt source/test File Map only):
+
+- Fresh creation brackets ordinary census and all candidate serialization with
+  the fixed cold census. Settled history produces strict pre-mutation V2 with
+  exact terminal pair/full physical tuple in both hashes; absent history keeps
+  V1 bytes unchanged. Pure nested/status validators share the strict versioned
+  validator. REDs reproduced V2 schema rejection and status acceptance of a
+  self-hashed malformed embedded predecessor; focused corrections passed.
+- Historical creation is a separate private constructor reached from both
+  selected and pinned progress origins with their borrowed status owner. It
+  preserves original P2–P5 bytes and stored census after predecessor departure;
+  neither current service observation nor a new status is synthesized. One
+  shared materializer preserves exact path/publisher policy. Actual pinned
+  routing RED reached the departed process observer; routed GREEN preserved
+  historical bytes and refused target/history crossing through serialization.
+- Actual file-backed nested ownership now retains the V2 history assertion
+  through its final fences. Same-byte terminal replacement previously returned
+  (RED); replacement/absence now refuse, V1 remains independent, and all actual
+  owned FDs close. Test compilation is warmed before its FD baseline because
+  independent diagnostics identified two first-import tsx cache handles, not
+  authority leaks. No FD filtering, count adjustment or production hook added.
+- Focused builder/selected-origin/nested-owner group passed3/3 (8.362s); all
+  twelve actual raw arms passed (6.597s); existing complete nested root-route
+  cases passed (44.466s). Exact source inventories were updated for the private
+  creation/replay split and previously committed prerequisite-publication fence.
+  Fixture roots now match the physical workspace baseline subtree, and copied
+  launch-environment source/dist ownership remains explicit. Final graph,
+  late-observation/serialization fences and preselection routing are unfinished;
+  do not run full P3 or claim live Task 6A acceptance from this checkpoint.
+- Final graph now shares strict V1/V2 validation, retains the fixed history
+  closure through remaining graph resolution, complete-zero and final live
+  observations, and rechecks before fresh/verification publication. REDs:
+  immediate same-byte terminal replacement was accepted; four late boundaries
+  also returned; fresh serialization drift wrote a rejected candidate (not a
+  successful authority). Those paths now refuse at their original-history
+  fences, with no known-crossed fresh/verification publication.
+- V2 pre-mutation spawner PID/start/process hash and service/generation must
+  equal the independently resolved predecessor/startup commitments. All five
+  individually self-hashed crosses were accepted in RED; each now refuses.
+  Existing V1 historical semantics remain unchanged. No additional ordered pair,
+  locator family or public receipt export was introduced.
+- Final focused graph/cross/lifetime group passed11/11 (102.397s). Independent
+  V1 compatibility plus creation/nested/static group passed6/6 (17.113s).
+  Inert API/phase-zero group passed3/3 (2.011s), exact source manifests17/17
+  (5.763s), TypeScript and diff whitespace passed. Independent scoped review
+  found no remaining must-fix. Checkpoint this prerequisite only; preselection
+  routing, direct-detached transport, full P3 and live Task 6A remain pending.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

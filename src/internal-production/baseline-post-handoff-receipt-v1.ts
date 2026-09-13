@@ -11182,7 +11182,7 @@ type ExactPoisonPostVisibleProgressObservationAuthorityV1 = Readonly<{
   successorOperation: InternalProductionCurrentEntryOperationV1;
   operationDirectory: string;
   currentStatusTarget: string;
-  buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1>;
+  buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1>;
   assertStable(): void;
 }>;
 
@@ -11281,9 +11281,9 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
     successorOperation: context.successorOperation,
     operationDirectory,
     currentStatusTarget: path.join(operationDirectory, "01-current-status.pair.json"),
-    buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+    buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
       context.assertStable();
-      return buildTask12PreparedCurrentEntryPublicationSetV1(preparedAuthority);
+      return buildTask12PreparedCurrentEntryReplayPublicationSetV1(preparedAuthority, statusOwner);
     },
     assertStable(): void { context.assertStable(); },
   };
@@ -11293,7 +11293,7 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
 function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(
   rootReader: SelectedCurrentEntryPrerequisiteRootReaderV1,
   operation: InternalProductionCurrentEntryOperationV1,
-  buildPreparedPublicationSet: () => Promise<Task12PreparedCurrentEntryPublicationSetV1>,
+  buildPreparedPublicationSet: (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1) => Promise<Task12PreparedCurrentEntryPublicationSetV1>,
 ): ExactPoisonPostVisibleProgressObservationAuthorityV1 {
   const selected = rootReader.selectedBinding;
   if (!selected.operation || selected.operation.operationRef !== operation.operationRef || selected.operation.operationHash !== operation.operationHash) currentEntryFail("selected progress operation binding is crossed");
@@ -11304,9 +11304,9 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReade
     successorOperation: operation,
     operationDirectory,
     currentStatusTarget: path.join(operationDirectory, "01-current-status.pair.json"),
-    buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+    buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
       rootReader.assertStable();
-      return buildPreparedPublicationSet();
+      return buildPreparedPublicationSet(statusOwner);
     },
     assertStable(): void { rootReader.assertStable(); },
   };
@@ -12036,7 +12036,6 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     return recursivelyFreeze(value);
   }
   const schemas: Readonly<Record<string, string>> = Object.freeze({
-    preMutationLoadedRuntimeServiceAuthority: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     preSchemaAuthorization: "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1",
     startupToken: "setfarm.internal-production-pre-schema-spawner-startup-token.v1",
     restartAuthority: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1",
@@ -12052,7 +12051,8 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     targetClose: "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1",
     entryAuthority: "setfarm.internal-production-current-entry-authority.v1",
   });
-  if (descriptor.name === "authorityV3Migration31Audit") {
+  if (descriptor.name === "preMutationLoadedRuntimeServiceAuthority") requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);
+  else if (descriptor.name === "authorityV3Migration31Audit") {
     const keys = ["schema", "currentStatus", "controllerSource", "pr86Delivery", "authorityV3ContractSpineThroughMigration31", "currentAuthorityAudit", "currentAuthorityAuditHash", "migration31SemanticDigest", "migration31SourceManifestEntryHash", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash"] as const;
     if (!hasExactKeys(value, keys) || value.schema !== "setfarm.internal-production-authority-v3-migration31-audit.v1" || value.currentStatus !== "current") currentEntryFail("nested v31 audit shape is invalid");
     requireSource(value.controllerSource);
@@ -12113,13 +12113,17 @@ async function openExactPoisonPostVisibleProgressNestedAuthorityV1(
     content = openExactPoisonRecoveryMemberV1(target, `nested authority content ${knownDescriptor.name}`);
     if (!sameRegularMetadata(locator.identity, content.identity) || !locator.bytes.equals(content.bytes)) currentEntryFail(`nested authority split generation is invalid: ${knownDescriptor.name}`);
     const body = requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(knownDescriptor, pair, content.bytes);
+    const assertColdHistory = knownDescriptor.name === "preMutationLoadedRuntimeServiceAuthority"
+      ? await openTask12ColdSpawnerPredecessorHistoryV1(body) : null;
     const assertStable = (): void => {
       if (closed || parent === null || locator === null || content === null) currentEntryFail(`nested authority owner is closed: ${knownDescriptor.name}`);
       authority.assertStable();
+      assertColdHistory?.();
       parent.assertStable();
       assertExactPoisonRecoveryPinnedMemberStableV1(target, locator, `nested authority locator ${knownDescriptor.name}`);
       assertExactPoisonRecoveryPinnedMemberStableV1(target, content, `nested authority content ${knownDescriptor.name}`);
       parent.assertStable();
+      assertColdHistory?.();
       authority.assertStable();
     };
     const close = (): void => {
@@ -17089,7 +17093,7 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
           if (controllerWriterObservation === null) currentEntryFail("progress raw controller writer observation is absent");
           return Object.freeze({ rawKind: descriptor.rawKind, current: blockedCurrent, controllerWriter: controllerWriterObservation, completedRetained: null, evidence: "terminal", effectResult: null, nextPairBytes: null, immediate: null, publication: null, writer: null, assertFilesystemStable, assertStable, close });
         }
-        const preparedPublicationSet = await authority.buildPreparedPublicationSet();
+        const preparedPublicationSet = await authority.buildPreparedPublicationSet(status);
         await requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1(authority, status, preparedPublicationSet);
         const externalArrowCurrent = selectExactPoisonPostVisibleExternalArrowV1(descriptor, preSchemaCurrent);
         const externalPublicationCurrent = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowCurrent, preSchemaCurrent, null);
@@ -17919,8 +17923,8 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
       || selectedBinding.operation.operationHash !== operation.operationHash
     ) currentEntryFail("selected progress binding is crossed");
     rootReader.assertStable();
-    const buildPreparedPublicationSet = async (): Promise<Task12PreparedCurrentEntryPublicationSetV1> =>
-      buildTask12PreparedCurrentEntryPublicationSetV1(createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation));
+    const buildPreparedPublicationSet = async (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> =>
+      buildTask12PreparedCurrentEntryReplayPublicationSetV1(createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation), statusOwner);
     const authority = exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(rootReader, operation, buildPreparedPublicationSet);
     const operationDirectory = authority.operationDirectory;
     operationDirectoryGuard = authenticateTask12ReceiptDirectoryChainV1(operationDirectory);
@@ -18848,12 +18852,21 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
     : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
   if (authority.kind === "pinned-successor") authority.context.assertStable();
 
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const coldBefore = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const census = await observeInternalProductionServiceCensusV1();
+  const coldAfter = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("prepared publication cold predecessor changed");
+  if (coldAfter.state === "settled" && canonicalComparable(coldAfter.settlement.serviceCensus) !== canonicalComparable(census)) {
+    currentEntryFail("prepared publication ordinary census is not its cold predecessor");
+  }
   if (expectedServiceCensus !== undefined && canonicalComparable(census) !== canonicalComparable(expectedServiceCensus)) {
     currentEntryFail("prepared publication service census changed");
   }
   const serviceProjection = {
-    schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
+    schema: coldAfter.state === "settled"
+      ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2"
+      : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     currentEntryOperationRef: operation.operationRef,
     currentEntryOperationHash: operation.operationHash,
     observedServiceCensusHash: census.censusHash,
@@ -18861,16 +18874,16 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
     dashboard: census.dashboard,
     missionControl: census.missionControl,
     openClaw: census.openClaw,
+    ...(coldAfter.state === "settled" ? { coldSpawnerPredecessor: {
+      settlementRef: coldAfter.settlement.settlementRef, settlementHash: coldAfter.settlement.settlementHash,
+      settlementIdentity: coldAfter.settlementIdentity,
+    } } : {}),
   };
   const serviceProjectionSetHash = hashCanonicalJson(serviceProjection);
   const preMutationBody = { ...serviceProjection, serviceProjectionSetHash };
   const preMutationLoadedRuntimeServiceAuthorityHash = hashCanonicalJson(preMutationBody);
   const preMutationLoadedRuntimeServiceAuthorityRef = `${TASK12_PRE_MUTATION_PREFIX_V1}${preMutationLoadedRuntimeServiceAuthorityHash}`;
   const preMutation = recursivelyFreeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
-  const preMutationTarget = authority.kind === "selected"
-    ? task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(authority.context, preMutationLoadedRuntimeServiceAuthorityHash)
-    : path.join(authority.context.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
-  const preMutationPair = recursivelyFreeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
   const source = operation.controllerSource;
   const statusBody = {
     schema: "setfarm.internal-production-current-entry-authority-status.v1",
@@ -18897,6 +18910,63 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
   const statusHash = hashCanonicalJson(statusBody);
   const statusRef = `${TASK12_STATUS_PREFIX_V1}${statusHash}`;
   const status = recursivelyFreeze({ ...statusBody, statusRef, statusHash });
+  const prepared = await materializeTask12PreparedCurrentEntryPublicationSetV1(authority, preMutation, status, census);
+  if (canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== canonicalComparable(coldAfter)) currentEntryFail("prepared publication cold predecessor changed during serialization");
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  return prepared;
+}
+
+async function buildTask12PreparedCurrentEntryReplayPublicationSetV1(
+  authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
+  statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1,
+): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+  if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared replay authority is invalid");
+  const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
+  const operationHash = requireSha256(operation.operationHash, "prepared replay operation hash");
+  const currentStatusTarget = authority.kind === "selected"
+    ? task12CurrentStatusPathV1(authority.context, operationHash)
+    : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash, "01-current-status.pair.json");
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  statusOwner.assertStable();
+  const status = parseInternalProductionCurrentEntryAuthorityStatusV1(statusOwner.lastValidStatus ?? statusOwner.status);
+  if (statusOwner.target !== currentStatusTarget || status.state !== "operation_prepared" || status.operationRef !== operation.operationRef || status.operationHash !== operationHash
+    || canonicalComparable(status.controllerSourceAuthority) !== canonicalComparable({ controllerSourceSha: operation.controllerSource.sha, controllerTreeHash: operation.controllerSource.treeHash, controllerBuildHash: operation.controllerSource.buildHash })
+    || canonicalComparable(status.productBuildAuthorityV2DeliveryEvidence) !== canonicalComparable(operation.productBuildAuthorityV2DeliveryEvidence)
+    || canonicalComparable(status.authorityV3Migration31Audit) !== canonicalComparable(operation.authorityV3Migration31Audit)
+    || canonicalComparable(status.pendingBootstrapHandoffMigration) !== canonicalComparable(operation.pendingBootstrapHandoffMigration)) currentEntryFail("prepared replay status is not its owned origin");
+  const statusBody: Record<string, unknown> = { ...status }; delete statusBody.statusRef; delete statusBody.statusHash;
+  const statusHash = hashCanonicalJson(statusBody);
+  if (status.statusHash !== statusHash || status.statusRef !== `${TASK12_STATUS_PREFIX_V1}${statusHash}`) currentEntryFail("prepared replay status hash is crossed");
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(status.preMutationLoadedRuntimeServiceAuthority);
+  const assertHistory = await openTask12ColdSpawnerPredecessorHistoryV1(preMutation);
+  statusOwner.assertStable();
+  const census = requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }) as unknown as InternalProductionServiceCensusV1;
+  const prepared = await materializeTask12PreparedCurrentEntryPublicationSetV1(authority, preMutation, status, census);
+  assertHistory();
+  statusOwner.assertStable();
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  return prepared;
+}
+
+async function materializeTask12PreparedCurrentEntryPublicationSetV1(
+  authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
+  preMutation: Readonly<Record<string, unknown>>,
+  status: Readonly<Record<string, unknown>>,
+  census: InternalProductionServiceCensusV1,
+): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+  if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared materialization authority is invalid");
+  const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
+  const operationHash = requireSha256(operation.operationHash, "prepared materialization operation hash");
+  const operationDirectory = authority.kind === "selected"
+    ? task12OperationDirectoryV1(authority.context, operationHash)
+    : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  const preMutationLoadedRuntimeServiceAuthorityHash = requireSha256(preMutation.preMutationLoadedRuntimeServiceAuthorityHash, "prepared materialization pre-mutation hash");
+  const preMutationLoadedRuntimeServiceAuthorityRef = preMutation.preMutationLoadedRuntimeServiceAuthorityRef;
+  const preMutationTarget = authority.kind === "selected"
+    ? task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(authority.context, preMutationLoadedRuntimeServiceAuthorityHash)
+    : path.join(authority.context.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
+  const preMutationPair = recursivelyFreeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
+  const statusHash = requireSha256(status.statusHash, "prepared materialization status hash"), statusRef = status.statusRef;
   const statusPair = recursivelyFreeze({ statusRef, statusHash });
   let statusTarget: string;
   if (authority.kind === "selected") {
@@ -18973,6 +19043,45 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
       Task12PreparedCurrentEntryPublicationCandidateV1<"P5">,
     ]),
   });
+}
+
+function requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isPlainRecord(value)) currentEntryFail("pre-mutation runtime authority is not a record");
+  const v2 = value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2";
+  const keys = ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw", "serviceProjectionSetHash", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"];
+  if (v2) keys.push("coldSpawnerPredecessor");
+  if ((!v2 && value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") || !hasExactKeys(value, keys)) currentEntryFail("pre-mutation runtime authority versioned shape is invalid");
+  requirePair({ operationRef: value.currentEntryOperationRef, operationHash: value.currentEntryOperationHash }, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const pair = requirePair({ preMutationLoadedRuntimeServiceAuthorityRef: value.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: value.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
+  requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: value.spawner, dashboard: value.dashboard, missionControl: value.missionControl, openClaw: value.openClaw, censusHash: value.observedServiceCensusHash });
+  if (v2) {
+    const cold = value.coldSpawnerPredecessor;
+    if (!isPlainRecord(cold) || !hasExactKeys(cold, ["settlementRef", "settlementHash", "settlementIdentity"])) currentEntryFail("pre-mutation cold predecessor fields are invalid");
+    requirePair({ settlementRef: cold.settlementRef, settlementHash: cold.settlementHash }, "settlementRef", "settlementHash", "setfarm://internal-production/cold-spawner-controller-settlement/sha256/");
+    const identity = cold.settlementIdentity;
+    if (!Array.isArray(identity) || identity.length !== 10 || identity.some(value => typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value))
+      || BigInt(identity[1]) < 1n || identity[2] !== String(process.getuid?.()) || identity[4] !== String(0o100600)
+      || identity[5] !== "1" || BigInt(identity[6]) < 1n || BigInt(identity[6]) > 65_536n) currentEntryFail("pre-mutation cold predecessor identity is invalid");
+  }
+  const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
+  const projection = { ...body }; delete projection.serviceProjectionSetHash;
+  if (value.serviceProjectionSetHash !== hashCanonicalJson(projection) || hashCanonicalJson(body) !== pair.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("pre-mutation runtime authority hashes are crossed");
+  return recursivelyFreeze(value);
+}
+
+async function openTask12ColdSpawnerPredecessorHistoryV1(value: unknown): Promise<() => void> {
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);
+  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") return () => {};
+  const predecessor = preMutation.coldSpawnerPredecessor as Readonly<Record<string, unknown>>;
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const assertStable = () => {
+    const history = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (history.state !== "settled" || history.settlement.settlementRef !== predecessor.settlementRef || history.settlement.settlementHash !== predecessor.settlementHash
+      || canonicalComparable(history.settlementIdentity) !== canonicalComparable(predecessor.settlementIdentity)
+      || canonicalComparable(history.settlement.serviceCensus) !== canonicalComparable({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash })) currentEntryFail("pre-mutation cold predecessor history is crossed");
+  };
+  assertStable();
+  return assertStable;
 }
 
 function createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(
@@ -20244,7 +20353,7 @@ function parseInternalProductionCurrentEntryAuthorityStatusV1(
   requirePair(status.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
   requirePair(status.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
   requirePair({ preMutationLoadedRuntimeServiceAuthorityRef: status.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: status.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
-  const preMutation = status.preMutationLoadedRuntimeServiceAuthority as Record<string, unknown>;
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(status.preMutationLoadedRuntimeServiceAuthority);
   if (preMutation.currentEntryOperationRef !== status.operationRef || preMutation.currentEntryOperationHash !== status.operationHash || preMutation.preMutationLoadedRuntimeServiceAuthorityRef !== status.preMutationLoadedRuntimeServiceAuthorityRef || preMutation.preMutationLoadedRuntimeServiceAuthorityHash !== status.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("current-entry pre-mutation runtime authority is crossed");
 
   const rebindRequired = status.state !== "operation_prepared" && status.state !== "pre_schema_spawner_rebinding";
@@ -20619,15 +20728,12 @@ async function resolveTask12PredecessorAuthorityPairV1(
     const exact = requirePair(pair, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
     const hash = String(exact.preMutationLoadedRuntimeServiceAuthorityHash);
     const target = task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(context, hash);
-    const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority");
-    const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
+    const value = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority"));
     if (
-      !hasExactKeys(value, ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw", "serviceProjectionSetHash", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"])
-      || value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1"
-      || value.preMutationLoadedRuntimeServiceAuthorityRef !== exact.preMutationLoadedRuntimeServiceAuthorityRef
+      value.preMutationLoadedRuntimeServiceAuthorityRef !== exact.preMutationLoadedRuntimeServiceAuthorityRef
       || value.preMutationLoadedRuntimeServiceAuthorityHash !== hash
-      || hashCanonicalJson(body) !== hash
     ) currentEntryFail("pre-mutation loaded runtime service authority is crossed");
+    await openTask12ColdSpawnerPredecessorHistoryV1(value);
     return resolvedRecord(value);
   }
   if (name === "postPredecessorTerminationLegacyZeroOwnerObservation" || name === "freshLegacyZeroOwnerObservation") return resolvedRecord(await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(pair as Readonly<{ observationRef: string; observationHash: string }>));
@@ -20698,6 +20804,7 @@ async function resolveTask12PredecessorAuthorityPairV1(
 type Task12AuthenticatedPredecessorGraphV1 = Readonly<{
   orderedPairs: readonly Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>[];
   nodes: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  assertColdHistory(): void;
 }>;
 
 function resolveTask12SpawnerProcessIdentityV1(
@@ -20749,12 +20856,10 @@ function requireTask12PredecessorGraphRelationsV1(
   const source = requireSource(operation.controllerSource);
   const sourceMatches = (body: Readonly<Record<string, unknown>>, prefix: string): boolean => body[`${prefix}SourceSha`] === source.sha && body[`${prefix}TreeHash`] === source.treeHash && body[`${prefix}BuildHash`] === source.buildHash;
 
-  const preMutation = node("preMutationLoadedRuntimeServiceAuthority");
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(node("preMutationLoadedRuntimeServiceAuthority"));
   if (!operationMatches(preMutation)) currentEntryFail("pre-mutation loaded runtime service authority operation is crossed");
   if (!isPlainRecord(status.preMutationLoadedRuntimeServiceAuthority) || !exact(preMutation, status.preMutationLoadedRuntimeServiceAuthority)) currentEntryFail("pre-mutation loaded runtime service authority external/embedded body is crossed");
   const preMutationCensus = requireExactPoisonPostVisibleServiceCensusEffectV1(Object.freeze({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }));
-  const preMutationProjection = Object.freeze({ schema: preMutation.schema, currentEntryOperationRef: preMutation.currentEntryOperationRef, currentEntryOperationHash: preMutation.currentEntryOperationHash, observedServiceCensusHash: preMutationCensus.censusHash, spawner: preMutationCensus.spawner, dashboard: preMutationCensus.dashboard, missionControl: preMutationCensus.missionControl, openClaw: preMutationCensus.openClaw });
-  if (preMutation.serviceProjectionSetHash !== hashCanonicalJson(preMutationProjection)) currentEntryFail("pre-mutation loaded runtime service projection hash is crossed");
 
   const preDispatchLegacy = node("preDispatchLegacyZeroOwnerObservation");
   const authorization = node("preSchemaSpawnerRebindAuthorization");
@@ -20774,6 +20879,12 @@ function requireTask12PredecessorGraphRelationsV1(
   if (!operationMatches(replacement) || !matches(replacement, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(replacement, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(replacement, "restartAuthorityRef", "restartAuthorityHash", "preSchemaSpawnerRestartAuthority") || !matches(replacement, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "predecessorTerminationObservation") || !sourceMatches(replacement, "actualSpawner") || replacement.replacementSpawnerProcessIdentityHash === startup.predecessorSpawnerProcessIdentityHash || replacement.replacementSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || replacement.actualSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema replacement-process graph is crossed");
   const predecessorIdentity = node("predecessorSpawnerProcessIdentity");
   const replacementIdentity = node("replacementSpawnerProcessIdentity");
+  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2") {
+    const coldSpawner = preMutationCensus.spawner as Readonly<Record<string, unknown>>;
+    if (coldSpawner.pid !== predecessorIdentity.pid || coldSpawner.processStartTimeEpochMs !== predecessorIdentity.processStartTimeEpochMs
+      || coldSpawner.processIdentityHash !== predecessorIdentity.processIdentityHash || coldSpawner.serviceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash
+      || coldSpawner.generationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("cold pre-mutation spawner predecessor is crossed");
+  }
   if (restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessor.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || predecessor.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessorIdentity.processIdentityHash === replacementIdentity.processIdentityHash || replacement.differsFromPredecessorProcessIdentity !== true) currentEntryFail("pre-schema process-identity graph is crossed");
   const loadedRuntime = node("loadedRuntimeServiceAuthority");
   const loadedSpawner = loadedRuntime.spawner;
@@ -20894,6 +21005,7 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
 ): Promise<Task12AuthenticatedPredecessorGraphV1> {
   const orderedPairs: Array<Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>> = [];
   const nodes: Record<string, Readonly<Record<string, unknown>>> = Object.create(null) as Record<string, Readonly<Record<string, unknown>>>;
+  let assertColdHistory: () => void = () => {};
   for (const [name, refKey, hashKey, prefix] of TASK12_RESOLVED_PAIR_SPECS_V1) {
     const member = authority[name];
     const pairInput = name === "loadedRuntimeServiceAuthority" && isPlainRecord(member)
@@ -20902,6 +21014,7 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
     const pair = requirePair(pairInput, refKey, hashKey, prefix);
     const exactPair = recursivelyFreeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] });
     nodes[name] = await resolveTask12PredecessorAuthorityPairV1(context, name, exactPair, authority);
+    if (name === "preMutationLoadedRuntimeServiceAuthority") assertColdHistory = await openTask12ColdSpawnerPredecessorHistoryV1(nodes[name]);
     orderedPairs.push(Object.freeze({ name, pair: exactPair }));
   }
   const authorization = nodes.preSchemaSpawnerRebindAuthorization;
@@ -20919,8 +21032,9 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
   nodes.recoverySourcePendingInput = await resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, requirePair({ pendingInputRef: nodes.recoverySourceOperation.pendingInputRef, pendingInputHash: nodes.recoverySourceOperation.pendingInputHash }, "pendingInputRef", "pendingInputHash", "setfarm://internal-production/recovery-source-bootstrap-pending-input/sha256/") as Readonly<{ pendingInputRef: string; pendingInputHash: string }>);
   nodes.terminalRunLaunch = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, requirePair({ terminalRunLaunchRef: targetClose.terminalRunLaunchRef, terminalRunLaunchHash: targetClose.terminalRunLaunchHash }, "terminalRunLaunchRef", "terminalRunLaunchHash", "setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/") as Readonly<{ terminalRunLaunchRef: string; terminalRunLaunchHash: string }>);
   if (orderedPairs.length !== TASK12_RESOLVED_PAIR_SPECS_V1.length) currentEntryFail("current-entry predecessor authority set cardinality is invalid");
-  const graph = recursivelyFreeze({ orderedPairs, nodes });
+  const graph = recursivelyFreeze({ orderedPairs, nodes, assertColdHistory });
   requireTask12PredecessorGraphRelationsV1(authority, status, graph);
+  graph.assertColdHistory();
   return graph;
 }
 
@@ -20943,6 +21057,7 @@ async function resolveInternalProductionCurrentEntryVerificationWithSelectedCurr
   const entryAuthority = requirePair(verification.entryAuthority, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1) as InternalProductionCurrentEntryAuthorityPairV1;
   const freshPair = requirePair(verification.freshRuntimeAndOwnerObservation, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1) as Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
   const fresh = authenticatedFresh ?? await resolveTask12FreshCoreV1(context, freshPair);
+  fresh.predecessorGraph.assertColdHistory();
   if (canonicalComparable(fresh.currentEntryStatus) !== canonicalComparable(currentEntryStatus) || canonicalComparable(fresh.entryAuthority) !== canonicalComparable(entryAuthority)) currentEntryFail("current-entry verification fresh observation is crossed");
   const orderedPairs = deriveTask12ResolvedAuthorityPairsV1(
     fresh.predecessorGraph,
@@ -20954,6 +21069,7 @@ async function resolveInternalProductionCurrentEntryVerificationWithSelectedCurr
   if (hashCanonicalJson(orderedPairs) !== verification.resolvedAuthoritySetHash) currentEntryFail("current-entry verification resolved authority set is crossed");
   const freshServices = await observeInternalProductionServiceCensusV1();
   const freshOwners = await observeCompleteInternalProductionZeroOwnerCensusV1();
+  fresh.predecessorGraph.assertColdHistory();
   if (canonicalComparable(freshServices) !== canonicalComparable(fresh.value.serviceCensus) || canonicalComparable(freshOwners) !== canonicalComparable(fresh.value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry verification runtime/owner evidence is stale");
   return verification;
 }
@@ -21010,6 +21126,7 @@ async function resolveTask12FreshCoreV1(
   ) currentEntryFail("current-entry authority complete-zero observation is crossed");
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(authorityZeroPair as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");
+  predecessorGraph.assertColdHistory();
   return recursivelyFreeze({ value, currentEntryStatus, entryAuthority, status, authority, predecessorGraph });
 }
 
@@ -22226,6 +22343,7 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const context = await selectCurrentEntryStoreContextV1();
   const status = await observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context);
   if (status.state !== "ready" || !status.entryAuthority || typeof status.entryAuthority !== "object") currentEntryFail("current entry is not ready");
+  const assertColdHistory = await openTask12ColdSpawnerPredecessorHistoryV1(status.preMutationLoadedRuntimeServiceAuthority);
   const pair = status.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1;
   const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, pair);
   const serviceCensus = await observeInternalProductionServiceCensusV1();
@@ -22252,7 +22370,9 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const freshRuntimeAndOwnerObservationHash = hashCanonicalJson(freshBody);
   const freshRuntimeAndOwnerObservationRef = `${TASK12_FRESH_OBSERVATION_PREFIX_V1}${freshRuntimeAndOwnerObservationHash}`;
   const freshValue = recursivelyFreeze({ ...freshBody, freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1(context, "fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), await canonicalRecordBytes(freshValue));
+  const freshBytes = await canonicalRecordBytes(freshValue);
+  assertColdHistory();
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), freshBytes);
   const authenticatedFresh = await resolveTask12FreshCoreV1(context, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
   const orderedPairs = deriveTask12ResolvedAuthorityPairsV1(authenticatedFresh.predecessorGraph, pair, currentEntryStatus, completeZeroOwnerCensusObservation, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
   const resolvedAuthoritySetHash = hashCanonicalJson(orderedPairs);
@@ -22260,7 +22380,9 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const currentEntryVerificationHash = hashCanonicalJson(body);
   const currentEntryVerificationRef = `${TASK12_VERIFICATION_PREFIX_V1}${currentEntryVerificationHash}`;
   const value = recursivelyFreeze({ ...body, currentEntryVerificationRef, currentEntryVerificationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1(context, "verifications", currentEntryVerificationHash), await canonicalRecordBytes(value));
+  const verificationBytes = await canonicalRecordBytes(value);
+  authenticatedFresh.predecessorGraph.assertColdHistory();
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "verifications", currentEntryVerificationHash), verificationBytes);
   return resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1(context, { currentEntryVerificationRef, currentEntryVerificationHash }, authenticatedFresh);
 }
 
