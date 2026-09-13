@@ -44,6 +44,162 @@ their owning tests. Root updates the literal main-plan/closure-design File Maps
 and projection/source-boundary contracts for every new runtime file. No source
 outside that causally necessary boundary is included.
 
+### Full receipt integration repair (2026-09-13, in progress)
+
+The authenticated isolated full receipt run uses the immutable `81bf9794`
+projection and is being allowed to complete despite failures. Root may repair
+the source checkout while that independent projection continues; its result
+remains evidence for `81bf9794`, never for the later fixes. File Map for this
+repair: the existing receipt test and this progress ledger; no runtime guard,
+P3 runner authority or production source changes so far.
+
+- Three Task12 writer/publication tests used repository `data` instead of their
+  fixture's authenticated workspace `data`. A focused RED reproduced all
+  three workspace-escape refusals. Corrected the fixture paths, retained real
+  no-replace/cleanup behavior, and repaired the bounded guard-close probe while
+  preserving its actual `try/finally` cleanup. The adjacent hardlinked-lock
+  test now also requires the real lock-member/topology refusal, avoiding a
+  false pass from the unrelated path error. Focused result: 4/4, 10.090s.
+- The phase-zero fixture now accepts exactly one of the original code-owned
+  workspace literal or the authenticated runner's projected literal. It still
+  installs a fixed disposable workspace; no environment authority is added.
+- Launch-profile RED reproduced by unsetting `TMPDIR`: `/private/tmp` is a
+  shared writable ancestor rejected by the actual production profile guard.
+  Only this profile fixture now uses a private temporary child of the physical
+  user home, matching an existing runtime-isolation test pattern. Production
+  ancestry checks and the P3 environment remain unchanged.
+- Two stale source-contract checks are reconciled with the already-tested
+  historical P3 resolver's seventh C-durability occurrence and the shared
+  prepared-record materializer. Existing semantic/durability tests remain.
+  Phase-zero/profile/both contract focused tests passed 4/4 (6.999s) with
+  `TMPDIR` absent. These narrow results are not a full receipt/P3 pass.
+- The same stale repository-relative authority paths affected P5c-S E4/E5 and
+  the effect-store fixture. Move only their production-observed paths into the
+  disposable workspace's private data subtree; retain external test-only
+  backup/input paths. The actual directory-owner, generation-swap,
+  stale-writer and descriptor checks passed 4/4 (8.278s). All admitted effects,
+  full content-shard ownership and E4/E5 response-loss integration passed 3/3
+  (24.318s). No failed-case expectations were relaxed. TypeScript passed and
+  independent fixture-diff review found no actionable issue; the reviewer did
+  not run tests or certify the unfinished full gate.
+- Composite status RED then exposed both its stale root and default-mode
+  content parents. The corrected private tree passed 1/1 (6.251s). Six retained
+  recovery AtRoot tests passed 6/6 (21.037s) after the same root repair,
+  including their independent expected locators and crossed-release bait.
+  The operation-directory leaf fixture is also relocated; its full workspace
+  snapshot now covers both repository and authority siblings. That larger
+  leaf test's rerun is pending.
+- H3/H4 had independently seeded terminal artifact parents at default modes;
+  prepare only the actually-present artifact parents using the existing private
+  publication helper. Missing-artifact cases stay missing. After this repair
+  their remaining focused failure was the unchanged zero-FD-delta assertion.
+  Temporary fstat/lsof diagnostics identified four handles to two tsx cache
+  files, whose source maps name only copied `src/db-pg.ts` and
+  `src/installer/run.ts`. No retained production authority file was implicated.
+  The two probes now pre-import those declaration-only fixture modules and
+  settle compilation before the FD baseline, with every controller/recovery
+  call still inside the measured interval. No post-action wait or descriptor
+  exclusion is allowed. Temporary diagnostics were removed; H3/H4 then passed
+  2/2 (57.692s), including unchanged zero-descriptor-delta and all refusal cases.
+- Physical Q classification and normalization fixtures shared the obsolete
+  repository root/default-parent-mode setup. Three focused REDs confirmed the
+  workspace escape. Their topology proofs and actual records now use the same
+  private workspace roots, with explicit private parents before fixed/content
+  writes. Their existing per-successor snapshots follow those roots. The combined
+  Q rerun passed three tests; the fourth retained-status test passed all four
+  mutation cases with the tsx cache disabled, identifying another pre-baseline
+  compilation race. A pre-baseline settle, matching the existing normalization
+  probe, then passed that test with the cache enabled (1/1, 13.786s). Its
+  zero-descriptor-delta assertion and all mutation refusals remain unchanged;
+  no normalization guard is changed. The subsequent TypeScript check passed.
+- Full-run failure inventory, remaining causal fixes, independent review and
+  the subsequent exact-snapshot rerun are still pending. Task 3's joined
+  cold-to-prepared-to-direct-rebind proof and Task 6A order remain unchecked.
+
+### Causal refinement: post-effect retained authority (2026-09-13)
+
+The absent pre-schema resume fixture previously preseeded six status locators
+without their causal materials. Correcting it to begin genuinely absent and
+publish authentic terminal material only at the execute transport boundary
+exposed a production refusal: `Task12 receipt endpoint missing directory
+appeared`. The current-status CAS revalidates the old raw absence after the
+owned effect legitimately creates those files. The same failure remains with
+the complete terminal history, not merely a prepared-prefix simulation.
+
+This blocks the existing Task 6A transition and is a systemic root fix under
+the approved cold-recovery objective and standing owner protocol. File Map:
+`src/internal-production/baseline-post-handoff-receipt-v1.ts`, its existing
+test, and this plan. No new public API, source inventory member, runtime flag,
+live mutation, or weaker raw validator is authorized.
+
+Chosen design: retain the original selected owner and its predecessor pins;
+after a genuinely executed prior-only effect, reopen a complete selected pass
+under the same context/controller. Fence the original root, status/nested
+authority and current-status CAS identity before and after that await. Require
+the same predecessor row/pair/body, completed fresh raw evidence, and the exact
+captured next pair before publishing candidate content or performing CAS.
+Use the fresh owner for the existing complete CAS guards and close it on every
+path, preserving primary failures. The original owner closes in its existing
+outer finally. Already-completed catch-up keeps its existing owner path.
+
+Refreshing only raw observations would require a second partial owner API;
+the existing full selected-pass opener already authenticates filesystem and DB
+evidence together. Dropping raw checks or precreating authority directories
+would conceal the stale-observation bug and is explicitly rejected.
+
+- [x] Reproduce the original malformed fixture, then the genuine absent to
+  complete physical history refusal (focused 1/1 RED, 6.254s).
+- [x] Add the private retained-predecessor fence and same-controller fresh-pass
+  handoff; require `fresh.pass.raw.nextPairBytes.equals(candidate.pairBytes)`
+  and exact old/fresh predecessor equality before the existing CAS path.
+- [ ] Prove positive adjacent advancement plus changed/missing completed
+  history, equal-byte predecessor replacement, and fresh-owner cleanup failure
+  refusals without extra dispatch or current-status advancement.
+- [ ] Run focused effect, retained catch-up, response-loss and zero-FD tests,
+  TypeScript, manifests and contracts; obtain independent scoped review.
+- [ ] Checkpoint and rerun the authenticated full receipt before P3 delivery.
+
+Initial scoped evidence: the genuine absent-to-terminal-history test now passes
+and still advances only to retained status-00. Five focused cases passed
+(26.772s): success, missing authorization material, same-byte predecessor
+replacement, fresh-owner close failure, and material refusal plus close failure.
+Both owners close in reverse order, descriptor delta stays zero, failed
+authority leaves the current pair unchanged, and a close failure after CAS
+preserves its committed adjacent pair. Independent source review found no
+must-fix; other prior-only effect arms and broader gates remain unverified.
+
+The branch-routing fixture now models two independently closable selected
+owners, a completed post-effect observation, and the same canonical predecessor
+bytes. Its existing CAS transport is attached at the moved call site, not in
+place of the new handoff. All effect ports, candidate construction and single
+CAS counts remain exact; successful executed effects close fresh/original
+owners in order `[2,1]`. The admitted effect-arm and E4/E5 response-loss tests
+passed 2/2 (18.965s). This is routing/endpoint coverage; the genuine physical
+five-case test above separately proves the actual reobservation and CAS path.
+
+The remaining Q-A/Q-B fixture failures share one repository-local `.setfarm`
+path producer. Its roots now use the private workspace data subtree; malformed
+evidence snapshots include the whole workspace. A focused RED confirmed the
+original workspace escape; sole PID-only Q1, wrong-mode, hardlinked evidence
+and stale-writer Q1 recovery passed 4/4. Fault modes are still applied after
+private directory setup. The two failing structural callers shared a stale
+pinned-chain count (8, now 9 including the historical P3 resolver). Their
+recursive effect audit now treats the already separately audited selected-pass
+opener as a leaf while continuing to traverse the new handoff. Both structural
+tests passed; full Q groups and the ongoing immutable run remain pending.
+
+Expanded checkpoint gate passed 10/10 (83.385s): selected-controller failure
+precedence, six adjacent retained catch-up resumes without another effect,
+the five physical post-effect cases, and both structural callers. Latest
+TypeScript, English (1469 files), path (848 files), migration digests, Mission
+Control contracts (12 artifacts) and whitespace checks passed. Independent
+re-review of the complete new test changes found no actionable issue. This is
+an intermediate reviewed source/test checkpoint, not full receipt, full P3,
+Task 3 completion, PR delivery, clean-main rollout or live acceptance. The
+immutable `81bf9794` run continues to collect all failures before its own
+runner-owned cleanup; the relocated row-tail leaf and full Q groups still need
+their focused reruns, and every later full gate must name its new exact SHA.
+
 ## Task 1: Preserve exact authenticated historical prerequisites
 
 **Consumes:** Existing fixed-root historical parsers, current overlay builder,

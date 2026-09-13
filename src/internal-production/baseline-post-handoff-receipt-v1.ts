@@ -11407,6 +11407,7 @@ type ExactPoisonPostVisibleProgressPassV1 = Readonly<{
 const exactPoisonPostVisibleSelectedProgressPassOwnerBrandV1: unique symbol = Symbol("exact-poison-post-visible-selected-progress-pass-owner-v1");
 const exactPoisonPostVisibleSelectedProgressPassControllerLocksV1 = new WeakMap<object, Readonly<{
   controllerLock: Task12ControllerLockHandleV1;
+  assertPredecessorStable(): void;
   resumeRecoverySourceBootstrapHeldLockV1: () => Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>>;
 }>>();
 
@@ -18251,6 +18252,14 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
     });
     exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set(owner, Object.freeze({
       controllerLock,
+      assertPredecessorStable(): void {
+        assertRootStable();
+        if (status === null || currentStatusCas === null) currentEntryFail("selected progress predecessor authority is absent");
+        status.assertStable();
+        currentStatusCas.assertStable();
+        status.assertStable();
+        assertRootStable();
+      },
       resumeRecoverySourceBootstrapHeldLockV1: () => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock),
     }));
     return owner;
@@ -18673,6 +18682,43 @@ async function advanceTask12CurrentStatusV1(
   return reopened;
 }
 
+async function advanceTask12CurrentStatusAfterOwnedEffectV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  predecessor: ExactPoisonPostVisibleSelectedProgressPassOwnerV1,
+  candidate: ExactPoisonPostVisibleProgressNextStatusV1,
+): Promise<void> {
+  predecessor.assertContext(context);
+  const retained = exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.get(predecessor);
+  if (retained === undefined || predecessor.pass.raw.evidence !== "prior-only") currentEntryFail("post-effect predecessor authority is invalid");
+  retained.assertPredecessorStable();
+  let fresh: ExactPoisonPostVisibleSelectedProgressPassOwnerV1 | null = null;
+  let failure: unknown = null;
+  try {
+    fresh = await openExactPoisonPostVisibleSelectedProgressPassV1(context, predecessor.operation, retained.controllerLock);
+    retained.assertPredecessorStable();
+    fresh.assertContext(context);
+    if (
+      fresh.pass.row !== predecessor.pass.row
+      || canonicalComparable(fresh.pass.status) !== canonicalComparable(predecessor.pass.status)
+      || canonicalComparable(fresh.pass.pair) !== canonicalComparable(predecessor.pass.pair)
+      || !fresh.pass.currentStatusCas.currentPairBytes.equals(predecessor.pass.currentStatusCas.currentPairBytes)
+      || fresh.pass.currentStatusCas.requiresNormalization
+      || fresh.pass.raw.evidence !== "completed"
+      || fresh.pass.raw.nextPairBytes === null
+      || !fresh.pass.raw.nextPairBytes.equals(candidate.pairBytes)
+    ) currentEntryFail("post-effect completed authority is crossed");
+    await fresh.assertStable();
+    retained.assertPredecessorStable();
+    await advanceTask12CurrentStatusV1(context, fresh, candidate);
+  } catch (error) {
+    failure = error;
+  } finally {
+    try { await fresh?.close(); }
+    catch (error) { failure ??= error; }
+  }
+  if (failure !== null) throw failure;
+}
+
 async function prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1(): Promise<Readonly<Record<string, unknown>>> {
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Readonly<Record<string, unknown>>;
   const port = startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1;
@@ -18980,7 +19026,8 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
   else if (effect.effect === "apply-or-adopt-migration-32") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-consumed");
   else if (effect.effect === "publish-migration-receipt") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-receipt");
   else if (effect.effect === "audit-migration-current") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-current-audited");
-  await advanceTask12CurrentStatusV1(context, passOwner, candidate);
+  if (raw.evidence === "prior-only") await advanceTask12CurrentStatusAfterOwnedEffectV1(context, passOwner, candidate);
+  else await advanceTask12CurrentStatusV1(context, passOwner, candidate);
   if (effect.effect === "resume-pre-schema") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-00");
   else if (effect.effect === "retained-pre-schema-01") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-01");
   else if (effect.effect === "retained-pre-schema-02") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-02");
