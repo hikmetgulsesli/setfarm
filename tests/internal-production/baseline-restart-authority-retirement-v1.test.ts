@@ -706,8 +706,10 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
 async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper", spawnFault?: string) {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
   const directChildCleanupPath = path.join(fixture, "direct-child-cleanup-row");
-  const actualDirectHelper = spawnFault?.startsWith("child-main-helper") ?? false;
-  const directHelperFault = actualDirectHelper ? spawnFault!.slice("child-main-helper".length).replace(/^-/, "") : "";
+  const actualDirectController = spawnFault?.startsWith("child-main-controller") ?? false;
+  const directControllerFault = actualDirectController ? spawnFault!.slice("child-main-controller".length).replace(/^-/, "") : "";
+  const actualDirectHelper = actualDirectController || (spawnFault?.startsWith("child-main-helper") ?? false);
+  const directHelperFault = actualDirectController ? directControllerFault === "helper-failure" ? "no-eof" : "" : actualDirectHelper ? spawnFault!.slice("child-main-helper".length).replace(/^-/, "") : "";
   const directHelperAccepted = ["", "fragmented", "second"].includes(directHelperFault);
   const directHelperSelectorRefused = ["mixed", "invalid-selector", "missing-selector"].includes(directHelperFault);
   const directSpawnTracePath = path.join(fixture, "direct-spawn-trace");
@@ -797,6 +799,10 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const directIntentOpen = "    intentDescriptor = openSync(paths.journal, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);";
     assert.equal(runtimeSource.split(directIntentOpen).length - 1, 1);
     runtimeSource = runtimeSource.replace(directIntentOpen, `${directIntentOpen}\n    if(globalThis.__directFrameProbeV1)globalThis.__directFrameProbeV1.intent=intentDescriptor;`);
+    runtimeSource = runtimeSource.replaceAll("verifyInternalProductionSpawnerLaunchOutputCandidateV1({", "verifyDirectControllerOutputFixtureV1({");
+    const spawnImport = 'import { spawn, spawnSync, type ChildProcess } from "node:child_process";';
+    assert.equal(runtimeSource.split(spawnImport).length - 1, 1);
+    runtimeSource = runtimeSource.replace(spawnImport, 'import { spawn as actualDirectControllerSpawnFixtureV1, spawnSync, type ChildProcess } from "node:child_process";');
     const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
@@ -817,9 +823,13 @@ export function openDirectHelperFrameFixtureV1(clone=false){const state=retained
 export function directBorrowedLeaseDescriptorFixtureV1(){return heldLease(retainedDirectSpawnerRebindIntentV1.lease).descriptor}
 export function parseDirectClaimFixtureV1(bytes,intent,dispatch){return parseDirectSpawnerClaimV1(bytes,intent,dispatch)}
 export function parseDirectSpawnDispatchFixtureV1(bytes,intent,terminationDispatch,terminationReceipt){return parseDirectSpawnerSpawnDispatchV1(bytes,intent,terminationDispatch,terminationReceipt)}
+function verifyDirectControllerOutputFixtureV1(input){return globalThis.__directControllerOutputFixtureV1(input)}
+function spawn(executable,args,options){const probe=globalThis.__directControllerSpawnFixtureV1;probe?.calls.push({executable,args,options});return actualDirectControllerSpawnFixtureV1(probe?.fault==='spawn-error'?${JSON.stringify(path.join(fixture, "absent-controller-node"))}:executable,args,options)}
+export async function invokeDirectControllerFixtureV1(lease,input,loseResponse=false){const completion=await invokeDirectSpawnerRebindHelperV1(lease,input);if(loseResponse)throw Error('DIRECT_CONTROLLER_RESPONSE_LOST');return completion}
+export function inspectDirectControllerFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,child=state.helperInvocation?.child;return {phase:state.phase,pid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode}}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
 function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
-export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
+export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');if(state.helperInvocation)for(const pin of [state.helperInvocation.frame,state.helperInvocation.intentReader])if(pin)closePrivateFrameDescriptorV1(pin);state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
 `);
     const internal = path.dirname(runtimePath);
     const environment = { PATH: "/usr/bin:/bin", PRIVATE_VALUE: "direct-fixture-secret", HOME: home, LANG: "C", LC_ALL: "C", SETFARM_ENV_DIR: environmentDirectory, SETFARM_REPO_DIR: repository, SETFARM_PG_URL: "postgresql://fixture@127.0.0.1:1/disposable" };
@@ -1249,6 +1259,69 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
       }
       if (mode === "direct-helper") {
         const { runner, recordPath } = helperCompiled!;
+        if (actualDirectController) {
+          const output = await import(pathToFileURL(path.join(repository, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
+          let outputChecks = 0;
+          const spawnProbe = { calls: [] as Array<{ executable: string; args: string[]; options: any }>, fault: directControllerFault };
+          Reflect.set(globalThis, "__directControllerSpawnFixtureV1", spawnProbe);
+          Reflect.set(globalThis, "__directControllerOutputFixtureV1", (input: unknown) => {
+            const result = output.verifyInternalProductionSpawnerLaunchOutputCandidateV1(input);
+            if (++outputChecks === 2 && directControllerFault === "journal-aba") {
+              const foreign = path.join(privateRoot, "controller-foreign.tmp");
+              writeFileSync(foreign, "foreign", { mode: 0o600, flag: "wx" }); unlinkSync(foreign);
+            }
+            if (outputChecks === 2 && directControllerFault === "intent-replace") {
+              const target = path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), bytes = readFileSync(target);
+              renameSync(target, path.join(fixture, "controller-original-intent")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+            }
+            return result;
+          });
+          writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
+          const initial = runtime.invokeDirectControllerFixtureV1(lease, input, true);
+          void initial.catch(() => {});
+          await assert.rejects(runtime.invokeDirectControllerFixtureV1(lease, input), /already active/);
+          if (directControllerFault) {
+            const entered = ["spawn-error", "helper-failure"].includes(directControllerFault);
+            const expected = entered ? /direct helper completion|direct helper exit/ : /helper outcome is uncertain/;
+            await assert.rejects(initial, expected);
+            const original = runtime.inspectDirectControllerFixtureV1();
+            await assert.rejects(runtime.invokeDirectControllerFixtureV1(lease, input), expected);
+            assert.deepEqual(runtime.inspectDirectControllerFixtureV1(), original, "failed transport retains its original attempted helper outcome");
+            assert.equal(outputChecks, 2, "mutation reaches the final pre-spawn output boundary");
+            assert.equal(spawnProbe.calls.length, entered ? 1 : 0, "neither crossed authority nor a failed transport grants a new helper attempt");
+            if (!entered) assert.equal(original.pid, undefined, "crossed original authority cannot dispatch even the fixed helper");
+            assert.equal(readFileSync(directSpawnTracePath, "utf8").trim().split("\n").filter(Boolean).length, directControllerFault === "helper-failure" ? 1 : 0);
+            assert.equal(signalProbe.calls.length, 1);
+            await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+            return;
+          }
+          await assert.rejects(initial, /DIRECT_CONTROLLER_RESPONSE_LOST/);
+          const originalInvocation = runtime.inspectDirectControllerFixtureV1();
+          const completion = await runtime.invokeDirectControllerFixtureV1(lease, input);
+          assert.deepEqual(runtime.inspectDirectControllerFixtureV1(), originalInvocation, "response-loss resume retains the original actual helper PID/outcome");
+          assert.deepEqual(await runtime.invokeDirectControllerFixtureV1(lease, input), completion);
+          assert.deepEqual(runtime.inspectDirectControllerFixtureV1(), originalInvocation, "repeated completion cannot replace the original helper process");
+          assert.equal(spawnProbe.calls.length, 1, "controller owns exactly one helper spawn, independently of child dispatch count");
+          assert.equal(spawnProbe.calls[0]!.executable, process.execPath);
+          assert.deepEqual(spawnProbe.calls[0]!.args, [runner]);
+          const options = spawnProbe.calls[0]!.options;
+          assert.equal(options.cwd, repository); assert.equal(options.shell, false);
+          assert.deepEqual(options.env, { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER: "1" });
+          assert.deepEqual(options.stdio.slice(0, 3), ["ignore", "pipe", "ignore"]);
+          assert.equal(options.stdio[4], runtime.directBorrowedLeaseDescriptorFixtureV1());
+          assert.equal(options.stdio.length, 6);
+          const invocation = runtime.inspectDirectControllerFixtureV1();
+          assert.equal(invocation.phase, "helper-may-have-run", "wire completion is not independent claim/settlement authority");
+          assert.ok(Number.isSafeInteger(invocation.pid)); assert.equal(invocation.exitCode, 0); assert.equal(invocation.signalCode, null);
+          const dispatch = JSON.parse(readFileSync(path.join(privateRoot, "spawn-dispatch.json"), "utf8"));
+          const claim = JSON.parse(readFileSync(path.join(privateRoot, "claim.json"), "utf8"));
+          assert.equal(dispatch.helper.pid, invocation.pid); assert.equal(completion.dispatchHash, dispatch.dispatchHash); assert.equal(completion.claimHash, claim.claimHash);
+          assert.equal(readFileSync(directSpawnTracePath, "utf8").trim().split("\n").length, 1, "response loss retains the sole real helper/child dispatch");
+          assert.equal(signalProbe.calls.length, 1);
+          assert.equal(fstatSync(runtime.directBorrowedLeaseDescriptorFixtureV1()).nlink, 1);
+          await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+          return;
+        }
         const crosses: Array<[string, (value: any) => void]> = [
           ["crossed-operation", value => { value.operation.purpose = "crossed"; }],
           ["crossed-restart", value => { value.restart.maximumSpawnDispatchCount = 2; }],
@@ -1508,6 +1581,8 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       Reflect.deleteProperty(globalThis, "__directSignalFixtureV1");
       Reflect.deleteProperty(globalThis, "__directTerminationPublicationHook");
       Reflect.deleteProperty(globalThis, "__directFrameProbeV1");
+      Reflect.deleteProperty(globalThis, "__directControllerOutputFixtureV1");
+      Reflect.deleteProperty(globalThis, "__directControllerSpawnFixtureV1");
       await runtime.releaseDirectPreparationFixtureV1(lease);
     }
   } finally {
@@ -1641,6 +1716,11 @@ test("real direct helper publishes one original spawn dispatch and consumes one 
 test("real direct child separates inherited configuration from original startup admission", () => exerciseDirectRebindFixtureV1("direct-helper", "child-none"));
 test("real direct main publishes one owned claim and remains sealed after helper departure", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main"));
 test("actual fixed direct helper authenticates one real sealed child claim and exits", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-helper"));
+test("actual direct controller retains one fixed helper through concurrent calls and response loss", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller"));
+test("direct controller refuses journal ABA at its final pre-spawn boundary", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-journal-aba"));
+test("direct controller retains its fence through original intent replacement and failed helper transport", async (context) => {
+  for (const fault of ["intent-replace", "spawn-error", "helper-failure"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-${fault}`));
+});
 test("actual direct helper refuses replacement of the original startup parent", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-helper-runtime-parent"));
 test("actual direct helper refuses late startup inode replacement during output verification", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-helper-late-pid"));
 test("actual direct helper refuses late startup parent replacement during output verification", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-helper-late-parent"));

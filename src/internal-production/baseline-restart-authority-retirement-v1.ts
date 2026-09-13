@@ -157,6 +157,7 @@ type DirectSpawnerTerminationStateV1 = {
 };
 type DirectSpawnerRebindIntentStateV1 = {
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  phase: "intent-only" | "helper-may-have-run" | "claim-observed" | "settled" | "releasing";
   inputs: Awaited<ReturnType<typeof resolveDirectSpawnerRebindInputsUnderLeaseV1>>;
   intent: Readonly<Record<string, unknown>>;
   nonce: string;
@@ -174,10 +175,20 @@ type DirectSpawnerRebindIntentStateV1 = {
     committed: boolean;
   };
   termination: DirectSpawnerTerminationStateV1 | null;
+  helperInvocation?: DirectControllerHelperInvocationV1;
+};
+type DirectControllerHelperInvocationV1 = {
+  child: ChildProcess | null;
+  completion: Promise<Readonly<Record<string, unknown>>> | null;
+  failed: boolean;
+  frame: PrivateFrameDescriptorV1 | null;
+  intentReader: PrivateFrameDescriptorV1 | null;
+  rootIdentity: BigIntStats | null;
 };
 let retainedDirectSpawnerRebindIntentV1: DirectSpawnerRebindIntentStateV1 | null = null;
 let directSpawnerRebindPreparationActiveV1 = false;
 let directSpawnerTerminationActiveV1 = false;
+let directControllerHelperInvocationActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -1156,7 +1167,7 @@ async function prepareDirectSpawnerRebindIntentV1(
       const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
       // Register before any publication attempt, including failures before the
       // intent becomes visible. Ordinary release must not discard this owner.
-      retainedDirectSpawnerRebindIntentV1 = { lease, inputs, intent, nonce, lockIdentity, rootGuard, epochPin: null, intentPin: null, termination: null,
+      retainedDirectSpawnerRebindIntentV1 = { lease, phase: "intent-only", inputs, intent, nonce, lockIdentity, rootGuard, epochPin: null, intentPin: null, termination: null,
         publication: { temporary, descriptor: null, identity: null, openAttempted: false, linkAttempted: false, unlinkAttempted: false, committed: false } };
     }
     const state = retainedDirectSpawnerRebindIntentV1;
@@ -2333,6 +2344,96 @@ function captureDirectControllerHelperCompletionV1(child: ChildProcess): Promise
     if (child.exitCode !== null || child.signalCode !== null) onExit(child.exitCode, child.signalCode);
     if (!settled && pipe.readableEnded) onEnd();
   });
+}
+
+function assertDirectControllerAuthorityV1(state: DirectSpawnerRebindIntentStateV1): void {
+  if (state !== retainedDirectSpawnerRebindIntentV1 || !state.publication.committed || !state.termination?.signalEntered
+    || !state.termination.dispatch || !state.termination.receipt) fail("direct controller original owner is unavailable");
+  const held = heldLease(state.lease), paths = rootPaths(), invocation = state.helperInvocation;
+  state.rootGuard.assertStable(); state.termination.rootGuard.assertStable(); state.epochPin!.assertStable(); state.intentPin!.assertStable();
+  publishDirectSpawnerRebindIntentV1(state);
+  if (!sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+    || !held.lockBytes.equals(readColdGenesisCandidateV1(paths.lock, state.lockIdentity))
+    || canonical(assertEpochOneActive()) !== canonical(state.inputs.epoch)) fail("direct controller original lease changed");
+  assertDirectTerminationPublicationV1(state.termination.dispatch); assertDirectTerminationPublicationV1(state.termination.receipt);
+  if (invocation?.rootIdentity) {
+    const current = lstatSync(path.join(paths.root, "direct-spawner-rebind-v1"), { bigint: true });
+    if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== invocation.rootIdentity![key as keyof BigIntStats])) fail("direct controller original journal changed");
+  }
+  for (const pin of [invocation?.frame, invocation?.intentReader]) {
+    if (!pin || pin.descriptor === null) continue;
+    if (pin.closeEntered || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct controller original transport changed");
+    if (pin === invocation?.intentReader && (!sameColdFileMetadataV1(pin.identity, state.publication.identity!)
+      || !readColdGenesisCandidateV1(paths.journal, pin.identity).equals(Buffer.from(`${canonical(state.intent)}\n`)))) fail("direct controller original intent reader changed");
+  }
+  state.epochPin!.assertStable(); state.intentPin!.assertStable(); state.termination.rootGuard.assertStable(); state.rootGuard.assertStable();
+}
+
+async function assertDirectControllerLaunchProfileV1(state: DirectSpawnerRebindIntentStateV1): Promise<void> {
+  assertDirectControllerAuthorityV1(state);
+  const fresh = await resolveDirectSpawnerRebindInputsUnderLeaseV1(state.lease, { currentEntryOperation: state.intent.currentEntryOperation, restartAuthority: state.intent.restartAuthority } as Parameters<typeof resolveDirectSpawnerRebindInputsUnderLeaseV1>[1]);
+  assertDirectControllerAuthorityV1(state);
+  if (canonical(fresh) !== canonical(state.inputs) || canonical(fresh.environment) !== canonical(state.inputs.environment)) fail("direct controller original launch evidence changed");
+  const profile = state.inputs.profile as Record<string, any>;
+  verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.rootIdentity.uid },
+    sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
+    outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
+  assertDirectControllerAuthorityV1(state);
+}
+
+// Owns only the single fixed helper invocation. A decoded completion does not
+// advance claim/settlement phase and cannot authorize physical lease release.
+async function invokeDirectSpawnerRebindHelperV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
+): Promise<Readonly<Record<string, unknown>>> {
+  if (directControllerHelperInvocationActiveV1) fail("direct controller invocation is already active");
+  directControllerHelperInvocationActiveV1 = true;
+  try {
+    heldLease(lease);
+    const prior = retainedDirectSpawnerRebindIntentV1;
+    if (prior && (prior.lease !== lease || canonical(input) !== canonical({ currentEntryOperation: prior.intent.currentEntryOperation, restartAuthority: prior.intent.restartAuthority }))) fail("direct controller invocation owner is crossed");
+    if (!prior || prior.phase === "intent-only") await terminateDirectSpawnerRebindPredecessorV1(lease, input);
+    const state = retainedDirectSpawnerRebindIntentV1!;
+    if (state.phase === "intent-only") {
+      await assertDirectControllerLaunchProfileV1(state);
+      const invocation: DirectControllerHelperInvocationV1 = { child: null, completion: null, failed: false, frame: null, intentReader: null, rootIdentity: null };
+      state.helperInvocation = invocation; state.phase = "helper-may-have-run";
+      try {
+        const handles = openDirectSpawnerHelperFrameV1(state);
+        // Retain both descriptors before observing either identity or awaiting.
+        invocation.frame = { descriptor: handles.frameDescriptor, identity: null, closeEntered: false };
+        invocation.intentReader = { descriptor: handles.intentDescriptor, identity: null, closeEntered: false };
+        invocation.frame.identity = fstatSync(handles.frameDescriptor, { bigint: true });
+        invocation.intentReader.identity = fstatSync(handles.intentDescriptor, { bigint: true });
+        invocation.rootIdentity = lstatSync(path.join(rootPaths().root, "direct-spawner-rebind-v1"), { bigint: true });
+        await assertDirectControllerLaunchProfileV1(state);
+        const profile = state.inputs.profile as Record<string, any>;
+        const assertLaunchPrefix = () => {
+          const root = path.join(rootPaths().root, "direct-spawner-rebind-v1");
+          if (!sameColdFileMetadataV1(invocation.rootIdentity!, lstatSync(root, { bigint: true }))
+            || canonical(readColdDirectoryMembersV1(root, 2).sort()) !== canonical(["termination-dispatch.json", "termination-receipt.json"])) fail("direct controller launch prefix changed");
+        };
+        assertLaunchPrefix();
+        if (observeDirectSpawnerTerminationTargetV1((state.inputs.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct controller predecessor returned before helper launch");
+        assertDirectControllerAuthorityV1(state);
+        assertLaunchPrefix();
+        invocation.child = spawn(profile.executable.path, [path.join(profile.repository, "dist/internal-production/baseline-service-restart-helper-v1.js")], {
+          cwd: profile.cwd, shell: false, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER: "1" },
+          stdio: ["ignore", "pipe", "ignore", handles.frameDescriptor, heldLease(lease).descriptor, handles.intentDescriptor],
+        });
+        invocation.completion = captureDirectControllerHelperCompletionV1(invocation.child);
+        void invocation.completion.catch(() => {});
+      } catch { invocation.failed = true; }
+    }
+    const invocation = state.helperInvocation;
+    if (!invocation || state.phase !== "helper-may-have-run") fail("direct controller retained invocation is unavailable");
+    if (invocation.frame) closePrivateFrameDescriptorV1(invocation.frame);
+    if (invocation.failed || !invocation.completion) fail("direct controller helper outcome is uncertain");
+    const completion = await invocation.completion;
+    assertDirectControllerAuthorityV1(state);
+    return completion;
+  } finally { directControllerHelperInvocationActiveV1 = false; }
 }
 
 function captureColdControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {

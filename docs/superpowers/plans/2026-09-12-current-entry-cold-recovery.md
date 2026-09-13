@@ -793,7 +793,7 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   account for both EOF/exit orders and already-observed clean/failed exit.
   Late events cannot alter a settled outcome. Capture closes no authority FD.
   This parser is transport evidence, never claim or dispatch authority.
-- [ ] Extend retained direct intent with monotonic intent-only,
+- [x] Extend retained direct intent with monotonic intent-only,
   helper-may-have-run, claim-observed, settled and releasing phases. Retain
   original frame/intent descriptors immediately, borrow only the held lease
   descriptor, and mark possible effect before the single fixed helper spawn.
@@ -867,6 +867,35 @@ Child original FD/frame/epoch/profile/live-parent/P3 checks remain in place.
 The parser may read terminated historical helper identities; only the future
 controller's retained ChildProcess and original physical pins confer authority.
 Live API/dashboard health rechecked HTTP200/200; no live mutation.
+
+Direct controller invocation implementation (not yet a settlement): retain the
+same physical owner, phase, real ChildProcess/completion, original frame and
+intent reader before any awaited observation/effect. Reauthenticate original
+inputs/profile/output and lease/epoch/intent/termination pins; consume only the
+fixed helper entry and fixed FD3/4/5 projection. Close only the original frame
+after spawn, preserving the intent reader and lease for independent observation.
+Both successful wire replay and failed helper results retain their original
+promise/process; phase remains helper-may-have-run and ordinary release refuses.
+
+The real controller fixture initially reproduced the missing invocation; its
+early rejecting test promise was given an immediate observer so RED has no
+unhandled-rejection side effect. First real fixed-helper/child response-loss
+test passed1/1 (7.951s). A pre-spawn journal-ABA RED (7.139s) showed immutable
+directory fields alone were insufficient at that boundary. Add the original
+full directory identity and exact two-member prefix, plus original predecessor
+absence, immediately before effect. General post-spawn assertions still allow
+owned journal growth; they cannot adopt a claim by themselves.
+
+Final focused6/6 (28.411s) covers concurrency/response loss, journal ABA,
+same-byte intent replacement, actual spawn failure and real helper no-EOF
+failure. An independent controller-spawn witness proves exactly one fixed
+helper call (separate from its one child dispatch), exact executable/argv/cwd/
+environment/FD layout, and unchanged original helper PID/outcome on every
+resume. TypeScript no-emit and whitespace checks passed. Final coupled capture,
+invocation, real helper/child and exact-export gate passed28/28 (39.702s);
+manifests17/17 (5.957s). Final independent scoped recheck found no remaining
+issue. This completes the invocation kernel, not public V2 routing or
+claim/settlement/release authority.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
