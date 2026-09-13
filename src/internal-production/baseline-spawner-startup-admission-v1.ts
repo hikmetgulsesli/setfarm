@@ -79,8 +79,7 @@ export type InternalProductionPreSchemaSpawnerStartupTokenV1 = Readonly<{
   startupTokenRef: CanonicalRef;
   startupTokenHash: Sha256V1;
 }>;
-export type InternalProductionPreSchemaSpawnerRestartAuthorityV1 = Readonly<{
-  schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1";
+type PreSchemaSpawnerRestartAuthorityCommonV1 = Readonly<{
   actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1";
   service: "setfarm-spawner";
   currentEntryOperationRef: CanonicalRef; currentEntryOperationHash: Sha256V1;
@@ -89,9 +88,20 @@ export type InternalProductionPreSchemaSpawnerRestartAuthorityV1 = Readonly<{
   predecessorSpawnerProcessIdentityRef: CanonicalRef; predecessorSpawnerProcessIdentityHash: Sha256V1;
   predecessorSpawnerServiceIdentityHash: Sha256V1; predecessorSpawnerGenerationHash: Sha256V1;
   targetSpawnerSourceSha: string; targetSpawnerTreeHash: string; targetSpawnerBuildHash: Sha256V1;
-  uid: number; launchdLabel: "com.setrox.setfarm-spawner"; executable: "/bin/launchctl"; argv: readonly ["kickstart", "-k", string];
+  uid: number;
   restartAuthorityRef: CanonicalRef;
   restartAuthorityHash: Sha256V1;
+}>;
+export type InternalProductionPreSchemaSpawnerRestartAuthorityV1 = PreSchemaSpawnerRestartAuthorityCommonV1 & Readonly<{
+  schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1";
+  launchdLabel: "com.setrox.setfarm-spawner"; executable: "/bin/launchctl"; argv: readonly ["kickstart", "-k", string];
+} | {
+  schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2";
+  transport: "direct-detached-node-v1";
+  launchProfileHash: Sha256V1;
+  terminationSignal: "SIGTERM";
+  maximumTerminationDispatchCount: 1;
+  maximumSpawnDispatchCount: 1;
 }>;
 export type InternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1 = Readonly<{
   schema: "setfarm.internal-production-pre-schema-spawner-predecessor-termination-observation.v1";
@@ -508,6 +518,25 @@ function validateEmbeddedPairV1(body: Record<string, unknown>, refKey: string, h
   if (typeof hash !== "string" || !SHA256.test(hash) || typeof ref !== "string" || (prefix ? ref !== `${prefix}${hash}` : !ref.endsWith(`/sha256/${hash}`))) fail(`${refKey} embedded pair is invalid`);
 }
 
+function validatePreSchemaSpawnerRestartTransportV1(body: Record<string, unknown>): void {
+  const common = ["schema", "actionId", "service", "currentEntryOperationRef", "currentEntryOperationHash", "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "startupTokenRef", "startupTokenHash", "predecessorSpawnerProcessIdentityRef", "predecessorSpawnerProcessIdentityHash", "predecessorSpawnerServiceIdentityHash", "predecessorSpawnerGenerationHash", "targetSpawnerSourceSha", "targetSpawnerTreeHash", "targetSpawnerBuildHash", "uid", "restartAuthorityRef", "restartAuthorityHash"];
+  if (body.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || body.service !== "setfarm-spawner"
+    || !Number.isSafeInteger(body.uid) || (body.uid as number) < 0) fail("restart authority fixed action is invalid");
+  if (body.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v1") {
+    exactKeys(body, [...common, "launchdLabel", "executable", "argv"], "restart-authority");
+    if (body.launchdLabel !== "com.setrox.setfarm-spawner" || body.executable !== "/bin/launchctl"
+      || !Array.isArray(body.argv) || canonical(body.argv) !== canonical(["kickstart", "-k", `gui/${body.uid}/com.setrox.setfarm-spawner`])) fail("restart authority fixed action is invalid");
+    return;
+  }
+  if (body.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") {
+    exactKeys(body, [...common, "transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount"], "restart-authority");
+    if (body.transport !== "direct-detached-node-v1" || typeof body.launchProfileHash !== "string" || !SHA256.test(body.launchProfileHash)
+      || body.terminationSignal !== "SIGTERM" || body.maximumTerminationDispatchCount !== 1 || body.maximumSpawnDispatchCount !== 1) fail("restart authority direct transport is invalid");
+    return;
+  }
+  fail("restart authority transport schema is invalid");
+}
+
 function validateResolvedRecord(kind: string, body: Record<string, unknown>): void {
   if (kind === "authorization") {
     exactKeys(body, ["schema", "purpose", "service", "currentEntryOperationRef", "currentEntryOperationHash", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "legacyZeroOwnerObservationRef", "legacyZeroOwnerObservationHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "predecessorSpawnerServiceIdentityHash", "predecessorSpawnerGenerationHash", "authorizationRef", "authorizationHash"], kind);
@@ -520,8 +549,7 @@ function validateResolvedRecord(kind: string, body: Record<string, unknown>): vo
     return;
   }
   if (kind === "restart-authority") {
-    exactKeys(body, ["schema", "actionId", "service", "currentEntryOperationRef", "currentEntryOperationHash", "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "startupTokenRef", "startupTokenHash", "predecessorSpawnerProcessIdentityRef", "predecessorSpawnerProcessIdentityHash", "predecessorSpawnerServiceIdentityHash", "predecessorSpawnerGenerationHash", "targetSpawnerSourceSha", "targetSpawnerTreeHash", "targetSpawnerBuildHash", "uid", "launchdLabel", "executable", "argv", "restartAuthorityRef", "restartAuthorityHash"], kind);
-    if (body.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v1" || body.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || body.service !== "setfarm-spawner" || body.launchdLabel !== "com.setrox.setfarm-spawner" || body.executable !== "/bin/launchctl" || !Number.isSafeInteger(body.uid) || (body.uid as number) < 0 || !Array.isArray(body.argv) || canonical(body.argv) !== canonical(["kickstart", "-k", `gui/${body.uid}/com.setrox.setfarm-spawner`])) fail("restart authority fixed action is invalid");
+    validatePreSchemaSpawnerRestartTransportV1(body);
     return;
   }
   if (kind === "predecessor-termination") {

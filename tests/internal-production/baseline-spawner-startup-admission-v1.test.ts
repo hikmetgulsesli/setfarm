@@ -419,6 +419,46 @@ function statExists(target: string): boolean {
   try { statSync(target); return true; } catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return false; throw error; }
 }
 
+test("direct rebind restart schema is distinct from immutable launchctl history", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-schema-")));
+  try {
+    const source = readFileSync(sourcePath, "utf8");
+    const tree = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true);
+    const names = ["validateResolvedRecord", "exactKeys", "canonical", "fail"];
+    if (source.includes("function validatePreSchemaSpawnerRestartTransportV1(")) names.push("validatePreSchemaSpawnerRestartTransportV1");
+    const declarations = tree.statements.filter(statement => ts.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
+    assert.equal(declarations.length, names.length);
+    const harness = `${source.match(/^const SHA256 = .*;$/m)![0]}\n${declarations.map(statement => statement.getText(tree)).join("\n")}\nexport function validate(value){validateResolvedRecord('restart-authority',value)}`;
+    writeFileSync(path.join(fixture, "harness.mjs"), ts.transpileModule(harness, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
+    const module = await import(pathToFileURL(path.join(fixture, "harness.mjs")).href);
+    const hash = "a".repeat(64), uid = process.getuid!();
+    const common = { actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${hash}`, currentEntryOperationHash: hash, preSchemaSpawnerRebindAuthorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${hash}`, preSchemaSpawnerRebindAuthorizationHash: hash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${hash}`, startupTokenHash: hash, predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${hash}`, predecessorSpawnerProcessIdentityHash: hash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash, targetSpawnerSourceSha: "b".repeat(40), targetSpawnerTreeHash: "c".repeat(40), targetSpawnerBuildHash: hash, uid, restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${hash}`, restartAuthorityHash: hash };
+    const v1 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1", launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: ["kickstart", "-k", `gui/${uid}/com.setrox.setfarm-spawner`] };
+    const v2 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", transport: "direct-detached-node-v1", launchProfileHash: "d".repeat(64), terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
+    const ordered = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).sort(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right))));
+    for (const value of [v1, v2]) {
+      const body = Object.freeze(ordered(value)), before = JSON.stringify(body);
+      assert.doesNotThrow(() => module.validate(body));
+      assert.equal(JSON.stringify(body), before, "parsing cannot rewrite historical or direct authority bytes");
+    }
+    const invalid: Array<Record<string, unknown>> = [];
+    for (const field of ["transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount"]) {
+      const missing: Record<string, unknown> = { ...v2 }; delete missing[field]; invalid.push(missing);
+      invalid.push({ ...v1, [field]: v2[field as keyof typeof v2] });
+    }
+    for (const field of ["launchdLabel", "executable", "argv"]) invalid.push({ ...v2, [field]: v1[field as keyof typeof v1] });
+    for (const transport of ["launchctl", "cold-spawner-v1", "direct-detached-node-v2", null]) invalid.push({ ...v2, transport });
+    for (const terminationSignal of ["SIGKILL", "SIGINT", 15]) invalid.push({ ...v2, terminationSignal });
+    for (const count of [0, 2, -1, 1.5, "1"]) {
+      invalid.push({ ...v2, maximumTerminationDispatchCount: count }, { ...v2, maximumSpawnDispatchCount: count });
+    }
+    for (const launchProfileHash of ["", "D".repeat(64), "d".repeat(63), null]) invalid.push({ ...v2, launchProfileHash });
+    for (const base of [v1, v2]) invalid.push({ ...base, uid: -1 }, { ...base, uid: "501" }, { ...base, actionId: "cold-bootstrap" }, { ...base, service: "setfarm-dashboard" });
+    invalid.push({ ...v2, schema: v1.schema }, { ...v1, schema: v2.schema }, { ...v1, argv: ["kickstart", `gui/${uid}/com.setrox.setfarm-spawner`] });
+    for (const value of invalid) assert.throws(() => module.validate(ordered(value)), /fields|fixed action|transport/);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("P4 startup executeOrRecover is sole mutation writer", () => {
   const source = readFileSync(sourcePath, "utf8");
   const tree = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -478,15 +518,15 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     const store = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
     const statusStore = path.join(store, "records/status/sha256");
     const operationStore = path.join(store, "operations/sha256", operationHash);
-    mkdirSync(operationStore, { recursive: true });
+    mkdirSync(operationStore, { recursive: true, mode: 0o700 });
     const persistStatus = (input: Record<string, unknown>, locator: string | null) => {
       const statusHash = hashCanonicalJson(input);
       const statusRef = `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${statusHash}`;
       const value = { ...input, statusRef, statusHash };
       const directory = path.join(statusStore, statusHash.slice(0, 2));
-      mkdirSync(directory, { recursive: true });
-      writeFileSync(path.join(directory, `${statusHash}.json`), `${canonical(value)}\n`);
-      if (locator !== null) writeFileSync(path.join(operationStore, `${locator}.pair.json`), `${canonical({ statusRef, statusHash })}\n`);
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(directory, `${statusHash}.json`), `${canonical(value)}\n`, { mode: 0o600 });
+      if (locator !== null) writeFileSync(path.join(operationStore, `${locator}.pair.json`), `${canonical({ statusRef, statusHash })}\n`, { mode: 0o600 });
       return { statusRef, statusHash };
     };
     const absentPair = persistStatus({

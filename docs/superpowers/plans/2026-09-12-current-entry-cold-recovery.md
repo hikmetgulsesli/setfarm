@@ -171,6 +171,45 @@ lock-taking terminal resolver from the read-only census.
 
 ## Task 2: Implement one-shot authenticated detached transport
 
+Direct-rebind refinement after preselection checkpoint `6c37dc4a`: preserve the
+public restart pair/domain and common operation/authorization/startup-token,
+stored predecessor/service/generation, target source and UID fields. V1 keeps
+its exact launchctl fields. V2 replaces those fields with exact
+`transport: direct-detached-node-v1`, `launchProfileHash`, `terminationSignal:
+SIGTERM`, and separate maximum termination/spawn counts of one. The logical
+action remains the same; schema plus exact transport fields distinguish actual
+effects. First add pure strict schema discrimination without switching the
+producer or enabling a V2 helper dispatch. Then connect the entire authenticated
+transport and typed downstream chain before emitting V2 in ordinary execution.
+
+The operation-bound transport requires separate intent, termination-dispatch,
+private termination receipt, spawn-dispatch, child claim and controller
+settlement domains. The spawn record must bind the private termination receipt,
+not the public predecessor observation that is published only after helper
+return. Intent binds the public launch profile, source, epoch, physical lease,
+original stored predecessor and startup token; environment plaintext stays only
+in inherited descriptor capability. Replacement enters normal operation-bound
+startup-token admission, never the cold token/claim/context. Reuse strict
+filesystem/runtime-profile/FD mechanics, not cold permission. Versioned public
+predecessor/replacement evidence must bind the corresponding private history
+through the existing final33 roots. Keep serialized writing and independent
+read-only review. File Map paths remain the existing startup/retirement/helper,
+spawner/receipt and their owning tests; amend the exact maps if that changes.
+
+V2 schema foundation evidence: actual resolved-record parser initially rejected
+the direct body at exact V1 keys; after strict discrimination it accepts exactly
+the two unchanged-history/direct shapes and rejects 45 crossed/missing/unsafe
+variants. The first full startup suite completed 11/12: an existing status
+fixture wrote authoritative files with default permissions, violating the
+unchanged 0600 production guard before reaching status validation. Set explicit
+0700 fixture directories and 0600 records/pairs; the full unchanged production
+guard suite then passed 12/12 (4.540s). Real detached watcher reproduction and
+fixed historical helper action passed 2/2 (6.716s), exact145/64 manifest passed
+17/17 (6.998s), TypeScript no-emit and whitespace checks passed. Independent
+review confirmed V1 equivalence and that the unchanged helper rejects V2 before
+journal creation. This is only schema foundation: producer remains V1 and no
+direct effect is enabled until the coupled authenticated kernel is connected.
+
 **Consumes:** Spec's cold-absence versus real-predecessor discriminants, existing
 physical transition lease, strict private record patterns, and current source
 integrity authority.
