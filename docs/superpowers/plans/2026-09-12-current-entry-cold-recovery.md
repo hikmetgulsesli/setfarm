@@ -271,6 +271,57 @@ manifest17/17 (5.382s), and fresh TypeScript no-emit passed. Independent review
 found no remaining must-fix. Direct producer/effects remain unwired until the
 retained one-shot transport and runtime routing are connected.
 
+Retained direct-intent preparation in progress (same retirement source/test
+File Map): retain the original lease, nonce, resolved input chain and physical
+root/epoch/intent ownership before the first publication attempt. Replay may
+repair only this original owner's exact immutable intent. Refuse ordinary lease
+release before its phase/FD cleanup path whenever direct preparation owns it;
+the old V1 parser's rejection alone would leave the disk lock but discard the
+held capability. A recognized direct intent also prevents dead-owner cleanup
+and terminal helper census. No termination, spawn, claim or terminal-release
+path is introduced by intent preparation, and no cold grant is reused.
+
+Intent publication refinement: retain one original read/write descriptor and
+one code-owned temporary name for the lifetime of preparation; do not recover
+this capability through the shared bytes-only publisher. Complete temporary,
+linked and final-only prefixes can resume from that descriptor. Partial writes,
+lost creation identity, foreign inventory and replacement inodes retain the
+fence. Fsync the original file and parent before/after owned temporary removal;
+final-only retry must complete the missing parent sync. Committed replay still
+checks the original descriptor and exact pending inventory, including after
+opening the separate final pin. No repeated data write or secret publication.
+Three missing rejections were reproduced before correction: final-only fsync
+loss, equal-byte final replacement, and pending arrival after commitment.
+The focused fixture covers twelve write/link/unlink/fsync/response-loss modes,
+partial-write refusal and original-FD disturbance; independent review cleared
+the intent-only milestone. The complete retirement run finished66/68 (434.814s):
+both failures were the existing cold fixture's first-match root-sync injection
+moving into the newly inserted publisher. Bind that injection to the unique
+cold root-sync/own-prefix boundary; do not change production or expectations.
+Fresh failed-two plus direct-intent checks then passed3/3 (4.389s), with exact
+manifest17/17 (6.287s), no-emit/whitespace checks and historical helper/watcher2/2
+(5.947s) passing. This is not a claim of a fresh complete68/68 rerun; the complete
+coupled gate remains required before delivery.
+
+Crash-scope precision: the live retained owner cannot release its physical
+lease. If the controller dies with only a temporary and no published journal,
+existing dead-owner rules may reclaim the stale physical lock. They leave the
+temporary untouched, and a fresh direct owner refuses that foreign publication;
+there is no signal/spawn prefix to adopt. Do not equate that durable publication
+refusal with a guarantee that the old physical lock survives controller death.
+
+Next executable refinement (same retirement source/test File Map): the retained
+original controller performs the single SIGTERM under its physical lease;
+the fixed helper remains responsible for the later direct spawn/FD handshake.
+The spec requires an authenticated signalling actor, not helper-only signalling.
+Bind the actual controller identity in the termination-dispatch, reobserve the
+stored predecessor via fresh service census and immediate UID/start/command/
+executable/cwd checks, and mark signal entry before the call. Retry never sends
+a second signal or converts uncertain dispatch into permission. Only observed
+termination admits the private receipt; it is not a helper settlement, spawn
+grant by itself or lease-release authority. Keep ordinary V2 emission disabled
+until replacement/claim/settlement and runtime routing are connected.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing

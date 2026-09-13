@@ -140,6 +140,27 @@ type LeaseStateV1 = {
 };
 
 const leases = new WeakMap<object, LeaseStateV1>();
+type DirectSpawnerRebindIntentStateV1 = {
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  inputs: Awaited<ReturnType<typeof resolveDirectSpawnerRebindInputsUnderLeaseV1>>;
+  intent: Readonly<Record<string, unknown>>;
+  nonce: string;
+  lockIdentity: BigIntStats;
+  rootGuard: PrivateDirectoryGuardV1;
+  epochPin: ReturnType<typeof pinStableCasPredecessorV1> | null;
+  intentPin: ReturnType<typeof pinStableCasPredecessorV1> | null;
+  publication: {
+    temporary: string;
+    descriptor: number | null;
+    identity: BigIntStats | null;
+    openAttempted: boolean;
+    linkAttempted: boolean;
+    unlinkAttempted: boolean;
+    committed: boolean;
+  };
+};
+let retainedDirectSpawnerRebindIntentV1: DirectSpawnerRebindIntentStateV1 | null = null;
+let directSpawnerRebindPreparationActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -930,6 +951,149 @@ async function resolveDirectSpawnerRebindInputsUnderLeaseV1(
   }
 }
 
+function publishDirectSpawnerRebindIntentV1(state: DirectSpawnerRebindIntentStateV1): void {
+  const publication = state.publication, target = rootPaths().journal;
+  const bytes = Buffer.from(`${canonical(state.intent)}\n`);
+  const at = (file: string): BigIntStats | null => {
+    try { return lstatSync(file, { bigint: true }); }
+    catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return null; throw error; }
+  };
+  const assertOriginal = (): BigIntStats => {
+    state.rootGuard.assertStable();
+    if (publication.descriptor === null || publication.identity === null) return fail("direct intent original publication descriptor is unavailable");
+    const held = fstatSync(publication.descriptor, { bigint: true });
+    if (!sameColdFileMetadataV1(publication.identity, held)) fail("direct intent original publication identity changed");
+    return held;
+  };
+  const assertPath = (file: string): void => {
+    const held = assertOriginal(), visible = at(file);
+    if (visible === null || !sameColdFileMetadataV1(held, visible)
+      || !readColdGenesisCandidateV1(file, held, 2).equals(bytes)) fail("direct intent original publication path is crossed");
+    assertOriginal();
+  };
+  const refreshOwnedLinkChange = (): void => {
+    const before = publication.identity!, after = fstatSync(publication.descriptor!, { bigint: true });
+    // Only our link/unlink may change nlink and ctime. Data, provenance and
+    // every other identity field remain those of the retained descriptor.
+    if (!sameColdFileMetadataV1({ ...before, nlink: after.nlink, ctimeNs: after.ctimeNs } as BigIntStats, after)
+      || after.nlink < 1n || after.nlink > 2n) fail("direct intent publication changed during owned link transition");
+    publication.identity = after;
+  };
+  state.rootGuard.assertStable();
+  const candidates = readdirSync(path.dirname(target)).filter(name => name.startsWith(`.${path.basename(target)}.`));
+  if (candidates.some(name => name !== path.basename(publication.temporary)) || candidates.length > 1) fail("direct intent publication inventory is crossed");
+  if (!publication.openAttempted) {
+    if (at(target) !== null || at(publication.temporary) !== null) fail("direct intent cannot adopt an unowned publication");
+    publication.openAttempted = true;
+    publication.descriptor = openSync(publication.temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    publication.identity = fstatSync(publication.descriptor, { bigint: true });
+    // No repeat write after an entered write: a partial/unrecognized file is
+    // fenced. A complete write with a lost response can proceed via this FD.
+    try { writeFileSync(publication.descriptor, bytes); }
+    finally { publication.identity = fstatSync(publication.descriptor, { bigint: true }); }
+  }
+  assertOriginal();
+  if (publication.committed) {
+    assertPath(target);
+    if (at(publication.temporary) !== null) fail("direct intent completed publication has a temporary");
+    return;
+  }
+  if (at(target) === null) {
+    if (publication.unlinkAttempted) fail("direct intent published original disappeared");
+    assertPath(publication.temporary);
+    if (assertOriginal().nlink !== 1n) fail("direct intent temporary has an unknown link");
+    fsyncSync(publication.descriptor!);
+    assertPath(publication.temporary);
+    publication.linkAttempted = true;
+    try { linkSync(publication.temporary, target); }
+    finally { refreshOwnedLinkChange(); }
+  } else if (!publication.linkAttempted) fail("direct intent final publication is unowned");
+  assertPath(target);
+  fsyncSync(publication.descriptor!);
+  if (at(publication.temporary) !== null) {
+    assertPath(publication.temporary);
+    if (assertOriginal().nlink !== 2n) fail("direct intent publication links are crossed");
+    fsyncParent(target);
+    assertPath(target); assertPath(publication.temporary);
+    publication.unlinkAttempted = true;
+    try { unlinkSync(publication.temporary); }
+    finally { refreshOwnedLinkChange(); }
+  } else if (!publication.unlinkAttempted) fail("direct intent temporary disappeared before owned cleanup");
+  if (assertOriginal().nlink !== 1n) fail("direct intent final publication has an unknown link");
+  // In particular, repeat this after final-only fsync response loss. Equal
+  // bytes alone neither prove durability nor authorize a replacement inode.
+  fsyncSync(publication.descriptor!);
+  fsyncParent(target);
+  assertPath(target);
+  if (at(publication.temporary) !== null) fail("direct intent temporary reappeared after cleanup");
+  publication.committed = true;
+}
+
+async function prepareDirectSpawnerRebindIntentV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof resolveDirectSpawnerRebindInputsUnderLeaseV1>[1],
+): Promise<Readonly<Record<string, unknown>>> {
+  if (directSpawnerRebindPreparationActiveV1) fail("direct rebind preparation is already active");
+  directSpawnerRebindPreparationActiveV1 = true;
+  try {
+    const held = heldLease(lease);
+    if (retainedDirectSpawnerRebindIntentV1 !== null && retainedDirectSpawnerRebindIntentV1.lease !== lease) fail("direct rebind preparation has another retained lease");
+    const inputs = await resolveDirectSpawnerRebindInputsUnderLeaseV1(lease, input);
+    if (retainedDirectSpawnerRebindIntentV1 === null) {
+      const nonce = randomBytes(32).toString("hex");
+      const body = {
+        schema: "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1",
+        transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1,
+        currentEntryOperation: { operationRef: inputs.operation.operationRef, operationHash: inputs.operation.operationHash },
+        restartAuthority: { restartAuthorityRef: inputs.restart.restartAuthorityRef, restartAuthorityHash: inputs.restart.restartAuthorityHash },
+        startupToken: { startupTokenRef: inputs.startup.startupTokenRef, startupTokenHash: inputs.startup.startupTokenHash },
+        predecessorSpawnerProcessIdentity: { predecessorSpawnerProcessIdentityRef: inputs.startup.predecessorSpawnerProcessIdentityRef, predecessorSpawnerProcessIdentityHash: inputs.startup.predecessorSpawnerProcessIdentityHash },
+        preMutationLoadedRuntimeServiceAuthority: { preMutationLoadedRuntimeServiceAuthorityRef: inputs.preMutation.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: inputs.preMutation.preMutationLoadedRuntimeServiceAuthorityHash },
+        launchProfile: inputs.profile, epoch: { epochRef: inputs.epoch.epochRef, epochHash: inputs.epoch.epochHash },
+        transitionLock: parseLockRecord(held.lockBytes), lockIdentity: descriptorIdentity(held.descriptor), nonceHash: sha256(nonce),
+      };
+      const intentHash = sha256(canonical(body));
+      const bytes = Buffer.from(`${canonical({ ...body, intentRef: `setfarm://internal-production/pre-schema-spawner-direct-rebind-intent/sha256/${intentHash}`, intentHash })}\n`);
+      if (bytes.length > 1_048_576) fail("direct rebind intent exceeds its publication cap");
+      const intent = parseDirectSpawnerRebindIntentV1(bytes);
+      const lockIdentity = fstatSync(held.descriptor, { bigint: true });
+      const temporary = path.join(rootPaths().root, `.${path.basename(rootPaths().journal)}.${randomBytes(16).toString("hex")}.tmp`);
+      const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
+      // Register before any publication attempt, including failures before the
+      // intent becomes visible. Ordinary release must not discard this owner.
+      retainedDirectSpawnerRebindIntentV1 = { lease, inputs, intent, nonce, lockIdentity, rootGuard, epochPin: null, intentPin: null,
+        publication: { temporary, descriptor: null, identity: null, openAttempted: false, linkAttempted: false, unlinkAttempted: false, committed: false } };
+    }
+    const state = retainedDirectSpawnerRebindIntentV1;
+    if (canonical(inputs) !== canonical(state.inputs) || canonical(inputs.environment) !== canonical(state.inputs.environment)) fail("direct rebind original preparation inputs changed");
+    const assertStable = (): void => {
+      if (retainedDirectSpawnerRebindIntentV1 !== state || heldLease(lease) !== held) fail("direct rebind retained preparation changed");
+      state.rootGuard.assertStable();
+      if (!sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+        || !sameColdFileMetadataV1(state.lockIdentity, lstatSync(rootPaths().lock, { bigint: true }))
+        || !readColdGenesisCandidateV1(rootPaths().lock, state.lockIdentity).equals(held.lockBytes)
+        || canonical(assertEpochOneActive()) !== canonical(state.inputs.epoch)) fail("direct rebind retained physical authority changed");
+      state.epochPin?.assertStable(); state.intentPin?.assertStable(); state.rootGuard.assertStable();
+    };
+    assertStable();
+    state.epochPin ??= pinStableCasPredecessorV1(rootPaths().epoch, "direct rebind retained epoch");
+    if (!state.epochPin.bytes.equals(Buffer.from(`${canonical(state.inputs.epoch)}\n`))) fail("direct rebind retained epoch is crossed");
+    assertStable();
+    publishDirectSpawnerRebindIntentV1(state);
+    if (state.intentPin === null) {
+      const target = rootPaths().journal, bytes = Buffer.from(`${canonical(state.intent)}\n`);
+      assertStable();
+      state.intentPin = pinStableCasPredecessorV1(target, "direct rebind retained intent");
+      if (!state.intentPin.bytes.equals(bytes)) fail("direct rebind retained intent is crossed");
+    }
+    // The separately opened final pin cannot replace the original publication
+    // FD, and a completed intent does not waive pending-inventory checks.
+    publishDirectSpawnerRebindIntentV1(state);
+    assertStable();
+    return state.intent;
+  } finally { directSpawnerRebindPreparationActiveV1 = false; }
+}
+
 function assertHelperJournalAllowsLockCleanup(
   transitionLock: Readonly<Record<string, unknown>>,
   currentLockIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>,
@@ -947,6 +1111,10 @@ function assertHelperJournalAllowsLockCleanup(
   }
   let value: unknown;
   try { value = JSON.parse(bytes.toString("utf8")); } catch { return fail("helper journal is not JSON during lock cleanup"); }
+  if ((value as Record<string, unknown> | null)?.schema === "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1") {
+    parseDirectSpawnerRebindIntentV1(bytes);
+    fail("DIRECT_REBIND_UNSETTLED: direct intent has no authenticated terminal");
+  }
   const journal = exactCanonicalRecord(value, ["schema", "family", "operationSchema", "operationPurpose", "action", "currentEntryOperation", "restartAuthority", "transitionLock", "lockIdentity", "maximumDispatchCount", "journalHash"], "helper journal lock cleanup");
   const journalTransitionLock = parseLockRecord(Buffer.from(`${canonical(journal.transitionLock)}\n`, "utf8"));
   const journalLockIdentity = exactCanonicalRecord(journal.lockIdentity, ["devDecimal", "inoDecimal"], "helper journal lock identity");
@@ -3143,6 +3311,7 @@ export async function acquireInternalProductionPhysicalServiceRestartAuthorityTr
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
 ): Promise<void> {
+  if (retainedDirectSpawnerRebindIntentV1?.lease === lease) fail("DIRECT_REBIND_UNSETTLED: direct preparation retains its physical lease");
   if (retainedColdBootstrapIntentV1?.lease === lease) return releaseColdControllerTransitionLeaseV1(retainedColdBootstrapIntentV1);
   const state = heldLease(lease);
   const paths = rootPaths();

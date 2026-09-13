@@ -401,10 +401,12 @@ function coldGenesisTreeSnapshotV1(root: string): unknown[] {
 async function createColdIntentFixtureV1(transformSource?: (source: string) => string) {
   const original = readFileSync(sourcePath, "utf8");
   assert.ok(original.includes("async function prepareColdSpawnerBootstrapIntentV1()"), "cold intent producer is not implemented");
+  const rootSyncBoundary = "    fsyncParent(target);\n    assertColdIntentOnlyPrefixV1(state, false);";
+  assert.equal(original.split(rootSyncBoundary).length - 1, 1, "inject at the cold intent's own root-sync boundary, not another publisher");
   const source = original.replace("    return created;\n", "    if (path.basename(file) === 'intent.json') globalThis.__coldIntentPublicationHook?.();\n    return created;\n")
     .replace("try { linkSync(temporary, file); }", "try { linkSync(temporary, file); if(path.basename(file)==='intent.json')globalThis.__coldIntentLinkedHook?.(); }")
     .replace("        const genesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(genesisPath, lstatSync(genesisPath, { bigint: true })));", "        globalThis.__coldIntentBeforeGenesisReadHook?.(genesisPath);\n        const genesis = parseColdEpochGenesisReceiptV1(readColdGenesisCandidateV1(genesisPath, lstatSync(genesisPath, { bigint: true })));\n        globalThis.__coldIntentAfterGenesisReadHook?.(genesisPath);")
-    .replace("    fsyncParent(target);\n", "    globalThis.__coldIntentRootSyncHook?.();\n    fsyncParent(target);\n") + `
+    .replace(rootSyncBoundary, "    globalThis.__coldIntentRootSyncHook?.();\n" + rootSyncBoundary) + `
 export { prepareColdSpawnerBootstrapIntentV1 };
 export function inspectColdIntentFixtureV1(){const state=retainedColdBootstrapIntentV1;if(!state)return null;const held=heldLease(state.lease);return {phase:state.phase,descriptor:held.descriptor,lockBytesHash:sha256(held.lockBytes.toString()),intent:state.intent,nonceHash:sha256(state.nonce)};}
 export function closeColdIntentFixtureV1(){if(typeof retainedColdBootstrapPreparationV1!=='undefined'&&retainedColdBootstrapPreparationV1){const preparation=retainedColdBootstrapPreparationV1;preparation.rootGuard?.close();const held=leases.get(preparation.lease);if(held)closeSync(held.descriptor);leases.delete(preparation.lease);retainedColdBootstrapPreparationV1=null;}if(retainedColdBootstrapIntentV1){const state=retainedColdBootstrapIntentV1,lease=state.lease,invocation=state.helperInvocation;if(invocation){for(const fd of [...invocation.transportDescriptors,...invocation.authorityDescriptors])closeSync(fd);for(const guard of invocation.guards)guard.close();}if(!state.release?.rootGuardClosed)state.rootGuard?.close();const held=leases.get(lease);if(held&&!state.release?.descriptorClosed)closeSync(held.descriptor);leases.delete(lease);retainedColdBootstrapIntentV1=null;}}
@@ -670,7 +672,29 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     for (const mutate of intentFaults) { const value = structuredClone(intentBody); mutate(value); assert.throws(() => module.parseDirectSpawnerRebindIntentV1(sealIntent(value))); }
     for (const bytes of [Buffer.alloc(0), Buffer.from(intentBytes.toString().trim()), Buffer.from(` ${intentBytes.toString()}`), Buffer.alloc(8_388_609, 0x20), Buffer.from(intentBytes.toString().replace(/"intentHash":"[a-f0-9]+"/, `"intentHash":"${"f".repeat(64)}"`))]) assert.throws(() => module.parseDirectSpawnerRebindIntentV1(bytes));
     assert.ok(source.includes("async function resolveDirectSpawnerRebindInputsUnderLeaseV1("), "direct rebind must resolve original authority under the actual physical lease");
-    const runtimePath = installRetirementFixture(fixture, source + "\nexport {resolveDirectSpawnerRebindInputsUnderLeaseV1};\n");
+    assert.ok(source.includes("async function prepareDirectSpawnerRebindIntentV1("), "direct intent preparation must retain its original lease before publication");
+    const writerMarker = "function publishDirectSpawnerRebindIntentV1(state: DirectSpawnerRebindIntentStateV1): void {";
+    assert.equal(source.split(writerMarker).length - 1, 1);
+    let runtimeSource = source.replace(writerMarker, "function actualDirectIntentPublisherFixtureV1(state: DirectSpawnerRebindIntentStateV1): void {").replace("function fsyncParent(file: string): void {", "function actualDirectFsyncParentFixtureV1(file: string): void {");
+    for (const name of ["fsyncSync", "linkSync", "unlinkSync", "writeFileSync"]) {
+      const marker = `  ${name},\n`;
+      assert.equal(runtimeSource.split(marker).length - 1, 1, `instrument only the actual ${name} import`);
+      runtimeSource = runtimeSource.replace(marker, `  ${name} as actualDirect_${name},\n`);
+    }
+    const runtimePath = installRetirementFixture(fixture, runtimeSource + `
+export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
+import {existsSync} from 'node:fs';
+function publishDirectSpawnerRebindIntentV1(state){const probe=globalThis.__directIntentPublicationFixtureV1;if(!probe)return actualDirectIntentPublisherFixtureV1(state);probe.attempts++;probe.intent=state.intent;if(probe.fault==='before'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BEFORE')}const result=actualDirectIntentPublisherFixtureV1(state);if(probe.fault==='after'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_AFTER')}return result}
+function fsyncParent(file:string){const probe=globalThis.__directIntentPublicationFixtureV1;if(path.basename(file)!=='pre-schema-helper-journal.json'||!probe)return actualDirectFsyncParentFixtureV1(file);if(probe.fault==='parent'&&!existsSync(retainedDirectSpawnerRebindIntentV1.publication.temporary)){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_PARENT')}actualDirectFsyncParentFixtureV1(file);probe.parentSyncs++}
+function directPublicationProbeFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,probe=globalThis.__directIntentPublicationFixtureV1;return state&&probe?{state,probe}:null}
+function directPublicationFaultFixtureV1(probe){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BOUNDARY')}
+function fsyncSync(fd){const current=directPublicationProbeFixtureV1();if(current&&fd===current.state.publication.descriptor){const{state,probe}=current;if(probe.fault==='temporary-sync'&&!existsSync(rootPaths().journal))directPublicationFaultFixtureV1(probe);if(probe.fault==='linked-sync'&&existsSync(rootPaths().journal)&&existsSync(state.publication.temporary))directPublicationFaultFixtureV1(probe)}return actualDirect_fsyncSync(fd)}
+function linkSync(from,to){const current=directPublicationProbeFixtureV1();if(!current||from!==current.state.publication.temporary)return actualDirect_linkSync(from,to);const{probe}=current;probe.links++;if(probe.fault==='link-before')directPublicationFaultFixtureV1(probe);actualDirect_linkSync(from,to);if(probe.fault==='link-after')directPublicationFaultFixtureV1(probe)}
+function unlinkSync(file){const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.temporary)return actualDirect_unlinkSync(file);const{probe}=current;probe.unlinks++;if(probe.fault==='unlink-before')directPublicationFaultFixtureV1(probe);actualDirect_unlinkSync(file);if(probe.fault==='unlink-after')directPublicationFaultFixtureV1(probe)}
+function writeFileSync(file,bytes,...args){const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.descriptor)return actualDirect_writeFileSync(file,bytes,...args);const{probe}=current;probe.writes++;if(probe.fault==='partial-write'){actualDirect_writeFileSync(file,bytes.subarray(0,17),...args);directPublicationFaultFixtureV1(probe)}actualDirect_writeFileSync(file,bytes,...args);if(probe.fault==='write-after')directPublicationFaultFixtureV1(probe)}
+export function disturbDirectPublicationDescriptorFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1;closeSync(state.publication.descriptor);state.publication.descriptor=openSync('/dev/null',constants.O_RDONLY)}
+export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
+`);
     const internal = path.dirname(runtimePath);
     const environment = { PATH: "/usr/bin:/bin", PRIVATE_VALUE: "direct-fixture-secret" };
     const directProfile = rehash({ ...structuredClone(profile), environmentHash: sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`) });
@@ -694,7 +718,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
     writeFileSync(processRecord, canonical(predecessor) + "\n", { mode: 0o600 });
     const runtime = await import(pathToFileURL(runtimePath).href);
-    const lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    let lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
     try {
       const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
       const run = async (mutate?: (value: any) => void, hook?: (key: string) => void) => {
@@ -726,9 +750,60 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
       const epochPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/epoch-head.json");
       await assert.rejects(run(undefined, key => { if (key === "profile") { const bytes = readFileSync(epochPath); renameSync(epochPath, epochPath + ".old"); writeFileSync(epochPath, bytes, { mode: 0o600 }); } }), /changed/, "the original epoch inode remains bound across awaits");
       assert.equal(existsSync(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json")), false, "input authentication cannot publish dispatch permission");
+      for (const fault of ["replace", "parent", "before", "after", "temporary-sync", "linked-sync", "link-before", "link-after", "unlink-before", "unlink-after", "write-after", "partial-write"] as const) {
+        await run(); // Reset the independent authenticated observation ports.
+        const publication = { fault: (fault === "replace" ? "after" : fault) as string | null, attempts: 0, parentSyncs: 0, links: 0, unlinks: 0, writes: 0, intent: null as any };
+        Reflect.set(globalThis, "__directIntentPublicationFixtureV1", publication);
+        await assert.rejects(runtime.prepareDirectSpawnerRebindIntentV1(lease, input), /DIRECT_INTENT_PUBLICATION/);
+        const originalIntent = publication.intent;
+        assert.ok(originalIntent?.intentHash);
+        await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+        await run(); // Refused release must preserve the exact live lease, not only its path.
+        const journal = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
+        if (fault === "replace" || fault === "partial-write") {
+          if (fault === "replace") {
+            const bytes = readFileSync(journal);
+            renameSync(journal, journal + ".old");
+            writeFileSync(journal, bytes, { mode: 0o600 });
+          }
+          const writes = publication.writes;
+          await assert.rejects(runtime.prepareDirectSpawnerRebindIntentV1(lease, input), /changed|identity|crossed/, "response loss cannot authorize adopting a replacement inode or rewriting partial bytes");
+          assert.equal(publication.writes, writes);
+          await runtime.releaseDirectPreparationFixtureV1(lease);
+          Reflect.deleteProperty(globalThis, "__directIntentPublicationFixtureV1");
+          lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+          continue;
+        }
+        const parentSyncs = publication.parentSyncs;
+        const resumed = await runtime.prepareDirectSpawnerRebindIntentV1(lease, input);
+        assert.deepEqual(resumed, originalIntent, "retry retains the original nonce, inputs and intent hash");
+        assert.equal(publication.writes, 1, "recovery retains the original write and file descriptor");
+        if (fault === "link-after") assert.equal(publication.links, 1, "a visible owned link is observed, not dispatched twice");
+        if (fault === "unlink-after") assert.equal(publication.unlinks, 1, "an absent owned temporary is observed, not removed twice");
+        if (fault === "parent") assert.ok(publication.parentSyncs > parentSyncs, "final-only response-loss recovery must complete the missing parent fsync before returning an intent");
+        const identity = lstatSync(journal, { bigint: true });
+        const writes = publication.writes;
+        assert.deepEqual(await runtime.prepareDirectSpawnerRebindIntentV1(lease, input), resumed);
+        assert.equal(publication.writes, writes, "settled intent publication is not written again on replay");
+        assert.equal(lstatSync(journal, { bigint: true }).ino, identity.ino);
+        await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+        await assert.rejects(runtime.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(), /shape|schema|direct|journal/i, "an intent is not a terminal helper census");
+        if (fault === "after") {
+          const unexpected = path.join(path.dirname(journal), `.pre-schema-helper-journal.json.${"1".repeat(32)}.tmp`);
+          writeFileSync(unexpected, readFileSync(journal), { mode: 0o600 });
+          await assert.rejects(runtime.prepareDirectSpawnerRebindIntentV1(lease, input), /inventory|temporary/, "committed preparation still refuses a newly appeared pending publication");
+          unlinkSync(unexpected);
+          runtime.disturbDirectPublicationDescriptorFixtureV1();
+          await assert.rejects(runtime.prepareDirectSpawnerRebindIntentV1(lease, input), /identity changed/, "the final pin does not substitute for the original publication descriptor");
+        }
+        await runtime.releaseDirectPreparationFixtureV1(lease);
+        Reflect.deleteProperty(globalThis, "__directIntentPublicationFixtureV1");
+        lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+      }
     } finally {
       Reflect.deleteProperty(globalThis, "__directRebindInputFixtureV1");
-      await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+      Reflect.deleteProperty(globalThis, "__directIntentPublicationFixtureV1");
+      await runtime.releaseDirectPreparationFixtureV1(lease);
     }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
