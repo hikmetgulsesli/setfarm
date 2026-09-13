@@ -7080,6 +7080,102 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
   }
 }
 
+/** Historical evidence only: P3 does not authorize preparation completion or a process effect. */
+export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(
+  pair: InternalProductionCurrentEntryOperationPairV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  const expected = requirePair(pair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const rootReader = openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  let operationPin: ExactPoisonRecoveryPinnedRecordV1 | null = null;
+  const prerequisites: CurrentEntryPrerequisiteSnapshotV1[] = [];
+  try {
+    rootReader.assertStable();
+    operationPin = openExactPoisonRecoveryPinnedRecordV1(path.join(rootReader.store.directory, CURRENT_ENTRY_FILES.operation), "historical predecessor operation");
+    const fixedOperation = parsePreselectionCurrentEntryOperationV1(operationPin.bytes);
+    if (expected.operationRef === fixedOperation.operationRef && expected.operationHash === fixedOperation.operationHash) {
+      const operation = await parseCurrentEntryOperationBodyCoreV1(
+        strictCanonicalRecord(operationPin.bytes, "historical predecessor operation"), expected,
+        (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, rootReader, retained),
+        (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, rootReader, retained),
+        prerequisites,
+      );
+      const assertStable = (): void => {
+        rootReader.assertStable();
+        assertExactPoisonRecoveryPinnedRecordStableV1(operationPin!, "historical predecessor operation");
+        for (const retained of prerequisites) {
+          const final = readTask12ReceiptStoreSnapshotV1(retained.source.locator);
+          if (!sameRegularMetadata(retained.source.observed.stats, final.stats) || !retained.source.observed.bytes.equals(final.bytes)) currentEntryFail("historical predecessor prerequisite changed");
+          if (retained.absentContentLocator !== null) assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, retained.absentContentLocator, "historical predecessor prerequisite");
+        }
+        rootReader.assertStable();
+      };
+      assertStable();
+      return await readHistoricalPreMutationRuntimeAuthorityAtRootV1(rootReader.store.directory, operation, assertStable);
+    }
+  } finally {
+    try { if (operationPin !== null) closeSync(operationPin.descriptor); }
+    finally { rootReader.close(); }
+  }
+  const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try {
+    if (expected.operationRef !== context.successorOperationPair.ref || expected.operationHash !== context.successorOperationPair.hash
+      || expected.operationRef !== context.successorOperation.operationRef || expected.operationHash !== context.successorOperation.operationHash) currentEntryFail("historical predecessor operation pair is unknown");
+    context.assertStable();
+    await durablyAuthenticateSuccessorActivationCommitV1(context);
+    context.assertStable();
+    return await readHistoricalPreMutationRuntimeAuthorityAtRootV1(context.successorRoot, context.successorOperation, context.assertStable);
+  } finally { context.close(); }
+}
+
+async function readHistoricalPreMutationRuntimeAuthorityAtRootV1(
+  storeRoot: string,
+  operation: InternalProductionCurrentEntryOperationV1,
+  assertOperationStable: () => void,
+): Promise<Readonly<Record<string, unknown>>> {
+  const locator = path.join(storeRoot, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const guards: Task12ReceiptDirectoryGuardV1[] = [];
+  const pins: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  const assertStable = (): void => {
+    assertOperationStable();
+    for (const guard of guards) guard.assertStable();
+    for (const pin of pins) assertExactPoisonRecoveryPinnedRecordStableV1(pin, "historical predecessor P3 evidence");
+    assertOperationStable();
+  };
+  const openPinned = (target: string): ExactPoisonRecoveryPinnedRecordV1 => {
+    assertStable();
+    guards.push(authenticateTask12ReceiptDirectoryChainV1(path.dirname(target)));
+    const pin = openExactPoisonRecoveryPinnedRecordV1(target, "historical predecessor P3 evidence");
+    pins.push(pin);
+    assertStable();
+    return pin;
+  };
+  try {
+    const pair = requirePair(strictCanonicalRecord(openPinned(locator).bytes, "historical predecessor P3 locator"), "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
+    const hash = pair.preMutationLoadedRuntimeServiceAuthorityHash!;
+    const record = openPinned(path.join(storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", hash.slice(0, 2), `${hash}.json`));
+    const value = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(strictCanonicalRecord(record.bytes, "historical predecessor P3 record"));
+    if (value.preMutationLoadedRuntimeServiceAuthorityRef !== pair.preMutationLoadedRuntimeServiceAuthorityRef || value.preMutationLoadedRuntimeServiceAuthorityHash !== hash
+      || value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash) currentEntryFail("historical predecessor P3 operation or pair is crossed");
+    assertStable();
+    const assertColdHistoryStable = await openTask12ColdSpawnerPredecessorHistoryV1(value);
+    assertStable();
+    assertColdHistoryStable();
+    assertStable();
+    return value;
+  } finally {
+    // Closing one resource must not prevent attempts to release the others.
+    // A close error rejects the evidence; an ambiguous OS close is not retried.
+    let cleanupError: unknown = null;
+    for (const pin of pins.reverse()) {
+      try { closeSync(pin.descriptor); } catch (error) { cleanupError ??= error; }
+    }
+    for (const guard of guards.reverse()) {
+      try { guard.close(); } catch (error) { cleanupError ??= error; }
+    }
+    if (cleanupError !== null) throw cleanupError;
+  }
+}
+
 async function resolveInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
   pair: InternalProductionCurrentEntryOperationPairV1,

@@ -46,8 +46,8 @@ const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-test
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
 function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
-  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1"];
-  assert.equal(names.length, 57, "cold recovery adds exactly the four fixed read-only ports");
+  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1", "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1"];
+  assert.equal(names.length, 58, "cold recovery adds exactly the five fixed read-only ports");
   assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
   const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
   assert.equal(historical.length, 53);
@@ -13875,6 +13875,22 @@ function configurePhase5bHistoricalStrictChainFixtureV1(
   return Object.freeze({ original, admitted, seeded });
 }
 
+function seedHistoricalPreMutationFixtureV1(store: string, operation: Phase5bHistoricalOperationPairFixtureV1, cold?: Readonly<Record<string, unknown>>) {
+  const service = exactZeroEffectServiceCensusV1();
+  const projection = { schema: cold ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2" : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, observedServiceCensusHash: service.censusHash, spawner: service.spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw, ...(cold ? { coldSpawnerPredecessor: cold } : {}) };
+  const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+  const hash = canonicalHash(body);
+  const pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
+  const value = { ...body, ...pair };
+  const locator = path.join(store, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const record = path.join(store, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+  for (const [target, content] of [[locator, pair], [record, value]] as const) {
+    phase5cEnsurePublicationParentV1(target);
+    writeFileSync(target, canonicalFixtureRecordV1(content), { mode: 0o600 });
+  }
+  return { service, value, pair, locator, record };
+}
+
 function phase5bLegacyBaitPathV1(store: string, successorLocator: string): string {
   const marker = `${path.sep}records${path.sep}`;
   const normalized = successorLocator.split("/").join(path.sep);
@@ -20498,6 +20514,104 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const equality = topLevelFunctionRegionV1(source, "assertExactPoisonRecoveryPinnedChainEqualV1");
     assert.match(equality, /canonicalComparable\(expected\.successorOperation\)[\s\S]*?canonicalComparable\(observed\.successorOperation\)/, "fresh C-helper reopen compares the fully parsed successor operation semantically");
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function resolveSuccessorHistorical|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B2 adds no public test seam, runtime seam, or fourth marker family");
+  });
+
+  it("historical predecessor reader uses immutable P3 without current-status selection", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+      const service = exactZeroEffectServiceCensusV1();
+      const projection = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: ordinary.pair.operationRef, currentEntryOperationHash: ordinary.pair.operationHash, observedServiceCensusHash: service.censusHash, spawner: service.spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw };
+      const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+      const hash = canonicalHash(body);
+      const pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
+      const expected = { ...body, ...pair };
+      const locator = path.join(ordinary.store, "operations", "sha256", ordinary.pair.operationHash.slice(0, 2), ordinary.pair.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+      const record = path.join(ordinary.store, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+      for (const [target, value] of [[locator, pair], [record, expected]] as const) {
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+      }
+      // A partial/malformed live status must not participate in historical reads.
+      writeFileSync(path.join(path.dirname(locator), "01-current-status.pair.json"), "{", { mode: 0o600 });
+      const before = filesystemTreeSnapshot(path.dirname(root));
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)});process.stdout.write(JSON.stringify({value,frozen:Object.isFrozen(value)&&Object.isFrozen(value.spawner)}))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { value: expected, frozen: true });
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "historical reading cannot publish or repair live status");
+      unlinkSync(locator);
+      const absent = await runFixtureExpressionAsync(root, `m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})`);
+      assert.notEqual(absent.status, 0, "a hash record without its original P3 locator grants no historical binding");
+      assert.match(absent.stderr, /ENOENT/);
+    } finally { removeFixture(root); }
+  });
+
+  it("historical predecessor reader authenticates only the committed successor P3 root", async () => {
+    for (const mode of ["valid", "missing-C", "unknown-operation", "missing-P3-with-legacy-bait", "crossed-record", "pair-mode", "record-hardlink"] as const) {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+        const operation = phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value);
+        const store = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+        const fixture = seedHistoricalPreMutationFixtureV1(store, operation);
+        if (mode === "missing-C") unlinkSync(harness.seeded.C);
+        if (mode === "missing-P3-with-legacy-bait") {
+          seedHistoricalPreMutationFixtureV1(harness.original.store, operation);
+          unlinkSync(fixture.locator);
+        }
+        if (mode === "crossed-record") writeFileSync(fixture.record, canonicalFixtureRecordV1({ ...fixture.value, currentEntryOperationHash: "a".repeat(64) }));
+        if (mode === "pair-mode") chmodSync(fixture.locator, 0o644);
+        if (mode === "record-hardlink") linkSync(fixture.record, `${fixture.record}.alias`);
+        const input = mode === "unknown-operation" ? { operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"b".repeat(64)}`, operationHash: "b".repeat(64) } : operation;
+        const before = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{try{const value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:'returned',value}))}catch(error){process.stdout.write(JSON.stringify({outcome:'threw',message:String(error)}))}})()`);
+        assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, mode === "valid" ? "returned" : "threw", `${mode}: ${observed.message}`);
+        if (mode === "valid") assert.deepEqual(observed.value, fixture.value);
+        else assert.doesNotMatch(observed.message, /not a function|ReferenceError|TypeError/);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, `${mode}: historical resolution does not repair or publish`);
+      } finally { removeFixture(root); }
+    }
+  });
+
+  it("historical predecessor reader retains original P3 and cold identity across awaits", async () => {
+    for (const mutation of ["none", "locator", "record", "operation", "parent", "cold", "close-response-loss"] as const) {
+      const root = createFixture();
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+        const terminal = path.join(path.dirname(root), "cold-history.json");
+        writeFileSync(terminal, "{}\n", { mode: 0o600 });
+        const identity = lstatSync(terminal, { bigint: true });
+        const cold = { settlementRef: `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${"f".repeat(64)}`, settlementHash: "f".repeat(64), settlementIdentity: [identity.dev, identity.ino, identity.uid, identity.gid, identity.mode, identity.nlink, identity.size, identity.birthtimeNs, identity.mtimeNs, identity.ctimeNs].map(String) };
+        const fixture = seedHistoricalPreMutationFixtureV1(ordinary.store, ordinary.pair, cold);
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        let source = readFileSync(modulePath, "utf8");
+        const marker = "    const assertColdHistoryStable = await openTask12ColdSpawnerPredecessorHistoryV1(value);";
+        assert.equal(source.split(marker).length - 1, 1, "instrument actual reader after asynchronous cold authentication");
+        source = source.replace(marker, `${marker}\n    await Reflect.get(globalThis, '__historicalP3AfterAwaitV1')();`);
+        if (mutation === "close-response-loss") {
+          const reader = topLevelFunctionRegionV1(source, "readHistoricalPreMutationRuntimeAuthorityAtRootV1");
+          assert.equal(reader.split("closeSync(pin.descriptor)").length - 1, 1);
+          source = source.replace(reader, reader.replace("closeSync(pin.descriptor)", "(() => { closeSync(pin.descriptor); if (path.basename(pin.target) !== '00-pre-mutation-loaded-runtime-service-authority.pair.json') throw new Error('HISTORICAL_P3_CLOSE_RESPONSE_LOSS'); })()"));
+        }
+        writeFileSync(modulePath, source);
+        const target = mutation === "locator" ? fixture.locator : mutation === "record" ? fixture.record : mutation === "operation" ? path.join(ordinary.store, "current-entry-operation.json") : mutation === "parent" ? path.dirname(fixture.record) : terminal;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import('node:fs');await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts")).href)});const terminal=${JSON.stringify(terminal)},mutation=${JSON.stringify(mutation)},target=${JSON.stringify(target)};globalThis.__nestedColdHistoryV1=()=>{const s=fs.lstatSync(terminal,{bigint:true});return {state:'settled',settlement:{settlementRef:${JSON.stringify(cold.settlementRef)},settlementHash:${JSON.stringify(cold.settlementHash)},serviceCensus:${JSON.stringify(fixture.service)}},settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}};globalThis.__historicalP3AfterAwaitV1=async()=>{if(mutation==='none'||mutation==='close-response-loss')return;if(mutation==='parent'){fs.renameSync(target,target+'.old');fs.mkdirSync(target,{mode:0o700});for(const name of fs.readdirSync(target+'.old'))fs.copyFileSync(target+'.old/'+name,target+'/'+name)}else{const bytes=fs.readFileSync(target);fs.renameSync(target,target+'.old');fs.writeFileSync(target,bytes,{mode:0o600})}};const count=()=>fs.readdirSync('/dev/fd').filter(n=>{try{fs.fstatSync(Number(n));return true}catch{return false}}).length;await new Promise(resolve=>setTimeout(resolve,100));const before=count();let outcome='returned',message=null,value=null;try{value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})}catch(error){outcome='threw';message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,descriptorDelta:count()-before}))})()`);
+        assert.equal(result.status, 0, `${mutation}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, mutation === "none" ? "returned" : "threw", `${mutation}: ${observed.message}`);
+        assert.equal(observed.descriptorDelta, 0, `${mutation}: all retained descriptors are closed`);
+        if (mutation === "none") assert.deepEqual(observed.value, fixture.value);
+        else assert.match(observed.message, /changed|crossed|HISTORICAL_P3_CLOSE_RESPONSE_LOSS/);
+      } finally { removeFixture(root); }
+    }
   });
 
   it("P5b-B2 ordinary fixed operation remains legacy while unknown no-chain requests fail closed", async () => {

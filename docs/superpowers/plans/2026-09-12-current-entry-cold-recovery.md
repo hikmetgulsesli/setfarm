@@ -221,6 +221,32 @@ not an owned capability and does not publish, signal, spawn or grant reuse of
 cold authority. The later lease-owning controller must independently resolve
 all those immutable relations and retain identities across every effect.
 
+Historical predecessor binding refinement (same receipt source/test File Map):
+the helper cannot use the selected current-status reader during a partial
+pre-schema dispatch because selection re-enters live progress validation. Add
+one operation-only, read-only historical pre-mutation resolver: authenticate
+the fixed legacy operation or exact pinned committed successor, then read only
+that root's immutable P3 locator and hash-derived V1/V2 record. Retain root,
+operation, locator and record identities across awaited authentication, and
+recheck the original cold settlement tuple. Never consult current status,
+scan, try the opposite root or reconstruct a current service observation.
+This explicitly amends the receipt runtime export surface from 57 to 58 (five
+named additions); historical ordered53/type26, File Map145/64 and final33 remain
+unchanged. P3 alone is historical evidence, not completed preparation or effect
+permission. The direct intent must bind this original pre-mutation pair, with
+startup/restart/lease authority authenticated separately before any effect.
+
+Historical P3 checkpoint evidence: the missing public reader first failed the
+actual legacy fixture. Legacy reading with a malformed current-status locator,
+seven strict-successor/root/corruption cases and original cold/P3/operation/parent
+identity checks passed. A genuine after-close response-loss injection exposed
+one collateral FD leak; attempt-all cleanup then passed with zero descriptor
+delta and a rejected result. No ambiguous OS close is retried; a persistent real
+close failure can still leak that FD and must keep the future helper fenced.
+Expanded historical routing/export/eleven-consumer checks passed23/23 (93.085s),
+exact145/64 manifests17/17 (6.766s), TypeScript no-emit and whitespace checks
+passed. Independent review found no remaining must-fix in this read-only slice.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
