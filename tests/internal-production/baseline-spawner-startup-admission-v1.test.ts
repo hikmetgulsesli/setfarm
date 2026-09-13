@@ -593,7 +593,7 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   }
 });
 
-test("P4 startup recovery reopens the durable helper-blocked prefix before live derivation", async () => {
+test("P4 startup recovery emits V2 and reopens the durable helper-blocked prefix before live derivation", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-reentry-"));
   try {
     const internal = path.join(fixture, "src/internal-production");
@@ -606,13 +606,21 @@ test("P4 startup recovery reopens the durable helper-blocked prefix before live 
     const operationHash = "1".repeat(64);
     const operationRef = `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`;
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 let legacyCalls = 0;
+export const directCalls = { p3: 0, profile: 0 };
+export const directFault = { profileHook: null };
 const operation = {
   operationRef:${JSON.stringify(operationRef)}, operationHash:${JSON.stringify(operationHash)},
   controllerSource:{sha:${JSON.stringify("2".repeat(40))},treeHash:${JSON.stringify("3".repeat(40))},buildHash:${JSON.stringify("4".repeat(64))}},
   authorityV3Migration31Audit:{authorityV3Migration31AuditRef:${JSON.stringify(`setfarm://internal-production/authority-v3-migration31-audit/sha256/${"5".repeat(64)}`)},authorityV3Migration31AuditHash:${JSON.stringify("5".repeat(64))}}
 };
 const census = {spawner:{pid:99999,processStartTimeEpochMs:1,processIdentityHash:${JSON.stringify("6".repeat(64))},serviceIdentityHash:${JSON.stringify("7".repeat(64))},generationHash:${JSON.stringify("8".repeat(64))},loadedSourceSha:operation.controllerSource.sha,loadedTreeHash:operation.controllerSource.treeHash,loadedBuildHash:operation.controllerSource.buildHash}};
+export const preMutation = {currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,preMutationLoadedRuntimeServiceAuthorityRef:${JSON.stringify(`setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"b".repeat(64)}`)},preMutationLoadedRuntimeServiceAuthorityHash:${JSON.stringify("b".repeat(64))},spawner:{...census.spawner,processOwnerCount:1,listener:null}};
+const profileBody = {source:operation.controllerSource,uid:process.getuid()};
+export const profile = {...profileBody,profileHash:hashCanonicalJson(profileBody)};
+export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair){directCalls.p3+=1;if(pair.operationRef!==operation.operationRef||pair.operationHash!==operation.operationHash)throw new Error("CROSSED_P3_INPUT");return structuredClone(preMutation)}
+export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){directCalls.profile+=1;await directFault.profileHook?.();return {profile}}
 const legacy = {observationRef:${JSON.stringify(`setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${"9".repeat(64)}`)},observationHash:${JSON.stringify("9".repeat(64))},cleanSetfarmSourceSha:operation.controllerSource.sha,cleanSetfarmTreeHash:operation.controllerSource.treeHash,cleanSetfarmBuildHash:operation.controllerSource.buildHash,observedSpawnerGenerationHash:census.spawner.generationHash};
 export async function observePreparedInternalProductionCurrentEntryOperationV1(){return operation}
 export async function resolveInternalProductionCurrentEntryOperationV1(){return operation}
@@ -622,14 +630,24 @@ export async function resolveInternalProductionLegacyPreManifestZeroOwnerObserva
 `, "utf8");
     writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), `
 let invokes=0;
+export const inputs = [];
 const lease=Object.freeze({schema:"setfarm.internal-production-physical-service-restart-authority-transition-lease.v1"});
 export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return lease}
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}
-export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){invokes+=1;throw new Error(invokes===1?"HELPER_DISPATCH_SETTLEMENT_UNKNOWN":"SECOND_REACHED_RETIREMENT")}
+export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input){inputs.push(input);invokes+=1;throw new Error(invokes===1?"HELPER_DISPATCH_SETTLEMENT_UNKNOWN":"SECOND_REACHED_RETIREMENT")}
 `, "utf8");
     const module = await import(`${pathToFileURL(path.join(internal, "baseline-spawner-startup-admission-v1.ts")).href}?reentry=${Date.now()}`);
     const authorization = await module.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1();
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+    const retirement = await import(pathToFileURL(path.join(internal, "baseline-restart-authority-retirement-v1.ts")).href);
+    const receipt = await import(pathToFileURL(path.join(internal, "baseline-post-handoff-receipt-v1.ts")).href);
+    const restart = await module.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(retirement.inputs[0].restartAuthority);
+    assert.equal(restart.schema, "setfarm.internal-production-pre-schema-spawner-restart-authority.v2");
+    assert.equal(restart.preMutationLoadedRuntimeServiceAuthorityHash, receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityHash);
+    assert.equal(restart.launchProfileHash, receipt.profile.profileHash);
+    assert.equal(restart.transport, "direct-detached-node-v1");
+    assert.equal(restart.executable, undefined);
+    assert.ok(receipt.directCalls.p3 > 0 && receipt.directCalls.profile > 0);
     const blocked = await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
     assert.equal(blocked.state, "blocked");
     assert.equal(blocked.refusalCode, "HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
@@ -638,6 +656,7 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     const collisionTemporary = path.join(operationDirectory, ".03-restart-authority.pair.json.123e4567-e89b-42d3-a456-426614174000.tmp");
     writeFileSync(collisionTemporary, readFileSync(restartFinal), { mode: 0o600 });
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    assert.deepEqual(retirement.inputs[1], retirement.inputs[0], "recovery must reuse the exact persisted V2 pair");
     assert.throws(() => readFileSync(collisionTemporary), /ENOENT/, "exact EEXIST collision temp must be cleaned before recovery advances");
     const laterTemporary = path.join(operationDirectory, ".07-sealed-admission.pair.json.123e4567-e89b-42d3-a456-426614174000.tmp");
     const sealedHash = "a".repeat(64);
@@ -645,6 +664,101 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /not the immediate next publication/);
     unlinkSync(laterTemporary);
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    const invocationCount = retirement.inputs.length;
+    const persistedPairBytes = readFileSync(restartFinal);
+    const originalP3 = structuredClone(receipt.preMutation);
+    const originalProfile = structuredClone(receipt.profile);
+    const restoreEvidence = () => {
+      for (const key of Object.keys(receipt.preMutation)) delete receipt.preMutation[key];
+      Object.assign(receipt.preMutation, structuredClone(originalP3));
+      for (const key of Object.keys(receipt.profile)) delete receipt.profile[key];
+      Object.assign(receipt.profile, structuredClone(originalProfile));
+    };
+    const faults: Array<readonly [string, () => void]> = [
+      ["P3 operation", () => { receipt.preMutation.currentEntryOperationHash = "c".repeat(64); }],
+      ["P3 pair", () => { receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityHash = "c".repeat(64); receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityRef = `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"c".repeat(64)}`; }],
+      ["predecessor PID", () => { receipt.preMutation.spawner.pid += 1; }],
+      ["predecessor start", () => { receipt.preMutation.spawner.processStartTimeEpochMs += 1; }],
+      ["predecessor identity", () => { receipt.preMutation.spawner.processIdentityHash = "c".repeat(64); }],
+      ["predecessor service", () => { receipt.preMutation.spawner.serviceIdentityHash = "c".repeat(64); }],
+      ["predecessor generation", () => { receipt.preMutation.spawner.generationHash = "c".repeat(64); }],
+      ["predecessor source", () => { receipt.preMutation.spawner.loadedBuildHash = "c".repeat(64); }],
+      ["predecessor owners", () => { receipt.preMutation.spawner.processOwnerCount = 2; }],
+      ["predecessor listener", () => { receipt.preMutation.spawner.listener = {}; }],
+      ["profile hash", () => { receipt.profile.profileHash = "c".repeat(64); }],
+      ["profile UID", () => { receipt.profile.uid += 1; const { profileHash, ...body } = receipt.profile; receipt.profile.profileHash = hashCanonicalJson(body); }],
+      ["profile source", () => { receipt.profile.source.buildHash = "c".repeat(64); const { profileHash, ...body } = receipt.profile; receipt.profile.profileHash = hashCanonicalJson(body); }],
+    ];
+    for (const [label, mutate] of faults) {
+      restoreEvidence(); mutate();
+      await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /direct startup/, label);
+      await assert.rejects(module.observeInternalProductionPreSchemaSpawnerRebindStatusV1(), /direct startup/, `${label}: observed replay`);
+      assert.equal(retirement.inputs.length, invocationCount, `${label}: no helper invocation`);
+      assert.deepEqual(readFileSync(restartFinal), persistedPairBytes, `${label}: no authority replacement`);
+    }
+    restoreEvidence();
+    await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    receipt.directFault.profileHook = () => { receipt.preMutation.spawner.pid += 1; };
+    await assert.rejects(module.observeInternalProductionPreSchemaSpawnerRebindStatusV1(), /direct startup/, "P3 must be reauthenticated after the profile await");
+    restoreEvidence();
+    receipt.directFault.profileHook = null;
+
+    // Seed an internally consistent historical V1 graph, including its status
+    // links. This changes only disposable fixture evidence, never the emitter.
+    const { restartAuthorityRef, restartAuthorityHash, transport, launchProfileHash, terminationSignal,
+      maximumTerminationDispatchCount, maximumSpawnDispatchCount, preMutationLoadedRuntimeServiceAuthorityRef,
+      preMutationLoadedRuntimeServiceAuthorityHash, ...common } = restart;
+    const v1Body = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1",
+      launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: ["kickstart", "-k", `gui/${process.getuid!()}/com.setrox.setfarm-spawner`] };
+    const v1Hash = hashCanonicalJson(v1Body);
+    const v1Pair = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${v1Hash}`, restartAuthorityHash: v1Hash };
+    const store = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+    const saveRecord = (kind: string, hash: string, value: unknown) => {
+      const file = path.join(store, kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+      mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      writeFileSync(file, `${canonical(value)}\n`, { mode: 0o600 });
+      return file;
+    };
+    const crossedProcessHash = "d".repeat(64);
+    const { restartAuthorityRef: unusedRef, restartAuthorityHash: unusedHash, ...crossedBody } = restart;
+    crossedBody.predecessorSpawnerProcessIdentityHash = crossedProcessHash;
+    crossedBody.predecessorSpawnerProcessIdentityRef = `setfarm://internal-production/spawner-process-identity/sha256/${crossedProcessHash}`;
+    const crossedHash = hashCanonicalJson(crossedBody);
+    const crossedPair = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${crossedHash}`, restartAuthorityHash: crossedHash };
+    saveRecord("restart-authority", crossedHash, { ...crossedBody, ...crossedPair });
+    unlinkSync(restartFinal);
+    writeFileSync(collisionTemporary, `${canonical(crossedPair)}\n`, { mode: 0o600 });
+    const crossedTemporaryBytes = readFileSync(collisionTemporary);
+    await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /crossed/);
+    assert.equal(existsSync(restartFinal), false, "crossed predecessor must refuse before publishing its recovery temporary");
+    assert.deepEqual(readFileSync(collisionTemporary), crossedTemporaryBytes);
+    unlinkSync(collisionTemporary);
+    writeFileSync(restartFinal, persistedPairBytes, { mode: 0o600 });
+    const v1Record = saveRecord("restart-authority", v1Hash, { ...v1Body, ...v1Pair });
+    writeFileSync(restartFinal, `${canonical(v1Pair)}\n`);
+    for (const basename of ["status-02-restart-authority-published", "status-blocked-helper-dispatch-settlement-unknown"]) {
+      const file = path.join(operationDirectory, `${basename}.pair.json`);
+      const pair = JSON.parse(readFileSync(file, "utf8"));
+      const { statusRef, statusHash, ...body } = await module.resolveInternalProductionPreSchemaSpawnerRebindStatusV1({ statusRef: pair.statusRef, statusHash: pair.statusHash });
+      body.restartAuthority = v1Pair;
+      const hash = hashCanonicalJson(body);
+      const replacement = { statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${hash}`, statusHash: hash };
+      saveRecord("status", hash, { ...body, ...replacement });
+      writeFileSync(file, `${canonical(replacement)}\n`);
+    }
+    const v1Bytes = readFileSync(v1Record), v1PairBytes = readFileSync(restartFinal);
+    const callsBeforeV1 = { ...receipt.directCalls };
+    // Invalid direct evidence must be completely irrelevant to V1 replay.
+    receipt.preMutation.spawner.pid = -1;
+    receipt.profile.profileHash = "invalid";
+    for (let replay = 0; replay < 2; replay += 1) {
+      await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+      assert.equal((await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1()).state, "blocked");
+      assert.deepEqual(retirement.inputs.at(-1).restartAuthority, v1Pair);
+      assert.deepEqual(readFileSync(v1Record), v1Bytes);
+      assert.deepEqual(readFileSync(restartFinal), v1PairBytes);
+      assert.deepEqual(receipt.directCalls, callsBeforeV1, "V1 replay must call neither new direct port");
+    }
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

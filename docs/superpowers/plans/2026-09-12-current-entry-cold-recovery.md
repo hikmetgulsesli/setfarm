@@ -832,6 +832,23 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
 - [ ] Emit fresh startup V2 from original operation P3 and authenticated launch
   profile; persisted V1 calls no new direct port. Persisted V2 reauthenticates
   exact original pairs, constants/source/startup/predecessor without downgrade.
+  Startup-owning slice implemented: fresh V2 binds historical operation P3 and
+  the authenticated profile hash; recovery preflight, held-lease replay and
+  observed-material replay discriminate transport. V1 loads neither direct
+  port and retains its exact record/pair bytes. The receipt-side physical,
+  nested and final-graph consumers remain coupled pending work, so this box
+  is deliberately not complete and live rollout remains prohibited.
+  TDD first exposed V1 emission (session6077). Independent review then found
+  two causally required prepublication fixes in the same File Map: reauthenticate
+  P3 after the profile await (RED61114), and compare the restart/startup
+  predecessor process pair before completing a recovery temporary (RED56533).
+  Both now refuse with preserved publication boundaries. Final startup suite
+  passed12/12 (session51518,5.831s), including13 evidence-drift variants in both
+  recovery and observation, exact V2 pair reuse, the two review regressions,
+  and two byte-preserving historical V1 replays with invalid direct evidence
+  and zero calls to either new port. TypeScript no-emit passed(session37537).
+  Independent localized re-review found no remaining substantive issue.
+  Source manifests passed17/17(session71010,5.860s); whitespace passed.
 - [ ] Bracket phase-zero with stable helper census: absent or fully authenticated
   terminal only; partial, appearance/disappearance and ABA refuse. Require
   terminal explicitly at all cutover/zero-owner guard consumers. Preserve the
