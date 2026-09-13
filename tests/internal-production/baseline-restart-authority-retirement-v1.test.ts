@@ -602,8 +602,9 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
   }
 });
 
-test("shared historical launch profile and direct intent do not import cold permission", async () => {
+async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before") {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
+  let targetPid: number | undefined, targetIdentity: ReturnType<typeof parseColdFixtureExitRowV1> | undefined;
   try {
     const source = readFileSync(sourcePath, "utf8"), typescript = await import("typescript");
     const tree = typescript.createSourceFile(sourcePath, source, typescript.ScriptTarget.Latest, true);
@@ -681,7 +682,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
       assert.equal(runtimeSource.split(marker).length - 1, 1, `instrument only the actual ${name} import`);
       runtimeSource = runtimeSource.replace(marker, `  ${name} as actualDirect_${name},\n`);
     }
-    const runtimePath = installRetirementFixture(fixture, runtimeSource + `
+    const runtimePath = installRetirementFixture(fixture, runtimeSource.replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
 function publishDirectSpawnerRebindIntentV1(state){const probe=globalThis.__directIntentPublicationFixtureV1;if(!probe)return actualDirectIntentPublisherFixtureV1(state);probe.attempts++;probe.intent=state.intent;if(probe.fault==='before'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BEFORE')}const result=actualDirectIntentPublisherFixtureV1(state);if(probe.fault==='after'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_AFTER')}return result}
@@ -691,15 +692,35 @@ function directPublicationFaultFixtureV1(probe){probe.fault=null;throw Error('DI
 function fsyncSync(fd){const current=directPublicationProbeFixtureV1();if(current&&fd===current.state.publication.descriptor){const{state,probe}=current;if(probe.fault==='temporary-sync'&&!existsSync(rootPaths().journal))directPublicationFaultFixtureV1(probe);if(probe.fault==='linked-sync'&&existsSync(rootPaths().journal)&&existsSync(state.publication.temporary))directPublicationFaultFixtureV1(probe)}return actualDirect_fsyncSync(fd)}
 function linkSync(from,to){const current=directPublicationProbeFixtureV1();if(!current||from!==current.state.publication.temporary)return actualDirect_linkSync(from,to);const{probe}=current;probe.links++;if(probe.fault==='link-before')directPublicationFaultFixtureV1(probe);actualDirect_linkSync(from,to);if(probe.fault==='link-after')directPublicationFaultFixtureV1(probe)}
 function unlinkSync(file){const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.temporary)return actualDirect_unlinkSync(file);const{probe}=current;probe.unlinks++;if(probe.fault==='unlink-before')directPublicationFaultFixtureV1(probe);actualDirect_unlinkSync(file);if(probe.fault==='unlink-after')directPublicationFaultFixtureV1(probe)}
-function writeFileSync(file,bytes,...args){const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.descriptor)return actualDirect_writeFileSync(file,bytes,...args);const{probe}=current;probe.writes++;if(probe.fault==='partial-write'){actualDirect_writeFileSync(file,bytes.subarray(0,17),...args);directPublicationFaultFixtureV1(probe)}actualDirect_writeFileSync(file,bytes,...args);if(probe.fault==='write-after')directPublicationFaultFixtureV1(probe)}
+function writeFileSync(file,bytes,...args){if(file===retainedDirectSpawnerRebindIntentV1?.termination?.dispatch?.descriptor||file===retainedDirectSpawnerRebindIntentV1?.termination?.receipt?.descriptor){actualDirect_writeFileSync(file,bytes,...args);globalThis.__directTerminationPublicationHook?.(file===retainedDirectSpawnerRebindIntentV1.termination.dispatch.descriptor?'dispatch':'receipt');return}const current=directPublicationProbeFixtureV1();if(!current||file!==current.state.publication.descriptor)return actualDirect_writeFileSync(file,bytes,...args);const{probe}=current;probe.writes++;if(probe.fault==='partial-write'){actualDirect_writeFileSync(file,bytes.subarray(0,17),...args);directPublicationFaultFixtureV1(probe)}actualDirect_writeFileSync(file,bytes,...args);if(probe.fault==='write-after')directPublicationFaultFixtureV1(probe)}
 export function disturbDirectPublicationDescriptorFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1;closeSync(state.publication.descriptor);state.publication.descriptor=openSync('/dev/null',constants.O_RDONLY)}
-export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
+export async function terminateDirectFixtureV1(lease,input){return await terminateDirectSpawnerRebindPredecessorV1(lease,input)}
+function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
+export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
 `);
     const internal = path.dirname(runtimePath);
     const environment = { PATH: "/usr/bin:/bin", PRIVATE_VALUE: "direct-fixture-secret" };
     const directProfile = rehash({ ...structuredClone(profile), environmentHash: sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`) });
+    directProfile.executable.path = process.execPath;
+    for (let target = path.dirname(process.execPath); ; target = path.dirname(target)) {
+      if (!directProfile.hostDirectories.some((entry: any) => entry.path === target)) directProfile.hostDirectories.push({ path: target, ...metadata });
+      if (path.dirname(target) === target) break;
+    }
+    rehash(directProfile);
+    const entry = directProfile.arguments[0], ready = path.join(fixture, "direct-target-ready"), signals = path.join(fixture, "direct-target-signals");
+    mkdirSync(path.dirname(entry), { recursive: true, mode: 0o700 });
+    writeFileSync(entry, `import{writeFileSync,appendFileSync,renameSync,existsSync}from'node:fs';process.on('SIGTERM',()=>{appendFileSync(${JSON.stringify(signals)},'SIGTERM\\n',{mode:0o600});if(${JSON.stringify(mode)}!=='ignored')process.exit(0)});const ready=${JSON.stringify(ready)};writeFileSync(ready+'.pending',String(process.pid),{mode:0o600,flag:'wx'});renameSync(ready+'.pending',ready);setInterval(()=>{if(existsSync(${JSON.stringify(path.join(fixture, "direct-owned-stop"))}))process.exit(0)},50);\n`, { mode: 0o600 });
+    directProfile.outputTreeBytesHash = sha256(readFileSync(entry, "utf8")); rehash(directProfile);
+    const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from'node:child_process';const child=spawn(process.execPath,[${JSON.stringify(entry)}],{cwd:${JSON.stringify(repository)},detached:true,stdio:'ignore'});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3000 });
+    assert.equal(launcher.status, 0, launcher.stderr); assert.match(launcher.stdout, /^[1-9][0-9]*$/);
+    targetPid = Number(launcher.stdout);
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(readFileSync(ready, "utf8"), String(targetPid));
+    targetIdentity = observeColdFixtureExitV1(targetPid)!;
+    assert.ok(targetIdentity); assert.equal(targetIdentity.command, `${process.execPath} ${entry}`);
+    assert.equal(targetIdentity.uid, String(uid)); assert.equal(targetIdentity.pgid, String(targetPid));
     const operation = { ...pair("operation", "current-entry-operation"), schema: "setfarm.internal-production-current-entry-operation.v1", purpose: "task6a-internal-production-current-entry-v1", controllerSource: directProfile.source, authorityV3Migration31Audit: pair("authorityV3Migration31Audit", "authority-v3-migration31-audit") };
-    const predecessor = { schema: "setfarm.internal-production-spawner-process-identity.v1", pid: 12345, processStartTimeEpochMs: 123456, processIdentityHash: "e".repeat(64) };
+    const predecessor = { schema: "setfarm.internal-production-spawner-process-identity.v1", pid: targetPid, processStartTimeEpochMs: Date.parse(targetIdentity.lstart), processIdentityHash: sha256(`${targetPid}\n${targetIdentity.lstart}\n`) };
     const predecessorHash = sha256(canonical(predecessor));
     const predecessorFields = { predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`, predecessorSpawnerProcessIdentityHash: predecessorHash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash };
     const sourceFields = { targetSpawnerSourceSha: directProfile.source.sha, targetSpawnerTreeHash: directProfile.source.treeHash, targetSpawnerBuildHash: directProfile.source.buildHash };
@@ -710,9 +731,11 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
     const restart = { schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", ...pair("restartAuthority", "pre-schema-spawner-restart-authority"), currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startup.startupTokenRef, startupTokenHash: startup.startupTokenHash, ...predecessorFields, ...sourceFields, ...preMutationPair, uid, actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", transport: "direct-detached-node-v1", launchProfileHash: directProfile.profileHash, terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
     const legacy = { ...pair("observation", "legacy-pre-manifest-zero-owner-observation"), schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1", observationKind: "legacy-pre-manifest-existing-live-truth", ...operation.authorityV3Migration31Audit, cleanSetfarmSourceSha: directProfile.source.sha, cleanSetfarmTreeHash: directProfile.source.treeHash, cleanSetfarmBuildHash: directProfile.source.buildHash, observedSpawnerGenerationHash: hash };
     Object.assign(authorization, operation.authorityV3Migration31Audit, { legacyZeroOwnerObservationRef: legacy.observationRef, legacyZeroOwnerObservationHash: legacy.observationHash });
-    const records = { operation, restart, startup, authorization, legacy, preMutation, profile: directProfile, environment };
+    const censusBody = { schema: "setfarm.internal-production-service-census.v1", ...(coldGenesisObservationFixture(fixture).remainingServices as object),
+      spawner: { ...preMutation.spawner, loadedSourceSha: directProfile.source.sha, loadedTreeHash: directProfile.source.treeHash, loadedBuildHash: directProfile.source.buildHash } };
+    const records = { operation, restart, startup, authorization, legacy, preMutation, profile: directProfile, environment, census: { ...censusBody, censusHash: sha256(canonical(censusBody)) } };
     const readPort = `const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.calls.push(key);state.hook?.(key);return structuredClone(state.records[key])};\n`;
-    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `export async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const result={profile:read('profile')};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `import{readFileSync}from'node:fs';import{createHash}from'node:crypto';${canonical.toString()}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionServiceCensusV1(){return read('census')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const profile=read('profile');profile.outputTreeBytesHash=createHash('sha256').update(readFileSync(${JSON.stringify(entry)})).digest('hex');delete profile.profileHash;profile.profileHash=createHash('sha256').update(canonical(profile)).digest('hex');const result={profile};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readPort + `export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(){return read('restart')}\nexport async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return read('startup')}\nexport async function resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1(){return read('authorization')}\n`);
     const processRecord = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), predecessorHash + ".json");
     mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
@@ -800,12 +823,100 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
         Reflect.deleteProperty(globalThis, "__directIntentPublicationFixtureV1");
         lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
       }
+      await run();
+      const signalProbe = { calls: [] as Array<{ pid: number; signal: string }>, responseLoss: mode === "response-loss", before: mode === "signal-before" };
+      Reflect.set(globalThis, "__directSignalFixtureV1", signalProbe);
+      if (mode === "response-loss") {
+        for (const field of ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "loadedSourceSha", "loadedTreeHash", "loadedBuildHash", "processOwnerCount", "listener"]) {
+          await run(value => { const old = value.census.spawner[field]; value.census.spawner[field] = typeof old === "number" ? old + 1 : field === "listener" ? { port: 3333 } : "f".repeat(typeof old === "string" ? old.length : 64); });
+          await assert.rejects(runtime.terminateDirectFixtureV1(lease, input), /fresh predecessor census/, `${field}: refreshed authority cannot substitute for the original predecessor`);
+          assert.deepEqual(signalProbe.calls, []);
+        }
+        await run();
+      }
+      if (mode === "dispatch-write" || mode === "receipt-write") {
+        Reflect.set(globalThis, "__directTerminationPublicationHook", (phase: string) => { if (mode === `${phase}-write`) throw Error("DIRECT_TERMINATION_PUBLICATION_FAULT"); });
+        await assert.rejects(runtime.terminateDirectFixtureV1(lease, input), /DIRECT_TERMINATION_PUBLICATION_FAULT/);
+        const privateRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1");
+        const before = coldGenesisTreeSnapshotV1(privateRoot);
+        Reflect.deleteProperty(globalThis, "__directTerminationPublicationHook");
+        await assert.rejects(runtime.terminateDirectFixtureV1(lease, input), /publication is uncertain/);
+        assert.deepEqual(coldGenesisTreeSnapshotV1(privateRoot), before, "an uncertain publication is neither rewritten nor admitted on retry");
+        assert.equal(signalProbe.calls.length, mode === "dispatch-write" ? 0 : 1);
+        if (mode === "dispatch-write") assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(targetPid), targetIdentity), "running");
+        else assert.equal(observeColdFixtureExitV1(targetPid), null);
+        await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+        return;
+      }
+      if (mode === "profile-drift") {
+        Reflect.set(globalThis, "__directTerminationPublicationHook", () => writeFileSync(entry, readFileSync(entry, "utf8") + "// drift after dispatch publication\n", { mode: 0o600 }));
+        await assert.rejects(runtime.terminateDirectFixtureV1(lease, input), /profile|source/, "dispatch publication cannot hide a changed launch output from the last signal gate");
+        assert.deepEqual(signalProbe.calls, []);
+        assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(targetPid), targetIdentity), "running");
+        await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+        return;
+      }
+      await assert.rejects(runtime.terminateDirectFixtureV1(lease, input), mode === "ignored" ? /DIRECT_TERMINATION_PENDING/ : mode === "signal-before" ? /DIRECT_SIGNAL_BEFORE/ : /DIRECT_SIGNAL_RESPONSE_LOST/);
+      let terminal: any;
+      if (mode === "ignored" || mode === "signal-before") {
+        assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(targetPid), targetIdentity), "running");
+        assert.deepEqual(readdirSync(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1")), ["termination-dispatch.json"]);
+        await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+        const retry = runtime.terminateDirectFixtureV1(lease, input);
+        await new Promise(resolve => setTimeout(resolve, 150));
+        assert.equal(signalProbe.calls.length, 1, "retry while the ignored target is alive cannot signal twice");
+        writeFileSync(path.join(fixture, "direct-owned-stop"), "owned test teardown", { mode: 0o600, flag: "wx" });
+        terminal = await retry;
+      } else terminal = await runtime.terminateDirectFixtureV1(lease, input);
+      assert.equal(terminal.schema, "setfarm.internal-production-pre-schema-spawner-direct-termination-receipt.v1");
+      assert.equal(terminal.observedProcessState, "terminal-and-not-running");
+      assert.equal(terminal.terminationSignal, "SIGTERM");
+      assert.equal(terminal.signalDispatchCount, 1);
+      assert.equal(terminal.controller.pid, process.pid);
+      assert.deepEqual(signalProbe.calls, [{ pid: targetPid, signal: "SIGTERM" }]);
+      if (mode === "signal-before") assert.equal(existsSync(signals), false, "a failed pre-effect signal response cannot be retried as another syscall");
+      else assert.equal(readFileSync(signals, "utf8"), "SIGTERM\n");
+      assert.equal(observeColdFixtureExitV1(targetPid), null);
+      assert.deepEqual(await runtime.terminateDirectFixtureV1(lease, input), terminal);
+      assert.equal(signalProbe.calls.length, 1, "terminal replay cannot signal or spawn again");
+      await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+      const privateRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1");
+      assert.deepEqual(readdirSync(privateRoot).sort(), ["termination-dispatch.json", "termination-receipt.json"]);
     } finally {
       Reflect.deleteProperty(globalThis, "__directRebindInputFixtureV1");
       Reflect.deleteProperty(globalThis, "__directIntentPublicationFixtureV1");
+      Reflect.deleteProperty(globalThis, "__directSignalFixtureV1");
+      Reflect.deleteProperty(globalThis, "__directTerminationPublicationHook");
       await runtime.releaseDirectPreparationFixtureV1(lease);
     }
-  } finally { rmSync(fixture, { recursive: true, force: true }); }
+  } finally {
+    if (targetPid !== undefined) {
+      const observed = observeColdFixtureExitV1(targetPid);
+      if (observed) {
+        assert.ok(targetIdentity, "fixture cleanup requires the original target identity");
+        if (assertColdFixtureExitObservationV1(observed, targetIdentity) === "running") {
+          if (mode === "ignored") writeFileSync(path.join(fixture, "direct-owned-stop"), "owned test teardown", { mode: 0o600 });
+          else process.kill(targetPid, "SIGTERM");
+        }
+        const deadline = Date.now() + 5000;
+        for (let next = observeColdFixtureExitV1(targetPid); next && Date.now() < deadline; next = observeColdFixtureExitV1(targetPid)) {
+          assertColdFixtureExitObservationV1(next, targetIdentity);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.equal(observeColdFixtureExitV1(targetPid), null);
+      }
+    }
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+test("shared historical launch profile and direct intent do not import cold permission", () => exerciseDirectRebindFixtureV1("response-loss"));
+test("direct termination refuses output drift after its dispatch publication", () => exerciseDirectRebindFixtureV1("profile-drift"));
+test("direct termination retains its fence when the actual predecessor ignores SIGTERM", () => exerciseDirectRebindFixtureV1("ignored"));
+test("direct termination refuses uncertain dispatch and receipt publications without redispatch", async () => {
+  await exerciseDirectRebindFixtureV1("dispatch-write");
+  await exerciseDirectRebindFixtureV1("receipt-write");
+  await exerciseDirectRebindFixtureV1("signal-before");
 });
 
 async function createColdHelperAuthenticationFixtureV1(helperSourceTransform?: (source: string) => string, runnerSetup = "", configureProfile?: (profile: any, root: string) => void,

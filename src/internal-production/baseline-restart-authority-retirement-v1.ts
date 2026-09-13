@@ -140,6 +140,21 @@ type LeaseStateV1 = {
 };
 
 const leases = new WeakMap<object, LeaseStateV1>();
+type DirectTerminationPublicationV1 = {
+  record: Readonly<Record<string, unknown>>;
+  file: string;
+  descriptor: number | null;
+  identity: BigIntStats | null;
+  started: boolean;
+  synced: boolean;
+};
+type DirectSpawnerTerminationStateV1 = {
+  rootGuard: PrivateDirectoryGuardV1;
+  dispatch: DirectTerminationPublicationV1 | null;
+  signalEntered: boolean;
+  signalReturned: boolean;
+  receipt: DirectTerminationPublicationV1 | null;
+};
 type DirectSpawnerRebindIntentStateV1 = {
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
   inputs: Awaited<ReturnType<typeof resolveDirectSpawnerRebindInputsUnderLeaseV1>>;
@@ -158,9 +173,11 @@ type DirectSpawnerRebindIntentStateV1 = {
     unlinkAttempted: boolean;
     committed: boolean;
   };
+  termination: DirectSpawnerTerminationStateV1 | null;
 };
 let retainedDirectSpawnerRebindIntentV1: DirectSpawnerRebindIntentStateV1 | null = null;
 let directSpawnerRebindPreparationActiveV1 = false;
+let directSpawnerTerminationActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -1061,7 +1078,7 @@ async function prepareDirectSpawnerRebindIntentV1(
       const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
       // Register before any publication attempt, including failures before the
       // intent becomes visible. Ordinary release must not discard this owner.
-      retainedDirectSpawnerRebindIntentV1 = { lease, inputs, intent, nonce, lockIdentity, rootGuard, epochPin: null, intentPin: null,
+      retainedDirectSpawnerRebindIntentV1 = { lease, inputs, intent, nonce, lockIdentity, rootGuard, epochPin: null, intentPin: null, termination: null,
         publication: { temporary, descriptor: null, identity: null, openAttempted: false, linkAttempted: false, unlinkAttempted: false, committed: false } };
     }
     const state = retainedDirectSpawnerRebindIntentV1;
@@ -1092,6 +1109,157 @@ async function prepareDirectSpawnerRebindIntentV1(
     assertStable();
     return state.intent;
   } finally { directSpawnerRebindPreparationActiveV1 = false; }
+}
+
+function observeDirectSpawnerTerminationTargetV1(pid: number) {
+  if (!Number.isSafeInteger(pid) || pid < 1 || pid === process.pid) fail("direct termination target PID is invalid");
+  const observed = spawnSync("/bin/ps", ["-ww", "-p", String(pid), "-o", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="], {
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, shell: false, encoding: "utf8", timeout: 2000, maxBuffer: 65_536,
+  });
+  if (!observed.error && !observed.signal && observed.status === 1 && observed.stdout === "" && observed.stderr === "") return null;
+  const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+(\S+)\s+(.{24})\s+([^\r\n]+)\n$/.exec(observed.stdout);
+  if (observed.error || observed.signal || observed.status !== 0 || observed.stderr !== "" || !match) return fail("direct termination process observation is ambiguous");
+  const [uid, actualPid, ppid, pgid] = match.slice(1, 5).map(Number), lstart = match[6]!;
+  const processStartTimeEpochMs = Date.parse(lstart);
+  if ([uid, actualPid, ppid, pgid, processStartTimeEpochMs].some(value => !Number.isSafeInteger(value))
+    || actualPid !== pid || processStartTimeEpochMs < 1) fail("direct termination process identity is malformed");
+  return Object.freeze({ uid: uid!, pid, ppid: ppid!, pgid: pgid!, stat: match[5]!, lstart, command: match[7]!, processStartTimeEpochMs,
+    processIdentityHash: sha256(`${pid}\n${lstart}\n`) });
+}
+
+function assertDirectSpawnerSignalTargetV1(state: DirectSpawnerRebindIntentStateV1) {
+  const profile = state.inputs.profile as Record<string, any>, predecessor = state.inputs.preMutation.spawner as Record<string, any>;
+  const current = observeDirectSpawnerTerminationTargetV1(predecessor.pid);
+  if (!current || current.uid !== profile.uid || current.ppid !== 1 || current.pgid !== current.pid || /[ZE]/.test(current.stat)
+    || current.processStartTimeEpochMs !== predecessor.processStartTimeEpochMs || current.processIdentityHash !== predecessor.processIdentityHash
+    || current.command !== `${profile.executable.path} ${profile.arguments[0]}`) return fail("direct termination stored predecessor identity is crossed");
+  const command = (executable: string, arguments_: string[]) => {
+    const result = spawnSync(executable, arguments_, { env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, shell: false, encoding: "utf8", timeout: 2000, maxBuffer: 65_536 });
+    if (result.error || result.signal || result.status !== 0 || result.stderr !== "") fail("direct termination target executable/cwd observation failed");
+    return result.stdout;
+  };
+  if (command("/bin/ps", ["-ww", "-p", String(current.pid), "-o", "comm="]) !== `${profile.executable.path}\n`) fail("direct termination executable is crossed");
+  const cwd = command("/usr/sbin/lsof", ["-a", "-p", String(current.pid), "-d", "cwd", "-F0pcRfn"]);
+  if (!cwd.endsWith("\0\n") || cwd.includes("\r")) fail("direct termination cwd is malformed");
+  const fields = cwd.split("\0").map(field => field.replace(/^\n+/, "")).filter(Boolean);
+  for (const [prefix, expected] of [["p", String(current.pid)], ["R", "1"], ["n", profile.cwd]] as const) {
+    if (canonical(fields.filter(field => field.startsWith(prefix))) !== canonical([`${prefix}${expected}`])) fail("direct termination cwd is crossed");
+  }
+  const after = observeDirectSpawnerTerminationTargetV1(current.pid);
+  if (!after || ["uid", "pid", "ppid", "pgid", "lstart", "command", "processIdentityHash"].some(key => after[key as keyof typeof after] !== current[key as keyof typeof current])
+    || /[ZE]/.test(after.stat)) fail("direct termination target changed before signal");
+  return current;
+}
+
+function assertDirectTerminationPublicationV1(publication: DirectTerminationPublicationV1): void {
+  if (!publication.synced || publication.descriptor === null || publication.identity === null
+    || !sameColdFileMetadataV1(publication.identity, fstatSync(publication.descriptor, { bigint: true }))
+    || !readColdGenesisCandidateV1(publication.file, publication.identity).equals(Buffer.from(`${canonical(publication.record)}\n`))) fail("direct termination publication is uncertain or crossed");
+}
+
+function publishDirectTerminationRecordV1(publication: DirectTerminationPublicationV1, guard: PrivateDirectoryGuardV1): void {
+  guard.assertStable();
+  if (publication.started) { assertDirectTerminationPublicationV1(publication); guard.assertStable(); return; }
+  publication.started = true;
+  publication.descriptor = openSync(publication.file, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+  const created = fstatSync(publication.descriptor, { bigint: true });
+  publication.identity = created;
+  const bytes = Buffer.from(`${canonical(publication.record)}\n`);
+  if (bytes.length > 1_048_576 || !created.isFile() || created.nlink !== 1n || created.uid !== BigInt(process.getuid!())
+    || (created.mode & 0o7777n) !== 0o600n || created.size !== 0n
+    || !sameColdFileMetadataV1(created, lstatSync(publication.file, { bigint: true }))) fail("direct termination publication creation is crossed");
+  writeFileSync(publication.descriptor, bytes);
+  fsyncSync(publication.descriptor);
+  fsyncParent(publication.file);
+  const written = fstatSync(publication.descriptor, { bigint: true });
+  if (written.dev !== created.dev || written.ino !== created.ino || written.uid !== created.uid || written.gid !== created.gid
+    || written.mode !== created.mode || written.birthtimeNs !== created.birthtimeNs || written.nlink !== 1n
+    || !readColdGenesisCandidateV1(publication.file, written).equals(bytes)) fail("direct termination publication changed while written");
+  publication.identity = written;
+  publication.synced = true;
+  assertDirectTerminationPublicationV1(publication); guard.assertStable();
+}
+
+async function terminateDirectSpawnerRebindPredecessorV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
+): Promise<Readonly<Record<string, unknown>>> {
+  if (directSpawnerTerminationActiveV1) fail("direct termination invocation is already active");
+  directSpawnerTerminationActiveV1 = true;
+  try {
+    await prepareDirectSpawnerRebindIntentV1(lease, input);
+    const state = retainedDirectSpawnerRebindIntentV1!;
+    const root = path.join(rootPaths().root, "direct-spawner-rebind-v1");
+    state.termination ??= { rootGuard: ensurePrivateAuthorityDirectoryV1(root), dispatch: null, signalEntered: false, signalReturned: false, receipt: null };
+    const termination = state.termination, held = heldLease(lease), predecessor = state.inputs.preMutation.spawner as Record<string, any>;
+    const assertStable = () => {
+      if (retainedDirectSpawnerRebindIntentV1 !== state || state.lease !== lease || heldLease(lease) !== held) fail("direct termination retained owner changed");
+      state.rootGuard.assertStable(); termination.rootGuard.assertStable(); state.epochPin!.assertStable(); state.intentPin!.assertStable();
+      publishDirectSpawnerRebindIntentV1(state);
+      if (!sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+        || !readColdGenesisCandidateV1(rootPaths().lock, state.lockIdentity).equals(held.lockBytes)
+        || canonical(assertEpochOneActive()) !== canonical(state.inputs.epoch)) fail("direct termination original lease changed");
+      const members = [termination.dispatch === null ? null : "termination-dispatch.json", termination.receipt === null ? null : "termination-receipt.json"].filter(value => value !== null);
+      if (canonical(readColdDirectoryMembersV1(root, 2).sort()) !== canonical(members)) fail("direct termination inventory is crossed");
+      if (termination.dispatch !== null) assertDirectTerminationPublicationV1(termination.dispatch);
+      if (termination.receipt !== null) assertDirectTerminationPublicationV1(termination.receipt);
+      termination.rootGuard.assertStable(); state.rootGuard.assertStable();
+    };
+    assertStable();
+    if (termination.receipt !== null) return termination.receipt.record;
+    if (termination.dispatch === null) {
+      const receipt = await import("./baseline-post-handoff-receipt-v1.js"); assertStable();
+      const census = await receipt.observeInternalProductionServiceCensusV1(); assertStable();
+      const fresh = census.spawner;
+      if (["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash", "processOwnerCount", "listener"].some(key => canonical(fresh[key as keyof typeof fresh]) !== canonical(predecessor[key]))
+        || fresh.loadedSourceSha !== state.inputs.restart.targetSpawnerSourceSha || fresh.loadedTreeHash !== state.inputs.restart.targetSpawnerTreeHash
+        || fresh.loadedBuildHash !== state.inputs.restart.targetSpawnerBuildHash) fail("direct termination fresh predecessor census is crossed");
+      const profile = await receipt.observeInternalProductionSpawnerLaunchProfileCandidateV1(); assertStable();
+      if (canonical(profile.profile) !== canonical(state.inputs.profile) || canonical(profile.environment) !== canonical(state.inputs.environment)) fail("direct termination source/profile changed");
+      const target = assertDirectSpawnerSignalTargetV1(state); assertStable();
+      const controller = parseLockRecord(held.lockBytes);
+      const body = { schema: "setfarm.internal-production-pre-schema-spawner-direct-termination-dispatch.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1",
+        intentRef: state.intent.intentRef, intentHash: state.intent.intentHash, intentIdentity: coldFileIdentityTupleV1(state.publication.identity!),
+        controller: { pid: controller.pid, processStartTimeEpochMs: controller.processStartTimeEpochMs, processIdentityHash: controller.processIdentityHash, uid: process.getuid!() },
+        target, serviceCensusHash: census.censusHash, terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1 };
+      const dispatchHash = sha256(canonical(body));
+      const record = freezeColdDataV1({ ...body, dispatchRef: `setfarm://internal-production/pre-schema-spawner-direct-termination-dispatch/sha256/${dispatchHash}`, dispatchHash });
+      termination.dispatch = { record, file: path.join(root, "termination-dispatch.json"), descriptor: null, identity: null, started: false, synced: false };
+      publishDirectTerminationRecordV1(termination.dispatch, termination.rootGuard);
+      assertStable();
+      const finalProfile = await receipt.observeInternalProductionSpawnerLaunchProfileCandidateV1(); assertStable();
+      if (canonical(finalProfile.profile) !== canonical(state.inputs.profile) || canonical(finalProfile.environment) !== canonical(state.inputs.environment)) fail("direct termination source/profile changed after dispatch publication");
+      assertDirectSpawnerSignalTargetV1(state); assertStable();
+      // Retain entry BEFORE the syscall. Even a lost/failed response can never
+      // turn a later invocation into permission for another signal.
+      termination.signalEntered = true;
+      process.kill(predecessor.pid, "SIGTERM");
+      termination.signalReturned = true;
+    }
+    if (!termination.signalEntered) fail("DIRECT_TERMINATION_PENDING: published dispatch did not enter its signal call");
+    for (let attempt = 0; attempt < 40; attempt++) {
+      assertStable();
+      const observed = observeDirectSpawnerTerminationTargetV1(predecessor.pid);
+      if (observed === null) {
+        assertStable();
+        const dispatch = termination.dispatch!.record;
+        const body = { schema: "setfarm.internal-production-pre-schema-spawner-direct-termination-receipt.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1",
+          intentRef: state.intent.intentRef, intentHash: state.intent.intentHash, dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash,
+          controller: dispatch.controller, predecessorSpawnerProcessIdentity: state.intent.predecessorSpawnerProcessIdentity,
+          terminationSignal: "SIGTERM", signalDispatchCount: 1, signalCallOutcome: termination.signalReturned ? "returned" : "response-unknown",
+          observedProcessState: "terminal-and-not-running", observedListenerState: "absent" };
+        const terminationReceiptHash = sha256(canonical(body));
+        const record = freezeColdDataV1({ ...body, terminationReceiptRef: `setfarm://internal-production/pre-schema-spawner-direct-termination-receipt/sha256/${terminationReceiptHash}`, terminationReceiptHash });
+        termination.receipt = { record, file: path.join(root, "termination-receipt.json"), descriptor: null, identity: null, started: false, synced: false };
+        publishDirectTerminationRecordV1(termination.receipt, termination.rootGuard); assertStable();
+        return record;
+      }
+      if (observed.uid !== state.inputs.profile.uid || observed.pgid !== predecessor.pid || observed.processStartTimeEpochMs !== predecessor.processStartTimeEpochMs
+        || observed.processIdentityHash !== predecessor.processIdentityHash) fail("direct termination original PID was reused or crossed");
+      if (attempt < 39) await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return fail("DIRECT_TERMINATION_PENDING: original predecessor remains present");
+  } finally { directSpawnerTerminationActiveV1 = false; }
 }
 
 function assertHelperJournalAllowsLockCleanup(

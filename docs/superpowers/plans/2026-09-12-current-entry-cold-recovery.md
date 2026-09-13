@@ -322,6 +322,42 @@ termination admits the private receipt; it is not a helper settlement, spawn
 grant by itself or lease-release authority. Keep ordinary V2 emission disabled
 until replacement/claim/settlement and runtime routing are connected.
 
+Controller termination kernel in progress (same File Map): private
+`terminateDirectSpawnerRebindPredecessorV1(lease, input)` first authenticates the
+existing retained preparation. Under that original lease it observes the full
+service census and launch profile, checks the actual detached predecessor's
+UID/PID/start/service hash, executable command and cwd, then publishes an
+exclusive controller-attributed termination dispatch. Reobserve the original
+profile/environment after that write and recheck the actual target immediately
+before marking signal entry and calling SIGTERM. A lost or failed signal
+response admits observation only; a still-present or reused PID cannot admit
+replacement. Only positive `ps` absence publishes the private termination
+receipt, with truthful `returned`/`response-unknown` signal-call outcome.
+The receipt is neither helper settlement nor release/spawn permission.
+
+Termination publication errors are deliberately conservative: original FDs and
+lease stay owned, but a partial/unsynced dispatch or receipt is not repaired or
+admitted. Do not claim resumable publication recovery for these records. A fully
+published receipt replay checks original descriptors, bytes, inventory and
+preparation again. All runtime functions remain private/unwired; external
+history parsers and direct helper/child runtime routing must precede V2 emission.
+
+Kernel test evidence so far: missing implementation first failed the genuine
+detached-process fixture. The fixture now uses real signals, `ps`, `lsof`, cwd,
+physical lease and stored predecessor bytes; only independently tested source/
+receipt observation ports are controlled. A real output-file mutation after
+dispatch write then reproduced a missing final-profile rejection before the
+additional check. Ten fresh-census field crosses reject without any signal;
+response loss sends exactly one SIGTERM; ignored SIGTERM preserves the fence
+and retry remains observe-only. An explicit fixture-owned stop channel permits
+test cleanup without adding a production signal fallback. Dispatch/receipt
+write failures preserve exact original files and refuse retry; pre-effect
+signal failure cannot become a second syscall. No live service was signalled.
+Final focused kernel4/4 passed (24.127s), prior lease/V1/cold-boundary checks6/6
+(3.161s), exact145/64 manifest17/17 (5.299s) and fresh no-emit/whitespace passed.
+Independent scoped review found no remaining must-fix. Whole-branch/P3 gates
+remain deferred until the direct helper/child/settlement chain is connected.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
