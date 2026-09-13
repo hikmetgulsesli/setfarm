@@ -87,7 +87,7 @@ export type InternalProductionBaselineServiceRestartHelperRegistryHeadV1 = Reado
 
 export type InternalProductionBaselineServiceRestartHelperJournalCensusV1 = Readonly<{
   schema: "setfarm.internal-production-baseline-service-restart-helper-journal-census.v1";
-  preSchemaHelperState: "terminal";
+  preSchemaHelperState: "absent" | "terminal";
   registeredBaselineHelperJournalCount: number;
   terminalBaselineHelperJournalCount: number;
   liveBaselineHelperJournalCount: number;
@@ -6045,7 +6045,7 @@ function closeNormalHelperJournalsBeforeLockCleanupV1(
   }
 }
 
-function resolvePreSchemaRetainedClosureV1(): Readonly<{ preSchemaHelperJournalHash: string; preSchemaHelperSettlementRef: string; preSchemaHelperSettlementHash: string }> {
+function resolveLegacyPreSchemaRetainedClosureV1(): Readonly<{ preSchemaHelperJournalHash: string; preSchemaHelperSettlementRef: string; preSchemaHelperSettlementHash: string }> {
   const bytes = readStableRetirementBytes(rootPaths().journal, "pre-schema helper journal census");
   let value: unknown;
   try { value = JSON.parse(bytes.toString("utf8")); } catch { return fail("pre-schema helper journal census is not JSON"); }
@@ -6065,17 +6065,94 @@ function resolvePreSchemaRetainedClosureV1(): Readonly<{ preSchemaHelperJournalH
   return Object.freeze({ preSchemaHelperJournalHash: journal.journalHash as string, preSchemaHelperSettlementRef, preSchemaHelperSettlementHash });
 }
 
+function observePreSchemaHelperAbsenceV1(): string | null {
+  for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+  const workspace = resolveInternalProductionBaselineWorkspaceRootV1(), paths = rootPaths();
+  let nearest = paths.root;
+  let before: BigIntStats;
+  for (;;) {
+    try { before = lstatSync(nearest, { bigint: true }); break; }
+    catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT" || nearest === workspace) throw error;
+      nearest = path.dirname(nearest);
+      if (nearest !== workspace && !nearest.startsWith(`${workspace}${path.sep}`)) fail("pre-schema helper ancestry escaped the workspace");
+    }
+  }
+  const guard = authenticatePrivateDirectoryChainV1(workspace, nearest);
+  try {
+    const assertStable = () => {
+      guard.assertStable();
+      if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("pre-schema helper absence ancestor changed");
+    };
+    assertStable();
+    if (nearest === paths.root && readColdDirectoryMembersV1(nearest, 4096).some(name => name.startsWith(`.${path.basename(paths.journal)}.`))) fail("pre-schema helper journal publication is incomplete");
+    let present = false;
+    try { lstatSync(paths.journal); present = true; }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    if (!present) {
+      try { lstatSync(path.join(paths.root, "direct-spawner-rebind-v1")); fail("pre-schema helper direct history has no intent"); }
+      catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    }
+    assertStable();
+    return present ? null : sha256(canonical({ ancestor: nearest, identity: coldFileIdentityTupleV1(before) }));
+  } finally { finishRetainedColdCleanupV1(() => guard.close()); }
+}
+
 export async function observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(): Promise<InternalProductionBaselineServiceRestartHelperJournalCensusV1> {
-  const preSchema = resolvePreSchemaRetainedClosureV1();
+  const absenceIdentityHash = observePreSchemaHelperAbsenceV1();
+  const preSchemaHelperState = absenceIdentityHash === null ? "terminal" : "absent";
+  const closure = absenceIdentityHash === null ? await resolvePreSchemaRetainedClosureV1() : null;
+  const preSchema = closure === null ? { absenceIdentityHash } : closure.projection;
+  closure?.assertStable();
   const walk = walkRegistryV1();
+  closure?.assertStable();
+  if (absenceIdentityHash !== null && observePreSchemaHelperAbsenceV1() !== absenceIdentityHash) fail("pre-schema helper absence changed across registry census");
   const registeredBaselineHelperJournalCount = walk.registrations.length;
   const terminalBaselineHelperJournalCount = walk.terminals.length;
   const ambiguousBaselineHelperJournalCount = walk.terminals.filter((terminal) => terminal.outcome === "ambiguous").length;
   const liveBaselineHelperJournalCount = registeredBaselineHelperJournalCount - terminalBaselineHelperJournalCount;
   if (terminalBaselineHelperJournalCount > registeredBaselineHelperJournalCount || liveBaselineHelperJournalCount < 0 || ambiguousBaselineHelperJournalCount > terminalBaselineHelperJournalCount) fail("baseline helper journal census arithmetic is crossed");
-  const retainedHelperJournalSettlementSetHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-service-restart-helper-retained-authority-set.v1", preSchemaHelperState: "terminal", ...preSchema, orderedRegistryEntries: walk.orderedEntries }));
-  const body = { schema: "setfarm.internal-production-baseline-service-restart-helper-journal-census.v1", preSchemaHelperState: "terminal", registeredBaselineHelperJournalCount, terminalBaselineHelperJournalCount, liveBaselineHelperJournalCount, ambiguousBaselineHelperJournalCount, helperJournalRegistryHeadRef: walk.head?.headRef ?? null, helperJournalRegistryHeadHash: walk.head?.headHash ?? null, retainedHelperJournalSettlementSetHash };
+  const retainedHelperJournalSettlementSetHash = sha256(canonical({ schema: "setfarm.internal-production-baseline-service-restart-helper-retained-authority-set.v1", preSchemaHelperState, ...preSchema, orderedRegistryEntries: walk.orderedEntries }));
+  const body = { schema: "setfarm.internal-production-baseline-service-restart-helper-journal-census.v1", preSchemaHelperState, registeredBaselineHelperJournalCount, terminalBaselineHelperJournalCount, liveBaselineHelperJournalCount, ambiguousBaselineHelperJournalCount, helperJournalRegistryHeadRef: walk.head?.headRef ?? null, helperJournalRegistryHeadHash: walk.head?.headHash ?? null, retainedHelperJournalSettlementSetHash };
   return orderedFrozenV1({ ...body, censusHash: sha256(canonical(body)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1;
+}
+
+async function resolvePreSchemaRetainedClosureV1() {
+  const bytes = readStableRetirementBytes(rootPaths().journal, "pre-schema helper journal census");
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString("utf8")); } catch { return fail("pre-schema helper journal census is not JSON"); }
+  if ((value as Record<string, unknown> | null)?.schema === "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1") {
+    const history = await observeDirectSpawnerControllerSettlementHistoryV1();
+    const assertStable = () => {
+      assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+      if (!bytes.equals(Buffer.from(`${canonical(history.intent)}\n`))) fail("pre-schema direct census original intent changed");
+    };
+    assertStable();
+    const settlement = history.settlement;
+    const physicalIdentityHash = sha256(canonical({ completion: settlement.completion,
+      terminationDispatch: settlement.terminationDispatch, terminationReceipt: settlement.terminationReceipt,
+      settlementIdentity: history.settlementIdentity }));
+    const projection = Object.freeze({ preSchemaHelperJournalHash: history.preSchemaHelperJournalHash,
+      preSchemaHelperSettlementRef: history.preSchemaHelperSettlementRef, preSchemaHelperSettlementHash: history.preSchemaHelperSettlementHash, physicalIdentityHash });
+    return { projection, assertStable };
+  }
+  const projection = resolveLegacyPreSchemaRetainedClosureV1();
+  const paths = rootPaths();
+  const originals = [paths.journal, path.join(paths.settlements, projection.preSchemaHelperSettlementHash.slice(0, 2), `${projection.preSchemaHelperSettlementHash}.json`)]
+    .map(target => ({ target, identity: coldFileIdentityTupleV1(lstatSync(target, { bigint: true })) }));
+  // Persisted V1 guard hashes retain their original logical projection.
+  const assertStable = () => {
+    try { lstatSync(path.join(paths.root, "direct-spawner-rebind-v1")); fail("pre-schema legacy helper has crossed direct history"); }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    for (const original of originals) {
+      if (canonical(coldFileIdentityTupleV1(lstatSync(original.target, { bigint: true }))) !== canonical(original.identity)) fail("pre-schema legacy helper physical history changed");
+      if (readColdDirectoryMembersV1(path.dirname(original.target), 4096).some(name => name.startsWith(`.${path.basename(original.target)}.`))) fail("pre-schema legacy helper publication is incomplete");
+    }
+    if (observePreSchemaHelperAbsenceV1() !== null || !bytes.equals(readStableRetirementBytes(rootPaths().journal, "pre-schema helper census original journal"))
+      || canonical(resolveLegacyPreSchemaRetainedClosureV1()) !== canonical(projection)) fail("pre-schema legacy helper census changed");
+  };
+  assertStable();
+  return { projection, assertStable };
 }
 
 function baselineJournalPathV1(operationHash: string): string {
@@ -6474,7 +6551,7 @@ async function observeEmptyBaselineNormalAuthoritySetV1(): Promise<Readonly<{
     }
   }
   const helperCensus = await observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
-  if (helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0) fail("baseline helper journal census is not terminal and unambiguous");
+  if (helperCensus.preSchemaHelperState !== "terminal" || helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0) fail("baseline helper journal census is not terminal and unambiguous");
   const liveBaselineHelperCount = liveSequenceHelperCount + helperCensus.liveBaselineHelperJournalCount;
   if (pendingBaselineRestartCount !== 0 || liveBaselineRestartCount !== 0 || activeBaselineSequenceCount !== 0 || liveBaselineHelperCount !== 0) fail("baseline A normal restart authority set is not empty");
   return Object.freeze({ pendingBaselineRestartCount: 0, liveBaselineRestartCount: 0, activeBaselineSequenceCount: 0, liveBaselineHelperCount: 0, retainedHistoricalAuthoritySetHash: sha256(canonical({ completedSequences: retained, retainedHelperJournalSettlementSetHash: helperCensus.retainedHelperJournalSettlementSetHash })) });
@@ -6602,7 +6679,7 @@ async function authenticateFixedGuardConsumptionV1(): Promise<Readonly<Record<st
   const consumption = validateConsumptionV1(await ports.resolveConsumption(consumptionPair), consumptionPair, guard, operation);
   validateCompleteZeroOwnerCensusV1(await ports.resolveCompleteZero({ observationRef: guard.completeZeroOwnerCensusObservationRef as string, observationHash: guard.completeZeroOwnerCensusObservationHash as string }), { observationRef: guard.completeZeroOwnerCensusObservationRef as string, observationHash: guard.completeZeroOwnerCensusObservationHash as string });
   const helperCensus = await observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
-  if (helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0 || helperCensus.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash) fail("guard helper journal census authority changed");
+  if (helperCensus.preSchemaHelperState !== "terminal" || helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0 || helperCensus.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash) fail("guard helper journal census authority changed");
   return consumption;
 }
 
@@ -6759,7 +6836,7 @@ export async function prepareInternalProductionPhysicalServiceRestartAuthorityCu
     const lockedReadiness = await observeCompleteCodeOwnedCutoverReadinessV1();
     if (canonical(lockedReadiness) !== canonical(readiness)) fail("cutover readiness changed before pending mutation");
     const helperCensus = await observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
-    if (helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0 || helperCensus.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash) fail("cutover guard helper journal census is stale or nonterminal");
+    if (helperCensus.preSchemaHelperState !== "terminal" || helperCensus.registeredBaselineHelperJournalCount !== helperCensus.terminalBaselineHelperJournalCount || helperCensus.liveBaselineHelperJournalCount !== 0 || helperCensus.ambiguousBaselineHelperJournalCount !== 0 || helperCensus.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash) fail("cutover guard helper journal census is stale or nonterminal");
     await observeEmptyBaselineNormalAuthoritySetV1();
     const pending = publishPendingInputV1(guard);
     let fencePair = readCutoverPairV1("00-owner-admission-fence", "fenceRef", "fenceHash", GLOBAL_FENCE_PREFIX);

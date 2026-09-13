@@ -884,10 +884,55 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   (session72657,7.032s), and localized independent re-review found no issue.
   No public keys, runtime exports or graph pairs were added. These scoped
   checks do not constitute complete receipt/P3, clean-main or live acceptance.
-- [ ] Bracket phase-zero with stable helper census: absent or fully authenticated
+- [x] Bracket phase-zero with stable helper census: absent or fully authenticated
   terminal only; partial, appearance/disappearance and ABA refuse. Require
   terminal explicitly at all cutover/zero-owner guard consumers. Preserve the
   exact ten census keys and existing final pair graph.
+  Compatibility scope: cross-observation physical ABA protection here applies
+  to new absent/direct witnesses. Legacy V1 retains its documented logical
+  retained-set/census hashes, including fresh observation after valid same-byte
+  replacement; the normal registry likewise retains its existing logical
+  contract. Private legacy file identities fence each newly asynchronous census
+  call without migrating stored guards. This slice does not claim a new
+  cross-call physical identity contract for legacy settlements or the normal
+  registry. No legacy hash migration or extra public witness key is introduced.
+  Implementation: absence authenticates the nearest existing private ancestor,
+  rejects journal temporaries/direct prefixes, and hashes physical generation.
+  Strict schema discrimination routes direct terminals through the independent
+  original-P3 history reader and its synchronous physical witness. Direct
+  completion/termination/settlement identities enter the private retained-set
+  projection. Registry traversal is bracketed by closure stability checks;
+  legacy and direct histories cannot coexist under one pre-schema journal.
+  RED absence failed at ENOENT; after correcting the fixture's preseeded epoch
+  directory, absence and creation/deletion ABA passed. Real departed-child
+  direct census first failed the legacy shape parser(session77822), then passed
+  with exact ten keys, zero counts, stable replay, every crossed terminal field
+  refusing, and changed witness for equal terminal replacement(session14912).
+  Independent review found a new legacy await window; actual same-byte journal
+  and settlement replacements reproduced acceptance before private identity
+  fencing. Legacy/direct coexistence independently reproduced acceptance first.
+  Final three-case initial regression passed(session88456,10.436s).
+  Three retirement consumers independently reproduced acceptance of absent
+  state with unchanged counts and bound guard hash(session32334,3/3 RED).
+  Receipt guard producer/consumer similarly reached the publication sentinel
+  before explicit state checks(session45986,2/2 RED); terminal positive controls
+  reach the same boundary, while absent calls publish nothing. The executing
+  phase-zero fixture first accepted partial helper history(session90210 RED),
+  then covered late appearance and ABA with the cold census isolated so it
+  cannot mask missing helper checks. Review found future authority appearance
+  during the final helper await(session7128 RED); repeat its absence checks
+  afterward, then compare cold/helper evidence and revalidate source.
+  Receipt scoped regression passed4/4(session91782,2.754s); no-emit passed
+  (session10081), manifest17/17(session55111,7.114s). Localized independent
+  final review found no remaining substantive issue under the compatibility
+  qualification above. Final retirement/cutover combined regression passed15/15
+  (session55554,71.897s), including seven original-history fault cases and the
+  unchanged one-way cutover matrix. Its initial run had14/15: the new prepare
+  test incorrectly expected its lock parent's timestamps not to change during
+  ordinary lock acquire/release. Permit only that exact parent's clock change;
+  all file identities/bytes, directory inventory and other metadata still match.
+  No production guard or preexisting expected count was relaxed. Whitespace
+  passed; live Mission Control/dashboard HTTP200/200. No live mutation occurred.
 - [ ] Run focused controller/history/release and startup/receipt regressions,
   manifest/no-emit, independent review, then complete receipt and P3 gates.
   Clean-main build/rollout and live A acceptance remain later required outcomes.

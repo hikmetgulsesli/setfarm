@@ -8287,6 +8287,13 @@ async function observePhaseClosedZeroV1(
   const coldJournal = await import("./baseline-restart-authority-retirement-v1.js");
   const coldBefore = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
     : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
+  const requireSettledHelpers = (census: Awaited<ReturnType<typeof coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1>>) => {
+    if (!["absent", "terminal"].includes(census.preSchemaHelperState)
+      || census.registeredBaselineHelperJournalCount !== census.terminalBaselineHelperJournalCount
+      || census.liveBaselineHelperJournalCount !== 0 || census.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("phase-zero helper journal census is incomplete");
+    return census;
+  };
+  const helperBefore = requireSettledHelpers(await coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1());
   for (const [locator, producer] of PHASE_CLOSED_FUTURE_PRODUCERS_V1) {
     requireAbsentPhasePathV1(path.join(codeRoot, locator), `${producer} module`);
   }
@@ -8300,15 +8307,22 @@ async function observePhaseClosedZeroV1(
   const setfarmDir = runtime.runtimeConfig?.setfarmDir;
   if (typeof setfarmDir !== "string" || !path.isAbsolute(setfarmDir)) currentEntryFail("phase-closed Setfarm authority base is invalid");
   const authorityRoot = path.join(setfarmDir, "internal-production");
-  requireAbsentPhasePathV1(authorityRoot, "future producer authority root");
-  for (const child of ["golden-results", "fixtures", "recovery", "golden-fleet"]) {
-    requireAbsentPhasePathV1(path.join(authorityRoot, child), `future producer authority child ${child}`);
-  }
+  const assertFutureAuthorityAbsent = () => {
+    requireAbsentPhasePathV1(authorityRoot, "future producer authority root");
+    for (const child of ["golden-results", "fixtures", "recovery", "golden-fleet"]) {
+      requireAbsentPhasePathV1(path.join(authorityRoot, child), `future producer authority child ${child}`);
+    }
+  };
+  assertFutureAuthorityAbsent();
   const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(before, after);
+  const helperAfter = requireSettledHelpers(await coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1());
+  assertFutureAuthorityAbsent();
   const coldAfter = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
     : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
   if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("cold journal ancestry changed during phase-zero observation");
+  if (canonicalComparable(helperBefore) !== canonicalComparable(helperAfter)) currentEntryFail("helper journal ancestry changed during phase-zero observation");
+  assertPhaseSourceEqualV1(before, observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   return recursivelyFreeze({
     ordinaryStartingCount: 0, restartReservationCount: 0, serviceRestartOperationCount: 0,
     launchPreparationCount: 0, preparedLaunchCount: 0, stagedCaseCount: 0, fixtureAttemptCount: 0,
@@ -11040,7 +11054,7 @@ export async function prepareInternalProductionBaselineZeroOwnerMutationGuardV1(
   const observeCensus = retirement.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1;
   if (typeof observeCensus !== "function" || observeCensus.length !== 0) currentEntryFail("baseline helper-journal census observer is unavailable");
   const helper = await (observeCensus as () => Promise<Record<string, unknown>>)();
-  if (helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("baseline helper-journal census is not terminal zero");
+  if (helper.preSchemaHelperState !== "terminal" || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("baseline helper-journal census is not terminal zero");
   const body = {
     schema: "setfarm.internal-production-baseline-zero-owner-mutation-guard.v1",
     completeZeroOwnerCensusObservationRef: zero.observationRef,
@@ -11091,7 +11105,7 @@ export async function consumeInternalProductionBaselinePhysicalServiceRestartAut
   const freshZero = await observeCompleteInternalProductionZeroOwnerCensusV1();
   if (freshZero.observationRef !== guard.completeZeroOwnerCensusObservationRef || freshZero.observationHash !== guard.completeZeroOwnerCensusObservationHash || freshZero.ownerIdentitySetHash !== fence.ownerIdentitySetHash) currentEntryFail("cutover complete zero-owner authority changed before consumption");
   const helper = await (observeHelperCensus as () => Promise<Record<string, unknown>>)();
-  if (helper.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("cutover helper-journal census changed before consumption");
+  if (helper.preSchemaHelperState !== "terminal" || helper.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("cutover helper-journal census changed before consumption");
   const body = { schema: "setfarm.internal-production-baseline-physical-service-restart-authority-cutover-zero-owner-guard-consumption.v1", purpose: "recovery-d-physical-service-restart-authority-cutover-v1", zeroOwnerGuardRef: input.zeroOwnerGuardRef, zeroOwnerGuardHash: input.zeroOwnerGuardHash, completeZeroOwnerCensusObservationRef: guard.completeZeroOwnerCensusObservationRef, completeZeroOwnerCensusObservationHash: guard.completeZeroOwnerCensusObservationHash, baselineServiceRestartHelperJournalCensusHash: guard.baselineServiceRestartHelperJournalCensusHash, operationRef: input.operationRef, operationHash: input.operationHash, guardConsumed: true };
   const consumptionHash = hashCanonicalJson(body);
   const consumptionRef = `${CUTOVER_ZERO_OWNER_CONSUMPTION_PREFIX_V1}${consumptionHash}`;

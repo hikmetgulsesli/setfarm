@@ -16951,6 +16951,50 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     }
   });
 
+  for (const consumer of ["prepare", "consume"] as const) it(`P4 receipt ${consumer} rejects absent helper state before publication`, async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-receipt-terminal-state-")));
+    const operationHash = "a".repeat(64), zeroOwnerGuardHash = "b".repeat(64), helperHash = "c".repeat(64);
+    const input = { zeroOwnerGuardRef: `setfarm://internal-production/baseline-zero-owner-mutation-guard/sha256/${zeroOwnerGuardHash}`, zeroOwnerGuardHash,
+      operationRef: `setfarm://internal-production/physical-service-restart-authority-cutover-operation/sha256/${operationHash}`, operationHash };
+    const zero = { observationRef: "test-zero-ref", observationHash: "d".repeat(64), ownerIdentitySetHash: "e".repeat(64) };
+    const guard = { zeroOwnerGuardRef: input.zeroOwnerGuardRef, zeroOwnerGuardHash, completeZeroOwnerCensusObservationRef: zero.observationRef,
+      completeZeroOwnerCensusObservationHash: zero.observationHash, baselineServiceRestartHelperJournalCensusHash: helperHash };
+    const operation = { ...input, ownerAdmissionFenceRef: "test-fence-ref", ownerAdmissionFenceHash: "f".repeat(64), pendingInputRef: "test-pending-ref", pendingInputHash: "1".repeat(64), predecessorPhysicalRestartEpochOrdinal: 1 };
+    const status = { state: "prepared", guardConsumed: false, operationRef: input.operationRef, operationHash, ownerAdmissionFenceRef: operation.ownerAdmissionFenceRef, ownerAdmissionFenceHash: operation.ownerAdmissionFenceHash };
+    const fence = { purpose: "recovery-d-physical-service-restart-authority-cutover-v1", fenceRef: operation.ownerAdmissionFenceRef, fenceHash: operation.ownerAdmissionFenceHash,
+      pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash, observedUnrelatedReservationCount: 0, observedUnrelatedOwnerCount: 0, ownerIdentitySetHash: zero.ownerIdentitySetHash };
+    const helper = { schema: "setfarm.internal-production-baseline-service-restart-helper-journal-census.v1", preSchemaHelperState: "absent",
+      registeredBaselineHelperJournalCount: 0, terminalBaselineHelperJournalCount: 0, liveBaselineHelperJournalCount: 0, ambiguousBaselineHelperJournalCount: 0,
+      helperJournalRegistryHeadRef: null, helperJournalRegistryHeadHash: null, retainedHelperJournalSettlementSetHash: "2".repeat(64), censusHash: helperHash };
+    let source = readFileSync(observerSource, "utf8");
+    // Keep both actual consumers and all their local validation. Stub only the
+    // already-authenticated read ports and stop before any physical publication.
+    for (const [name, replacement] of [
+      ["observeCompleteInternalProductionZeroOwnerCensusV1", `export async function observeCompleteInternalProductionZeroOwnerCensusV1(){return ${JSON.stringify(zero)}}`],
+      ["resolveInternalProductionBaselineZeroOwnerMutationGuardV1", `export async function resolveInternalProductionBaselineZeroOwnerMutationGuardV1(input){return ${JSON.stringify(guard)}}`],
+      ["canonicalRecordBytes", "async function canonicalRecordBytes(value){return Buffer.from(canonicalComparable(value)+'\\n')}"],
+      ["publishLegacyZeroRecordV1", "function publishLegacyZeroRecordV1(){globalThis.__terminalReceiptPublicationCalls++;throw Error('REACHED_PUBLICATION')}"],
+    ]) source = source.replace(topLevelFunctionRegionV1(source, name!), `${replacement}\n`);
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", `export async function observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(){return {...${JSON.stringify(helper)},preSchemaHelperState:globalThis.__terminalReceiptAllowClosed?'terminal':'absent'}}
+export async function resolveInternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1(input){return ${JSON.stringify(operation)}}
+export async function observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1(){return ${JSON.stringify(status)}}\n`);
+    fixtureFile(root, "src/db-pg.ts", `export async function reobserveInternalProductionGlobalOwnerAdmissionFenceV1(input){return ${JSON.stringify(fence)}}\n`);
+    fixtureFile(root, "package.json", '{"type":"module"}\n');
+    Reflect.set(globalThis, "__terminalReceiptPublicationCalls", 0);
+    try {
+      const module = await import(pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href);
+      const call = consumer === "prepare" ? () => module.prepareInternalProductionBaselineZeroOwnerMutationGuardV1()
+        : () => module.consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1(input);
+      await assert.rejects(call(), /helper-journal census (?:is not terminal zero|changed before consumption)/);
+      assert.equal(Reflect.get(globalThis, "__terminalReceiptPublicationCalls"), 0);
+      assert.equal(existsSync(path.join(root, "data")), false);
+      Reflect.set(globalThis, "__terminalReceiptAllowClosed", true);
+      await assert.rejects(call(), /REACHED_PUBLICATION/, "the same bound evidence with terminal state reaches the publication boundary");
+      assert.equal(Reflect.get(globalThis, "__terminalReceiptPublicationCalls"), 1);
+    } finally { Reflect.deleteProperty(globalThis, "__terminalReceiptPublicationCalls"); Reflect.deleteProperty(globalThis, "__terminalReceiptAllowClosed"); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("P4 receipt owns startup prerequisite observations", async () => {
     const receipt = await import(
       `../../src/internal-production/baseline-post-handoff-receipt-v1.js?p4-prerequisites=${Date.now()}`
@@ -17190,7 +17234,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     let source = readFileSync(observerSource, "utf8");
     const cleanObserver = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionCleanSetfarmSourceBuildV1");
     source = source.replace(cleanObserver, `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){globalThis.__coldPhaseSourceHook?.();return Object.freeze(${JSON.stringify(sourceIdentity)});}\n`)
-      .replace("async function observePhaseClosedZeroV1(", "export async function observePhaseClosedZeroV1(");
+      .replace("async function observePhaseClosedZeroV1(", "export async function observePhaseClosedZeroV1(")
+      .replaceAll("coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()", "(globalThis.__helperPhaseOnly ? { state: 'isolated-cold-census' } : coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1())");
     fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
     fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
     const locator = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
@@ -17204,6 +17249,16 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       const module = await import(pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href);
       const absent = await module.observePhaseClosedZeroV1(sourceIdentity);
       assert.ok(Object.values(absent).every((value) => value === 0));
+      mkdirSync(path.dirname(cold), { recursive: true, mode: 0o700 });
+      for (const name of ["pre-schema-helper-journal.json", ".pre-schema-helper-journal.json.pending", "direct-spawner-rebind-v1"]) {
+        const target = path.join(path.dirname(cold), name);
+        if (name === "direct-spawner-rebind-v1") mkdirSync(target, { mode: 0o700 });
+        else writeFileSync(target, "{}\n", { mode: 0o600 });
+        const before = lstatSync(target, { bigint: true });
+        await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /pre-schema|direct|helper/i, `${name} cannot be reported as phase-zero`);
+        assert.equal(lstatSync(target, { bigint: true }).ino, before.ino, "phase-zero never repairs a partial helper record");
+        rmSync(target, { recursive: true });
+      }
       mkdirSync(cold, { recursive: true, mode: 0o700 });
       writeFileSync(path.join(cold, "intent.json"), '{"disposition":"completed","schema":"unbound"}\n', { mode: 0o600 });
       const bytes = readFileSync(path.join(cold, "intent.json"));
@@ -17223,9 +17278,34 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         if (++sourceCalls === 2) { mkdirSync(cold, { mode: 0o700 }); rmSync(cold, { recursive: true }); }
       });
       await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /cold journal ancestry changed/, "transient owner appearance cannot hide between the two absence reads");
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      Reflect.set(globalThis, "__helperPhaseOnly", true); // Isolate the new helper witness from the independently tested cold parent witness.
+      for (const name of ["pre-schema-helper-journal.json", "direct-spawner-rebind-v1"]) for (const transient of [false, true]) {
+        sourceCalls = 0;
+        const target = path.join(path.dirname(cold), name);
+        Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+          if (++sourceCalls !== 2) return;
+          if (name === "direct-spawner-rebind-v1") mkdirSync(target, { mode: 0o700 });
+          else writeFileSync(target, "{}\n", { mode: 0o600 });
+          if (transient) rmSync(target, { recursive: true });
+        });
+        await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /helper/i, `${name} ${transient ? 'ABA' : 'appearance'} must be caught by helper bracketing itself`);
+        assert.equal(sourceCalls, 2);
+        if (!transient) rmSync(target, { recursive: true });
+      }
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      assert.deepEqual(await module.observePhaseClosedZeroV1(sourceIdentity), absent);
+      sourceCalls = 0;
+      const futureAuthority = path.join(root, "runtime/internal-production");
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) queueMicrotask(() => mkdirSync(futureAuthority, { recursive: true, mode: 0o700 }));
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /future producer authority root.*present/, "future authority appearing during the final helper await must not escape phase-zero");
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      rmSync(futureAuthority, { recursive: true });
       assert.match(source, /const CURRENT_ENTRY_MAX_BYTES = 1_048_576;/, "authority-record cap is unchanged");
       assert.ok(Buffer.byteLength(source) > 1_048_576, "the executing source exceeds the separate record cap");
-    } finally { Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook"); rmSync(root, { recursive: true, force: true }); }
+    } finally { Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook"); Reflect.deleteProperty(globalThis, "__helperPhaseOnly"); rmSync(root, { recursive: true, force: true }); }
   });
 
   it("P4 phase-closed census refuses every present or symlinked future authority path", async () => {

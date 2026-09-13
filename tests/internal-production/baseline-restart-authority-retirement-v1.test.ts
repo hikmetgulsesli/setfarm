@@ -1886,6 +1886,7 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
                 await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
                 assert.equal(fired, true);
                 await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
+                await assert.rejects(fresh.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(), undefined, "invalid direct history cannot be reported as absent or terminal");
                 if (historyFault !== "await-aba") assert.deepEqual(coldGenesisTreeSnapshotV1(path.dirname(privateRoot)), beforeRefusal);
                 assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
                 return;
@@ -1897,6 +1898,11 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               assert.equal(historical.preSchemaHelperSettlementRef, settled.helperSettlementRef);
               assert.equal(historical.preSchemaHelperSettlementHash, settled.helperSettlementHash);
               assert.deepEqual(await fresh.readDirectSettlementHistoryFixtureV1(), historical);
+              const helperCensus = await fresh.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
+              assert.equal(helperCensus.preSchemaHelperState, "terminal");
+              assert.equal(Reflect.ownKeys(helperCensus).length, 10);
+              assert.deepEqual([helperCensus.registeredBaselineHelperJournalCount, helperCensus.terminalBaselineHelperJournalCount, helperCensus.liveBaselineHelperJournalCount, helperCensus.ambiguousBaselineHelperJournalCount], [0, 0, 0, 0]);
+              assert.deepEqual(await fresh.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(), helperCensus);
               assert.deepEqual(coldGenesisTreeSnapshotV1(path.dirname(privateRoot)), stored, "fresh historical resolution cannot mutate or repair authority");
               assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
               const bytes = readFileSync(target);
@@ -1908,6 +1914,7 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
                 }
                 writeFileSync(target, `${canonical(crossed)}\n`, { mode: 0o600 });
                 await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1(), undefined, `historical terminal refuses ${key}`);
+                await assert.rejects(fresh.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(), undefined, `public census refuses crossed terminal ${key}`);
               }
               for (const malformed of [Buffer.from("{}\n"), Buffer.from(`${JSON.stringify(settled)}\n`), Buffer.concat([bytes, bytes]), Buffer.alloc(65_537, 32)]) {
                 writeFileSync(target, malformed); await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
@@ -1918,6 +1925,9 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               const replacedTerminal = await fresh.readDirectSettlementHistoryFixtureV1();
               assert.deepEqual(replacedTerminal.settlement, settled);
               assert.notDeepEqual(replacedTerminal.settlementIdentity, historical.settlementIdentity, "terminal inode replacement must change the future census witness");
+              const replacedCensus = await fresh.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
+              assert.equal(replacedCensus.preSchemaHelperState, "terminal");
+              assert.notEqual(replacedCensus.censusHash, helperCensus.censusHash, "equal direct terminal replacement changes the public census witness");
             }
           }
           if (directControllerFault.startsWith("observe")) {
@@ -5952,6 +5962,53 @@ test("P4 retirement invoke bridges held lease to empty helper", () => {
   assert.doesNotMatch(fencePorts, /owner-admission-v1\.js/);
 });
 
+test("P4 helper census distinguishes stable absence from partial history and absence ABA", async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-absence-"));
+  try {
+    const modulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"));
+    renameSync(path.join(fixture, "data"), path.join(fixture, "seeded-data"));
+    const isolated = await import(`${pathToFileURL(modulePath).href}?absence=${Date.now()}`);
+    const observe = () => isolated.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
+    const initial = await observe();
+    assert.equal(initial.preSchemaHelperState, "absent");
+    assert.deepEqual(Reflect.ownKeys(initial), ["schema", "preSchemaHelperState", "registeredBaselineHelperJournalCount", "terminalBaselineHelperJournalCount", "liveBaselineHelperJournalCount", "ambiguousBaselineHelperJournalCount", "helperJournalRegistryHeadRef", "helperJournalRegistryHeadHash", "retainedHelperJournalSettlementSetHash", "censusHash"]);
+    assert.deepEqual([initial.registeredBaselineHelperJournalCount, initial.terminalBaselineHelperJournalCount, initial.liveBaselineHelperJournalCount, initial.ambiguousBaselineHelperJournalCount], [0, 0, 0, 0]);
+    assert.deepEqual(await observe(), initial);
+    assert.equal(existsSync(path.join(fixture, "data")), false, "read-only absence cannot create authority directories");
+    const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    const rooted = await observe();
+    assert.notEqual(rooted.censusHash, initial.censusHash, "nearest existing authority ancestor is part of absence evidence");
+    assert.deepEqual(await observe(), rooted);
+    for (const name of ["pre-schema-helper-journal.json", ".pre-schema-helper-journal.json.pending", "direct-spawner-rebind-v1"]) {
+      const target = path.join(root, name), before = await observe();
+      if (name === "direct-spawner-rebind-v1") mkdirSync(target, { mode: 0o700 });
+      else writeFileSync(target, "{}\n", { mode: 0o600 });
+      await assert.rejects(observe(), /pre-schema|direct|helper/i, `${name} is not absence`);
+      rmSync(target, { recursive: true });
+      const after = await observe();
+      assert.equal(after.preSchemaHelperState, "absent");
+      assert.notEqual(after.censusHash, before.censusHash, `${name} create/delete must change the physical absence witness`);
+      assert.deepEqual(await observe(), after);
+    }
+    const legacy = seedPreSchemaHelperClosure(fixture);
+    assert.deepEqual(await observe(), legacy, "legacy terminal keeps its original census hash");
+    const settlementStore = path.join(root, "pre-schema-helper-settlements/sha256");
+    const shard = path.join(settlementStore, readdirSync(settlementStore)[0]!);
+    for (const target of [path.join(root, "pre-schema-helper-journal.json"), path.join(shard, readdirSync(shard)[0]!)]) {
+      const pending = observe();
+      const bytes = readFileSync(target), original = path.join(fixture, "original-legacy-record");
+      renameSync(target, original); writeFileSync(target, bytes, { mode: 0o600 });
+      try { await assert.rejects(pending, /pre-schema|legacy|helper/i, "a same-byte legacy replacement during census cannot pass its original witness"); }
+      finally { unlinkSync(target); renameSync(original, target); }
+      assert.deepEqual(await observe(), legacy, "a fresh legacy census retains the historical logical hash");
+    }
+    const direct = path.join(root, "direct-spawner-rebind-v1");
+    mkdirSync(direct, { mode: 0o700 });
+    await assert.rejects(observe(), /pre-schema|direct|helper/i, "a legacy terminal cannot hide another partial direct owner");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("P4 baseline helper registry closes an indeterminate journal without redispatch", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-baseline-helper-registry-"));
   try {
@@ -6172,6 +6229,45 @@ test("P4 cutover refuses an absent complete code-owned readiness tuple before mu
     );
     assert.equal(existsSync(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/cutover-to-recovery-d-v1/cutover-pending-input.json")), false);
   } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+for (const consumer of ["normal-set", "prepare", "consumption"] as const) test(`P4 ${consumer} requires terminal helper state independently of counts and hash`, async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-terminal-state-"));
+  try {
+    const censusReturn = "return orderedFrozenV1({ ...body, censusHash: sha256(canonical(body)) }) as InternalProductionBaselineServiceRestartHelperJournalCensusV1;";
+    const source = readFileSync(sourcePath, "utf8")
+      .replace("async function observeEmptyBaselineNormalAuthoritySetV1(", "export async function observeEmptyBaselineNormalAuthoritySetV1(")
+      .replace("async function authenticateFixedGuardConsumptionV1(", "export async function authenticateFixedGuardConsumptionV1(")
+      .replace(censusReturn, `const probe=(globalThis as any).__p4TerminalConsumerAbsentProbeV1; if(probe && ++probe.calls === 1) return orderedFrozenV1({...body,preSchemaHelperState:"absent",censusHash:probe.hash}) as InternalProductionBaselineServiceRestartHelperJournalCensusV1; ${censusReturn}`);
+    const modulePath = installRetirementFixture(fixture, source);
+    Reflect.set(globalThis, "__p4ServiceCensus", Object.freeze({ censusHash: "9".repeat(64) }));
+    const readiness = cutoverReadinessFixture(fixture);
+    Reflect.set(globalThis, "__p4CutoverReadiness", readiness);
+    Reflect.set(globalThis, "__p4CutoverGate", cutoverGateFixture(readiness));
+    const zero = completeZeroFixture(); Reflect.set(globalThis, "__p4CompleteZero", zero);
+    const census = seedPreSchemaHelperClosure(fixture), guard = cutoverGuardFixture(zero, census.censusHash as string);
+    Reflect.set(globalThis, "__p4CutoverGuard", guard); Reflect.set(globalThis, "__p4GuardConsumeCalls", 0);
+    const isolated = await import(`${pathToFileURL(modulePath).href}?terminal-consumer=${consumer}`);
+    const pair = { zeroOwnerGuardRef: guard.zeroOwnerGuardRef, zeroOwnerGuardHash: guard.zeroOwnerGuardHash };
+    if (consumer === "consumption") {
+      await isolated.prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1(pair);
+      await isolated.resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1();
+    }
+    const before = coldGenesisTreeSnapshotV1(path.join(fixture, "data"));
+    const probe = { calls: 0, hash: census.censusHash }; Reflect.set(globalThis, "__p4TerminalConsumerAbsentProbeV1", probe);
+    const call = consumer === "normal-set" ? () => isolated.observeEmptyBaselineNormalAuthoritySetV1()
+      : consumer === "prepare" ? () => isolated.prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1(pair)
+      : () => isolated.authenticateFixedGuardConsumptionV1();
+    await assert.rejects(call(), /helper.*(?:terminal|authority changed|stale)/i, "matching logical authority cannot substitute for terminal helper state");
+    assert.equal(probe.calls, 1, "the selected consumer must refuse before another census can mask it");
+    const after = coldGenesisTreeSnapshotV1(path.join(fixture, "data"));
+    const permitOwnedLeaseParentClock = (rows: typeof before) => rows.map(row => consumer === "prepare" && row.relative === "internal-production-baseline/restart-authority-retirement-v1"
+      ? { ...row, mtimeNs: "owned-lease-parent", ctimeNs: "owned-lease-parent" } : row);
+    assert.deepEqual(permitOwnedLeaseParentClock(after), permitOwnedLeaseParentClock(before), "only prepare's normal lock acquire/release may change its parent clock; no authority is published or replaced");
+  } finally {
+    for (const key of ["__p4ServiceCensus", "__p4CutoverReadiness", "__p4CutoverGate", "__p4CompleteZero", "__p4CutoverGuard", "__p4GuardConsumeCalls", "__p4GuardConsumption", "__p4TerminalConsumerAbsentProbeV1"]) Reflect.deleteProperty(globalThis, key);
     rmSync(fixture, { recursive: true, force: true });
   }
 });
