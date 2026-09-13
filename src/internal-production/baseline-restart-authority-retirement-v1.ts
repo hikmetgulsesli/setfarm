@@ -177,6 +177,28 @@ type DirectSpawnerRebindIntentStateV1 = {
   termination: DirectSpawnerTerminationStateV1 | null;
   helperInvocation?: DirectControllerHelperInvocationV1;
   settlement?: DirectControllerSettlementV1;
+  release?: DirectControllerReleaseV1;
+};
+type DirectControllerReleaseStepV1 = {
+  pin?: PrivateFrameDescriptorV1;
+  assertOwned?: () => void;
+  close?: () => void;
+  onClosed?: () => void;
+  entered: boolean;
+  completed: boolean;
+};
+type DirectControllerReleaseV1 = {
+  held: LeaseStateV1;
+  settlementIdentity: readonly string[];
+  steps: DirectControllerReleaseStepV1[];
+  rootClose: DirectControllerReleaseStepV1;
+  parent: PrivateFrameDescriptorV1;
+  parentOpenEntered: boolean;
+  parentAccepted: boolean;
+  parentSynced: boolean;
+  lock: PrivateFrameDescriptorV1;
+  unlinkEntered: boolean;
+  unlinked: boolean;
 };
 type DirectControllerSettlementV1 = {
   record: Readonly<Record<string, unknown>>;
@@ -208,6 +230,7 @@ let directSpawnerTerminationActiveV1 = false;
 let directControllerHelperInvocationActiveV1 = false;
 let directControllerClaimObservationActiveV1 = false;
 let directControllerSettlementActiveV1 = false;
+let directControllerReleaseActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -499,7 +522,7 @@ function readStableRetirementBytes(file: string, label: string, maximumBytes = 1
   }
 }
 
-function pinStableCasPredecessorV1(file: string, label: string): Readonly<{ bytes: Buffer; assertStable: () => void; close: () => void }> {
+function pinStableCasPredecessorV1(file: string, label: string): Readonly<{ bytes: Buffer; assertStable: () => void; assertOwnedDescriptor: () => void; close: () => void }> {
   const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   let closed = false;
   try {
@@ -519,7 +542,13 @@ function pinStableCasPredecessorV1(file: string, label: string): Readonly<{ byte
       if (!recheck.equals(bytes)) fail(`${label} pinned predecessor bytes changed`);
     };
     assertStable();
-    return Object.freeze({ bytes, assertStable, close: (): void => { if (!closed) { closed = true; closeSync(descriptor); } } });
+    const assertOwnedDescriptor = (): void => {
+      if (closed) fail(`${label} pinned descriptor is closed`);
+      const current = fstatSync(descriptor, { bigint: true });
+      // Cleanup authenticates the original open file, not a mutable pathname.
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== identity[key as keyof BigIntStats])) fail(`${label} pinned descriptor was reused`);
+    };
+    return Object.freeze({ bytes, assertStable, assertOwnedDescriptor, close: (): void => { if (!closed) { closed = true; closeSync(descriptor); } } });
   } catch (error) { if (!closed) closeSync(descriptor); throw error; }
 }
 
@@ -2417,7 +2446,7 @@ async function invokeDirectSpawnerRebindHelperV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
   input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
 ): Promise<Readonly<Record<string, unknown>>> {
-  if (directControllerHelperInvocationActiveV1) fail("direct controller invocation is already active");
+  if (directControllerHelperInvocationActiveV1 || directControllerReleaseActiveV1) fail("direct controller invocation is already active");
   directControllerHelperInvocationActiveV1 = true;
   try {
     heldLease(lease);
@@ -2534,7 +2563,7 @@ async function observeDirectSpawnerRebindControllerClaimV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
   input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
 ) {
-  if (directControllerClaimObservationActiveV1 || directControllerSettlementActiveV1) fail("direct controller claim observation is already active");
+  if (directControllerClaimObservationActiveV1 || directControllerSettlementActiveV1 || directControllerReleaseActiveV1) fail("direct controller claim observation is already active");
   directControllerClaimObservationActiveV1 = true;
   try {
     const completion = await invokeDirectSpawnerRebindHelperV1(lease, input), state = retainedDirectSpawnerRebindIntentV1!;
@@ -2746,7 +2775,7 @@ async function settleDirectSpawnerRebindControllerV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
   input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
 ): Promise<Readonly<Record<string, unknown>>> {
-  if (directControllerSettlementActiveV1 || directControllerClaimObservationActiveV1 || directControllerHelperInvocationActiveV1) fail("direct controller settlement is already active");
+  if (directControllerSettlementActiveV1 || directControllerClaimObservationActiveV1 || directControllerHelperInvocationActiveV1 || directControllerReleaseActiveV1) fail("direct controller settlement is already active");
   directControllerSettlementActiveV1 = true;
   try {
     if (retainedDirectSpawnerRebindIntentV1?.phase !== "settled") await invokeDirectSpawnerRebindHelperV1(lease, input);
@@ -5051,7 +5080,7 @@ export async function acquireInternalProductionPhysicalServiceRestartAuthorityTr
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
 ): Promise<void> {
-  if (retainedDirectSpawnerRebindIntentV1?.lease === lease) fail("DIRECT_REBIND_UNSETTLED: direct preparation retains its physical lease");
+  if (retainedDirectSpawnerRebindIntentV1?.lease === lease) return releaseDirectControllerTransitionLeaseV1(retainedDirectSpawnerRebindIntentV1);
   if (retainedColdBootstrapIntentV1?.lease === lease) return releaseColdControllerTransitionLeaseV1(retainedColdBootstrapIntentV1);
   const state = heldLease(lease);
   const paths = rootPaths();
@@ -5070,6 +5099,122 @@ export async function releaseInternalProductionPhysicalServiceRestartAuthorityTr
       leases.delete(lease);
     }
   }
+}
+
+async function releaseDirectControllerTransitionLeaseV1(state: DirectSpawnerRebindIntentStateV1): Promise<void> {
+  if (directControllerReleaseActiveV1 || directControllerSettlementActiveV1 || directControllerClaimObservationActiveV1
+    || directControllerHelperInvocationActiveV1 || directSpawnerTerminationActiveV1 || directSpawnerRebindPreparationActiveV1) fail("direct controller ownership is active");
+  directControllerReleaseActiveV1 = true;
+  try {
+    const held = leases.get(state.lease), settlement = state.settlement, invocation = state.helperInvocation, paths = rootPaths();
+    if (state !== retainedDirectSpawnerRebindIntentV1 || !held || !settlement?.committed || !invocation
+      || !["settled", "releasing"].includes(state.phase) || settlement.writer.descriptor !== null || invocation.frame?.descriptor !== null
+      || !settlement.readerAccepted || !settlement.reader?.identity) fail("DIRECT_REBIND_UNSETTLED: direct preparation retains its physical lease");
+    const terminal = async () => {
+      const history = await observeDirectSpawnerControllerSettlementHistoryV1();
+      const original = state.release?.settlementIdentity ?? coldFileIdentityTupleV1(settlement.reader!.identity!);
+      if (canonical(history.settlement) !== canonical(settlement.record) || !settlement.bytes.equals(Buffer.from(`${canonical(history.settlement)}\n`))
+        || canonical(history.settlementIdentity) !== canonical(original)) fail("direct release terminal is not the original owned publication");
+    };
+    const opaque = (assertOwned: () => void, close: () => void): DirectControllerReleaseStepV1 => ({ assertOwned, close, entered: false, completed: false });
+    if (!state.release) {
+      if (held.phase !== "held" || !settlement.reader || settlement.reader.descriptor === null || settlement.reader.closeEntered
+        || !sameColdFileMetadataV1(settlement.reader.identity!, fstatSync(settlement.reader.descriptor, { bigint: true }))
+        || !state.termination?.dispatch?.synced || !state.termination.receipt?.synced || invocation.observationPins.length !== 2) fail("direct release original resources are unavailable");
+      state.rootGuard.assertStable(); state.termination.rootGuard.assertStable(); settlement.guard!.assertStable();
+      await terminal();
+      const steps: DirectControllerReleaseStepV1[] = [];
+      const concrete = (pin: PrivateFrameDescriptorV1, onClosed?: () => void) => {
+        if (pin.descriptor === null || pin.identity === null || pin.closeEntered || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct release original descriptor is crossed");
+        steps.push({ pin, onClosed, entered: false, completed: false });
+      };
+      concrete(invocation.intentReader!);
+      for (const pin of invocation.observationPins) concrete(pin);
+      for (const publication of [state.termination.dispatch, state.termination.receipt]) {
+        concrete({ descriptor: publication.descriptor, identity: publication.identity, closeEntered: false }, () => { publication.descriptor = null; });
+      }
+      concrete({ descriptor: state.publication.descriptor, identity: state.publication.identity, closeEntered: false }, () => { state.publication.descriptor = null; });
+      steps.push(opaque(() => state.intentPin!.assertOwnedDescriptor(), () => state.intentPin!.close()),
+        opaque(() => state.epochPin!.assertOwnedDescriptor(), () => state.epochPin!.close()));
+      concrete(settlement.reader);
+      steps.push(opaque(() => settlement.guard!.assertStable(), () => settlement.guard!.close()),
+        opaque(() => state.termination!.rootGuard.assertStable(), () => state.termination!.rootGuard.close()));
+      if (!sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+        || !held.lockBytes.equals(readColdGenesisCandidateV1(paths.lock, state.lockIdentity))
+        || canonical(parseLockRecord(held.lockBytes)) !== canonical(state.intent.transitionLock)) fail("direct release original physical lock is crossed");
+      state.release = { held, settlementIdentity: coldFileIdentityTupleV1(settlement.reader.identity!), steps, rootClose: opaque(() => state.rootGuard.assertStable(), () => state.rootGuard.close()),
+        parent: { descriptor: null, identity: null, closeEntered: false }, parentOpenEntered: false, parentAccepted: false, parentSynced: false,
+        lock: { descriptor: held.descriptor, identity: state.lockIdentity, closeEntered: false }, unlinkEntered: false, unlinked: false };
+      state.phase = "releasing"; held.phase = "released";
+    }
+    const release = state.release;
+    if (release.held !== held || held.phase !== "released" || state.phase !== "releasing") fail("direct release retained owner changed");
+    if (!release.parentOpenEntered) {
+      state.rootGuard.assertStable(); const original = lstatSync(paths.root, { bigint: true });
+      release.parentOpenEntered = true;
+      release.parent.descriptor = openSync(paths.root, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      release.parent.identity = fstatSync(release.parent.descriptor, { bigint: true });
+      if (!sameColdFileMetadataV1(original, release.parent.identity)) fail("direct release opened parent is crossed");
+      release.parentAccepted = true; state.rootGuard.assertStable();
+    }
+    const closeStep = (step: DirectControllerReleaseStepV1) => {
+      if (step.completed) return;
+      if (step.pin) {
+        try { closePrivateFrameDescriptorV1(step.pin); }
+        finally { if (step.pin.descriptor === null) step.onClosed?.(); }
+      } else {
+        if (step.entered) fail("direct release opaque close outcome is ambiguous");
+        step.assertOwned!();
+        step.entered = true; step.close!();
+      }
+      step.completed = true;
+    };
+    if (!release.unlinked) {
+      if (!release.parentAccepted || release.parent.descriptor === null || release.parent.identity === null || release.parent.closeEntered) fail("direct release original parent is unavailable");
+      for (const step of release.steps) closeStep(step);
+      await terminal(); state.rootGuard.assertStable();
+      const original = release.lock.identity!;
+      if (release.lock.descriptor === null || release.lock.closeEntered) fail("direct release original lock descriptor changed");
+      const current = fstatSync(release.lock.descriptor, { bigint: true });
+      if (release.unlinkEntered && current.nlink === 0n
+        && sameColdFileMetadataV1({ ...original, nlink: current.nlink, ctimeNs: current.ctimeNs } as BigIntStats, current)) {
+        // The prior unlink may have completed before its response was lost.
+        // Only reconcile this retained inode; a later pathname belongs elsewhere.
+        release.lock.identity = current; release.unlinked = true;
+      } else if (!sameColdFileMetadataV1(original, current)) fail("direct release original lock descriptor changed");
+      if (!release.unlinked) {
+        let visible: BigIntStats | null = null;
+        try { visible = lstatSync(paths.lock, { bigint: true }); }
+        catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
+        if (visible === null) {
+          if (!release.unlinkEntered) fail("direct release original lock disappeared before owned unlink");
+        } else {
+          if (!sameColdFileMetadataV1(original, visible) || !held.lockBytes.equals(readColdGenesisCandidateV1(paths.lock, original))) fail("direct release lock path is not the original owner");
+          release.unlinkEntered = true;
+          try { unlinkSync(paths.lock); }
+          finally {
+            const after = fstatSync(release.lock.descriptor, { bigint: true });
+            if (!sameColdFileMetadataV1({ ...original, nlink: after.nlink, ctimeNs: after.ctimeNs } as BigIntStats, after)
+              || after.nlink !== 0n && after.nlink !== 1n) fail("direct release original lock changed during unlink");
+            if (after.nlink === 0n) { release.lock.identity = after; release.unlinked = true; }
+          }
+        }
+        if (!release.unlinked) fail("direct release unlink outcome is uncertain");
+      }
+    }
+    if (!release.parentSynced) {
+      const pin = release.parent;
+      if (!release.parentAccepted || pin.descriptor === null || pin.identity === null || pin.closeEntered) fail("direct release parent sync owner is unavailable");
+      for (const current of [fstatSync(pin.descriptor, { bigint: true }), lstatSync(paths.root, { bigint: true })]) {
+        if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== pin.identity![key as keyof BigIntStats])) fail("direct release original parent changed");
+      }
+      state.rootGuard.assertStable(); fsyncSync(pin.descriptor); state.rootGuard.assertStable(); release.parentSynced = true;
+    }
+    closePrivateFrameDescriptorV1(release.parent);
+    closeStep(release.rootClose);
+    closePrivateFrameDescriptorV1(release.lock);
+    leases.delete(state.lease); retainedDirectSpawnerRebindIntentV1 = null;
+  } finally { directControllerReleaseActiveV1 = false; }
 }
 
 function releaseColdControllerTransitionLeaseV1(state: ColdBootstrapIntentStateV1): void {

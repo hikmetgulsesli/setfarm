@@ -989,6 +989,21 @@ propagation through helper cleanup, dead-lock reclaim and raw-lock release befor
 those consumers can accept direct terminal history. Preserve V1 behavior and
 test every existing raw/genesis/ordinary caller; do not fire-and-forget cleanup.
 
+Next cleanup coupling (same existing retirement/test File Map): make the private
+helper cleanup assertion, dead-lock reclaim and raw-lock release asynchronous;
+await all three raw cleanup callers plus ordinary release/acquisition. Preserve
+the existing V1 body. A recognized direct intent is a global cleanup fence even
+when its original lock differs from the currently supplied lock: authenticate
+the complete P3-bound terminal first, bind its journal/lock relation to that
+intent, and recheck the original intent across the await. Missing/partial/crossed
+history remains settlement-unknown. A valid old terminal only removes this
+global fence; it never grants authority over a later lock, whose normal-journal
+and physical-owner checks still apply. Reobserve dead owner state and exact lock
+identity after awaited history. Retain exclusive per-raw cleanup progression
+across the await; reject concurrent cleanup or promotion. Behavioral gates must
+cover each awaited caller, original/new lock relations, awaited path replacement,
+normal-journal refusal, and unchanged V1/genesis cleanup response-loss behavior.
+
 Private direct terminal-history RED first failed at the missing reader (8.159s).
 The new resolver retains original file descriptors/metadata/bytes across both
 historical-P3 reads, requires the original P3-bound termination chain, and derives
@@ -1011,6 +1026,46 @@ manifest17/17 (6.161s), TypeScript no-emit and whitespace passed. Final independ
 scoped review found no remaining material issue. API/dashboard remain200/200,
 canonical Setfarm and Mission Control worktrees unchanged. This checkpoint does
 not wire public V2, helper census, dead-owner reclaim, or retained physical release.
+
+Retained direct release implementation keeps its own progress object, distinct
+from historical acceptance and ordinary V1 cleanup. Before any resource close,
+authenticate the retained terminal against the independent historical reader and
+its original accepted settlement-reader tuple. Revoke the retained effect phase,
+then drain original helper/history readers, termination/intent writers, opaque
+intent/epoch pins, settlement reader and subordinate guards. Opaque closes carry
+entered/completed flags because their existing close callbacks cannot prove a
+lost response; ambiguous closes cannot be retried as silent no-ops. Concrete
+descriptors retain actual identities and use the conservative close helper.
+Reauthenticate terminal before unlink. Retain a separate original parent-sync FD
+and original lock FD/identity, mark unlink entered before its syscall, reconcile
+only the original inode becoming unlinked, fsync that original parent, then close
+parent/root/lock owners before clearing retained state. Never unlink a later
+foreign pathname, delete history, or require live helper/child/epoch observations
+after committed terminal. The positive test invokes the public release; fixture
+cleanup is not accepted as production semantics.
+
+Retained release RED initially refused the completed owner (7.992s). Independent
+review then reproduced two material boundaries: successful unlink followed by
+failed fstat could not reconcile on replay; an opaque epoch FD reused during the
+historical await was closed as if it were original (explicit missing-rejection
+RED8.407s). Reconcile only the retained unlinked inode before any later pathname
+lookup. Add a private descriptor-only cleanup assertion to the existing pin,
+and assert each opaque resource immediately before its first close; retain the
+entered/completed ambiguity fence. No current epoch pathname becomes cleanup
+authority. The fixes passed3/3 (24.404s).
+
+Expanded release gate passed14/14 (98.882s): preserved original history, unlink
+fstat response loss with a later lock owner, foreign epoch FD reuse, actual child
+departure/current epoch replacement, gated concurrent release/invoke/observe/
+settle, and before/after parent-sync plus parent/lock/reader/epoch-close faults.
+Test teardown retains exact injected pre-close ownership through finally and
+attempts all remaining cleanup even after an earlier assertion fails. Manifest
+17/17 (6.029s), TypeScript no-emit and whitespace passed. API/dashboard200/200;
+no live service, DB, epoch, or history was changed. Final shared-history/cold-release/
+exact lease ABI regression passed12/12 (102.546s), including the existing fourteen
+cold release fault modes; independent re-review found no remaining material
+issue in this retained-release slice. Dead-owner acceptance, public V2/startup/census,
+full receipt/P3, clean-main rollout and live A remain pending.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result

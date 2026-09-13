@@ -788,7 +788,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const writerMarker = "function publishDirectSpawnerRebindIntentV1(state: DirectSpawnerRebindIntentStateV1): void {";
     assert.equal(source.split(writerMarker).length - 1, 1);
     let runtimeSource = source.replace(writerMarker, "function actualDirectIntentPublisherFixtureV1(state: DirectSpawnerRebindIntentStateV1): void {").replace("function fsyncParent(file: string): void {", "function actualDirectFsyncParentFixtureV1(file: string): void {");
-    for (const name of ["fsyncSync", "linkSync", "unlinkSync", "writeFileSync", "openSync", "closeSync"]) {
+    for (const name of ["fsyncSync", "linkSync", "unlinkSync", "writeFileSync", "openSync", "closeSync", "fstatSync"]) {
       const marker = `  ${name},\n`;
       assert.equal(runtimeSource.split(marker).length - 1, 1, `instrument only the actual ${name} import`);
       runtimeSource = runtimeSource.replace(marker, `  ${name} as actualDirect_${name},\n`);
@@ -804,9 +804,24 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     assert.equal(runtimeSource.split(spawnImport).length - 1, 1);
     runtimeSource = runtimeSource.replace(spawnImport, 'import { spawn as actualDirectControllerSpawnFixtureV1, spawnSync, type ChildProcess } from "node:child_process";');
     runtimeSource = runtimeSource.replace("publication.reader = { descriptor: openSync(publication.target,", "publication.reader = { descriptor: openDirectSettlementReaderFixtureV1(publication.target,");
+    const pinnedReturn = "return Object.freeze({ bytes, assertStable, assertOwnedDescriptor, close:";
+    assert.equal(runtimeSource.split(pinnedReturn).length - 1, 1);
+    runtimeSource = runtimeSource.replace(pinnedReturn, "globalThis.__directPinnedDescriptorsV1?.set(label, descriptor); " + pinnedReturn);
     const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
+function fstatSync(fd,...args){const p=globalThis.__directReleaseBoundaryV1;if(p?.fault==='unlink-stat'&&p.unlinked&&!p.fired&&fd===p.lock){p.fired=true;throw Error('DIRECT_RELEASE_STAT_FAULT')}return actualDirect_fstatSync(fd,...args)}
+export function abandonDirectReleaseEpochFixtureV1(){if(retainedDirectSpawnerRebindIntentV1)retainedDirectSpawnerRebindIntentV1.epochPin={close(){}}}
+export function cleanupPartialDirectReleaseFixtureV1(lease){
+ const s=retainedDirectSpawnerRebindIntentV1,r=s?.release;if(!r)return;
+ const errors=[],attempt=fn=>{try{fn()}catch(error){errors.push(error)}};
+ for(const step of [...r.steps,r.rootClose])attempt(()=>{if(step.completed)return;if(step.pin)closePrivateFrameDescriptorV1(step.pin);else step.close();step.completed=true;});
+ attempt(()=>closePrivateFrameDescriptorV1(r.parent));const fd=r.lock.descriptor;
+ if(fd!==null)attempt(()=>{const current=actualDirect_fstatSync(fd,{bigint:true});if(current.dev!==s.lockIdentity.dev||current.ino!==s.lockIdentity.ino)throw Error('fixture lock cleanup identity crossed');
+  if(existsSync(rootPaths().lock)){const visible=lstatSync(rootPaths().lock,{bigint:true});if(visible.dev===current.dev&&visible.ino===current.ino)actualDirect_unlinkSync(rootPaths().lock)}actualDirect_closeSync(fd);r.lock.descriptor=null});
+ leases.delete(lease);retainedDirectSpawnerRebindIntentV1=null;
+ if(errors.length)throw new AggregateError(errors,'partial direct fixture cleanup failed');
+}
 function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')){if((args[1]&constants.O_CREAT)!==0)probe.writer=fd;else probe.reader=fd;}if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}const history=globalThis.__directHistoryCleanupV1;if(history){history.opens++;if(args[0]===rootPaths().journal&&history.targetFd===undefined){history.targetFd=fd;history.identity=fstatSync(fd,{bigint:true});}}return fd;}
 function closeSync(fd){const probe=globalThis.__directFrameProbeV1;if(probe&&fd===probe.intent&&probe.mode==='intent-same-inode-reuse'&&probe.writes>0&&!probe.fired){probe.fired=true;actualDirect_closeSync(fd);probe.owned.delete(fd);probe.foreign=actualDirect_openSync(rootPaths().journal,constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture same-inode FD was not reused');throw Error('DIRECT_FRAME_CLOSE_FAULT')}if(probe&&fd===probe.writer&&!probe.fired&&['late-mutation','close-response','close-reuse'].includes(probe.mode)){probe.fired=true;if(probe.mode==='late-mutation')actualDirect_writeFileSync(fd,'crossed-after-last-reader-check');else{actualDirect_closeSync(fd);probe.owned.delete(fd);if(probe.mode==='close-reuse'){probe.foreign=actualDirect_openSync('/dev/null',constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture did not reuse original FD')}throw Error('DIRECT_FRAME_CLOSE_FAULT')}}if(probe&&fd===probe.writer&&(probe.mode==='persistent-close'||probe.mode==='writer-close'&&!probe.fired)){probe.fired=true;throw Error('DIRECT_FRAME_CLOSE_FAULT')}actualDirect_closeSync(fd);probe?.owned.delete(fd);}
 function publishDirectSpawnerRebindIntentV1(state){const probe=globalThis.__directIntentPublicationFixtureV1;if(!probe)return actualDirectIntentPublisherFixtureV1(state);probe.attempts++;probe.intent=state.intent;if(probe.fault==='before'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BEFORE')}const result=actualDirectIntentPublisherFixtureV1(state);if(probe.fault==='after'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_AFTER')}return result}
@@ -832,9 +847,10 @@ export async function settleDirectControllerFixtureV1(lease,input){return settle
 export async function readDirectSettlementHistoryFixtureV1(){return observeDirectSpawnerControllerSettlementHistoryV1()}
 export function validateDirectSettlementCensusFixtureV1(claim,census){return assertDirectControllerServiceCensusV1(retainedDirectSpawnerRebindIntentV1,claim,census)}
 export function inspectDirectControllerFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,child=state.helperInvocation?.child;return {phase:state.phase,pid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode}}
+export function hasDirectControllerOwnerFixtureV1(){return retainedDirectSpawnerRebindIntentV1!==null}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
 function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
-export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');if(state.settlement){for(const pin of [state.settlement.writer,state.settlement.reader])if(pin)closePrivateFrameDescriptorV1(pin);state.settlement.guard?.close()}if(state.helperInvocation)for(const pin of [state.helperInvocation.frame,state.helperInvocation.intentReader,...(state.helperInvocation.observationPins??[])])if(pin)closePrivateFrameDescriptorV1(pin);state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
+export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(!state&&!leases.has(lease))return;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');if(state.settlement){for(const pin of [state.settlement.writer,state.settlement.reader])if(pin)closePrivateFrameDescriptorV1(pin);state.settlement.guard?.close()}if(state.helperInvocation)for(const pin of [state.helperInvocation.frame,state.helperInvocation.intentReader,...(state.helperInvocation.observationPins??[])])if(pin)closePrivateFrameDescriptorV1(pin);state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
 `.replace("function fsyncSync(fd){", "function priorDirectSettlementSyncFixtureV1(fd){")
       .replace("function fsyncParent(file:string){", "function priorDirectSettlementParentFixtureV1(file:string){")
       .replace("function closeSync(fd){", "function priorDirectSettlementCloseFixtureV1(fd){")
@@ -860,11 +876,18 @@ function settlementSyscallFixtureV1(kind,args,invoke){
  if(!p.fired&&kind==='parent'&&fault==='late-sibling'&&!existsSync(s.temporary)){actualDirect_writeFileSync(path.join(path.dirname(s.target),'.'+path.basename(s.target)+'.foreign.tmp'),'foreign',{mode:0o600,flag:'wx'});p.fired=true;}
  if(!p.fired&&fault===kind+'-after')fail();return result;
 }
-function fsyncSync(fd){return settlementSyscallFixtureV1('sync',[fd],()=>priorDirectSettlementSyncFixtureV1(fd))}
+function directReleaseSyscallFixtureV1(kind,fd,invoke){
+ const p=globalThis.__directReleaseBoundaryV1,r=retainedDirectSpawnerRebindIntentV1?.release;if(!p||!r)return invoke();
+ const slot=kind==='sync'&&fd===r.parent.descriptor?'parent-sync':kind==='close'&&fd===r.parent.descriptor?'parent-close':kind==='close'&&fd===r.lock.descriptor?'lock-close':kind==='close'&&fd===r.steps[0].pin.descriptor?'reader-close':kind==='close'&&fd===globalThis.__directPinnedDescriptorsV1?.get('direct rebind retained epoch')?'epoch-close':null;
+ if(!slot||!p.fault.startsWith(slot)||p.fired)return invoke();
+ p.descriptor=fd;p.identity=actualDirect_fstatSync(fd,{bigint:true});p.fired=true;
+ if(p.fault.endsWith('-after'))invoke();throw Error('DIRECT_RELEASE_BOUNDARY');
+}
+function fsyncSync(fd){return directReleaseSyscallFixtureV1('sync',fd,()=>settlementSyscallFixtureV1('sync',[fd],()=>priorDirectSettlementSyncFixtureV1(fd)))}
 function fsyncParent(file){return settlementSyscallFixtureV1('parent',[file],()=>priorDirectSettlementParentFixtureV1(file))}
-function closeSync(fd){const history=globalThis.__directHistoryCleanupV1;if(history?.fault&&history.targetFd===fd)throw Error('DIRECT_HISTORY_CLOSE_FAULT');return settlementSyscallFixtureV1('close',[fd],()=>priorDirectSettlementCloseFixtureV1(fd))}
+function closeSync(fd){const history=globalThis.__directHistoryCleanupV1;if(history?.fault&&history.targetFd===fd)throw Error('DIRECT_HISTORY_CLOSE_FAULT');return directReleaseSyscallFixtureV1('close',fd,()=>settlementSyscallFixtureV1('close',[fd],()=>priorDirectSettlementCloseFixtureV1(fd)))}
 function linkSync(from,to){return settlementSyscallFixtureV1('link',[from,to],()=>priorDirectSettlementLinkFixtureV1(from,to))}
-function unlinkSync(file){return settlementSyscallFixtureV1('unlink',[file],()=>priorDirectSettlementUnlinkFixtureV1(file))}
+function unlinkSync(file){const result=settlementSyscallFixtureV1('unlink',[file],()=>priorDirectSettlementUnlinkFixtureV1(file));const p=globalThis.__directReleaseBoundaryV1;if(p&&file===rootPaths().lock)p.unlinked=true;return result}
 function writeFileSync(file,bytes,...args){return settlementSyscallFixtureV1('write',[file,bytes,...args],()=>priorDirectSettlementWriteFixtureV1(file,bytes,...args))}
 export function inspectDirectSettlementFixtureV1(){const s=retainedDirectSpawnerRebindIntentV1?.settlement;return s?{target:s.target,temporary:s.temporary,record:s.record,writer:s.writer.descriptor,committed:s.committed}:null}
 export function drainDirectSettlementReaderFixtureV1(){closePrivateFrameDescriptorV1(retainedDirectSpawnerRebindIntentV1.settlement.reader)}
@@ -915,6 +938,7 @@ const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.cal
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `import{readFileSync}from'node:fs';import{createHash}from'node:crypto';${canonical.toString()}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionServiceCensusV1(){return read('census')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const profile=read('profile');profile.outputTreeBytesHash=createHash('sha256').update(readFileSync(${JSON.stringify(mode === "direct-helper" ? path.join(repository, "dist/PLATFORM_BUILD_OUTPUT_TREE.json") : entry)})).digest('hex');delete profile.profileHash;profile.profileHash=createHash('sha256').update(canonical(profile)).digest('hex');const result={profile};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
     const receiptFixturePath = path.join(internal, "baseline-post-handoff-receipt-v1.ts");
     writeFileSync(receiptFixturePath, readFileSync(receiptFixturePath, "utf8").replace("export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){", "export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){await globalThis.__directControllerProfileGateV1?.();")
+      .replace("export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){", "export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){await globalThis.__directControllerHistoryGateV1?.();")
       .replace("export async function observeInternalProductionServiceCensusV1(){", "export async function observeInternalProductionServiceCensusV1(){await globalThis.__directControllerCensusGateV1?.();"));
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readPort + `export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(){return read('restart')}\nexport async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return read('startup')}\nexport async function resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1(){return read('authorization')}\n`);
     const processRecord = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), predecessorHash + ".json");
@@ -922,6 +946,7 @@ const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.cal
     writeFileSync(processRecord, canonical(predecessor) + "\n", { mode: 0o600 });
     const runtime = await import(pathToFileURL(runtimePath).href);
     let lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    Reflect.set(globalThis, "__directPinnedDescriptorsV1", new Map());
     try {
       const helperCompiled = mode === "direct-helper" ? installDirectHelperCompiledFixtureV1() : null;
       const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
@@ -1385,7 +1410,8 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
             inputs.hook = (key: string) => { if (key === "census") censusCalls++; };
             const before = coldGenesisTreeSnapshotV1(privateRoot);
             const historyRequested = directControllerFault.startsWith("settle-history");
-            const fault = historyRequested ? "" : directControllerFault.slice("settle".length).replace(/^-/, "");
+            const releaseRequested = directControllerFault.startsWith("settle-release");
+            const fault = historyRequested || releaseRequested ? "" : directControllerFault.slice("settle".length).replace(/^-/, "");
             const probe = { fault, fired: false, calls: [] as string[], foreign: undefined as number | undefined, foreignIdentity: undefined as ReturnType<typeof fstatSync> | undefined };
             Reflect.set(globalThis, "__directSettlementPublicationV1", probe);
             const originalCensus = structuredClone(inputs.records.census);
@@ -1465,6 +1491,112 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               for (const crossed of [{ ...originalCensus, extra: 1 }, { ...originalCensus, censusHash: "f".repeat(64) }]) assert.throws(() => runtime.validateDirectSettlementCensusFixtureV1(claim, crossed));
             }
             assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+            if (releaseRequested) {
+              const physicalLock = path.join(path.dirname(privateRoot), "physical-service-restart-authority.transition.lock"), descriptor = runtime.directBorrowedLeaseDescriptorFixtureV1();
+              const historyPaths = [path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), ...readdirSync(privateRoot).map(name => path.join(privateRoot, name)), target];
+              const snapshot = () => historyPaths.map(file => {
+                const stats = lstatSync(file, { bigint: true });
+                return { file, bytes: readFileSync(file).toString("base64"), identity: [stats.dev, stats.ino, stats.uid, stats.gid, stats.mode, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].map(String) };
+              });
+              const originalHistory = snapshot();
+              assert.equal(existsSync(physicalLock), true);
+              const releaseFault = directControllerFault.slice("settle-release".length).replace(/^-/, "");
+              const releaseProbe = { fault: releaseFault, lock: descriptor, unlinked: false, fired: false, fixtureClosed: false, descriptor: undefined as number | undefined, identity: undefined as ReturnType<typeof fstatSync> | undefined };
+              Reflect.set(globalThis, "__directReleaseBoundaryV1", releaseProbe);
+              if (releaseFault === "unlink-stat") {
+                await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_RELEASE_STAT_FAULT/);
+                assert.equal(releaseProbe.fired, true);
+                assert.equal(fstatSync(descriptor).nlink, 0);
+                writeFileSync(physicalLock, "later-owner", { mode: 0o600, flag: "wx" });
+                const successor = lstatSync(physicalLock, { bigint: true });
+                await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+                assert.equal(lstatSync(physicalLock, { bigint: true }).ino, successor.ino);
+                assert.equal(readFileSync(physicalLock, "utf8"), "later-owner", "retry must not inspect or remove a later owner's lock");
+                unlinkSync(physicalLock); // Only the test-created successor is removed.
+              } else if (releaseFault === "epoch-reuse") {
+                const epochFd = Reflect.get(globalThis, "__directPinnedDescriptorsV1").get("direct rebind retained epoch");
+                assert.ok(Number.isSafeInteger(epochFd));
+                let foreign: number | undefined, foreignIdentity: ReturnType<typeof fstatSync> | undefined;
+                inputs.hook = (key: string) => {
+                  if (key !== "preMutation" || releaseProbe.fired) return;
+                  releaseProbe.fired = true; closeSync(epochFd); foreign = openSync("/dev/null", constants.O_RDONLY);
+                  assert.equal(foreign, epochFd); foreignIdentity = fstatSync(foreign);
+                };
+                try {
+                  await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /identity|descriptor|predecessor|crossed|reused/);
+                  assert.equal(releaseProbe.fired, true);
+                  assert.equal(fstatSync(foreign!).ino, foreignIdentity!.ino, "release must not close a foreign descriptor reused during historical resolution");
+                  assert.equal(fstatSync(descriptor).nlink, 1);
+                  assert.equal(existsSync(physicalLock), true);
+                  assert.deepEqual(snapshot(), originalHistory);
+                } finally {
+                  inputs.hook = undefined; runtime.abandonDirectReleaseEpochFixtureV1();
+                  if (foreign !== undefined) try { const actual = fstatSync(foreign); if (actual.dev === foreignIdentity!.dev && actual.ino === foreignIdentity!.ino) closeSync(foreign); }
+                  catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error; }
+                }
+                return;
+              } else if (/^(parent-sync|parent-close|lock-close|reader-close|epoch-close)-(before|after)$/.test(releaseFault)) {
+                await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_RELEASE_BOUNDARY/);
+                assert.equal(releaseProbe.fired, true);
+                assert.equal(runtime.hasDirectControllerOwnerFixtureV1(), true, "cleanup failure retains the owner and its outstanding resources");
+                assert.deepEqual(snapshot(), originalHistory);
+                const opaque = releaseFault.startsWith("epoch-close"), closeBefore = releaseFault.endsWith("close-before");
+                if (opaque || closeBefore) {
+                  await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /close outcome is ambiguous/);
+                  if (closeBefore) {
+                    const fd = releaseProbe.descriptor!, current = fstatSync(fd, { bigint: true });
+                    assert.equal(current.dev.toString(), releaseProbe.identity!.dev.toString()); assert.equal(current.ino.toString(), releaseProbe.identity!.ino.toString());
+                    closeSync(fd); releaseProbe.fixtureClosed = true; // Exact fixture-owned close-before injection; production still refuses an uncertain close.
+                  }
+                  if (opaque) {
+                    assert.equal(existsSync(physicalLock), true);
+                    assert.equal(fstatSync(descriptor).nlink, 1);
+                    await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /close outcome is ambiguous/);
+                    assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+                    return;
+                  }
+                }
+                const laterOwner = !existsSync(physicalLock);
+                if (laterOwner) writeFileSync(physicalLock, "later-owner", { mode: 0o600, flag: "wx" });
+                const successor = laterOwner ? lstatSync(physicalLock, { bigint: true }) : null;
+                await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+                if (successor) {
+                  assert.equal(lstatSync(physicalLock, { bigint: true }).ino, successor.ino);
+                  assert.equal(readFileSync(physicalLock, "utf8"), "later-owner"); unlinkSync(physicalLock);
+                }
+              } else {
+                if (releaseFault === "history-only") {
+                  const owned = observeColdFixtureExitV1(claim.child.pid)!;
+                  assert.equal(owned.command, claim.child.command); process.kill(claim.child.pid, "SIGTERM");
+                  const deadline = Date.now() + 5000;
+                  for (let current = observeColdFixtureExitV1(claim.child.pid); current && Date.now() < deadline; current = observeColdFixtureExitV1(claim.child.pid)) {
+                    assertColdFixtureExitObservationV1(current, owned); await new Promise(resolve => setTimeout(resolve, 20));
+                  }
+                  assert.equal(observeColdFixtureExitV1(claim.child.pid), null);
+                  const epochPath = path.join(path.dirname(privateRoot), "epoch-head.json");
+                  renameSync(epochPath, path.join(fixture, "original-release-epoch")); writeFileSync(epochPath, "later-epoch", { mode: 0o600, flag: "wx" });
+                }
+                let entered!: () => void, release!: () => void, gated = false;
+                const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+                Reflect.set(globalThis, "__directControllerHistoryGateV1", () => { if (!gated) { gated = true; entered(); return gate; } });
+                const pending = runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease); void pending.catch(() => {});
+                await reached;
+                try {
+                  await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /ownership is active/);
+                  await assert.rejects(runtime.invokeDirectControllerFixtureV1(lease, input), /active/);
+                  await assert.rejects(runtime.observeDirectControllerFixtureV1(lease, input), /active/);
+                  await assert.rejects(runtime.settleDirectControllerFixtureV1(lease, input), /active/);
+                } finally { release(); Reflect.deleteProperty(globalThis, "__directControllerHistoryGateV1"); await pending; }
+              }
+              assert.equal(existsSync(physicalLock), false);
+              assert.equal(runtime.hasDirectControllerOwnerFixtureV1(), false);
+              assert.throws(() => fstatSync(descriptor), (error: unknown) => error instanceof Error && "code" in error && error.code === "EBADF");
+              assert.deepEqual(snapshot(), originalHistory, "physical release preserves every original history byte and inode");
+              assert.deepEqual((await runtime.readDirectSettlementHistoryFixtureV1()).settlement, settled);
+              await assert.rejects(runtime.invokeDirectControllerFixtureV1(lease, input));
+              assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+              return;
+            }
             if (historyRequested) {
               const owned = observeColdFixtureExitV1(claim.child.pid)!;
               assert.equal(owned.command, claim.child.command);
@@ -1584,7 +1716,7 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
             }
             assert.equal(spawnProbe.calls.length, 1, "independent observation cannot redispatch");
           }
-          await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
+          if (!directControllerFault.startsWith("settle")) await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
           return;
         }
         const crosses: Array<[string, (value: any) => void]> = [
@@ -1850,6 +1982,7 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       Reflect.deleteProperty(globalThis, "__directControllerSpawnFixtureV1");
       Reflect.deleteProperty(globalThis, "__directControllerProfileGateV1");
       Reflect.deleteProperty(globalThis, "__directControllerCensusGateV1");
+      Reflect.deleteProperty(globalThis, "__directControllerHistoryGateV1");
       const settlementProbe = Reflect.get(globalThis, "__directSettlementPublicationV1");
       if (settlementProbe?.foreign !== undefined) {
         try { const current = fstatSync(settlementProbe.foreign, { bigint: true }); if (current.dev === settlementProbe.foreignIdentity.dev && current.ino === settlementProbe.foreignIdentity.ino) closeSync(settlementProbe.foreign); }
@@ -1860,6 +1993,18 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
         catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error; }
       }
       Reflect.deleteProperty(globalThis, "__directSettlementPublicationV1");
+      const releaseProbe = Reflect.get(globalThis, "__directReleaseBoundaryV1");
+      if (releaseProbe?.fired && releaseProbe.fault.endsWith("close-before") && !releaseProbe.fixtureClosed) {
+        try {
+          const current = fstatSync(releaseProbe.descriptor, { bigint: true });
+          if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].every(key => String(Reflect.get(current, key)) === String(Reflect.get(releaseProbe.identity, key)))) {
+            closeSync(releaseProbe.descriptor); releaseProbe.fixtureClosed = true;
+          }
+        } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error; }
+      }
+      Reflect.deleteProperty(globalThis, "__directReleaseBoundaryV1");
+      Reflect.deleteProperty(globalThis, "__directPinnedDescriptorsV1");
+      runtime.cleanupPartialDirectReleaseFixtureV1(lease);
       await runtime.releaseDirectPreparationFixtureV1(lease);
     }
   } finally {
@@ -1996,6 +2141,13 @@ test("actual fixed direct helper authenticates one real sealed child claim and e
 test("actual direct controller retains one fixed helper through concurrent calls and response loss", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller"));
 test("actual direct controller independently binds the original detached child claim", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-observe"));
 test("actual direct controller durably settles the original claim and two service observations", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle"));
+test("direct controller terminal release removes only its owned physical lock and preserves history", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release"));
+test("direct controller terminal release reconciles an unlinked original after stat response loss without touching a later owner", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release-unlink-stat"));
+test("direct controller terminal release refuses an epoch descriptor reused during historical resolution", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release-epoch-reuse"));
+test("direct controller terminal release accepts history after child departure and current epoch replacement", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-release-history-only"));
+for (const boundary of ["parent-sync", "parent-close", "lock-close", "reader-close", "epoch-close"]) {
+  for (const effect of ["before", "after"]) test(`direct controller terminal release retains ${boundary}-${effect} cleanup ownership`, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-release-${boundary}-${effect}`));
+}
 test("fresh direct terminal history authenticates after the original child departs without effects", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-history"));
 test("fresh direct terminal history refuses replaced original records P3 and awaited journal churn", async (context) => {
   for (const fault of ["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim", "p3", "await-aba"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-history-${fault}`));
