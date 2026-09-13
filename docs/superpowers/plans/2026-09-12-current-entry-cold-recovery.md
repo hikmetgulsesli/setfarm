@@ -816,7 +816,7 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   Bind the original history and two equal ordinary four-service observations;
   their spawner is the retained claim and other services equal original P3.
   Preserve no-replace publication/fsync/close progress across response loss.
-- [ ] Release only the same committed terminal owner. Retain per-resource close
+- [x] Release only the same committed terminal owner. Retain per-resource close
   progress, authenticate original descriptors, then exact lock unlink/fsync and
   original lease close. Preserve history. Complete authenticated historical
   terminals may authorize dead-owner cleanup without claiming child liveness;
@@ -1066,6 +1066,26 @@ without another production change: existing full physical witnesses reject it
 before terminal publication. Retain those regressions. Independent review found
 no further demonstrated material defect in this scoped acceptance checkpoint.
 This is not a full P3, PR-delivery or live-goal completion claim.
+
+Actual dead-original-controller E2E now runs a separate plain Node controller
+against the real compiled retirement/helper/sealed-child implementation. It
+acquires, invokes, independently settles and exits without releasing its lock.
+The fresh parent proves that durable PID absent with real ps, retains the old
+lock FD, acquires through production dead-owner reclaim (old nlink becomes zero,
+new lock belongs to the parent), then releases. The original intent, four journal
+files, terminal and physical history witnesses remain unchanged; actual signal
+and helper/child spawn traces do not grow, and the exact replacement child stays
+running until identity-bound fixture teardown. Aliases are compiled before
+sealed output hashing; the runner and finalized observation file stay outside
+dist. No death/process-effect double or production change is involved.
+An initial fixture-only terminal-path typo was corrected before evaluating the
+reclaim assertions. Positive passed1/1 (5.915s), coupled helper/controller/release/
+ABI passed6/6 (36.440s), source manifest17/17 (5.750s), TypeScript and whitespace
+passed. Independent review found no correctness/security blocker. Its minor
+instrumentation-window/FD-finally/bigint improvements were incorporated, then
+dead-owner plus retained-release regression passed2/2 (12.697s).
+The composite terminal-release/dead-owner checkbox is now proven; public V2
+routing, startup/census, full gates and live goal acceptance remain open.
 
 Private direct terminal-history RED first failed at the missing reader (8.159s).
 The new resolver retains original file descriptors/metadata/bytes across both

@@ -952,9 +952,79 @@ const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.cal
     mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
     writeFileSync(processRecord, canonical(predecessor) + "\n", { mode: 0o600 });
     const runtime = await import(pathToFileURL(runtimePath).href);
-    let lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
-    Reflect.set(globalThis, "__directPinnedDescriptorsV1", new Map());
+    let lease: any;
     try {
+      if (directControllerFault === "settle-dead-owner") {
+        const { recordPath } = installDirectHelperCompiledFixtureV1();
+        writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
+        const compiledModule = path.join(repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js");
+        const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1"), journalRoot = path.join(root, "direct-spawner-rebind-v1");
+        const controllerPath = path.join(fixture, "direct-controller-owner.mjs");
+        writeFileSync(controllerPath, `
+import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {createHash} from 'node:crypto';import {readFileSync,writeFileSync} from 'node:fs';
+${canonical.toString()}
+${sha256.toString()}
+${parseColdFixtureExitRowV1.toString()}
+${observeColdFixtureExitV1.toString()}
+const recordPath=${JSON.stringify(recordPath)},records=JSON.parse(readFileSync(recordPath,'utf8'));
+globalThis.__directRebindInputFixtureV1={records,calls:[]};
+const runtime=await import(${JSON.stringify(pathToFileURL(compiledModule).href)});
+const lease=await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+const input={currentEntryOperation:{operationRef:records.operation.operationRef,operationHash:records.operation.operationHash},restartAuthority:{restartAuthorityRef:records.restart.restartAuthorityRef,restartAuthorityHash:records.restart.restartAuthorityHash}};
+await runtime.invokeDirectControllerOwnerFixtureV1(lease,input);
+const claim=JSON.parse(readFileSync(${JSON.stringify(path.join(journalRoot, "claim.json"))},'utf8')),child=observeColdFixtureExitV1(claim.child.pid);
+assert.ok(child);assert.equal(child.command,claim.child.command);assert.equal(Date.parse(child.lstart),claim.child.processStartTimeEpochMs);
+const label='com.setrox.setfarm-spawner',source=records.profile.source;
+const serviceIdentityHash=sha256(canonical({schema:'setfarm.internal-production-service-identity.v1',label,command:child.command}));
+const {censusHash:_prior,...body}=records.census;
+body.spawner={pid:claim.child.pid,processStartTimeEpochMs:Date.parse(child.lstart),processIdentityHash:sha256(claim.child.pid+'\\n'+child.lstart+'\\n'),serviceIdentityHash,
+generationHash:sha256(canonical({schema:'setfarm.internal-production-loaded-service-generation.v1',label,serviceIdentityHash,source:{sha:source.sha,treeHash:source.treeHash,buildHash:source.buildHash}})),
+loadedSourceSha:source.sha,loadedTreeHash:source.treeHash,loadedBuildHash:source.buildHash,processOwnerCount:1,listener:null};
+records.census={...body,censusHash:sha256(canonical(body))};writeFileSync(recordPath,JSON.stringify(records),{mode:0o600});
+const terminal=await runtime.settleDirectControllerOwnerFixtureV1(lease,input),history=await runtime.readDirectControllerHistoryFixtureV1();
+assert.equal(history.preSchemaHelperSettlementHash,terminal.helperSettlementHash);
+process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helperSettlementHash}));
+// Deliberately leave the original physical lease retained until process exit.
+`, { mode: 0o600, flag: "wx" });
+        const controller = spawnSync(process.execPath, [controllerPath], { cwd: repository, encoding: "utf8", timeout: 30_000, maxBuffer: 65_536,
+          env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+        assert.equal(controller.error, undefined); assert.equal(controller.signal, null); assert.equal(controller.status, 0, controller.stderr); assert.equal(controller.stderr, "");
+        const completed = JSON.parse(controller.stdout), lock = path.join(root, "physical-service-restart-authority.transition.lock");
+        const originalLock = JSON.parse(readFileSync(lock, "utf8"));
+        assert.equal(originalLock.pid, completed.pid); assert.notEqual(originalLock.pid, process.pid);
+        assert.equal(observeColdFixtureExitV1(originalLock.pid), null, "original durable controller PID is actually absent, not a fixture process double");
+        Reflect.set(globalThis, "__directRebindInputFixtureV1", { records: JSON.parse(readFileSync(recordPath, "utf8")), calls: [] });
+        const fresh = await import(`${pathToFileURL(compiledModule).href}?dead-owner-parent=${Date.now()}`);
+        const history = await fresh.readDirectControllerHistoryFixtureV1();
+        assert.equal(history.preSchemaHelperSettlementHash, completed.terminalHash);
+        const historyPaths = [path.join(root, "pre-schema-helper-journal.json"), journalRoot, path.join(root, "pre-schema-helper-settlements/sha256", completed.terminalHash.slice(0, 2), `${completed.terminalHash}.json`)];
+        const before = historyPaths.map(target => coldGenesisTreeSnapshotV1(target));
+        const effects = { signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) };
+        assert.equal(effects.signals.toString(), "SIGTERM\n");
+        const dispatches = effects.spawns.toString().trim().split("\n").map(line => JSON.parse(line));
+        assert.equal(dispatches.length, 2, "one actual controller-helper dispatch and one helper-child dispatch");
+        assert.deepEqual(dispatches.map(value => value.arguments), [[path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js")], [entry]]);
+        const originalFd = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
+        let recovered: any;
+        try {
+          const identity = fstatSync(originalFd, { bigint: true });
+          recovered = await fresh.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+          assert.equal(fstatSync(originalFd, { bigint: true }).nlink, 0n, "only the proven dead original lock was unlinked");
+          assert.notEqual(lstatSync(lock, { bigint: true }).ino, identity.ino);
+          assert.equal(JSON.parse(readFileSync(lock, "utf8")).pid, process.pid);
+        } finally {
+          try { if (recovered) await fresh.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(recovered); }
+          finally { closeSync(originalFd); }
+        }
+        assert.equal(existsSync(lock), false);
+        assert.deepEqual(historyPaths.map(target => coldGenesisTreeSnapshotV1(target)), before);
+        assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects, "recovery performs no new termination/helper/child effect");
+        const originalChild = parseColdFixtureExitRowV1(readFileSync(directChildCleanupPath, "utf8"));
+        assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(Number(originalChild.pid)), originalChild), "running");
+        return;
+      }
+      lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+      Reflect.set(globalThis, "__directPinnedDescriptorsV1", new Map());
       const helperCompiled = mode === "direct-helper" ? installDirectHelperCompiledFixtureV1() : null;
       const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
       const run = async (mutate?: (value: any) => void, hook?: (key: string) => void) => {
@@ -1157,7 +1227,7 @@ function fsyncSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&(
           ]) { assert.equal(helperSource.split(marker!).length - 1, 1); helperSource = helperSource.replace(marker!, marker! + hook); }
           writeFileSync(path.join(fixture, "foreign-direct-claim"), "", { mode: 0o600 });
         }
-        compile("internal-production/baseline-restart-authority-retirement-v1.ts", helperSource + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\nexport function publishDirectSpawnFixtureV1(){return publishDirectSpawnerHelperSpawnDispatchV1()}\nexport function takeDirectChildFixtureV1(){return takeDirectSpawnerChildLaunchDescriptorsV1()}\nexport async function admitDirectChildFixtureV1(){return await acquireDirectSpawnerChildStartupContextV1()}\nexport function drainDirectSpawnFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}\n");
+        compile("internal-production/baseline-restart-authority-retirement-v1.ts", helperSource + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\nexport function publishDirectSpawnFixtureV1(){return publishDirectSpawnerHelperSpawnDispatchV1()}\nexport function takeDirectChildFixtureV1(){return takeDirectSpawnerChildLaunchDescriptorsV1()}\nexport async function admitDirectChildFixtureV1(){return await acquireDirectSpawnerChildStartupContextV1()}\nexport function drainDirectSpawnFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}\nexport async function invokeDirectControllerOwnerFixtureV1(lease,input){return invokeDirectSpawnerRebindHelperV1(lease,input)}\nexport async function settleDirectControllerOwnerFixtureV1(lease,input){return settleDirectSpawnerRebindControllerV1(lease,input)}\nexport async function readDirectControllerHistoryFixtureV1(){return observeDirectSpawnerControllerSettlementHistoryV1()}\n");
         for (const relative of ["internal-production/baseline-spawner-launch-environment-v1.ts", "findings/legacy-finding-publication-inventory-v1.ts", "runtime-config.ts"]) compileStatic(relative);
         for (const relative of ["baseline-post-handoff-receipt-v1.ts", "baseline-spawner-startup-admission-v1.ts"]) {
           let source = readFileSync(path.join(internal, relative), "utf8");
@@ -2071,8 +2141,10 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       }
       Reflect.deleteProperty(globalThis, "__directReleaseBoundaryV1");
       Reflect.deleteProperty(globalThis, "__directPinnedDescriptorsV1");
-      runtime.cleanupPartialDirectReleaseFixtureV1(lease);
-      await runtime.releaseDirectPreparationFixtureV1(lease);
+      if (lease !== undefined) {
+        runtime.cleanupPartialDirectReleaseFixtureV1(lease);
+        await runtime.releaseDirectPreparationFixtureV1(lease);
+      }
     }
   } finally {
     // The helper records its actual spawned identity before readiness and any
@@ -2209,6 +2281,7 @@ test("actual direct controller retains one fixed helper through concurrent calls
 test("actual direct controller independently binds the original detached child claim", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-observe"));
 test("actual direct controller durably settles the original claim and two service observations", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle"));
 test("complete direct terminal history permits original and later ordinary lock cleanup without effects", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup"));
+test("fresh direct history reclaims an actually exited original controller without redispatch", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-dead-owner"));
 test("ordinary lock release refuses direct history replaced after the outer helper await", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup-outer-claim"));
 for (const member of ["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim", "settlement", "directory", "intent-temp", "settlement-temp"]) {
   test(`direct cleanup refuses post-await ${member} history replacement`, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-cleanup-${member}`));
