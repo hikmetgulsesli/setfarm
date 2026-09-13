@@ -798,7 +798,7 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   original frame/intent descriptors immediately, borrow only the held lease
   descriptor, and mark possible effect before the single fixed helper spawn.
   Retry awaits that same ChildProcess/completion; no replacement invocation.
-- [ ] Independently authenticate the exact four-member direct journal and
+- [x] Independently authenticate the exact four-member direct journal and
   original top-level intent, termination records, spawn dispatch and claim.
   First extract a private strict spawn-dispatch history parser from the existing
   child checks: consume original intent and termination record bytes, require
@@ -896,6 +896,33 @@ invocation, real helper/child and exact-export gate passed28/28 (39.702s);
 manifests17/17 (5.957s). Final independent scoped recheck found no remaining
 issue. This completes the invocation kernel, not public V2 routing or
 claim/settlement/release authority.
+
+Independent direct controller claim observation now authenticates the original
+four-member journal, completion-bound publication identities and actual retained
+helper exit, then independently observes the exact detached child and original
+startup files. Original runtime parents are retained before helper dispatch;
+spawn-dispatch/claim readers are retained before their first read and reused,
+never reopened as new authority on replay. Both awaited profile/output checks
+are followed by complete original history/process/startup re-observation.
+
+The first real-process observer test failed at the missing implementation
+(7.045s). Initial observation/replacement gates passed8/8 (45.567s). Review
+identified an async observation overlap after helper capture had completed;
+the test now blocks the first observer at that exact post-kernel profile await.
+RED accepted the second observer (7.325s); a separate whole-observation active
+guard yields GREEN1/1 (7.107s), and resets on success/refusal without granting
+redispatch. Extended focused gates passed15/15 (80.398s): original intent and
+termination replacement, claim/dispatch/startup replacement, journal ABA,
+original P3 drift, late PID/parent replacement, and successful-observation then
+same-byte/new-inode claim/dispatch replacement on replay. Refusal preserves the
+original invocation, physical lease and phase. No public settlement/release
+authority is introduced. TypeScript no-emit and whitespace passed; independent
+scoped review found no remaining production issue.
+Final capture/helper/controller/observer coupled gate passed41/41 (110.375s);
+the separate exact retirement export/lease check passed1/1 (0.818s), and
+manifest17/17 (5.980s). Live API/dashboard remain HTTP200/200. This checkpoint
+completes independent claim observation only; settlement and release remain
+unchecked and no live recovery or full-P3 acceptance is claimed.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result

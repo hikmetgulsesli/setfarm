@@ -826,10 +826,11 @@ export function parseDirectSpawnDispatchFixtureV1(bytes,intent,terminationDispat
 function verifyDirectControllerOutputFixtureV1(input){return globalThis.__directControllerOutputFixtureV1(input)}
 function spawn(executable,args,options){const probe=globalThis.__directControllerSpawnFixtureV1;probe?.calls.push({executable,args,options});return actualDirectControllerSpawnFixtureV1(probe?.fault==='spawn-error'?${JSON.stringify(path.join(fixture, "absent-controller-node"))}:executable,args,options)}
 export async function invokeDirectControllerFixtureV1(lease,input,loseResponse=false){const completion=await invokeDirectSpawnerRebindHelperV1(lease,input);if(loseResponse)throw Error('DIRECT_CONTROLLER_RESPONSE_LOST');return completion}
+export async function observeDirectControllerFixtureV1(lease,input){return observeDirectSpawnerRebindControllerClaimV1(lease,input)}
 export function inspectDirectControllerFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,child=state.helperInvocation?.child;return {phase:state.phase,pid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode}}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
 function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
-export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');if(state.helperInvocation)for(const pin of [state.helperInvocation.frame,state.helperInvocation.intentReader])if(pin)closePrivateFrameDescriptorV1(pin);state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
+export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');if(state.helperInvocation)for(const pin of [state.helperInvocation.frame,state.helperInvocation.intentReader,...(state.helperInvocation.observationPins??[])])if(pin)closePrivateFrameDescriptorV1(pin);state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
 `);
     const internal = path.dirname(runtimePath);
     const environment = { PATH: "/usr/bin:/bin", PRIVATE_VALUE: "direct-fixture-secret", HOME: home, LANG: "C", LC_ALL: "C", SETFARM_ENV_DIR: environmentDirectory, SETFARM_REPO_DIR: repository, SETFARM_PG_URL: "postgresql://fixture@127.0.0.1:1/disposable" };
@@ -875,6 +876,8 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
     const readPort = `import{projectInternalProductionSpawnerLaunchEnvironmentCandidateV1}from'./baseline-spawner-launch-environment-v1.js';
 const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.calls.push(key);state.hook?.(key);if(key==='environment'){const{PRIVATE_VALUE,...base}=state.records.environment;const candidate=projectInternalProductionSpawnerLaunchEnvironmentCandidateV1(base,[Buffer.from('PRIVATE_VALUE='+PRIVATE_VALUE+'\\n'),null]);if(Object.getPrototypeOf(candidate.environment)!==null)throw Error('fixture must retain the real producer prototype');return state.customPrototype?Object.assign(Object.create({foreign:true}),candidate.environment):candidate.environment;}return structuredClone(state.records[key])};\n`;
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `import{readFileSync}from'node:fs';import{createHash}from'node:crypto';${canonical.toString()}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionServiceCensusV1(){return read('census')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const profile=read('profile');profile.outputTreeBytesHash=createHash('sha256').update(readFileSync(${JSON.stringify(mode === "direct-helper" ? path.join(repository, "dist/PLATFORM_BUILD_OUTPUT_TREE.json") : entry)})).digest('hex');delete profile.profileHash;profile.profileHash=createHash('sha256').update(canonical(profile)).digest('hex');const result={profile};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
+    const receiptFixturePath = path.join(internal, "baseline-post-handoff-receipt-v1.ts");
+    writeFileSync(receiptFixturePath, readFileSync(receiptFixturePath, "utf8").replace("export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){", "export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){await globalThis.__directControllerProfileGateV1?.();"));
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readPort + `export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(){return read('restart')}\nexport async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return read('startup')}\nexport async function resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1(){return read('authorization')}\n`);
     const processRecord = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), predecessorHash + ".json");
     mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
@@ -1274,13 +1277,21 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               const target = path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), bytes = readFileSync(target);
               renameSync(target, path.join(fixture, "controller-original-intent")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
             }
+            if (outputChecks === 4 && directControllerFault === "observe-late-pid") {
+              const target = path.join(home, ".openclaw/setfarm/spawner.pid"), bytes = readFileSync(target);
+              renameSync(target, path.join(fixture, "controller-original-late-pid")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+            }
+            if (outputChecks === 4 && directControllerFault === "observe-late-parent") {
+              const target = path.join(home, ".openclaw/setfarm"), original = path.join(fixture, "controller-original-late-runtime");
+              renameSync(target, original); symlinkSync(original, target, "dir");
+            }
             return result;
           });
           writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
           const initial = runtime.invokeDirectControllerFixtureV1(lease, input, true);
           void initial.catch(() => {});
           await assert.rejects(runtime.invokeDirectControllerFixtureV1(lease, input), /already active/);
-          if (directControllerFault) {
+          if (directControllerFault && !directControllerFault.startsWith("observe")) {
             const entered = ["spawn-error", "helper-failure"].includes(directControllerFault);
             const expected = entered ? /direct helper completion|direct helper exit/ : /helper outcome is uncertain/;
             await assert.rejects(initial, expected);
@@ -1319,6 +1330,42 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
           assert.equal(readFileSync(directSpawnTracePath, "utf8").trim().split("\n").length, 1, "response loss retains the sole real helper/child dispatch");
           assert.equal(signalProbe.calls.length, 1);
           assert.equal(fstatSync(runtime.directBorrowedLeaseDescriptorFixtureV1()).nlink, 1);
+          if (directControllerFault.startsWith("observe")) {
+            const fault = directControllerFault.slice("observe".length).replace(/^-/, "");
+            if (fault.startsWith("replay-")) {
+              assert.deepEqual(await runtime.observeDirectControllerFixtureV1(lease, input), claim);
+              assert.equal(runtime.inspectDirectControllerFixtureV1().phase, "claim-observed");
+            }
+            if (["claim-replace", "dispatch-replace", "pid-replace", "intent-replace", "termination-replace", "replay-claim", "replay-dispatch"].includes(fault)) {
+              const target = fault === "pid-replace" ? path.join(home, ".openclaw/setfarm/spawner.pid")
+                : fault === "intent-replace" ? path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json")
+                : path.join(privateRoot, fault === "termination-replace" ? "termination-receipt.json" : ["claim-replace", "replay-claim"].includes(fault) ? "claim.json" : "spawn-dispatch.json");
+              const bytes = readFileSync(target); renameSync(target, path.join(fixture, "controller-original-observation")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+            }
+            if (fault === "journal-aba") { const target = path.join(privateRoot, "observer-foreign.tmp"); writeFileSync(target, "foreign", { mode: 0o600 }); unlinkSync(target); }
+            if (fault === "runtime-parent") {
+              const target = path.join(home, ".openclaw/setfarm"), original = path.join(fixture, "controller-original-runtime");
+              renameSync(target, original); symlinkSync(original, target, "dir");
+            }
+            if (fault === "p3") Reflect.get(globalThis, "__directRebindInputFixtureV1").records.preMutation.spawner.pid++;
+            if (fault) {
+              await assert.rejects(runtime.observeDirectControllerFixtureV1(lease, input), /direct|profile|predecessor/);
+              await assert.rejects(runtime.observeDirectControllerFixtureV1(lease, input), /direct|profile|predecessor/);
+              assert.equal(runtime.inspectDirectControllerFixtureV1().phase, fault.startsWith("replay-") ? "claim-observed" : "helper-may-have-run");
+            } else {
+              let entered!: () => void, release!: () => void, gated = false;
+              const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+              Reflect.set(globalThis, "__directControllerProfileGateV1", () => { if (!gated) { gated = true; entered(); return gate; } });
+              const observation = runtime.observeDirectControllerFixtureV1(lease, input); void observation.catch(() => {});
+              await reached;
+              try { await assert.rejects(runtime.observeDirectControllerFixtureV1(lease, input), /already active/); }
+              finally { release(); Reflect.deleteProperty(globalThis, "__directControllerProfileGateV1"); await observation; }
+              assert.deepEqual(await observation, claim);
+              assert.equal(runtime.inspectDirectControllerFixtureV1().phase, "claim-observed");
+              assert.deepEqual(await runtime.observeDirectControllerFixtureV1(lease, input), claim);
+            }
+            assert.equal(spawnProbe.calls.length, 1, "independent observation cannot redispatch");
+          }
           await assert.rejects(runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease), /DIRECT_REBIND_UNSETTLED/);
           return;
         }
@@ -1583,6 +1630,7 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       Reflect.deleteProperty(globalThis, "__directFrameProbeV1");
       Reflect.deleteProperty(globalThis, "__directControllerOutputFixtureV1");
       Reflect.deleteProperty(globalThis, "__directControllerSpawnFixtureV1");
+      Reflect.deleteProperty(globalThis, "__directControllerProfileGateV1");
       await runtime.releaseDirectPreparationFixtureV1(lease);
     }
   } finally {
@@ -1717,6 +1765,13 @@ test("real direct child separates inherited configuration from original startup 
 test("real direct main publishes one owned claim and remains sealed after helper departure", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main"));
 test("actual fixed direct helper authenticates one real sealed child claim and exits", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-helper"));
 test("actual direct controller retains one fixed helper through concurrent calls and response loss", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller"));
+test("actual direct controller independently binds the original detached child claim", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-observe"));
+test("direct controller claim observation refuses replaced history startup files and original P3", async (context) => {
+  for (const fault of ["claim-replace", "dispatch-replace", "pid-replace", "journal-aba", "runtime-parent", "p3", "late-pid", "late-parent", "intent-replace", "termination-replace"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-observe-${fault}`));
+});
+test("direct controller observed claim replay preserves the original history readers", async (context) => {
+  for (const fault of ["replay-claim", "replay-dispatch"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-observe-${fault}`));
+});
 test("direct controller refuses journal ABA at its final pre-spawn boundary", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-journal-aba"));
 test("direct controller retains its fence through original intent replacement and failed helper transport", async (context) => {
   for (const fault of ["intent-replace", "spawn-error", "helper-failure"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-${fault}`));

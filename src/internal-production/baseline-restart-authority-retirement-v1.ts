@@ -184,11 +184,14 @@ type DirectControllerHelperInvocationV1 = {
   frame: PrivateFrameDescriptorV1 | null;
   intentReader: PrivateFrameDescriptorV1 | null;
   rootIdentity: BigIntStats | null;
+  runtimeDirectories: Map<string, BigIntStats>;
+  observationPins: Array<PrivateFrameDescriptorV1 & { target: string; bytes: Buffer | null }>;
 };
 let retainedDirectSpawnerRebindIntentV1: DirectSpawnerRebindIntentStateV1 | null = null;
 let directSpawnerRebindPreparationActiveV1 = false;
 let directSpawnerTerminationActiveV1 = false;
 let directControllerHelperInvocationActiveV1 = false;
+let directControllerClaimObservationActiveV1 = false;
 type RawPhysicalTransitionLockV1 = Readonly<{
   schema: "setfarm.internal-production-raw-physical-transition-lock.v1";
 }>;
@@ -2360,6 +2363,17 @@ function assertDirectControllerAuthorityV1(state: DirectSpawnerRebindIntentState
     const current = lstatSync(path.join(paths.root, "direct-spawner-rebind-v1"), { bigint: true });
     if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== invocation.rootIdentity![key as keyof BigIntStats])) fail("direct controller original journal changed");
   }
+  for (const [target, original] of invocation?.runtimeDirectories ?? []) {
+    const current = lstatSync(target, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink()
+      || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])) fail("direct controller original runtime directory changed");
+  }
+  for (const pin of invocation?.observationPins ?? []) {
+    if (pin.descriptor === null || pin.identity === null || pin.bytes === null || pin.closeEntered
+      || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+      || !pin.bytes.equals(readColdGenesisCandidateV1(pin.target, pin.identity))
+      || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct controller original observation reader changed");
+  }
   for (const pin of [invocation?.frame, invocation?.intentReader]) {
     if (!pin || pin.descriptor === null) continue;
     if (pin.closeEntered || pin.identity === null || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct controller original transport changed");
@@ -2397,7 +2411,7 @@ async function invokeDirectSpawnerRebindHelperV1(
     const state = retainedDirectSpawnerRebindIntentV1!;
     if (state.phase === "intent-only") {
       await assertDirectControllerLaunchProfileV1(state);
-      const invocation: DirectControllerHelperInvocationV1 = { child: null, completion: null, failed: false, frame: null, intentReader: null, rootIdentity: null };
+      const invocation: DirectControllerHelperInvocationV1 = { child: null, completion: null, failed: false, frame: null, intentReader: null, rootIdentity: null, runtimeDirectories: new Map(), observationPins: [] };
       state.helperInvocation = invocation; state.phase = "helper-may-have-run";
       try {
         const handles = openDirectSpawnerHelperFrameV1(state);
@@ -2407,6 +2421,12 @@ async function invokeDirectSpawnerRebindHelperV1(
         invocation.frame.identity = fstatSync(handles.frameDescriptor, { bigint: true });
         invocation.intentReader.identity = fstatSync(handles.intentDescriptor, { bigint: true });
         invocation.rootIdentity = lstatSync(path.join(rootPaths().root, "direct-spawner-rebind-v1"), { bigint: true });
+        const originalProfile = state.inputs.profile as Record<string, any>;
+        for (const target of [path.join(originalProfile.home, ".openclaw"), path.join(originalProfile.home, ".openclaw/setfarm")]) {
+          const stats = lstatSync(target, { bigint: true });
+          if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== BigInt(originalProfile.uid)) fail("direct controller original runtime directory is invalid");
+          invocation.runtimeDirectories.set(target, stats);
+        }
         await assertDirectControllerLaunchProfileV1(state);
         const profile = state.inputs.profile as Record<string, any>;
         const assertLaunchPrefix = () => {
@@ -2427,13 +2447,88 @@ async function invokeDirectSpawnerRebindHelperV1(
       } catch { invocation.failed = true; }
     }
     const invocation = state.helperInvocation;
-    if (!invocation || state.phase !== "helper-may-have-run") fail("direct controller retained invocation is unavailable");
+    if (!invocation || !["helper-may-have-run", "claim-observed"].includes(state.phase)) fail("direct controller retained invocation is unavailable");
     if (invocation.frame) closePrivateFrameDescriptorV1(invocation.frame);
     if (invocation.failed || !invocation.completion) fail("direct controller helper outcome is uncertain");
     const completion = await invocation.completion;
     assertDirectControllerAuthorityV1(state);
     return completion;
   } finally { directControllerHelperInvocationActiveV1 = false; }
+}
+
+function independentlyObserveDirectControllerClaimV1(state: DirectSpawnerRebindIntentStateV1, completion: Readonly<Record<string, unknown>>) {
+  const invocation = state.helperInvocation, helper = invocation?.child;
+  if (!invocation || invocation.failed || !helper || helper.exitCode !== 0 || helper.signalCode !== null || !Number.isSafeInteger(helper.pid)
+    || invocation.runtimeDirectories.size !== 2) fail("direct controller retained helper outcome is unavailable");
+  const root = path.join(rootPaths().root, "direct-spawner-rebind-v1");
+  const assertOriginal = () => {
+    assertDirectControllerAuthorityV1(state);
+    if (canonical(coldFileIdentityTupleV1(lstatSync(root, { bigint: true }))) !== canonical(completion.journalIdentity)
+      || canonical(readColdDirectoryMembersV1(root, 4).sort()) !== canonical(["claim.json", "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct controller completed journal is crossed");
+  };
+  assertOriginal();
+  if (canonical(completion.intentIdentity) !== canonical(coldFileIdentityTupleV1(state.publication.identity!))) fail("direct controller completion intent identity is crossed");
+  const readOriginal = (name: string, expected: unknown) => {
+    assertOriginal();
+    const target = path.join(root, name), stats = lstatSync(target, { bigint: true });
+    if (stats.size > 65_536n || canonical(coldFileIdentityTupleV1(stats)) !== canonical(expected)) fail("direct controller completion publication identity is crossed");
+    let pin = invocation.observationPins.find(candidate => candidate.target === target);
+    if (!pin) {
+      pin = { target, descriptor: openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null, bytes: null, closeEntered: false };
+      invocation.observationPins.push(pin);
+      pin.identity = fstatSync(pin.descriptor!, { bigint: true });
+      if (!sameColdFileMetadataV1(stats, pin.identity)) fail("direct controller observation reader is crossed");
+      pin.bytes = readColdGenesisCandidateV1(target, stats);
+    }
+    assertOriginal();
+    return pin.bytes!;
+  };
+  const termination = state.termination!;
+  const terminationDispatchBytes = Buffer.from(`${canonical(termination.dispatch!.record)}\n`), terminationReceiptBytes = Buffer.from(`${canonical(termination.receipt!.record)}\n`);
+  const dispatchBytes = readOriginal("spawn-dispatch.json", completion.dispatchIdentity);
+  const dispatch = parseDirectSpawnerSpawnDispatchV1(dispatchBytes, state.intent, terminationDispatchBytes, terminationReceiptBytes);
+  if (canonical(dispatch.intentIdentity) !== canonical(completion.intentIdentity)
+    || canonical(dispatch.terminationDispatchIdentity) !== canonical(coldFileIdentityTupleV1(termination.dispatch!.identity!))
+    || canonical(dispatch.terminationReceiptIdentity) !== canonical(coldFileIdentityTupleV1(termination.receipt!.identity!))
+    || (dispatch.helper as Record<string, unknown>).pid !== helper.pid) fail("direct controller spawn history belongs to another original owner");
+  const claimBytes = readOriginal("claim.json", completion.claimIdentity), claim = parseDirectSpawnerClaimV1(claimBytes, state.intent, dispatch);
+  for (const [stem, record] of [["intent", state.intent], ["dispatch", dispatch], ["claim", claim]] as const) {
+    for (const suffix of ["Ref", "Hash"]) if (completion[`${stem}${suffix}`] !== record[`${stem}${suffix}`]) fail("direct controller completion content pair is crossed");
+  }
+  const assertChild = () => {
+    if (helper.exitCode !== 0 || helper.signalCode !== null || boundedPsProcessIdentity(helper.pid!) !== null) fail("direct controller original helper has not departed");
+    const child = claim.child as Record<string, any>, actual = boundedPsProcessIdentity(child.pid), ownership = observeColdProcessParentGroupV1(child.pid);
+    if (!actual || canonical({ ...actual, ...ownership }) !== canonical({ ...child, ppid: 1 })) fail("direct controller detached child identity is crossed");
+    if (observeDirectSpawnerTerminationTargetV1((state.inputs.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct controller original predecessor returned");
+    const files = claim.startupFiles as Record<string, any>;
+    for (const key of ["singleton", "pidFile"]) {
+      const file = files[key], stats = lstatSync(file.path, { bigint: true });
+      if (stats.size > 32n || String(stats.dev) !== file.devDecimal || String(stats.ino) !== file.inoDecimal || Number(stats.uid) !== file.uid
+        || Number(stats.mode & 0o7777n) !== file.mode || Number(stats.size) !== file.byteLength
+        || sha256(canonical(coldFileIdentityTupleV1(stats))) !== file.identityHash || sha256(readColdGenesisCandidateV1(file.path, stats)) !== file.bytesHash) fail("direct controller original startup file changed");
+    }
+  };
+  assertChild(); assertOriginal();
+  if (!dispatchBytes.equals(readOriginal("spawn-dispatch.json", completion.dispatchIdentity)) || !claimBytes.equals(readOriginal("claim.json", completion.claimIdentity))) fail("direct controller original history read changed");
+  assertChild(); assertOriginal();
+  return claim;
+}
+
+async function observeDirectSpawnerRebindControllerClaimV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1],
+) {
+  if (directControllerClaimObservationActiveV1) fail("direct controller claim observation is already active");
+  directControllerClaimObservationActiveV1 = true;
+  try {
+    const completion = await invokeDirectSpawnerRebindHelperV1(lease, input), state = retainedDirectSpawnerRebindIntentV1!;
+    await assertDirectControllerLaunchProfileV1(state);
+    const claim = independentlyObserveDirectControllerClaimV1(state, completion);
+    await assertDirectControllerLaunchProfileV1(state);
+    if (canonical(independentlyObserveDirectControllerClaimV1(state, completion)) !== canonical(claim)) fail("direct controller claimed child changed across output validation");
+    state.phase = "claim-observed";
+    return claim;
+  } finally { directControllerClaimObservationActiveV1 = false; }
 }
 
 function captureColdControllerHelperCompletionV1(child: ChildProcess): Promise<Readonly<Record<string, unknown>>> {
